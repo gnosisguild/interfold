@@ -149,6 +149,13 @@ describe("InterfoldTicketToken", function () {
       expect(await token.registry()).to.equal(await otherRegistry.getAddress());
     });
 
+    it("setRegistry reverts when the new registry is unchanged", async function () {
+      const { token, initialOwner, registry } = await loadFixture(deploy);
+      await expect(
+        token.connect(initialOwner).setRegistry(await registry.getAddress()),
+      ).to.be.revertedWithCustomError(token, "SameRegistry");
+    });
+
     it("setRegistry reverts once locked", async function () {
       const { token, initialOwner, otherRegistry } = await loadFixture(deploy);
       await token.connect(initialOwner).lockRegistry();
@@ -177,6 +184,16 @@ describe("InterfoldTicketToken", function () {
           .connect(initialOwner)
           .requestRegistryChange(await otherRegistry.getAddress()),
       ).to.be.revertedWithCustomError(token, "RegistryNotLocked");
+    });
+
+    it("requestRegistryChange reverts when the new registry is unchanged", async function () {
+      const { token, initialOwner, registry } = await loadFixture(deploy);
+      await token.connect(initialOwner).lockRegistry();
+      await expect(
+        token
+          .connect(initialOwner)
+          .requestRegistryChange(await registry.getAddress()),
+      ).to.be.revertedWithCustomError(token, "SameRegistry");
     });
 
     it("activateRegistryChange enforces REGISTRY_CHANGE_DELAY", async function () {
