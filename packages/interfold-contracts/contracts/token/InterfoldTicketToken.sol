@@ -71,6 +71,10 @@ contract InterfoldTicketToken is
     /// @notice Thrown when a registry change targets the current registry.
     error SameRegistry();
 
+    /// @notice Thrown when a registry change is attempted while burned-ticket
+    ///         funds are still awaiting payout by the current registry.
+    error OutstandingPayableBalance(uint256 amount);
+
     /// @notice Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
 
@@ -187,6 +191,7 @@ contract InterfoldTicketToken is
         if (registryLocked) revert RegistryAlreadyLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
         if (newRegistry == registry) revert SameRegistry();
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = newRegistry;
         emit RegistryChanged(old, newRegistry);
@@ -208,6 +213,7 @@ contract InterfoldTicketToken is
         if (!registryLocked) revert RegistryNotLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
         if (newRegistry == registry) revert SameRegistry();
+        _revertIfPayableBalanceOutstanding();
         pendingRegistry = newRegistry;
         uint64 activatesAt = uint64(block.timestamp) + REGISTRY_CHANGE_DELAY;
         pendingRegistryActivationTime = activatesAt;
@@ -223,6 +229,7 @@ contract InterfoldTicketToken is
         if (block.timestamp < pendingRegistryActivationTime) {
             revert RegistryChangeNotReady();
         }
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = pending;
         pendingRegistry = address(0);
@@ -356,6 +363,13 @@ contract InterfoldTicketToken is
         if (to == address(0)) revert ZeroAddress();
         token.safeTransfer(to, amount);
         emit ERC20Rescued(address(token), to, amount);
+    }
+
+    function _revertIfPayableBalanceOutstanding() internal view {
+        uint256 amount = payableBalance;
+        if (amount != 0) {
+            revert OutstandingPayableBalance(amount);
+        }
     }
 
     // ── Disabled flows ─────────────────────────────────────────────────────────
