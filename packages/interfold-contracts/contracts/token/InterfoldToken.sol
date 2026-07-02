@@ -174,6 +174,10 @@ contract InterfoldToken is
     /// @notice The CCA auction/claim source has already been set.
     error ClaimSourceAlreadySet(address current);
 
+    /// @notice Thrown when the current owner attempts to renounce a role.
+    ///         Owner roles are synchronized through ownership transfer.
+    error RenounceRoleDisabledForOwner();
+
     // ─────────────────────────────────────────────────────────────────────────
     // Constants and immutables
     // ─────────────────────────────────────────────────────────────────────────
@@ -1081,6 +1085,20 @@ contract InterfoldToken is
     /// @notice Disabled. Reverts unconditionally.
     function renounceOwnership() public view override onlyOwner {
         revert RenounceOwnershipDisabled();
+    }
+
+    /// @inheritdoc AccessControl
+    function renounceRole(
+        bytes32 role,
+        address callerConfirmation
+    ) public override {
+        if (
+            callerConfirmation == _msgSender() &&
+            callerConfirmation == owner()
+        ) {
+            revert RenounceRoleDisabledForOwner();
+        }
+        super.renounceRole(role, callerConfirmation);
     }
 
     /**
