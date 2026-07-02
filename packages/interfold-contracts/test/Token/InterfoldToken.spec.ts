@@ -2720,6 +2720,33 @@ describe("InterfoldToken", function () {
       ).to.be.revertedWithCustomError(token, "RenounceOwnershipDisabled");
     });
 
+    it("owner cannot renounce AccessControl roles directly", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const adminAddress = await admin.getAddress();
+
+      await expect(
+        token
+          .connect(admin)
+          .renounceRole(await token.DEFAULT_ADMIN_ROLE(), adminAddress),
+      ).to.be.revertedWithCustomError(
+        token,
+        "RenounceRoleDisabledForOwner",
+      );
+    });
+
+    it("non-owner role holders can still renounce roles", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const minterRole = await token.MINTER_ROLE();
+
+      await token.connect(admin).grantRole(minterRole, aliceAddress);
+      expect(await token.hasRole(minterRole, aliceAddress)).to.be.true;
+
+      await token.connect(alice).renounceRole(minterRole, aliceAddress);
+
+      expect(await token.hasRole(minterRole, aliceAddress)).to.be.false;
+    });
+
     it("ownership transfer syncs AccessControl roles", async function () {
       const { token, admin, alice } = await loadFixture(deploy);
       const adminAddress = await admin.getAddress();
