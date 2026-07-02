@@ -14,14 +14,14 @@ import {
     ERC20Wrapper
 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
 import {
-    ERC20Permit
-} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {
     ERC20Votes
 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { Nonces } from "@openzeppelin/contracts/utils/Nonces.sol";
+import {
+    EIP712
+} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -50,7 +50,6 @@ import {
  */
 contract InterfoldTicketToken is
     ERC20,
-    ERC20Permit,
     ERC20Votes,
     Ownable2Step,
     ERC20Wrapper,
@@ -68,9 +67,6 @@ contract InterfoldTicketToken is
 
     /// @notice Thrown when attempting to transfer tokens between non-zero addresses
     error TransferNotAllowed();
-
-    /// @notice Thrown when ERC-2612 {permit} is invoked (approvals are disabled on this token).
-    error PermitDisabled();
 
     /// @notice Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
@@ -168,7 +164,7 @@ contract InterfoldTicketToken is
         address initialOwner_
     )
         ERC20("Interfold Ticket Token", "tFOLD")
-        ERC20Permit("Interfold Ticket Token")
+        EIP712("Interfold Ticket Token", "1")
         ERC20Wrapper(baseToken)
         Ownable(initialOwner_)
     {
@@ -364,21 +360,6 @@ contract InterfoldTicketToken is
     }
 
     /**
-     * @dev ERC-2612 permit is disabled because allowances are disabled.
-     */
-    function permit(
-        address,
-        address,
-        uint256,
-        uint256,
-        uint8,
-        bytes32,
-        bytes32
-    ) public pure override {
-        revert PermitDisabled();
-    }
-
-    /**
      * @notice Override ERC20Votes update hook to prevent transfers between users.
      */
     function _update(
@@ -435,7 +416,7 @@ contract InterfoldTicketToken is
      */
     function nonces(
         address owner
-    ) public view override(ERC20Permit, Nonces) returns (uint256) {
+    ) public view override(Nonces) returns (uint256) {
         return super.nonces(owner);
     }
 
