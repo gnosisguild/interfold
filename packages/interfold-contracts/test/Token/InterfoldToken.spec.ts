@@ -929,6 +929,44 @@ describe("InterfoldToken", function () {
       ).to.be.revertedWithCustomError(token, "InvalidPolicy");
     });
 
+    it("reverts when an Absolute policy is already fully matured", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const now = BigInt(await time.latest());
+
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("STALE_ABS"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 0,
+              start: now - 2n * DAY,
+              cliffDuration: DAY,
+              vestDuration: 0n,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("accepts an old Absolute curve when holdUntil still locks", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const now = BigInt(await time.latest());
+
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("HELD_ABS"), {
+            holdUntil: now + DAY,
+            unlock: {
+              anchor: 0,
+              start: now - 2n * DAY,
+              cliffDuration: DAY,
+              vestDuration: 0n,
+            },
+          }),
+      ).to.emit(token, "PolicyDefined");
+    });
+
     it("reverts when holdUntil is past the earliest sunset", async function () {
       const { token, admin, ccaEnd } = await loadFixture(deploy);
       const earliestMaturity = noMoreLocksFor(ccaEnd);
