@@ -213,20 +213,14 @@ describe("InterfoldTicketToken", function () {
   });
 
   // ── M-11 ──────────────────────────────────────────────────────────────────
-  describe("M-11 — permit disabled", function () {
-    it("permit always reverts", async function () {
-      const { token, alice } = await loadFixture(deploy);
-      await expect(
-        token.permit(
-          await alice.getAddress(),
-          AddressOne,
-          1n,
-          ethers.MaxUint256,
-          27,
-          ethers.ZeroHash,
-          ethers.ZeroHash,
+  describe("M-11 — permit removed", function () {
+    it("does not expose ERC-2612 permit in the ABI", async function () {
+      const { token } = await loadFixture(deploy);
+      expect(
+        token.interface.getFunction(
+          "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)" as unknown as "permit",
         ),
-      ).to.be.revertedWithCustomError(token, "PermitDisabled");
+      ).to.equal(null);
     });
   });
 
