@@ -3,22 +3,16 @@ import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 
 import { connect, hasFlag } from "./cli";
-import {
-  CCA_AUCTION_ABI,
-  PREDICATE_VALIDATION_HOOK_ABI,
-  ZERO,
-} from "./constants";
-import {
-  deploymentPath,
-  planPath,
-  readJson,
-} from "./files";
-import {
-  buildSalePlan,
-  planConfigHash,
-  readPlanForConfig,
-} from "./plan";
-import type { DeploymentFile, HardhatEthers, SaleConfigFile, SalePlan } from "./types";
+import { PREDICATE_VALIDATION_HOOK_ABI, ZERO } from "./constants";
+import { deploymentPath, planPath, readJson } from "./files";
+import { buildSalePlan, planConfigHash, readPlanForConfig } from "./plan";
+import type {
+  DeploymentFile,
+  HardhatEthers,
+  SaleConfigFile,
+  SalePlan,
+} from "./types";
+import { CCA_AUCTION_ABI, LBP_STRATEGY_ABI } from "./uniswap";
 import {
   address,
   assertEq,
@@ -66,11 +60,14 @@ Sale deployment
   operator:          ${deployment.operator}
   safe:              ${deployment.safe}
   saleDeployer:      ${deployment.saleDeployer}
+  mode:              LiquidityLauncher / LBPStrategy
   FOLD:              ${deployment.fold}
   CCA auction:       ${deployment.auction}
   bondingRegistry:   ${deployment.bondingRegistry}
   proxyAdmin:        ${deployment.bondingRegistryProxyAdmin ?? "(unknown)"}
-  ccaFactory:        ${deployment.ccaFactory}
+  liquidityLauncher: ${deployment.liquidityLauncher ?? plan.liquidityLauncher}
+  lbpStrategy:       ${deployment.lbpStrategy ?? plan.lbpStrategy}
+  initializerFactory:${deployment.initializerFactory ?? plan.initializerFactory}
   validationHook:    ${deployment.validationHook ?? ZERO}
   config hash:       ${planConfigHash(plan)}
 
@@ -93,6 +90,7 @@ CCA schedule
 
 Economics and recipients
   saleAmount:        ${config.saleAmount} (${formatFold(config.saleAmount)})
+  LP reserve:        ${plan.lbpSaleConfig.reservedTokenAmountForLP} (${formatFold(plan.lbpSaleConfig.reservedTokenAmountForLP)})
   currency:          ${config.auction.currency} -> ${resolveCurrency(config.auction.currency)}
   floorPrice:        ${config.auction.floorPrice}
   tickSpacing:       ${config.auction.tickSpacing}
@@ -100,6 +98,17 @@ Economics and recipients
   tokensRecipient:   ${config.auction.tokensRecipient}
   fundsRecipient:    ${config.auction.fundsRecipient}
   auctionSteps bytes:${(config.auction.auctionStepsData.length - 2) / 2}
+`);
+
+  console.log(`LBP migration
+  strategy:          ${plan.lbpStrategy}
+  initializerFactory:${plan.lbp.initializerFactory}
+  positionManager:   ${plan.lbp.positionManager}
+  poolManager:       ${plan.lbp.poolManager}
+  distributionAmount:${plan.lbp.distributionAmount} (${formatFold(plan.lbp.distributionAmount)})
+  migrationBlock:    ${plan.lbp.migratorParams.migrationBlock}
+  launcherSalt:      ${plan.lbp.launcherSalt}
+  initializerSalt:   ${plan.lbp.initializerSalt}
 `);
 
   if (deployment.safeProposal) {
@@ -205,7 +214,11 @@ export async function validateDeployment(
   printValue("claimSource", claimSource);
 
   const bondingRegistry = await fold.BONDING_REGISTRY();
-  assertEq("FOLD.BONDING_REGISTRY", bondingRegistry, config.fold.bondingRegistry);
+  assertEq(
+    "FOLD.BONDING_REGISTRY",
+    bondingRegistry,
+    config.fold.bondingRegistry,
+  );
   printValue("bondingRegistry", bondingRegistry);
   await requireContract(
     ethers.provider,
@@ -225,10 +238,17 @@ export async function validateDeployment(
   );
 
   const foldTotalSupply = await fold.totalSupply();
-  printValue("FOLD total supply", `${foldTotalSupply} (${formatFold(foldTotalSupply)})`);
+  printValue(
+    "FOLD total supply",
+    `${foldTotalSupply} (${formatFold(foldTotalSupply)})`,
+  );
 
   const auctionCurrency = await auction.currency();
-  assertEq("auction.currency", auctionCurrency, resolveCurrency(config.auction.currency));
+  assertEq(
+    "auction.currency",
+    auctionCurrency,
+    resolveCurrency(config.auction.currency),
+  );
   printValue("auction currency", auctionCurrency);
 
   const tokensRecipient = await auction.tokensRecipient();
@@ -249,15 +269,24 @@ export async function validateDeployment(
 
   const startBlock = await auction.startBlock();
   assertEq("auction.startBlock", startBlock, config.auction.startBlock);
-  printValue("startBlock", `${startBlock} (${formatBlockDelta(BigInt(startBlock), currentBlock)})`);
+  printValue(
+    "startBlock",
+    `${startBlock} (${formatBlockDelta(BigInt(startBlock), currentBlock)})`,
+  );
 
   const endBlock = await auction.endBlock();
   assertEq("auction.endBlock", endBlock, config.auction.endBlock);
-  printValue("endBlock", `${endBlock} (${formatBlockDelta(BigInt(endBlock), currentBlock)})`);
+  printValue(
+    "endBlock",
+    `${endBlock} (${formatBlockDelta(BigInt(endBlock), currentBlock)})`,
+  );
 
   const claimBlock = await auction.claimBlock();
   assertEq("auction.claimBlock", claimBlock, config.auction.claimBlock);
-  printValue("claimBlock", `${claimBlock} (${formatBlockDelta(BigInt(claimBlock), currentBlock)})`);
+  printValue(
+    "claimBlock",
+    `${claimBlock} (${formatBlockDelta(BigInt(claimBlock), currentBlock)})`,
+  );
 
   const hook = await optionalView("auction.validationHook", () =>
     auction.validationHook(),
@@ -275,7 +304,88 @@ export async function validateDeployment(
   const currencyRaised = await optionalView("auction.currencyRaised", () =>
     auction.currencyRaised(),
   );
-  if (currencyRaised !== undefined) printValue("auction currencyRaised", currencyRaised);
+  if (currencyRaised !== undefined)
+    printValue("auction currencyRaised", currencyRaised);
+
+  const strategy = new ethersLib.Contract(
+    plan.lbpStrategy,
+    LBP_STRATEGY_ABI,
+    ethers.provider,
+  );
+  assertEq(
+    "lbp.initializerFactory",
+    await strategy.initializerFactory(),
+    plan.lbp.initializerFactory,
+  );
+  assertEq(
+    "lbp.positionManager",
+    await strategy.positionManager(),
+    plan.lbp.positionManager,
+  );
+  assertEq(
+    "lbp.poolManager",
+    await strategy.poolManager(),
+    plan.lbp.poolManager,
+  );
+  const initializer = await strategy.initializers(deployment.auction);
+  assertEq("lbp.initializer.token", initializer.token, deployment.fold);
+  assertEq(
+    "lbp.initializer.currency",
+    initializer.currency,
+    resolveCurrency(config.auction.currency),
+  );
+  assertEq(
+    "lbp.initializer.migrationBlock",
+    initializer.migrationBlock,
+    plan.lbp.migratorParams.migrationBlock,
+  );
+  assertEq(
+    "lbp.initializer.reservedTokenAmountForLP",
+    initializer.reservedTokenAmountForLP,
+    plan.lbpSaleConfig.reservedTokenAmountForLP,
+  );
+  assertEq(
+    "lbp.initializer.recipient",
+    initializer.recipient,
+    config.lbp?.recipient,
+  );
+  assertEq(
+    "lbp.initializer.positionRecipient",
+    initializer.positionRecipient,
+    config.lbp?.positionRecipient,
+  );
+  assertEq(
+    "lbp.initializer.pool.fee",
+    initializer.poolParameters.fee,
+    config.lbp?.pool.fee,
+  );
+  assertEq(
+    "lbp.initializer.pool.tickSpacing",
+    initializer.poolParameters.tickSpacing,
+    config.lbp?.pool.tickSpacing,
+  );
+  assertEq(
+    "lbp.initializer.pool.hook",
+    initializer.poolParameters.hook,
+    config.lbp?.pool.hook ?? ZERO,
+  );
+  printValue("lbp auction registered", true);
+
+  assertEq(
+    "FOLD whitelist LiquidityLauncher",
+    await fold.transferWhitelist(plan.liquidityLauncher),
+    true,
+  );
+  assertEq(
+    "FOLD whitelist LBPStrategy",
+    await fold.transferWhitelist(plan.lbpStrategy),
+    true,
+  );
+  assertEq(
+    "FOLD whitelist PositionManager",
+    await fold.transferWhitelist(plan.lbp.positionManager),
+    true,
+  );
 
   const validationHook =
     deployment.validationHook ?? config.auction.validationHook;
@@ -300,22 +410,25 @@ export async function validateDeployment(
     }
     if (config.predicateHook?.registry) {
       const registry = await predicateHook.getRegistry();
-      assertEq("validationHook.registry", registry, config.predicateHook.registry);
+      assertEq(
+        "validationHook.registry",
+        registry,
+        config.predicateHook.registry,
+      );
       printValue("validationHook registry", registry);
     }
     if (config.predicateHook?.policyID) {
       const policyID = await predicateHook.getPolicyID();
-      assertEq("validationHook.policyID", policyID, config.predicateHook.policyID);
+      assertEq(
+        "validationHook.policyID",
+        policyID,
+        config.predicateHook.policyID,
+      );
       printValue("validationHook policyID", policyID);
     }
   }
 
-  await validateAuctionFundingNotification(
-    ethers,
-    auction,
-    config,
-    deployment,
-  );
+  await validateAuctionFundingNotification(ethers, auction, config, deployment);
 
   const auctionBalance = await fold.balanceOf(deployment.auction);
   const saleAmount = BigInt(config.saleAmount);
@@ -353,7 +466,11 @@ export async function validateDeployment(
   printValue("tgeTimestamp", tgeTimestamp);
 
   const configHash = planConfigHash(plan);
-  assertEq("used config hash", await saleDeployer.usedConfigHashes(configHash), true);
+  assertEq(
+    "used config hash",
+    await saleDeployer.usedConfigHashes(configHash),
+    true,
+  );
   printValue("used config hash", configHash);
 
   const owner = address(await fold.owner(), "FOLD.owner");
@@ -366,22 +483,14 @@ export async function validateDeployment(
   if (owner === config.safe) {
     const defaultAdminRole = ethersLib.ZeroHash;
     const safeDefaultAdmin = await fold.hasRole(defaultAdminRole, config.safe);
-    assertEq(
-      "Safe DEFAULT_ADMIN_ROLE",
-      safeDefaultAdmin,
-      true,
-    );
+    assertEq("Safe DEFAULT_ADMIN_ROLE", safeDefaultAdmin, true);
     printValue("Safe DEFAULT_ADMIN_ROLE", safeDefaultAdmin);
     if (address(deployment.operator, "deployment.operator") !== config.safe) {
       const operatorDefaultAdmin = await fold.hasRole(
         defaultAdminRole,
         deployment.operator,
       );
-      assertEq(
-        "operator DEFAULT_ADMIN_ROLE",
-        operatorDefaultAdmin,
-        false,
-      );
+      assertEq("operator DEFAULT_ADMIN_ROLE", operatorDefaultAdmin, false);
       printValue("operator DEFAULT_ADMIN_ROLE", operatorDefaultAdmin);
     } else {
       console.log(
@@ -392,41 +501,25 @@ export async function validateDeployment(
       defaultAdminRole,
       config.saleDeployer,
     );
-    assertEq(
-      "factory DEFAULT_ADMIN_ROLE",
-      factoryDefaultAdmin,
-      false,
-    );
+    assertEq("factory DEFAULT_ADMIN_ROLE", factoryDefaultAdmin, false);
     printValue("factory DEFAULT_ADMIN_ROLE", factoryDefaultAdmin);
     const safeMinter = await fold.hasRole(
       ethersLib.id("MINTER_ROLE"),
       config.safe,
     );
-    assertEq(
-      "Safe MINTER_ROLE",
-      safeMinter,
-      true,
-    );
+    assertEq("Safe MINTER_ROLE", safeMinter, true);
     printValue("Safe MINTER_ROLE", safeMinter);
     const safeWhitelist = await fold.hasRole(
       ethersLib.id("WHITELIST_ROLE"),
       config.safe,
     );
-    assertEq(
-      "Safe WHITELIST_ROLE",
-      safeWhitelist,
-      true,
-    );
+    assertEq("Safe WHITELIST_ROLE", safeWhitelist, true);
     printValue("Safe WHITELIST_ROLE", safeWhitelist);
     const safeLockManager = await fold.hasRole(
       ethersLib.id("LOCK_MANAGER_ROLE"),
       config.safe,
     );
-    assertEq(
-      "Safe LOCK_MANAGER_ROLE",
-      safeLockManager,
-      true,
-    );
+    assertEq("Safe LOCK_MANAGER_ROLE", safeLockManager, true);
     printValue("Safe LOCK_MANAGER_ROLE", safeLockManager);
   } else {
     const normalizedPendingOwner = address(

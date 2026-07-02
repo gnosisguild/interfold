@@ -6,9 +6,9 @@
 pragma solidity 0.8.28;
 
 /**
- * @title ICCA
- * @notice Minimal interfaces for the Uniswap Continuous Clearing Auction (CCA)
- *         v2 factory + auction instance.
+ * @title Uniswap CCA v2 Interfaces
+ * @notice Minimal call surface for the Uniswap Continuous Clearing Auction
+ *         v2 factory, auction instance, and validation hook.
  *
  * @dev    The on-chain CCA contracts are NOT deployed from this repository.
  *         These are thin call/predict interfaces against the canonical Uniswap
@@ -47,9 +47,21 @@ struct AuctionParameters {
     bytes auctionStepsData;
 }
 
-/// @title ICCAFactory
+/// @title IValidationHook
+/// @notice Optional bid-validation hook called by a CCA auction.
+interface IValidationHook {
+    function validate(
+        uint256 maxPrice,
+        uint128 amount,
+        address owner,
+        address sender,
+        bytes calldata hookData
+    ) external;
+}
+
+/// @title IContinuousClearingAuctionFactory
 /// @notice Uniswap CCA factory v2.0.0 entrypoints.
-interface ICCAFactory {
+interface IContinuousClearingAuctionFactory {
     /// @notice Deploys a new auction instance via CREATE2 (v2 naming).
     function create(
         address token,
@@ -72,10 +84,10 @@ interface ICCAFactory {
     function protocolFeeController() external view returns (address);
 }
 
-/// @title ICCAAuction
+/// @title IContinuousClearingAuction
 /// @notice The subset of the deployed CCA auction instance the deployer reads
 ///         from and pokes during funding.
-interface ICCAAuction {
+interface IContinuousClearingAuction {
     /// @notice Notifies the auction that its sale tokens have been transferred
     ///         in. Must be called once after the sale supply is funded.
     function onTokensReceived() external;
@@ -104,3 +116,8 @@ interface ICCAAuction {
     /// @notice Claim block.
     function claimBlock() external view returns (uint64);
 }
+
+/// @dev Backwards-compatible names used by older Interfold sale code.
+interface ICCAFactory is IContinuousClearingAuctionFactory {}
+
+interface ICCAAuction is IContinuousClearingAuction {}

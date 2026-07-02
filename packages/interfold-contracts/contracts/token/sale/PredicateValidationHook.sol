@@ -14,16 +14,7 @@ import {
 import {
     BasicPredicateClient
 } from "@predicate/contracts/src/mixins/BasicPredicateClient.sol";
-
-interface ICCAValidationHook {
-    function validate(
-        uint256 maxPrice,
-        uint128 amount,
-        address owner,
-        address sender,
-        bytes calldata hookData
-    ) external;
-}
+import { IValidationHook } from "../../interfaces/external/ICCA.sol";
 
 /**
  * @title PredicateValidationHook
@@ -33,7 +24,7 @@ interface ICCAValidationHook {
  *      constructor needs this hook address first. The Safe owns that action.
  */
 contract PredicateValidationHook is
-    ICCAValidationHook,
+    IValidationHook,
     BasicPredicateClient,
     Ownable,
     IERC165
@@ -111,7 +102,7 @@ contract PredicateValidationHook is
 
     function supportsInterface(bytes4 interfaceId) public pure returns (bool) {
         return
-            interfaceId == type(ICCAValidationHook).interfaceId ||
+            interfaceId == type(IValidationHook).interfaceId ||
             interfaceId == type(IPredicateClient).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }

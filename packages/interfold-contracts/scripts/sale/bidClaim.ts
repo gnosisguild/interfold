@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
-import fs from "fs";
 
-import { arg, connect, hasFlag } from "./cli";
-import { CCA_AUCTION_ABI, ZERO } from "./constants";
-import {
-  deploymentPath,
-  planPath,
-  readJson,
-  writeJson,
-} from "./files";
-import { writeSaleUiManifest } from "./plan";
-import type { DeploymentFile, HardhatEthers, SaleConfigFile, SalePlan } from "./types";
+import { arg, connect } from "./cli";
+import { ZERO } from "./constants";
+import { deploymentPath, readJson, writeJson } from "./files";
+import type { DeploymentFile, HardhatEthers, SaleConfigFile } from "./types";
+import { CCA_AUCTION_ABI } from "./uniswap";
 import { loadConfig, resolveCurrency } from "./values";
 
 async function waitForBlock(
@@ -64,8 +58,9 @@ export async function bidClaim(
   const startBlock = BigInt(await auction.startBlock());
   const endBlock = BigInt(await auction.endBlock());
   const claimBlock = BigInt(await auction.claimBlock());
-  const isMockCca =
-    hasFlag("mock-cca") || deployment.mockCcaFactory !== undefined;
+  const network = await ethers.provider.getNetwork();
+  const isLocalMockCca =
+    network.chainId === 31337n || network.chainId === 1337n;
   const resumeBidId = arg("bid-id") ?? deployment.testBidId;
 
   const bidValue = ethersLib.parseEther(arg("bid-eth") ?? "0.001");
@@ -108,7 +103,7 @@ export async function bidClaim(
       writeJson(deploymentPath(config), deployment);
       console.log(`Buyer bid submitted: ${bidTx.hash} (bid ${bidId})`);
     } catch (error) {
-      if (!isMockCca) throw error;
+      if (!isLocalMockCca) throw error;
       const bidTx = await auction.bid({ value: bidValue });
       await bidTx.wait();
       console.log(`Mock buyer bid submitted: ${bidTx.hash}`);
@@ -117,7 +112,7 @@ export async function bidClaim(
 
   await waitForBlock(ethers.provider, endBlock + 1n);
   if (bidId !== undefined) {
-    if (!isMockCca) {
+    if (!isLocalMockCca) {
       try {
         const checkpointTx = await auction.checkpoint();
         await checkpointTx.wait();
@@ -132,7 +127,7 @@ export async function bidClaim(
       await exitTx.wait();
       console.log(`Buyer bid exited: ${exitTx.hash}`);
     } catch (error) {
-      if (isMockCca) throw error;
+      if (isLocalMockCca) throw error;
       const bid = await auction.bids(bidId);
       const partialExitTx = await auction.exitPartiallyFilledBid(
         bidId,
@@ -164,13 +159,6 @@ export async function bidClaim(
   if (bidId !== undefined) {
     deployment.testBidId = bidId.toString();
     writeJson(deploymentPath(config), deployment);
-    if (fs.existsSync(planPath(config))) {
-      writeSaleUiManifest(
-        config,
-        readJson<SalePlan>(planPath(config)),
-        deployment,
-      );
-    }
   }
 }
 
@@ -182,4 +170,3 @@ async function expectTransferRestricted(fold: any, to: string): Promise<void> {
   }
   throw new Error("Expected claimed FOLD to be transfer-restricted before TGE");
 }
-

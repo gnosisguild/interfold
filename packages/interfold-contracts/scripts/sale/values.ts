@@ -4,17 +4,28 @@ import { ethers as ethersLib } from "ethers";
 import { decodeSchedule } from "../ccaSchedule";
 import { arg } from "./cli";
 import {
-  abi,
-  AUCTION_PARAMETERS_TUPLE,
-  CCA_FACTORY_ADDRESS,
-  CCA_VERSION,
   FORTY_DAYS,
   FOUR_YEARS,
   MSG_SENDER_SENTINEL,
   ZERO,
+  abi,
 } from "./constants";
 import { configPath, readJson } from "./files";
-import type { AuctionConfig, AuctionParameters, SaleConfigFile, SalePlan } from "./types";
+import type {
+  AuctionConfig,
+  AuctionParameters,
+  LbpConfig,
+  MigratorParameters,
+  SaleConfigFile,
+  SalePlan,
+} from "./types";
+import {
+  AUCTION_PARAMETERS_TUPLE,
+  CCA_VERSION,
+  LBP_STRATEGY_ADDRESSES,
+  LIQUIDITY_LAUNCHER_ADDRESS,
+  MIGRATOR_PARAMETERS_TUPLE,
+} from "./uniswap";
 
 export function address(value: string, label: string): string {
   try {
@@ -51,7 +62,6 @@ export function loadConfig(file = configPath()): SaleConfigFile {
   const safeOverride = arg("safe") ?? process.env.SAFE_ADDRESS;
   const saleDeployerOverride = arg("sale-deployer");
   const bondingOverride = arg("bonding-registry");
-  const ccaFactoryOverride = arg("cca-factory");
 
   if (safeOverride && config.safe === ZERO) config.safe = safeOverride;
   if (saleDeployerOverride && config.saleDeployer === ZERO) {
@@ -60,7 +70,6 @@ export function loadConfig(file = configPath()): SaleConfigFile {
   if (bondingOverride && config.fold.bondingRegistry === ZERO) {
     config.fold.bondingRegistry = bondingOverride;
   }
-  if (ccaFactoryOverride) config.ccaFactory = ccaFactoryOverride;
 
   validateConfig(config);
   return config;
@@ -68,6 +77,12 @@ export function loadConfig(file = configPath()): SaleConfigFile {
 
 export function validateConfig(config: SaleConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
+  config.launchMode = config.launchMode ?? "lbp";
+  if (config.launchMode !== "lbp") {
+    throw new Error(
+      "Only launchMode=lbp is supported. The direct CCA factory path was removed; rerun --action prepare to generate an official LiquidityLauncher config.",
+    );
+  }
   const legacyVersion = (config as SaleConfigFile & { ccaVersion?: unknown })
     .ccaVersion;
   if (legacyVersion !== undefined && legacyVersion !== CCA_VERSION) {
@@ -78,9 +93,8 @@ export function validateConfig(config: SaleConfigFile): void {
   delete (config as SaleConfigFile & { ccaVersion?: unknown }).ccaVersion;
   config.safe = address(config.safe, "safe");
   config.saleDeployer = address(config.saleDeployer, "saleDeployer");
-  if (config.ccaFactory) {
-    config.ccaFactory = address(config.ccaFactory, "ccaFactory");
-  }
+  if (!config.lbp) throw new Error("lbp config is required");
+  validateLbpConfig(config.lbp);
   config.fold.bondingRegistry = address(
     config.fold.bondingRegistry,
     "fold.bondingRegistry",
@@ -123,6 +137,68 @@ export function validateConfig(config: SaleConfigFile): void {
   BigInt(config.fold.ccaStart);
   BigInt(config.fold.ccaEnd);
   if (config.fold.noMoreLocks?.trim()) BigInt(config.fold.noMoreLocks);
+}
+
+function validateBytes(value: string, label: string): string {
+  if (!ethersLib.isHexString(value)) {
+    throw new Error(`${label} must be 0x-prefixed hex bytes`);
+  }
+  return value;
+}
+
+function validateLbpConfig(config: LbpConfig): void {
+  config.liquidityLauncher = address(
+    config.liquidityLauncher || LIQUIDITY_LAUNCHER_ADDRESS,
+    "lbp.liquidityLauncher",
+  );
+  config.strategy = address(config.strategy, "lbp.strategy");
+  BigInt(config.migrationBlock);
+  BigInt(config.reservedTokenAmountForLP);
+  config.recipient = address(config.recipient, "lbp.recipient");
+  config.positionRecipient = address(
+    config.positionRecipient,
+    "lbp.positionRecipient",
+  );
+  config.pool.hook = address(config.pool.hook || ZERO, "lbp.pool.hook");
+  BigInt(config.pool.fee);
+  BigInt(config.pool.tickSpacing);
+  config.positionDefinitions = validateBytes(
+    config.positionDefinitions,
+    "lbp.positionDefinitions",
+  );
+  config.lpAllocationSchedule = validateBytes(
+    config.lpAllocationSchedule,
+    "lbp.lpAllocationSchedule",
+  );
+
+  abi.decode(
+    [
+      "tuple(int24 offsetLower,int24 offsetUpper,uint24 weight,address overridePositionRecipient)[]",
+    ],
+    config.positionDefinitions,
+  );
+  const brackets = abi.decode(
+    ["tuple(uint128 lowerThreshold,uint24 rate)[]"],
+    config.lpAllocationSchedule,
+  )[0] as Array<{ lowerThreshold: bigint; rate: bigint }>;
+  if (brackets.length === 0) {
+    throw new Error(
+      "lbp.lpAllocationSchedule must contain at least one bracket",
+    );
+  }
+  let previous: bigint | undefined;
+  for (const [index, bracket] of brackets.entries()) {
+    if (index === 0 && bracket.lowerThreshold !== 0n) {
+      throw new Error("lbp.lpAllocationSchedule first threshold must be 0");
+    }
+    if (previous !== undefined && bracket.lowerThreshold <= previous) {
+      throw new Error("lbp.lpAllocationSchedule thresholds must increase");
+    }
+    if (bracket.rate === 0n || bracket.rate > 10_000_000n) {
+      throw new Error("lbp.lpAllocationSchedule rates must be 1..10000000");
+    }
+    previous = bracket.lowerThreshold;
+  }
 }
 
 export function resolveCurrency(currency: string): string {
@@ -184,8 +260,20 @@ export function encodeAuctionConfigData(params: AuctionParameters): string {
   );
 }
 
-export function resolveCcaFactory(config: SaleConfigFile): string {
-  return address(config.ccaFactory ?? CCA_FACTORY_ADDRESS, "ccaFactory");
+export function resolveLiquidityLauncher(config: SaleConfigFile): string {
+  return address(
+    config.lbp?.liquidityLauncher ?? LIQUIDITY_LAUNCHER_ADDRESS,
+    "lbp.liquidityLauncher",
+  );
+}
+
+export function resolveLbpStrategy(config: SaleConfigFile): string {
+  const fallback = LBP_STRATEGY_ADDRESSES[config.chainId];
+  const value = config.lbp?.strategy ?? fallback;
+  if (!value) {
+    throw new Error(`No default LBPStrategy for chain ${config.chainId}`);
+  }
+  return address(value, "lbp.strategy");
 }
 
 export function deriveNoMoreLocks(ccaEnd: bigint, explicit?: string): bigint {
@@ -225,14 +313,107 @@ export function buildFoldInitCode(opts: {
   return ethersLib.concat([opts.creationCode, encodedCtor]);
 }
 
-export function saleConfigStruct(plan: SalePlan) {
+export function toMigratorParameters(
+  config: LbpConfig,
+  opts: { token: string; currency: string },
+): MigratorParameters {
   return {
-    ccaFactory: plan.saleConfig.ccaFactory,
-    saleAmount: BigInt(plan.saleConfig.saleAmount),
-    ccaSalt: plan.saleConfig.ccaSalt,
-    ccaConfigData: plan.saleConfig.ccaConfigData,
-    saleLabel: plan.saleConfig.saleLabel,
-    foldInitCodeHash: plan.saleConfig.foldInitCodeHash,
+    token: opts.token,
+    currency: opts.currency,
+    migrationBlock: BigInt(config.migrationBlock),
+    reservedTokenAmountForLP: BigInt(config.reservedTokenAmountForLP),
+    recipient: address(config.recipient, "lbp.recipient"),
+    positionRecipient: address(
+      config.positionRecipient,
+      "lbp.positionRecipient",
+    ),
+    poolParameters: {
+      fee: BigInt(config.pool.fee),
+      tickSpacing: BigInt(config.pool.tickSpacing),
+      hook: address(config.pool.hook || ZERO, "lbp.pool.hook"),
+    },
+    positionDefinitions: validateBytes(
+      config.positionDefinitions,
+      "lbp.positionDefinitions",
+    ),
+    lpAllocationSchedule: validateBytes(
+      config.lpAllocationSchedule,
+      "lbp.lpAllocationSchedule",
+    ),
+  };
+}
+
+export function encodeMigratorParameters(params: MigratorParameters): string {
+  return abi.encode(
+    [MIGRATOR_PARAMETERS_TUPLE],
+    [migratorParametersValue(params)],
+  );
+}
+
+export function migratorParametersValue(params: MigratorParameters) {
+  return [
+    params.token,
+    params.currency,
+    params.migrationBlock,
+    params.reservedTokenAmountForLP,
+    params.recipient,
+    params.positionRecipient,
+    [
+      params.poolParameters.fee,
+      params.poolParameters.tickSpacing,
+      params.poolParameters.hook,
+    ],
+    params.positionDefinitions,
+    params.lpAllocationSchedule,
+  ] as const;
+}
+
+export function encodeMigratorSalt(
+  launcherSalt: string,
+  params: MigratorParameters,
+): string {
+  return ethersLib.keccak256(
+    abi.encode(
+      ["bytes32", MIGRATOR_PARAMETERS_TUPLE],
+      [launcherSalt, migratorParametersValue(params)],
+    ),
+  );
+}
+
+export function encodeLauncherSalt(caller: string, salt: string): string {
+  return ethersLib.keccak256(
+    abi.encode(["address", "bytes32"], [caller, salt]),
+  );
+}
+
+export function encodeLbpConfigData(
+  migratorParams: MigratorParameters,
+  auctionConfigData: string,
+): string {
+  return abi.encode(
+    [MIGRATOR_PARAMETERS_TUPLE, "bytes"],
+    [migratorParametersValue(migratorParams), auctionConfigData],
+  );
+}
+
+export function lbpSaleConfigStruct(plan: SalePlan) {
+  if (!plan.lbpSaleConfig) {
+    throw new Error(
+      "Plan is missing lbpSaleConfig. Run --action plan again with the official LiquidityLauncher/LBP config.",
+    );
+  }
+  return {
+    liquidityLauncher: plan.lbpSaleConfig.liquidityLauncher,
+    lbpStrategy: plan.lbpSaleConfig.lbpStrategy,
+    expectedAuction: plan.lbpSaleConfig.expectedAuction,
+    auctionAmount: BigInt(plan.lbpSaleConfig.auctionAmount),
+    reservedTokenAmountForLP: BigInt(
+      plan.lbpSaleConfig.reservedTokenAmountForLP,
+    ),
+    distributionSalt: plan.lbpSaleConfig.distributionSalt,
+    lbpConfigData: plan.lbpSaleConfig.lbpConfigData,
+    saleLabel: plan.lbpSaleConfig.saleLabel,
+    foldInitCodeHash: plan.lbpSaleConfig.foldInitCodeHash,
   };
 }
 
@@ -271,7 +452,11 @@ export async function deployedAddress(contract: {
   throw new Error("Could not determine deployed contract address");
 }
 
-export function assertEq(label: string, actual: unknown, expected: unknown): void {
+export function assertEq(
+  label: string,
+  actual: unknown,
+  expected: unknown,
+): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
     throw new Error(`${label}: expected ${expected}, got ${actual}`);
   }
@@ -293,4 +478,3 @@ export async function optionalView<T>(
     return undefined;
   }
 }
-

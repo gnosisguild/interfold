@@ -33,17 +33,38 @@ export interface PredicateHookConfig {
   requireSenderIsOwner?: boolean;
 }
 
+export type LaunchMode = "lbp";
+
+export interface PoolParametersConfig {
+  fee: string;
+  tickSpacing: string;
+  hook: string;
+}
+
+export interface LbpConfig {
+  liquidityLauncher: string;
+  strategy: string;
+  migrationBlock: string;
+  reservedTokenAmountForLP: string;
+  recipient: string;
+  positionRecipient: string;
+  pool: PoolParametersConfig;
+  positionDefinitions: string;
+  lpAllocationSchedule: string;
+}
+
 export interface SaleConfigFile {
   name: string;
   chainId: number;
+  launchMode?: LaunchMode;
   saleDeployer: string;
   safe: string;
-  ccaFactory?: string;
   saleAmount: string;
   ccaSalt: string;
   saleLabel: string;
   fold: FoldTokenConfig;
   auction: AuctionConfig;
+  lbp?: LbpConfig;
   predicateHook?: PredicateHookConfig;
 }
 
@@ -61,13 +82,34 @@ export interface AuctionParameters {
   auctionStepsData: string;
 }
 
+export interface PoolParameters {
+  fee: bigint;
+  tickSpacing: bigint;
+  hook: string;
+}
+
+export interface MigratorParameters {
+  token: string;
+  currency: string;
+  migrationBlock: bigint;
+  reservedTokenAmountForLP: bigint;
+  recipient: string;
+  positionRecipient: string;
+  poolParameters: PoolParameters;
+  positionDefinitions: string;
+  lpAllocationSchedule: string;
+}
+
 export interface SalePlan {
   name: string;
   chainId: number;
+  launchMode?: LaunchMode;
   saleDeployer: string;
   safe: string;
   factoryNonce: number;
-  ccaFactory: string;
+  initializerFactory: string;
+  liquidityLauncher: string;
+  lbpStrategy: string;
   predictedFold: string;
   predictedAuction: string;
   fold: {
@@ -79,13 +121,26 @@ export interface SalePlan {
     bondingRegistry: string;
   };
   auction: AuctionParameters;
-  saleConfig: {
-    ccaFactory: string;
-    saleAmount: string;
-    ccaSalt: string;
-    ccaConfigData: string;
+  lbpSaleConfig: {
+    liquidityLauncher: string;
+    lbpStrategy: string;
+    expectedAuction: string;
+    auctionAmount: string;
+    reservedTokenAmountForLP: string;
+    distributionSalt: string;
+    lbpConfigData: string;
     saleLabel: string;
     foldInitCodeHash: string;
+  };
+  lbp: {
+    initializerFactory: string;
+    positionManager: string;
+    poolManager: string;
+    distributionAmount: string;
+    launcherSalt: string;
+    initializerSalt: string;
+    migratorConfigData: string;
+    migratorParams: MigratorParameters;
   };
   foldInitCode: string;
   configHash?: string;
@@ -100,16 +155,20 @@ export interface DeploymentFile {
   operator: string;
   safe: string;
   saleDeployer: string;
+  launchMode?: LaunchMode;
   fold: string;
   auction: string;
   bondingRegistry: string;
   bondingRegistryProxyAdmin?: string;
-  ccaFactory: string;
+  initializerFactory: string;
+  liquidityLauncher?: string;
+  lbpStrategy?: string;
+  reservedTokenAmountForLP?: string;
+  migrationBlock?: string;
   validationHook?: string;
   predicateRegistry?: string;
   predicatePolicyID?: string;
   predicateRequireSenderIsOwner?: boolean;
-  mockCcaFactory?: string;
   testBidId?: string;
   safeProposal?: SafeProposal;
 }
@@ -144,4 +203,3 @@ export interface SafeTransactionFallbackFile {
     operation: number;
   }>;
 }
-

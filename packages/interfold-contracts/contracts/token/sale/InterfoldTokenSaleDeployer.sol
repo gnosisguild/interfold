@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity 0.8.28;
 
-import { ICCAFactory, ICCAAuction } from "../../interfaces/external/ICCA.sol";
+import { IContinuousClearingAuction } from "../../interfaces/external/ICCA.sol";
+import {
+    Distribution,
+    ILBPStrategy,
+    ILiquidityLauncher
+} from "../../interfaces/external/IUniswapLiquidityLauncher.sol";
 
 /// @notice The minimal slice of {InterfoldToken} the deployer needs.
 interface IFoldToken {
     function mint(address recipient, uint256 amount, bytes32 label) external;
+
+    function setTransferWhitelisted(address account, bool whitelisted) external;
 
     function transferOwnership(address newOwner) external;
 
@@ -20,23 +27,29 @@ interface IFoldToken {
  * @notice Operator-callable sale deployment factory. The Safe passed as
  *         `protocolAdmin` becomes the FOLD owner; the caller only pays gas.
  * @dev FOLD and the CCA auction depend on each other's addresses. The deploy
- *      script predicts both addresses, this contract checks the prediction
- *      on-chain, and the whole transaction reverts on any mismatch.
+ *      script predicts the auction created by Uniswap's LiquidityLauncher /
+ *      LBPStrategy path, this contract checks the prediction on-chain, and the
+ *      whole transaction reverts on any mismatch.
  */
 contract InterfoldTokenSaleDeployer {
-    /// @param ccaFactory The deployed Uniswap CCA factory address.
-    /// @param saleAmount FOLD sale supply minted to the auction (must fit uint128).
-    /// @param ccaSalt Salt forwarded to the Uniswap factory.
-    /// @param ccaConfigData abi.encode(AuctionParameters) for the auction.
+    /// @param liquidityLauncher The deployed Uniswap LiquidityLauncher.
+    /// @param lbpStrategy The deployed Uniswap LBPStrategy singleton.
+    /// @param expectedAuction The predicted CCA auction/initializer address.
+    /// @param auctionAmount FOLD sent to the CCA auction.
+    /// @param reservedTokenAmountForLP FOLD reserved by LBPStrategy for LP.
+    /// @param distributionSalt Salt passed to LiquidityLauncher.distributeToken.
+    /// @param lbpConfigData abi.encode(MigratorParameters, bytes auctionConfigData).
     /// @param saleLabel Label recorded on the FOLD mint event.
     /// @param foldInitCodeHash keccak256 of the FOLD creation code + constructor
-    ///        args (with claimSource = predicted auction). Binds the exact token
-    ///        bytecode/params into the one-use config hash.
-    struct SaleConfig {
-        address ccaFactory;
-        uint256 saleAmount;
-        bytes32 ccaSalt;
-        bytes ccaConfigData;
+    ///        args with claimSource = expectedAuction.
+    struct LbpSaleConfig {
+        address liquidityLauncher;
+        address lbpStrategy;
+        address expectedAuction;
+        uint256 auctionAmount;
+        uint256 reservedTokenAmountForLP;
+        bytes32 distributionSalt;
+        bytes lbpConfigData;
         bytes32 saleLabel;
         bytes32 foldInitCodeHash;
     }
@@ -49,6 +62,8 @@ contract InterfoldTokenSaleDeployer {
     error AuctionMismatch(address expected, address actual);
     error FoldOwnershipNotRetained(address owner);
     error AuctionTokenMismatch(address expected, address actual);
+    error AuctionSupplyMismatch(uint256 expected, uint256 actual);
+    error ArithmeticOverflow();
 
     /// @notice The Safe that becomes FOLD owner/admin.
     // solhint-disable-next-line immutable-vars-naming
@@ -66,45 +81,90 @@ contract InterfoldTokenSaleDeployer {
         address operator
     );
 
+    /// @notice Emitted for LiquidityLauncher/LBP deployments.
+    event LbpSaleDeployed(
+        bytes32 indexed configHash,
+        address indexed fold,
+        address indexed auction,
+        address liquidityLauncher,
+        address lbpStrategy,
+        uint256 auctionAmount,
+        uint256 reservedTokenAmountForLP,
+        address operator
+    );
+
     constructor(address protocolAdmin_) {
         if (protocolAdmin_ == address(0)) revert ZeroAddress();
         protocolAdmin = protocolAdmin_;
     }
 
     /**
-     * @notice Deploys FOLD + the CCA auction and funds the sale, all in one
-     *         transaction. Callable by the operator wallet.
-     *
-     * @param config        The deployment parameters.
-     * @param foldInitCode  The full FOLD creation code + abi-encoded constructor
-     *                       args. Its keccak256 must equal
-     *                       `config.foldInitCodeHash`.
-     * @return fold    The deployed FOLD token address.
-     * @return auction The deployed CCA auction address (== FOLD `CLAIM_SOURCE`).
+     * @notice Deploys FOLD and starts a Uniswap LiquidityLauncher/LBPStrategy
+     *         distribution in one transaction.
+     * @dev Callable by the operator wallet. FOLD's immutable {CLAIM_SOURCE}
+     *      must equal the CCA auction address predicted from the LBP strategy's
+     *      initializer factory flow.
      */
-    function deploySale(
-        SaleConfig calldata config,
+    function deploySaleWithLiquidityLauncher(
+        LbpSaleConfig calldata config,
         bytes calldata foldInitCode
     ) external returns (address fold, address auction) {
-        bytes32 configHash = _checkConfig(config, foldInitCode);
+        bytes32 configHash = _checkLbpConfig(config, foldInitCode);
 
         fold = _create(foldInitCode);
         if (IFoldToken(fold).owner() != address(this)) {
             revert FoldOwnershipNotRetained(IFoldToken(fold).owner());
         }
 
-        auction = _createAuction(config, fold);
-
-        address claimSource = IFoldToken(fold).CLAIM_SOURCE();
-        if (auction != claimSource) {
-            revert AuctionMismatch(claimSource, auction);
-        }
-        if (ICCAAuction(auction).token() != fold) {
-            revert AuctionTokenMismatch(fold, ICCAAuction(auction).token());
+        auction = config.expectedAuction;
+        if (IFoldToken(fold).CLAIM_SOURCE() != auction) {
+            revert AuctionMismatch(IFoldToken(fold).CLAIM_SOURCE(), auction);
         }
 
-        IFoldToken(fold).mint(auction, config.saleAmount, config.saleLabel);
-        ICCAAuction(auction).onTokensReceived();
+        uint256 distributionAmount = config.auctionAmount +
+            config.reservedTokenAmountForLP;
+        if (distributionAmount < config.auctionAmount) {
+            revert ArithmeticOverflow();
+        }
+        if (distributionAmount > type(uint128).max) {
+            revert SaleAmountTooLarge();
+        }
+
+        _prepareLbpTransferAllowances(fold, config);
+
+        IFoldToken(fold).mint(
+            config.liquidityLauncher,
+            distributionAmount,
+            config.saleLabel
+        );
+
+        ILiquidityLauncher(config.liquidityLauncher).distributeToken(
+            fold,
+            Distribution({
+                strategy: config.lbpStrategy,
+                amount: uint128(distributionAmount),
+                configData: config.lbpConfigData
+            }),
+            config.distributionSalt
+        );
+
+        if (auction.code.length == 0)
+            revert AuctionMismatch(auction, address(0));
+        if (IContinuousClearingAuction(auction).token() != fold) {
+            revert AuctionTokenMismatch(
+                fold,
+                IContinuousClearingAuction(auction).token()
+            );
+        }
+        if (
+            IContinuousClearingAuction(auction).totalSupply() !=
+            config.auctionAmount
+        ) {
+            revert AuctionSupplyMismatch(
+                config.auctionAmount,
+                IContinuousClearingAuction(auction).totalSupply()
+            );
+        }
 
         IFoldToken(fold).transferOwnership(protocolAdmin);
 
@@ -112,61 +172,78 @@ contract InterfoldTokenSaleDeployer {
             configHash,
             fold,
             auction,
-            config.saleAmount,
+            config.auctionAmount,
+            msg.sender
+        );
+        emit LbpSaleDeployed(
+            configHash,
+            fold,
+            auction,
+            config.liquidityLauncher,
+            config.lbpStrategy,
+            config.auctionAmount,
+            config.reservedTokenAmountForLP,
             msg.sender
         );
     }
 
-    /**
-     * @notice Deterministic hash used to identify a deployment config.
-     * @dev Domain-separated by chain id and this contract's address so the
-     *      replay guard is scoped to this deployer instance. `ccaConfigData` is
-     *      hashed (not embedded) to keep the preimage fixed-size.
-     */
-    function hashConfig(
-        SaleConfig calldata config
+    function hashLbpConfig(
+        LbpSaleConfig calldata config
     ) public view returns (bytes32) {
         return
             keccak256(
                 abi.encode(
                     block.chainid,
                     address(this),
-                    config.ccaFactory,
-                    config.saleAmount,
-                    config.ccaSalt,
-                    keccak256(config.ccaConfigData),
+                    config.liquidityLauncher,
+                    config.lbpStrategy,
+                    config.expectedAuction,
+                    config.auctionAmount,
+                    config.reservedTokenAmountForLP,
+                    config.distributionSalt,
+                    keccak256(config.lbpConfigData),
                     config.saleLabel,
                     config.foldInitCodeHash
                 )
             );
     }
 
-    function _checkConfig(
-        SaleConfig calldata config,
+    function _checkLbpConfig(
+        LbpSaleConfig calldata config,
         bytes calldata foldInitCode
     ) internal returns (bytes32 configHash) {
-        if (config.ccaFactory == address(0)) revert ZeroAddress();
-        if (config.saleAmount > type(uint128).max) revert SaleAmountTooLarge();
+        if (
+            config.liquidityLauncher == address(0) ||
+            config.lbpStrategy == address(0) ||
+            config.expectedAuction == address(0)
+        ) revert ZeroAddress();
+        if (config.auctionAmount > type(uint128).max) {
+            revert SaleAmountTooLarge();
+        }
+        if (config.reservedTokenAmountForLP > type(uint128).max) {
+            revert SaleAmountTooLarge();
+        }
         if (keccak256(foldInitCode) != config.foldInitCodeHash) {
             revert FoldInitCodeMismatch();
         }
 
-        configHash = hashConfig(config);
+        configHash = hashLbpConfig(config);
         if (usedConfigHashes[configHash]) revert ConfigAlreadyUsed(configHash);
         usedConfigHashes[configHash] = true;
     }
 
-    /// @dev Deploys the auction through the Uniswap CCA v2 factory.
-    function _createAuction(
-        SaleConfig calldata config,
-        address fold
-    ) internal returns (address auction) {
-        auction = ICCAFactory(config.ccaFactory).create(
-            fold,
-            config.saleAmount,
-            config.ccaConfigData,
-            config.ccaSalt
-        );
+    function _prepareLbpTransferAllowances(
+        address fold,
+        LbpSaleConfig calldata config
+    ) internal {
+        IFoldToken(fold).setTransferWhitelisted(config.liquidityLauncher, true);
+        IFoldToken(fold).setTransferWhitelisted(config.lbpStrategy, true);
+
+        address positionManager = ILBPStrategy(config.lbpStrategy)
+            .positionManager();
+        if (positionManager != address(0)) {
+            IFoldToken(fold).setTransferWhitelisted(positionManager, true);
+        }
     }
 
     /// @dev Deploys `initCode` with plain CREATE and returns the new address.

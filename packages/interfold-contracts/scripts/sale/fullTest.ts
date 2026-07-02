@@ -2,28 +2,20 @@
 import path from "path";
 
 import { bidClaim } from "./bidClaim";
-import { arg, connect, hasFlag, networkName } from "./cli";
-import { CCA_FACTORY_ADDRESS } from "./constants";
-import {
-  deployMockBondingRegistryProxy,
-  deployMockCcaFactory,
-  deploySaleDeployer,
-} from "./deployContracts";
-import {
-  deploymentPath,
-  planPath,
-  saleDir,
-  writeJson,
-} from "./files";
+import { arg, connect, networkName } from "./cli";
 import { deployFromPlan } from "./deploy";
 import {
-  buildSalePlan,
-  printPlan,
-  writeSaleUiManifest,
-} from "./plan";
+  deployMockBondingRegistryProxy,
+  deployMockInitializerFactory,
+  deployMockLbpStrategy,
+  deployMockLiquidityLauncher,
+  deploySaleDeployer,
+} from "./deployContracts";
+import { deploymentPath, planPath, saleDir, writeJson } from "./files";
+import { buildSalePlan, printPlan } from "./plan";
 import { makeTemplateConfig } from "./template";
-import { address } from "./values";
 import { validateDeployment } from "./validate";
+import { address } from "./values";
 
 export async function actionFullTest(): Promise<void> {
   const { ethers } = await connect();
@@ -40,13 +32,21 @@ export async function actionFullTest(): Promise<void> {
   const safeInput = arg("safe") ?? process.env.SAFE_ADDRESS;
   const safe = safeInput ? address(safeInput, "safe") : operatorAddress;
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
-  const useMockCca = hasFlag("mock-cca") || network.chainId === 31337n;
-  const ccaFactory = useMockCca
-    ? await deployMockCcaFactory(ethers)
-    : CCA_FACTORY_ADDRESS;
   const saleDeployer = await deploySaleDeployer(ethers, safe);
   const latest = await ethers.provider.getBlock("latest");
   if (!latest) throw new Error("Could not read latest block");
+
+  const local = network.chainId === 31337n || network.chainId === 1337n;
+  const mockInitializerFactory = local
+    ? await deployMockInitializerFactory(ethers)
+    : undefined;
+  const mockLiquidityLauncher = local
+    ? await deployMockLiquidityLauncher(ethers)
+    : undefined;
+  const mockLbpStrategy =
+    local && mockInitializerFactory
+      ? await deployMockLbpStrategy(ethers, mockInitializerFactory)
+      : undefined;
 
   const name = arg("name") ?? `${networkName()}-sale-dry-run-${Date.now()}`;
   const config = makeTemplateConfig({
@@ -55,10 +55,14 @@ export async function actionFullTest(): Promise<void> {
     safe,
     saleDeployer,
     bondingRegistry: registry.proxy,
-    ccaFactory,
     currentBlock: BigInt(latest.number),
     currentTimestamp: BigInt(latest.timestamp),
   });
+  if (local && mockLiquidityLauncher && mockLbpStrategy) {
+    config.lbp!.liquidityLauncher = mockLiquidityLauncher;
+    config.lbp!.strategy = mockLbpStrategy;
+    config.auction.fundsRecipient = mockLbpStrategy;
+  }
   const configFile = path.join(saleDir, `${name}.config.json`);
   writeJson(configFile, config);
 
@@ -68,10 +72,8 @@ export async function actionFullTest(): Promise<void> {
   printPlan(plan, planFile);
 
   const deployment = await deployFromPlan(ethers, config, plan);
-  if (useMockCca) deployment.mockCcaFactory = ccaFactory;
   deployment.bondingRegistryProxyAdmin = registry.proxyAdmin;
   writeJson(deploymentPath(config), deployment);
-  writeSaleUiManifest(config, plan, deployment);
 
   if (safe === operatorAddress) {
     const fold = await ethers.getContractAt("InterfoldToken", deployment.fold);
@@ -101,4 +103,3 @@ Full Sepolia/local rehearsal complete
   auction:    ${deployment.auction}
 `);
 }
-

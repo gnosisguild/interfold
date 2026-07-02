@@ -54,7 +54,7 @@ export async function deployPredicateValidationHook(
   return deployedAddress(hook);
 }
 
-export async function deployMockCcaFactory(
+export async function deployMockInitializerFactory(
   ethers: HardhatEthers,
 ): Promise<string> {
   const factory = await ethers.getContractFactory("MockCCAFactory");
@@ -63,3 +63,25 @@ export async function deployMockCcaFactory(
   return deployedAddress(mock);
 }
 
+export async function deployMockLiquidityLauncher(
+  ethers: HardhatEthers,
+): Promise<string> {
+  const factory = await ethers.getContractFactory("MockLiquidityLauncher");
+  const launcher = await factory.deploy();
+  await launcher.waitForDeployment();
+  return deployedAddress(launcher);
+}
+
+export async function deployMockLbpStrategy(
+  ethers: HardhatEthers,
+  initializerFactory: string,
+): Promise<string> {
+  const factory = await ethers.getContractFactory("MockLBPStrategy");
+  const strategy = await factory.deploy(
+    initializerFactory,
+    initializerFactory,
+    initializerFactory,
+  );
+  await strategy.waitForDeployment();
+  return deployedAddress(strategy);
+}

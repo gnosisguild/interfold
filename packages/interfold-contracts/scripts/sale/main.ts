@@ -18,7 +18,7 @@ Interfold FOLD sale pipeline
 One script, selected by --action:
   --action prepare      Deploy Safe-owned MockBondingRegistry proxy + sale deployer
   --action plan         Predict FOLD/CCA and write the plan
-  --action deploy       Operator submits deploySale
+  --action deploy       Operator submits deploySaleWithLiquidityLauncher
   --action propose-safe Propose FOLD.acceptOwnership() through the Safe SDK
   --action validate     Check FOLD/CCA/Safe invariants
   --action bid-claim    Submit a CCA bid, exit, and claim FOLD
@@ -31,14 +31,27 @@ Common flags:
   --plan <file>             Optional plan path override
   --deployment <file>       Optional deployment path override
   --safe-transactions <file> Optional manual Safe fallback batch path
-  --mock-cca                Local fallback only; Sepolia/mainnet use real CCA factories by default
+  --liquidity-launcher 0x... Override LiquidityLauncher address
+  --lbp-strategy 0x...      Override LBPStrategy address
+  --reserved-token-amount-for-lp N  FOLD wei reserved for LP in LBP mode
+  --lp-allocation-rate-mps N Percent of raised currency routed to LP, 1e7 = 100%
+  --migration-delay-blocks N Blocks after auction end before LBP migrate() is allowed
+  --pool-fee N              Uniswap v4 pool fee for LBP migration
+  --pool-tick-spacing N     Uniswap v4 pool tick spacing for LBP migration
+  --pool-hook 0x...         Optional v4 hook for LBP migration
   --predicate-registry 0x... Deploy a Safe-owned Predicate validation hook
   --predicate-policy-id x... Predicate policy/verification hash for that hook
   --predicate-hook 0x...     Use an already deployed validation hook
   --hook-data 0x...          Encoded Predicate attestation for --action bid-claim
-  --auction-duration-blocks N  CCA length in blocks (default 40)
+  --auction-duration-blocks N  CCA length in blocks when not deriving blocks from timestamps (default 40)
   --cca-offset-seconds N    Seconds until FOLD CCA_START from now (default 86400 = 1 day)
   --cca-duration-seconds N  Seconds FOLD CCA lasts (default 604800 = 7 days)
+  --cca-start-timestamp N   Unix seconds for FOLD CCA_START; also derives CCA blocks by default
+  --cca-end-timestamp N     Unix seconds for FOLD CCA_END; also derives CCA blocks by default
+  --auction-start-timestamp N  Unix seconds used only for CCA startBlock derivation
+  --auction-end-timestamp N    Unix seconds used only for CCA endBlock derivation
+  --derive-auction-blocks   Derive CCA blocks from the FOLD timestamps
+  --seconds-per-block N     Block-time estimate for timestamp -> block conversion (default 12)
 
 Examples:
   pnpm sale --network sepolia --action full-test

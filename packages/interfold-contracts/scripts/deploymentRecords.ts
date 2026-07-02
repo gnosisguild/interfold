@@ -27,8 +27,6 @@ interface SaleInfraRecord {
   bondingRegistryProxy: string;
   bondingRegistryImplementation: string;
   bondingRegistryProxyAdmin: string;
-  ccaFactory: string;
-  mockCcaFactory?: string;
   validationHook?: string;
   predicateRegistry?: string;
   predicatePolicyID?: string;
@@ -304,16 +302,6 @@ export function syncSaleInfraRecords(
     "BondingRegistry",
     opts.chain,
   );
-  if (infra.mockCcaFactory) {
-    storeDeploymentArgs(
-      {
-        address: infra.mockCcaFactory,
-        blockNumber: maybeBlock(opts.blockNumber),
-      },
-      "MockCCAFactory",
-      opts.chain,
-    );
-  }
   if (infra.validationHook) {
     const hasHookConstructorArgs = Boolean(
       infra.predicateRegistry && infra.predicatePolicyID,

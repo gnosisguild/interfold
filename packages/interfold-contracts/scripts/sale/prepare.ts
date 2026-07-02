@@ -1,29 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 import path from "path";
-import { ethers as ethersLib } from "ethers";
 
 import { syncSaleInfraRecords } from "../deploymentRecords";
 import { arg, connect, hasFlag, networkName } from "./cli";
-import {
-  CCA_FACTORY_ADDRESS,
-  ZERO,
-} from "./constants";
+import { ZERO } from "./constants";
 import {
   deployMockBondingRegistryProxy,
-  deployMockCcaFactory,
   deployPredicateValidationHook,
   deploySaleDeployer,
 } from "./deployContracts";
 import {
   configPath,
   nextAvailablePath,
+  readJson,
   saleDir,
   saleNameFromConfigPath,
   writeJson,
 } from "./files";
-import { makeTemplateConfig, resolvePredicateHookInput } from "./template";
-import { address, loadConfig, requireContract } from "./values";
+import {
+  makeDefaultLbpConfig,
+  makeTemplateConfig,
+  resolvePredicateHookInput,
+} from "./template";
+import type { SaleConfigFile } from "./types";
+import { address, requireContract } from "./values";
 
 export async function actionPrepare(): Promise<void> {
   const { ethers } = await connect();
@@ -41,22 +43,18 @@ export async function actionPrepare(): Promise<void> {
     await requireContract(ethers.provider, safe, "safe");
   }
 
-  const useMockCca = hasFlag("mock-cca");
   const requestedFile = configPath(false);
   const requestedFileExists = fs.existsSync(requestedFile);
   const file = requestedFileExists
     ? nextAvailablePath(requestedFile)
     : requestedFile;
   const existingConfig = requestedFileExists
-    ? loadConfig(requestedFile)
+    ? readJson<SaleConfigFile>(requestedFile)
     : undefined;
   const predicateHookInput = resolvePredicateHookInput(existingConfig);
 
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
   const saleDeployer = await deploySaleDeployer(ethers, safe);
-  const ccaFactory = useMockCca
-    ? await deployMockCcaFactory(ethers)
-    : CCA_FACTORY_ADDRESS;
   let predicateHookAddress = predicateHookInput?.address;
   if (predicateHookInput && !predicateHookAddress) {
     predicateHookAddress = await deployPredicateValidationHook(ethers, {
@@ -81,7 +79,6 @@ export async function actionPrepare(): Promise<void> {
       safe,
       saleDeployer,
       bondingRegistry: registry.proxy,
-      ccaFactory,
       currentBlock: BigInt(latest.number),
       currentTimestamp: BigInt(latest.timestamp),
     });
@@ -90,9 +87,16 @@ export async function actionPrepare(): Promise<void> {
   config.chainId = chainId;
   config.safe = safe;
   config.saleDeployer = saleDeployer;
-  config.ccaFactory = ccaFactory;
   config.ccaSalt = ethersLib.id(`${config.name}:${chainId}:${Date.now()}`);
   config.fold.bondingRegistry = registry.proxy;
+  config.launchMode = "lbp";
+  delete (config as SaleConfigFile & { ccaFactory?: string }).ccaFactory;
+  config.lbp ??= makeDefaultLbpConfig({
+    chainId,
+    safe,
+    endBlock: BigInt(config.auction.endBlock),
+  });
+  config.auction.fundsRecipient = config.lbp.strategy;
   if (predicateHookInput && predicateHookAddress) {
     config.auction.validationHook = predicateHookAddress;
     if (predicateHookInput.registry !== ZERO && predicateHookInput.policyID) {
@@ -113,8 +117,6 @@ export async function actionPrepare(): Promise<void> {
     bondingRegistryProxy: registry.proxy,
     bondingRegistryImplementation: registry.implementation,
     bondingRegistryProxyAdmin: registry.proxyAdmin,
-    ccaFactory,
-    mockCcaFactory: useMockCca ? ccaFactory : undefined,
     validationHook: predicateHookAddress,
     predicateRegistry:
       predicateHookInput?.registry === ZERO
@@ -132,12 +134,14 @@ export async function actionPrepare(): Promise<void> {
 
   console.log(`
 Prepared sale infrastructure
+  mode:                         LiquidityLauncher / LBPStrategy
   safe:                         ${safe}
   saleDeployer:                 ${saleDeployer}
   MockBondingRegistry impl:     ${registry.implementation}
   bondingRegistry proxy:        ${registry.proxy}
   bondingRegistry ProxyAdmin:   ${registry.proxyAdmin}
-  ccaFactory:                   ${ccaFactory}
+  liquidityLauncher:            ${config.lbp?.liquidityLauncher ?? ZERO}
+  lbpStrategy:                  ${config.lbp?.strategy ?? ZERO}
   validationHook:               ${predicateHookAddress ?? ZERO}
   config:                       ${file}
   infra:                        ${infraFile}

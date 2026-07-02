@@ -120,10 +120,6 @@ export function safeTransactionsPath(config: SaleConfigFile): string {
     : path.join(saleDir, `${config.name}.safe-transactions.json`);
 }
 
-export function saleUiDir(): string {
-  return path.join(repoRoot, "packages", "interfold-sale", "public", "sale");
-}
-
 export function readJson<T>(file: string): T {
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
 }

@@ -1,21 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import fs from "fs";
-
-import { getProxyAdmin } from "../proxy";
 import { syncSaleDeploymentRecords } from "../deploymentRecords";
+import { getProxyAdmin } from "../proxy";
 import { connect, hasFlag, networkName } from "./cli";
 import { ZERO } from "./constants";
-import {
-  deploymentPath,
-  planPath,
-  readJson,
-  writeJson,
-} from "./files";
-import {
-  planConfigHash,
-  readPlanForConfig,
-  writeSaleUiManifest,
-} from "./plan";
+import { deploymentPath, readJson, writeJson } from "./files";
+import { planConfigHash, readPlanForConfig } from "./plan";
 import {
   buildSaleSafeActions,
   errorMessage,
@@ -32,11 +21,7 @@ import type {
   SaleConfigFile,
   SalePlan,
 } from "./types";
-import {
-  address,
-  loadConfig,
-  saleConfigStruct,
-} from "./values";
+import { address, lbpSaleConfigStruct, loadConfig } from "./values";
 
 export async function deployFromPlan(
   ethers: HardhatEthers,
@@ -51,6 +36,11 @@ export async function deployFromPlan(
       `saleDeployer nonce moved: plan=${plan.factoryNonce}, live=${liveNonce}. Run --action plan again.`,
     );
   }
+  if (!plan.lbp || !plan.lbpSaleConfig) {
+    throw new Error(
+      "Plan was generated for the removed direct CCA path. Run --action plan again with the official LiquidityLauncher/LBP config.",
+    );
+  }
 
   const deployer = await ethers.getContractAt(
     "InterfoldTokenSaleDeployer",
@@ -59,12 +49,13 @@ export async function deployFromPlan(
   const [operator] = await ethers.getSigners();
   const operatorAddress = await operator.getAddress();
 
-  console.log(`Submitting deploySale for ${config.name}`);
+  console.log(`Submitting deploySaleWithLiquidityLauncher for ${config.name}`);
+  console.log(`  mode:             LiquidityLauncher / LBPStrategy`);
   console.log(`  expected FOLD:    ${plan.predictedFold}`);
   console.log(`  expected auction: ${plan.predictedAuction}`);
 
-  const tx = await deployer.deploySale(
-    saleConfigStruct(plan),
+  const tx = await deployer.deploySaleWithLiquidityLauncher(
+    lbpSaleConfigStruct(plan),
     plan.foldInitCode,
   );
   console.log(`  tx: ${tx.hash}`);
@@ -98,6 +89,7 @@ export async function deployFromPlan(
     operator: operatorAddress,
     safe: config.safe,
     saleDeployer: config.saleDeployer,
+    launchMode: "lbp",
     fold,
     auction,
     bondingRegistry: config.fold.bondingRegistry,
@@ -105,7 +97,11 @@ export async function deployFromPlan(
       ethers.provider,
       config.fold.bondingRegistry,
     ),
-    ccaFactory: plan.ccaFactory,
+    initializerFactory: plan.initializerFactory,
+    liquidityLauncher: plan.liquidityLauncher,
+    lbpStrategy: plan.lbpStrategy,
+    reservedTokenAmountForLP: plan.lbpSaleConfig.reservedTokenAmountForLP,
+    migrationBlock: plan.lbp.migratorParams.migrationBlock.toString(),
     validationHook:
       config.auction.validationHook === ZERO
         ? undefined
@@ -115,7 +111,6 @@ export async function deployFromPlan(
     predicateRequireSenderIsOwner: config.predicateHook?.requireSenderIsOwner,
   };
   writeJson(deploymentPath(config), deployment);
-  writeSaleUiManifest(config, plan, deployment);
   syncSaleDeploymentRecords(deployment, plan, {
     chain: networkName(),
     blockNumber: receipt.blockNumber,
@@ -137,7 +132,6 @@ export async function deployFromPlan(
       );
       deployment.safeProposal = proposal;
       writeJson(deploymentPath(config), deployment);
-      writeSaleUiManifest(config, plan, deployment);
       console.log(`
 Safe transaction proposed
   hash: ${proposal.safeTxHash}
@@ -162,6 +156,7 @@ Safe transaction proposed
 Sale deployed
   FOLD:    ${fold}
   auction: ${auction}
+  mode:    LiquidityLauncher / LBPStrategy
   tx:      ${tx.hash}
   config hash: ${planConfigHash(plan)}
 `);
@@ -208,13 +203,6 @@ export async function actionProposeSafe(): Promise<void> {
   }
   deployment.safeProposal = proposal;
   writeJson(deploymentPath(config), deployment);
-  if (fs.existsSync(planPath(config))) {
-    writeSaleUiManifest(
-      config,
-      readJson<SalePlan>(planPath(config)),
-      deployment,
-    );
-  }
 
   console.log(`
 Safe transaction proposed
@@ -224,4 +212,3 @@ Safe transaction proposed
   url:  ${proposal.url ?? "(open the Safe UI pending queue)"}
 `);
 }
-
