@@ -1342,31 +1342,22 @@ describe("InterfoldToken", function () {
       expect(lock.amount).to.equal(claimAmount);
     });
 
-    it("MAX_QUEUED_LOCKS_PER_ACCOUNT: 9th queued policy reverts", async function () {
+    it("repeated queued links under one policy increment one queued bucket", async function () {
       const { token, admin, alice } = await loadFixture(deploy);
       const aliceAddress = await alice.getAddress();
       const maxQueued = Number(await token.MAX_QUEUED_LOCKS_PER_ACCOUNT());
-
-      // Create 8 distinct policies and queue links.
-      for (let i = 0; i < maxQueued; i++) {
-        const policyId = ethers.encodeBytes32String(`QCAP_${i}`);
-        await createLinearPolicy(token, admin, `QCAP_${i}`, {
-          vestDuration: 1n * YEAR,
-        });
-        await token.connect(admin).linkClaim(aliceAddress, 1n, policyId);
-      }
-      expect(await token.queuedLockCount(aliceAddress)).to.equal(
-        BigInt(maxQueued),
-      );
-
-      // 9th queued link should revert.
-      const ninthId = ethers.encodeBytes32String("QCAP_9");
-      await createLinearPolicy(token, admin, "QCAP_9", {
+      const policyId = await createLinearPolicy(token, admin, "QCAP", {
         vestDuration: 1n * YEAR,
       });
-      await expect(
-        token.connect(admin).linkClaim(aliceAddress, 1n, ninthId),
-      ).to.be.revertedWithCustomError(token, "TooManyQueuedLocks");
+
+      for (let i = 0; i < maxQueued + 1; i++) {
+        await token.connect(admin).linkClaim(aliceAddress, 1n, policyId);
+      }
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      const queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(BigInt(maxQueued + 1));
     });
 
     it("incrementing an existing policy does not count as a new entry", async function () {
@@ -1803,6 +1794,41 @@ describe("InterfoldToken", function () {
       // rounding from vesting elapsed seconds).
       const lb2 = await token.lockedBalanceOf(await alice.getAddress());
       expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
+    });
+
+    it("linkClaim rejects a conflicting queued policy for the same account", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyA = await createLinearPolicy(token, admin, "QUEUE_A", {
+        vestDuration: 2n * YEAR,
+      });
+      const policyB = await createLinearPolicy(token, admin, "QUEUE_B", {
+        vestDuration: 4n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyA);
+
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 100n, policyB),
+      )
+        .to.be.revertedWithCustomError(token, "ConflictingQueuedClaimPolicy")
+        .withArgs(policyA, policyB);
+    });
+
+    it("linkClaim can increment the existing queued policy", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "QUEUE_SAME", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
+      await token.connect(admin).linkClaim(aliceAddress, 200n, policyId);
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      const queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(300n);
     });
 
     it("linkClaim cannot create queued locks for a claim-lock exempt account", async function () {
