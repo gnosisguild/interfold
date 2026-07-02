@@ -145,6 +145,14 @@ contract InterfoldToken is
     ///         policy entries.
     error TooManyQueuedLocks();
 
+    /// @notice A queued CCA claim bucket already exists under a different
+    ///         policy. Claim transfers do not carry a bucket id, so queued
+    ///         matching must remain unambiguous.
+    error ConflictingQueuedClaimPolicy(
+        bytes32 existingPolicyId,
+        bytes32 newPolicyId
+    );
+
     /// @notice The policy id is already defined; policies are write-once.
     error PolicyAlreadyDefined(bytes32 policyId);
 
@@ -777,6 +785,7 @@ contract InterfoldToken is
 
         // Whatever is left queues under the target policy.
         if (remaining != 0) {
+            _validateQueuedClaimPolicy(account, policyId);
             _addOrIncrementLock(
                 account,
                 queuedLocks[account],
@@ -868,6 +877,23 @@ contract InterfoldToken is
             emit QueuedLockUpdated(account, policyId, amount);
         }
         return amount;
+    }
+
+    function _validateQueuedClaimPolicy(
+        address account,
+        bytes32 policyId
+    ) internal view {
+        Lock[] storage entries = queuedLocks[account];
+        uint256 len = entries.length;
+        for (uint256 i = 0; i < len; i++) {
+            bytes32 existingPolicyId = entries[i].policyId;
+            if (existingPolicyId != policyId) {
+                revert ConflictingQueuedClaimPolicy(
+                    existingPolicyId,
+                    policyId
+                );
+            }
+        }
     }
 
     function _removeLockAt(Lock[] storage entries, uint256 index) internal {
