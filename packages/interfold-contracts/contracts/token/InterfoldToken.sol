@@ -137,6 +137,10 @@ contract InterfoldToken is
     ///         the source policy.
     error RelinkAmountExceeded();
 
+    /// @notice Relinking from this Absolute policy would move already vested
+    ///         principal back under another policy.
+    error RelinkSourceAlreadyVested(bytes32 policyId);
+
     /// @notice An account has reached the maximum number of active lock
     ///         policy entries.
     error TooManyLocks();
@@ -499,9 +503,14 @@ contract InterfoldToken is
     ) external onlyRole(LOCK_MANAGER_ROLE) {
         if (tgeTimestamp != 0) revert AlreadyLive();
         _validateRelinkParams(account, fromPolicyId, toPolicyId, amount);
-        if (_activeLockAmount(account, fromPolicyId) < amount) {
+        uint256 activeAmount = _activeLockAmount(account, fromPolicyId);
+        if (activeAmount < amount) {
             revert RelinkAmountExceeded();
         }
+        _validateRelinkSourceHasNoVestedPrincipal(
+            fromPolicyId,
+            activeAmount
+        );
 
         (uint256 consumed, ) = _consumeLock(
             account,
@@ -957,6 +966,22 @@ contract InterfoldToken is
         }
         if (!_policyDefined(toPolicyId)) {
             revert PolicyNotDefined(toPolicyId);
+        }
+    }
+
+    function _validateRelinkSourceHasNoVestedPrincipal(
+        bytes32 policyId,
+        uint256 activeAmount
+    ) internal view {
+        LockPolicy storage policy = lockPolicies[policyId];
+        if (policy.unlock.anchor != Anchor.Absolute) return;
+        uint256 lockedAmount = _lockedAmount(
+            policy,
+            activeAmount,
+            uint64(block.timestamp)
+        );
+        if (lockedAmount < activeAmount) {
+            revert RelinkSourceAlreadyVested(policyId);
         }
     }
 
