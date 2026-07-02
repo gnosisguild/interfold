@@ -167,6 +167,9 @@ contract InterfoldToken is
     ///         freeze admin functions and is disallowed.
     error RenounceOwnershipDisabled();
 
+    /// @notice The CCA auction/claim source has already been set.
+    error ClaimSourceAlreadySet(address current);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Constants and immutables
     // ─────────────────────────────────────────────────────────────────────────
@@ -205,8 +208,8 @@ contract InterfoldToken is
     /// @notice Absolute timestamp after which token locks no longer apply.
     uint64 public immutable NO_MORE_LOCKS;
 
-    /// @notice The CCA auction contract
-    address public immutable CLAIM_SOURCE;
+    /// @notice The CCA auction contract, set once by the owner after launch.
+    address public CLAIM_SOURCE;
 
     /// @notice Registry whose bonded FOLD counts toward locked balances.
     IBondingRegistry public immutable BONDING_REGISTRY;
@@ -255,6 +258,9 @@ contract InterfoldToken is
     /// @notice Emitted when an account's claim-lock exemption status changes.
     event ClaimLockExemptUpdated(address indexed account, bool exempt);
 
+    /// @notice Emitted when the CCA auction/claim source is set.
+    event ClaimSourceSet(address indexed claimSource);
+
     /// @notice Emitted whenever an active lock amount changes; `amount` is
     ///         the new total under `policyId`.
     event ActiveLockUpdated(
@@ -296,7 +302,6 @@ contract InterfoldToken is
      * @param ccaStart_ CCA auction window start;
      * @param ccaEnd_ CCA auction window end; after `ccaStart_`.
      * @param noMoreLocks_ Absolute timestamp after which token locks no longer apply.
-     * @param claimSource_ The CCA auction contract
      * @param bondingRegistry_ Registry whose bonded FOLD
      */
     constructor(
@@ -304,7 +309,6 @@ contract InterfoldToken is
         uint64 ccaStart_,
         uint64 ccaEnd_,
         uint64 noMoreLocks_,
-        address claimSource_,
         IBondingRegistry bondingRegistry_
     )
         ERC20("Interfold", "FOLD")
@@ -315,7 +319,6 @@ contract InterfoldToken is
             revert InvalidCcaWindow(ccaStart_, ccaEnd_);
         }
         if (ccaEnd_ <= ccaStart_) revert InvalidCcaWindow(ccaStart_, ccaEnd_);
-        if (claimSource_ == address(0)) revert ZeroAddress();
         address registry = address(bondingRegistry_);
         if (registry == address(0)) revert ZeroAddress();
         if (registry.code.length == 0) {
@@ -329,7 +332,6 @@ contract InterfoldToken is
         CCA_START = ccaStart_;
         CCA_END = ccaEnd_;
         NO_MORE_LOCKS = noMoreLocks_;
-        CLAIM_SOURCE = claimSource_;
         BONDING_REGISTRY = bondingRegistry_;
     }
 
@@ -382,6 +384,15 @@ contract InterfoldToken is
         if (current < earliest) revert TgeTooEarly(current, earliest);
         tgeTimestamp = current;
         emit TgeTriggered(current);
+    }
+
+    /// @notice Sets the CCA auction/claim source exactly once.
+    function setClaimSource(address claimSource) external onlyOwner {
+        if (claimSource == address(0)) revert ZeroAddress();
+        address current = CLAIM_SOURCE;
+        if (current != address(0)) revert ClaimSourceAlreadySet(current);
+        CLAIM_SOURCE = claimSource;
+        emit ClaimSourceSet(claimSource);
     }
 
     /// @notice Current lifecycle phase. Live is event-driven ({tge}); the
@@ -633,6 +644,7 @@ contract InterfoldToken is
         if (
             !isBurn &&
             value != 0 &&
+            CLAIM_SOURCE != address(0) &&
             from == CLAIM_SOURCE &&
             !claimLockExempt[to]
         ) {
@@ -656,7 +668,8 @@ contract InterfoldToken is
         // The claim source is trusted in any phase: the CCA enforces its own
         // (block-based) claim timing. Every distribution still lands in a
         // lock via {_claim}.
-        bool isCcaDistribution = from == CLAIM_SOURCE;
+        bool isCcaDistribution = CLAIM_SOURCE != address(0) &&
+            from == CLAIM_SOURCE;
         bool isWhitelisted = transferWhitelist[from] || transferWhitelist[to];
         return !isBonding && !isCcaDistribution && !isWhitelisted;
     }

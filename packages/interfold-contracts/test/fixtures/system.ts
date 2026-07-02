@@ -371,7 +371,6 @@ export async function deployInterfoldSystem(
         owner: ownerAddress,
         ccaStart,
         ccaEnd,
-        claimSource,
         bondingRegistry: bondingRegistryAddress,
         noMoreLocks,
       },
@@ -381,6 +380,7 @@ export async function deployInterfoldSystem(
     await interfoldToken.getAddress(),
     owner,
   );
+  await (await licenseToken.setClaimSource(claimSource)).wait();
 
   // Fix the BondingRegistry licenseToken placeholder.
   await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
