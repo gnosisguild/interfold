@@ -2072,6 +2072,77 @@ describe("InterfoldToken", function () {
       expect(byPolicy.get(toPolicy)).to.equal(relinkAmount);
     });
 
+    it("relink allows an unvested Absolute source policy", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const start = BigInt(await time.latest()) + DAY;
+
+      const fromPolicy = await createLinearPolicy(token, admin, "ABS_UNVEST", {
+        anchor: 0,
+        start,
+        vestDuration: 10n * DAY,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "ABS_DST", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("abs"),
+        },
+      ]);
+
+      await expect(
+        token.connect(admin).relinkActiveLock(
+          aliceAddress,
+          fromPolicy,
+          toPolicy,
+          ethers.parseEther("100"),
+        ),
+      ).to.emit(token, "ActiveLockRelinked");
+    });
+
+    it("relink rejects an Absolute source policy with vested principal", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const start = BigInt(await time.latest()) + DAY;
+
+      const fromPolicy = await createLinearPolicy(token, admin, "ABS_VEST", {
+        anchor: 0,
+        start,
+        vestDuration: 10n * DAY,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "ABS_TO", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("abs"),
+        },
+      ]);
+      await time.increaseTo(start + 5n * DAY);
+
+      await expect(
+        token.connect(admin).relinkActiveLock(
+          aliceAddress,
+          fromPolicy,
+          toPolicy,
+          ethers.parseEther("100"),
+        ),
+      )
+        .to.be.revertedWithCustomError(token, "RelinkSourceAlreadyVested")
+        .withArgs(fromPolicy);
+    });
+
     it("relink reverts after TGE", async function () {
       const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
       const aliceAddress = await alice.getAddress();
