@@ -43,6 +43,21 @@ describe("InterfoldTicketToken", function () {
     };
   }
 
+  async function createPayableBalance(
+    fixture: Awaited<ReturnType<typeof deploy>>,
+    amount = ethers.parseUnits("100", 6),
+  ) {
+    const { token, underlying, registry, alice } = fixture;
+    await underlying.mint(await registry.getAddress(), amount);
+    await underlying
+      .connect(registry)
+      .approve(await token.getAddress(), amount);
+    await token.connect(registry).depositFor(await alice.getAddress(), amount);
+    await token.connect(registry).burnTickets(await alice.getAddress(), amount);
+    expect(await token.payableBalance()).to.equal(amount);
+    return amount;
+  }
+
   // ── H-02 ──────────────────────────────────────────────────────────────────
   describe("H-02 — registry initialization", function () {
     it("constructor sets registry directly without requiring deployer==owner", async function () {
@@ -159,6 +174,20 @@ describe("InterfoldTicketToken", function () {
       ).to.be.revertedWithCustomError(token, "RegistryAlreadyLocked");
     });
 
+    it("setRegistry reverts while payable balance is outstanding", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, initialOwner, otherRegistry } = fixture;
+      const amount = await createPayableBalance(fixture);
+
+      await expect(
+        token
+          .connect(initialOwner)
+          .setRegistry(await otherRegistry.getAddress()),
+      )
+        .to.be.revertedWithCustomError(token, "OutstandingPayableBalance")
+        .withArgs(amount);
+    });
+
     it("lockRegistry is one-way", async function () {
       const { token, initialOwner } = await loadFixture(deploy);
       await expect(token.connect(initialOwner).lockRegistry()).to.emit(
@@ -179,6 +208,21 @@ describe("InterfoldTicketToken", function () {
       ).to.be.revertedWithCustomError(token, "RegistryNotLocked");
     });
 
+    it("requestRegistryChange reverts while payable balance is outstanding", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, initialOwner, otherRegistry } = fixture;
+      await token.connect(initialOwner).lockRegistry();
+      const amount = await createPayableBalance(fixture);
+
+      await expect(
+        token
+          .connect(initialOwner)
+          .requestRegistryChange(await otherRegistry.getAddress()),
+      )
+        .to.be.revertedWithCustomError(token, "OutstandingPayableBalance")
+        .withArgs(amount);
+    });
+
     it("activateRegistryChange enforces REGISTRY_CHANGE_DELAY", async function () {
       const { token, initialOwner, otherRegistry } = await loadFixture(deploy);
       await token.connect(initialOwner).lockRegistry();
@@ -197,6 +241,22 @@ describe("InterfoldTicketToken", function () {
       ).to.emit(token, "RegistryChanged");
       expect(await token.registry()).to.equal(await otherRegistry.getAddress());
       expect(await token.pendingRegistry()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("activateRegistryChange reverts if payable balance appears during the timelock", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, initialOwner, otherRegistry } = fixture;
+      await token.connect(initialOwner).lockRegistry();
+      await token
+        .connect(initialOwner)
+        .requestRegistryChange(await otherRegistry.getAddress());
+
+      const amount = await createPayableBalance(fixture);
+      await time.increase(REGISTRY_CHANGE_DELAY);
+
+      await expect(token.connect(initialOwner).activateRegistryChange())
+        .to.be.revertedWithCustomError(token, "OutstandingPayableBalance")
+        .withArgs(amount);
     });
 
     it("cancelRegistryChange clears the pending swap", async function () {

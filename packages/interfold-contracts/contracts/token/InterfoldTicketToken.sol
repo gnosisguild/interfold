@@ -72,6 +72,10 @@ contract InterfoldTicketToken is
     /// @notice Thrown when ERC-2612 {permit} is invoked (approvals are disabled on this token).
     error PermitDisabled();
 
+    /// @notice Thrown when a registry change is attempted while burned-ticket
+    ///         funds are still awaiting payout by the current registry.
+    error OutstandingPayableBalance(uint256 amount);
+
     /// @notice Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
 
@@ -187,6 +191,7 @@ contract InterfoldTicketToken is
     function setRegistry(address newRegistry) external onlyOwner {
         if (registryLocked) revert RegistryAlreadyLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = newRegistry;
         emit RegistryChanged(old, newRegistry);
@@ -207,6 +212,7 @@ contract InterfoldTicketToken is
     function requestRegistryChange(address newRegistry) external onlyOwner {
         if (!registryLocked) revert RegistryNotLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        _revertIfPayableBalanceOutstanding();
         pendingRegistry = newRegistry;
         uint64 activatesAt = uint64(block.timestamp) + REGISTRY_CHANGE_DELAY;
         pendingRegistryActivationTime = activatesAt;
@@ -222,6 +228,7 @@ contract InterfoldTicketToken is
         if (block.timestamp < pendingRegistryActivationTime) {
             revert RegistryChangeNotReady();
         }
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = pending;
         pendingRegistry = address(0);
@@ -352,6 +359,13 @@ contract InterfoldTicketToken is
         if (to == address(0)) revert ZeroAddress();
         token.safeTransfer(to, amount);
         emit ERC20Rescued(address(token), to, amount);
+    }
+
+    function _revertIfPayableBalanceOutstanding() internal view {
+        uint256 amount = payableBalance;
+        if (amount != 0) {
+            revert OutstandingPayableBalance(amount);
+        }
     }
 
     // ── Disabled flows ─────────────────────────────────────────────────────────
