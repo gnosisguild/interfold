@@ -943,6 +943,14 @@ contract InterfoldToken is
         if (policy.holdUntil > NO_MORE_LOCKS) {
             revert InvalidPolicy();
         }
+        if (curve.anchor == Anchor.Absolute) {
+            uint256 lockEnd = policyEnd > policy.holdUntil
+                ? policyEnd
+                : policy.holdUntil;
+            if (lockEnd <= block.timestamp) {
+                revert InvalidPolicy();
+            }
+        }
     }
 
     /// @dev Validates the unlock curve: it must lock something and be
