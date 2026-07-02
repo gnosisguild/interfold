@@ -866,6 +866,10 @@ contract InterfoldToken is
                 return newAmount;
             }
         }
+        if (isActive && len >= MAX_LOCKS_PER_ACCOUNT) {
+            _pruneMaturedActiveLocks(account, entries);
+            len = entries.length;
+        }
         if (isActive && len >= MAX_LOCKS_PER_ACCOUNT) revert TooManyLocks();
         if (!isActive && len >= MAX_QUEUED_LOCKS_PER_ACCOUNT) {
             revert TooManyQueuedLocks();
@@ -893,6 +897,30 @@ contract InterfoldToken is
                     policyId
                 );
             }
+        }
+    }
+
+    function _pruneMaturedActiveLocks(
+        address account,
+        Lock[] storage entries
+    ) internal {
+        uint64 current = uint64(block.timestamp);
+        uint256 i;
+        while (i < entries.length) {
+            bytes32 policyId = entries[i].policyId;
+            if (policyId == PENDING_LOCK_POLICY_ID) {
+                i++;
+                continue;
+            }
+
+            uint256 amount = entries[i].amount;
+            if (_lockedAmount(lockPolicies[policyId], amount, current) != 0) {
+                i++;
+                continue;
+            }
+
+            _removeLockAt(entries, i);
+            emit ActiveLockUpdated(account, policyId, 0);
         }
     }
 
