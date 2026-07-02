@@ -69,6 +69,9 @@ contract InterfoldTicketToken is
     /// @notice Thrown when attempting to transfer tokens between non-zero addresses
     error TransferNotAllowed();
 
+    /// @notice Thrown when a registry change targets the current registry.
+    error SameRegistry();
+
     /// @notice Thrown when ERC-2612 {permit} is invoked (approvals are disabled on this token).
     error PermitDisabled();
 
@@ -187,6 +190,7 @@ contract InterfoldTicketToken is
     function setRegistry(address newRegistry) external onlyOwner {
         if (registryLocked) revert RegistryAlreadyLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        if (newRegistry == registry) revert SameRegistry();
         address old = registry;
         registry = newRegistry;
         emit RegistryChanged(old, newRegistry);
@@ -207,6 +211,7 @@ contract InterfoldTicketToken is
     function requestRegistryChange(address newRegistry) external onlyOwner {
         if (!registryLocked) revert RegistryNotLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        if (newRegistry == registry) revert SameRegistry();
         pendingRegistry = newRegistry;
         uint64 activatesAt = uint64(block.timestamp) + REGISTRY_CHANGE_DELAY;
         pendingRegistryActivationTime = activatesAt;
