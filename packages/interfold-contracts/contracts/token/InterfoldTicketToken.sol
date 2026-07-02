@@ -328,7 +328,10 @@ contract InterfoldTicketToken is
      * @param to Address to payout to.
      * @param amount Amount of ticket tokens to payout.
      */
-    function payout(address to, uint256 amount) external onlyRegistry {
+    function payout(
+        address to,
+        uint256 amount
+    ) external onlyRegistry nonReentrant {
         require(amount <= payableBalance, "Exceeds payable balance");
         payableBalance -= amount;
         SafeERC20.safeTransfer(IERC20(address(underlying())), to, amount);
