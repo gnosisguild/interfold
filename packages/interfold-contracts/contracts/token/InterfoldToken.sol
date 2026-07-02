@@ -162,6 +162,10 @@ contract InterfoldToken is
     /// @notice The bonding registry address has no deployed code.
     error InvalidBondingRegistry(address registry);
 
+    /// @notice Claim-lock exemption cannot coexist with queued claim buckets
+    ///         because exempt claim-source transfers skip queue consumption.
+    error ClaimLockExemptQueuedLocks(address account);
+
     /// @notice Thrown when {renounceOwnership} is called. Ownership is
     ///         critical for protocol governance; renouncing would permanently
     ///         freeze admin functions and is disallowed.
@@ -415,6 +419,9 @@ contract InterfoldToken is
         bool exempt
     ) external onlyRole(LOCK_MANAGER_ROLE) {
         if (account == address(0)) revert ZeroAddress();
+        if (exempt && queuedLocks[account].length != 0) {
+            revert ClaimLockExemptQueuedLocks(account);
+        }
         claimLockExempt[account] = exempt;
         emit ClaimLockExemptUpdated(account, exempt);
     }
@@ -777,6 +784,9 @@ contract InterfoldToken is
 
         // Whatever is left queues under the target policy.
         if (remaining != 0) {
+            if (claimLockExempt[account]) {
+                revert ClaimLockExemptQueuedLocks(account);
+            }
             _addOrIncrementLock(
                 account,
                 queuedLocks[account],

@@ -692,6 +692,22 @@ describe("InterfoldToken", function () {
         "AccessControlUnauthorizedAccount",
       );
     });
+
+    it("cannot enable claim-lock exemption while queued locks exist", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_QUEUE", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
+
+      await expect(
+        token.connect(admin).setClaimLockExempt(aliceAddress, true),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1700,6 +1716,22 @@ describe("InterfoldToken", function () {
       // rounding from vesting elapsed seconds).
       const lb2 = await token.lockedBalanceOf(await alice.getAddress());
       expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
+    });
+
+    it("linkClaim cannot create queued locks for a claim-lock exempt account", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_LINK", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).setClaimLockExempt(aliceAddress, true);
+
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 100n, policyId),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
     });
 
     it("linkClaim partly consumes PENDING and queues the remainder", async function () {
