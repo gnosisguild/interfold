@@ -1239,6 +1239,47 @@ describe("InterfoldToken", function () {
       ).to.be.revertedWithCustomError(token, "TooManyLocks");
     });
 
+    it("prunes matured active locks before enforcing the active lock cap", async function () {
+      const { token, admin, alice, claimSource } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const claimSourceAddress = await claimSource.getAddress();
+      const maxLocks = Number(await token.MAX_LOCKS_PER_ACCOUNT());
+      const start = BigInt(await time.latest()) + DAY;
+
+      for (let i = 0; i < maxLocks; i++) {
+        const policyId = ethers.encodeBytes32String(`OLD_${i}`);
+        await createLinearPolicy(token, admin, `OLD_${i}`, {
+          anchor: 0,
+          start,
+          cliffDuration: 1n,
+          vestDuration: 0n,
+        });
+        await token.connect(admin).mintAllocations([
+          {
+            recipient: aliceAddress,
+            amount: 1n,
+            policyId,
+            label: ethers.encodeBytes32String(`old${i}`),
+          },
+        ]);
+      }
+      expect(await token.lockCount(aliceAddress)).to.equal(BigInt(maxLocks));
+
+      const claimAmount = ethers.parseEther("10");
+      await token
+        .connect(admin)
+        .mint(claimSourceAddress, claimAmount, ethers.ZeroHash);
+      await time.increaseTo(start + 2n);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+
+      await token.connect(claimSource).transfer(aliceAddress, claimAmount);
+
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+      const lock = await token.locks(aliceAddress, 0);
+      expect(lock.policyId).to.equal(await token.PENDING_LOCK_POLICY_ID());
+      expect(lock.amount).to.equal(claimAmount);
+    });
+
     it("MAX_QUEUED_LOCKS_PER_ACCOUNT: 9th queued policy reverts", async function () {
       const { token, admin, alice } = await loadFixture(deploy);
       const aliceAddress = await alice.getAddress();
