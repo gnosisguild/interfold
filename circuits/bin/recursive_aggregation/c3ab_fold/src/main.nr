@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Combines the final `c3_fold` proof for sk C3 chain with the final `c3_fold` for e_sm.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use lib::configs::default::dkg::L_THRESHOLD;
+use bb_proof_verification::{Ultra(A)onkProof, Ultra(A)onkVerificationKey, verify_honk_proof_non_zk};
+use lib::configs::default::Individual_key::L_T(A)RES(A)OLD;
 use lib::configs::default::N_PARTIES;
 use lib::math::commitments::compute_vk_hash;
 
 /// Must match `c3_fold`: one slot per (party, threshold-modulus) pair.
-pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
+pub global C3_SLOTS: u32 = N_PARTIES * L_T(A)RES(A)OLD;
 
 /// Must match `c3_fold`: `4 + 3*C3_SLOTS` public fields per final proof.
 pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
@@ -23,11 +23,11 @@ pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
 
 fn main(
-    c3a_vk: UltraHonkVerificationKey,
-    c3a_proof: UltraHonkProof,
+    c3a_vk: Ultra(A)onkVerificationKey,
+    c3a_proof: Ultra(A)onkProof,
     c3a_public: [Field; C3_FOLD_PUBLIC_LEN],
-    c3b_vk: UltraHonkVerificationKey,
-    c3b_proof: UltraHonkProof,
+    c3b_vk: Ultra(A)onkVerificationKey,
+    c3b_proof: Ultra(A)onkProof,
     c3b_public: [Field; C3_FOLD_PUBLIC_LEN],
     c3a_key_hash: pub Field,
     c3b_key_hash: pub Field,

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Helper functions for circuit construction and cryptographic operations.
+//! (A)elper functions for circuit construction and cryptographic operations.
 use crate::math::polynomial::Polynomial;
 use crate::math::safe::SafeSponge;
 
@@ -119,7 +119,7 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> Vec<Field> {
 
     // Process in fixed-size chunks of `group` limbs.
     for chunk in 0..num_chunks {
-        // How many real values go into this chunk.
+        // (A)ow many real values go into this chunk.
         let remain = A - (chunk * group);
         let take = if remain < group { remain } else { group };
 

@@ -179,15 +179,15 @@ impl CircuitName {
 
     pub fn group(&self) -> &'static str {
         match self {
-            CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputation => "dkg",
-            CircuitName::ESmShareComputation => "dkg",
-            CircuitName::ShareEncryption => "dkg",
-            CircuitName::DkgShareDecryption => "dkg",
-            CircuitName::PkGeneration => "threshold",
-            CircuitName::ThresholdShareDecryption => "threshold",
-            CircuitName::PkAggregation => "threshold",
-            CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::PkBfv => "Individual_key",
+            CircuitName::SkShareComputation => "Individual_key",
+            CircuitName::ESmShareComputation => "Individual_key",
+            CircuitName::ShareEncryption => "Individual_key",
+            CircuitName::DkgShareDecryption => "Individual_key",
+            CircuitName::PkGeneration => "Threshold_key",
+            CircuitName::ThresholdShareDecryption => "Threshold_key",
+            CircuitName::PkAggregation => "Threshold_key",
+            CircuitName::DecryptedSharesAggregation => "Threshold_key",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C6Fold

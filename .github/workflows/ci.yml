@@ -884,10 +884,10 @@ jobs:
         with:
           name: compiled-circuits
           path: |
-            circuits/bin/dkg/target/
-            circuits/bin/threshold/target/
-            circuits/bin/recursive_aggregation/wrapper/dkg/target/
-            circuits/bin/recursive_aggregation/wrapper/threshold/target/
+            circuits/bin/Individual_key/target/
+            circuits/bin/Threshold_key/target/
+            circuits/bin/recursive_aggregation/wrapper/Individual_key/target/
+            circuits/bin/recursive_aggregation/wrapper/Threshold_key/target/
             circuits/bin/recursive_aggregation/fold/target/
           retention-days: 1
           if-no-files-found: error
@@ -948,21 +948,21 @@ jobs:
       - name: Verify circuit artifacts
         run: |
           echo "DKG circuits:"
-          ls -la circuits/bin/dkg/target/*.json \
-               circuits/bin/dkg/target/*.vk \
-               circuits/bin/dkg/target/*.vk_hash \
-               circuits/bin/dkg/target/*.vk_recursive \
-               circuits/bin/dkg/target/*.vk_recursive_hash \
-               circuits/bin/dkg/target/*.vk_noir \
-               circuits/bin/dkg/target/*.vk_noir_hash
+          ls -la circuits/bin/Individual_key/target/*.json \
+               circuits/bin/Individual_key/target/*.vk \
+               circuits/bin/Individual_key/target/*.vk_hash \
+               circuits/bin/Individual_key/target/*.vk_recursive \
+               circuits/bin/Individual_key/target/*.vk_recursive_hash \
+               circuits/bin/Individual_key/target/*.vk_noir \
+               circuits/bin/Individual_key/target/*.vk_noir_hash
           echo "Threshold circuits:"
-          ls -la circuits/bin/threshold/target/*.json \
-               circuits/bin/threshold/target/*.vk \
-               circuits/bin/threshold/target/*.vk_hash \
-               circuits/bin/threshold/target/*.vk_recursive \
-               circuits/bin/threshold/target/*.vk_recursive_hash \
-               circuits/bin/threshold/target/*.vk_noir \
-               circuits/bin/threshold/target/*.vk_noir_hash
+          ls -la circuits/bin/Threshold_key/target/*.json \
+               circuits/bin/Threshold_key/target/*.vk \
+               circuits/bin/Threshold_key/target/*.vk_hash \
+               circuits/bin/Threshold_key/target/*.vk_recursive \
+               circuits/bin/Threshold_key/target/*.vk_recursive_hash \
+               circuits/bin/Threshold_key/target/*.vk_noir \
+               circuits/bin/Threshold_key/target/*.vk_noir_hash
 
       - name: Verify variant output directories
         run: |
@@ -1081,8 +1081,8 @@ jobs:
             packages/interfold-contracts/types
             crates/wasm/dist
             circuits/bin/.active-preset.json
-            circuits/bin/recursive_aggregation/wrapper/threshold/target
-            circuits/bin/threshold/target
+            circuits/bin/recursive_aggregation/wrapper/Threshold_key/target
+            circuits/bin/Threshold_key/target
           retention-days: 1
           if-no-files-found: error
 
@@ -1143,8 +1143,8 @@ jobs:
             examples/CRISP/packages/crisp-zk-inputs/dist
             examples/CRISP/circuits/bin/crisp/target
             examples/CRISP/circuits/bin/fold/target
-            circuits/bin/threshold/target
-            circuits/bin/recursive_aggregation/wrapper/threshold/target
+            circuits/bin/Threshold_key/target
+            circuits/bin/recursive_aggregation/wrapper/Threshold_key/target
           retention-days: 1
           if-no-files-found: warn
 

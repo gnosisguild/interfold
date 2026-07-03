@@ -64,12 +64,12 @@ impl E3Extension for CommitmentConsistencyCheckerExtension {
         info!("Starting CommitmentConsistencyChecker for E3 {}", e3_id);
 
         let links = (self.links_factory)(meta.params_preset);
-        let committee_h =
+        let committee_a =
             CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)
                 .expect("committee size must be canonical at CommitteeFinalized")
                 .values()
-                .h;
-        let addr = CommitmentConsistencyChecker::setup(&self.bus, e3_id, links, committee_h);
+                .a;
+        let addr = CommitmentConsistencyChecker::setup(&self.bus, e3_id, links, committee_a);
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
     }

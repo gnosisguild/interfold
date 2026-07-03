@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Decryption aggregator: non-ZK `c6_fold` (folded C6 column) + non-ZK `decrypted_shares_aggregation`
@@ -14,7 +14,7 @@
 //! from the inner C7 proof) are indices into that full committee. `committee_members` must be
 //! supplied in the same order as on-chain `topNodes`; the hash equality pins that order.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use bb_proof_verification::{Ultra(A)onkProof, Ultra(A)onkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::MAX_MSG_NON_ZERO_COEFFS;
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::T;
@@ -27,12 +27,12 @@ pub global C6_FOLD_PUBLIC_LEN: u32 = 4 + (4 * (T + 1));
 pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
 
 /// Column offsets inside the `c6_fold` flattened tail (after `C6_FOLD_PREFIX_LEN`):
-/// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
-pub global C6_FOLD_COL_WIDTH: u32 = T + 1;
+/// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDT(A) = T + 1` long.
+pub global C6_FOLD_COL_WIDT(A): u32 = T + 1;
 pub global C6_FOLD_SK_COL_OFFSET: u32 = 0;
-pub global C6_FOLD_ESM_COL_OFFSET: u32 = C6_FOLD_COL_WIDTH;
-pub global C6_FOLD_CT_COL_OFFSET: u32 = 2 * C6_FOLD_COL_WIDTH;
-pub global C6_FOLD_D_COL_OFFSET: u32 = 3 * C6_FOLD_COL_WIDTH;
+pub global C6_FOLD_ESM_COL_OFFSET: u32 = C6_FOLD_COL_WIDT(A);
+pub global C6_FOLD_CT_COL_OFFSET: u32 = 2 * C6_FOLD_COL_WIDT(A);
+pub global C6_FOLD_D_COL_OFFSET: u32 = 3 * C6_FOLD_COL_WIDT(A);
 
 /// `c7_public` layout: `[expected_d_commitments | party_ids | message]`.
 pub global C7_D_COMMITMENT_OFFSET: u32 = 0;
@@ -42,11 +42,11 @@ pub global C7_MESSAGE_OFFSET: u32 = 2 * (T + 1);
 pub global C7_PUBLIC_LEN: u32 = (2 * (T + 1)) + MAX_MSG_NON_ZERO_COEFFS;
 
 fn main(
-    c6_fold_vk: UltraHonkVerificationKey,
-    c6_fold_proof: UltraHonkProof,
+    c6_fold_vk: Ultra(A)onkVerificationKey,
+    c6_fold_proof: Ultra(A)onkProof,
     c6_fold_public: [Field; C6_FOLD_PUBLIC_LEN],
-    c7_vk: UltraHonkVerificationKey,
-    c7_proof: UltraHonkProof,
+    c7_vk: Ultra(A)onkVerificationKey,
+    c7_proof: Ultra(A)onkProof,
     c7_public: [Field; C7_PUBLIC_LEN],
     c6_fold_key_hash: pub Field,
     c7_key_hash: pub Field,

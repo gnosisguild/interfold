@@ -10,8 +10,8 @@ use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
-/// Exchange #3: Each honest node shares its aggregated trBFV partial key shares
-/// with all other honest nodes, together with C4 proofs of correct BFV decryption.
+/// Exchange #3: Each authorized node shares its aggregated trBFV partial key shares
+/// with all other authorized nodes, together with C4 proofs of correct BFV decryption.
 #[derive(Message, Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 #[derivative(Debug)]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 /// Configuration Verification Circuit (pre-deployment).
@@ -19,28 +19,28 @@
 /// - BFV and Threshold BFV parameter sets are mutually consistent
 
 use lib::configs::default::{N_PARTIES, T};
-use lib::configs::secure::dkg::{
-    L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
-    Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
-    SHARE_ENCRYPTION_E0_BOUND, SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS,
-    SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_P1_BOUNDS, SHARE_ENCRYPTION_P2_BOUNDS,
-    SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_R1_LOW_BOUNDS, SHARE_ENCRYPTION_R1_UP_BOUNDS,
-    SHARE_ENCRYPTION_R2_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
+use lib::configs::secure::Individual_key::{
+    L as DKG_L, L_T(A)RES(A)OLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
+    Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_T(A)RES(A)OLD,
+    S(A)ARE_ENCRYPTION_E0_BOUND, S(A)ARE_ENCRYPTION_E1_BOUND, S(A)ARE_ENCRYPTION_K0IS,
+    S(A)ARE_ENCRYPTION_MSG_BOUND, S(A)ARE_ENCRYPTION_P1_BOUNDS, S(A)ARE_ENCRYPTION_P2_BOUNDS,
+    S(A)ARE_ENCRYPTION_PK_BOUNDS, S(A)ARE_ENCRYPTION_R1_LOW_BOUNDS, S(A)ARE_ENCRYPTION_R1_UP_BOUNDS,
+    S(A)ARE_ENCRYPTION_R2_BOUNDS, S(A)ARE_ENCRYPTION_U_BOUND,
 };
 
-use lib::configs::secure::threshold::{
+use lib::configs::secure::Threshold_key::{
     // Structural parameters
-    N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_SEARCH_N, PARAMS_SEARCH_Z as N_CIPHERTEXTS,
+    N as T(A)RES(A)OLD_N, L as T(A)RES(A)OLD_L, PARAMS_SEARC(A)_N, PARAMS_SEARC(A)_Z as N_CIP(A)ERTEXTS,
     // Moduli
-    QIS as THRESHOLD_QIS,
+    QIS as T(A)RES(A)OLD_QIS,
     // Derived values
-    PLAINTEXT_MODULUS as THRESHOLD_PLAINTEXT_MODULUS, Q_MOD_T as THRESHOLD_Q_MOD_T,
-    Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
+    PLAINTEXT_MODULUS as T(A)RES(A)OLD_PLAINTEXT_MODULUS, Q_MOD_T as T(A)RES(A)OLD_Q_MOD_T,
+    Q_MOD_T_CENTERED as T(A)RES(A)OLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as T(A)RES(A)OLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
     PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_B_ENC,
     // share_decryption bounds
-    THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
+    T(A)RES(A)OLD_S(A)ARE_DECRYPTION_R1_BOUNDS, T(A)RES(A)OLD_S(A)ARE_DECRYPTION_R2_BOUNDS,
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
@@ -134,19 +134,19 @@ fn verify_dkg_q_mod_t_centered() {
     );
 }
 
-/// Verifies Reed-Solomon parity matrix: H * G^T = 0 (mod q_l) for each modulus.
+/// Verifies Reed-Solomon parity matrix: (A) * G^T = 0 (mod q_l) for each modulus.
 ///
 /// For Shamir Secret Sharing with threshold T, shares must satisfy the parity check
-/// equation H * shares^T = 0, where H is the parity check matrix. This function
+/// equation (A) * shares^T = 0, where (A) is the parity check matrix. This function
 /// verifies that the precomputed PARITY_MATRIX is correct by checking it against
 /// the Vandermonde generator matrix G.
 ///
 /// The generator matrix G is constructed as G[i][j] = j^i mod q_l (Vandermonde structure).
-/// For valid Shamir shares, H * G^T must equal zero for all entries.
+/// For valid Shamir shares, (A) * G^T must equal zero for all entries.
 fn verify_dkg_parity_matrix() {
     // For each CRT modulus
-    for l in 0..L_THRESHOLD {
-        let q_l = QIS_THRESHOLD[l];
+    for l in 0..L_T(A)RES(A)OLD {
+        let q_l = QIS_T(A)RES(A)OLD[l];
         let m = ModU128::new(q_l);
 
         // Build generator matrix G (Vandermonde)
@@ -163,18 +163,18 @@ fn verify_dkg_parity_matrix() {
             }
         }
 
-        // Verify H * G^T = 0 (mod q_l)
-        // H is (N_PARTIES - T) * (N_PARTIES + 1)
+        // Verify (A) * G^T = 0 (mod q_l)
+        // (A) is (N_PARTIES - T) * (N_PARTIES + 1)
         // G^T is (N_PARTIES + 1) * (T + 1)
         // Result is (N_PARTIES - T) * (T + 1)
         for row in 0..(N_PARTIES - T) {
             for col in 0..(T + 1) {
                 let mut sum: Field = 0;
                 for k in 0..(N_PARTIES + 1) {
-                    // H[l][row][k] * G[col][k]
+                    // (A)[l][row][k] * G[col][k]
                     sum = m.add(sum, m.mul_mod(PARITY_MATRIX[l][row][k], g[col][k]));
                 }
-                assert(sum == 0, "Parity matrix verification failed: H · G^T != 0");
+                assert(sum == 0, "Parity matrix verification failed: (A) · G^T != 0");
             }
         }
     }
@@ -194,21 +194,21 @@ fn verify_dkg_parity_matrix() {
 fn verify_dkg_bounds() {
     let n: u128 = DKG_N as u128;
     let t: u128 = DKG_PLAINTEXT_MODULUS as u128;
-    let u_bound: u128 = SHARE_ENCRYPTION_U_BOUND as u128;
-    let e0_bound: u128 = SHARE_ENCRYPTION_E0_BOUND as u128;
-    let e1_bound: u128 = SHARE_ENCRYPTION_E1_BOUND as u128;
+    let u_bound: u128 = S(A)ARE_ENCRYPTION_U_BOUND as u128;
+    let e0_bound: u128 = S(A)ARE_ENCRYPTION_E0_BOUND as u128;
+    let e1_bound: u128 = S(A)ARE_ENCRYPTION_E1_BOUND as u128;
 
     // u_bound = 1 (ternary)
-    assert(SHARE_ENCRYPTION_U_BOUND == 1, "SHARE_ENCRYPTION_U_BOUND should be 1 for ternary");
+    assert(S(A)ARE_ENCRYPTION_U_BOUND == 1, "S(A)ARE_ENCRYPTION_U_BOUND should be 1 for ternary");
 
     // e0_bound = 20
-    assert(SHARE_ENCRYPTION_E0_BOUND == 20, "SHARE_ENCRYPTION_E0_BOUND should be 20");
+    assert(S(A)ARE_ENCRYPTION_E0_BOUND == 20, "S(A)ARE_ENCRYPTION_E0_BOUND should be 20");
 
     // e1_bound = 20
-    assert(SHARE_ENCRYPTION_E1_BOUND == 20, "SHARE_ENCRYPTION_E1_BOUND should be 20");
+    assert(S(A)ARE_ENCRYPTION_E1_BOUND == 20, "S(A)ARE_ENCRYPTION_E1_BOUND should be 20");
 
     // msg_bound = t - 1
-    assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
+    assert(S(A)ARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "S(A)ARE_ENCRYPTION_MSG_BOUND mismatch");
 
     // ptxt bounds for r1 calculation
     let ptxt_up_bound: u128 = (t - 1) / 2;
@@ -219,38 +219,38 @@ fn verify_dkg_bounds() {
     for i in 0..DKG_L {
         let qi: u128 = DKG_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
-        let k0i: u128 = SHARE_ENCRYPTION_K0IS[i] as u128;
+        let k0i: u128 = S(A)ARE_ENCRYPTION_K0IS[i] as u128;
 
         // pk_bounds[i] = (q_i - 1) / 2
         assert(
-            SHARE_ENCRYPTION_PK_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_PK_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_PK_BOUNDS[i] as u128 == qi_bound,
+            "S(A)ARE_ENCRYPTION_PK_BOUNDS mismatch",
         );
 
         // r2_bounds[i] = (q_i - 1) / 2
         assert(
-            SHARE_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_R2_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
+            "S(A)ARE_ENCRYPTION_R2_BOUNDS mismatch",
         );
 
         // p2_bounds[i] = (q_i - 1) / 2
         assert(
-            SHARE_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_P2_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
+            "S(A)ARE_ENCRYPTION_P2_BOUNDS mismatch",
         );
 
         // p1_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
         let expected_p1: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
         assert(
-            SHARE_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
-            "SHARE_ENCRYPTION_P1_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
+            "S(A)ARE_ENCRYPTION_P1_BOUNDS mismatch",
         );
 
         // k0is[i] verification: k0i * t = -1 mod q_i
         let m = ModU128::new(DKG_QIS[i]);
-        let product = m.mul_mod(SHARE_ENCRYPTION_K0IS[i], DKG_PLAINTEXT_MODULUS);
+        let product = m.mul_mod(S(A)ARE_ENCRYPTION_K0IS[i], DKG_PLAINTEXT_MODULUS);
         let neg_one = DKG_QIS[i] - 1;
-        assert(product == neg_one, "SHARE_ENCRYPTION_K0IS mismatch");
+        assert(product == neg_one, "S(A)ARE_ENCRYPTION_K0IS mismatch");
 
         // e0_bound mod qi for r1 calculation
         let e0_bound_i: u128 = e0_bound % qi;
@@ -259,8 +259,8 @@ fn verify_dkg_bounds() {
         let expected_r1_up: u128 =
             (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
         assert(
-            SHARE_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "SHARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
+            "S(A)ARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
 
         // r1_low_bounds[i] depends on whether t is even or odd
@@ -270,8 +270,8 @@ fn verify_dkg_bounds() {
             expected_r1_up
         };
         assert(
-            SHARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
-            "SHARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+            S(A)ARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
+            "S(A)ARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",
         );
     }
 }
@@ -292,21 +292,21 @@ fn verify_threshold_derived_values() {
 
 /// Verifies Threshold: Q_MOD_T = (product of QIS) mod t.
 fn verify_threshold_q_mod_t() {
-    let t = THRESHOLD_PLAINTEXT_MODULUS;
+    let t = T(A)RES(A)OLD_PLAINTEXT_MODULUS;
     let m = ModU128::new(t);
 
     let mut product: Field = 1;
-    for i in 0..THRESHOLD_L {
-        product = m.mul_mod(product, THRESHOLD_QIS[i]);
+    for i in 0..T(A)RES(A)OLD_L {
+        product = m.mul_mod(product, T(A)RES(A)OLD_QIS[i]);
     }
 
-    assert(product == THRESHOLD_Q_MOD_T, "Threshold Q_MOD_T verification failed");
+    assert(product == T(A)RES(A)OLD_Q_MOD_T, "Threshold Q_MOD_T verification failed");
 }
 
 /// Verifies Threshold: Q_MOD_T_CENTERED = center(Q_MOD_T).
 fn verify_threshold_q_mod_t_centered() {
     assert(
-        center(THRESHOLD_Q_MOD_T, THRESHOLD_PLAINTEXT_MODULUS) == THRESHOLD_Q_MOD_T_CENTERED,
+        center(T(A)RES(A)OLD_Q_MOD_T, T(A)RES(A)OLD_PLAINTEXT_MODULUS) == T(A)RES(A)OLD_Q_MOD_T_CENTERED,
         "Threshold Q_MOD_T_CENTERED verification failed",
     );
 }
@@ -316,10 +316,10 @@ fn verify_threshold_q_mod_t_centered() {
 /// This inverse is used in circuit C7 for final decoding:
 /// message = -Q^{-1} * (t * u_global)_Q mod t
 fn verify_threshold_q_inverse_mod_t() {
-    let t = THRESHOLD_PLAINTEXT_MODULUS;
+    let t = T(A)RES(A)OLD_PLAINTEXT_MODULUS;
     let m = ModU128::new(t);
 
-    let product = m.mul_mod(THRESHOLD_Q_MOD_T, THRESHOLD_Q_INVERSE_MOD_T);
+    let product = m.mul_mod(T(A)RES(A)OLD_Q_MOD_T, T(A)RES(A)OLD_Q_INVERSE_MOD_T);
 
     assert(product == 1, "Threshold Q_INVERSE_MOD_T verification failed");
 }
@@ -344,7 +344,7 @@ fn verify_threshold_bounds() {
 /// - Smudging noise e_sm (large bound for 80-bit statistical security)
 /// - Quotients r1, r2 for each CRT modulus
 fn verify_pk_generation_bounds() {
-    let n: u128 = THRESHOLD_N as u128;
+    let n: u128 = T(A)RES(A)OLD_N as u128;
     let eek: u128 = PK_GENERATION_EEK_BOUND as u128;
 
     // sk_bound = 1 (ternary)
@@ -354,8 +354,8 @@ fn verify_pk_generation_bounds() {
     assert(PK_GENERATION_EEK_BOUND == 20, "PK_GENERATION_EEK_BOUND should be 20");
 
     // r2_bounds and r1_bounds for each modulus
-    for i in 0..THRESHOLD_L {
-        let qi: u128 = THRESHOLD_QIS[i] as u128;
+    for i in 0..T(A)RES(A)OLD_L {
+        let qi: u128 = T(A)RES(A)OLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
         // r2_bounds[i] = (q_i - 1) / 2
@@ -375,23 +375,23 @@ fn verify_pk_generation_bounds() {
 /// Verifies e_sm_bound (smudging noise bound).
 ///
 /// The smudging noise bound is critical for threshold decryption security.
-/// It's computed as: e_sm_bound = 2^lambda * N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
+/// It's computed as: e_sm_bound = 2^lambda * N_CIP(A)ERTEXTS * (b_fresh + Q_MOD_T)
 /// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 80.
 ///
 /// The 2^80 factor provides 80 bits of statistical security, ensuring that
 /// decryption shares don't leak secret key information.
 fn verify_e_sm_bound() {
-    let n: Field = THRESHOLD_N as Field;
+    let n: Field = T(A)RES(A)OLD_N as Field;
     let e_norm: Field = 20;
     let b_e: Field = 20;
-    let sk_norm: Field = PARAMS_SEARCH_N as Field;
-    let num_ciphertexts: Field = N_CIPHERTEXTS as Field;
+    let sk_norm: Field = PARAMS_SEARC(A)_N as Field;
+    let num_ciphertexts: Field = N_CIP(A)ERTEXTS as Field;
 
     // b_fresh = N * e_norm + b_enc + N * b_e * sk_norm
     let b_fresh = n * e_norm + PK_GENERATION_B_ENC + n * b_e * sk_norm;
 
-    // b_c = N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
-    let b_c = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
+    // b_c = N_CIP(A)ERTEXTS * (b_fresh + Q_MOD_T)
+    let b_c = num_ciphertexts * (b_fresh + T(A)RES(A)OLD_Q_MOD_T);
 
     // 2^60
     let two_pow_60: Field = 0x1000000000000000;
@@ -406,23 +406,23 @@ fn verify_e_sm_bound() {
 ///
 /// Checks quotient bounds r1, r2 used in the threshold decryption share equation.
 fn verify_share_decryption_bounds() {
-    let n: u128 = THRESHOLD_N as u128;
+    let n: u128 = T(A)RES(A)OLD_N as u128;
 
-    for i in 0..THRESHOLD_L {
-        let qi: u128 = THRESHOLD_QIS[i] as u128;
+    for i in 0..T(A)RES(A)OLD_L {
+        let qi: u128 = T(A)RES(A)OLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
         // r2_bounds[i] = (q_i - 1) / 2
         assert(
-            THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_DECRYPTION_R2_BOUNDS mismatch",
+            T(A)RES(A)OLD_S(A)ARE_DECRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
+            "S(A)ARE_DECRYPTION_R2_BOUNDS mismatch",
         );
 
         // r1_bounds[i] = (((q_j-1)/2)^2 * n + 4 * (q_j-1)/2) / q_j
         let expected_r1: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
         assert(
-            THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS[i] as u128 == expected_r1,
-            "SHARE_DECRYPTION_R1_BOUNDS mismatch",
+            T(A)RES(A)OLD_S(A)ARE_DECRYPTION_R1_BOUNDS[i] as u128 == expected_r1,
+            "S(A)ARE_DECRYPTION_R1_BOUNDS mismatch",
         );
     }
 }
@@ -435,8 +435,8 @@ fn verify_share_decryption_bounds() {
 /// threshold public key. Uses Threshold BFV parameters with specific constraints
 /// for the user data encryption zero-knowledge proof.
 fn verify_user_data_encryption_bounds() {
-    let n: u128 = THRESHOLD_N as u128;
-    let t: u128 = THRESHOLD_PLAINTEXT_MODULUS as u128;
+    let n: u128 = T(A)RES(A)OLD_N as u128;
+    let t: u128 = T(A)RES(A)OLD_PLAINTEXT_MODULUS as u128;
     let u_bound: u128 = USER_DATA_ENCRYPTION_U_BOUND as u128;
     let e1_bound: u128 = USER_DATA_ENCRYPTION_E1_BOUND as u128;
 
@@ -474,8 +474,8 @@ fn verify_user_data_encryption_bounds() {
     // ptxt_up_bound for r1 calculations
     let ptxt_up_bound: u128 = (t - 1) / 2;
 
-    for i in 0..THRESHOLD_L {
-        let qi: u128 = THRESHOLD_QIS[i] as u128;
+    for i in 0..T(A)RES(A)OLD_L {
+        let qi: u128 = T(A)RES(A)OLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
         let k0i: u128 = USER_DATA_ENCRYPTION_K0IS[i] as u128;
 
@@ -505,9 +505,9 @@ fn verify_user_data_encryption_bounds() {
         );
 
         // k0is[i] verification: k0i * t = -1 mod q_i
-        let m = ModU128::new(THRESHOLD_QIS[i]);
-        let product = m.mul_mod(USER_DATA_ENCRYPTION_K0IS[i], THRESHOLD_PLAINTEXT_MODULUS);
-        let neg_one = THRESHOLD_QIS[i] - 1;
+        let m = ModU128::new(T(A)RES(A)OLD_QIS[i]);
+        let product = m.mul_mod(USER_DATA_ENCRYPTION_K0IS[i], T(A)RES(A)OLD_PLAINTEXT_MODULUS);
+        let neg_one = T(A)RES(A)OLD_QIS[i] - 1;
         assert(product == neg_one, "USER_DATA_ENCRYPTION_K0IS mismatch");
 
         // e0_bound mod qi for r1 calculation
@@ -540,16 +540,16 @@ fn verify_user_data_encryption_bounds() {
 /// Verifies consistency between BFV and Threshold BFV parameter sets.
 fn verify_cross_config_consistency() {
     // N is consistent
-    assert(DKG_N == THRESHOLD_N, "N mismatch between DKG and Threshold configs");
+    assert(DKG_N == T(A)RES(A)OLD_N, "N mismatch between DKG and Threshold configs");
 
-    // L_THRESHOLD in dkg.nr matches L in threshold.nr
-    assert(L_THRESHOLD == THRESHOLD_L, "L_THRESHOLD mismatch between config files");
+    // L_T(A)RES(A)OLD in dkg.nr matches L in threshold.nr
+    assert(L_T(A)RES(A)OLD == T(A)RES(A)OLD_L, "L_T(A)RES(A)OLD mismatch between config files");
 
-    // QIS_THRESHOLD in dkg.nr matches QIS in threshold.nr
-    for i in 0..THRESHOLD_L {
+    // QIS_T(A)RES(A)OLD in dkg.nr matches QIS in threshold.nr
+    for i in 0..T(A)RES(A)OLD_L {
         assert(
-            QIS_THRESHOLD[i] == THRESHOLD_QIS[i],
-            "QIS_THRESHOLD mismatch between dkg.nr and threshold.nr",
+            QIS_T(A)RES(A)OLD[i] == T(A)RES(A)OLD_QIS[i],
+            "QIS_T(A)RES(A)OLD mismatch between dkg.nr and threshold.nr",
         );
     }
 }

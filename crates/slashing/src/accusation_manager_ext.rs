@@ -147,9 +147,9 @@ impl E3Extension for AccusationManagerExtension {
     ///   running their own independent `AccusationManager` instances will continue the
     ///   protocol unaffected.
     /// - A malicious node cannot exploit restart-induced state loss to prevent slashing:
-    ///   restarting only loses *this node's* pending state — all other honest nodes still
+    ///   restarting only loses *this node's* pending state — all other authorized nodes still
     ///   independently verify, vote, and reach quorum without this node's participation
-    ///   (as long as enough honest nodes remain to meet threshold M).
+    ///   (as long as enough authorized nodes remain to meet threshold M).
     async fn hydrate(&self, _ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
         Ok(())
     }

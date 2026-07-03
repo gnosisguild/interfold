@@ -10,7 +10,7 @@ use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
 use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
 
-/// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
+/// Total public field count for `node_fold` at committee size `n`, authorized `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
     11 + n + 2 * (n + h) * l
 }
@@ -40,7 +40,7 @@ fn field_hex_to_u64(field: &str) -> Result<u64, ZkError> {
 pub fn extract_node_fold_agg_commits(
     proof: &Proof,
     committee_n: usize,
-    committee_h: usize,
+    committee_a: usize,
     n_moduli: usize,
 ) -> Result<(u64, DkgFoldAggCommits), ZkError> {
     if proof.circuit != CircuitName::NodeFold {
@@ -50,10 +50,10 @@ pub fn extract_node_fold_agg_commits(
         )));
     }
     let fields = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    let expected = node_fold_public_field_count(committee_n, committee_h, n_moduli);
+    let expected = node_fold_public_field_count(committee_n, committee_a, n_moduli);
     if fields.len() != expected {
         return Err(ZkError::InvalidInput(format!(
-            "NodeFold public field count {} != expected {} (n={committee_n}, h={committee_h}, l={n_moduli})",
+            "NodeFold public field count {} != expected {} (n={committee_n}, h={committee_a}, l={n_moduli})",
             fields.len(),
             expected
         )));

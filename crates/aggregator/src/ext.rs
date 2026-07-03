@@ -32,10 +32,10 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 /// for `committee_hash_*` binding in downstream ZK requests.
 pub const COMMITTEE_ADDRESSES_KEY: TypedKey<Vec<Address>> = TypedKey::new("committee_addresses");
 
-/// Honest subset of the committee (`PublicKeyAggregated.honest_committee_addresses`, length `H`)
+/// Honest subset of the committee (`PublicKeyAggregated.authorized_committee_addresses`, length `H`)
 /// for decryption-share collection gating.
 pub const HONEST_COMMITTEE_ADDRESSES_KEY: TypedKey<Vec<Address>> =
-    TypedKey::new("honest_committee_addresses");
+    TypedKey::new("authorized_committee_addresses");
 
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
@@ -209,7 +209,7 @@ const ERROR_TRBFV_PLAINTEXT_META_MISSING:&str = "Could not create ThresholdPlain
 const ERROR_TRBFV_PLAINTEXT_COMMITTEE_MISSING: &str =
     "Could not create ThresholdPlaintextAggregator because committee addresses were not set (expected PublicKeyAggregated before CiphertextOutputPublished).";
 const ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING: &str =
-    "Could not create ThresholdPlaintextAggregator because honest committee addresses were not set (expected non-empty PublicKeyAggregated.honest_committee_addresses).";
+    "Could not create ThresholdPlaintextAggregator because authorized committee addresses were not set (expected non-empty PublicKeyAggregated.authorized_committee_addresses).";
 
 fn load_committee_addresses(ctx: &E3Context, e3_id: &E3id) -> Result<Vec<Address>> {
     if let Some(addrs) = ctx.get_dependency(COMMITTEE_ADDRESSES_KEY) {
@@ -230,7 +230,7 @@ fn load_committee_addresses(ctx: &E3Context, e3_id: &E3id) -> Result<Vec<Address
     committee_addresses_from_nodes(nodes)
 }
 
-fn load_honest_committee_addresses(ctx: &E3Context, e3_id: &E3id) -> Result<Vec<Address>> {
+fn load_authorized_committee_addresses(ctx: &E3Context, e3_id: &E3id) -> Result<Vec<Address>> {
     if let Some(addrs) = ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY) {
         if addrs.is_empty() {
             return Err(anyhow!(ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING));
@@ -242,7 +242,7 @@ fn load_honest_committee_addresses(ctx: &E3Context, e3_id: &E3id) -> Result<Vec<
     let Some(state) = state else {
         return Err(anyhow!(ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING));
     };
-    if let Some(addrs) = state.honest_committee_addresses() {
+    if let Some(addrs) = state.authorized_committee_addresses() {
         return Ok(addrs.to_vec());
     }
     Err(anyhow!(ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING))
@@ -260,7 +260,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             match addrs {
                 Ok(addrs) => {
                     ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addrs);
-                    if data.honest_committee_addresses.is_empty() {
+                    if data.authorized_committee_addresses.is_empty() {
                         self.bus.err(
                             EType::PlaintextAggregation,
                             anyhow!(ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING),
@@ -269,7 +269,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                     }
                     ctx.set_dependency(
                         HONEST_COMMITTEE_ADDRESSES_KEY,
-                        data.honest_committee_addresses.clone(),
+                        data.authorized_committee_addresses.clone(),
                     );
                 }
                 Err(e) => {
@@ -308,7 +308,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 return;
             }
         };
-        let honest_committee_addresses = match load_honest_committee_addresses(ctx, &e3_id) {
+        let authorized_committee_addresses = match load_authorized_committee_addresses(ctx, &e3_id) {
             Ok(addrs) => addrs,
             Err(e) => {
                 self.bus.err(EType::PlaintextAggregation, e);
@@ -350,7 +350,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                             },
                             proof_aggregation_enabled: meta.proof_aggregation_enabled,
                             committee_addresses,
-                            honest_committee_addresses,
+                            authorized_committee_addresses,
                         },
                         sync_state,
                     )
@@ -386,7 +386,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         };
 
         let committee_addresses = load_committee_addresses(ctx, &ctx.e3_id)?;
-        let honest_committee_addresses = load_honest_committee_addresses(ctx, &ctx.e3_id)?;
+        let authorized_committee_addresses = load_authorized_committee_addresses(ctx, &ctx.e3_id)?;
 
         let value = ThresholdPlaintextAggregator::new(
             ThresholdPlaintextAggregatorParams {
@@ -407,7 +407,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 })?,
                 proof_aggregation_enabled: meta.proof_aggregation_enabled,
                 committee_addresses,
-                honest_committee_addresses,
+                authorized_committee_addresses,
             },
             sync_state,
         )

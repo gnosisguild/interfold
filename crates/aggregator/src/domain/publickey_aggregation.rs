@@ -9,7 +9,7 @@
 //! This module holds the [`PublicKeyAggregatorState`] state machine plus the pure
 //! transition/decision functions used by the `PublicKeyAggregator` actor. Nothing here
 //! touches actix, `Persistable`, or the event bus: the actor feeds inputs in, gets a
-//! next-state or a [decision](C1Dispatch)/[`HonestSelection`] back, and performs the
+//! next-state or a [decision](C1Dispatch)/[`AuthorizedSelection`] back, and performs the
 //! persistence/publish/dispatch side effects itself.
 
 use alloy::primitives::Address;
@@ -20,21 +20,21 @@ use e3_events::{
 };
 use e3_fhe::Fhe;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::cap_honest_party_ids;
+use e3_zk_helpers::cap_authorized_party_ids;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::extract_node_fold_agg_commits;
 use std::collections::{BTreeSet, HashMap};
 use tracing::{error, info, warn};
 
-/// Circuit honest-party count `H` for the committee `(threshold_m, threshold_n)`.
-pub(crate) fn committee_h_for(threshold_m: usize, threshold_n: usize) -> Result<usize> {
+/// Circuit authorized-party count `H` for the committee `(threshold_m, threshold_n)`.
+pub(crate) fn committee_a_for(threshold_m: usize, threshold_n: usize) -> Result<usize> {
     Ok(
         CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n)
             .with_context(|| {
                 format!("unknown committee for threshold_m={threshold_m} threshold_n={threshold_n}")
             })?
             .values()
-            .h,
+            .a,
     )
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn verify_dkg_fold_attestation(
     attestation: &SignedDkgFoldAttestation,
     expected_node: &str,
     committee_n: usize,
-    committee_h: usize,
+    committee_a: usize,
     n_moduli: usize,
 ) -> Result<()> {
     ensure!(
@@ -69,7 +69,7 @@ pub(crate) fn verify_dkg_fold_attestation(
         "fold attestation signer does not match committee node for party {party_id}"
     );
     let (extracted_party, commits) =
-        extract_node_fold_agg_commits(proof, committee_n, committee_h, n_moduli)
+        extract_node_fold_agg_commits(proof, committee_n, committee_a, n_moduli)
             .map_err(|e| anyhow!("{e}"))?;
     ensure!(extracted_party == party_id, "NodeFold party_id mismatch");
     ensure!(
@@ -96,7 +96,7 @@ pub(crate) fn extract_pk_commitment(c5_proof: &Proof) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-/// Outcome of cross-checking each honest party's keyshare against its signed C1
+/// Outcome of cross-checking each authorized party's keyshare against its signed C1
 /// `pk_commitment` public signal.
 pub(crate) struct C1CommitmentAudit {
     /// Parties whose keyshare does not recompute to their signed C1 commitment, paired
@@ -106,10 +106,10 @@ pub(crate) struct C1CommitmentAudit {
     pub missing_proof: Vec<u64>,
 }
 
-/// Recompute each honest party's `pk_commitment` from its keyshare bytes and compare it
+/// Recompute each authorized party's `pk_commitment` from its keyshare bytes and compare it
 /// against the `pk_commitment` public signal in the party's signed C1 proof. Pure: the
 /// actor publishes `SignedProofFailed` for `mismatched` and folds both result sets into
-/// `dishonest_parties`.
+/// `disauthorized_parties`.
 pub(crate) fn check_c1_keyshare_commitments(
     entries: &[(u64, String, ArcBytes, Option<SignedProofPayload>)],
     fhe: &Fhe,
@@ -162,8 +162,8 @@ pub enum PublicKeyAggregatorState {
         threshold_m: usize,
         /// Canonical on-chain / circuit committee size N (unchanged after expulsion).
         circuit_committee_n: usize,
-        /// Canonical honest-party count H for circuit public IO.
-        circuit_committee_h: usize,
+        /// Canonical authorized-party count H for circuit public IO.
+        circuit_committee_a: usize,
         keyshares: OrderedSet<ArcBytes>,
         /// C1 proofs collected from KeyshareCreated events, indexed by insertion order
         /// (matches `submission_order`).
@@ -180,10 +180,10 @@ pub enum PublicKeyAggregatorState {
         /// Insertion-ordered (party_id, node, keyshare) triples from Collecting.
         submission_order: Vec<(u64, String, ArcBytes)>,
         threshold_m: usize,
-        /// Canonical on-chain / circuit committee size N (for `committee_h` lookup).
+        /// Canonical on-chain / circuit committee size N (for `committee_a` lookup).
         circuit_committee_n: usize,
-        /// Canonical honest-party count H for circuit public IO.
-        circuit_committee_h: usize,
+        /// Canonical authorized-party count H for circuit public IO.
+        circuit_committee_a: usize,
         /// C1 proofs in the same insertion order as `submission_order`.
         c1_proofs: Vec<Option<SignedProofPayload>>,
         /// Real party_ids that submitted no C1 proof — treated as dishonest.
@@ -194,19 +194,19 @@ pub enum PublicKeyAggregatorState {
         keyshare_bytes: Vec<ArcBytes>,
         nodes: OrderedSet<String>,
         /// Registered node address per sortition `party_id` for the **full** committee
-        /// (all `N` parties that submitted a keyshare, honest or not). Honest-only lookups
-        /// must intersect with `honest_party_ids`.
+        /// (all `N` parties that submitted a keyshare, authorized or not). Honest-only lookups
+        /// must intersect with `authorized_party_ids`.
         party_nodes: HashMap<u64, String>,
         /// DKG recursive proofs per party (restart-critical).
         dkg_node_proofs: HashMap<u64, Option<Proof>>,
-        /// Per-party fold attestations collected with honest DKG folds.
+        /// Per-party fold attestations collected with authorized DKG folds.
         dkg_fold_attestations: HashMap<u64, SignedDkgFoldAttestation>,
-        honest_party_ids: BTreeSet<u64>,
-        dishonest_parties: BTreeSet<u64>,
+        authorized_party_ids: BTreeSet<u64>,
+        disauthorized_parties: BTreeSet<u64>,
         /// Circuit committee size N (NodeFold / DKG public IO layout).
         circuit_committee_n: usize,
-        /// Circuit honest-party count H (NodeFold / DKG public IO layout).
-        circuit_committee_h: usize,
+        /// Circuit authorized-party count H (NodeFold / DKG public IO layout).
+        circuit_committee_a: usize,
         /// In-flight [`ZkRequest::DkgAggregation`], if any.
         dkg_aggregation_correlation: Option<e3_events::CorrelationId>,
         /// Result from [`ZkResponse::DkgAggregation`] (replaces pairwise `FoldProofs`).
@@ -227,7 +227,7 @@ pub enum PublicKeyAggregatorState {
         /// Ascending `party_id` order (matches on-chain `topNodes` after finalize sort).
         committee_addresses: Vec<Address>,
         /// Honest subset (H entries) for decryption-share gating after restart.
-        honest_committee_addresses: Vec<Address>,
+        authorized_committee_addresses: Vec<Address>,
     },
 }
 
@@ -252,26 +252,26 @@ impl PublicKeyAggregatorState {
         }
     }
 
-    pub fn honest_committee_addresses(&self) -> Option<&[Address]> {
+    pub fn authorized_committee_addresses(&self) -> Option<&[Address]> {
         match self {
             PublicKeyAggregatorState::Complete {
-                honest_committee_addresses,
+                authorized_committee_addresses,
                 ..
-            } if !honest_committee_addresses.is_empty() => {
-                Some(honest_committee_addresses.as_slice())
+            } if !authorized_committee_addresses.is_empty() => {
+                Some(authorized_committee_addresses.as_slice())
             }
             _ => None,
         }
     }
 
     pub fn init(threshold_n: usize, threshold_m: usize, seed: Seed) -> Self {
-        let circuit_committee_h = committee_h_for(threshold_m, threshold_n)
+        let circuit_committee_a = committee_a_for(threshold_m, threshold_n)
             .unwrap_or_else(|e| panic!("invalid committee at init: {e}"));
         PublicKeyAggregatorState::Collecting {
             threshold_n,
             threshold_m,
             circuit_committee_n: threshold_n,
-            circuit_committee_h,
+            circuit_committee_a,
             keyshares: OrderedSet::new(),
             c1_proofs: Vec::new(),
             seed,
@@ -288,14 +288,14 @@ pub(crate) struct C1Dispatch {
     pub no_proof_parties: Vec<u64>,
 }
 
-/// Outcome of [`PublicKeyAggregation::select_honest_set`].
-pub(crate) enum HonestSelection {
-    /// Too few honest parties cleared C1 — caller must fail the E3.
+/// Outcome of [`PublicKeyAggregation::select_authorized_set`].
+pub(crate) enum AuthorizedSelection {
+    /// Too few authorized parties cleared C1 — caller must fail the E3.
     Fail,
-    /// Enough honest parties — proceed to aggregation with this honest set.
+    /// Enough authorized parties — proceed to aggregation with this authorized set.
     Proceed {
-        honest_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
-        honest_party_ids: BTreeSet<u64>,
+        authorized_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
+        authorized_party_ids: BTreeSet<u64>,
     },
 }
 
@@ -317,7 +317,7 @@ impl PublicKeyAggregation {
             threshold_n,
             threshold_m,
             circuit_committee_n,
-            circuit_committee_h,
+            circuit_committee_a,
             keyshares,
             c1_proofs,
             nodes,
@@ -343,12 +343,12 @@ impl PublicKeyAggregation {
         let n = *threshold_n;
         let m = *threshold_m;
         let committee_n = *circuit_committee_n;
-        let committee_h = *circuit_committee_h;
+        let committee_a = *circuit_committee_a;
         let unique_parties = submission_order.len();
         info!(
-            "PublicKeyAggregator got keyshares {unique_parties}/{n} distinct parties (circuit_n={committee_n}, committee_h={committee_h})"
+            "PublicKeyAggregator got keyshares {unique_parties}/{n} distinct parties (circuit_n={committee_n}, committee_a={committee_a})"
         );
-        // Collect all N committee keyshares before C1. C5 then requires exactly H honest
+        // Collect all N committee keyshares before C1. C5 then requires exactly H authorized
         // proofs afterward (micro had N=H so waiting for H was equivalent).
         if unique_parties >= n {
             info!(
@@ -358,7 +358,7 @@ impl PublicKeyAggregation {
                 submission_order: std::mem::take(submission_order),
                 threshold_m: m,
                 circuit_committee_n: committee_n,
-                circuit_committee_h: committee_h,
+                circuit_committee_a: committee_a,
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
             });
@@ -400,67 +400,67 @@ impl PublicKeyAggregation {
         }
     }
 
-    /// Select the canonical honest set after C1 (ZK + commitment) filtering.
+    /// Select the canonical authorized set after C1 (ZK + commitment) filtering.
     ///
-    /// Sorts the honest entries by real `party_id`, fails closed when fewer than `circuit_h`
-    /// parties cleared C1, caps the honest set to the `circuit_h` lowest `party_id`s, and
+    /// Sorts the authorized entries by real `party_id`, fails closed when fewer than `circuit_a`
+    /// parties cleared C1, caps the authorized set to the `circuit_a` lowest `party_id`s, and
     /// fails again if `<= threshold_m` parties remain. Logging mirrors the original handler.
-    pub(crate) fn select_honest_set(
+    pub(crate) fn select_authorized_set(
         e3_id: &E3id,
-        mut honest_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
-        dishonest_parties: &BTreeSet<u64>,
-        circuit_h: usize,
+        mut authorized_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
+        disauthorized_parties: &BTreeSet<u64>,
+        circuit_a: usize,
         threshold_m: usize,
         collected: usize,
-    ) -> HonestSelection {
-        // Sort by real party_id ascending so honest_keyshares / honest_nodes /
-        // honest_party_ids all share the same ordering used by NodeFold rows
+    ) -> AuthorizedSelection {
+        // Sort by real party_id ascending so authorized_keyshares / authorized_nodes /
+        // authorized_party_ids all share the same ordering used by NodeFold rows
         // and by the circuit's slot indexing in `dkg_aggregator.nr`.
-        honest_entries.sort_by_key(|(pid, _, _, _)| *pid);
+        authorized_entries.sort_by_key(|(pid, _, _, _)| *pid);
 
-        if !dishonest_parties.is_empty() {
+        if !disauthorized_parties.is_empty() {
             warn!(
                 "Total dishonest parties (ZK + commitment): {:?}",
-                dishonest_parties
+                disauthorized_parties
             );
         }
 
         // Fail closed when fewer than H parties cleared C1 — C5 cannot be witnessed.
-        if honest_entries.len() < circuit_h {
+        if authorized_entries.len() < circuit_a {
             error!(
-                "C5 requires {circuit_h} honest parties with valid C1 proofs; only {} honest after verification (collected {collected}, dishonest: {:?})",
-                honest_entries.len(),
-                dishonest_parties
+                "C5 requires {circuit_a} authorized parties with valid C1 proofs; only {} authorized after verification (collected {collected}, dishonest: {:?})",
+                authorized_entries.len(),
+                disauthorized_parties
             );
-            return HonestSelection::Fail;
+            return AuthorizedSelection::Fail;
         }
 
-        // The C5 PkAggregation circuit is parameterised by a fixed honest-party count H.
+        // The C5 PkAggregation circuit is parameterised by a fixed authorized-party count H.
         // When more than H parties cleared C1, select the H lowest party_ids as the
-        // canonical honest set; the remainder stay in the full committee.
-        let pre_cap_len = honest_entries.len();
-        let honest_party_ids =
-            cap_honest_party_ids(circuit_h, honest_entries.iter().map(|(pid, _, _, _)| *pid));
-        if pre_cap_len > circuit_h {
+        // canonical authorized set; the remainder stay in the full committee.
+        let pre_cap_len = authorized_entries.len();
+        let authorized_party_ids =
+            cap_authorized_party_ids(circuit_a, authorized_entries.iter().map(|(pid, _, _, _)| *pid));
+        if pre_cap_len > circuit_a {
             info!(
-                "Capping honest set from {pre_cap_len} to circuit_h={circuit_h} for E3 {e3_id} (extras remain in full committee)"
+                "Capping authorized set from {pre_cap_len} to circuit_a={circuit_a} for E3 {e3_id} (extras remain in full committee)"
             );
-            honest_entries.retain(|(pid, _, _, _)| honest_party_ids.contains(pid));
+            authorized_entries.retain(|(pid, _, _, _)| authorized_party_ids.contains(pid));
         }
 
         // Defensive: should hold after truncation above; guard against future refactors.
-        if honest_entries.len() <= threshold_m {
+        if authorized_entries.len() <= threshold_m {
             error!(
-                "Not enough honest parties after filtering: {} (need > {})",
-                honest_entries.len(),
+                "Not enough authorized parties after filtering: {} (need > {})",
+                authorized_entries.len(),
                 threshold_m
             );
-            return HonestSelection::Fail;
+            return AuthorizedSelection::Fail;
         }
 
-        HonestSelection::Proceed {
-            honest_entries,
-            honest_party_ids,
+        AuthorizedSelection::Proceed {
+            authorized_entries,
+            authorized_party_ids,
         }
     }
 
@@ -474,7 +474,7 @@ impl PublicKeyAggregation {
             threshold_n,
             threshold_m,
             circuit_committee_n,
-            circuit_committee_h,
+            circuit_committee_a,
             keyshares,
             c1_proofs,
             nodes,
@@ -516,13 +516,13 @@ impl PublicKeyAggregation {
         if keyshares.len() == *threshold_n && *threshold_n > 0 {
             let m = *threshold_m;
             let committee_n = *circuit_committee_n;
-            let committee_h = *circuit_committee_h;
+            let committee_a = *circuit_committee_a;
             info!("PublicKeyAggregator: enough keyshares after expulsion, transitioning to VerifyingC1");
             return Ok(PublicKeyAggregatorState::VerifyingC1 {
                 submission_order: std::mem::take(submission_order),
                 threshold_m: m,
                 circuit_committee_n: committee_n,
-                circuit_committee_h: committee_h,
+                circuit_committee_a: committee_a,
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
             });
@@ -595,13 +595,13 @@ mod tests {
             PublicKeyAggregatorState::VerifyingC1 {
                 submission_order,
                 circuit_committee_n,
-                circuit_committee_h,
+                circuit_committee_a,
                 threshold_m,
                 ..
             } => {
                 assert_eq!(submission_order.len(), 3);
                 assert_eq!(circuit_committee_n, 3);
-                assert_eq!(circuit_committee_h, 2);
+                assert_eq!(circuit_committee_a, 2);
                 assert_eq!(threshold_m, 1);
             }
             _ => panic!("expected VerifyingC1"),
@@ -614,7 +614,7 @@ mod tests {
             submission_order: vec![],
             threshold_m: 1,
             circuit_committee_n: 3,
-            circuit_committee_h: 2,
+            circuit_committee_a: 2,
             c1_proofs: vec![],
             no_proof_parties: vec![],
         };
@@ -637,51 +637,51 @@ mod tests {
     }
 
     #[test]
-    fn select_honest_set_fails_below_circuit_h() {
+    fn select_authorized_set_fails_below_circuit_a() {
         let e3_id = E3id::new("1", 1);
-        let honest = vec![(0u64, "n0".to_string(), ks(1), None)];
+        let authorized = vec![(0u64, "n0".to_string(), ks(1), None)];
         let sel =
-            PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 1, 1);
-        assert!(matches!(sel, HonestSelection::Fail));
+            PublicKeyAggregation::select_authorized_set(&e3_id, authorized, &BTreeSet::new(), 3, 1, 1);
+        assert!(matches!(sel, AuthorizedSelection::Fail));
     }
 
     #[test]
-    fn select_honest_set_caps_to_circuit_h_and_sorts() {
+    fn select_authorized_set_caps_to_circuit_a_and_sorts() {
         let e3_id = E3id::new("1", 1);
-        // 4 honest, circuit_h = 3 -> cap to lowest-3 party_ids {0,1,2}, sorted ascending.
-        let honest = vec![
+        // 4 authorized, circuit_a = 3 -> cap to lowest-3 party_ids {0,1,2}, sorted ascending.
+        let authorized = vec![
             (3u64, "n3".to_string(), ks(4), None),
             (1u64, "n1".to_string(), ks(2), None),
             (0u64, "n0".to_string(), ks(1), None),
             (2u64, "n2".to_string(), ks(3), None),
         ];
         let sel =
-            PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 1, 4);
+            PublicKeyAggregation::select_authorized_set(&e3_id, authorized, &BTreeSet::new(), 3, 1, 4);
         match sel {
-            HonestSelection::Proceed {
-                honest_entries,
-                honest_party_ids,
+            AuthorizedSelection::Proceed {
+                authorized_entries,
+                authorized_party_ids,
             } => {
-                let ids: Vec<u64> = honest_entries.iter().map(|(p, _, _, _)| *p).collect();
+                let ids: Vec<u64> = authorized_entries.iter().map(|(p, _, _, _)| *p).collect();
                 assert_eq!(ids, vec![0, 1, 2]);
-                assert_eq!(honest_party_ids, BTreeSet::from([0, 1, 2]));
+                assert_eq!(authorized_party_ids, BTreeSet::from([0, 1, 2]));
             }
-            HonestSelection::Fail => panic!("expected Proceed"),
+            AuthorizedSelection::Fail => panic!("expected Proceed"),
         }
     }
 
     #[test]
-    fn select_honest_set_fails_when_at_or_below_threshold_m() {
+    fn select_authorized_set_fails_when_at_or_below_threshold_m() {
         let e3_id = E3id::new("1", 1);
-        // 3 honest, circuit_h = 3 but threshold_m = 3 -> len <= m -> Fail.
-        let honest = vec![
+        // 3 authorized, circuit_a = 3 but threshold_m = 3 -> len <= m -> Fail.
+        let authorized = vec![
             (0u64, "n0".to_string(), ks(1), None),
             (1u64, "n1".to_string(), ks(2), None),
             (2u64, "n2".to_string(), ks(3), None),
         ];
         let sel =
-            PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 3, 3);
-        assert!(matches!(sel, HonestSelection::Fail));
+            PublicKeyAggregation::select_authorized_set(&e3_id, authorized, &BTreeSet::new(), 3, 3, 3);
+        assert!(matches!(sel, AuthorizedSelection::Fail));
     }
 
     #[test]
@@ -722,7 +722,7 @@ mod tests {
             threshold_n: 2,
             threshold_m: 1,
             circuit_committee_n: 3,
-            circuit_committee_h: 2,
+            circuit_committee_a: 2,
             keyshares: OrderedSet::from(vec![ks(10), ks(11)]),
             c1_proofs: vec![None, None],
             seed: Seed([0u8; 32]),
@@ -736,12 +736,12 @@ mod tests {
         match next {
             PublicKeyAggregatorState::VerifyingC1 {
                 circuit_committee_n,
-                circuit_committee_h,
+                circuit_committee_a,
                 submission_order,
                 ..
             } => {
                 assert_eq!(circuit_committee_n, 3);
-                assert_eq!(circuit_committee_h, 2);
+                assert_eq!(circuit_committee_a, 2);
                 assert_eq!(submission_order.len(), 1);
             }
             _ => panic!("expected VerifyingC1"),

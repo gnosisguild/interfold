@@ -71,9 +71,9 @@ pub(crate) struct PreZkOutcome {
 pub(crate) struct CommitmentConsistency {
     e3_id: E3id,
     links: Vec<Box<dyn CommitmentLink>>,
-    /// Canonical honest-party count H. C4 `expected_commitments` only bind the lowest H
+    /// Canonical authorized-party count H. C4 `expected_commitments` only bind the lowest H
     /// senders; C2 proofs from `party_id >= H` are outside the circuit roster.
-    committee_h: usize,
+    committee_a: usize,
     /// Verified proof outputs: `(address, proof_type) → data`.
     /// Multiple proofs per key are supported (e.g. N-1 C3a proofs per sender).
     verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,
@@ -83,12 +83,12 @@ impl CommitmentConsistency {
     pub(crate) fn new(
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
-        committee_h: usize,
+        committee_a: usize,
     ) -> Self {
         Self {
             e3_id,
             links,
-            committee_h,
+            committee_a,
             verified: HashMap::new(),
         }
     }
@@ -268,7 +268,7 @@ impl CommitmentConsistency {
         matches!(
             proof_type,
             ProofType::C2aSkShareComputation | ProofType::C2bESmShareComputation
-        ) && party_id as usize >= self.committee_h
+        ) && party_id as usize >= self.committee_a
     }
 
     /// Build the [`CommitmentConsistencyViolation`] for a mismatch, computing
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn pre_zk_check_flags_and_evicts_inconsistent_party() {
         let mut svc = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
-        let honest = addr(5);
+        let authorized = addr(5);
         let faulty = addr(6);
 
         let req = CommitmentConsistencyCheckRequested {
@@ -659,7 +659,7 @@ mod tests {
             party_proofs: vec![
                 PartyProofData {
                     party_id: 1,
-                    address: honest,
+                    address: authorized,
                     proofs: vec![
                         (
                             ProofType::C1PkGeneration,
@@ -703,17 +703,17 @@ mod tests {
         );
         assert!(
             !outcome.complete.inconsistent_parties.contains(&1),
-            "honest party must not be flagged"
+            "authorized party must not be flagged"
         );
         assert_eq!(outcome.violations.len(), 1);
         assert_eq!(outcome.violations[0].accused_party_id, 2);
 
         // The faulty party's cache entries are evicted, so a later post-ZK
-        // event for the honest party does not re-report the faulty one.
+        // event for the authorized party does not re-report the faulty one.
         let v = svc.on_proof_verified(passed(
             e3(),
             1,
-            honest,
+            authorized,
             ProofType::C1PkGeneration,
             [0xa1; 32],
             signals(0x42),

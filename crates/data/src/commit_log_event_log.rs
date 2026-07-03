@@ -259,7 +259,7 @@ mod tests {
                     e3_id: e3_id.clone(),
                     nodes: Default::default(),
                     committee_addresses: vec![Address::ZERO],
-                    honest_committee_addresses: vec![Address::ZERO],
+                    authorized_committee_addresses: vec![Address::ZERO],
                     pk_commitment: [0u8; 32],
                     dkg_aggregator_proof: None,
                     dkg_attestation_bundle: None,

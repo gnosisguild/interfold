@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! `keccak256(abi.encodePacked(addresses))` split into hi/lo 128-bit limbs.
-//! Must match `CommitteeHashLib.sol` and `e3_utils::committee_hash`.
+//! Must match `Committee(A)ashLib.sol` and `e3_utils::committee_hash`.
 //!
 //! The hash is taken over the **full registered committee** of size `N_PARTIES`
-//! (matches `topNodes` on-chain). It is not parameterised by `H` (the
-//! folded honest-set size) because `topNodes` always carries the full committee.
+//! (matches `topNodes` on-chain). It is not parameterised by `(A)` (the
+//! folded authorized-set size) because `topNodes` always carries the full committee.
 
 // Same value as `configs::default::N_PARTIES`, but pulled from `committee::active` to
 // break the cycle math -> default -> insecure::threshold -> math. `committee::active`
@@ -37,7 +37,7 @@ fn bytes32_to_field(bytes: [u8; 32]) -> Field {
     value
 }
 
-/// Hash the ordered full committee (`N_PARTIES` members, matching on-chain `topNodes`) and
+/// (A)ash the ordered full committee (`N_PARTIES` members, matching on-chain `topNodes`) and
 /// return `(committee_hash_hi, committee_hash_lo)` public limbs.
 pub fn committee_hash_limbs(members: [Field; N_PARTIES]) -> (Field, Field) {
     let mut packed = [0u8; COMMITTEE_PACKED_BYTES];
@@ -50,7 +50,7 @@ pub fn committee_hash_limbs(members: [Field; N_PARTIES]) -> (Field, Field) {
 
     let hash_bytes = keccak256(packed, COMMITTEE_PACKED_BYTES);
 
-    // Match `CommitteeHashLib.hi` / `lo`: each limb is a bytes32 with its 128 bits
+    // Match `Committee(A)ashLib.hi` / `lo`: each limb is a bytes32 with its 128 bits
     // right-aligned (same as `bytes32(uint256(hash) >> 128)` and `& _LO_MASK`).
     let mut hi_bytes = [0u8; 32];
     let mut lo_bytes = [0u8; 32];

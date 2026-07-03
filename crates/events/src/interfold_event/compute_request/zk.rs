@@ -80,9 +80,9 @@ pub struct NodesFoldStepRequest {
     pub inner_proof: Proof,
     /// The prior accumulator proof, or `None` for the first step.
     pub prior_accumulator: Option<Proof>,
-    /// Slot index for this honest party (position in ascending `party_id` order).
+    /// Slot index for this authorized party (position in ascending `party_id` order).
     pub slot_index: u32,
-    /// Total honest-party count H.
+    /// Total authorized-party count H.
     pub total_slots: usize,
     /// E3 identifier used for job namespacing.
     pub e3_id: String,
@@ -129,7 +129,7 @@ pub struct PkAggregationProofRequest {
     /// Total committee size (N).
     pub committee_n: usize,
     /// Honest committee size (H) — number of shares being aggregated.
-    pub committee_h: usize,
+    pub committee_a: usize,
     /// Threshold (T).
     pub committee_threshold: usize,
 }
@@ -195,7 +195,7 @@ impl ShareEncryptionProofRequest {
 
 /// Request to generate a proof for DKG share decryption (C4a or C4b).
 ///
-/// Proves that a node correctly decrypted (H − 1) external honest parties' BFV-encrypted
+/// Proves that a node correctly decrypted (H − 1) external authorized parties' BFV-encrypted
 /// Shamir shares using its own BFV secret key, and that its own (un-encrypted) share row
 /// matches the C2-bound commitment for its slot. The own slot is supplied as plaintext
 /// because parties no longer self-encrypt during DKG.
@@ -204,12 +204,12 @@ impl ShareEncryptionProofRequest {
 pub struct DkgShareDecryptionProofRequest {
     /// BFV secret key used for decryption (witness — encrypted at rest).
     pub sk_bfv: SensitiveBytes,
-    /// BFV ciphertexts from the (H − 1) external honest parties, flattened
+    /// BFV ciphertexts from the (H − 1) external authorized parties, flattened
     /// `[(H − 1) * L]` in ascending external-party_id order (own party skipped).
     /// Layout: ext party 0 mod 0, ext party 0 mod 1, ..., ext party 1 mod 0, ...
-    pub honest_ciphertexts_raw: Vec<ArcBytes>,
-    /// Total number of honest parties (H), counting the own slot.
-    pub num_honest_parties: usize,
+    pub authorized_ciphertexts_raw: Vec<ArcBytes>,
+    /// Total number of authorized parties (H), counting the own slot.
+    pub num_authorized_parties: usize,
     /// Number of CRT moduli (L).
     pub num_moduli: usize,
     /// Position of the own party within the H ascending-party_id ordering. The prover
@@ -450,7 +450,7 @@ impl PkGenerationProofResponse {
 
 /// Request to batch-verify C2/C3 proofs received from other parties.
 ///
-/// Grouped by sender so the verifier can report honest/dishonest per party.
+/// Grouped by sender so the verifier can report authorized/dishonest per party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VerifyShareProofsRequest {
     /// Proofs grouped by sender party_id.
@@ -494,7 +494,7 @@ pub struct PartyVerificationResult {
 
 /// Request to batch-verify C4 proofs from DecryptionKeyShared events.
 ///
-/// Grouped by sender so the verifier can report honest/dishonest per party.
+/// Grouped by sender so the verifier can report authorized/dishonest per party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VerifyShareDecryptionProofsRequest {
     /// C4 proofs grouped by sender party_id.

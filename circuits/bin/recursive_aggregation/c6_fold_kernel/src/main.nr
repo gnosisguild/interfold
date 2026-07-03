@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Same IO as [`c6_fold`](../c6_fold/src/main.nr) but **only** verifies the inner
-//! `ThresholdShareDecryption` proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps
+//! `ThresholdShareDecryption` proof. Used to mint a fixed genesis `Ultra(A)onkProof` that bootstraps
 //! the real `c6_fold` circuit, which always runs `verify_honk_proof_non_zk` on the accumulator (see
 //! `c6_fold`).
 
 use bb_proof_verification::{
-    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    Ultra(A)onkProof, Ultra(A)onkVerificationKey, Ultra(A)onkZKProof, verify_honk_proof,
 };
 use lib::configs::default::T;
 
@@ -21,11 +21,11 @@ pub global C6_PUBLIC_LEN: u32 = 4;
 pub global C6_FOLD_PUBLIC_LEN: u32 = 4 + (4 * (T + 1));
 
 fn main(
-    inner_vk: UltraHonkVerificationKey,
-    inner_proof: UltraHonkZKProof,
+    inner_vk: Ultra(A)onkVerificationKey,
+    inner_proof: Ultra(A)onkZKProof,
     c6_public_inputs: [Field; C6_PUBLIC_LEN],
-    acc_vk: UltraHonkVerificationKey,
-    acc_proof: UltraHonkProof,
+    acc_vk: Ultra(A)onkVerificationKey,
+    acc_proof: Ultra(A)onkProof,
     acc_public_inputs: [Field; C6_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
     acc_key_hash: pub Field,

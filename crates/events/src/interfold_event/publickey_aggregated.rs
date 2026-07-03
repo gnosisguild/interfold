@@ -26,7 +26,7 @@ pub struct PublicKeyAggregated {
     /// Honest subset of the committee (size `H ≤ N`) in ascending `party_id` order.
     /// These are the parties whose C1/NodeFold proofs were accepted; downstream actors
     /// must gate decryption-share collection on this set rather than full `topNodes`.
-    pub honest_committee_addresses: Vec<Address>,
+    pub authorized_committee_addresses: Vec<Address>,
     /// Hash-based aggregated PK commitment (last public signal of the C5 proof).
     /// Passed as `pkCommitment` to `publishCommittee`.
     pub pk_commitment: [u8; 32],

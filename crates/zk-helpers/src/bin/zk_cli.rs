@@ -24,29 +24,29 @@ use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, Parser};
 use e3_fhe_params::{BfvPreset, ParameterType};
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
-use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::circuits::dkg::share_computation::circuit::{
+use e3_zk_helpers::circuits::Individual_key::pk::circuit::{PkCircuit, PkCircuitData};
+use e3_zk_helpers::circuits::Threshold_key::share_computation::circuit::{
     ShareComputationCircuit, ShareComputationCircuitData,
 };
 use e3_zk_helpers::codegen::{write_artifacts, write_toml, CircuitCodegen};
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_decryption::{
+use e3_zk_helpers::Individual_key::share_decryption::{
     ShareDecryptionCircuit as DkgShareDecryptionCircuit,
     ShareDecryptionCircuitData as DkgShareDecryptionCircuitData,
 };
-use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::Individual_key::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::registry::{Circuit, CircuitRegistry};
-use e3_zk_helpers::threshold::decrypted_shares_aggregation::{
+use e3_zk_helpers::Threshold_key::decrypted_shares_aggregation::{
     DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
 };
-use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
-use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
-use e3_zk_helpers::threshold::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
-use e3_zk_helpers::threshold::share_decryption::{
+use e3_zk_helpers::Threshold_key::pk_aggregation::PkAggregationCircuit;
+use e3_zk_helpers::Threshold_key::pk_aggregation::PkAggregationCircuitData;
+use e3_zk_helpers::Threshold_key::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
+use e3_zk_helpers::Threshold_key::share_decryption::{
     ShareDecryptionCircuit as ThresholdShareDecryptionCircuit,
     ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
 };
-use e3_zk_helpers::threshold::user_data_encryption::{
+use e3_zk_helpers::Threshold_key::user_data_encryption::{
     UserDataEncryptionCircuit, UserDataEncryptionCircuitData,
 };
 use std::io::Write;
@@ -107,7 +107,7 @@ fn print_generation_info(
     );
     println!(
         "  Committee:  {:?} (n={}, t={}, h={})",
-        committee_size, committee.n, committee.threshold, committee.h
+        committee_size, committee.n, committee.threshold, committee.a
     );
     if has_inputs {
         println!(

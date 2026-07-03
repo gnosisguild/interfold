@@ -550,14 +550,14 @@ impl ShareVerificationActor {
         &self,
         e3_id: E3id,
         kind: VerificationKind,
-        dishonest_parties: BTreeSet<u64>,
+        disauthorized_parties: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
     ) {
         if let Err(err) = self.bus.publish(
             ShareVerificationComplete {
                 e3_id,
                 kind,
-                dishonest_parties,
+                disauthorized_parties,
             },
             ec,
         ) {

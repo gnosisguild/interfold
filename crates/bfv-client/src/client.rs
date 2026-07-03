@@ -6,8 +6,8 @@
 
 use anyhow::{anyhow, Result};
 use e3_fhe_params::{build_bfv_params_arc, DEFAULT_BFV_PRESET};
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
+use e3_zk_helpers::circuits::Threshold_key::user_data_encryption::circuit::UserDataEncryptionCircuitData;
+use e3_zk_helpers::circuits::Threshold_key::user_data_encryption::Inputs as UserDataEncryptionInputs;
 use e3_zk_helpers::circuits::Computation;
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
@@ -148,7 +148,7 @@ pub fn compute_pk_commitment(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<[u8; 32]> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
+    use e3_zk_helpers::circuits::Threshold_key::user_data_encryption::utils::compute_public_key_commitment;
 
     let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
 
@@ -167,7 +167,7 @@ pub fn compute_ct_commitment(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<[u8; 32]> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
+    use e3_zk_helpers::circuits::Threshold_key::user_data_encryption::utils::compute_ciphertext_commitment;
 
     let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
 

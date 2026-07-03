@@ -7,10 +7,10 @@
 //! Pure decryption-key aggregation crypto.
 //!
 //! After C2/C3 verification, [`build_decryption_key_plan`] decrypts this party's
-//! row from every honest sender, splices in the locally cached own share, builds
+//! row from every authorized sender, splices in the locally cached own share, builds
 //! the [`CalculateDecryptionKeyRequest`] and the C4 (share-decryption) proof
-//! requests, and selects the canonical honest roster. No actix/persistence/bus
-//! access — the actor publishes the compute request, persists the honest set and
+//! requests, and selects the canonical authorized roster. No actix/persistence/bus
+//! access — the actor publishes the compute request, persists the authorized set and
 //! stashes the C4 requests from the returned plan.
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -25,7 +25,7 @@ use e3_trbfv::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::{canonical_honest_party_ids_with_own, CiphernodesCommitteeSize};
+use e3_zk_helpers::{canonical_authorized_party_ids_with_own, CiphernodesCommitteeSize};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -34,20 +34,20 @@ use crate::domain::{vec_of_rows_to_shamir_share, AggregatingDecryptionKey};
 
 /// Outcome of decryption-key aggregation planning.
 pub(crate) enum DecryptionKeyPlan {
-    /// Too few honest parties remain after dimension filtering — the caller
+    /// Too few authorized parties remain after dimension filtering — the caller
     /// should publish `E3Failed(InsufficientCommitteeMembers)`.
     Insufficient,
-    /// Proceed: dispatch `CalculateDecryptionKey`, persist `honest_party_ids` and
+    /// Proceed: dispatch `CalculateDecryptionKey`, persist `authorized_party_ids` and
     /// stash the C4 proof requests.
     Proceed {
         calc_request: CalculateDecryptionKeyRequest,
         sk_request: DkgShareDecryptionProofRequest,
         esm_requests: Vec<DkgShareDecryptionProofRequest>,
-        honest_party_ids: BTreeSet<u64>,
+        authorized_party_ids: BTreeSet<u64>,
     },
 }
 
-/// Decrypt honest shares, splice the own share, and assemble the decryption-key
+/// Decrypt authorized shares, splice the own share, and assemble the decryption-key
 /// compute request plus C4 proof requests.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_decryption_key_plan(
@@ -59,7 +59,7 @@ pub(crate) fn build_decryption_key_plan(
     trbfv_config: TrBFVConfig,
     current: &AggregatingDecryptionKey,
     shares: Vec<Arc<ThresholdShare>>,
-    dishonest_parties: Option<HashSet<u64>>,
+    disauthorized_parties: Option<HashSet<u64>>,
     e3_id: &E3id,
 ) -> Result<DecryptionKeyPlan> {
     let party_id = own_party_id as usize;
@@ -94,11 +94,11 @@ pub(crate) fn build_decryption_key_plan(
         .map(|rows| rows.len())
         .unwrap_or(0);
 
-    // Filter to honest external parties (collector already excludes self).
-    let honest_shares: Vec<_> = shares
+    // Filter to authorized external parties (collector already excludes self).
+    let authorized_shares: Vec<_> = shares
         .iter()
         .filter(|ts| {
-            dishonest_parties
+            disauthorized_parties
                 .as_ref()
                 .is_none_or(|dp| !dp.contains(&ts.party_id))
         })
@@ -106,12 +106,12 @@ pub(crate) fn build_decryption_key_plan(
 
     // Validate per-party dimensions and exclude mismatched parties.
     let mut dimension_excluded: Vec<u64> = Vec::new();
-    let mut honest_shares: Vec<_> = honest_shares
+    let mut authorized_shares: Vec<_> = authorized_shares
         .into_iter()
         .filter(|ts| {
             if ts.esi_sss.len() != expected_num_esi {
                 warn!(
-                    "Party {} has wrong esi_sss count ({} vs expected {}) — excluding from honest set",
+                    "Party {} has wrong esi_sss count ({} vs expected {}) — excluding from authorized set",
                     ts.party_id, ts.esi_sss.len(), expected_num_esi
                 );
                 dimension_excluded.push(ts.party_id);
@@ -121,7 +121,7 @@ pub(crate) fn build_decryption_key_plan(
             match ts.sk_sss.clone_share(idx) {
                 Some(share) if share.num_moduli() != expected_num_moduli_sk => {
                     warn!(
-                        "Party {} has wrong sk num_moduli ({} vs expected {}) — excluding from honest set",
+                        "Party {} has wrong sk num_moduli ({} vs expected {}) — excluding from authorized set",
                         ts.party_id, share.num_moduli(), expected_num_moduli_sk
                     );
                     dimension_excluded.push(ts.party_id);
@@ -129,7 +129,7 @@ pub(crate) fn build_decryption_key_plan(
                 }
                 None => {
                     warn!(
-                        "Party {} has no sk_sss share at index {} — excluding from honest set",
+                        "Party {} has no sk_sss share at index {} — excluding from authorized set",
                         ts.party_id, idx
                     );
                     dimension_excluded.push(ts.party_id);
@@ -142,7 +142,7 @@ pub(crate) fn build_decryption_key_plan(
                 match esi_shares.clone_share(idx) {
                     Some(share) if share.num_moduli() != expected_num_moduli_esi => {
                         warn!(
-                            "Party {} has wrong esi num_moduli at index {} ({} vs expected {}) — excluding from honest set",
+                            "Party {} has wrong esi num_moduli at index {} ({} vs expected {}) — excluding from authorized set",
                             ts.party_id, esi_idx, share.num_moduli(), expected_num_moduli_esi
                         );
                         dimension_excluded.push(ts.party_id);
@@ -150,7 +150,7 @@ pub(crate) fn build_decryption_key_plan(
                     }
                     None => {
                         warn!(
-                            "Party {} has no esi_sss share at index {} (esi {}) — excluding from honest set",
+                            "Party {} has no esi_sss share at index {} (esi {}) — excluding from authorized set",
                             ts.party_id, idx, esi_idx
                         );
                         dimension_excluded.push(ts.party_id);
@@ -171,58 +171,58 @@ pub(crate) fn build_decryption_key_plan(
         );
         // Re-check threshold after exclusion (+1 for own share).
         let threshold = threshold_m;
-        if (honest_shares.len() as u64 + 1) <= threshold {
+        if (authorized_shares.len() as u64 + 1) <= threshold {
             return Ok(DecryptionKeyPlan::Insufficient);
         }
     }
 
-    // Noir C4 is parameterized by `H` (honest-set size), not full committee `N`.
+    // Noir C4 is parameterized by `H` (authorized-set size), not full committee `N`.
     // Use the same lowest-`H` roster rule as the public-key aggregator (C5 / NodeFold).
     let committee =
         CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
-    let committee_h = committee.values().h;
-    let external_party_ids: Vec<u64> = honest_shares.iter().map(|s| s.party_id).collect();
-    if external_party_ids.len().saturating_add(1) > committee_h {
+    let committee_a = committee.values().a;
+    let external_party_ids: Vec<u64> = authorized_shares.iter().map(|s| s.party_id).collect();
+    if external_party_ids.len().saturating_add(1) > committee_a {
         warn!(
-            "Capping honest roster to committee H={committee_h} for E3 {} (had {} external honest shares)",
+            "Capping authorized roster to committee H={committee_a} for E3 {} (had {} external authorized shares)",
             e3_id,
             external_party_ids.len()
         );
     }
-    let honest_party_ids =
-        canonical_honest_party_ids_with_own(committee_h, external_party_ids, own_party_id);
-    honest_shares.retain(|s| honest_party_ids.contains(&s.party_id));
+    let authorized_party_ids =
+        canonical_authorized_party_ids_with_own(committee_a, external_party_ids, own_party_id);
+    authorized_shares.retain(|s| authorized_party_ids.contains(&s.party_id));
 
     debug_assert!(
-        honest_shares
+        authorized_shares
             .windows(2)
             .all(|w| w[0].party_id < w[1].party_id),
-        "honest_shares must be strictly ascending by party_id"
+        "authorized_shares must be strictly ascending by party_id"
     );
 
-    let canonical_sorted: Vec<u64> = honest_party_ids.iter().copied().collect();
-    let own_in_canonical = honest_party_ids.contains(&own_party_id);
+    let canonical_sorted: Vec<u64> = authorized_party_ids.iter().copied().collect();
+    let own_in_canonical = authorized_party_ids.contains(&own_party_id);
     let own_plaintext_idx = if let Some(idx) =
         canonical_sorted.iter().position(|&pid| pid == own_party_id)
     {
         idx
     } else {
         warn!(
-                "Party {own_party_id} is outside the canonical honest roster (H={committee_h}, roster={honest_party_ids:?}) for E3 {e3_id}; \
+                "Party {own_party_id} is outside the canonical authorized roster (H={committee_a}, roster={authorized_party_ids:?}) for E3 {e3_id}; \
                  NodeFold/C5 on the aggregator will not include this party"
             );
         canonical_sorted.len().saturating_sub(1)
     };
-    let num_honest = honest_party_ids.len();
+    let num_authorized = authorized_party_ids.len();
     let external_for_c4: &[&Arc<ThresholdShare>] = if own_in_canonical {
-        &honest_shares
+        &authorized_shares
     } else {
-        &honest_shares[..num_honest.saturating_sub(1).min(honest_shares.len())]
+        &authorized_shares[..num_authorized.saturating_sub(1).min(authorized_shares.len())]
     };
 
     info!(
-        "Decrypting shares from {} honest parties (canonical roster size H={}) for E3 {}",
-        num_honest, committee_h, e3_id
+        "Decrypting shares from {} authorized parties (canonical roster size H={}) for E3 {}",
+        num_authorized, committee_a, e3_id
     );
 
     // External ciphertexts for C4: own slot omitted from wire (rides as `own_share_raw`).
@@ -256,7 +256,7 @@ pub(crate) fn build_decryption_key_plan(
         }
     }
 
-    // Decrypt our share row from each external honest sender using BFV.
+    // Decrypt our share row from each external authorized sender using BFV.
     let mut sk_sss_collected: Vec<ShamirShare> = external_for_c4
         .iter()
         .map(|ts| {
@@ -332,8 +332,8 @@ pub(crate) fn build_decryption_key_plan(
 
     let sk_request = DkgShareDecryptionProofRequest {
         sk_bfv: current.sk_bfv.clone(),
-        honest_ciphertexts_raw: sk_ciphertexts_raw,
-        num_honest_parties: num_honest,
+        authorized_ciphertexts_raw: sk_ciphertexts_raw,
+        num_authorized_parties: num_authorized,
         num_moduli: num_moduli_sk,
         own_plaintext_idx,
         own_share_raw: current.own_sk_share_raw.clone(),
@@ -347,8 +347,8 @@ pub(crate) fn build_decryption_key_plan(
         .enumerate()
         .map(|(esi_idx, esi_cts)| DkgShareDecryptionProofRequest {
             sk_bfv: current.sk_bfv.clone(),
-            honest_ciphertexts_raw: esi_cts,
-            num_honest_parties: num_honest,
+            authorized_ciphertexts_raw: esi_cts,
+            num_authorized_parties: num_authorized,
             num_moduli: num_moduli_esi,
             own_plaintext_idx,
             own_share_raw: current.own_esi_shares_raw[esi_idx].clone(),
@@ -362,6 +362,6 @@ pub(crate) fn build_decryption_key_plan(
         calc_request,
         sk_request,
         esm_requests,
-        honest_party_ids,
+        authorized_party_ids,
     })
 }

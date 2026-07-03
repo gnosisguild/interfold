@@ -7,7 +7,7 @@
 //! Pure tally logic for collecting `DecryptionKeyShared` events (Exchange #3).
 //!
 //! No actix/timer/bus dependencies — plain synchronous state plus tracing.
-//! Unlike the other collectors the expected set is an arbitrary set of honest
+//! Unlike the other collectors the expected set is an arbitrary set of authorized
 //! party IDs (H minus self), not a contiguous `0..n` range.
 
 use std::collections::{HashMap, HashSet};

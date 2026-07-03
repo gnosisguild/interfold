@@ -30,8 +30,8 @@ use common::{
 use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
-use e3_zk_helpers::threshold::share_decryption::{
+use e3_zk_helpers::Individual_key::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::Threshold_key::share_decryption::{
     ShareDecryptionCircuit, ShareDecryptionCircuitData,
 };
 use e3_zk_helpers::CiphernodesCommitteeSize;
@@ -310,7 +310,7 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
 
     let sd = BfvPreset::InsecureThreshold512.search_defaults()?;
 
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "share_encryption").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3FoldKernel).await;
 
@@ -439,7 +439,7 @@ async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "share_decryption").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6Fold).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
 

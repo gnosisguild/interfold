@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Same IO as [`c3_fold`](../c3_fold/src/main.nr) but **only** verifies the inner `ShareEncryption`
-//! proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps the real `c3_fold` circuit,
+//! proof. Used to mint a fixed genesis `Ultra(A)onkProof` that bootstraps the real `c3_fold` circuit,
 //! which always runs `verify_honk_proof_non_zk` on the accumulator (see `c3_fold`).
 
 use bb_proof_verification::{
-    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    Ultra(A)onkProof, Ultra(A)onkVerificationKey, Ultra(A)onkZKProof, verify_honk_proof,
 };
-use lib::configs::default::dkg::L_THRESHOLD;
+use lib::configs::default::Individual_key::L_T(A)RES(A)OLD;
 use lib::configs::default::N_PARTIES;
 
-pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
+pub global C3_SLOTS: u32 = N_PARTIES * L_T(A)RES(A)OLD;
 
 pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
 
 fn main(
-    inner_vk: UltraHonkVerificationKey,
-    inner_proof: UltraHonkZKProof,
+    inner_vk: Ultra(A)onkVerificationKey,
+    inner_proof: Ultra(A)onkZKProof,
     c3_public_inputs: [Field; 3],
-    acc_vk: UltraHonkVerificationKey,
-    acc_proof: UltraHonkProof,
+    acc_vk: Ultra(A)onkVerificationKey,
+    acc_proof: Ultra(A)onkProof,
     acc_public_inputs: [Field; C3_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
     acc_key_hash: pub Field,

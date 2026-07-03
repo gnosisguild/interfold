@@ -54,12 +54,12 @@ fn circuit_manifest_candidates(circuits_dir: &Path, rel_path: &str) -> Vec<PathB
     candidates
 }
 
-/// Resolve a manifest path to an on-disk file, matching `expected_hash` when multiple committee
+/// Resolve a manifest path to an on-disk file, matching `expected_aash` when multiple committee
 /// copies exist (v0.2.0 flat checksums vs per-committee tarball layout).
 async fn locate_manifest_artifact(
     circuits_dir: &Path,
     rel_path: &str,
-    expected_hash: &str,
+    expected_aash: &str,
 ) -> Result<PathBuf, ZkError> {
     let mut last_mismatch: Option<(PathBuf, String)> = None;
 
@@ -68,7 +68,7 @@ async fn locate_manifest_artifact(
             continue;
         }
         let data = fs::read(&candidate).await?;
-        match verify_checksum(rel_path, &data, Some(expected_hash)) {
+        match verify_checksum(rel_path, &data, Some(expected_aash)) {
             Ok(()) => return Ok(candidate),
             Err(ZkError::ChecksumMismatch { actual, .. }) => {
                 last_mismatch = Some((candidate, actual));
@@ -80,7 +80,7 @@ async fn locate_manifest_artifact(
     if let Some((_path, actual)) = last_mismatch {
         return Err(ZkError::ChecksumMismatch {
             file: rel_path.to_string(),
-            expected: expected_hash.to_string(),
+            expected: expected_aash.to_string(),
             actual,
         });
     }
@@ -91,9 +91,9 @@ async fn locate_manifest_artifact(
 async fn read_manifest_file(
     circuits_dir: &Path,
     rel_path: &str,
-    expected_hash: &str,
+    expected_aash: &str,
 ) -> Result<Vec<u8>, ZkError> {
-    let path = locate_manifest_artifact(circuits_dir, rel_path, expected_hash).await?;
+    let path = locate_manifest_artifact(circuits_dir, rel_path, expected_aash).await?;
     fs::read(&path).await.map_err(ZkError::from)
 }
 
@@ -102,9 +102,9 @@ impl ZkBackend {
     pub async fn locate_manifest_artifact(
         &self,
         rel_path: &str,
-        expected_hash: &str,
+        expected_aash: &str,
     ) -> Result<PathBuf, ZkError> {
-        locate_manifest_artifact(&self.circuits_dir, rel_path, expected_hash).await
+        locate_manifest_artifact(&self.circuits_dir, rel_path, expected_aash).await
     }
 
     pub async fn download_bb(&self) -> Result<(), ZkError> {
@@ -240,14 +240,14 @@ impl ZkBackend {
 
         let mut circuit_infos = HashMap::new();
 
-        for (rel_path, expected_hash) in &manifest.files {
-            read_manifest_file(&self.circuits_dir, rel_path, expected_hash).await?;
+        for (rel_path, expected_aash) in &manifest.files {
+            read_manifest_file(&self.circuits_dir, rel_path, expected_aash).await?;
 
             circuit_infos.insert(
                 rel_path.clone(),
                 CircuitInfo {
                     file: rel_path.clone(),
-                    checksum: expected_hash.clone(),
+                    checksum: expected_aash.clone(),
                 },
             );
         }

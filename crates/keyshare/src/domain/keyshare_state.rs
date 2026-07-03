@@ -193,12 +193,12 @@ pub struct ThresholdKeyshareState {
     pub expelled_parties: HashSet<u64>,
     /// Honest party IDs in deterministic ascending order (`BTreeSet` guarantees this).
     /// Downstream proof circuits index parties by position in this sorted set.
-    pub honest_parties: Option<BTreeSet<u64>>,
+    pub authorized_parties: Option<BTreeSet<u64>>,
     pub dkg_started_at_unix_secs: Option<u64>,
     pub proof_aggregation_enabled: bool,
     /// Set once `KeyshareCreated` has actually been published from an authorized
-    /// path (after C4 honest-set verification, the no-C4-proofs path, or the
-    /// sole-honest fast path). `ReadyForDecryption` is entered *before* that
+    /// path (after C4 authorized-set verification, the no-C4-proofs path, or the
+    /// sole-authorized fast path). `ReadyForDecryption` is entered *before* that
     /// authorization, so resume-after-crash must only re-publish when this is set;
     /// otherwise it could emit a keyshare that never passed C4 filtering.
     pub keyshare_published: bool,
@@ -226,7 +226,7 @@ impl ThresholdKeyshareState {
             params,
             aggregated_pk: None,
             expelled_parties: HashSet::new(),
-            honest_parties: None,
+            authorized_parties: None,
             dkg_started_at_unix_secs: Some(now_unix_secs()),
             proof_aggregation_enabled,
             keyshare_published: false,
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(s.variant_name(), "Init");
         assert!(s.aggregated_pk.is_none());
         assert!(s.expelled_parties.is_empty());
-        assert!(s.honest_parties.is_none());
+        assert!(s.authorized_parties.is_none());
         assert!(s.dkg_started_at_unix_secs.is_some());
         assert!(s.proof_aggregation_enabled);
         assert_eq!(s.get_threshold_m(), 1);

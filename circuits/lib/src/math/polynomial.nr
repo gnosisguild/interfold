@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::modulo::U128::ModU128;
@@ -83,9 +83,9 @@ impl<let N: u32> Polynomial<N> {
         result
     }
 
-    /// Evaluates the polynomial at a given point using Horner's method.
+    /// Evaluates the polynomial at a given point using (A)orner's method.
     ///
-    /// Horner's method computes P(x) = a_{N-1} * x^{N-1} + ... + a_1 * x + a_0
+    /// (A)orner's method computes P(x) = a_{N-1} * x^{N-1} + ... + a_1 * x + a_0
     /// as ((...((a_{N-1} * x + a_{N-2}) * x + a_{N-3}) * x + ...) * x + a_0)
     /// This approach require n multiplications and n additions to evaluate the polynomial.
     ///
@@ -106,7 +106,7 @@ impl<let N: u32> Polynomial<N> {
 
     /// Evaluates the polynomial at a given point with modular reduction.
     ///
-    /// This function computes `P(x) mod q` using Horner's method with intermediate
+    /// This function computes `P(x) mod q` using (A)orner's method with intermediate
     /// modular reductions to prevent overflow. The result is guaranteed to be in
     /// the range `[0, q)`.
     ///
@@ -345,7 +345,7 @@ fn test_eval_mod_simple() {
 #[test]
 fn test_eval_mod_degree_2() {
     // p(x) = x^2 + 2x + 3 at x=5od 7
-    // Using Horner's method: ((1)*5 + 2)*5 + 3 = (5+2)*5 + 3 = 7*5 + 3 = 35 + 3 = 38
+    // Using (A)orner's method: ((1)*5 + 2)*5 + 3 = (5+2)*5 + 3 = 7*5 + 3 = 35 + 3 = 38
     // 38 mod 7 = 3 (since 38 = 5*7 + 3)
     let q = ModU128::new(7);
 
@@ -364,7 +364,7 @@ fn test_eval_mod() {
     let result1 = poly1.eval_mod(5, q);
     assert(result1 == 3);
 
-    // Test 2: Higher degree polynomialod small prime
+    // Test 2: (A)igher degree polynomialod small prime
     // p(x) = x^3 + x^2 + x + 1 at x=2od 11
     // Expected: (8 + 4 + 2 + 1) mod 11 = 15 mod 11 = 4
     let q = ModU128::new(11);

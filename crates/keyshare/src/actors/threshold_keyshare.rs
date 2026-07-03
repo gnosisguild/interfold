@@ -287,7 +287,7 @@ impl ThresholdKeyshare {
     }
 
     /// Create or return the DecryptionKeySharedCollector.
-    /// Uses honest_parties from persisted state.
+    /// Uses authorized_parties from persisted state.
     pub fn ensure_decryption_key_shared_collector(
         &mut self,
         self_addr: Addr<Self>,
@@ -295,12 +295,12 @@ impl ThresholdKeyshare {
         let state = self.state.try_get()?;
         let my_party_id = state.party_id;
 
-        let honest = state
-            .honest_parties
+        let authorized = state
+            .authorized_parties
             .as_ref()
-            .ok_or_else(|| anyhow!("honest_parties not set when creating collector"))?;
+            .ok_or_else(|| anyhow!("authorized_parties not set when creating collector"))?;
 
-        let expected: HashSet<u64> = honest
+        let expected: HashSet<u64> = authorized
             .iter()
             .filter(|&&pid| pid != my_party_id)
             .copied()
@@ -343,11 +343,11 @@ impl ThresholdKeyshare {
 
         // Record permanently so late-arriving data is rejected even if
         // collectors haven't been created or have already completed.
-        // Also clean honest_parties set for the expelled party.
+        // Also clean authorized_parties set for the expelled party.
         let _ = self.state.try_mutate(&ec, |mut s| {
             s.expelled_parties.insert(party_id);
-            if let Some(ref mut honest) = s.honest_parties {
-                honest.remove(&party_id);
+            if let Some(ref mut authorized) = s.authorized_parties {
+                authorized.remove(&party_id);
             }
             Ok(s)
         });
@@ -1045,13 +1045,13 @@ impl ThresholdKeyshare {
             // All non-self parties are dishonest (missing or incomplete proofs), none to verify
             let threshold = state.threshold_m;
             let total = state.threshold_n;
-            let dishonest_count = (pre_dishonest.len() as u64).min(total);
-            let honest_count = total - dishonest_count;
+            let disauthorized_count = (pre_dishonest.len() as u64).min(total);
+            let authorized_count = total - disauthorized_count;
 
-            if honest_count <= threshold {
+            if authorized_count <= threshold {
                 warn!(
-                    "Too few honest parties for E3 {} ({} honest, need at least {}) after C2/C3 pre-dishonest filtering — cannot proceed",
-                    e3_id, honest_count, threshold + 1
+                    "Too few authorized parties for E3 {} ({} authorized, need at least {}) after C2/C3 pre-dishonest filtering — cannot proceed",
+                    e3_id, authorized_count, threshold + 1
                 );
                 self.pending_shares.clear();
                 self.bus.publish(
@@ -1108,7 +1108,7 @@ impl ThresholdKeyshare {
         match msg.kind {
             VerificationKind::ShareProofs => {
                 // C2/C3 verification complete
-                if msg.dishonest_parties.is_empty() {
+                if msg.disauthorized_parties.is_empty() {
                     info!(
                         "All parties passed C2/C3 verification for E3 {} — proceeding",
                         e3_id
@@ -1117,13 +1117,13 @@ impl ThresholdKeyshare {
                 } else {
                     let threshold = state.threshold_m;
                     let total = state.threshold_n;
-                    let dishonest_count = (msg.dishonest_parties.len() as u64).min(total);
-                    let honest_count = total - dishonest_count;
+                    let disauthorized_count = (msg.disauthorized_parties.len() as u64).min(total);
+                    let authorized_count = total - disauthorized_count;
 
-                    if honest_count <= threshold {
+                    if authorized_count <= threshold {
                         warn!(
-                            "Too few honest parties for E3 {} ({} honest, need at least {}) — cannot proceed",
-                            e3_id, honest_count, threshold + 1
+                            "Too few authorized parties for E3 {} ({} authorized, need at least {}) — cannot proceed",
+                            e3_id, authorized_count, threshold + 1
                         );
                         // Clear pending shares
                         self.pending_shares.clear();
@@ -1138,10 +1138,10 @@ impl ThresholdKeyshare {
                         return Ok(());
                     }
 
-                    let dishonest_set: HashSet<u64> = msg.dishonest_parties.into_iter().collect();
+                    let dishonest_set: HashSet<u64> = msg.disauthorized_parties.into_iter().collect();
                     info!(
-                        "Proceeding with {} honest parties for E3 {} ({} dishonest excluded)",
-                        honest_count,
+                        "Proceeding with {} authorized parties for E3 {} ({} dishonest excluded)",
+                        authorized_count,
                         e3_id,
                         dishonest_set.len()
                     );
@@ -1149,27 +1149,27 @@ impl ThresholdKeyshare {
                 }
             }
             VerificationKind::DecryptionProofs => {
-                // C4 verification complete — update honest set and publish KeyshareCreated
-                if !msg.dishonest_parties.is_empty() {
+                // C4 verification complete — update authorized set and publish KeyshareCreated
+                if !msg.disauthorized_parties.is_empty() {
                     self.state.try_mutate(&ec, |mut s| {
-                        if let Some(ref mut honest) = s.honest_parties {
-                            honest.retain(|pid| !msg.dishonest_parties.contains(pid));
+                        if let Some(ref mut authorized) = s.authorized_parties {
+                            authorized.retain(|pid| !msg.disauthorized_parties.contains(pid));
                         }
                         Ok(s)
                     })?;
 
                     let state = self.state.try_get()?;
                     let threshold = state.threshold_m;
-                    let honest_count = state
-                        .honest_parties
+                    let authorized_count = state
+                        .authorized_parties
                         .as_ref()
                         .map(|h| h.len() as u64)
                         .unwrap_or(0);
 
-                    if honest_count <= threshold {
+                    if authorized_count <= threshold {
                         warn!(
-                            "Too few honest parties after C4 for E3 {} ({} honest, need at least {})",
-                            e3_id, honest_count, threshold + 1
+                            "Too few authorized parties after C4 for E3 {} ({} authorized, need at least {})",
+                            e3_id, authorized_count, threshold + 1
                         );
                         self.bus.publish(
                             E3Failed {
@@ -1183,10 +1183,10 @@ impl ThresholdKeyshare {
                     }
 
                     info!(
-                        "Updated honest set after C4 for E3 {}: {} honest ({} removed)",
+                        "Updated authorized set after C4 for E3 {}: {} authorized ({} removed)",
                         e3_id,
-                        honest_count,
-                        msg.dishonest_parties.len()
+                        authorized_count,
+                        msg.disauthorized_parties.len()
                     );
                 } else {
                     info!(
@@ -1201,11 +1201,11 @@ impl ThresholdKeyshare {
         }
     }
 
-    /// After verification, decrypt shares from honest parties and compute decryption key.
+    /// After verification, decrypt shares from authorized parties and compute decryption key.
     /// C4 proof generation is deferred to ProofRequestActor via DecryptionShareProofsPending.
     fn proceed_with_decryption_key_calculation(
         &mut self,
-        dishonest_parties: Option<HashSet<u64>>,
+        disauthorized_parties: Option<HashSet<u64>>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
@@ -1225,7 +1225,7 @@ impl ThresholdKeyshare {
             trbfv_config,
             &current,
             shares,
-            dishonest_parties,
+            disauthorized_parties,
             e3_id,
         )?;
 
@@ -1245,7 +1245,7 @@ impl ThresholdKeyshare {
                 calc_request,
                 sk_request,
                 esm_requests,
-                honest_party_ids,
+                authorized_party_ids,
             } => {
                 // Publish CalculateDecryptionKey request before persisting (ordering preserved).
                 let event = ComputeRequest::trbfv(
@@ -1255,9 +1255,9 @@ impl ThresholdKeyshare {
                 );
                 self.bus.publish(event, ec.clone())?;
 
-                // Store honest parties and C4 data on the actor (transient coordination)
+                // Store authorized parties and C4 data on the actor (transient coordination)
                 self.state.try_mutate(&ec, |mut s| {
-                    s.honest_parties = Some(honest_party_ids.clone());
+                    s.authorized_parties = Some(authorized_party_ids.clone());
                     Ok(s)
                 })?;
                 self.pending_share_decryption_data = Some((sk_request, esm_requests));
@@ -1342,8 +1342,8 @@ impl ThresholdKeyshare {
         // Create collector and replay any early-arriving DecryptionKeyShared events
         let state = self.state.try_get()?;
         let my_party_id = state.party_id;
-        let honest = state.honest_parties.as_ref().cloned().unwrap_or_default();
-        let expected: HashSet<u64> = honest
+        let authorized = state.authorized_parties.as_ref().cloned().unwrap_or_default();
+        let expected: HashSet<u64> = authorized
             .iter()
             .filter(|&&pid| pid != my_party_id)
             .copied()
@@ -1429,11 +1429,11 @@ impl ThresholdKeyshare {
             })
             .collect();
 
-        // Evict pre-dishonest parties (wrong ESM count) from honest set
+        // Evict pre-dishonest parties (wrong ESM count) from authorized set
         if !c4_count_dishonest.is_empty() {
             self.state.try_mutate(&ec, |mut s| {
-                if let Some(ref mut honest) = s.honest_parties {
-                    honest.retain(|pid| !c4_count_dishonest.contains(pid));
+                if let Some(ref mut authorized) = s.authorized_parties {
+                    authorized.retain(|pid| !c4_count_dishonest.contains(pid));
                 }
                 Ok(s)
             })?;
@@ -1443,16 +1443,16 @@ impl ThresholdKeyshare {
             // Check threshold viability after removing pre-dishonest parties
             let state = self.state.try_get()?;
             let threshold = state.threshold_m;
-            let honest_count = state
-                .honest_parties
+            let authorized_count = state
+                .authorized_parties
                 .as_ref()
                 .map(|h| h.len() as u64)
                 .unwrap_or(0);
 
-            if honest_count <= threshold {
+            if authorized_count <= threshold {
                 warn!(
-                    "Too few honest parties after C4 pre-filtering for E3 {} ({} honest, need at least {})",
-                    e3_id, honest_count, threshold + 1
+                    "Too few authorized parties after C4 pre-filtering for E3 {} ({} authorized, need at least {})",
+                    e3_id, authorized_count, threshold + 1
                 );
                 self.bus.publish(
                     E3Failed {
@@ -1540,7 +1540,7 @@ impl ThresholdKeyshare {
 
         // Record that publishing was authorized and has occurred, so resume-after-crash
         // may safely re-publish (idempotent at the aggregator) without ever emitting a
-        // keyshare for a state that had not yet passed C4 honest-set filtering.
+        // keyshare for a state that had not yet passed C4 authorized-set filtering.
         self.state.try_mutate(&ec, |mut s| {
             s.keyshare_published = true;
             Ok(s)
@@ -1678,7 +1678,7 @@ impl ThresholdKeyshare {
         match &state.state {
             // We have produced our public-key share but may have crashed before (or while)
             // publishing KeyshareCreated. Re-publishing is idempotent at the aggregator, but
-            // ReadyForDecryption is entered *before* C4 honest-set verification authorizes the
+            // ReadyForDecryption is entered *before* C4 authorized-set verification authorizes the
             // publish, so only re-drive when a prior authorized publish was recorded. An
             // un-published ReadyForDecryption is a loose end surfaced by `interfold node validate`.
             KeyshareState::ReadyForDecryption(_) if state.keyshare_published => {
@@ -1886,7 +1886,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                                     Ok(())
                                 } else {
                                     warn!(
-                                        "DecryptionKeyShared from party {} dropped — no collector (sole honest party)",
+                                        "DecryptionKeyShared from party {} dropped — no collector (sole authorized party)",
                                         data.party_id
                                     );
                                     Ok(())
@@ -1907,18 +1907,18 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     }
                 } else {
                     // Own DecryptionKeyShared published by ProofRequestActor.
-                    // A3 fast-path: if no other honest parties, publish KeyshareCreated directly.
+                    // A3 fast-path: if no other authorized parties, publish KeyshareCreated directly.
                     if let Some(state) = self.state.get() {
                         if data.party_id == state.party_id {
                             if let KeyshareState::ReadyForDecryption(_) = state.state {
                                 let others = state
-                                    .honest_parties
+                                    .authorized_parties
                                     .as_ref()
                                     .map(|h| h.iter().filter(|&&pid| pid != state.party_id).count())
                                     .unwrap_or(0);
                                 if others == 0 {
                                     info!(
-                                        "No other honest parties for E3 {} — publishing KeyshareCreated directly",
+                                        "No other authorized parties for E3 {} — publishing KeyshareCreated directly",
                                         data.e3_id
                                     );
                                     if let Err(err) = self.publish_keyshare_created(ec) {

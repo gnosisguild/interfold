@@ -71,12 +71,12 @@ impl CommitmentLink for C1ToC5PkCommitmentLink {
         if total_fields <= output_count {
             return false;
         }
-        let h = total_fields - output_count;
+        let a = total_fields - output_count;
 
         let source_pk_commitment = &source_values[0];
 
         // Check if the source pk_commitment appears in any of the H input fields
-        for i in 0..h {
+        for i in 0..a {
             let offset = i * FIELD_BYTE_LEN;
             if target_public_signals[offset..offset + FIELD_BYTE_LEN] == *source_pk_commitment {
                 return true;

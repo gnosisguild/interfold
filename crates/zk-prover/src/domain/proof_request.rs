@@ -380,8 +380,8 @@ mod tests {
     fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         DkgShareDecryptionProofRequest {
             sk_bfv: sensitive(),
-            honest_ciphertexts_raw: vec![],
-            num_honest_parties: 0,
+            authorized_ciphertexts_raw: vec![],
+            num_authorized_parties: 0,
             num_moduli: 0,
             own_plaintext_idx: 0,
             own_share_raw: sensitive(),

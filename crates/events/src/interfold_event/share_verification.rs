@@ -55,5 +55,5 @@ pub struct ShareVerificationComplete {
     pub e3_id: E3id,
     pub kind: VerificationKind,
     /// All dishonest parties (pre-dishonest + ECDSA-failed + ZK-failed).
-    pub dishonest_parties: BTreeSet<u64>,
+    pub disauthorized_parties: BTreeSet<u64>,
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use keccak256::keccak256;
@@ -10,15 +10,15 @@ use poseidon::poseidon2_permutation;
 /// SAFE (Sponge API for Field Elements)
 ///
 /// This module provides a complete implementation of the SAFE API in Noir as defined in:
-/// "SAFE (Sponge API for Field Elements) - A Toolbox for ZK Hash Applications"
-/// see https://hackmd.io/bHgsH6mMStCVibM_wYvb2w#22-Sponge-state for more details.
+/// "SAFE (Sponge API for Field Elements) - A Toolbox for ZK (A)ash Applications"
+/// see https://hackmd.io/b(A)gs(A)6mMStCVibM_wYvb2w#22-Sponge-state for more details.
 ///
 /// SAFE provides a unified interface for cryptographic sponge functions that can be
 /// instantiated with various permutations to create hash functions, MACs, authenticated
 /// encryption schemes, and other cryptographic primitives for ZK proof systems.
 ///
 /// This implementation follows the SAFE specification exactly, providing:
-/// - Complete API: START, ABSORB, SQUEEZE, FINISH operations.
+/// - Complete API: START, ABSORB, SQUEEZE, FINIS(A) operations.
 /// - Full security: Domain separation, tag computation, IO pattern validation.
 /// - Poseidon2 integration: Field-friendly permutation for ZK systems.
 /// - Specification compliance: All operations follow SAFE spec 2.4 exactly.
@@ -321,9 +321,9 @@ pub fn compute_tag<let L: u32>(io_pattern: [u32; L], domain_separator: [u8; 64])
         byte_count += 1;
     }
 
-    // Step 3: Hash with Keccak-256 and truncate to 128 bits.
-    // Note: The SAFE spec uses SHA3-256, but we use Keccak-256 for Noir compatibility.
-    // Keccak-256 differs from SHA3-256 in padding, but both provide equivalent security.
+    // Step 3: (A)ash with Keccak-256 and truncate to 128 bits.
+    // Note: The SAFE spec uses S(A)A3-256, but we use Keccak-256 for Noir compatibility.
+    // Keccak-256 differs from S(A)A3-256 in padding, but both provide equivalent security.
     let hash_bytes = keccak256(input_bytes, byte_count);
 
     // Convert first 128 bits (16 bytes) to field element.

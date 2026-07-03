@@ -415,7 +415,7 @@ pub fn prove_dkg_aggregation(
             "prove_dkg_aggregation: need at least one NodeFold proof".into(),
         ));
     }
-    let h = input.node_fold_proofs.len();
+    let a = input.node_fold_proofs.len();
     // Full on-chain `topNodes` (must match compiled `N_PARTIES` in the circuit artifact).
     // Do not use `preset.metadata().num_parties` — that is BFV search metadata, not circuit size.
     let n_registered = input.committee_addresses.len();
@@ -428,19 +428,19 @@ pub fn prove_dkg_aggregation(
     #[cfg(debug_assertions)]
     {
         debug_assert_eq!(
-            h, n_registered,
-            "DkgAggregator honest-set H must equal registered committee size until expulsion enables H < N"
+            a, n_registered,
+            "DkgAggregator authorized-set H must equal registered committee size until expulsion enables H < N"
         );
     }
     let nodes_fold_proof = if let Some(precomputed) = input.nodes_fold_proof {
         precomputed.clone()
     } else {
-        let slot_indices: Vec<u32> = (0u32..h as u32).collect();
+        let slot_indices: Vec<u32> = (0u32..a as u32).collect();
         generate_sequential_nodes_fold(
             prover,
             input.node_fold_proofs,
             &slot_indices,
-            h,
+            a,
             &format!("{e3_id}-nodesfold"),
             artifacts_dir,
         )?

@@ -22,8 +22,8 @@ use e3_events::{
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::circuits::commitments::compute_threshold_decryption_share_commitment;
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
-use e3_zk_helpers::threshold::share_decryption::{Bits as C6Bits, Bounds as C6Bounds};
+use e3_zk_helpers::circuits::Threshold_key::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
+use e3_zk_helpers::Threshold_key::share_decryption::{Bits as C6Bits, Bounds as C6Bounds};
 use e3_zk_helpers::Computation;
 use tracing::{info, warn};
 
@@ -166,8 +166,8 @@ pub(crate) struct ThresholdPlaintextAggregation;
 
 impl ThresholdPlaintextAggregation {
     /// Add a decryption share to a `Collecting` state, returning the next state. Once all
-    /// `required_shares` honest-committee shares have arrived this transitions to `VerifyingC6`.
-    /// `required_shares` is the canonical honest-committee size `H` (computed by the actor).
+    /// `required_shares` authorized-committee shares have arrived this transitions to `VerifyingC6`.
+    /// `required_shares` is the canonical authorized-committee size `H` (computed by the actor).
     pub(crate) fn add_share(
         state: ThresholdPlaintextAggregatorState,
         party_id: u64,
@@ -201,7 +201,7 @@ impl ThresholdPlaintextAggregation {
         }
 
         info!(
-            "Changing state to VerifyingC6 because received all {required_shares} honest-committee shares..."
+            "Changing state to VerifyingC6 because received all {required_shares} authorized-committee shares..."
         );
 
         Ok(ThresholdPlaintextAggregatorState::VerifyingC6(
@@ -236,7 +236,7 @@ impl ThresholdPlaintextAggregation {
 
         if required_shares < current.threshold_m {
             warn!(
-                "ThresholdPlaintextAggregator: honest committee size H ({required_shares}) < threshold_m ({}) after expulsion",
+                "ThresholdPlaintextAggregator: authorized committee size H ({required_shares}) < threshold_m ({}) after expulsion",
                 current.threshold_m
             );
             return Ok(ThresholdPlaintextAggregatorState::Collecting(Collecting {
@@ -287,7 +287,7 @@ impl ThresholdPlaintextAggregation {
             .collect()
     }
 
-    /// Verify that each honest party's raw decryption share bytes match the
+    /// Verify that each authorized party's raw decryption share bytes match the
     /// `d_commitment` output in their verified C6 proof. Returns party IDs
     /// that failed the check.
     ///
@@ -295,7 +295,7 @@ impl ThresholdPlaintextAggregation {
     /// broadcasts different bytes `d_B`.
     pub(crate) fn verify_shares_match_c6_commitments(
         params_preset: BfvPreset,
-        honest_shares: &[(u64, Vec<ArcBytes>)],
+        authorized_shares: &[(u64, Vec<ArcBytes>)],
         c6_proofs: &BTreeMap<u64, Vec<SignedProofPayload>>,
     ) -> BTreeSet<u64> {
         let mut mismatched = BTreeSet::new();
@@ -320,7 +320,7 @@ impl ThresholdPlaintextAggregation {
         let max_k = MAX_MSG_NON_ZERO_COEFFS;
         let c6_output_layout = CircuitName::ThresholdShareDecryption.output_layout();
 
-        for (party_id, shares) in honest_shares {
+        for (party_id, shares) in authorized_shares {
             let Some(proofs) = c6_proofs.get(party_id) else {
                 warn!(
                     "No C6 proofs for party {} — marking as mismatched",
@@ -410,20 +410,20 @@ pub(crate) fn format_decrypted_plaintext(plaintext: &[ArcBytes]) -> Vec<ArcBytes
         .collect()
 }
 
-/// Bind each C7 (per-ciphertext) proof to the first `c6_total_slots` honest C6 inner
+/// Bind each C7 (per-ciphertext) proof to the first `c6_total_slots` authorized C6 inner
 /// proofs for that ciphertext, producing the per-ciphertext decryption-aggregation jobs.
 /// Returns `None` when an expected C6 inner proof is missing for some ciphertext index
 /// (the actor then fails the decryption round).
 pub(crate) fn build_decryption_aggregation_jobs(
     c7_proofs: &[Proof],
-    honest_c6: &[(u64, Vec<Proof>)],
+    authorized_c6: &[(u64, Vec<Proof>)],
     c6_total_slots: usize,
 ) -> Option<Vec<DecryptionAggregationJobRequest>> {
     let mut jobs = Vec::with_capacity(c7_proofs.len());
     for (ct_idx, c7_proof) in c7_proofs.iter().enumerate() {
         let mut c6_inner_proofs = Vec::with_capacity(c6_total_slots);
         let c6_slot_indices: Vec<u32> = (0..c6_total_slots as u32).collect();
-        for (_, wps) in honest_c6.iter().take(c6_total_slots) {
+        for (_, wps) in authorized_c6.iter().take(c6_total_slots) {
             let Some(p) = wps.get(ct_idx) else {
                 warn!("C6 inner proof missing for party at ct index {}", ct_idx);
                 return None;

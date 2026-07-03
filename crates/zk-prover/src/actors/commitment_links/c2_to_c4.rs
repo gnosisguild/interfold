@@ -282,7 +282,7 @@ mod tests {
         assert!(!values.contains(&make_field(0xFF)));
     }
 
-    /// 3 parties (N=3), 2 moduli (L=2), 2 honest parties (H=2).
+    /// 3 parties (N=3), 2 moduli (L=2), 2 authorized parties (H=2).
     /// C2 from party X=1, C4 for recipient R=1.
     /// C2_X: [p0m0,p0m1, p1m0,p1m1, p2m0,p2m1]
     /// C4_R=1: rows for party 0 and party 1 = [[p0m0,p0m1],[p1m0,p1m1]] + agg
@@ -303,7 +303,7 @@ mod tests {
         ]);
         let source_values = link.extract_source_values(&c2);
 
-        // C4 for recipient R=1: 2 honest parties (rows for X=0 and X=1)
+        // C4 for recipient R=1: 2 authorized parties (rows for X=0 and X=1)
         let c4 = c4_signals(
             &[
                 vec![make_field(10), make_field(11)], // row X=0

@@ -18,7 +18,7 @@
 //! absent and, once a wall-clock budget elapses, decides to mark the current
 //! aggregator as locally unresponsive and promote the next standby. Because the
 //! committee order and the skip set are derived from signals every node shares,
-//! all honest nodes converge on the same replacement without a leader-election
+//! all authorized nodes converge on the same replacement without a leader-election
 //! round. A brief overlap (old + new aggregator both publishing) is bounded by
 //! the timeout and made harmless by the on-chain publish being single-shot.
 //!

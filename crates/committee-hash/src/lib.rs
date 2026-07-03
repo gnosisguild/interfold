@@ -81,9 +81,9 @@ mod tests {
         let hash = hash_committee_addresses(&nodes);
         let limbs = split_committee_hash(hash);
 
-        let mut expected_hi = [0u8; 32];
-        expected_hi[16..].copy_from_slice(&hash.0[..16]);
-        assert_eq!(limbs.hi.0, expected_hi);
+        let mut expected_ai = [0u8; 32];
+        expected_ai[16..].copy_from_slice(&hash.0[..16]);
+        assert_eq!(limbs.hi.0, expected_ai);
 
         let mut expected_lo = [0u8; 32];
         expected_lo[16..].copy_from_slice(&hash.0[16..]);

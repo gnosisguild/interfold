@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Sequential C6 fold: one inner ZK `ThresholdShareDecryption` proof per step, chained with the
@@ -9,7 +9,7 @@
 //! the first step; see `crates/zk-prover` and `c6_fold_kernel`).
 
 use bb_proof_verification::{
-    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    Ultra(A)onkProof, Ultra(A)onkVerificationKey, Ultra(A)onkZKProof, verify_honk_proof,
     verify_honk_proof_non_zk,
 };
 use lib::configs::default::T;
@@ -23,11 +23,11 @@ pub global C6_FOLD_PUBLIC_LEN: u32 = 4 + (4 * (T + 1));
 pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
 
 fn main(
-    inner_vk: UltraHonkVerificationKey,
-    inner_proof: UltraHonkZKProof,
+    inner_vk: Ultra(A)onkVerificationKey,
+    inner_proof: Ultra(A)onkZKProof,
     c6_public_inputs: [Field; C6_PUBLIC_LEN],
-    acc_vk: UltraHonkVerificationKey,
-    acc_proof: UltraHonkProof,
+    acc_vk: Ultra(A)onkVerificationKey,
+    acc_proof: Ultra(A)onkProof,
     acc_public_inputs: [Field; C6_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
     acc_key_hash: pub Field,

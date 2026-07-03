@@ -38,7 +38,7 @@ pub use circuits::aggregation::nodes_fold_accumulator::{
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;
-pub use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuit;
+pub use e3_zk_helpers::circuits::Individual_key::pk::circuit::PkCircuit;
 pub use error::ZkError;
 pub use node_fold_public::extract_node_fold_agg_commits;
 pub use prover::ZkProver;

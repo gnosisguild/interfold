@@ -411,8 +411,8 @@ async fn setup_test_zk_backend(
             return Ok((backend, temp));
         } else {
             let circuits_build_root = repo_root.join("circuits").join("bin");
-            let dkg_target = circuits_build_root.join("dkg").join("target");
-            let threshold_target = circuits_build_root.join("threshold").join("target");
+            let dkg_target = circuits_build_root.join("Individual_key").join("target");
+            let threshold_target = circuits_build_root.join("Threshold_key").join("target");
             let c3_fold_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("c3_fold")
@@ -945,9 +945,9 @@ fn count_projected_events(projected: &[&str], event_type: &str) -> usize {
 }
 
 /// Scan a node history for slashing, accusation, and protocol-fault signals that must not
-/// appear on an all-honest benchmark run. Catches regressions such as spurious C2→C4
+/// appear on an all-authorized benchmark run. Catches regressions such as spurious C2→C4
 /// commitment mismatches when N > H that completion-only assertions would miss.
-fn collect_honest_run_faults(
+fn collect_authorized_run_faults(
     history: &[InterfoldEvent],
     e3_id: &E3id,
     context: &str,
@@ -989,11 +989,11 @@ fn collect_honest_run_faults(
                 ));
             }
             InterfoldEventData::ShareVerificationComplete(data)
-                if data.e3_id == *e3_id && !data.dishonest_parties.is_empty() =>
+                if data.e3_id == *e3_id && !data.disauthorized_parties.is_empty() =>
             {
                 faults.push(format!(
-                    "{context}: ShareVerificationComplete kind={:?} dishonest_parties={:?}",
-                    data.kind, data.dishonest_parties
+                    "{context}: ShareVerificationComplete kind={:?} disauthorized_parties={:?}",
+                    data.kind, data.disauthorized_parties
                 ));
             }
             InterfoldEventData::AccusationVote(data) if data.e3_id == *e3_id => {
@@ -1027,11 +1027,11 @@ fn collect_honest_run_faults(
     faults
 }
 
-fn assert_honest_run_safeguards(history: &[InterfoldEvent], e3_id: &E3id, context: &str) {
-    let faults = collect_honest_run_faults(history, e3_id, context);
+fn assert_authorized_run_safeguards(history: &[InterfoldEvent], e3_id: &E3id, context: &str) {
+    let faults = collect_authorized_run_faults(history, e3_id, context);
     assert!(
         faults.is_empty(),
-        "honest-run safeguard failures ({}):\n{}",
+        "authorized-run safeguard failures ({}):\n{}",
         context,
         faults.join("\n")
     );
@@ -1366,7 +1366,7 @@ async fn test_trbfv_actor() -> Result<()> {
     let benchmark_committee = committee_size.values();
     let threshold_m = benchmark_committee.threshold;
     let threshold_n = benchmark_committee.n;
-    let committee_h = benchmark_committee.h;
+    let committee_a = benchmark_committee.a;
     let participant_count = benchmark_participant_node_count(threshold_m, threshold_n);
     let nodes_spawned = participant_count + 1; // +1 non-registered observer collector
                                                // Statistical security parameter λ used for smudging bound / error_size.
@@ -1521,7 +1521,7 @@ async fn test_trbfv_actor() -> Result<()> {
     ///////////////////////////////////////////////////////////////////////////////////
     // 2. Trigger E3Requested
     //
-    //   - threshold_m / threshold_n / committee_h from active committee stamp
+    //   - threshold_m / threshold_n / committee_a from active committee stamp
     //   - lambda -> calculate_error_size uses the selected BFV preset metadata
     //   - error_size -> calculate using calculate_error_size
     //   - esi_per_ciphertext = 1
@@ -1598,7 +1598,7 @@ async fn test_trbfv_actor() -> Result<()> {
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
     let shares_to_pubkey_agg_timer = Instant::now();
-    // KeyshareCreated is gossiped by each committee member (N). The aggregator folds H honest
+    // KeyshareCreated is gossiped by each committee member (N). The aggregator folds H authorized
     // keyshares into PublicKeyAggregated; DKGRecursiveAggregationComplete is one per member (N).
     let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; threshold_n];
     let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; threshold_n];
@@ -1608,7 +1608,7 @@ async fn test_trbfv_actor() -> Result<()> {
         "CommitmentConsistencyCheckComplete",
     ];
     // C1 verification dispatches ALL N submitted keyshare proofs (the protocol needs to know
-    // who's dishonest before it can pick the H honest set), so N ProofVerificationPassed events
+    // who's dishonest before it can pick the H authorized set), so N ProofVerificationPassed events
     // fire. The aggregator subsequently truncates to H for C5 input only.
     active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", threshold_n));
     active_aggregator_c1_c5.extend_from_slice(&[
@@ -1666,15 +1666,15 @@ async fn test_trbfv_actor() -> Result<()> {
         .collect();
     // Unlike KeyshareCreated (cheap, gossiped early — all N arrive before aggregation), the
     // per-node recursive fold proof (DKGRecursiveAggregationComplete) is expensive and late.
-    // `PublicKeyAggregated` fires once the aggregator selects and aggregates the honest set, so
-    // only the H honest folds are guaranteed to have reached node 0 by this barrier; the extra
+    // `PublicKeyAggregated` fires once the aggregator selects and aggregates the authorized set, so
+    // only the H authorized folds are guaranteed to have reached node 0 by this barrier; the extra
     // N-H members' folds race against it (and may land afterward). Assert the guaranteed floor
     // and that every observed fold party is a committee member, not the racy `== N`.
     assert!(
-        dkg_parties.len() >= committee_h
+        dkg_parties.len() >= committee_a
             && dkg_parties.len() <= threshold_n
             && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members before PublicKeyAggregated (only the H honest folds are guaranteed by this barrier), got parties {dkg_parties:?}"
+        "node 0: expected DKGRecursiveAggregationComplete from {committee_a}..={threshold_n} committee members before PublicKeyAggregated (only the H authorized folds are guaranteed by this barrier), got parties {dkg_parties:?}"
     );
     assert_eq!(
         ks_parties.len(),
@@ -1691,8 +1691,8 @@ async fn test_trbfv_actor() -> Result<()> {
         .expect("PublicKeyAggregated in history");
     assert_eq!(
         pk_agg.nodes.len(),
-        committee_h,
-        "PublicKeyAggregated must list H={committee_h} honest nodes"
+        committee_a,
+        "PublicKeyAggregated must list H={committee_a} authorized nodes"
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
@@ -1826,9 +1826,9 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // The collector only sees the shared ciphertext event, gossiped decryption shares, and the
     // final gossiped plaintext output.
-    // Only the H honest parties decrypt and gossip a share; the (N - H) extras stay in the
+    // Only the H authorized parties decrypt and gossip a share; the (N - H) extras stay in the
     // full committee but do not participate in decryption.
-    let ds_n: Vec<&'static str> = vec!["DecryptionshareCreated"; committee_h];
+    let ds_n: Vec<&'static str> = vec!["DecryptionshareCreated"; committee_a];
     let mut expected_events: Vec<&'static str> = vec!["CiphertextOutputPublished"];
     expected_events.extend_from_slice(&ds_n);
     expected_events.push("PlaintextAggregated");
@@ -1872,8 +1872,8 @@ async fn test_trbfv_actor() -> Result<()> {
     // aggregator consumes only H. So the number of distinct senders observed at the collector
     // sits in [H, N].
     assert!(
-        unique_ds_parties.len() >= committee_h && unique_ds_parties.len() <= threshold_n,
-        "collector: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
+        unique_ds_parties.len() >= committee_a && unique_ds_parties.len() <= threshold_n,
+        "collector: expected DecryptionshareCreated from {committee_a}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
         unique_ds_parties.len()
     );
     println!("[bench-progress] PlaintextAggregated observed on collector path");
@@ -1919,8 +1919,8 @@ async fn test_trbfv_actor() -> Result<()> {
         })
         .collect();
     assert!(
-        unique_ds_parties_agg.len() >= committee_h && unique_ds_parties_agg.len() <= threshold_n,
-        "active aggregator: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
+        unique_ds_parties_agg.len() >= committee_a && unique_ds_parties_agg.len() <= threshold_n,
+        "active aggregator: expected DecryptionshareCreated from {committee_a}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
         unique_ds_parties_agg.len()
     );
     assert_eq!(
@@ -1945,8 +1945,8 @@ async fn test_trbfv_actor() -> Result<()> {
         "expected one C6 ShareVerificationComplete before aggregation"
     );
     assert!(
-        count_projected_events(c6_body, "ProofVerificationPassed") >= committee_h,
-        "expected >= {committee_h} C6 ProofVerificationPassed events before aggregation"
+        count_projected_events(c6_body, "ProofVerificationPassed") >= committee_a,
+        "expected >= {committee_a} C6 ProofVerificationPassed events before aggregation"
     );
     let c6_compute_requests = count_projected_events(c6_body, "ComputeRequest");
     let c6_compute_responses = count_projected_events(c6_body, "ComputeResponse");
@@ -2115,18 +2115,18 @@ async fn test_trbfv_actor() -> Result<()> {
         assert_eq!(res, exp);
     }
 
-    // All-honest safeguard: scan every participant and the observer for spurious accusations,
+    // All-authorized safeguard: scan every participant and the observer for spurious accusations,
     // commitment mismatches (including C4 DecryptionProofs on ThresholdKeyshare), and traps.
     for index in 1..=participant_count {
         let history = nodes.get_history(index).await?;
-        assert_honest_run_safeguards(
+        assert_authorized_run_safeguards(
             &history,
             &e3_id,
             &format!("participant node {index} ({})", nodes[index].address()),
         );
     }
     let observer_history = nodes.get_history(0).await?;
-    assert_honest_run_safeguards(&observer_history, &e3_id, "observer node 0");
+    assert_authorized_run_safeguards(&observer_history, &e3_id, "observer node 0");
 
     let mt_report = multithread_report.send(ToReport).await.unwrap();
     println!("{}", mt_report);
@@ -2203,7 +2203,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 "    \"lambda\": {},\n",
                 "    \"proof_aggregation_enabled\": {},\n",
                 "    \"multithread_concurrent_jobs\": {},\n",
-                "    \"committee_h\": {},\n",
+                "    \"committee_a\": {},\n",
                 "    \"committee_n\": {},\n",
                 "    \"committee_t\": {},\n",
                 "    \"nodes_spawned\": {},\n",
@@ -2217,7 +2217,7 @@ async fn test_trbfv_actor() -> Result<()> {
             benchmark_params.lambda,
             proof_aggregation_enabled,
             concurrent_jobs,
-            committee_h,
+            committee_a,
             threshold_n,
             threshold_m,
             nodes_spawned,
@@ -2785,7 +2785,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
             e3_id: E3id::new("1234", 1),
             nodes: OrderedSet::from(eth_addrs.clone()),
             committee_addresses: actual_pubkey_agg_1.committee_addresses.clone(),
-            honest_committee_addresses: actual_pubkey_agg_1.honest_committee_addresses.clone(),
+            authorized_committee_addresses: actual_pubkey_agg_1.authorized_committee_addresses.clone(),
             pk_commitment: actual_pubkey_agg_1.pk_commitment,
             dkg_aggregator_proof: None,
             dkg_attestation_bundle: None,
@@ -2829,7 +2829,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
             e3_id: E3id::new("1234", 2),
             nodes: OrderedSet::from(eth_addrs.clone()),
             committee_addresses: actual_pubkey_agg_2.committee_addresses.clone(),
-            honest_committee_addresses: actual_pubkey_agg_2.honest_committee_addresses.clone(),
+            authorized_committee_addresses: actual_pubkey_agg_2.authorized_committee_addresses.clone(),
             pk_commitment: actual_pubkey_agg_2.pk_commitment,
             dkg_aggregator_proof: None,
             dkg_attestation_bundle: None,

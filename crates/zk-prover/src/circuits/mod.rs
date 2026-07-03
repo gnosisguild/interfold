@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod aggregation;
-pub(crate) mod dkg;
-mod threshold;
+pub(crate) mod Individual_key;
+mod Threshold_key;
 pub(crate) mod utils;
 pub(crate) mod vk;

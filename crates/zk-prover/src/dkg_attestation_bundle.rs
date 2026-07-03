@@ -30,17 +30,17 @@ alloy::sol! {
 
 /// Build the bundle expected by `DkgFoldAttestationVerifier.verify`.
 ///
-/// `honest_party_ids` must be iterated in ascending order (e.g. a `BTreeSet`).
+/// `authorized_party_ids` must be iterated in ascending order (e.g. a `BTreeSet`).
 /// `bindings` are emitted in that order; `attestations` may be any order.
 pub fn encode_dkg_attestation_bundle(
-    honest_party_ids: &BTreeSet<u64>,
+    authorized_party_ids: &BTreeSet<u64>,
     party_nodes: &HashMap<u64, String>,
     attestations: &HashMap<u64, SignedDkgFoldAttestation>,
 ) -> Result<Bytes> {
-    let mut binding_sols = Vec::with_capacity(honest_party_ids.len());
-    let mut attestation_sols = Vec::with_capacity(honest_party_ids.len());
+    let mut binding_sols = Vec::with_capacity(authorized_party_ids.len());
+    let mut attestation_sols = Vec::with_capacity(authorized_party_ids.len());
 
-    for party_id in honest_party_ids {
+    for party_id in authorized_party_ids {
         let node = party_nodes
             .get(party_id)
             .with_context(|| format!("missing party_nodes entry for party {party_id}"))?;
@@ -99,14 +99,14 @@ mod tests {
         };
         let signed = e3_events::SignedDkgFoldAttestation::sign(payload, &signer).unwrap();
 
-        let mut honest = BTreeSet::new();
-        honest.insert(2);
+        let mut authorized = BTreeSet::new();
+        authorized.insert(2);
         let mut party_nodes = HashMap::new();
         party_nodes.insert(2, signer.address().to_string());
         let mut attestations = HashMap::new();
         attestations.insert(2, signed);
 
-        let encoded = encode_dkg_attestation_bundle(&honest, &party_nodes, &attestations).unwrap();
+        let encoded = encode_dkg_attestation_bundle(&authorized, &party_nodes, &attestations).unwrap();
         assert!(!encoded.is_empty());
 
         let typehash = keccak256(

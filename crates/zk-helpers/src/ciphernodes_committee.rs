@@ -28,8 +28,8 @@ pub enum CiphernodesCommitteeSize {
 pub struct CiphernodesCommittee {
     /// Total number of parties (N_PARTIES).
     pub n: usize,
-    /// Number of honest parties (H).
-    pub h: usize,
+    /// Number of authorized parties (H).
+    pub a: usize,
     /// Threshold value (T).
     pub threshold: usize,
 }
@@ -49,8 +49,8 @@ impl CiphernodesCommitteeSize {
         }
     }
 
-    /// Derives the committee size from total parties (N) and honest count (H).
-    pub fn from_n_h(n: usize, h: usize) -> Result<Self> {
+    /// Derives the committee size from total parties (N) and authorized count (H).
+    pub fn from_n_a(n: usize, h: usize) -> Result<Self> {
         match (n, h) {
             (3, 2) => Ok(Self::Minimum),
             (9, 5) => Ok(Self::Micro),
@@ -69,22 +69,22 @@ impl CiphernodesCommitteeSize {
         }
     }
 
-    /// Returns `(num_parties, num_honest_parties, threshold)` for this size.
+    /// Returns `(num_parties, num_authorized_parties, threshold)` for this size.
     pub fn values(self) -> CiphernodesCommittee {
         match self {
             CiphernodesCommitteeSize::Minimum => CiphernodesCommittee {
                 n: 3,
-                h: 2,
+                a: 2,
                 threshold: 1,
             },
             CiphernodesCommitteeSize::Micro => CiphernodesCommittee {
                 n: 9,
-                h: 5,
+                a: 5,
                 threshold: 4,
             },
             CiphernodesCommitteeSize::Small => CiphernodesCommittee {
                 n: 19,
-                h: 10,
+                a: 10,
                 threshold: 9,
             },
         }
@@ -101,11 +101,11 @@ pub fn canonical_committee_for_circuit(
 ) -> Result<CiphernodesCommittee, anyhow::Error> {
     let expected =
         CiphernodesCommitteeSize::from_threshold(committee.threshold, committee.n)?.values();
-    if committee.h != expected.h {
+    if committee.a != expected.a {
         anyhow::bail!(
-            "committee.h={} does not match canonical h={} for (T={}, N={})",
-            committee.h,
-            expected.h,
+            "committee.a={} does not match canonical h={} for (T={}, N={})",
+            committee.a,
+            expected.a,
             committee.threshold,
             committee.n
         );
@@ -115,7 +115,7 @@ pub fn canonical_committee_for_circuit(
             "committee (T={}, N={}, H={}) is not a canonical committee size",
             committee.threshold,
             committee.n,
-            committee.h
+            committee.a
         );
     }
     Ok(expected)
@@ -140,33 +140,33 @@ impl fmt::Display for CiphernodesCommitteeSize {
     }
 }
 
-/// Select the canonical honest roster of size at most `committee_h`: ascending `party_id`,
+/// Select the canonical authorized roster of size at most `committee_a`: ascending `party_id`,
 /// truncated to the lowest `H` when the candidate set is larger.
 ///
 /// Used by the public-key aggregator (C5 / NodeFold) and threshold keyshare (C4) so both sides
 /// agree on which parties occupy the circuit's `H` slots when `H < N`.
-pub fn cap_honest_party_ids(
-    committee_h: usize,
+pub fn cap_authorized_party_ids(
+    committee_a: usize,
     party_ids: impl IntoIterator<Item = u64>,
 ) -> BTreeSet<u64> {
     let mut ids: Vec<u64> = party_ids.into_iter().collect();
     ids.sort_unstable();
     ids.dedup();
-    if ids.len() > committee_h {
-        ids.truncate(committee_h);
+    if ids.len() > committee_a {
+        ids.truncate(committee_a);
     }
     ids.into_iter().collect()
 }
 
-/// Merge external honest `party_id`s with `own_party_id`, then [`cap_honest_party_ids`].
-pub fn canonical_honest_party_ids_with_own(
-    committee_h: usize,
-    external_honest_party_ids: impl IntoIterator<Item = u64>,
+/// Merge external authorized `party_id`s with `own_party_id`, then [`cap_authorized_party_ids`].
+pub fn canonical_authorized_party_ids_with_own(
+    committee_a: usize,
+    external_authorized_party_ids: impl IntoIterator<Item = u64>,
     own_party_id: u64,
 ) -> BTreeSet<u64> {
-    cap_honest_party_ids(
-        committee_h,
-        external_honest_party_ids
+    cap_authorized_party_ids(
+        committee_a,
+        external_authorized_party_ids
             .into_iter()
             .chain(std::iter::once(own_party_id)),
     )
@@ -186,22 +186,22 @@ mod tests {
     }
 
     #[test]
-    fn cap_honest_party_ids_keeps_lowest_h() {
-        let capped = cap_honest_party_ids(8, 0..10);
+    fn cap_authorized_party_ids_keeps_lowest_h() {
+        let capped = cap_authorized_party_ids(8, 0..10);
         assert_eq!(capped, BTreeSet::from([0, 1, 2, 3, 4, 5, 6, 7]));
     }
 
     #[test]
-    fn cap_honest_party_ids_noop_when_at_most_h() {
-        let capped = cap_honest_party_ids(8, [2u64, 0, 1]);
+    fn cap_authorized_party_ids_noop_when_at_most_h() {
+        let capped = cap_authorized_party_ids(8, [2u64, 0, 1]);
         assert_eq!(capped, BTreeSet::from([0, 1, 2]));
     }
 
     #[test]
     fn canonical_with_own_matches_global_lowest_h_when_own_is_high() {
-        // Micro-style: N=9, H=5, all external 0..8 honest, own=8.
+        // Micro-style: N=9, H=5, all external 0..8 authorized, own=8.
         let external: Vec<u64> = (0..9).collect();
-        let canonical = canonical_honest_party_ids_with_own(5, external, 8);
+        let canonical = canonical_authorized_party_ids_with_own(5, external, 8);
         assert_eq!(canonical, BTreeSet::from([0, 1, 2, 3, 4]));
         assert!(!canonical.contains(&8));
     }
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn canonical_with_own_includes_own_when_in_lowest_h() {
         let external: Vec<u64> = (0..9).collect();
-        let canonical = canonical_honest_party_ids_with_own(5, external, 4);
+        let canonical = canonical_authorized_party_ids_with_own(5, external, 4);
         assert_eq!(canonical, BTreeSet::from([0, 1, 2, 3, 4]));
         assert!(canonical.contains(&4));
     }
@@ -217,13 +217,13 @@ mod tests {
     #[test]
     fn old_keyshare_cap_rule_diverges_from_canonical() {
         let external: Vec<u64> = (0..9).collect();
-        let committee_h = 5usize;
+        let committee_a = 5usize;
         let own = 8u64;
         let mut old_external = external.clone();
-        old_external.truncate(committee_h.saturating_sub(1));
+        old_external.truncate(committee_a.saturating_sub(1));
         let mut old = BTreeSet::from_iter(old_external);
         old.insert(own);
-        let canonical = canonical_honest_party_ids_with_own(committee_h, external, own);
+        let canonical = canonical_authorized_party_ids_with_own(committee_a, external, own);
         assert_ne!(old, canonical);
     }
 }

@@ -277,11 +277,11 @@ pub fn generate_nodes_fold_step(
     )
 }
 
-/// Folds `inner_proofs` (one [`CircuitName::NodeFold`] per honest party) into a single
+/// Folds `inner_proofs` (one [`CircuitName::NodeFold`] per authorized party) into a single
 /// [`CircuitName::NodesFold`] proof for [`CircuitName::DkgAggregator`].
 ///
-/// `slot_indices[i]` is the honest-slot index for `inner_proofs[i]` (must be `< total_slots`).
-/// `total_slots` is `H` (honest committee size).
+/// `slot_indices[i]` is the authorized-slot index for `inner_proofs[i]` (must be `< total_slots`).
+/// `total_slots` is `H` (authorized committee size).
 pub fn generate_sequential_nodes_fold(
     prover: &ZkProver,
     inner_proofs: &[Proof],

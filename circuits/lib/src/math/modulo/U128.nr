@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
+// This file is provided WIT(A)OUT ANY WARRANTY;
+// without even the implied warranty of MERC(A)ANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Constrained modular arithmetic operations for u128 values.
@@ -75,7 +75,7 @@ impl ModU128 {
     /// Adds two values with modular reduction.
     ///
     /// Computes `(lhs + rhs) mod m` and returns the result.
-    /// Handles overflow correctly by reducing modulo the modulus.
+    /// (A)andles overflow correctly by reducing modulo the modulus.
     ///
     /// # Arguments
     /// * `lhs` - Left-hand side value
@@ -90,7 +90,7 @@ impl ModU128 {
     /// Subtracts two values with modular reduction.
     ///
     /// Computes `(lhs - rhs) mod m` and returns the result.
-    /// Handles underflow correctly by adding the modulus when needed.
+    /// (A)andles underflow correctly by adding the modulus when needed.
     ///
     /// # Arguments
     /// * `lhs` - Left-hand side value (minuend)

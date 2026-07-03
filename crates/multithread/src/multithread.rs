@@ -55,20 +55,20 @@ use e3_trbfv::shares::SharedSecret;
 use e3_trbfv::{TrBFVError, TrBFVFailure, TrBFVRequest, TrBFVResponse};
 use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
-use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
+use e3_zk_helpers::circuits::Individual_key::pk::circuit::{PkCircuit, PkCircuitData};
+use e3_zk_helpers::circuits::Threshold_key::share_computation::utils::compute_parity_matrix;
+use e3_zk_helpers::circuits::Threshold_key::decrypted_shares_aggregation::circuit::{
     DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
 };
-use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
+use e3_zk_helpers::circuits::Threshold_key::pk_generation::circuit::{
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
-use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
-use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
-use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
-use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
+use e3_zk_helpers::Threshold_key::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
+use e3_zk_helpers::Individual_key::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
+use e3_zk_helpers::Individual_key::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::Threshold_key::pk_aggregation::PkAggregationCircuit;
+use e3_zk_helpers::Threshold_key::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
@@ -295,13 +295,13 @@ fn handle_pk_aggregation_proof(
     let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
     // 3. Validate keyshare count before deserialization
-    if req.keyshare_bytes.len() != req.committee_h {
+    if req.keyshare_bytes.len() != req.committee_a {
         return Err(make_zk_error(
             &request,
             format!(
-                "keyshare_bytes length {} != committee_h {}",
+                "keyshare_bytes length {} != committee_a {}",
                 req.keyshare_bytes.len(),
-                req.committee_h
+                req.committee_a
             ),
         ));
     }
@@ -326,7 +326,7 @@ fn handle_pk_aggregation_proof(
     // 6. Build committee and circuit data
     let committee = CiphernodesCommittee {
         n: req.committee_n,
-        h: req.committee_h,
+        a: req.committee_a,
         threshold: req.committee_threshold,
     };
 
@@ -346,12 +346,12 @@ fn handle_pk_aggregation_proof(
     let circuit = PkAggregationCircuit;
     let bb_work_id = zk_bb_work_id(&request);
     let committee =
-        CiphernodesCommitteeSize::from_n_h(req.committee_n, req.committee_h).map_err(|e| {
+        CiphernodesCommitteeSize::from_n_a(req.committee_n, req.committee_a).map_err(|e| {
             make_zk_error(
                 &request,
                 format!(
                     "unknown committee (n={}, h={}): {e}",
-                    req.committee_n, req.committee_h
+                    req.committee_n, req.committee_a
                 ),
             )
         })?;
@@ -444,7 +444,7 @@ fn handle_threshold_share_decryption_proof(
         let d_share = CrtPolynomial::from_fhe_polynomial(&d_share_poly);
 
         // Build circuit data
-        let circuit_data = e3_zk_helpers::threshold::share_decryption::ShareDecryptionCircuitData {
+        let circuit_data = e3_zk_helpers::Threshold_key::share_decryption::ShareDecryptionCircuitData {
             ciphertext,
             public_key: public_key.clone(),
             s: s.clone(),
@@ -453,7 +453,7 @@ fn handle_threshold_share_decryption_proof(
         };
 
         // Generate proof
-        let circuit = e3_zk_helpers::threshold::share_decryption::ShareDecryptionCircuit;
+        let circuit = e3_zk_helpers::Threshold_key::share_decryption::ShareDecryptionCircuit;
         let idx_work_id = format!("{bb_work_base}_c6_{i}");
         let proof = circuit
             .prove(
@@ -1188,38 +1188,38 @@ fn handle_dkg_share_decryption_proof(
         .map_err(|e| make_zk_error(&request, format!("sk_bfv deserialize: {}", e)))?;
 
     // External slots = (H - 1), each carrying L ciphertexts.
-    let h = req.num_honest_parties;
+    let a = req.num_authorized_parties;
     let l = req.num_moduli;
-    if req.own_plaintext_idx >= h {
+    if req.own_plaintext_idx >= a {
         return Err(make_zk_error(
             &request,
             format!(
-                "own_plaintext_idx {} out of range (num_honest_parties={})",
-                req.own_plaintext_idx, h
+                "own_plaintext_idx {} out of range (num_authorized_parties={})",
+                req.own_plaintext_idx, a
             ),
         ));
     }
-    let expected_external_cts = h.saturating_sub(1) * l;
-    if req.honest_ciphertexts_raw.len() != expected_external_cts {
+    let expected_external_cts = a.saturating_sub(1) * l;
+    if req.authorized_ciphertexts_raw.len() != expected_external_cts {
         return Err(make_zk_error(
             &request,
             format!(
                 "Expected {} external ciphertexts ((H-1)={} * L={}), got {}",
                 expected_external_cts,
-                h.saturating_sub(1),
+                a.saturating_sub(1),
                 l,
-                req.honest_ciphertexts_raw.len()
+                req.authorized_ciphertexts_raw.len()
             ),
         ));
     }
 
     // Deserialize external ciphertexts → [(H-1)][L]
-    let num_external = h.saturating_sub(1);
+    let num_external = a.saturating_sub(1);
     let mut external_ciphertexts: Vec<Vec<Ciphertext>> = Vec::with_capacity(num_external);
     for ext_idx in 0..num_external {
         let mut party_cts = Vec::with_capacity(l);
         for mod_idx in 0..l {
-            let raw = &req.honest_ciphertexts_raw[ext_idx * l + mod_idx];
+            let raw = &req.authorized_ciphertexts_raw[ext_idx * l + mod_idx];
             let ct = Ciphertext::from_bytes(raw, &dkg_params).map_err(|e| {
                 make_zk_error(
                     &request,
@@ -1231,14 +1231,14 @@ fn handle_dkg_share_decryption_proof(
         external_ciphertexts.push(party_cts);
     }
 
-    // Splice None at `own_plaintext_idx` so the H-sized vector matches ascending honest party_id order.
-    let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::with_capacity(h);
+    // Splice None at `own_plaintext_idx` so the H-sized vector matches ascending authorized party_id order.
+    let mut authorized_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::with_capacity(a);
     let mut external_iter = external_ciphertexts.into_iter();
-    for slot in 0..h {
+    for slot in 0..a {
         if slot == req.own_plaintext_idx {
-            honest_ciphertexts.push(None);
+            authorized_ciphertexts.push(None);
         } else {
-            honest_ciphertexts.push(Some(
+            authorized_ciphertexts.push(Some(
                 external_iter
                     .next()
                     .expect("external_iter exhausted: lengths validated above"),
@@ -1280,7 +1280,7 @@ fn handle_dkg_share_decryption_proof(
 
     let circuit_data = ShareDecryptionCircuitData {
         secret_key,
-        honest_ciphertexts,
+        authorized_ciphertexts,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
     };
@@ -1501,7 +1501,7 @@ fn handle_decrypted_shares_aggregation_proof(
     req.d_share_polys.sort_by_key(|(id, _)| *id);
 
     // 3. The circuit expects exactly threshold + 1 shares for Lagrange interpolation.
-    //    We may have more honest parties than needed, so take the first threshold + 1.
+    //    We may have more authorized parties than needed, so take the first threshold + 1.
     let required = req.threshold_m as usize + 1;
     if req.d_share_polys.len() > required {
         req.d_share_polys.truncate(required);
@@ -1553,7 +1553,7 @@ fn handle_decrypted_shares_aggregation_proof(
         // d. Build committee
         let committee = e3_zk_helpers::CiphernodesCommittee {
             n: req.threshold_n as usize,
-            h: num_parties,
+            a: num_parties,
             threshold: req.threshold_m as usize,
         };
 

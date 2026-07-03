@@ -18,5 +18,5 @@ pub use computation::{CircuitComputation, Computation};
 pub use errors::CircuitsErrors;
 pub use output_layout::*;
 
-pub mod dkg;
-pub mod threshold;
+pub mod Individual_key;
+pub mod Threshold_key;

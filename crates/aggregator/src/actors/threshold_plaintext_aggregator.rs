@@ -38,9 +38,9 @@ use tracing::{debug, info, trace, warn};
 
 /// Env var overriding the decryption-share collection timeout (seconds).
 const DECRYPTION_COLLECTION_TIMEOUT_ENV: &str = "E3_DECRYPTION_COLLECTION_TIMEOUT_SECS";
-/// Default wall-clock budget for collecting the honest committee's decryption shares before the
-/// round is failed loudly. Without this bound a single absent honest member stalls the decryption
-/// round forever (the collector waits for all `H` honest shares with no fallback).
+/// Default wall-clock budget for collecting the authorized committee's decryption shares before the
+/// round is failed loudly. Without this bound a single absent authorized member stalls the decryption
+/// round forever (the collector waits for all `H` authorized shares with no fallback).
 const DEFAULT_DECRYPTION_COLLECTION_TIMEOUT_SECS: u64 = 1800;
 
 /// Resolve the decryption-share collection timeout, honouring the env override.
@@ -82,7 +82,7 @@ pub struct ThresholdPlaintextAggregator {
     proof_aggregation_enabled: bool,
     state: Persistable<ThresholdPlaintextAggregatorState>,
     /// Honest parties' C6 inner proofs (sorted by party id) for [`ZkRequest::DecryptionAggregation`].
-    honest_c6_proofs_for_agg: Option<Vec<(u64, Vec<Proof>)>>,
+    authorized_c6_proofs_for_agg: Option<Vec<(u64, Vec<Proof>)>>,
     /// In-flight threshold decryption request.
     threshold_decryption_correlation: Option<CorrelationId>,
     /// In-flight decryption aggregation request.
@@ -96,10 +96,10 @@ pub struct ThresholdPlaintextAggregator {
     /// Full registered committee (`topNodes`, length `N`) for decryption-aggregator
     /// `committee_hash_*` inputs. Same value as `PublicKeyAggregated.committee_addresses`.
     committee_addresses: Vec<Address>,
-    /// Canonical honest subset from DKG (length `H ≤ N`, from
-    /// `PublicKeyAggregated.honest_committee_addresses`). Drives share-collection
+    /// Canonical authorized subset from DKG (length `H ≤ N`, from
+    /// `PublicKeyAggregated.authorized_committee_addresses`). Drives share-collection
     /// gating (expects one share from each H party) and sender checks after sortition.
-    honest_committee_addresses: Vec<Address>,
+    authorized_committee_addresses: Vec<Address>,
     /// Timer handle for the decryption-share collection timeout (cancelled when the actor stops).
     timeout_handle: Option<SpawnHandle>,
     /// Most recent inbound event context, used as the causal parent for the `E3Failed` event
@@ -117,9 +117,9 @@ pub struct ThresholdPlaintextAggregatorParams {
     /// Full committee from `PublicKeyAggregated.committee_addresses` (length `N`).
     /// Used for `committee_hash_*` payload binding to on-chain `topNodes`.
     pub committee_addresses: Vec<Address>,
-    /// Honest committee from `PublicKeyAggregated.honest_committee_addresses`
+    /// Honest committee from `PublicKeyAggregated.authorized_committee_addresses`
     /// (length `H`). Roster for decryption-share collection and sender gating.
-    pub honest_committee_addresses: Vec<Address>,
+    pub authorized_committee_addresses: Vec<Address>,
 }
 
 impl ThresholdPlaintextAggregator {
@@ -135,31 +135,31 @@ impl ThresholdPlaintextAggregator {
             committee_size: params.committee_size,
             proof_aggregation_enabled: params.proof_aggregation_enabled,
             state,
-            honest_c6_proofs_for_agg: None,
+            authorized_c6_proofs_for_agg: None,
             threshold_decryption_correlation: None,
             decryption_aggregation_correlation: None,
             c7_proofs_pending: None,
             decryption_aggregator_proofs: None,
             last_ec: None,
             committee_addresses: params.committee_addresses,
-            honest_committee_addresses: params.honest_committee_addresses,
+            authorized_committee_addresses: params.authorized_committee_addresses,
             timeout_handle: None,
             timeout_ec: None,
         }
     }
 
-    /// Length of the canonical honest subset (`H`), not on-chain committee size `N`.
+    /// Length of the canonical authorized subset (`H`), not on-chain committee size `N`.
     /// Share collection waits for one decryption share from each address in
-    /// `honest_committee_addresses` (sortition membership is checked separately).
+    /// `authorized_committee_addresses` (sortition membership is checked separately).
     fn aggregated_committee_n(&self) -> u64 {
-        self.honest_committee_addresses.len() as u64
+        self.authorized_committee_addresses.len() as u64
     }
 
-    /// True when `node` is in `PublicKeyAggregated.honest_committee_addresses`.
+    /// True when `node` is in `PublicKeyAggregated.authorized_committee_addresses`.
     fn node_in_aggregated_pk_committee(&self, node: &str) -> bool {
         Address::from_str(node)
             .ok()
-            .is_some_and(|addr| self.honest_committee_addresses.contains(&addr))
+            .is_some_and(|addr| self.authorized_committee_addresses.contains(&addr))
     }
 
     pub fn add_share(
@@ -172,7 +172,7 @@ impl ThresholdPlaintextAggregator {
         let required_shares = self.aggregated_committee_n();
         ensure!(
             required_shares > 0,
-            "honest committee addresses must not be empty before collecting decryption shares"
+            "authorized committee addresses must not be empty before collecting decryption shares"
         );
         self.state.try_mutate(ec, |state| {
             ThresholdPlaintextAggregation::add_share(
@@ -240,40 +240,40 @@ impl ThresholdPlaintextAggregator {
             .ok_or(anyhow!("Could not get state"))?
             .try_into()?;
 
-        let mut dishonest_parties = msg.dishonest_parties.clone();
-        if !dishonest_parties.is_empty() {
+        let mut disauthorized_parties = msg.disauthorized_parties.clone();
+        if !disauthorized_parties.is_empty() {
             warn!(
                 "C6 verification: {} dishonest parties filtered: {:?}",
-                dishonest_parties.len(),
-                dishonest_parties
+                disauthorized_parties.len(),
+                disauthorized_parties
             );
         }
 
-        // Filter shares to only honest parties
-        let mut honest_shares: Vec<(u64, Vec<ArcBytes>)> = state
+        // Filter shares to only authorized parties
+        let mut authorized_shares: Vec<(u64, Vec<ArcBytes>)> = state
             .shares
             .iter()
-            .filter(|(id, _)| !dishonest_parties.contains(id))
+            .filter(|(id, _)| !disauthorized_parties.contains(id))
             .map(|(id, s)| (*id, s.clone()))
             .collect();
 
-        if honest_shares.len() <= state.threshold_m as usize {
+        if authorized_shares.len() <= state.threshold_m as usize {
             warn!(
-                "Not enough honest shares after C6 verification: {} honest shares, {} required",
-                honest_shares.len(),
+                "Not enough authorized shares after C6 verification: {} authorized shares, {} required",
+                authorized_shares.len(),
                 state.threshold_m + 1
             );
             return self.fail_decryption_round(ec);
         }
 
-        // Verify each honest party's raw decryption share matches the
+        // Verify each authorized party's raw decryption share matches the
         // d_commitment attested by their verified C6 proof. Catches the attack
         // where a node sends a valid C6 proof for share d_A but broadcasts
         // different bytes d_B.
         let share_mismatch_parties =
             ThresholdPlaintextAggregation::verify_shares_match_c6_commitments(
                 self.params_preset,
-                &honest_shares,
+                &authorized_shares,
                 &state.c6_proofs,
             );
         if !share_mismatch_parties.is_empty() {
@@ -283,12 +283,12 @@ impl ThresholdPlaintextAggregator {
                 share_mismatch_parties,
             );
 
-            dishonest_parties.extend(&share_mismatch_parties);
-            honest_shares.retain(|(id, _)| !share_mismatch_parties.contains(id));
-            if honest_shares.len() <= state.threshold_m as usize {
+            disauthorized_parties.extend(&share_mismatch_parties);
+            authorized_shares.retain(|(id, _)| !share_mismatch_parties.contains(id));
+            if authorized_shares.len() <= state.threshold_m as usize {
                 warn!(
-                    "Not enough honest shares after d_commitment check: {} honest, {} required",
-                    honest_shares.len(),
+                    "Not enough authorized shares after d_commitment check: {} authorized, {} required",
+                    authorized_shares.len(),
                     state.threshold_m + 1
                 );
                 return self.fail_decryption_round(ec);
@@ -296,17 +296,17 @@ impl ThresholdPlaintextAggregator {
         }
 
         info!(
-            "C6 verification passed: {} honest parties, transitioning to Computing",
-            honest_shares.len(),
+            "C6 verification passed: {} authorized parties, transitioning to Computing",
+            authorized_shares.len(),
         );
 
-        // Collect honest C6 inner proofs (from signed payloads) for DecryptionAggregation.
+        // Collect authorized C6 inner proofs (from signed payloads) for DecryptionAggregation.
         // BTreeMap iteration yields ascending party_id, matching the slot layout
-        // used by honest_shares above and enforced by decryption_aggregator.nr.
-        let honest_c6: Vec<(u64, Vec<Proof>)> = state
+        // used by authorized_shares above and enforced by decryption_aggregator.nr.
+        let authorized_c6: Vec<(u64, Vec<Proof>)> = state
             .c6_proofs
             .iter()
-            .filter(|(id, _)| !dishonest_parties.contains(id))
+            .filter(|(id, _)| !disauthorized_parties.contains(id))
             .map(|(id, signed)| {
                 (
                     *id,
@@ -319,7 +319,7 @@ impl ThresholdPlaintextAggregator {
         // failure leaves us in VerifyingC6 (retryable) rather than
         // Computing (no retry path).
         // TrBFV scheme size stays N (`threshold_n`); only the share roster is restricted to the
-        // H canonical honest parties in `PublicKeyAggregated` (see `node_in_aggregated_pk_committee`).
+        // H canonical authorized parties in `PublicKeyAggregated` (see `node_in_aggregated_pk_committee`).
         let trbfv_config =
             TrBFVConfig::new(state.params.clone(), state.threshold_n, state.threshold_m);
 
@@ -328,19 +328,19 @@ impl ThresholdPlaintextAggregator {
             TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
                 ciphertexts: state.ciphertext_output.clone(),
                 trbfv_config,
-                d_share_polys: honest_shares.clone(),
+                d_share_polys: authorized_shares.clone(),
             }),
             correlation_id,
             self.e3_id.clone(),
         );
         self.bus.publish(event, ec.clone())?;
 
-        self.honest_c6_proofs_for_agg = Some(honest_c6);
+        self.authorized_c6_proofs_for_agg = Some(authorized_c6);
         self.threshold_decryption_correlation = Some(correlation_id);
 
         self.state.try_mutate(&ec, |_| {
             Ok(ThresholdPlaintextAggregatorState::Computing(Computing {
-                shares: honest_shares,
+                shares: authorized_shares,
                 ciphertext_output: state.ciphertext_output,
                 threshold_m: state.threshold_m,
                 threshold_n: state.threshold_n,
@@ -462,19 +462,19 @@ impl ThresholdPlaintextAggregator {
             self.decryption_aggregator_proofs = Some(Vec::new());
             return Ok(());
         }
-        let Some(honest_c6) = self.honest_c6_proofs_for_agg.as_ref() else {
+        let Some(authorized_c6) = self.authorized_c6_proofs_for_agg.as_ref() else {
             warn!(
                 e3_id = %self.e3_id,
-                "DecryptionAggregation deferred: honest C6 proofs not retained on aggregator"
+                "DecryptionAggregation deferred: authorized C6 proofs not retained on aggregator"
             );
             return Ok(());
         };
         // With proof aggregation enabled we must have a complete C6 set; otherwise we'd publish
         // `decryption_aggregator_proofs = Vec::new()`, which downstream consumers interpret as
         // "aggregation disabled". Fail loudly instead so the missing shares are surfaced.
-        if honest_c6.is_empty() || honest_c6.iter().any(|(_, w)| w.is_empty()) {
+        if authorized_c6.is_empty() || authorized_c6.iter().any(|(_, w)| w.is_empty()) {
             warn!(
-                "DecryptionAggregation: honest C6 inner proofs missing while proof aggregation is enabled"
+                "DecryptionAggregation: authorized C6 inner proofs missing while proof aggregation is enabled"
             );
             return self.fail_decryption_round(ec.clone());
         }
@@ -487,16 +487,16 @@ impl ThresholdPlaintextAggregator {
         // first `T + 1` parties after sorting by party id (`handle_decrypted_shares_aggregation_proof`
         // truncates); fold slot indices must stay in `0..T+1` and use that same party subset.
         let c6_total_slots = state.threshold_m as usize + 1;
-        if honest_c6.len() < c6_total_slots {
+        if authorized_c6.len() < c6_total_slots {
             warn!(
-                "DecryptionAggregation needs at least {} honest C6 parties, have {}",
+                "DecryptionAggregation needs at least {} authorized C6 parties, have {}",
                 c6_total_slots,
-                honest_c6.len()
+                authorized_c6.len()
             );
             return self.fail_decryption_round(ec.clone());
         }
         let num_ct = c7_proofs.len();
-        let Some(jobs) = build_decryption_aggregation_jobs(c7_proofs, honest_c6, c6_total_slots)
+        let Some(jobs) = build_decryption_aggregation_jobs(c7_proofs, authorized_c6, c6_total_slots)
         else {
             return self.fail_decryption_round(ec.clone());
         };
@@ -618,7 +618,7 @@ impl ThresholdPlaintextAggregator {
             ec,
         )?;
 
-        self.honest_c6_proofs_for_agg = None;
+        self.authorized_c6_proofs_for_agg = None;
         self.threshold_decryption_correlation = None;
         self.decryption_aggregation_correlation = None;
         self.c7_proofs_pending = None;
@@ -722,7 +722,7 @@ impl Actor for ThresholdPlaintextAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        // Bound the decryption-share collection phase so a missing honest member cannot stall the
+        // Bound the decryption-share collection phase so a missing authorized member cannot stall the
         // round indefinitely. On expiry the round is failed loudly (see the timeout handler).
         let timeout = decryption_collection_timeout();
         info!(
@@ -756,7 +756,7 @@ impl Handler<DecryptionCollectionTimeout> for ThresholdPlaintextAggregator {
             e3_id = %self.e3_id,
             collected,
             required,
-            "Decryption-share collection timed out with {collected}/{required} honest shares; failing E3 round (DecryptionTimeout)"
+            "Decryption-share collection timed out with {collected}/{required} authorized shares; failing E3 round (DecryptionTimeout)"
         );
 
         let Some(ec) = self.timeout_ec.clone() else {
@@ -867,7 +867,7 @@ impl Handler<E3CommitteeContainsResponse<TypedEvent<DecryptionshareCreated>>>
                 };
                 if !self.node_in_aggregated_pk_committee(&msg.node) {
                     trace!(
-                        "Node {} not in PublicKeyAggregated honest subset — ignoring decryption share",
+                        "Node {} not in PublicKeyAggregated authorized subset — ignoring decryption share",
                         &msg.node
                     );
                     return Ok(());
@@ -1132,7 +1132,7 @@ mod tests {
                 committee_size: CiphernodesCommitteeSize::Minimum,
                 proof_aggregation_enabled,
                 committee_addresses: vec![test_committee_address()],
-                honest_committee_addresses: vec![test_committee_address()],
+                authorized_committee_addresses: vec![test_committee_address()],
             },
             test_persistable(initial_state),
         );
@@ -1219,7 +1219,7 @@ mod tests {
     }
 
     #[actix::test]
-    async fn insufficient_honest_c6_shares_emit_e3_failed() -> Result<()> {
+    async fn insufficient_authorized_c6_shares_emit_e3_failed() -> Result<()> {
         let (mut aggregator, history, e3_id) =
             build_plaintext_aggregator(verifying_c6_state(), true).await?;
 
@@ -1227,7 +1227,7 @@ mod tests {
             ShareVerificationComplete {
                 e3_id: e3_id.clone(),
                 kind: VerificationKind::ThresholdDecryptionProofs,
-                dishonest_parties: BTreeSet::from([1]),
+                disauthorized_parties: BTreeSet::from([1]),
             },
             test_ctx(E3Failed {
                 e3_id: e3_id.clone(),
@@ -1254,7 +1254,7 @@ mod tests {
         let (mut aggregator, history, e3_id) =
             build_plaintext_aggregator(generating_c7_state(), true).await?;
         aggregator.c7_proofs_pending = Some(vec![dummy_proof(CircuitName::PkAggregation)]);
-        aggregator.honest_c6_proofs_for_agg = Some(vec![(
+        aggregator.authorized_c6_proofs_for_agg = Some(vec![(
             0,
             vec![dummy_proof(CircuitName::ThresholdShareDecryption)],
         )]);
@@ -1308,7 +1308,7 @@ mod tests {
         let (mut aggregator, history, e3_id) =
             build_plaintext_aggregator(generating_c7_state(), true).await?;
         aggregator.c7_proofs_pending = Some(vec![dummy_proof(CircuitName::PkAggregation)]);
-        aggregator.honest_c6_proofs_for_agg = Some(vec![
+        aggregator.authorized_c6_proofs_for_agg = Some(vec![
             (0, vec![]),
             (1, vec![dummy_proof(CircuitName::ThresholdShareDecryption)]),
         ]);
@@ -1328,7 +1328,7 @@ mod tests {
                     && data.failed_at_stage == E3Stage::CiphertextReady
                     && data.reason == FailureReason::DecryptionInvalidShares
         ));
-        assert!(aggregator.honest_c6_proofs_for_agg.is_none());
+        assert!(aggregator.authorized_c6_proofs_for_agg.is_none());
         assert!(aggregator.decryption_aggregation_correlation.is_none());
         assert!(aggregator.c7_proofs_pending.is_none());
         assert!(aggregator.decryption_aggregator_proofs.is_none());

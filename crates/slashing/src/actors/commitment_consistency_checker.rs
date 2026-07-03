@@ -59,12 +59,12 @@ impl CommitmentConsistencyChecker {
         bus: &BusHandle,
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
-        committee_h: usize,
+        committee_a: usize,
     ) -> Self {
         Self {
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            consistency: CommitmentConsistency::new(e3_id, links, committee_h),
+            consistency: CommitmentConsistency::new(e3_id, links, committee_a),
         }
     }
 
@@ -72,9 +72,9 @@ impl CommitmentConsistencyChecker {
         bus: &BusHandle,
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
-        committee_h: usize,
+        committee_a: usize,
     ) -> Addr<Self> {
-        let actor = Self::new(bus, e3_id, links, committee_h);
+        let actor = Self::new(bus, e3_id, links, committee_a);
         let addr = actor.start();
         bus.subscribe(
             EventType::CommitmentConsistencyCheckRequested,

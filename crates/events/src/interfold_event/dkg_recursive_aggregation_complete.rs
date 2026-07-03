@@ -7,7 +7,7 @@
 //! Event published by [`NodeProofAggregator`] when all inner proofs for a
 //! DKG node have been incrementally folded into a single aggregated proof.
 //!
-//! [`PublicKeyAggregator`] collects these from all honest nodes for the
+//! [`PublicKeyAggregator`] collects these from all authorized nodes for the
 //! cross-node aggregation phase.
 
 use crate::{E3id, Proof, SignedDkgFoldAttestation};

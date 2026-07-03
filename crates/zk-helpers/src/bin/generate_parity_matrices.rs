@@ -15,7 +15,7 @@
 //!         [--output-root <path-to-circuits/lib/src/configs/committee>]
 //!
 //! The Noir literal is produced by
-//! `e3_zk_helpers::circuits::dkg::share_computation::utils::parity_matrix_constant_string`,
+//! `e3_zk_helpers::circuits::Threshold_key::share_computation::utils::parity_matrix_constant_string`,
 //! which is the same function the C2 codegen uses — so the values here match what the
 //! prover would compute at witness time.
 
@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
-use e3_zk_helpers::circuits::dkg::share_computation::utils::parity_matrix_constant_string;
+use e3_zk_helpers::circuits::Threshold_key::share_computation::utils::parity_matrix_constant_string;
 
 #[derive(Parser, Debug)]
 #[command(

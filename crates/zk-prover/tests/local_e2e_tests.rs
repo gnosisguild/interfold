@@ -27,8 +27,8 @@ use common::{
 use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
-use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuit;
-use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
+use e3_zk_helpers::circuits::Individual_key::pk::circuit::PkCircuit;
+use e3_zk_helpers::circuits::Individual_key::pk::circuit::PkCircuitData;
 use e3_zk_helpers::circuits::{
     commitments::{
         compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
@@ -38,14 +38,14 @@ use e3_zk_helpers::circuits::{
     CircuitComputation,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
-use e3_zk_helpers::dkg::share_decryption::{
+use e3_zk_helpers::Threshold_key::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
+use e3_zk_helpers::Individual_key::share_decryption::{
     ShareDecryptionCircuit as DkgShareDecryptionCircuit,
     ShareDecryptionCircuitData as DkgShareDecryptionCircuitData,
 };
-use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
-use e3_zk_helpers::threshold::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
-use e3_zk_helpers::threshold::{
+use e3_zk_helpers::Individual_key::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::Threshold_key::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
+use e3_zk_helpers::Threshold_key::{
     decrypted_shares_aggregation::{
         DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
     },
@@ -63,7 +63,7 @@ use e3_zk_helpers::{
 use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
 use fhe::trbfv::TRBFV;
 
-/// Sum per-modulus decrypted shares across honest parties (matches C4 `compute_aggregated_shares`).
+/// Sum per-modulus decrypted shares across authorized parties (matches C4 `compute_aggregated_shares`).
 /// Coefficients are summed in the BN254 field, not reduced mod each CRT modulus (see `share_decryption.nr`).
 fn aggregate_dkg_decrypted_shares_to_crt(
     decrypted_shares: &[Vec<Vec<num_bigint::BigInt>>],
@@ -153,7 +153,7 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
     let sd: e3_fhe_params::PresetSearchDefaults =
         BfvPreset::InsecureThreshold512.search_defaults().unwrap();
 
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "share_encryption").await;
 
     let sample = ShareEncryptionCircuitData::generate_sample(
         preset,
@@ -193,7 +193,7 @@ async fn setup_share_encryption_sk_test() -> Option<(
     let sd: e3_fhe_params::PresetSearchDefaults =
         BfvPreset::InsecureThreshold512.search_defaults().unwrap();
 
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "share_encryption").await;
 
     let sample = ShareEncryptionCircuitData::generate_sample(
         preset,
@@ -230,8 +230,8 @@ async fn setup_share_computation_sk_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "sk_share_computation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "e_sm_share_computation").await;
 
     let sample =
         ShareComputationCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
@@ -264,8 +264,8 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "sk_share_computation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "e_sm_share_computation").await;
 
     let sample = ShareComputationCircuitData::generate_sample(
         preset,
@@ -301,7 +301,7 @@ async fn setup_pk_generation_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "pk_generation").await;
 
     let sample = PkGenerationCircuitData::generate_sample(preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
@@ -332,7 +332,7 @@ async fn setup_share_decryption_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "share_decryption").await;
 
     let sample = ThresholdShareDecryptionCircuitData::generate_sample(preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
@@ -363,8 +363,8 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "share_decryption").await;
-    setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "share_decryption").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "share_decryption").await;
 
     let dkg_sample = DkgShareDecryptionCircuitData::generate_sample(
         preset,
@@ -393,7 +393,7 @@ async fn setup_pk_aggregation_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "threshold", "pk_aggregation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "pk_aggregation").await;
 
     let sample = PkAggregationCircuitData::generate_sample(preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
@@ -424,7 +424,7 @@ async fn setup_decrypted_shares_aggregation_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "threshold", "decrypted_shares_aggregation").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "threshold"backend, "Threshold_key", "decrypted_shares_aggregation").await;
 
     let sample = DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
@@ -453,7 +453,7 @@ async fn setup_pk_test() -> Option<(
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "pk").await;
+    setup_compiled_circuit(setup_compiled_circuit(&backend, "dkg"backend, "Individual_key", "pk").await;
 
     let sample = PkCircuitData::generate_sample(preset).ok()?;
     let prover = ZkProver::new(&backend);
