@@ -56,9 +56,9 @@ describe("InterfoldToken", function () {
       ccaStart,
       ccaEnd,
       noMoreLocks,
-      await claimSource.getAddress(),
       await mockRegistry.getAddress(),
     );
+    await token.connect(admin).setClaimSource(await claimSource.getAddress());
 
     return {
       deployer,
@@ -173,7 +173,22 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("constructor", function () {
-    it("reverts when claimSource is zero address", async function () {
+    it("lets the owner set CLAIM_SOURCE once", async function () {
+      const { token, admin, alice, claimSource } = await loadFixture(deploy);
+      expect(await token.CLAIM_SOURCE()).to.equal(
+        await claimSource.getAddress(),
+      );
+
+      await expect(
+        token.connect(alice).setClaimSource(await alice.getAddress()),
+      ).to.be.revertedWithCustomError(token, "OwnableUnauthorizedAccount");
+
+      await expect(
+        token.connect(admin).setClaimSource(await alice.getAddress()),
+      ).to.be.revertedWithCustomError(token, "ClaimSourceAlreadySet");
+    });
+
+    it("reverts when setClaimSource is zero address", async function () {
       const [deployer] = await ethers.getSigners();
       const mockRegistry = await new MockBondingRegistryFactory(
         deployer,
@@ -184,19 +199,18 @@ describe("InterfoldToken", function () {
       const ccaEnd = ccaStart + 7n * DAY;
       const noMoreLocks = noMoreLocksFor(ccaEnd);
 
-      await expect(
-        new InterfoldTokenFactory(deployer).deploy(
-          await deployer.getAddress(),
-          ccaStart,
-          ccaEnd,
-          noMoreLocks,
-          ethers.ZeroAddress,
-          await mockRegistry.getAddress(),
-        ),
-      ).to.be.revertedWithCustomError(
-        { interface: InterfoldTokenFactory.createInterface() },
-        "ZeroAddress",
+      const token = await new InterfoldTokenFactory(deployer).deploy(
+        await deployer.getAddress(),
+        ccaStart,
+        ccaEnd,
+        noMoreLocks,
+        await mockRegistry.getAddress(),
       );
+      expect(await token.CLAIM_SOURCE()).to.equal(ethers.ZeroAddress);
+
+      await expect(
+        token.setClaimSource(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(token, "ZeroAddress");
     });
 
     it("reverts when bondingRegistry is zero address", async function () {
@@ -212,7 +226,6 @@ describe("InterfoldToken", function () {
           ccaStart,
           ccaEnd,
           noMoreLocks,
-          await deployer.getAddress(),
           ethers.ZeroAddress,
         ),
       ).to.be.revertedWithCustomError(
@@ -234,7 +247,6 @@ describe("InterfoldToken", function () {
           ccaStart,
           ccaEnd,
           noMoreLocks,
-          await deployer.getAddress(),
           await admin.getAddress(), // EOA, not a contract
         ),
       ).to.be.revertedWithCustomError(
@@ -257,7 +269,6 @@ describe("InterfoldToken", function () {
           now, // in the past (or now)
           now + 7n * DAY,
           noMoreLocksFor(now + 7n * DAY),
-          await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
       ).to.be.revertedWithCustomError(
@@ -283,7 +294,6 @@ describe("InterfoldToken", function () {
           ccaStart,
           ccaEnd,
           noMoreLocks,
-          await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
       ).to.be.revertedWithCustomError(
@@ -308,7 +318,6 @@ describe("InterfoldToken", function () {
           ccaStart,
           ccaEnd,
           0n,
-          await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
       ).to.be.revertedWithCustomError(
@@ -334,7 +343,6 @@ describe("InterfoldToken", function () {
           ccaStart,
           ccaEnd,
           earliestTge, // must be strictly after
-          await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
       ).to.be.revertedWithCustomError(
@@ -691,6 +699,22 @@ describe("InterfoldToken", function () {
         token,
         "AccessControlUnauthorizedAccount",
       );
+    });
+
+    it("cannot enable claim-lock exemption while queued locks exist", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_QUEUE", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
+
+      await expect(
+        token.connect(admin).setClaimLockExempt(aliceAddress, true),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
     });
   });
 
@@ -1700,6 +1724,22 @@ describe("InterfoldToken", function () {
       // rounding from vesting elapsed seconds).
       const lb2 = await token.lockedBalanceOf(await alice.getAddress());
       expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
+    });
+
+    it("linkClaim cannot create queued locks for a claim-lock exempt account", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_LINK", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).setClaimLockExempt(aliceAddress, true);
+
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 100n, policyId),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
     });
 
     it("linkClaim partly consumes PENDING and queues the remainder", async function () {

@@ -9,7 +9,6 @@ export default buildModule("InterfoldToken", (m) => {
   const owner = m.getParameter("owner");
   const ccaStart = m.getParameter("ccaStart");
   const ccaEnd = m.getParameter("ccaEnd");
-  const claimSource = m.getParameter("claimSource");
   const bondingRegistry = m.getParameter("bondingRegistry");
   const noMoreLocks = m.getParameter("noMoreLocks");
 
@@ -18,7 +17,6 @@ export default buildModule("InterfoldToken", (m) => {
     ccaStart,
     ccaEnd,
     noMoreLocks,
-    claimSource,
     bondingRegistry,
   ]);
 
