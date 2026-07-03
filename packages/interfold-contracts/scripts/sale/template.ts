@@ -187,6 +187,7 @@ export function makeTemplateConfig(opts: {
     saleAmount,
     lpAllocationPercent: arg("lp-allocation-percent"),
   });
+  const migrationBlock = BigInt(lbp.migrationBlock);
   return {
     name: opts.name,
     chainId: opts.chainId,
@@ -214,7 +215,7 @@ export function makeTemplateConfig(opts: {
       endTimestamp: ccaEnd.toString(),
       startBlock: startBlock.toString(),
       endBlock: endBlock.toString(),
-      claimBlock: (endBlock + 1n).toString(),
+      claimBlock: (migrationBlock + 1n).toString(),
       tickSpacing: tickSpacing.toString(),
       validationHook: ZERO,
       floorPriceEthPerFold,

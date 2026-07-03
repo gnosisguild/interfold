@@ -320,6 +320,11 @@ export function applyDerivedConfigFields(
       currentTimestamp: opts.currentTimestamp,
       secondsPerBlock: blockTime,
     });
+    const migrationDelayBlocks =
+      arg("migration-delay-blocks") ?? config.lbp?.migrationDelayBlocks ?? "20";
+    const migrationBlock = config.lbp
+      ? endBlock + BigInt(migrationDelayBlocks)
+      : endBlock;
     const claimBlock = claimTimestamp
       ? blockForTimestamp({
           timestamp: claimTimestamp,
@@ -327,11 +332,16 @@ export function applyDerivedConfigFields(
           currentTimestamp: opts.currentTimestamp,
           secondsPerBlock: blockTime,
         })
-      : endBlock + 1n;
+      : migrationBlock + 1n;
 
     if (claimBlock < endBlock) {
       throw new Error(
         "auction.claimTimestamp must be at or after endTimestamp",
+      );
+    }
+    if (config.lbp && claimBlock <= migrationBlock) {
+      throw new Error(
+        `auction.claimTimestamp must be after LBP migrationBlock ${migrationBlock}`,
       );
     }
 
@@ -360,14 +370,8 @@ export function applyDerivedConfigFields(
 
     if (config.lbp) {
       config.lbp.generated ??= {};
-      const migrationDelayBlocks =
-        arg("migration-delay-blocks") ??
-        config.lbp.migrationDelayBlocks ??
-        "20";
       config.lbp.migrationDelayBlocks = migrationDelayBlocks;
-      config.lbp.migrationBlock = (
-        endBlock + BigInt(migrationDelayBlocks)
-      ).toString();
+      config.lbp.migrationBlock = migrationBlock.toString();
       config.lbp.generated.migrationBlock = config.lbp.migrationBlock;
     }
   }
