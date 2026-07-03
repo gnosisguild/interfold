@@ -37,20 +37,8 @@ const AUCTION_PARAMETERS_TUPLE =
   "uint128 requiredCurrencyRaised," +
   "bytes auctionStepsData" +
   ")";
-const MIGRATOR_PARAMETERS_TUPLE =
-  "tuple(" +
-  "address token," +
-  "address currency," +
-  "uint64 migrationBlock," +
-  "uint128 reservedTokenAmountForLP," +
-  "address recipient," +
-  "address positionRecipient," +
-  "tuple(uint24 fee,int24 tickSpacing,address hook) poolParameters," +
-  "bytes positionDefinitions," +
-  "bytes lpAllocationSchedule" +
-  ")";
 
-/** Read a deployed mock auction's shared views (version-agnostic). */
+/** Read a deployed mock auction's shared views. */
 function auctionAt(
   address: string,
   runner: Parameters<typeof InterfoldTokenFactory.connect>[1],
@@ -65,48 +53,30 @@ function auctionAt(
 }
 
 interface TestConfig {
-  name: string;
-  chainId: number;
   saleDeployer: string;
   safe: string;
-  saleAmount: string;
-  ccaSalt: string;
-  saleLabel: string;
-  fold: {
-    ccaStart: string;
-    ccaEnd: string;
-    bondingRegistry: string;
-  };
+  ccaStart: bigint;
+  ccaEnd: bigint;
+  noMoreLocks: bigint;
+  bondingRegistry: string;
   auction: {
     currency: string;
     tokensRecipient: string;
     fundsRecipient: string;
-    startBlock: string;
-    endBlock: string;
-    claimBlock: string;
-    tickSpacing: string;
+    startBlock: bigint;
+    endBlock: bigint;
+    claimBlock: bigint;
+    tickSpacing: bigint;
     validationHook: string;
-    floorPrice: string;
-    requiredCurrencyRaised: string;
+    floorPrice: bigint;
+    requiredCurrencyRaised: bigint;
     auctionStepsData: string;
   };
 }
 
-interface TestLbpSalePlan {
-  predictedFold: string;
-  predictedAuction: string;
-  foldInitCode: string;
-  lbpSaleConfig: {
-    liquidityLauncher: string;
-    lbpStrategy: string;
-    expectedAuction: string;
-    auctionAmount: bigint;
-    reservedTokenAmountForLP: bigint;
-    distributionSalt: string;
-    lbpConfigData: string;
-    saleLabel: string;
-    foldInitCodeHash: string;
-  };
+interface DeployedSale {
+  foldAddress: string;
+  auctionAddress: string;
 }
 
 describe("InterfoldTokenSaleDeployer", function () {
@@ -114,6 +84,7 @@ describe("InterfoldTokenSaleDeployer", function () {
     saleDeployer: string;
     safe: string;
     bondingRegistry: string;
+    lbpStrategy: string;
   }): Promise<TestConfig> {
     const now = BigInt(await time.latest());
     const ccaStart = now + 10n * DAY;
@@ -121,29 +92,23 @@ describe("InterfoldTokenSaleDeployer", function () {
     const currentBlock = BigInt(await ethers.provider.getBlockNumber());
 
     return {
-      name: "test-sale",
-      chainId: Number((await ethers.provider.getNetwork()).chainId),
       saleDeployer: opts.saleDeployer,
       safe: opts.safe,
-      saleAmount: SALE_AMOUNT.toString(),
-      ccaSalt: ethers.ZeroHash,
-      saleLabel: "cca-sale",
-      fold: {
-        ccaStart: ccaStart.toString(),
-        ccaEnd: ccaEnd.toString(),
-        bondingRegistry: opts.bondingRegistry,
-      },
+      ccaStart,
+      ccaEnd,
+      noMoreLocks: ccaEnd + FORTY_DAYS + FOUR_YEARS,
+      bondingRegistry: opts.bondingRegistry,
       auction: {
-        currency: "ETH",
+        currency: ethers.ZeroAddress,
         tokensRecipient: opts.safe,
-        fundsRecipient: opts.safe,
-        startBlock: (currentBlock + 100n).toString(),
-        endBlock: (currentBlock + 200n).toString(),
-        claimBlock: (currentBlock + 210n).toString(),
-        tickSpacing: "1000000000000",
+        fundsRecipient: opts.lbpStrategy,
+        startBlock: currentBlock + 100n,
+        endBlock: currentBlock + 200n,
+        claimBlock: currentBlock + 210n,
+        tickSpacing: 1_000_000_000_000n,
         validationHook: ethers.ZeroAddress,
-        floorPrice: "1000000000000",
-        requiredCurrencyRaised: "0",
+        floorPrice: 1_000_000_000_000n,
+        requiredCurrencyRaised: 0n,
         auctionStepsData: "0x",
       },
     };
@@ -151,7 +116,6 @@ describe("InterfoldTokenSaleDeployer", function () {
 
   async function setup() {
     const [deployer, operator, safeAdmin, stranger] = await ethers.getSigners();
-
     const safeAddress = await safeAdmin.getAddress();
 
     const bondingRegistry = await new MockBondingRegistryFactory(
@@ -164,8 +128,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       ethers.ZeroAddress,
     );
     await ccaFactory.waitForDeployment();
-    // NB: the mock exposes a `getAddress(token,...)` method (v2 ABI) which
-    // shadows ethers' BaseContract.getAddress(); read `.target` instead.
     const ccaFactoryAddress = ccaFactory.target as string;
 
     const launcher = await new MockLiquidityLauncherFactory(deployer).deploy();
@@ -182,8 +144,6 @@ describe("InterfoldTokenSaleDeployer", function () {
     await lbpStrategy.waitForDeployment();
     const lbpStrategyAddress = await lbpStrategy.getAddress();
 
-    // Operator/gas payer deploys the sale factory, but the immutable
-    // protocolAdmin is the Safe.
     const saleDeployerContract = await new SaleDeployerFactory(operator).deploy(
       safeAddress,
     );
@@ -201,9 +161,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       stranger,
       safeAddress,
       bondingRegistryAddress,
-      ccaFactory,
-      ccaFactoryAddress,
-      launcher,
       launcherAddress,
       lbpStrategy,
       lbpStrategyAddress,
@@ -214,42 +171,33 @@ describe("InterfoldTokenSaleDeployer", function () {
     };
   }
 
-  async function computeTestLbpSalePlan(
-    ctx: Awaited<ReturnType<typeof setup>>,
-    nonceOverride?: number,
-  ): Promise<TestLbpSalePlan> {
+  function auctionConfigData(config: TestConfig): string {
+    const auctionValues = [
+      config.auction.currency,
+      config.auction.tokensRecipient,
+      config.auction.fundsRecipient,
+      config.auction.startBlock,
+      config.auction.endBlock,
+      config.auction.claimBlock,
+      config.auction.tickSpacing,
+      config.auction.validationHook,
+      config.auction.floorPrice,
+      config.auction.requiredCurrencyRaised,
+      config.auction.auctionStepsData,
+    ] as const;
+    return ethers.AbiCoder.defaultAbiCoder().encode(
+      [AUCTION_PARAMETERS_TUPLE],
+      [auctionValues],
+    );
+  }
+
+  async function buildLbpSaleConfig(ctx: Awaited<ReturnType<typeof setup>>) {
     const config = await buildConfig({
       saleDeployer: ctx.saleDeployerAddress,
       safe: ctx.safeAddress,
       bondingRegistry: ctx.bondingRegistryAddress,
+      lbpStrategy: ctx.lbpStrategyAddress,
     });
-    config.auction.fundsRecipient = ctx.lbpStrategyAddress;
-
-    const factoryNonce =
-      nonceOverride ??
-      (await ethers.provider.getTransactionCount(ctx.saleDeployerAddress));
-    const predictedFold = ethers.getCreateAddress({
-      from: ctx.saleDeployerAddress,
-      nonce: BigInt(factoryNonce),
-    });
-    const auctionValues = [
-      ethers.ZeroAddress,
-      config.auction.tokensRecipient,
-      config.auction.fundsRecipient,
-      BigInt(config.auction.startBlock),
-      BigInt(config.auction.endBlock),
-      BigInt(config.auction.claimBlock),
-      BigInt(config.auction.tickSpacing),
-      config.auction.validationHook,
-      BigInt(config.auction.floorPrice),
-      BigInt(config.auction.requiredCurrencyRaised),
-      config.auction.auctionStepsData,
-    ] as const;
-    const ccaConfigData = ethers.AbiCoder.defaultAbiCoder().encode(
-      [AUCTION_PARAMETERS_TUPLE],
-      [auctionValues],
-    );
-
     const positionDefinitions = ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "tuple(int24 offsetLower,int24 offsetUpper,uint24 weight,address overridePositionRecipient)[]",
@@ -260,72 +208,83 @@ describe("InterfoldTokenSaleDeployer", function () {
       ["tuple(uint128 lowerThreshold,uint24 rate)[]"],
       [[[0n, 5_000_000n]]],
     );
-    const migratorParams = [
-      predictedFold,
-      ethers.ZeroAddress,
-      BigInt(config.auction.endBlock) + 10n,
-      LP_RESERVE,
-      ctx.safeAddress,
-      ctx.safeAddress,
-      [3000n, 60n, ethers.ZeroAddress],
-      positionDefinitions,
-      lpAllocationSchedule,
-    ] as const;
-    const launcherSalt = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "bytes32"],
-        [ctx.saleDeployerAddress, config.ccaSalt],
-      ),
-    );
-    const initializerSalt = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["bytes32", MIGRATOR_PARAMETERS_TUPLE],
-        [launcherSalt, migratorParams],
-      ),
-    );
-    const predictedAuction = await (ctx.ccaFactory as any)[
-      "getAddress(address,uint256,bytes,bytes32,address)"
-    ](
-      predictedFold,
-      SALE_AMOUNT,
-      ccaConfigData,
-      initializerSalt,
-      ctx.lbpStrategyAddress,
-    );
-    const noMoreLocks = BigInt(config.fold.ccaEnd) + FORTY_DAYS + FOUR_YEARS;
     const foldInitCode = ethers.concat([
       InterfoldTokenFactory.bytecode,
       ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint64", "uint64", "uint64", "address", "address"],
+        ["address", "uint64", "uint64", "uint64", "address"],
         [
           config.saleDeployer,
-          BigInt(config.fold.ccaStart),
-          BigInt(config.fold.ccaEnd),
-          noMoreLocks,
-          predictedAuction,
-          config.fold.bondingRegistry,
+          config.ccaStart,
+          config.ccaEnd,
+          config.noMoreLocks,
+          config.bondingRegistry,
         ],
       ),
     ]);
-    const lbpConfigData = ethers.AbiCoder.defaultAbiCoder().encode(
-      [MIGRATOR_PARAMETERS_TUPLE, "bytes"],
-      [migratorParams, ccaConfigData],
-    );
+
     return {
-      predictedFold,
-      predictedAuction,
+      config,
       foldInitCode,
       lbpSaleConfig: {
         liquidityLauncher: ctx.launcherAddress,
         lbpStrategy: ctx.lbpStrategyAddress,
-        expectedAuction: predictedAuction,
+        ccaStart: config.ccaStart,
+        ccaEnd: config.ccaEnd,
+        noMoreLocks: config.noMoreLocks,
+        bondingRegistry: config.bondingRegistry,
         auctionAmount: SALE_AMOUNT,
         reservedTokenAmountForLP: LP_RESERVE,
-        distributionSalt: config.ccaSalt,
-        lbpConfigData,
-        saleLabel: ethers.encodeBytes32String(config.saleLabel),
+        distributionSalt: ethers.ZeroHash,
+        currency: config.auction.currency,
+        migrationBlock: config.auction.endBlock + 10n,
+        recipient: ctx.safeAddress,
+        positionRecipient: ctx.safeAddress,
+        poolParameters: {
+          fee: 3000n,
+          tickSpacing: 60n,
+          hook: ethers.ZeroAddress,
+        },
+        positionDefinitions,
+        lpAllocationSchedule,
+        auctionConfigData: auctionConfigData(config),
+        saleLabel: ethers.encodeBytes32String("cca-sale"),
         foldInitCodeHash: ethers.keccak256(foldInitCode),
       },
+    };
+  }
+
+  async function deploySale(
+    ctx: Awaited<ReturnType<typeof setup>>,
+    plan: Awaited<ReturnType<typeof buildLbpSaleConfig>>,
+  ): Promise<DeployedSale> {
+    const tx = await ctx.saleDeployer
+      .connect(ctx.operator)
+      .deploySaleWithLiquidityLauncher(plan.lbpSaleConfig, plan.foldInitCode);
+    const receipt = await tx.wait();
+    if (!receipt) throw new Error("missing receipt");
+
+    const saleEvent = receipt.logs
+      .map((log) => {
+        try {
+          return ctx.saleDeployer.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((event) => event?.name === "SaleDeployed");
+    const lbpEvent = receipt.logs
+      .map((log) => {
+        try {
+          return ctx.lbpStrategy.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((event) => event?.name === "InitializerCreated");
+
+    return {
+      foldAddress: saleEvent?.args.fold as string,
+      auctionAddress: lbpEvent?.args.initializer as string,
     };
   }
 
@@ -334,39 +293,16 @@ describe("InterfoldTokenSaleDeployer", function () {
     expect(await ctx.saleDeployer.protocolAdmin()).to.equal(ctx.safeAddress);
   });
 
-  it("deploys FOLD + CCA through LiquidityLauncher/LBPStrategy", async function () {
+  it("deploys FOLD + CCA through LiquidityLauncher/LBPStrategy without a predicted auction", async function () {
     const ctx = await setup();
-    const salePlan = await computeTestLbpSalePlan(ctx);
-    const digest = await ctx.saleDeployer.hashLbpConfig(salePlan.lbpSaleConfig);
+    const plan = await buildLbpSaleConfig(ctx);
+    const digest = await ctx.saleDeployer.hashLbpConfig(plan.lbpSaleConfig);
+    const { foldAddress, auctionAddress } = await deploySale(ctx, plan);
 
-    await expect(
-      ctx.saleDeployer
-        .connect(ctx.operator)
-        .deploySaleWithLiquidityLauncher(
-          salePlan.lbpSaleConfig,
-          salePlan.foldInitCode,
-        ),
-    )
-      .to.emit(ctx.saleDeployer, "LbpSaleDeployed")
-      .withArgs(
-        digest,
-        salePlan.predictedFold,
-        salePlan.predictedAuction,
-        ctx.launcherAddress,
-        ctx.lbpStrategyAddress,
-        SALE_AMOUNT,
-        LP_RESERVE,
-        await ctx.operator.getAddress(),
-      );
-
-    const fold = InterfoldTokenFactory.connect(
-      salePlan.predictedFold,
-      ctx.operator,
-    );
-    expect(await fold.CLAIM_SOURCE()).to.equal(salePlan.predictedAuction);
-    expect(await fold.balanceOf(salePlan.predictedAuction)).to.equal(
-      SALE_AMOUNT,
-    );
+    const fold = InterfoldTokenFactory.connect(foldAddress, ctx.operator);
+    expect(await ctx.saleDeployer.usedConfigHashes(digest)).to.equal(true);
+    expect(await fold.CLAIM_SOURCE()).to.equal(ethers.ZeroAddress);
+    expect(await fold.balanceOf(auctionAddress)).to.equal(SALE_AMOUNT);
     expect(await fold.balanceOf(ctx.lbpStrategyAddress)).to.equal(LP_RESERVE);
     expect(await fold.transferWhitelist(ctx.launcherAddress)).to.equal(true);
     expect(await fold.transferWhitelist(ctx.lbpStrategyAddress)).to.equal(true);
@@ -374,40 +310,37 @@ describe("InterfoldTokenSaleDeployer", function () {
       true,
     );
 
-    const auction = auctionAt(salePlan.predictedAuction, ctx.operator);
-    expect(await auction.token()).to.equal(salePlan.predictedFold);
+    const auction = auctionAt(auctionAddress, ctx.operator);
+    expect(await auction.token()).to.equal(foldAddress);
     expect(await auction.totalSupply()).to.equal(SALE_AMOUNT);
     expect(await auction.fundsRecipient()).to.equal(ctx.lbpStrategyAddress);
     expect(await auction.tokensReceived()).to.equal(true);
 
-    const initializer = await ctx.lbpStrategy.initializers(
-      salePlan.predictedAuction,
-    );
-    expect(initializer.token).to.equal(salePlan.predictedFold);
+    const initializer = await ctx.lbpStrategy.initializers(auctionAddress);
+    expect(initializer.token).to.equal(foldAddress);
     expect(initializer.reservedTokenAmountForLP).to.equal(LP_RESERVE);
   });
 
-  it("hands FOLD ownership to the Safe (pending until acceptOwnership)", async function () {
+  it("hands FOLD ownership to the Safe, which sets CLAIM_SOURCE once", async function () {
     const ctx = await setup();
-    const salePlan = await computeTestLbpSalePlan(ctx);
-    await ctx.saleDeployer
-      .connect(ctx.operator)
-      .deploySaleWithLiquidityLauncher(
-        salePlan.lbpSaleConfig,
-        salePlan.foldInitCode,
-      );
-
-    const fold = InterfoldTokenFactory.connect(
-      salePlan.predictedFold,
-      ctx.operator,
-    );
+    const plan = await buildLbpSaleConfig(ctx);
+    const { foldAddress, auctionAddress } = await deploySale(ctx, plan);
+    const fold = InterfoldTokenFactory.connect(foldAddress, ctx.operator);
 
     expect(await fold.owner()).to.equal(ctx.saleDeployerAddress);
     expect(await fold.pendingOwner()).to.equal(ctx.safeAddress);
 
     await (await fold.connect(ctx.safeAdmin).acceptOwnership()).wait();
+    await (
+      await fold.connect(ctx.safeAdmin).setClaimSource(auctionAddress)
+    ).wait();
 
     expect(await fold.owner()).to.equal(ctx.safeAddress);
+    expect(await fold.CLAIM_SOURCE()).to.equal(auctionAddress);
+    await expect(
+      fold.connect(ctx.safeAdmin).setClaimSource(ctx.lbpStrategyAddress),
+    ).to.be.revertedWithCustomError(fold, "ClaimSourceAlreadySet");
+
     const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
     expect(await fold.hasRole(DEFAULT_ADMIN_ROLE, ctx.safeAddress)).to.equal(
       true,
@@ -415,74 +348,36 @@ describe("InterfoldTokenSaleDeployer", function () {
     expect(
       await fold.hasRole(DEFAULT_ADMIN_ROLE, ctx.saleDeployerAddress),
     ).to.equal(false);
+    expect(
+      await fold.hasRole(DEFAULT_ADMIN_ROLE, await ctx.operator.getAddress()),
+    ).to.equal(false);
   });
 
-  it("reverts when the sale amount does not match the FOLD init-code claim-source plan", async function () {
+  it("prevents replaying the same config twice", async function () {
     const ctx = await setup();
-    const salePlan = await computeTestLbpSalePlan(ctx);
+    const plan = await buildLbpSaleConfig(ctx);
 
-    const tampered = {
-      ...salePlan.lbpSaleConfig,
-      auctionAmount: SALE_AMOUNT + 1n,
-    };
-    await expect(
-      ctx.saleDeployer
-        .connect(ctx.operator)
-        .deploySaleWithLiquidityLauncher(tampered, salePlan.foldInitCode),
-    ).to.be.revertedWithCustomError(ctx.saleDeployer, "AuctionMismatch");
-  });
-
-  it("reverts when FOLD init code does not match its hash", async function () {
-    const ctx = await setup();
-    const salePlan = await computeTestLbpSalePlan(ctx);
-
-    const lastByte = salePlan.foldInitCode.slice(-2);
-    const flipped = lastByte === "00" ? "01" : "00";
-    const badInitCode = salePlan.foldInitCode.slice(0, -2) + flipped;
-    await expect(
-      ctx.saleDeployer
-        .connect(ctx.operator)
-        .deploySaleWithLiquidityLauncher(salePlan.lbpSaleConfig, badInitCode),
-    ).to.be.revertedWithCustomError(ctx.saleDeployer, "FoldInitCodeMismatch");
-  });
-
-  it("prevents replaying the same approved config twice", async function () {
-    const ctx = await setup();
-    const salePlan = await computeTestLbpSalePlan(ctx);
-
-    await ctx.saleDeployer
-      .connect(ctx.operator)
-      .deploySaleWithLiquidityLauncher(
-        salePlan.lbpSaleConfig,
-        salePlan.foldInitCode,
-      );
+    await deploySale(ctx, plan);
 
     await expect(
       ctx.saleDeployer
         .connect(ctx.operator)
-        .deploySaleWithLiquidityLauncher(
-          salePlan.lbpSaleConfig,
-          salePlan.foldInitCode,
-        ),
+        .deploySaleWithLiquidityLauncher(plan.lbpSaleConfig, plan.foldInitCode),
     ).to.be.revertedWithCustomError(ctx.saleDeployer, "ConfigAlreadyUsed");
   });
 
-  it("reverts (AuctionMismatch) when the predicted nonce is wrong", async function () {
+  it("reverts when the sale amount exceeds uint128", async function () {
     const ctx = await setup();
-    // Build a plan assuming the wrong factory nonce -> wrong predicted FOLD ->
-    // wrong predicted auction baked as claimSource -> on-chain mismatch.
-    const liveNonce = await ethers.provider.getTransactionCount(
-      ctx.saleDeployerAddress,
-    );
-    const salePlan = await computeTestLbpSalePlan(ctx, liveNonce + 5);
+    const plan = await buildLbpSaleConfig(ctx);
+    const tampered = {
+      ...plan.lbpSaleConfig,
+      auctionAmount: (1n << 128n) + 1n,
+    };
 
     await expect(
       ctx.saleDeployer
         .connect(ctx.operator)
-        .deploySaleWithLiquidityLauncher(
-          salePlan.lbpSaleConfig,
-          salePlan.foldInitCode,
-        ),
-    ).to.be.revertedWithCustomError(ctx.saleDeployer, "AuctionMismatch");
+        .deploySaleWithLiquidityLauncher(tampered, plan.foldInitCode),
+    ).to.be.revertedWithCustomError(ctx.saleDeployer, "SaleAmountTooLarge");
   });
 });

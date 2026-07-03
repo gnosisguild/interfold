@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { ethers as ethersLib } from "ethers";
+
 import { syncSaleDeploymentRecords } from "../deploymentRecords";
 import { getProxyAdmin } from "../proxy";
 import { connect, hasFlag, networkName } from "./cli";
 import { ZERO } from "./constants";
-import { deploymentPath, readJson, writeJson } from "./files";
+import {
+  configPath,
+  deploymentPath,
+  jsonFileHash,
+  readJson,
+  writeJson,
+} from "./files";
 import { planConfigHash, readPlanForConfig } from "./plan";
 import {
   buildSaleSafeActions,
@@ -21,21 +29,76 @@ import type {
   SaleConfigFile,
   SalePlan,
 } from "./types";
-import { address, lbpSaleConfigStruct, loadConfig } from "./values";
+import { CCA_AUCTION_ABI, LBP_STRATEGY_ABI } from "./uniswap";
+import {
+  address,
+  assertEq,
+  lbpSaleConfigStruct,
+  loadConfig,
+  requireContract,
+} from "./values";
+
+function parseDeployedFold(
+  deployer: Awaited<ReturnType<HardhatEthers["getContractAt"]>>,
+  receipt: { logs: Array<{ topics: ReadonlyArray<string>; data: string }> },
+): string {
+  const event = receipt.logs
+    .map((log) => {
+      try {
+        return deployer.interface.parseLog(log);
+      } catch {
+        return null;
+      }
+    })
+    .find((parsed) => parsed?.name === "SaleDeployed");
+  return address(event?.args?.fold as string, "SaleDeployed.fold");
+}
+
+function parseAuctionFromLbpLogs(
+  plan: SalePlan,
+  receipt: {
+    logs: Array<{
+      address: string;
+      topics: ReadonlyArray<string>;
+      data: string;
+    }>;
+  },
+): string {
+  const lbpInterface = new ethersLib.Interface(LBP_STRATEGY_ABI);
+  const strategy = plan.lbpStrategy.toLowerCase();
+  const event = receipt.logs
+    .filter((log) => log.address.toLowerCase() === strategy)
+    .map((log) => {
+      try {
+        return lbpInterface.parseLog(log);
+      } catch {
+        return null;
+      }
+    })
+    .find((parsed) => parsed?.name === "InitializerCreated");
+  return address(
+    event?.args?.initializer as string,
+    "LBPStrategy.InitializerCreated.initializer",
+  );
+}
+
+async function validateFreshAuction(
+  ethers: HardhatEthers,
+  config: SaleConfigFile,
+  fold: string,
+  auction: string,
+): Promise<void> {
+  await requireContract(ethers.provider, auction, "auction");
+  const cca = new ethersLib.Contract(auction, CCA_AUCTION_ABI, ethers.provider);
+  assertEq("auction.token", await cca.token(), fold);
+  assertEq("auction.totalSupply", await cca.totalSupply(), config.saleAmount);
+}
 
 export async function deployFromPlan(
   ethers: HardhatEthers,
   config: SaleConfigFile,
   plan: SalePlan,
 ): Promise<DeploymentFile> {
-  const liveNonce = await ethers.provider.getTransactionCount(
-    config.saleDeployer,
-  );
-  if (liveNonce !== plan.factoryNonce) {
-    throw new Error(
-      `saleDeployer nonce moved: plan=${plan.factoryNonce}, live=${liveNonce}. Run --action plan again.`,
-    );
-  }
   if (!plan.lbp || !plan.lbpSaleConfig) {
     throw new Error(
       "Plan was generated for the removed direct CCA path. Run --action plan again with the official LiquidityLauncher/LBP config.",
@@ -51,8 +114,10 @@ export async function deployFromPlan(
 
   console.log(`Submitting deploySaleWithLiquidityLauncher for ${config.name}`);
   console.log(`  mode:             LiquidityLauncher / LBPStrategy`);
-  console.log(`  expected FOLD:    ${plan.predictedFold}`);
-  console.log(`  expected auction: ${plan.predictedAuction}`);
+  console.log(`  FOLD:             discovered after deploy`);
+  console.log(
+    `  auction:          discovered from LBPStrategy.InitializerCreated`,
+  );
 
   const tx = await deployer.deploySaleWithLiquidityLauncher(
     lbpSaleConfigStruct(plan),
@@ -62,24 +127,9 @@ export async function deployFromPlan(
   const receipt = await tx.wait();
   if (!receipt) throw new Error("deploySale transaction was not mined");
 
-  const event = receipt.logs
-    .map((log: { topics: ReadonlyArray<string>; data: string }) => {
-      try {
-        return deployer.interface.parseLog(log);
-      } catch {
-        return null;
-      }
-    })
-    .find((parsed: { name: string } | null) => parsed?.name === "SaleDeployed");
-
-  const fold = address(event?.args?.fold as string, "SaleDeployed.fold");
-  const auction = address(
-    event?.args?.auction as string,
-    "SaleDeployed.auction",
-  );
-  if (fold !== plan.predictedFold || auction !== plan.predictedAuction) {
-    throw new Error(`Address mismatch: got fold=${fold}, auction=${auction}`);
-  }
+  const fold = parseDeployedFold(deployer, receipt);
+  const auction = parseAuctionFromLbpLogs(plan, receipt);
+  await validateFreshAuction(ethers, config, fold, auction);
 
   const deployment: DeploymentFile = {
     name: config.name,
@@ -165,8 +215,17 @@ Sale deployed
 
 export async function actionDeploy(): Promise<void> {
   const { ethers } = await connect();
-  const config = loadConfig();
+  const configFile = configPath();
+  const config = loadConfig(configFile);
   const plan = await readPlanForConfig(config);
+  if (
+    plan.sourceConfigHash &&
+    plan.sourceConfigHash !== jsonFileHash(configFile)
+  ) {
+    throw new Error(
+      "Plan is stale because the sale config changed. Run --action plan again, inspect the new plan, then deploy.",
+    );
+  }
   await deployFromPlan(ethers, config, plan);
 }
 

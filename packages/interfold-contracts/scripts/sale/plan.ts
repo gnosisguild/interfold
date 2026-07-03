@@ -2,18 +2,17 @@
 import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 
+import { ZERO } from "./constants";
 import { planPath, readJson } from "./files";
+import { applyDerivedConfigFields } from "./schedule";
 import type { HardhatEthers, SaleConfigFile, SalePlan } from "./types";
-import { CCA_INITIALIZER_FACTORY_ABI, LBP_STRATEGY_ABI } from "./uniswap";
+import { LBP_STRATEGY_ABI } from "./uniswap";
 import {
   address,
   buildFoldInitCode,
   deriveNoMoreLocks,
   encodeAuctionConfigData,
   encodeLauncherSalt,
-  encodeLbpConfigData,
-  encodeMigratorParameters,
-  encodeMigratorSalt,
   lbpSaleConfigStruct,
   requireContract,
   resolveLbpStrategy,
@@ -57,6 +56,11 @@ export async function buildSalePlan(
 
   const latest = await ethers.provider.getBlock("latest");
   if (!latest) throw new Error("Could not read latest block");
+  applyDerivedConfigFields(config, {
+    currentBlock: BigInt(latest.number),
+    currentTimestamp: BigInt(latest.timestamp),
+  });
+
   const ccaStart = BigInt(config.fold.ccaStart);
   const ccaEnd = BigInt(config.fold.ccaEnd);
   if (ccaStart <= BigInt(latest.timestamp)) {
@@ -69,13 +73,6 @@ export async function buildSalePlan(
   }
   const noMoreLocks = deriveNoMoreLocks(ccaEnd, config.fold.noMoreLocks);
 
-  const factoryNonce = await ethers.provider.getTransactionCount(
-    config.saleDeployer,
-  );
-  const predictedFold = ethersLib.getCreateAddress({
-    from: config.saleDeployer,
-    nonce: BigInt(factoryNonce),
-  });
   const auctionParams = toAuctionParameters(config.auction);
   const saleAmount = BigInt(config.saleAmount);
   if (saleAmount > (1n << 128n) - 1n) {
@@ -83,7 +80,6 @@ export async function buildSalePlan(
   }
 
   const launchMode = "lbp";
-  let predictedAuction: string;
   const ccaConfigData = encodeAuctionConfigData(auctionParams);
 
   if (!config.lbp) throw new Error("lbp config is required");
@@ -132,53 +128,12 @@ export async function buildSalePlan(
   }
 
   const migratorParams = toMigratorParameters(config.lbp, {
-    token: predictedFold,
+    token: ZERO,
     currency: auctionParams.currency,
   });
-  const migratorConfigData = encodeMigratorParameters(migratorParams);
-  const lbpConfigData = encodeLbpConfigData(migratorParams, ccaConfigData);
   const launcherSalt = encodeLauncherSalt(config.saleDeployer, config.ccaSalt);
-  const initializerSalt = encodeMigratorSalt(launcherSalt, migratorParams);
-
-  const cca = new ethersLib.Contract(
-    initializerFactory,
-    CCA_INITIALIZER_FACTORY_ABI,
-    ethers.provider,
-  );
-  predictedAuction = address(
-    await cca["getAddress(address,uint256,bytes,bytes32,address)"](
-      predictedFold,
-      saleAmount,
-      ccaConfigData,
-      initializerSalt,
-      lbpStrategy,
-    ),
-    "predictedAuction",
-  );
 
   const saleLabel = ethersLib.encodeBytes32String(config.saleLabel);
-  const lbpSaleConfig: SalePlan["lbpSaleConfig"] = {
-    liquidityLauncher,
-    lbpStrategy,
-    expectedAuction: predictedAuction,
-    auctionAmount: saleAmount.toString(),
-    reservedTokenAmountForLP: reservedTokenAmountForLP.toString(),
-    distributionSalt: config.ccaSalt,
-    lbpConfigData,
-    saleLabel,
-    foldInitCodeHash: "",
-  };
-  const lbpPlan: SalePlan["lbp"] = {
-    initializerFactory,
-    positionManager,
-    poolManager,
-    distributionAmount: distributionAmount.toString(),
-    launcherSalt,
-    initializerSalt,
-    migratorConfigData,
-    migratorParams,
-  };
-
   const foldFactory = await ethers.getContractFactory("InterfoldToken");
   const foldInitCode = buildFoldInitCode({
     creationCode: foldFactory.bytecode,
@@ -186,13 +141,38 @@ export async function buildSalePlan(
     ccaStart,
     ccaEnd,
     noMoreLocks,
-    claimSource: predictedAuction,
     bondingRegistry: config.fold.bondingRegistry,
   });
   const foldInitCodeHash = ethersLib.keccak256(foldInitCode);
-  if (lbpSaleConfig) {
-    lbpSaleConfig.foldInitCodeHash = foldInitCodeHash;
-  }
+  const lbpSaleConfig: SalePlan["lbpSaleConfig"] = {
+    liquidityLauncher,
+    lbpStrategy,
+    ccaStart: ccaStart.toString(),
+    ccaEnd: ccaEnd.toString(),
+    noMoreLocks: noMoreLocks.toString(),
+    bondingRegistry: config.fold.bondingRegistry,
+    auctionAmount: saleAmount.toString(),
+    reservedTokenAmountForLP: reservedTokenAmountForLP.toString(),
+    distributionSalt: config.ccaSalt,
+    currency: auctionParams.currency,
+    migrationBlock: migratorParams.migrationBlock.toString(),
+    recipient: migratorParams.recipient,
+    positionRecipient: migratorParams.positionRecipient,
+    poolParameters: migratorParams.poolParameters,
+    positionDefinitions: migratorParams.positionDefinitions,
+    lpAllocationSchedule: migratorParams.lpAllocationSchedule,
+    auctionConfigData: ccaConfigData,
+    saleLabel,
+    foldInitCodeHash,
+  };
+  const lbpPlan: SalePlan["lbp"] = {
+    initializerFactory,
+    positionManager,
+    poolManager,
+    distributionAmount: distributionAmount.toString(),
+    launcherSalt,
+    migratorParams,
+  };
 
   const plan: SalePlan = {
     name: config.name,
@@ -200,18 +180,14 @@ export async function buildSalePlan(
     launchMode,
     saleDeployer: config.saleDeployer,
     safe: config.safe,
-    factoryNonce,
     initializerFactory,
     liquidityLauncher,
     lbpStrategy,
-    predictedFold,
-    predictedAuction,
     fold: {
       initialOwner: config.saleDeployer,
       ccaStart: ccaStart.toString(),
       ccaEnd: ccaEnd.toString(),
       noMoreLocks: noMoreLocks.toString(),
-      claimSource: predictedAuction,
       bondingRegistry: config.fold.bondingRegistry,
     },
     auction: auctionParams,
@@ -231,13 +207,16 @@ Interfold sale plan
   safe:          ${plan.safe}
   mode:          LiquidityLauncher / LBPStrategy
   saleDeployer:  ${plan.saleDeployer}
-  factoryNonce:  ${plan.factoryNonce}
   liquidityLauncher:${plan.liquidityLauncher}
   lbpStrategy:   ${plan.lbpStrategy}
   initializerFactory: ${plan.initializerFactory}
-  FOLD:          ${plan.predictedFold}
-  CCA auction:   ${plan.predictedAuction}
-  LP reserve:    ${plan.lbpSaleConfig.reservedTokenAmountForLP}
+  FOLD:          discovered at deploy
+  CCA auction:   discovered from LBPStrategy.InitializerCreated
+  auction FOLD:  ${plan.lbpSaleConfig.auctionAmount}
+  LP FOLD reserve:${plan.lbpSaleConfig.reservedTokenAmountForLP}
+  CCA floorPrice:${plan.auction.floorPrice}
+  CCA tickSpacing:${plan.auction.tickSpacing}
+  required raise:${plan.auction.requiredCurrencyRaised}
   migrationBlock:${plan.lbp.migratorParams.migrationBlock}
   bondingRegistry proxy: ${plan.fold.bondingRegistry}
   FOLD timestamps: start=${plan.fold.ccaStart} end=${plan.fold.ccaEnd} noMoreLocks=${plan.fold.noMoreLocks}

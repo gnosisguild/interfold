@@ -49,7 +49,6 @@ interface SalePlanRecord {
     ccaStart: string;
     ccaEnd: string;
     noMoreLocks: string;
-    claimSource: string;
     bondingRegistry: string;
   };
 }
@@ -340,7 +339,6 @@ export function syncSaleDeploymentRecords(
         ccaStart: plan.fold.ccaStart,
         ccaEnd: plan.fold.ccaEnd,
         noMoreLocks: plan.fold.noMoreLocks,
-        claimSource: plan.fold.claimSource,
         bondingRegistry: plan.fold.bondingRegistry,
       },
     },

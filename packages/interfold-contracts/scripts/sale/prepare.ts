@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 import fs from "fs";
-import path from "path";
 
 import { syncSaleInfraRecords } from "../deploymentRecords";
 import { arg, connect, hasFlag, networkName } from "./cli";
@@ -13,19 +12,177 @@ import {
 } from "./deployContracts";
 import {
   configPath,
+  infraPath,
   nextAvailablePath,
   readJson,
-  saleDir,
   saleNameFromConfigPath,
   writeJson,
 } from "./files";
+import {
+  applyReadableConfigFields,
+  ccaPriceConfig,
+  optionalTimestampInput,
+} from "./schedule";
 import {
   makeDefaultLbpConfig,
   makeTemplateConfig,
   resolvePredicateHookInput,
 } from "./template";
-import type { SaleConfigFile } from "./types";
-import { address, requireContract } from "./values";
+import type { SaleConfigFile, SaleInfraFile } from "./types";
+import { address, normalizeSaleConfig, requireContract } from "./values";
+
+function applyPrepareOverrides(config: SaleConfigFile): void {
+  const saleAmountFold = arg("sale-amount-fold") ?? config.saleAmountFold;
+  if (saleAmountFold?.trim()) {
+    config.saleAmountFold = saleAmountFold;
+  }
+
+  const saleAmountOverride = arg("sale-amount");
+  if (saleAmountOverride?.trim()) config.saleAmount = saleAmountOverride;
+
+  const presaleStart =
+    optionalTimestampInput("presale-start", "INTERFOLD_CCA_START") ??
+    optionalTimestampInput("cca-start-timestamp", "INTERFOLD_CCA_START");
+  if (presaleStart !== undefined) {
+    config.fold.ccaStart = presaleStart.toString();
+    config.auction.preSaleStartTimestamp = presaleStart.toString();
+    config.auction.startTimestamp = presaleStart.toString();
+  }
+
+  const auctionStart =
+    optionalTimestampInput("auction-start") ??
+    optionalTimestampInput("auction-start-timestamp");
+  if (auctionStart !== undefined) {
+    config.auction.auctionStartTimestamp = auctionStart.toString();
+  }
+
+  const auctionEnd =
+    optionalTimestampInput("auction-end", "INTERFOLD_CCA_END") ??
+    optionalTimestampInput("cca-end-timestamp", "INTERFOLD_CCA_END");
+  if (auctionEnd !== undefined) {
+    config.fold.ccaEnd = auctionEnd.toString();
+    config.auction.auctionEndTimestamp = auctionEnd.toString();
+    config.auction.endTimestamp = auctionEnd.toString();
+  }
+
+  const claimTimestamp =
+    optionalTimestampInput("claim-timestamp") ??
+    optionalTimestampInput("auction-claim-timestamp");
+  if (claimTimestamp !== undefined) {
+    config.auction.claimTimestamp = claimTimestamp.toString();
+  }
+
+  config.auction.floorPriceEthPerFold =
+    arg("floor-price-eth-per-fold") ??
+    config.auction.floorPriceEthPerFold ??
+    "0.000012";
+  config.auction.tickSpacingPercentOfFloor =
+    arg("tick-spacing-percent-of-floor") ??
+    config.auction.tickSpacingPercentOfFloor ??
+    "1";
+  const { floorPrice, tickSpacing } = ccaPriceConfig({
+    floorPriceEthPerFold: config.auction.floorPriceEthPerFold,
+    tickSpacingPercentOfFloor: config.auction.tickSpacingPercentOfFloor,
+  });
+  config.auction.floorPrice = floorPrice.toString();
+  config.auction.tickSpacing = tickSpacing.toString();
+
+  const requiredCurrencyRaised = arg("required-currency-raised") ?? undefined;
+  const requiredRaiseEth = arg("required-raise-eth");
+  if (requiredRaiseEth !== undefined) {
+    config.auction.requiredRaiseEth = requiredRaiseEth;
+  }
+
+  if (config.lbp) {
+    config.lbp.lpAllocationPercent =
+      arg("lp-allocation-percent") ?? config.lbp.lpAllocationPercent ?? "18";
+    config.lbp.migrationDelayBlocks =
+      arg("migration-delay-blocks") ?? config.lbp.migrationDelayBlocks ?? "20";
+    config.lbp.poolFee = arg("pool-fee") ?? config.lbp.poolFee;
+    config.lbp.poolTickSpacing =
+      arg("pool-tick-spacing") ?? config.lbp.poolTickSpacing;
+    config.lbp.poolHook = arg("pool-hook") ?? config.lbp.poolHook;
+    if (arg("reserved-token-amount-for-lp")) {
+      config.lbp.reservedTokenAmountForLP = arg(
+        "reserved-token-amount-for-lp",
+      )!;
+    }
+  }
+  applyReadableConfigFields(config);
+  if (saleAmountOverride?.trim()) config.saleAmount = saleAmountOverride;
+  if (requiredCurrencyRaised !== undefined) {
+    config.auction.requiredCurrencyRaised = requiredCurrencyRaised;
+  }
+  if (config.lbp && arg("reserved-token-amount-for-lp")) {
+    config.lbp.reservedTokenAmountForLP = arg("reserved-token-amount-for-lp")!;
+  }
+}
+
+function shouldForkExistingConfig(config?: SaleConfigFile): boolean {
+  if (!config) return false;
+  return config.saleDeployer !== ZERO && config.fold.bondingRegistry !== ZERO;
+}
+
+function saleConfigJson(config: SaleConfigFile): unknown {
+  return {
+    name: config.name,
+    chainId: config.chainId,
+    saleDeployer: config.saleDeployer,
+    safe: config.safe,
+    launchMode: config.launchMode,
+    saleAmountFold:
+      config.saleAmountFold ?? ethersLib.formatEther(config.saleAmount),
+    saleAmountWei: config.saleAmount,
+    ccaSalt: config.ccaSalt,
+    ...(config.saleLabel !== "cca-sale" ? { saleLabel: config.saleLabel } : {}),
+    fold: config.fold,
+    auction: {
+      currency: config.auction.currency,
+      tokensRecipient: config.auction.tokensRecipient,
+      fundsRecipient: config.auction.fundsRecipient,
+      preSaleStartTimestamp: config.auction.preSaleStartTimestamp,
+      auctionStartTimestamp: config.auction.auctionStartTimestamp,
+      auctionEndTimestamp: config.auction.auctionEndTimestamp,
+      validationHook: config.auction.validationHook,
+      floorPriceEthPerFold: config.auction.floorPriceEthPerFold,
+      tickSpacingPercentOfFloor: config.auction.tickSpacingPercentOfFloor,
+      requiredRaiseEth: config.auction.requiredRaiseEth,
+      generated: {
+        startBlock: config.auction.startBlock,
+        endBlock: config.auction.endBlock,
+        claimBlock: config.auction.claimBlock,
+        floorPriceQ96: config.auction.floorPrice,
+        tickSpacingQ96: config.auction.tickSpacing,
+        requiredCurrencyRaisedWei: config.auction.requiredCurrencyRaised,
+        auctionStepsData: config.auction.auctionStepsData,
+      },
+    },
+    lbp: config.lbp
+      ? {
+          uniswap: {
+            liquidityLauncher: config.lbp.liquidityLauncher,
+            lbpStrategy: config.lbp.strategy,
+          },
+          migrationDelayBlocks: config.lbp.migrationDelayBlocks,
+          lpAllocationPercent: config.lbp.lpAllocationPercent,
+          recipients: {
+            proceedsRecipient: config.lbp.recipient,
+            lpPositionRecipient: config.lbp.positionRecipient,
+          },
+          pool: config.lbp.pool,
+          advanced: {
+            positionDefinitions: config.lbp.positionDefinitions,
+          },
+          generated: {
+            migrationBlock: config.lbp.migrationBlock,
+            reservedTokenAmountForLPWei: config.lbp.reservedTokenAmountForLP,
+            lpAllocationSchedule: config.lbp.lpAllocationSchedule,
+          },
+        }
+      : undefined,
+    predicateHook: config.predicateHook,
+  };
+}
 
 export async function actionPrepare(): Promise<void> {
   const { ethers } = await connect();
@@ -34,7 +191,18 @@ export async function actionPrepare(): Promise<void> {
   const [operator] = await ethers.getSigners();
   const operatorAddress = await operator.getAddress();
   const local = chainId === 31337 || chainId === 1337;
-  const safeInput = arg("safe") ?? process.env.SAFE_ADDRESS;
+
+  const requestedFile = configPath(false);
+  const requestedFileExists = fs.existsSync(requestedFile);
+  const existingConfig = requestedFileExists
+    ? normalizeSaleConfig(readJson(requestedFile), {
+        file: requestedFile,
+        allowMissingInfra: true,
+      })
+    : undefined;
+
+  const safeInput =
+    arg("safe") ?? process.env.SAFE_ADDRESS ?? existingConfig?.safe;
   if (!safeInput && !local && !hasFlag("allow-eoa-safe")) {
     throw new Error("SAFE_ADDRESS or --safe is required outside localhost.");
   }
@@ -42,15 +210,8 @@ export async function actionPrepare(): Promise<void> {
   if (!local && !hasFlag("allow-eoa-safe")) {
     await requireContract(ethers.provider, safe, "safe");
   }
-
-  const requestedFile = configPath(false);
-  const requestedFileExists = fs.existsSync(requestedFile);
-  const file = requestedFileExists
-    ? nextAvailablePath(requestedFile)
-    : requestedFile;
-  const existingConfig = requestedFileExists
-    ? readJson<SaleConfigFile>(requestedFile)
-    : undefined;
+  const shouldFork = shouldForkExistingConfig(existingConfig);
+  const file = shouldFork ? nextAvailablePath(requestedFile) : requestedFile;
   const predicateHookInput = resolvePredicateHookInput(existingConfig);
 
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
@@ -69,7 +230,9 @@ export async function actionPrepare(): Promise<void> {
   if (!latest) throw new Error("Could not read latest block");
 
   const preparedName = requestedFileExists
-    ? saleNameFromConfigPath(file)
+    ? shouldFork
+      ? saleNameFromConfigPath(file)
+      : (arg("name") ?? existingConfig?.name ?? saleNameFromConfigPath(file))
     : (arg("name") ?? `${networkName()}-fold-cca`);
   const config =
     existingConfig ??
@@ -95,8 +258,13 @@ export async function actionPrepare(): Promise<void> {
     chainId,
     safe,
     endBlock: BigInt(config.auction.endBlock),
+    saleAmount: BigInt(config.saleAmount),
   });
+  applyPrepareOverrides(config);
+  config.auction.tokensRecipient = safe;
   config.auction.fundsRecipient = config.lbp.strategy;
+  config.lbp.recipient = safe;
+  config.lbp.positionRecipient = safe;
   if (predicateHookInput && predicateHookAddress) {
     config.auction.validationHook = predicateHookAddress;
     if (predicateHookInput.registry !== ZERO && predicateHookInput.policyID) {
@@ -109,11 +277,12 @@ export async function actionPrepare(): Promise<void> {
     }
   }
 
-  writeJson(file, config);
-  const infra = {
+  writeJson(file, saleConfigJson(config));
+  const infra: SaleInfraFile = {
     chainId,
     safe,
     saleDeployer,
+    ccaSalt: config.ccaSalt,
     bondingRegistryProxy: registry.proxy,
     bondingRegistryImplementation: registry.implementation,
     bondingRegistryProxyAdmin: registry.proxyAdmin,
@@ -125,7 +294,7 @@ export async function actionPrepare(): Promise<void> {
     predicatePolicyID: predicateHookInput?.policyID || undefined,
     predicateRequireSenderIsOwner: predicateHookInput?.requireSenderIsOwner,
   };
-  const infraFile = path.join(saleDir, `${config.name}.infra.json`);
+  const infraFile = infraPath(config.name);
   writeJson(infraFile, infra);
   syncSaleInfraRecords(infra, {
     chain: networkName(),
@@ -145,7 +314,7 @@ Prepared sale infrastructure
   validationHook:               ${predicateHookAddress ?? ZERO}
   config:                       ${file}
   infra:                        ${infraFile}
-${requestedFileExists ? `  forkedFrom:                  ${requestedFile}\n` : ""}
+${shouldFork ? `  forkedFrom:                  ${requestedFile}\n` : ""}
 
 Review the config schedule and economics, then run --action plan.
 `);

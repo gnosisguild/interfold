@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
-import { encodeSchedule, generateSchedule } from "../ccaSchedule";
 import { arg, hasFlag } from "./cli";
 import { DAY, DEFAULT_SALE_AMOUNT, ZERO, abi } from "./constants";
+import {
+  auctionStepsDataForWindow,
+  blockForTimestamp,
+  ccaPriceConfig,
+  configSalt,
+  lpAllocationSchedule,
+  optionalTimestampInput,
+  percentToMps,
+  secondsPerBlock,
+  tokenReserveForLp,
+} from "./schedule";
 import type { PredicateHookConfig, SaleConfigFile } from "./types";
 import {
-  DEFAULT_CCA_PRICE_TICK_SPACING,
   DEFAULT_LP_ALLOCATION_RATE_MPS,
   LBP_STRATEGY_ADDRESSES,
   LIQUIDITY_LAUNCHER_ADDRESS,
@@ -14,49 +23,6 @@ import {
   UNISWAP_V4_MEDIUM_TICK_SPACING,
 } from "./uniswap";
 import { address } from "./values";
-
-const DEFAULT_SECONDS_PER_BLOCK = 12n;
-
-function optionalBigIntInput(
-  cliName: string,
-  envName?: string,
-): bigint | undefined {
-  const value = arg(cliName) ?? (envName ? process.env[envName] : undefined);
-  if (!value?.trim()) return undefined;
-  return BigInt(value);
-}
-
-function ceilDiv(value: bigint, divisor: bigint): bigint {
-  return (value + divisor - 1n) / divisor;
-}
-
-function secondsPerBlock(): bigint {
-  const value = optionalBigIntInput(
-    "seconds-per-block",
-    "AUCTION_SECONDS_PER_BLOCK",
-  );
-  const resolved = value ?? DEFAULT_SECONDS_PER_BLOCK;
-  if (resolved <= 0n) throw new Error("seconds-per-block must be > 0");
-  return resolved;
-}
-
-function blockForTimestamp(opts: {
-  timestamp: bigint;
-  currentBlock: bigint;
-  currentTimestamp: bigint;
-  secondsPerBlock: bigint;
-}): bigint {
-  if (opts.timestamp <= opts.currentTimestamp) {
-    throw new Error(
-      `auction timestamp ${opts.timestamp} must be greater than current timestamp ${opts.currentTimestamp}`,
-    );
-  }
-  const blocksFromNow = ceilDiv(
-    opts.timestamp - opts.currentTimestamp,
-    opts.secondsPerBlock,
-  );
-  return opts.currentBlock + (blocksFromNow < 2n ? 2n : blocksFromNow);
-}
 
 export function defaultPositionDefinitions(): string {
   return abi.encode(
@@ -68,19 +34,14 @@ export function defaultPositionDefinitions(): string {
 }
 
 export function defaultLpAllocationSchedule(): string {
-  return abi.encode(
-    ["tuple(uint128 lowerThreshold,uint24 rate)[]"],
-    [
-      [
-        [
-          0n,
-          BigInt(
-            arg("lp-allocation-rate-mps") ??
-              DEFAULT_LP_ALLOCATION_RATE_MPS.toString(),
-          ),
-        ],
-      ],
-    ],
+  return lpAllocationSchedule(
+    BigInt(
+      arg("lp-allocation-rate-mps") ??
+        (arg("lp-allocation-percent")
+          ? percentToMps(arg("lp-allocation-percent")!, "lp-allocation-percent")
+          : DEFAULT_LP_ALLOCATION_RATE_MPS
+        ).toString(),
+    ),
   );
 }
 
@@ -97,20 +58,30 @@ export function makeDefaultLbpConfig(opts: {
   chainId: number;
   safe: string;
   endBlock: bigint;
+  saleAmount: bigint;
+  lpAllocationPercent?: string;
 }) {
   const strategy = defaultLbpStrategy(opts.chainId);
+  const lpAllocationPercent =
+    arg("lp-allocation-percent") ?? opts.lpAllocationPercent ?? "18";
+  const lpRateMps = BigInt(
+    arg("lp-allocation-rate-mps") ??
+      percentToMps(lpAllocationPercent, "lp-allocation-percent").toString(),
+  );
   return {
     liquidityLauncher:
       arg("liquidity-launcher") ??
       process.env.LIQUIDITY_LAUNCHER ??
       LIQUIDITY_LAUNCHER_ADDRESS,
     strategy,
+    migrationDelayBlocks: arg("migration-delay-blocks") ?? "20",
     migrationBlock: (
       opts.endBlock + BigInt(arg("migration-delay-blocks") ?? "20")
     ).toString(),
+    lpAllocationPercent,
     reservedTokenAmountForLP:
       arg("reserved-token-amount-for-lp") ??
-      ethersLib.parseEther("100").toString(),
+      tokenReserveForLp(opts.saleAmount, lpRateMps).toString(),
     recipient: opts.safe,
     positionRecipient: opts.safe,
     pool: {
@@ -119,8 +90,12 @@ export function makeDefaultLbpConfig(opts: {
         arg("pool-tick-spacing") ?? UNISWAP_V4_MEDIUM_TICK_SPACING.toString(),
       hook: arg("pool-hook") ?? ZERO,
     },
+    poolFee: arg("pool-fee") ?? UNISWAP_V4_MEDIUM_FEE.toString(),
+    poolTickSpacing:
+      arg("pool-tick-spacing") ?? UNISWAP_V4_MEDIUM_TICK_SPACING.toString(),
+    poolHook: arg("pool-hook") ?? ZERO,
     positionDefinitions: defaultPositionDefinitions(),
-    lpAllocationSchedule: defaultLpAllocationSchedule(),
+    lpAllocationSchedule: lpAllocationSchedule(lpRateMps),
   };
 }
 
@@ -133,14 +108,13 @@ export function makeTemplateConfig(opts: {
   currentBlock: bigint;
   currentTimestamp: bigint;
 }): SaleConfigFile {
-  const explicitCcaStart = optionalBigIntInput(
-    "cca-start-timestamp",
-    "INTERFOLD_CCA_START",
-  );
-  const explicitCcaEnd = optionalBigIntInput(
-    "cca-end-timestamp",
-    "INTERFOLD_CCA_END",
-  );
+  const explicitCcaStart =
+    optionalTimestampInput("presale-start", "INTERFOLD_CCA_START") ??
+    optionalTimestampInput("cca-start-timestamp", "INTERFOLD_CCA_START");
+  const explicitAuctionStart = optionalTimestampInput("auction-start");
+  const explicitCcaEnd =
+    optionalTimestampInput("auction-end", "INTERFOLD_CCA_END") ??
+    optionalTimestampInput("cca-end-timestamp", "INTERFOLD_CCA_END");
   const offsetSeconds = BigInt(arg("cca-offset-seconds") ?? String(DAY));
   const durationSeconds = BigInt(
     arg("cca-duration-seconds") ?? String(7n * DAY),
@@ -151,18 +125,21 @@ export function makeTemplateConfig(opts: {
     throw new Error("cca-end-timestamp must be after cca-start-timestamp");
   }
 
-  const explicitAuctionStart = optionalBigIntInput("auction-start-timestamp");
-  const explicitAuctionEnd = optionalBigIntInput("auction-end-timestamp");
+  const explicitAuctionBlockStart =
+    optionalTimestampInput("auction-start-timestamp") ?? explicitCcaStart;
+  const explicitAuctionEnd =
+    optionalTimestampInput("auction-end-timestamp") ?? explicitCcaEnd;
   const deriveAuctionBlocks =
     hasFlag("derive-auction-blocks") ||
-    explicitAuctionStart !== undefined ||
+    explicitAuctionBlockStart !== undefined ||
     explicitAuctionEnd !== undefined ||
+    explicitAuctionStart !== undefined ||
     explicitCcaStart !== undefined ||
     explicitCcaEnd !== undefined;
   const blockTime = secondsPerBlock();
   const startBlock = deriveAuctionBlocks
     ? blockForTimestamp({
-        timestamp: explicitAuctionStart ?? ccaStart,
+        timestamp: explicitAuctionBlockStart ?? ccaStart,
         currentBlock: opts.currentBlock,
         currentTimestamp: opts.currentTimestamp,
         secondsPerBlock: blockTime,
@@ -176,24 +153,39 @@ export function makeTemplateConfig(opts: {
         secondsPerBlock: blockTime,
       })
     : startBlock + BigInt(arg("auction-duration-blocks") ?? "40");
+  const issuanceStartBlock =
+    explicitAuctionStart && explicitAuctionStart > ccaStart
+      ? blockForTimestamp({
+          timestamp: explicitAuctionStart,
+          currentBlock: opts.currentBlock,
+          currentTimestamp: opts.currentTimestamp,
+          secondsPerBlock: blockTime,
+        })
+      : startBlock;
   if (endBlock <= startBlock) {
     throw new Error("derived auction endBlock must be after startBlock");
   }
-  const auctionBlocks = Number(endBlock - startBlock);
-  const auctionStepsData = encodeSchedule(
-    generateSchedule({
-      auctionBlocks: auctionBlocks - 1,
-      prebidBlocks: 0,
-      numSteps: Math.min(12, Math.max(1, auctionBlocks - 1)),
-      finalBlockPct: 0.3,
-      alpha: 1.2,
-    }),
-  );
-  const floorPrice = "4295000000";
+  const auctionStepsData = auctionStepsDataForWindow({
+    startBlock,
+    auctionStartBlock: issuanceStartBlock,
+    endBlock,
+  });
+  const floorPriceEthPerFold = arg("floor-price-eth-per-fold") ?? "0.000012";
+  const tickSpacingPercentOfFloor = arg("tick-spacing-percent-of-floor") ?? "1";
+  const { floorPrice, tickSpacing } = ccaPriceConfig({
+    floorPriceEthPerFold,
+    tickSpacingPercentOfFloor,
+  });
+  const saleAmountFold = arg("sale-amount-fold");
+  const saleAmount = saleAmountFold
+    ? ethersLib.parseEther(saleAmountFold)
+    : BigInt(arg("sale-amount") ?? DEFAULT_SALE_AMOUNT);
   const lbp = makeDefaultLbpConfig({
     chainId: opts.chainId,
     safe: opts.safe,
     endBlock,
+    saleAmount,
+    lpAllocationPercent: arg("lp-allocation-percent"),
   });
   return {
     name: opts.name,
@@ -201,8 +193,9 @@ export function makeTemplateConfig(opts: {
     launchMode: "lbp",
     safe: opts.safe,
     saleDeployer: opts.saleDeployer,
-    saleAmount: arg("sale-amount") ?? DEFAULT_SALE_AMOUNT,
-    ccaSalt: ethersLib.id(`${opts.name}:${opts.chainId}:${Date.now()}`),
+    saleAmountFold,
+    saleAmount: saleAmount.toString(),
+    ccaSalt: configSalt(opts.name, opts.chainId),
     saleLabel: arg("sale-label") ?? "cca-sale",
     fold: {
       ccaStart: ccaStart.toString(),
@@ -214,13 +207,23 @@ export function makeTemplateConfig(opts: {
       currency: "ETH",
       tokensRecipient: opts.safe,
       fundsRecipient: lbp.strategy,
+      preSaleStartTimestamp: ccaStart.toString(),
+      startTimestamp: ccaStart.toString(),
+      auctionStartTimestamp: (explicitAuctionStart ?? ccaStart).toString(),
+      auctionEndTimestamp: ccaEnd.toString(),
+      endTimestamp: ccaEnd.toString(),
       startBlock: startBlock.toString(),
       endBlock: endBlock.toString(),
       claimBlock: (endBlock + 1n).toString(),
-      tickSpacing: DEFAULT_CCA_PRICE_TICK_SPACING.toString(),
+      tickSpacing: tickSpacing.toString(),
       validationHook: ZERO,
-      floorPrice,
-      requiredCurrencyRaised: "0",
+      floorPriceEthPerFold,
+      tickSpacingPercentOfFloor,
+      floorPrice: floorPrice.toString(),
+      requiredRaiseEth: arg("required-raise-eth") ?? "400",
+      requiredCurrencyRaised:
+        arg("required-currency-raised") ??
+        ethersLib.parseEther(arg("required-raise-eth") ?? "400").toString(),
       auctionStepsData,
     },
     lbp,
@@ -242,8 +245,8 @@ export function resolvePredicateHookInput(
     nonZero(config?.auction.validationHook);
   const registryInput =
     arg("predicate-registry") ??
-    process.env.PREDICATE_REGISTRY ??
-    config?.predicateHook?.registry;
+    nonZero(process.env.PREDICATE_REGISTRY) ??
+    nonZero(config?.predicateHook?.registry);
   const policyID =
     arg("predicate-policy-id") ??
     process.env.PREDICATE_POLICY_ID ??

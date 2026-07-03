@@ -17,9 +17,9 @@ Interfold FOLD sale pipeline
 
 One script, selected by --action:
   --action prepare      Deploy Safe-owned MockBondingRegistry proxy + sale deployer
-  --action plan         Predict FOLD/CCA and write the plan
+  --action plan         Resolve schedule/economics and write the deploy plan
   --action deploy       Operator submits deploySaleWithLiquidityLauncher
-  --action propose-safe Propose FOLD.acceptOwnership() through the Safe SDK
+  --action propose-safe Propose Safe activation: accept ownership + set claim source
   --action validate     Check FOLD/CCA/Safe invariants
   --action bid-claim    Submit a CCA bid, exit, and claim FOLD
   --action full-test    Self-contained Sepolia/local rehearsal
@@ -27,7 +27,7 @@ One script, selected by --action:
 Common flags:
   --safe 0x...              Required for --action prepare unless SAFE_ADDRESS is set
   --config <file>           Defaults to packages/interfold-contracts/deploy/sale/<network>-sale.config.json
-                           prepare auto-forks to <name>-2.config.json if this already exists
+                           full resolved config; generated infra/plan files sit beside it
   --plan <file>             Optional plan path override
   --deployment <file>       Optional deployment path override
   --safe-transactions <file> Optional manual Safe fallback batch path
@@ -39,6 +39,12 @@ Common flags:
   --pool-fee N              Uniswap v4 pool fee for LBP migration
   --pool-tick-spacing N     Uniswap v4 pool tick spacing for LBP migration
   --pool-hook 0x...         Optional v4 hook for LBP migration
+  --presale-start T         Unix seconds or ISO time when pre-bids open
+  --auction-start T         Unix seconds or ISO time when non-zero CCA issuance starts
+  --auction-end T           Unix seconds or ISO time when the CCA closes
+  --floor-price-eth-per-fold N  Human ETH/FOLD floor price, e.g. 0.000012
+  --tick-spacing-percent-of-floor N  CCA price increment as % of floor (default 1)
+  --lp-allocation-percent N Percent of raised ETH routed to LP (default 18)
   --predicate-registry 0x... Deploy a Safe-owned Predicate validation hook
   --predicate-policy-id x... Predicate policy/verification hash for that hook
   --predicate-hook 0x...     Use an already deployed validation hook
@@ -55,6 +61,8 @@ Common flags:
 
 Examples:
   pnpm sale --network sepolia --action full-test
+  pnpm sale --network sepolia --action prepare --config deploy/sale/sepolia-july-dry-run.config.json
+  pnpm sale --network sepolia --action plan --config deploy/sale/sepolia-july-dry-run.config.json
   pnpm sale --network mainnet --action prepare --safe 0xSafe --config packages/interfold-contracts/deploy/sale/mainnet-sale.config.json
   pnpm sale --network mainnet --action plan --config packages/interfold-contracts/deploy/sale/mainnet-sale.config.json
   pnpm sale --network mainnet --action deploy --config packages/interfold-contracts/deploy/sale/mainnet-sale.config.json --propose-safe

@@ -16,14 +16,35 @@ export interface AuctionConfig {
   currency: string;
   tokensRecipient: string;
   fundsRecipient: string;
+  preSaleStartTimestamp?: string;
+  startTimestamp?: string;
+  auctionStartTimestamp?: string;
+  auctionEndTimestamp?: string;
+  endTimestamp?: string;
+  claimTimestamp?: string;
   startBlock: string;
   endBlock: string;
   claimBlock: string;
   tickSpacing: string;
+  tickSpacingQ96?: string;
   validationHook: string;
+  floorPriceEthPerFold?: string;
+  tickSpacingPercentOfFloor?: string;
   floorPrice: string;
+  floorPriceQ96?: string;
+  requiredRaiseEth?: string;
   requiredCurrencyRaised: string;
+  requiredCurrencyRaisedWei?: string;
   auctionStepsData: string;
+  generated?: {
+    startBlock?: string;
+    endBlock?: string;
+    claimBlock?: string;
+    floorPriceQ96?: string;
+    tickSpacingQ96?: string;
+    requiredCurrencyRaisedWei?: string;
+    auctionStepsData?: string;
+  };
 }
 
 export interface PredicateHookConfig {
@@ -41,16 +62,44 @@ export interface PoolParametersConfig {
   hook: string;
 }
 
+export interface LbpUniswapConfig {
+  liquidityLauncher?: string;
+  lbpStrategy?: string;
+}
+
+export interface LbpRecipientConfig {
+  proceedsRecipient?: string;
+  lpPositionRecipient?: string;
+}
+
+export interface LbpAdvancedConfig {
+  positionDefinitions?: string;
+}
+
 export interface LbpConfig {
   liquidityLauncher: string;
   strategy: string;
+  uniswap?: LbpUniswapConfig;
+  migrationDelayBlocks?: string;
   migrationBlock: string;
+  lpAllocationPercent?: string;
   reservedTokenAmountForLP: string;
+  reservedTokenAmountForLPWei?: string;
   recipient: string;
   positionRecipient: string;
+  recipients?: LbpRecipientConfig;
+  poolFee?: string;
+  poolTickSpacing?: string;
+  poolHook?: string;
   pool: PoolParametersConfig;
   positionDefinitions: string;
   lpAllocationSchedule: string;
+  advanced?: LbpAdvancedConfig;
+  generated?: {
+    migrationBlock?: string;
+    reservedTokenAmountForLPWei?: string;
+    lpAllocationSchedule?: string;
+  };
 }
 
 export interface SaleConfigFile {
@@ -59,6 +108,8 @@ export interface SaleConfigFile {
   launchMode?: LaunchMode;
   saleDeployer: string;
   safe: string;
+  saleAmountFold?: string;
+  saleAmountWei?: string;
   saleAmount: string;
   ccaSalt: string;
   saleLabel: string;
@@ -66,6 +117,20 @@ export interface SaleConfigFile {
   auction: AuctionConfig;
   lbp?: LbpConfig;
   predicateHook?: PredicateHookConfig;
+}
+
+export interface SaleInfraFile {
+  chainId: number;
+  safe: string;
+  saleDeployer: string;
+  ccaSalt: string;
+  bondingRegistryProxy: string;
+  bondingRegistryImplementation: string;
+  bondingRegistryProxyAdmin: string;
+  validationHook?: string;
+  predicateRegistry?: string;
+  predicatePolicyID?: string;
+  predicateRequireSenderIsOwner?: boolean;
 }
 
 export interface AuctionParameters {
@@ -106,29 +171,35 @@ export interface SalePlan {
   launchMode?: LaunchMode;
   saleDeployer: string;
   safe: string;
-  factoryNonce: number;
   initializerFactory: string;
   liquidityLauncher: string;
   lbpStrategy: string;
-  predictedFold: string;
-  predictedAuction: string;
   fold: {
     initialOwner: string;
     ccaStart: string;
     ccaEnd: string;
     noMoreLocks: string;
-    claimSource: string;
     bondingRegistry: string;
   };
   auction: AuctionParameters;
   lbpSaleConfig: {
     liquidityLauncher: string;
     lbpStrategy: string;
-    expectedAuction: string;
+    ccaStart: string;
+    ccaEnd: string;
+    noMoreLocks: string;
+    bondingRegistry: string;
     auctionAmount: string;
     reservedTokenAmountForLP: string;
     distributionSalt: string;
-    lbpConfigData: string;
+    currency: string;
+    migrationBlock: string;
+    recipient: string;
+    positionRecipient: string;
+    poolParameters: PoolParameters;
+    positionDefinitions: string;
+    lpAllocationSchedule: string;
+    auctionConfigData: string;
     saleLabel: string;
     foldInitCodeHash: string;
   };
@@ -138,11 +209,10 @@ export interface SalePlan {
     poolManager: string;
     distributionAmount: string;
     launcherSalt: string;
-    initializerSalt: string;
-    migratorConfigData: string;
     migratorParams: MigratorParameters;
   };
   foldInitCode: string;
+  sourceConfigHash?: string;
   configHash?: string;
   configDigest?: string;
 }

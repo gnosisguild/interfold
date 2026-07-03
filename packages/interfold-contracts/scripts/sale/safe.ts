@@ -6,14 +6,11 @@ import { ethers as ethersLib } from "ethers";
 
 import { arg } from "./cli";
 import {
+  FOLD_TOKEN_SAFE_ABI,
   PREDICATE_VALIDATION_HOOK_ABI,
   ZERO,
 } from "./constants";
-import {
-  safeProposalPath,
-  safeTransactionsPath,
-  writeJson,
-} from "./files";
+import { safeProposalPath, safeTransactionsPath, writeJson } from "./files";
 import type {
   DeploymentFile,
   SafeAction,
@@ -206,6 +203,18 @@ export function buildSaleSafeActions(
       transaction: acceptOwnership,
     },
   ];
+  const foldInterface = new ethersLib.Interface(FOLD_TOKEN_SAFE_ABI);
+  actions.push({
+    description: `FOLD.setClaimSource(${deployment.auction})`,
+    transaction: {
+      to: deployment.fold,
+      value: "0",
+      data: foldInterface.encodeFunctionData("setClaimSource", [
+        deployment.auction,
+      ]),
+      operation: OperationType.Call,
+    },
+  });
   const validationHook =
     deployment.validationHook ?? config.auction.validationHook;
   if (validationHook && validationHook !== ZERO) {
@@ -240,4 +249,3 @@ export async function proposeSaleSafeActions(
     origin,
   );
 }
-

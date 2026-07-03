@@ -4,19 +4,28 @@ import { ethers as ethersLib } from "ethers";
 import { decodeSchedule } from "../ccaSchedule";
 import { arg } from "./cli";
 import {
+  DEFAULT_SALE_AMOUNT,
   FORTY_DAYS,
   FOUR_YEARS,
   MSG_SENDER_SENTINEL,
   ZERO,
   abi,
 } from "./constants";
-import { configPath, readJson } from "./files";
+import {
+  configPath,
+  infraPath,
+  readJson,
+  saleNameFromConfigPath,
+} from "./files";
+import { applyReadableConfigFields, parseTimestamp } from "./schedule";
 import type {
   AuctionConfig,
   AuctionParameters,
+  FoldTokenConfig,
   LbpConfig,
   MigratorParameters,
   SaleConfigFile,
+  SaleInfraFile,
   SalePlan,
 } from "./types";
 import {
@@ -25,6 +34,8 @@ import {
   LBP_STRATEGY_ADDRESSES,
   LIQUIDITY_LAUNCHER_ADDRESS,
   MIGRATOR_PARAMETERS_TUPLE,
+  UNISWAP_V4_MEDIUM_FEE,
+  UNISWAP_V4_MEDIUM_TICK_SPACING,
 } from "./uniswap";
 
 export function address(value: string, label: string): string {
@@ -40,6 +51,246 @@ export function requireBytes32(value: string, label: string): string {
     throw new Error(`${label} must be a 0x-prefixed bytes32`);
   }
   return value;
+}
+
+type RawSaleConfig = Partial<
+  Omit<SaleConfigFile, "fold" | "auction" | "lbp">
+> & {
+  fold?: Partial<FoldTokenConfig>;
+  auction?: Partial<AuctionConfig>;
+  lbp?: Partial<LbpConfig>;
+};
+
+function nonZeroAddress(value?: string): string | undefined {
+  if (!value?.trim() || value === ZERO) return undefined;
+  return value;
+}
+
+function nonZeroBytes32(value?: string): string | undefined {
+  if (
+    !value?.trim() ||
+    value ===
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function defaultPositionDefinitions(): string {
+  return abi.encode(
+    [
+      "tuple(int24 offsetLower,int24 offsetUpper,uint24 weight,address overridePositionRecipient)[]",
+    ],
+    [[]],
+  );
+}
+
+function defaultLpAllocationSchedule(): string {
+  return abi.encode(
+    ["tuple(uint128 lowerThreshold,uint24 rate)[]"],
+    [[[0n, 1_800_000n]]],
+  );
+}
+
+function readInfra(
+  name: string,
+  opts: { allowMissingInfra?: boolean },
+): SaleInfraFile | undefined {
+  try {
+    return readJson<SaleInfraFile>(infraPath(name));
+  } catch (error) {
+    if (opts.allowMissingInfra) return undefined;
+    throw new Error(
+      `Sale infra not found for ${name}: ${infraPath(name)}. Run --action prepare first.`,
+      { cause: error },
+    );
+  }
+}
+
+export function normalizeSaleConfig(
+  raw: RawSaleConfig,
+  opts: { file?: string; allowMissingInfra?: boolean } = {},
+): SaleConfigFile {
+  const name =
+    raw.name ??
+    (opts.file ? saleNameFromConfigPath(opts.file) : undefined) ??
+    "sale";
+  const infra = readInfra(name, opts);
+  const chainId = raw.chainId ?? infra?.chainId ?? 0;
+  const safe = nonZeroAddress(raw.safe) ?? infra?.safe ?? ZERO;
+  const saleAmountFold = raw.saleAmountFold;
+  const saleAmount =
+    raw.saleAmount ??
+    (raw as RawSaleConfig & { saleAmountWei?: string }).saleAmountWei ??
+    DEFAULT_SALE_AMOUNT;
+  const auction = raw.auction ?? {};
+  const auctionAliases = auction as Partial<AuctionConfig> & {
+    tickSpacingQ96?: string;
+    floorPriceQ96?: string;
+    requiredCurrencyRaisedWei?: string;
+  };
+  const auctionGenerated = auction.generated ?? {};
+  const lbp = raw.lbp ?? {};
+  const lbpAliases = raw.lbp as
+    | (Partial<LbpConfig> & { reservedTokenAmountForLPWei?: string })
+    | undefined;
+  const lbpUniswap = lbp?.uniswap ?? {};
+  const lbpRecipients = lbp?.recipients ?? {};
+  const lbpAdvanced = lbp?.advanced ?? {};
+  const lbpGenerated = raw.lbp?.generated ?? {};
+  const strategy =
+    nonZeroAddress(lbp.strategy) ??
+    nonZeroAddress(lbpUniswap.lbpStrategy) ??
+    LBP_STRATEGY_ADDRESSES[chainId] ??
+    ZERO;
+  const validationHook =
+    nonZeroAddress(auction.validationHook) ??
+    nonZeroAddress(raw.predicateHook?.address) ??
+    infra?.validationHook ??
+    ZERO;
+  const predicateRegistry =
+    raw.predicateHook?.registry ?? infra?.predicateRegistry ?? ZERO;
+  const predicatePolicyID =
+    raw.predicateHook?.policyID ?? infra?.predicatePolicyID ?? "";
+  const hasPredicateHook =
+    (predicateRegistry !== ZERO && Boolean(predicatePolicyID)) ||
+    Boolean(raw.predicateHook?.address ?? infra?.validationHook);
+
+  return {
+    name,
+    chainId,
+    launchMode: "lbp",
+    saleDeployer:
+      nonZeroAddress(raw.saleDeployer) ?? infra?.saleDeployer ?? ZERO,
+    safe,
+    saleAmountFold,
+    saleAmountWei: saleAmount,
+    saleAmount,
+    ccaSalt: nonZeroBytes32(raw.ccaSalt) ?? infra?.ccaSalt ?? ZERO,
+    saleLabel: raw.saleLabel ?? "cca-sale",
+    fold: {
+      ccaStart: raw.fold?.ccaStart ?? "0",
+      ccaEnd: raw.fold?.ccaEnd ?? "0",
+      noMoreLocks: raw.fold?.noMoreLocks ?? "",
+      bondingRegistry:
+        nonZeroAddress(raw.fold?.bondingRegistry) ??
+        infra?.bondingRegistryProxy ??
+        ZERO,
+    },
+    auction: {
+      currency: auction.currency ?? "ETH",
+      tokensRecipient: nonZeroAddress(auction.tokensRecipient) ?? safe,
+      fundsRecipient: nonZeroAddress(auction.fundsRecipient) ?? strategy,
+      preSaleStartTimestamp:
+        auction.preSaleStartTimestamp ?? auction.startTimestamp,
+      startTimestamp: auction.startTimestamp,
+      auctionStartTimestamp: auction.auctionStartTimestamp,
+      auctionEndTimestamp: auction.auctionEndTimestamp ?? auction.endTimestamp,
+      endTimestamp: auction.endTimestamp,
+      claimTimestamp: auction.claimTimestamp,
+      startBlock: auction.startBlock ?? auctionGenerated.startBlock ?? "0",
+      endBlock: auction.endBlock ?? auctionGenerated.endBlock ?? "0",
+      claimBlock: auction.claimBlock ?? auctionGenerated.claimBlock ?? "0",
+      tickSpacing:
+        auction.tickSpacing ??
+        auctionGenerated.tickSpacingQ96 ??
+        auctionAliases.tickSpacingQ96 ??
+        "0",
+      tickSpacingQ96:
+        auctionGenerated.tickSpacingQ96 ??
+        auctionAliases.tickSpacingQ96 ??
+        auction.tickSpacing,
+      validationHook,
+      floorPriceEthPerFold: auction.floorPriceEthPerFold ?? "0.000012",
+      tickSpacingPercentOfFloor: auction.tickSpacingPercentOfFloor ?? "1",
+      floorPrice:
+        auction.floorPrice ??
+        auctionGenerated.floorPriceQ96 ??
+        auctionAliases.floorPriceQ96 ??
+        "0",
+      floorPriceQ96:
+        auctionGenerated.floorPriceQ96 ??
+        auctionAliases.floorPriceQ96 ??
+        auction.floorPrice,
+      requiredRaiseEth: auction.requiredRaiseEth ?? "400",
+      requiredCurrencyRaised:
+        auction.requiredCurrencyRaised ??
+        auctionGenerated.requiredCurrencyRaisedWei ??
+        auctionAliases.requiredCurrencyRaisedWei ??
+        "0",
+      requiredCurrencyRaisedWei:
+        auctionGenerated.requiredCurrencyRaisedWei ??
+        auctionAliases.requiredCurrencyRaisedWei ??
+        auction.requiredCurrencyRaised,
+      auctionStepsData:
+        auction.auctionStepsData ?? auctionGenerated.auctionStepsData ?? "0x",
+      generated: auction.generated,
+    },
+    lbp: {
+      liquidityLauncher:
+        nonZeroAddress(lbp.liquidityLauncher) ??
+        nonZeroAddress(lbpUniswap.liquidityLauncher) ??
+        LIQUIDITY_LAUNCHER_ADDRESS,
+      strategy,
+      uniswap: lbpUniswap,
+      migrationDelayBlocks: lbp.migrationDelayBlocks ?? "20",
+      migrationBlock: lbp.migrationBlock ?? lbpGenerated.migrationBlock ?? "0",
+      lpAllocationPercent: lbp.lpAllocationPercent ?? "18",
+      reservedTokenAmountForLP:
+        lbp.reservedTokenAmountForLP ??
+        lbpGenerated.reservedTokenAmountForLPWei ??
+        lbpAliases?.reservedTokenAmountForLPWei ??
+        "0",
+      reservedTokenAmountForLPWei:
+        lbpGenerated.reservedTokenAmountForLPWei ??
+        lbpAliases?.reservedTokenAmountForLPWei ??
+        lbp.reservedTokenAmountForLP,
+      recipient:
+        nonZeroAddress(lbp.recipient) ??
+        nonZeroAddress(lbpRecipients.proceedsRecipient) ??
+        safe,
+      positionRecipient:
+        nonZeroAddress(lbp.positionRecipient) ??
+        nonZeroAddress(lbpRecipients.lpPositionRecipient) ??
+        safe,
+      recipients: lbp.recipients,
+      poolFee: lbp.poolFee ?? lbp.pool?.fee ?? UNISWAP_V4_MEDIUM_FEE.toString(),
+      poolTickSpacing:
+        lbp.poolTickSpacing ??
+        lbp.pool?.tickSpacing ??
+        UNISWAP_V4_MEDIUM_TICK_SPACING.toString(),
+      poolHook: lbp.poolHook ?? lbp.pool?.hook ?? ZERO,
+      pool: {
+        fee: lbp.poolFee ?? lbp.pool?.fee ?? UNISWAP_V4_MEDIUM_FEE.toString(),
+        tickSpacing:
+          lbp.poolTickSpacing ??
+          lbp.pool?.tickSpacing ??
+          UNISWAP_V4_MEDIUM_TICK_SPACING.toString(),
+        hook: lbp.poolHook ?? lbp.pool?.hook ?? ZERO,
+      },
+      positionDefinitions:
+        lbp.positionDefinitions ??
+        lbpAdvanced.positionDefinitions ??
+        defaultPositionDefinitions(),
+      lpAllocationSchedule:
+        lbp.lpAllocationSchedule ??
+        lbpGenerated.lpAllocationSchedule ??
+        defaultLpAllocationSchedule(),
+      advanced: lbp.advanced,
+      generated: lbp.generated,
+    },
+    predicateHook: hasPredicateHook
+      ? {
+          registry: predicateRegistry,
+          policyID: predicatePolicyID,
+          address: raw.predicateHook?.address ?? infra?.validationHook,
+          requireSenderIsOwner:
+            raw.predicateHook?.requireSenderIsOwner ??
+            infra?.predicateRequireSenderIsOwner,
+        }
+      : undefined,
+  };
 }
 
 function validateAuctionStepsData(
@@ -58,12 +309,21 @@ function validateAuctionStepsData(
 }
 
 export function loadConfig(file = configPath()): SaleConfigFile {
-  const config = readJson<SaleConfigFile>(file);
+  const config = normalizeSaleConfig(readJson<RawSaleConfig>(file), { file });
   const safeOverride = arg("safe") ?? process.env.SAFE_ADDRESS;
   const saleDeployerOverride = arg("sale-deployer");
   const bondingOverride = arg("bonding-registry");
 
-  if (safeOverride && config.safe === ZERO) config.safe = safeOverride;
+  if (safeOverride && config.safe === ZERO) {
+    config.safe = safeOverride;
+    if (config.auction.tokensRecipient === ZERO) {
+      config.auction.tokensRecipient = safeOverride;
+    }
+    if (config.lbp?.recipient === ZERO) config.lbp.recipient = safeOverride;
+    if (config.lbp?.positionRecipient === ZERO) {
+      config.lbp.positionRecipient = safeOverride;
+    }
+  }
   if (saleDeployerOverride && config.saleDeployer === ZERO) {
     config.saleDeployer = saleDeployerOverride;
   }
@@ -71,6 +331,7 @@ export function loadConfig(file = configPath()): SaleConfigFile {
     config.fold.bondingRegistry = bondingOverride;
   }
 
+  applyReadableConfigFields(config);
   validateConfig(config);
   return config;
 }
@@ -137,6 +398,33 @@ export function validateConfig(config: SaleConfigFile): void {
   BigInt(config.fold.ccaStart);
   BigInt(config.fold.ccaEnd);
   if (config.fold.noMoreLocks?.trim()) BigInt(config.fold.noMoreLocks);
+  if (config.auction.startTimestamp?.trim()) {
+    parseTimestamp(config.auction.startTimestamp, "auction.startTimestamp");
+  }
+  if (config.auction.preSaleStartTimestamp?.trim()) {
+    parseTimestamp(
+      config.auction.preSaleStartTimestamp,
+      "auction.preSaleStartTimestamp",
+    );
+  }
+  if (config.auction.auctionStartTimestamp?.trim()) {
+    parseTimestamp(
+      config.auction.auctionStartTimestamp,
+      "auction.auctionStartTimestamp",
+    );
+  }
+  if (config.auction.auctionEndTimestamp?.trim()) {
+    parseTimestamp(
+      config.auction.auctionEndTimestamp,
+      "auction.auctionEndTimestamp",
+    );
+  }
+  if (config.auction.endTimestamp?.trim()) {
+    parseTimestamp(config.auction.endTimestamp, "auction.endTimestamp");
+  }
+  if (config.auction.claimTimestamp?.trim()) {
+    parseTimestamp(config.auction.claimTimestamp, "auction.claimTimestamp");
+  }
 }
 
 function validateBytes(value: string, label: string): string {
@@ -296,17 +584,15 @@ export function buildFoldInitCode(opts: {
   ccaStart: bigint;
   ccaEnd: bigint;
   noMoreLocks: bigint;
-  claimSource: string;
   bondingRegistry: string;
 }): string {
   const encodedCtor = abi.encode(
-    ["address", "uint64", "uint64", "uint64", "address", "address"],
+    ["address", "uint64", "uint64", "uint64", "address"],
     [
       opts.initialOwner,
       opts.ccaStart,
       opts.ccaEnd,
       opts.noMoreLocks,
-      opts.claimSource,
       opts.bondingRegistry,
     ],
   );
@@ -405,13 +691,27 @@ export function lbpSaleConfigStruct(plan: SalePlan) {
   return {
     liquidityLauncher: plan.lbpSaleConfig.liquidityLauncher,
     lbpStrategy: plan.lbpSaleConfig.lbpStrategy,
-    expectedAuction: plan.lbpSaleConfig.expectedAuction,
+    ccaStart: BigInt(plan.lbpSaleConfig.ccaStart),
+    ccaEnd: BigInt(plan.lbpSaleConfig.ccaEnd),
+    noMoreLocks: BigInt(plan.lbpSaleConfig.noMoreLocks),
+    bondingRegistry: plan.lbpSaleConfig.bondingRegistry,
     auctionAmount: BigInt(plan.lbpSaleConfig.auctionAmount),
     reservedTokenAmountForLP: BigInt(
       plan.lbpSaleConfig.reservedTokenAmountForLP,
     ),
     distributionSalt: plan.lbpSaleConfig.distributionSalt,
-    lbpConfigData: plan.lbpSaleConfig.lbpConfigData,
+    currency: plan.lbpSaleConfig.currency,
+    migrationBlock: BigInt(plan.lbpSaleConfig.migrationBlock),
+    recipient: plan.lbpSaleConfig.recipient,
+    positionRecipient: plan.lbpSaleConfig.positionRecipient,
+    poolParameters: {
+      fee: BigInt(plan.lbpSaleConfig.poolParameters.fee),
+      tickSpacing: BigInt(plan.lbpSaleConfig.poolParameters.tickSpacing),
+      hook: plan.lbpSaleConfig.poolParameters.hook,
+    },
+    positionDefinitions: plan.lbpSaleConfig.positionDefinitions,
+    lpAllocationSchedule: plan.lbpSaleConfig.lpAllocationSchedule,
+    auctionConfigData: plan.lbpSaleConfig.auctionConfigData,
     saleLabel: plan.lbpSaleConfig.saleLabel,
     foldInitCodeHash: plan.lbpSaleConfig.foldInitCodeHash,
   };

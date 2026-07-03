@@ -79,9 +79,11 @@ export async function actionFullTest(): Promise<void> {
     const fold = await ethers.getContractAt("InterfoldToken", deployment.fold);
     await (await fold.acceptOwnership()).wait();
     console.log(`Accepted FOLD ownership: ${deployment.fold}`);
+    await (await fold.setClaimSource(deployment.auction)).wait();
+    console.log(`Set FOLD claim source: ${deployment.auction}`);
   } else {
     console.log(
-      `FOLD ownership is pending Safe acceptance. Run acceptOwnership from ${safe}.`,
+      `FOLD ownership is pending Safe activation. Execute the Safe batch from ${safe}: acceptOwnership(), setClaimSource(), and Predicate hook setup if applicable.`,
     );
   }
 

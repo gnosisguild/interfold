@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -101,6 +102,12 @@ export function planPath(config: SaleConfigFile): string {
     : path.join(saleDir, `${config.name}.plan.json`);
 }
 
+export function infraPath(configOrName: SaleConfigFile | string): string {
+  const name =
+    typeof configOrName === "string" ? configOrName : configOrName.name;
+  return path.join(saleDir, `${name}.infra.json`);
+}
+
 export function deploymentPath(config: SaleConfigFile): string {
   const cliDeployment = arg("deployment");
   return cliDeployment
@@ -122,6 +129,11 @@ export function safeTransactionsPath(config: SaleConfigFile): string {
 
 export function readJson<T>(file: string): T {
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+}
+
+export function jsonFileHash(file: string): string {
+  const normalized = JSON.stringify(readJson<unknown>(file));
+  return `0x${crypto.createHash("sha256").update(normalized).digest("hex")}`;
 }
 
 export function writeJson(file: string, value: unknown): void {

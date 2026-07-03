@@ -71,11 +71,6 @@ Sale deployment
   validationHook:    ${deployment.validationHook ?? ZERO}
   config hash:       ${planConfigHash(plan)}
 
-Predicted addresses
-  FOLD:              ${plan.predictedFold}
-  CCA auction:       ${plan.predictedAuction}
-  saleDeployer nonce:${plan.factoryNonce}
-
 FOLD lifecycle
   current timestamp: ${formatTimestamp(currentTimestamp)}
   CCA_START:         ${formatTimestamp(config.fold.ccaStart)} (${formatSecondsDelta(BigInt(config.fold.ccaStart), currentTimestamp)})
@@ -108,7 +103,6 @@ Economics and recipients
   distributionAmount:${plan.lbp.distributionAmount} (${formatFold(plan.lbp.distributionAmount)})
   migrationBlock:    ${plan.lbp.migratorParams.migrationBlock}
   launcherSalt:      ${plan.lbp.launcherSalt}
-  initializerSalt:   ${plan.lbp.initializerSalt}
 `);
 
   if (deployment.safeProposal) {
@@ -210,8 +204,13 @@ export async function validateDeployment(
   printValue("protocolAdmin", protocolAdmin);
 
   const claimSource = await fold.CLAIM_SOURCE();
-  assertEq("FOLD.CLAIM_SOURCE", claimSource, deployment.auction);
   printValue("claimSource", claimSource);
+  if (address(claimSource, "FOLD.CLAIM_SOURCE") === ZERO) {
+    throw new Error(
+      "FOLD.CLAIM_SOURCE is not set. Execute the Safe activation batch first: FOLD.acceptOwnership(), FOLD.setClaimSource(auction), and PredicateValidationHook.setAuction(auction) if applicable.",
+    );
+  }
+  assertEq("FOLD.CLAIM_SOURCE", claimSource, deployment.auction);
 
   const bondingRegistry = await fold.BONDING_REGISTRY();
   assertEq(
