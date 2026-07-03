@@ -8,6 +8,7 @@ import {
   writeJson,
 } from "./files";
 import { buildSalePlan, printPlan } from "./plan";
+import { saleConfigJson } from "./prepare";
 import type { SalePlan } from "./types";
 import { loadConfig } from "./values";
 
@@ -25,8 +26,9 @@ export async function actionPlan(): Promise<SalePlan> {
   const rawConfig = readJson<unknown>(configFile);
   const config = loadConfig(configFile);
   const plan = await buildSalePlan(ethers, config);
+  if (hasRuntimeFields(rawConfig))
+    writeJson(configFile, saleConfigJson(config));
   plan.sourceConfigHash = jsonFileHash(configFile);
-  if (hasRuntimeFields(rawConfig)) writeJson(configFile, config);
   const planFile = planPath(config);
   writeJson(planFile, plan);
   printPlan(plan, planFile);

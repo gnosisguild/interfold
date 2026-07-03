@@ -147,7 +147,7 @@ function isKnownLbpStrategyForAnotherChain(
   );
 }
 
-function saleConfigJson(config: SaleConfigFile): unknown {
+export function saleConfigJson(config: SaleConfigFile): unknown {
   return {
     name: config.name,
     chainId: config.chainId,
