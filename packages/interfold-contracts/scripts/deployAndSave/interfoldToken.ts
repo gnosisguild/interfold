@@ -77,7 +77,6 @@ export const deployAndSaveInterfoldToken = async ({
     !owner ||
     ccaStart === undefined ||
     ccaEnd === undefined ||
-    !claimSource ||
     !bondingRegistry ||
     noMoreLocks === undefined ||
     preDeployedArgs?.constructorArgs?.owner === owner
@@ -104,11 +103,21 @@ export const deployAndSaveInterfoldToken = async ({
     ccaStart,
     ccaEnd,
     noMoreLocks,
-    claimSource,
     bondingRegistry,
   );
 
   await interfoldToken.waitForDeployment();
+
+  if (claimSource) {
+    const signerAddress = await signer.getAddress();
+    if (signerAddress.toLowerCase() === owner.toLowerCase()) {
+      await (await interfoldToken.setClaimSource(claimSource)).wait();
+    } else {
+      console.log(
+        `Skipping setClaimSource(${claimSource}); owner ${owner} must call it.`,
+      );
+    }
+  }
 
   const blockNumber = await ethers.provider.getBlockNumber();
 
@@ -121,7 +130,6 @@ export const deployAndSaveInterfoldToken = async ({
         ccaStart: ccaStart.toString(),
         ccaEnd: ccaEnd.toString(),
         noMoreLocks: noMoreLocks.toString(),
-        claimSource,
         bondingRegistry,
       },
       blockNumber,

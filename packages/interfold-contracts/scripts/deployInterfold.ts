@@ -239,10 +239,9 @@ export const deployInterfold = async (
   const bondingRegistryAddress = await bondingRegistry.getAddress();
   console.log("BondingRegistry deployed to:", bondingRegistryAddress);
 
-  // FOLD is deployed with BondingRegistry's real address.  claimSource uses
-  // the deployer as a placeholder; the actual Interfold protocol contract is
-  // deployed later (its address is not known at this point).  CLAIM_SOURCE is
-  // immutable, so local deployments use the deployer as the claim source.
+  // FOLD is deployed with BondingRegistry's real address. Local deployments set
+  // the deployer as the one-time claim source placeholder; production sale
+  // deployments set the actual auction after it exists.
   console.log("Deploying FOLD token...");
   const { interfoldToken } = await deployAndSaveInterfoldToken({
     owner: ownerAddress,
