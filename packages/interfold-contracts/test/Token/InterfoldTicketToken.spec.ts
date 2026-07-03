@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
+import { Interface } from "ethers";
 import { network } from "hardhat";
 
 import {
@@ -234,8 +235,8 @@ describe("InterfoldTicketToken", function () {
     it("does not expose ERC-2612 permit in the ABI", async function () {
       const { token } = await loadFixture(deploy);
       expect(
-        token.interface.getFunction(
-          "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)" as unknown as "permit",
+        (token.interface as Interface).getFunction(
+          "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
         ),
       ).to.equal(null);
     });
