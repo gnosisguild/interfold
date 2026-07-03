@@ -63,7 +63,7 @@ export function makeDefaultLbpConfig(opts: {
 }) {
   const strategy = defaultLbpStrategy(opts.chainId);
   const lpAllocationPercent =
-    arg("lp-allocation-percent") ?? opts.lpAllocationPercent ?? "18";
+    arg("lp-allocation-percent") ?? opts.lpAllocationPercent ?? "25";
   const lpRateMps = BigInt(
     arg("lp-allocation-rate-mps") ??
       percentToMps(lpAllocationPercent, "lp-allocation-percent").toString(),
@@ -215,7 +215,7 @@ export function makeTemplateConfig(opts: {
       endTimestamp: ccaEnd.toString(),
       startBlock: startBlock.toString(),
       endBlock: endBlock.toString(),
-      claimBlock: (migrationBlock + 1n).toString(),
+      claimBlock: migrationBlock.toString(),
       tickSpacing: tickSpacing.toString(),
       validationHook: ZERO,
       floorPriceEthPerFold,
@@ -239,19 +239,24 @@ function nonZero(value?: string): string | undefined {
 export function resolvePredicateHookInput(
   config?: SaleConfigFile,
 ): PredicateHookConfig | undefined {
-  const addressInput =
-    arg("predicate-hook") ??
-    arg("validation-hook") ??
+  const cliAddressInput = arg("predicate-hook") ?? arg("validation-hook");
+  const cliRegistryInput = arg("predicate-registry");
+  const cliPolicyID = arg("predicate-policy-id");
+  const configPredicateAddress =
     nonZero(config?.predicateHook?.address) ??
     nonZero(config?.auction.validationHook);
+  const configPredicateRegistry = nonZero(config?.predicateHook?.registry);
+  const configPolicyID = config?.predicateHook?.policyID;
+  const shouldUseEnv = !config;
+  const addressInput = cliAddressInput ?? configPredicateAddress;
   const registryInput =
-    arg("predicate-registry") ??
-    nonZero(process.env.PREDICATE_REGISTRY) ??
-    nonZero(config?.predicateHook?.registry);
+    cliRegistryInput ??
+    configPredicateRegistry ??
+    (shouldUseEnv ? nonZero(process.env.PREDICATE_REGISTRY) : undefined);
   const policyID =
-    arg("predicate-policy-id") ??
-    process.env.PREDICATE_POLICY_ID ??
-    config?.predicateHook?.policyID;
+    cliPolicyID ??
+    configPolicyID ??
+    (shouldUseEnv ? process.env.PREDICATE_POLICY_ID : undefined);
 
   if (!addressInput && !registryInput && !policyID) return undefined;
 

@@ -40,7 +40,7 @@
       "lbpStrategy": "0xb98766A35cdc28415be0767D4EA41e39fBA3e000"
     },
     "migrationDelayBlocks": "20",
-    "lpAllocationPercent": "18",
+    "lpAllocationPercent": "25",
     "recipients": {
       "proceedsRecipient": "0x0000000000000000000000000000000000000000",
       "lpPositionRecipient": "0x0000000000000000000000000000000000000000"

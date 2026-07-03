@@ -89,7 +89,7 @@ function defaultPositionDefinitions(): string {
 function defaultLpAllocationSchedule(): string {
   return abi.encode(
     ["tuple(uint128 lowerThreshold,uint24 rate)[]"],
-    [[[0n, 1_800_000n]]],
+    [[[0n, 2_500_000n]]],
   );
 }
 
@@ -144,18 +144,27 @@ export function normalizeSaleConfig(
     nonZeroAddress(lbpUniswap.lbpStrategy) ??
     LBP_STRATEGY_ADDRESSES[chainId] ??
     ZERO;
+  const explicitValidationHook = auction.validationHook !== undefined;
+  const useInfraPredicate = !explicitValidationHook && !raw.predicateHook;
   const validationHook =
     nonZeroAddress(auction.validationHook) ??
     nonZeroAddress(raw.predicateHook?.address) ??
-    infra?.validationHook ??
+    (useInfraPredicate ? infra?.validationHook : undefined) ??
     ZERO;
   const predicateRegistry =
-    raw.predicateHook?.registry ?? infra?.predicateRegistry ?? ZERO;
+    raw.predicateHook?.registry ??
+    (useInfraPredicate ? infra?.predicateRegistry : undefined) ??
+    ZERO;
   const predicatePolicyID =
-    raw.predicateHook?.policyID ?? infra?.predicatePolicyID ?? "";
+    raw.predicateHook?.policyID ??
+    (useInfraPredicate ? infra?.predicatePolicyID : undefined) ??
+    "";
   const hasPredicateHook =
     (predicateRegistry !== ZERO && Boolean(predicatePolicyID)) ||
-    Boolean(raw.predicateHook?.address ?? infra?.validationHook);
+    Boolean(
+      raw.predicateHook?.address ??
+        (useInfraPredicate ? infra?.validationHook : undefined),
+    );
 
   return {
     name,
@@ -236,7 +245,7 @@ export function normalizeSaleConfig(
       uniswap: lbpUniswap,
       migrationDelayBlocks: lbp.migrationDelayBlocks ?? "20",
       migrationBlock: lbp.migrationBlock ?? lbpGenerated.migrationBlock ?? "0",
-      lpAllocationPercent: lbp.lpAllocationPercent ?? "18",
+      lpAllocationPercent: lbp.lpAllocationPercent ?? "25",
       reservedTokenAmountForLP:
         lbp.reservedTokenAmountForLP ??
         lbpGenerated.reservedTokenAmountForLPWei ??
@@ -284,7 +293,9 @@ export function normalizeSaleConfig(
       ? {
           registry: predicateRegistry,
           policyID: predicatePolicyID,
-          address: raw.predicateHook?.address ?? infra?.validationHook,
+          address:
+            raw.predicateHook?.address ??
+            (useInfraPredicate ? infra?.validationHook : undefined),
           requireSenderIsOwner:
             raw.predicateHook?.requireSenderIsOwner ??
             infra?.predicateRequireSenderIsOwner,

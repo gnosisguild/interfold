@@ -228,6 +228,7 @@ export interface DeploymentFile {
   launchMode?: LaunchMode;
   fold: string;
   auction: string;
+  uniswapAuctionUrl?: string;
   bondingRegistry: string;
   bondingRegistryProxyAdmin?: string;
   initializerFactory: string;

@@ -131,9 +131,9 @@ export async function buildSalePlan(
     token: ZERO,
     currency: auctionParams.currency,
   });
-  if (auctionParams.claimBlock <= migratorParams.migrationBlock) {
+  if (auctionParams.claimBlock < migratorParams.migrationBlock) {
     throw new Error(
-      `auction.claimBlock must be after lbp.migrationBlock (${migratorParams.migrationBlock}) so liquidity can migrate before claims open`,
+      `auction.claimBlock must be at or after lbp.migrationBlock (${migratorParams.migrationBlock}) so liquidity can migrate before or during claims open`,
     );
   }
   const launcherSalt = encodeLauncherSalt(config.saleDeployer, config.ccaSalt);

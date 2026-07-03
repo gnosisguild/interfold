@@ -30,6 +30,7 @@ import type {
   SalePlan,
 } from "./types";
 import { CCA_AUCTION_ABI, LBP_STRATEGY_ABI } from "./uniswap";
+import { uniswapAuctionUrl } from "./urls";
 import {
   address,
   assertEq,
@@ -142,6 +143,7 @@ export async function deployFromPlan(
     launchMode: "lbp",
     fold,
     auction,
+    uniswapAuctionUrl: uniswapAuctionUrl(config.chainId, auction),
     bondingRegistry: config.fold.bondingRegistry,
     bondingRegistryProxyAdmin: await getProxyAdmin(
       ethers.provider,
@@ -206,6 +208,7 @@ Safe transaction proposed
 Sale deployed
   FOLD:    ${fold}
   auction: ${auction}
+  Uniswap: ${deployment.uniswapAuctionUrl}
   mode:    LiquidityLauncher / LBPStrategy
   tx:      ${tx.hash}
   config hash: ${planConfigHash(plan)}

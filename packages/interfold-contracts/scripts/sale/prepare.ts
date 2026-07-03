@@ -100,7 +100,7 @@ function applyPrepareOverrides(config: SaleConfigFile): void {
 
   if (config.lbp) {
     config.lbp.lpAllocationPercent =
-      arg("lp-allocation-percent") ?? config.lbp.lpAllocationPercent ?? "18";
+      arg("lp-allocation-percent") ?? config.lbp.lpAllocationPercent ?? "25";
     config.lbp.migrationDelayBlocks =
       arg("migration-delay-blocks") ?? config.lbp.migrationDelayBlocks ?? "20";
     config.lbp.poolFee = arg("pool-fee") ?? config.lbp.poolFee;

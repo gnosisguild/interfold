@@ -44,7 +44,7 @@ Common flags:
   --auction-end T           Unix seconds or ISO time when the CCA closes
   --floor-price-eth-per-fold N  Human ETH/FOLD floor price, e.g. 0.000012
   --tick-spacing-percent-of-floor N  CCA price increment as % of floor (default 1)
-  --lp-allocation-percent N Percent of raised ETH routed to LP (default 18)
+  --lp-allocation-percent N Percent of raised ETH routed to LP (default 25)
   --predicate-registry 0x... Deploy a Safe-owned Predicate validation hook
   --predicate-policy-id x... Predicate policy/verification hash for that hook
   --predicate-hook 0x...     Use an already deployed validation hook

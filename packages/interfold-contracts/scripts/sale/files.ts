@@ -32,15 +32,16 @@ export const saleDir = path.join(
 
 export function resolvePath(input: string): string {
   if (path.isAbsolute(input)) return input;
+  const normalizedInput = input.replace(/^\.\//u, "");
 
   const packagePrefix = "packages/interfold-contracts/";
-  if (input.startsWith(packagePrefix)) {
-    return path.join(repoRoot, input);
+  if (normalizedInput.startsWith(packagePrefix)) {
+    return path.join(repoRoot, normalizedInput);
   }
 
   const salePrefix = "deploy/sale/";
-  if (input.startsWith(salePrefix)) {
-    return path.join(saleDir, input.slice(salePrefix.length));
+  if (normalizedInput.startsWith(salePrefix)) {
+    return path.join(saleDir, normalizedInput.slice(salePrefix.length));
   }
 
   const cwdPath = path.resolve(input);

@@ -13,6 +13,7 @@ import type {
   SalePlan,
 } from "./types";
 import { CCA_AUCTION_ABI, LBP_STRATEGY_ABI } from "./uniswap";
+import { uniswapAuctionUrl } from "./urls";
 import {
   address,
   assertEq,
@@ -63,6 +64,10 @@ Sale deployment
   mode:              LiquidityLauncher / LBPStrategy
   FOLD:              ${deployment.fold}
   CCA auction:       ${deployment.auction}
+  Uniswap URL:       ${
+    deployment.uniswapAuctionUrl ??
+    uniswapAuctionUrl(deployment.chainId, deployment.auction)
+  }
   bondingRegistry:   ${deployment.bondingRegistry}
   proxyAdmin:        ${deployment.bondingRegistryProxyAdmin ?? "(unknown)"}
   liquidityLauncher: ${deployment.liquidityLauncher ?? plan.liquidityLauncher}

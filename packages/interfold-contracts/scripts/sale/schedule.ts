@@ -332,16 +332,16 @@ export function applyDerivedConfigFields(
           currentTimestamp: opts.currentTimestamp,
           secondsPerBlock: blockTime,
         })
-      : migrationBlock + 1n;
+      : migrationBlock;
 
     if (claimBlock < endBlock) {
       throw new Error(
         "auction.claimTimestamp must be at or after endTimestamp",
       );
     }
-    if (config.lbp && claimBlock <= migrationBlock) {
+    if (config.lbp && claimBlock < migrationBlock) {
       throw new Error(
-        `auction.claimTimestamp must be after LBP migrationBlock ${migrationBlock}`,
+        `auction.claimTimestamp must be at or after LBP migrationBlock ${migrationBlock}`,
       );
     }
 
