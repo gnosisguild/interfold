@@ -218,7 +218,13 @@ contract InterfoldToken is
     /// @notice TGE timestamp; zero until {tge} is called, then immutable.
     uint64 public tgeTimestamp;
 
-    /// @notice Addresses allowed to transfer before TGE.
+    /// @notice Trusted operational addresses allowed to transfer before TGE.
+    /// @dev This is intentionally a one-sided gate, not a list of approved
+    ///      token holders. A whitelisted sender OR recipient can move tokens
+    ///      pre-TGE, so whitelisted addresses must be trusted not to act as
+    ///      public forwarders between ordinary holders. CCA claims and bonding
+    ///      do not rely on this whitelist: {CLAIM_SOURCE} distributions and
+    ///      {BONDING_REGISTRY} movements bypass the pre-TGE gate separately.
     mapping(address account => bool whitelisted) public transferWhitelist;
 
     /// @notice Addresses exempt from automatic claim-source lock creation.
@@ -399,6 +405,10 @@ contract InterfoldToken is
     // Whitelisting
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// @notice Updates one-sided pre-TGE operational transfer privileges.
+    /// @dev Do not whitelist CCA bidders merely so they can claim; claims from
+    ///      {CLAIM_SOURCE} already bypass the pre-TGE gate. Do not whitelist
+    ///      addresses that can act as public forwarding bridges.
     function setTransferWhitelisted(
         address account,
         bool whitelisted
@@ -657,6 +667,9 @@ contract InterfoldToken is
         // (block-based) claim timing. Every distribution still lands in a
         // lock via {_claim}.
         bool isCcaDistribution = from == CLAIM_SOURCE;
+        // Intentional OR: the whitelist is for trusted operational addresses
+        // that may need one-sided movement pre-TGE. CCA bidders are not
+        // whitelisted for claims, and bonding is handled by {isBonding}.
         bool isWhitelisted = transferWhitelist[from] || transferWhitelist[to];
         return !isBonding && !isCcaDistribution && !isWhitelisted;
     }
