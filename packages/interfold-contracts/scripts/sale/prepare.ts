@@ -19,17 +19,22 @@ import {
   writeJson,
 } from "./files";
 import {
+  applyDerivedConfigFields,
   applyReadableConfigFields,
   ccaPriceConfig,
   optionalTimestampInput,
 } from "./schedule";
 import {
+  defaultLbpStrategy,
   makeDefaultLbpConfig,
   makeTemplateConfig,
   resolvePredicateHookInput,
 } from "./template";
 import type { SaleConfigFile, SaleInfraFile } from "./types";
+import { LBP_STRATEGY_ADDRESSES } from "./uniswap";
 import { address, normalizeSaleConfig, requireContract } from "./values";
+
+type PrepareInputConfig = Partial<SaleConfigFile>;
 
 function applyPrepareOverrides(config: SaleConfigFile): void {
   const saleAmountFold = arg("sale-amount-fold") ?? config.saleAmountFold;
@@ -123,6 +128,25 @@ function shouldForkExistingConfig(config?: SaleConfigFile): boolean {
   return config.saleDeployer !== ZERO && config.fold.bondingRegistry !== ZERO;
 }
 
+async function hasCode(
+  provider: ethersLib.Provider,
+  target: string,
+): Promise<boolean> {
+  return target !== ZERO && (await provider.getCode(target)) !== "0x";
+}
+
+function isKnownLbpStrategyForAnotherChain(
+  strategy: string,
+  chainId: number,
+): boolean {
+  const normalized = strategy.toLowerCase();
+  return Object.entries(LBP_STRATEGY_ADDRESSES).some(
+    ([knownChainId, knownStrategy]) =>
+      Number(knownChainId) !== chainId &&
+      knownStrategy.toLowerCase() === normalized,
+  );
+}
+
 function saleConfigJson(config: SaleConfigFile): unknown {
   return {
     name: config.name,
@@ -194,11 +218,21 @@ export async function actionPrepare(): Promise<void> {
 
   const requestedFile = configPath(false);
   const requestedFileExists = fs.existsSync(requestedFile);
-  const existingConfig = requestedFileExists
-    ? normalizeSaleConfig(readJson(requestedFile), {
-        file: requestedFile,
-        allowMissingInfra: true,
-      })
+  const rawExistingConfig = requestedFileExists
+    ? readJson<PrepareInputConfig>(requestedFile)
+    : undefined;
+  const existingChainId = rawExistingConfig?.chainId;
+  const existingConfig = rawExistingConfig
+    ? normalizeSaleConfig(
+        {
+          ...rawExistingConfig,
+          name: saleNameFromConfigPath(requestedFile),
+        },
+        {
+          file: requestedFile,
+          allowMissingInfra: true,
+        },
+      )
     : undefined;
 
   const safeInput =
@@ -230,9 +264,7 @@ export async function actionPrepare(): Promise<void> {
   if (!latest) throw new Error("Could not read latest block");
 
   const preparedName = requestedFileExists
-    ? shouldFork
-      ? saleNameFromConfigPath(file)
-      : (arg("name") ?? existingConfig?.name ?? saleNameFromConfigPath(file))
+    ? (arg("name") ?? saleNameFromConfigPath(file))
     : (arg("name") ?? `${networkName()}-fold-cca`);
   const config =
     existingConfig ??
@@ -260,6 +292,21 @@ export async function actionPrepare(): Promise<void> {
     endBlock: BigInt(config.auction.endBlock),
     saleAmount: BigInt(config.saleAmount),
   });
+  const copiedFromDifferentChain =
+    existingChainId !== undefined && existingChainId !== chainId;
+  const lbpStrategyOverride = arg("lbp-strategy") ?? process.env.LBP_STRATEGY;
+  if (
+    config.lbp &&
+    (copiedFromDifferentChain ||
+      lbpStrategyOverride ||
+      isKnownLbpStrategyForAnotherChain(config.lbp.strategy, chainId) ||
+      !(await hasCode(ethers.provider, config.lbp.strategy)))
+  ) {
+    config.lbp.strategy = address(
+      lbpStrategyOverride ?? defaultLbpStrategy(chainId),
+      "lbp.strategy",
+    );
+  }
   applyPrepareOverrides(config);
   config.auction.tokensRecipient = safe;
   config.auction.fundsRecipient = config.lbp.strategy;
@@ -276,6 +323,10 @@ export async function actionPrepare(): Promise<void> {
       };
     }
   }
+  applyDerivedConfigFields(config, {
+    currentBlock: BigInt(latest.number),
+    currentTimestamp: BigInt(latest.timestamp),
+  });
 
   writeJson(file, saleConfigJson(config));
   const infra: SaleInfraFile = {
