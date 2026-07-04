@@ -14,14 +14,14 @@ import {
     ERC20Wrapper
 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
 import {
-    ERC20Permit
-} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {
     ERC20Votes
 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { Nonces } from "@openzeppelin/contracts/utils/Nonces.sol";
+import {
+    EIP712
+} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -50,7 +50,6 @@ import {
  */
 contract InterfoldTicketToken is
     ERC20,
-    ERC20Permit,
     ERC20Votes,
     Ownable2Step,
     ERC20Wrapper,
@@ -69,8 +68,12 @@ contract InterfoldTicketToken is
     /// @notice Thrown when attempting to transfer tokens between non-zero addresses
     error TransferNotAllowed();
 
-    /// @notice Thrown when ERC-2612 {permit} is invoked (approvals are disabled on this token).
-    error PermitDisabled();
+    /// @notice Thrown when a registry change targets the current registry.
+    error SameRegistry();
+
+    /// @notice Thrown when a registry change is attempted while burned-ticket
+    ///         funds are still awaiting payout by the current registry.
+    error OutstandingPayableBalance(uint256 amount);
 
     /// @notice Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
@@ -168,7 +171,7 @@ contract InterfoldTicketToken is
         address initialOwner_
     )
         ERC20("Interfold Ticket Token", "tFOLD")
-        ERC20Permit("Interfold Ticket Token")
+        EIP712("Interfold Ticket Token", "1")
         ERC20Wrapper(baseToken)
         Ownable(initialOwner_)
     {
@@ -187,6 +190,8 @@ contract InterfoldTicketToken is
     function setRegistry(address newRegistry) external onlyOwner {
         if (registryLocked) revert RegistryAlreadyLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        if (newRegistry == registry) revert SameRegistry();
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = newRegistry;
         emit RegistryChanged(old, newRegistry);
@@ -207,6 +212,8 @@ contract InterfoldTicketToken is
     function requestRegistryChange(address newRegistry) external onlyOwner {
         if (!registryLocked) revert RegistryNotLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
+        if (newRegistry == registry) revert SameRegistry();
+        _revertIfPayableBalanceOutstanding();
         pendingRegistry = newRegistry;
         uint64 activatesAt = uint64(block.timestamp) + REGISTRY_CHANGE_DELAY;
         pendingRegistryActivationTime = activatesAt;
@@ -222,6 +229,7 @@ contract InterfoldTicketToken is
         if (block.timestamp < pendingRegistryActivationTime) {
             revert RegistryChangeNotReady();
         }
+        _revertIfPayableBalanceOutstanding();
         address old = registry;
         registry = pending;
         pendingRegistry = address(0);
@@ -327,7 +335,10 @@ contract InterfoldTicketToken is
      * @param to Address to payout to.
      * @param amount Amount of ticket tokens to payout.
      */
-    function payout(address to, uint256 amount) external onlyRegistry {
+    function payout(
+        address to,
+        uint256 amount
+    ) external onlyRegistry nonReentrant {
         require(amount <= payableBalance, "Exceeds payable balance");
         payableBalance -= amount;
         SafeERC20.safeTransfer(IERC20(address(underlying())), to, amount);
@@ -354,6 +365,13 @@ contract InterfoldTicketToken is
         emit ERC20Rescued(address(token), to, amount);
     }
 
+    function _revertIfPayableBalanceOutstanding() internal view {
+        uint256 amount = payableBalance;
+        if (amount != 0) {
+            revert OutstandingPayableBalance(amount);
+        }
+    }
+
     // ── Disabled flows ─────────────────────────────────────────────────────────
 
     /**
@@ -361,21 +379,6 @@ contract InterfoldTicketToken is
      */
     function approve(address, uint256) public pure override returns (bool) {
         revert TransferNotAllowed();
-    }
-
-    /**
-     * @dev ERC-2612 permit is disabled because allowances are disabled.
-     */
-    function permit(
-        address,
-        address,
-        uint256,
-        uint256,
-        uint8,
-        bytes32,
-        bytes32
-    ) public pure override {
-        revert PermitDisabled();
     }
 
     /**
@@ -435,7 +438,7 @@ contract InterfoldTicketToken is
      */
     function nonces(
         address owner
-    ) public view override(ERC20Permit, Nonces) returns (uint256) {
+    ) public view override(Nonces) returns (uint256) {
         return super.nonces(owner);
     }
 

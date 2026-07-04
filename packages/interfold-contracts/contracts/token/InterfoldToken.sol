@@ -137,6 +137,10 @@ contract InterfoldToken is
     ///         the source policy.
     error RelinkAmountExceeded();
 
+    /// @notice Relinking from this Absolute policy would move already vested
+    ///         principal back under another policy.
+    error RelinkSourceAlreadyVested(bytes32 policyId);
+
     /// @notice An account has reached the maximum number of active lock
     ///         policy entries.
     error TooManyLocks();
@@ -144,6 +148,14 @@ contract InterfoldToken is
     /// @notice An account has reached the maximum number of queued lock
     ///         policy entries.
     error TooManyQueuedLocks();
+
+    /// @notice A queued CCA claim bucket already exists under a different
+    ///         policy. Claim transfers do not carry a bucket id, so queued
+    ///         matching must remain unambiguous.
+    error ConflictingQueuedClaimPolicy(
+        bytes32 existingPolicyId,
+        bytes32 newPolicyId
+    );
 
     /// @notice The policy id is already defined; policies are write-once.
     error PolicyAlreadyDefined(bytes32 policyId);
@@ -162,6 +174,10 @@ contract InterfoldToken is
     /// @notice The bonding registry address has no deployed code.
     error InvalidBondingRegistry(address registry);
 
+    /// @notice Claim-lock exemption cannot coexist with queued claim buckets
+    ///         because exempt claim-source transfers skip queue consumption.
+    error ClaimLockExemptQueuedLocks(address account);
+
     /// @notice Thrown when {renounceOwnership} is called. Ownership is
     ///         critical for protocol governance; renouncing would permanently
     ///         freeze admin functions and is disallowed.
@@ -169,6 +185,10 @@ contract InterfoldToken is
 
     /// @notice The CCA auction/claim source has already been set.
     error ClaimSourceAlreadySet(address current);
+
+    /// @notice Thrown when the current owner attempts to renounce a role.
+    ///         Owner roles are synchronized through ownership transfer.
+    error RenounceRoleDisabledForOwner();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Constants and immutables
@@ -221,7 +241,13 @@ contract InterfoldToken is
     /// @notice TGE timestamp; zero until {tge} is called, then immutable.
     uint64 public tgeTimestamp;
 
-    /// @notice Addresses allowed to transfer before TGE.
+    /// @notice Trusted operational addresses allowed to transfer before TGE.
+    /// @dev This is intentionally a one-sided gate, not a list of approved
+    ///      token holders. A whitelisted sender OR recipient can move tokens
+    ///      pre-TGE, so whitelisted addresses must be trusted not to act as
+    ///      public forwarders between ordinary holders. CCA claims and bonding
+    ///      do not rely on this whitelist: {CLAIM_SOURCE} distributions and
+    ///      {BONDING_REGISTRY} movements bypass the pre-TGE gate separately.
     mapping(address account => bool whitelisted) public transferWhitelist;
 
     /// @notice Addresses exempt from automatic claim-source lock creation.
@@ -410,6 +436,10 @@ contract InterfoldToken is
     // Whitelisting
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// @notice Updates one-sided pre-TGE operational transfer privileges.
+    /// @dev Do not whitelist CCA bidders merely so they can claim; claims from
+    ///      {CLAIM_SOURCE} already bypass the pre-TGE gate. Do not whitelist
+    ///      addresses that can act as public forwarding bridges.
     function setTransferWhitelisted(
         address account,
         bool whitelisted
@@ -426,6 +456,9 @@ contract InterfoldToken is
         bool exempt
     ) external onlyRole(LOCK_MANAGER_ROLE) {
         if (account == address(0)) revert ZeroAddress();
+        if (exempt && queuedLocks[account].length != 0) {
+            revert ClaimLockExemptQueuedLocks(account);
+        }
         claimLockExempt[account] = exempt;
         emit ClaimLockExemptUpdated(account, exempt);
     }
@@ -502,9 +535,14 @@ contract InterfoldToken is
     ) external onlyRole(LOCK_MANAGER_ROLE) {
         if (tgeTimestamp != 0) revert AlreadyLive();
         _validateRelinkParams(account, fromPolicyId, toPolicyId, amount);
-        if (_activeLockAmount(account, fromPolicyId) < amount) {
+        uint256 activeAmount = _activeLockAmount(account, fromPolicyId);
+        if (activeAmount < amount) {
             revert RelinkAmountExceeded();
         }
+        _validateRelinkSourceHasNoVestedPrincipal(
+            fromPolicyId,
+            activeAmount
+        );
 
         (uint256 consumed, ) = _consumeLock(
             account,
@@ -670,6 +708,9 @@ contract InterfoldToken is
         // lock via {_claim}.
         bool isCcaDistribution = CLAIM_SOURCE != address(0) &&
             from == CLAIM_SOURCE;
+        // Intentional OR: the whitelist is for trusted operational addresses
+        // that may need one-sided movement pre-TGE. CCA bidders are not
+        // whitelisted for claims, and bonding is handled by {isBonding}.
         bool isWhitelisted = transferWhitelist[from] || transferWhitelist[to];
         return !isBonding && !isCcaDistribution && !isWhitelisted;
     }
@@ -790,6 +831,10 @@ contract InterfoldToken is
 
         // Whatever is left queues under the target policy.
         if (remaining != 0) {
+            if (claimLockExempt[account]) {
+                revert ClaimLockExemptQueuedLocks(account);
+            }
+            _validateQueuedClaimPolicy(account, policyId);
             _addOrIncrementLock(
                 account,
                 queuedLocks[account],
@@ -870,6 +915,10 @@ contract InterfoldToken is
                 return newAmount;
             }
         }
+        if (isActive && len >= MAX_LOCKS_PER_ACCOUNT) {
+            _pruneMaturedActiveLocks(account, entries);
+            len = entries.length;
+        }
         if (isActive && len >= MAX_LOCKS_PER_ACCOUNT) revert TooManyLocks();
         if (!isActive && len >= MAX_QUEUED_LOCKS_PER_ACCOUNT) {
             revert TooManyQueuedLocks();
@@ -881,6 +930,47 @@ contract InterfoldToken is
             emit QueuedLockUpdated(account, policyId, amount);
         }
         return amount;
+    }
+
+    function _pruneMaturedActiveLocks(
+        address account,
+        Lock[] storage entries
+    ) internal {
+        uint64 current = uint64(block.timestamp);
+        uint256 i;
+        while (i < entries.length) {
+            bytes32 policyId = entries[i].policyId;
+            if (policyId == PENDING_LOCK_POLICY_ID) {
+                i++;
+                continue;
+            }
+
+            uint256 amount = entries[i].amount;
+            if (_lockedAmount(lockPolicies[policyId], amount, current) != 0) {
+                i++;
+                continue;
+            }
+
+            _removeLockAt(entries, i);
+            emit ActiveLockUpdated(account, policyId, 0);
+        }
+    }
+
+    function _validateQueuedClaimPolicy(
+        address account,
+        bytes32 policyId
+    ) internal view {
+        Lock[] storage entries = queuedLocks[account];
+        uint256 len = entries.length;
+        for (uint256 i = 0; i < len; i++) {
+            bytes32 existingPolicyId = entries[i].policyId;
+            if (existingPolicyId != policyId) {
+                revert ConflictingQueuedClaimPolicy(
+                    existingPolicyId,
+                    policyId
+                );
+            }
+        }
     }
 
     function _removeLockAt(Lock[] storage entries, uint256 index) internal {
@@ -916,6 +1006,22 @@ contract InterfoldToken is
         }
         if (!_policyDefined(toPolicyId)) {
             revert PolicyNotDefined(toPolicyId);
+        }
+    }
+
+    function _validateRelinkSourceHasNoVestedPrincipal(
+        bytes32 policyId,
+        uint256 activeAmount
+    ) internal view {
+        LockPolicy storage policy = lockPolicies[policyId];
+        if (policy.unlock.anchor != Anchor.Absolute) return;
+        uint256 lockedAmount = _lockedAmount(
+            policy,
+            activeAmount,
+            uint64(block.timestamp)
+        );
+        if (lockedAmount < activeAmount) {
+            revert RelinkSourceAlreadyVested(policyId);
         }
     }
 
@@ -955,6 +1061,14 @@ contract InterfoldToken is
         }
         if (policy.holdUntil > NO_MORE_LOCKS) {
             revert InvalidPolicy();
+        }
+        if (curve.anchor == Anchor.Absolute) {
+            uint256 lockEnd = policyEnd > policy.holdUntil
+                ? policyEnd
+                : policy.holdUntil;
+            if (lockEnd <= block.timestamp) {
+                revert InvalidPolicy();
+            }
         }
     }
 
@@ -1035,6 +1149,20 @@ contract InterfoldToken is
     /// @notice Disabled. Reverts unconditionally.
     function renounceOwnership() public view override onlyOwner {
         revert RenounceOwnershipDisabled();
+    }
+
+    /// @inheritdoc AccessControl
+    function renounceRole(
+        bytes32 role,
+        address callerConfirmation
+    ) public override {
+        if (
+            callerConfirmation == _msgSender() &&
+            callerConfirmation == owner()
+        ) {
+            revert RenounceRoleDisabledForOwner();
+        }
+        super.renounceRole(role, callerConfirmation);
     }
 
     /**

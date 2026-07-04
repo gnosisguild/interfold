@@ -700,6 +700,22 @@ describe("InterfoldToken", function () {
         "AccessControlUnauthorizedAccount",
       );
     });
+
+    it("cannot enable claim-lock exemption while queued locks exist", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_QUEUE", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
+
+      await expect(
+        token.connect(admin).setClaimLockExempt(aliceAddress, true),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -935,6 +951,44 @@ describe("InterfoldToken", function () {
             },
           }),
       ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("reverts when an Absolute policy is already fully matured", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const now = BigInt(await time.latest());
+
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("STALE_ABS"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 0,
+              start: now - 2n * DAY,
+              cliffDuration: DAY,
+              vestDuration: 0n,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("accepts an old Absolute curve when holdUntil still locks", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const now = BigInt(await time.latest());
+
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("HELD_ABS"), {
+            holdUntil: now + DAY,
+            unlock: {
+              anchor: 0,
+              start: now - 2n * DAY,
+              cliffDuration: DAY,
+              vestDuration: 0n,
+            },
+          }),
+      ).to.emit(token, "PolicyDefined");
     });
 
     it("reverts when holdUntil is past the earliest sunset", async function () {
@@ -1247,31 +1301,63 @@ describe("InterfoldToken", function () {
       ).to.be.revertedWithCustomError(token, "TooManyLocks");
     });
 
-    it("MAX_QUEUED_LOCKS_PER_ACCOUNT: 9th queued policy reverts", async function () {
+    it("prunes matured active locks before enforcing the active lock cap", async function () {
+      const { token, admin, alice, claimSource } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const claimSourceAddress = await claimSource.getAddress();
+      const maxLocks = Number(await token.MAX_LOCKS_PER_ACCOUNT());
+      const start = BigInt(await time.latest()) + DAY;
+
+      for (let i = 0; i < maxLocks; i++) {
+        const policyId = ethers.encodeBytes32String(`OLD_${i}`);
+        await createLinearPolicy(token, admin, `OLD_${i}`, {
+          anchor: 0,
+          start,
+          cliffDuration: 1n,
+          vestDuration: 0n,
+        });
+        await token.connect(admin).mintAllocations([
+          {
+            recipient: aliceAddress,
+            amount: 1n,
+            policyId,
+            label: ethers.encodeBytes32String(`old${i}`),
+          },
+        ]);
+      }
+      expect(await token.lockCount(aliceAddress)).to.equal(BigInt(maxLocks));
+
+      const claimAmount = ethers.parseEther("10");
+      await token
+        .connect(admin)
+        .mint(claimSourceAddress, claimAmount, ethers.ZeroHash);
+      await time.increaseTo(start + 2n);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+
+      await token.connect(claimSource).transfer(aliceAddress, claimAmount);
+
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+      const lock = await token.locks(aliceAddress, 0);
+      expect(lock.policyId).to.equal(await token.PENDING_LOCK_POLICY_ID());
+      expect(lock.amount).to.equal(claimAmount);
+    });
+
+    it("repeated queued links under one policy increment one queued bucket", async function () {
       const { token, admin, alice } = await loadFixture(deploy);
       const aliceAddress = await alice.getAddress();
       const maxQueued = Number(await token.MAX_QUEUED_LOCKS_PER_ACCOUNT());
-
-      // Create 8 distinct policies and queue links.
-      for (let i = 0; i < maxQueued; i++) {
-        const policyId = ethers.encodeBytes32String(`QCAP_${i}`);
-        await createLinearPolicy(token, admin, `QCAP_${i}`, {
-          vestDuration: 1n * YEAR,
-        });
-        await token.connect(admin).linkClaim(aliceAddress, 1n, policyId);
-      }
-      expect(await token.queuedLockCount(aliceAddress)).to.equal(
-        BigInt(maxQueued),
-      );
-
-      // 9th queued link should revert.
-      const ninthId = ethers.encodeBytes32String("QCAP_9");
-      await createLinearPolicy(token, admin, "QCAP_9", {
+      const policyId = await createLinearPolicy(token, admin, "QCAP", {
         vestDuration: 1n * YEAR,
       });
-      await expect(
-        token.connect(admin).linkClaim(aliceAddress, 1n, ninthId),
-      ).to.be.revertedWithCustomError(token, "TooManyQueuedLocks");
+
+      for (let i = 0; i < maxQueued + 1; i++) {
+        await token.connect(admin).linkClaim(aliceAddress, 1n, policyId);
+      }
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      const queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(BigInt(maxQueued + 1));
     });
 
     it("incrementing an existing policy does not count as a new entry", async function () {
@@ -1710,6 +1796,57 @@ describe("InterfoldToken", function () {
       expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
     });
 
+    it("linkClaim rejects a conflicting queued policy for the same account", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyA = await createLinearPolicy(token, admin, "QUEUE_A", {
+        vestDuration: 2n * YEAR,
+      });
+      const policyB = await createLinearPolicy(token, admin, "QUEUE_B", {
+        vestDuration: 4n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyA);
+
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 100n, policyB),
+      )
+        .to.be.revertedWithCustomError(token, "ConflictingQueuedClaimPolicy")
+        .withArgs(policyA, policyB);
+    });
+
+    it("linkClaim can increment the existing queued policy", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "QUEUE_SAME", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
+      await token.connect(admin).linkClaim(aliceAddress, 200n, policyId);
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      const queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(300n);
+    });
+
+    it("linkClaim cannot create queued locks for a claim-lock exempt account", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "EXEMPT_LINK", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token.connect(admin).setClaimLockExempt(aliceAddress, true);
+
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 100n, policyId),
+      )
+        .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
+        .withArgs(aliceAddress);
+    });
+
     it("linkClaim partly consumes PENDING and queues the remainder", async function () {
       const { token, admin, alice, claimSource, amount } =
         await deployWithUnlockedAndTge(ethers.parseEther("300"));
@@ -2078,6 +2215,77 @@ describe("InterfoldToken", function () {
       );
       expect(byPolicy.get(fromPolicy)).to.equal(ethers.parseEther("600"));
       expect(byPolicy.get(toPolicy)).to.equal(relinkAmount);
+    });
+
+    it("relink allows an unvested Absolute source policy", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const start = BigInt(await time.latest()) + DAY;
+
+      const fromPolicy = await createLinearPolicy(token, admin, "ABS_UNVEST", {
+        anchor: 0,
+        start,
+        vestDuration: 10n * DAY,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "ABS_DST", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("abs"),
+        },
+      ]);
+
+      await expect(
+        token.connect(admin).relinkActiveLock(
+          aliceAddress,
+          fromPolicy,
+          toPolicy,
+          ethers.parseEther("100"),
+        ),
+      ).to.emit(token, "ActiveLockRelinked");
+    });
+
+    it("relink rejects an Absolute source policy with vested principal", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const start = BigInt(await time.latest()) + DAY;
+
+      const fromPolicy = await createLinearPolicy(token, admin, "ABS_VEST", {
+        anchor: 0,
+        start,
+        vestDuration: 10n * DAY,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "ABS_TO", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("abs"),
+        },
+      ]);
+      await time.increaseTo(start + 5n * DAY);
+
+      await expect(
+        token.connect(admin).relinkActiveLock(
+          aliceAddress,
+          fromPolicy,
+          toPolicy,
+          ethers.parseEther("100"),
+        ),
+      )
+        .to.be.revertedWithCustomError(token, "RelinkSourceAlreadyVested")
+        .withArgs(fromPolicy);
     });
 
     it("relink reverts after TGE", async function () {
@@ -2726,6 +2934,33 @@ describe("InterfoldToken", function () {
       await expect(
         token.connect(admin).renounceOwnership(),
       ).to.be.revertedWithCustomError(token, "RenounceOwnershipDisabled");
+    });
+
+    it("owner cannot renounce AccessControl roles directly", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      const adminAddress = await admin.getAddress();
+
+      await expect(
+        token
+          .connect(admin)
+          .renounceRole(await token.DEFAULT_ADMIN_ROLE(), adminAddress),
+      ).to.be.revertedWithCustomError(
+        token,
+        "RenounceRoleDisabledForOwner",
+      );
+    });
+
+    it("non-owner role holders can still renounce roles", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const minterRole = await token.MINTER_ROLE();
+
+      await token.connect(admin).grantRole(minterRole, aliceAddress);
+      expect(await token.hasRole(minterRole, aliceAddress)).to.be.true;
+
+      await token.connect(alice).renounceRole(minterRole, aliceAddress);
+
+      expect(await token.hasRole(minterRole, aliceAddress)).to.be.false;
     });
 
     it("ownership transfer syncs AccessControl roles", async function () {
