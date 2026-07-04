@@ -24,7 +24,7 @@ Confirm these before touching mainnet:
 
 ## 1. Safe And Operator
 
-- [ ] Foundation Safe exists and is `2-of-3`.
+- [ ] Foundation Safe exists.
 - [ ] Foundation Safe address is exactly
       `0x5429D8c7fD14023f3c414126F94BbE25A05fC018`.
 - [ ] Operator wallet is funded with mainnet ETH for gas only.
