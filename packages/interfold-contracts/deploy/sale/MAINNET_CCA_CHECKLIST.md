@@ -101,6 +101,8 @@ Required values:
 - [ ] UTC pre-sale / FOLD `CCA_START`: July 6, 2026 at 14:00 UTC.
 - [ ] UTC auction start: July 8, 2026 at 14:00 UTC.
 - [ ] UTC auction end: July 10, 2026 at 14:00 UTC.
+- [ ] `NO_MORE_LOCKS` is `CCA_END + 40 days + 4 years + 30 days`.
+- [ ] Expected mainnet `NO_MORE_LOCKS` is September 17, 2030 at 14:00 UTC.
 - [ ] `claimBlock = migrationBlock`.
 - [ ] Plan output shows `migrationBlock >= endBlock`.
 
@@ -161,6 +163,7 @@ Check every printed line:
 - [ ] Tick spacing corresponds to `1%` of floor price.
 - [ ] CCA blocks line matches expected July 8 to July 10 window.
 - [ ] FOLD timestamps line matches expected July 6 to July 10 lifecycle.
+- [ ] FOLD `noMoreLocks` line is `1915884000` (`2030-09-17T14:00:00Z`).
 - [ ] `claimBlock = migrationBlock`.
 - [ ] Config hash is recorded in launch notes.
 - [ ] Plan file is generated and inspected.

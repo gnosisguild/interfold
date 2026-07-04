@@ -6,7 +6,7 @@ import { arg } from "./cli";
 import {
   DEFAULT_SALE_AMOUNT,
   FORTY_DAYS,
-  FOUR_YEARS,
+  LOCK_SUNSET_DELAY,
   MSG_SENDER_SENTINEL,
   ZERO,
   abi,
@@ -586,7 +586,7 @@ export function deriveNoMoreLocks(ccaEnd: bigint, explicit?: string): bigint {
     }
     return value;
   }
-  return ccaEnd + FORTY_DAYS + FOUR_YEARS;
+  return ccaEnd + FORTY_DAYS + LOCK_SUNSET_DELAY;
 }
 
 export function buildFoldInitCode(opts: {

@@ -20,6 +20,8 @@ const { time } = networkHelpers;
 const DAY = 24n * 60n * 60n;
 const FORTY_DAYS = 40n * DAY;
 const FOUR_YEARS = 4n * 365n * DAY;
+const ONE_MONTH = 30n * DAY;
+const LOCK_SUNSET_DELAY = FOUR_YEARS + ONE_MONTH;
 const SALE_AMOUNT = ethers.parseEther("120000000"); // 120M FOLD
 const LP_RESERVE = ethers.parseEther("1000000"); // 1M FOLD
 
@@ -96,7 +98,7 @@ describe("InterfoldTokenSaleDeployer", function () {
       safe: opts.safe,
       ccaStart,
       ccaEnd,
-      noMoreLocks: ccaEnd + FORTY_DAYS + FOUR_YEARS,
+      noMoreLocks: ccaEnd + FORTY_DAYS + LOCK_SUNSET_DELAY,
       bondingRegistry: opts.bondingRegistry,
       auction: {
         currency: ethers.ZeroAddress,

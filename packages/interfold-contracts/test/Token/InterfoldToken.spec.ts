@@ -15,7 +15,8 @@ const { loadFixture, time } = networkHelpers;
 
 const DAY = 24n * 60n * 60n;
 const YEAR = 365n * DAY;
-const NO_MORE_LOCKS_DELAY = 4n * YEAR;
+const MONTH = 30n * DAY;
+const NO_MORE_LOCKS_DELAY = 4n * YEAR + MONTH;
 const TGE_COOLDOWN = 40n * DAY;
 
 function noMoreLocksFor(ccaEnd: bigint) {
@@ -1628,7 +1629,7 @@ describe("InterfoldToken", function () {
       // Create a policy whose natural end lands exactly at NO_MORE_LOCKS
       // (using the earliest possible TGE: ccaEnd + TGE_COOLDOWN).
       const earliestTge = ccaEnd + TGE_COOLDOWN;
-      // The tail after earliestTge is NO_MORE_LOCKS_DELAY = 4 years.
+      // The tail after earliestTge is NO_MORE_LOCKS_DELAY = 4 years + 30 days.
       const policyId = await createLinearPolicy(token, admin, "MAX_TAIL", {
         vestDuration: NO_MORE_LOCKS_DELAY,
       });
