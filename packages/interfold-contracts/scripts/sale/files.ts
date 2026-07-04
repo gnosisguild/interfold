@@ -75,6 +75,7 @@ export function nextAvailablePath(file: string): string {
     ".deployment.json",
     ".infra.json",
     ".safe-proposal.json",
+    ".safe-builder.json",
     ".safe-transactions.json",
     ".json",
   ];
@@ -126,6 +127,12 @@ export function safeTransactionsPath(config: SaleConfigFile): string {
   return arg("safe-transactions")
     ? resolvePath(arg("safe-transactions")!)
     : path.join(saleDir, `${config.name}.safe-transactions.json`);
+}
+
+export function safeBuilderPath(config: SaleConfigFile): string {
+  return arg("safe-builder")
+    ? resolvePath(arg("safe-builder")!)
+    : path.join(saleDir, `${config.name}.safe-builder.json`);
 }
 
 export function readJson<T>(file: string): T {

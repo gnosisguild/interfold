@@ -1,0 +1,62 @@
+{
+  "name": "interfold-mainnet-cca",
+  "chainId": 1,
+  "saleDeployer": "0x0000000000000000000000000000000000000000",
+  "safe": "0x5429D8c7fD14023f3c414126F94BbE25A05fC018",
+  "launchMode": "lbp",
+  "saleAmountFold": "120000000",
+  "saleAmountWei": "120000000000000000000000000",
+  "ccaSalt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "fold": {
+    "ccaStart": "0",
+    "ccaEnd": "0",
+    "noMoreLocks": "",
+    "bondingRegistry": "0x0000000000000000000000000000000000000000"
+  },
+  "auction": {
+    "currency": "ETH",
+    "tokensRecipient": "0x5429D8c7fD14023f3c414126F94BbE25A05fC018",
+    "fundsRecipient": "0xb98766A35cdc28415be0767D4EA41e39fBA3e000",
+    "preSaleStartTimestamp": "2026-07-06T10:00:00-04:00",
+    "auctionStartTimestamp": "2026-07-08T10:00:00-04:00",
+    "auctionEndTimestamp": "2026-07-10T10:00:00-04:00",
+    "validationHook": "0x0000000000000000000000000000000000000000",
+    "floorPriceEthPerFold": "0.000012",
+    "tickSpacingPercentOfFloor": "1",
+    "requiredRaiseEth": "400",
+    "generated": {
+      "startBlock": "0",
+      "endBlock": "0",
+      "claimBlock": "0",
+      "floorPriceQ96": "0",
+      "tickSpacingQ96": "0",
+      "requiredCurrencyRaisedWei": "0",
+      "auctionStepsData": "0x"
+    }
+  },
+  "lbp": {
+    "uniswap": {
+      "liquidityLauncher": "0x00004c4ccc709Ef590F7C81102C0689F0263D4e9",
+      "lbpStrategy": "0xb98766A35cdc28415be0767D4EA41e39fBA3e000"
+    },
+    "migrationDelayBlocks": "20",
+    "lpAllocationPercent": "25",
+    "recipients": {
+      "proceedsRecipient": "0x5429D8c7fD14023f3c414126F94BbE25A05fC018",
+      "lpPositionRecipient": "0x5429D8c7fD14023f3c414126F94BbE25A05fC018"
+    },
+    "pool": {
+      "fee": "3000",
+      "tickSpacing": "60",
+      "hook": "0x0000000000000000000000000000000000000000"
+    },
+    "advanced": {
+      "positionDefinitions": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "generated": {
+      "migrationBlock": "0",
+      "reservedTokenAmountForLPWei": "0",
+      "lpAllocationSchedule": "0x"
+    }
+  }
+}

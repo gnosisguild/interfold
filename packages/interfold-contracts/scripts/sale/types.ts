@@ -266,11 +266,32 @@ export interface SafeTransactionFallbackFile {
   safe: string;
   origin: string;
   createdAt: string;
+  builderFile: string;
   transactions: Array<{
     description: string;
     to: string;
     value: string;
     data: string;
     operation: number;
+  }>;
+}
+
+export interface SafeTransactionBuilderFile {
+  version: "1.0";
+  chainId: string;
+  createdAt: number;
+  meta: {
+    name: string;
+    description: string;
+    txBuilderVersion: string;
+    createdFromSafeAddress: string;
+  };
+  transactions: Array<{
+    to: string;
+    value: string;
+    data: string;
+    operation: number;
+    contractMethod: null;
+    contractInputsValues: null;
   }>;
 }

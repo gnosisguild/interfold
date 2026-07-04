@@ -10,11 +10,17 @@ import {
   PREDICATE_VALIDATION_HOOK_ABI,
   ZERO,
 } from "./constants";
-import { safeProposalPath, safeTransactionsPath, writeJson } from "./files";
+import {
+  safeBuilderPath,
+  safeProposalPath,
+  safeTransactionsPath,
+  writeJson,
+} from "./files";
 import type {
   DeploymentFile,
   SafeAction,
   SafeProposal,
+  SafeTransactionBuilderFile,
   SafeTransactionFallbackFile,
   SaleConfigFile,
 } from "./types";
@@ -132,17 +138,52 @@ export function safeActionsToTransactions(
   return actions.map((action) => action.transaction);
 }
 
+function toBuilderTransaction(action: SafeAction) {
+  const operation = Number(action.transaction.operation ?? OperationType.Call);
+  return {
+    to: action.transaction.to,
+    value: action.transaction.value,
+    data: action.transaction.data,
+    operation,
+    contractMethod: null,
+    contractInputsValues: null,
+  };
+}
+
+export function safeTransactionBuilderFile(
+  config: SaleConfigFile,
+  actions: SafeAction[],
+  origin: string,
+): SafeTransactionBuilderFile {
+  return {
+    version: "1.0",
+    chainId: config.chainId.toString(),
+    createdAt: Date.now(),
+    meta: {
+      name: `${config.name} sale activation`,
+      description: origin,
+      txBuilderVersion: "1.18.0",
+      createdFromSafeAddress: config.safe,
+    },
+    transactions: actions.map(toBuilderTransaction),
+  };
+}
+
 export function writeSafeTransactionFallback(
   config: SaleConfigFile,
   actions: SafeAction[],
   origin: string,
 ): SafeTransactionFallbackFile {
+  const builderFile = safeBuilderPath(config);
+  writeJson(builderFile, safeTransactionBuilderFile(config, actions, origin));
+
   const fallback: SafeTransactionFallbackFile = {
     name: config.name,
     chainId: config.chainId,
     safe: config.safe,
     origin,
     createdAt: new Date().toISOString(),
+    builderFile,
     transactions: actions.map(({ description, transaction }) => ({
       description,
       to: transaction.to,
@@ -176,10 +217,15 @@ export function printSafeTransactionFallback(
 Safe transaction fallback${reasonLine}
   safe:  ${fallback.safe}
   chain: ${fallback.chainId}
-  file:  ${safeTransactionsPath(config)}
+  builder import: ${fallback.builderFile}
+  raw calldata:   ${safeTransactionsPath(config)}
 
-Add these as a Safe batch transaction:
+Import the builder file in Safe Transaction Builder, or add these calls manually:
 ${transactionLines}
+
+Recovery notes:
+  - If the Safe proposal failed because the operator is not a proposer, add the operator as a proposer and run --action propose-safe again.
+  - The builder import file is written before the Safe API call, so it is still usable even when proposal submission fails.
 `);
 }
 

@@ -31,6 +31,7 @@ Common flags:
   --plan <file>             Optional plan path override
   --deployment <file>       Optional deployment path override
   --safe-transactions <file> Optional manual Safe fallback batch path
+  --safe-builder <file>     Optional Safe Transaction Builder import path
   --liquidity-launcher 0x... Override LiquidityLauncher address
   --lbp-strategy 0x...      Override LBPStrategy address
   --reserved-token-amount-for-lp N  FOLD wei reserved for LP in LBP mode
