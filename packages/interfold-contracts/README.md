@@ -12,6 +12,10 @@
 | `SlashingManager.sol`           | Fault attribution and slashing for dishonest ciphernodes (accusation → quorum → slash)           |
 | `E3RefundManager.sol`           | Issues refunds to requesters when an E3 fails                                                    |
 
+## Audits
+
+Contract audit reports are kept in [`audits/`](./audits/).
+
 ### Key Interfaces
 
 | Interface          | Description                                                                   |
