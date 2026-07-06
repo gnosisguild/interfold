@@ -40,9 +40,9 @@ serde = { version = "1.0", features = ["derive", "std"] }
 serde_json = "=1.0.141"
 # NOTE: tag must match the fhe.rs tag used by interfold workspace crates
 # (e3-fhe-params, e3-compute-provider, etc.) at the pinned interfold tag.
-fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", branch = "lbfv/F1-2-3-mul-example" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "lbfv/F1-2-3-mul-example" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", branch = "lbfv/F1-2-3-mul-example" }
 e3-compute-provider = { git = "https://github.com/theinterfold/interfold", tag = "v0.2.2" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.2" }

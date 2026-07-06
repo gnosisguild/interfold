@@ -33,20 +33,26 @@ pub mod insecure_512 {
 
 /// Secure preset constants (degree 8192) - PRODUCTION READY
 pub mod secure_8192 {
-    pub const DEGREE: usize = 8192;
+    pub const DEGREE: usize = 16384;
     pub const NUM_PARTIES: u128 = 20; // real - used in the search default
 
     /// Threshold BFV parameters
     pub mod threshold {
-        pub const PLAINTEXT_MODULUS: u64 = 1000000;
-        pub const MODULI: &[u64] = &[0x02000000015a0001, 0x0200000001460001, 0x0200000001210001];
-        pub const ERROR1_VARIANCE: &str = "18148392902450051384713312396360971277653333";
+        pub const PLAINTEXT_MODULUS: u64 = 1000;
+        pub const MODULI: &[u64] = &[
+            0x0008000000bb0001,
+            0x0008000000a30001,
+            0x0008000000940001,
+            0x0008000000820001,
+            0x0008000000590001,
+        ];
+        pub const ERROR1_VARIANCE: &str = "69230624780464368380406617722934613333";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 144115188098531329;
-        pub const MODULI: &[u64] = &[0x0800000000004001, 0x0800000000044001];
+        pub const PLAINTEXT_MODULUS: u64 = 2251799825940481;
+        pub const MODULI: &[u64] = &[0x00200000000e0001, 0x0020000000140001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -59,8 +65,8 @@ pub mod search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
     pub const SEARCH_N: u128 = 20;
-    pub const SEARCH_K: u128 = 1000000;
-    pub const SEARCH_Z: u128 = 1000000;
+    pub const SEARCH_K: u128 = 1000;
+    pub const SEARCH_Z: u128 = 3;
 }
 
 /// Search defaults for the InsecureThreshold512 preset (test-only, small scale).
@@ -84,5 +90,5 @@ pub mod defaults {
     /// Default insecure security parameter (λ).
     pub const DEFAULT_INSECURE_LAMBDA: usize = 2;
     /// Default secure security parameter (λ).
-    pub const DEFAULT_SECURE_LAMBDA: usize = 50;
+    pub const DEFAULT_SECURE_LAMBDA: usize = 40;
 }

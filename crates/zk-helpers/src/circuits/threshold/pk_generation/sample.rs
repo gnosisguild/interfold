@@ -57,7 +57,7 @@ impl PkGenerationCircuitData {
 
         // Generate smudging error coefficients
         let esi_coeffs =
-            trbfv.generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)?;
+            trbfv.generate_smudging_error(num_ciphertexts as usize, 3, lambda, &mut rng)?;
 
         // Convert to polynomial in RNS representation
         // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly

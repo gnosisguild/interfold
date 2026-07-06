@@ -135,7 +135,7 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let share_manager_for_esm =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, lambda, rng)?;
+    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, 3, lambda, rng)?;
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 

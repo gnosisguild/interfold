@@ -78,7 +78,7 @@ pub fn pk_generation_sample_with_esi(
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
+        .generate_smudging_error(num_ciphertexts as usize, 3, lambda, &mut rng)
         .map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
         })?;
