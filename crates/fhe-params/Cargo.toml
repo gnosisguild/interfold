@@ -26,10 +26,6 @@ fhe-traits = { workspace = true }
 name = "search_params"
 path = "src/bin/search_params.rs"
 
-[[bin]]
-name = "search_mult_depth"
-path = "src/bin/search_mult_depth.rs"
-
 [features]
 default = []
 abi-encoding = ["dep:alloy-dyn-abi", "dep:alloy-primitives"]
