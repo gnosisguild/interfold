@@ -2,5 +2,4 @@
 
 | Date | Auditor | Scope | Report |
 | ---- | ------- | ----- | ------ |
-| 2026 | Zenith | Interfold smart contracts | [Interfold Zenith Audit Report](./Interfold-Zenith-Audit-Report.pdf) |
-
+| 2026-07-02 | Zenith | FOLD token | [20260702_audit_token_zenith.pdf](./20260702_audit_token_zenith.pdf) |
