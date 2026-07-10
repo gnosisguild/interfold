@@ -100,9 +100,14 @@ impl ModU64 {
 
     /// (a / b) mod m: multiplies a by b^(-1) mod m.
     pub fn div_mod(self, a: Field, b: Field) -> Field {
-        // Safety: __inv_mod_u64 uses Fermat's Little Theorem; verified via mul_mod below.
+        // Safety: __inv_mod_u64 uses Fermat's Little Theorem; verified below by result*b == a mod m.
         let b_inv = unsafe { __inv_mod_u64(b, self.m) };
-        self.mul_mod(a, b_inv as Field)
+        let result = self.mul_mod(a, b_inv as Field);
+        assert(
+            self.mul_mod(result, b) == self.reduce_mod(a),
+            "Division verification failed: result * b != a (mod m)",
+        );
+        result
     }
 
     /// (-val) mod m.
@@ -350,4 +355,15 @@ fn test_u64_division_multiplication_inverse() {
     let b = 7;
     let quotient = m.div_mod(a, b);
     assert(m.mul_mod(quotient, b) == m.reduce_mod(a));
+}
+
+#[test(should_fail_with = "Division verification failed: result * b != a (mod m)")]
+fn test_u64_div_mod_rejects_non_invertible_divisor() {
+    // m = 100 is composite and b = 10 shares a factor with it, so b has no true
+    // modular inverse. The Fermat's-Little-Theorem-based unconstrained hint
+    // (`__inv_mod_u64`, which assumes a prime modulus) silently returns 0 here,
+    // which previously let `div_mod` return an unconstrained/bogus result. This
+    // regression-tests IF-001: the verification assert must now catch it.
+    let m = ModU64::new(100);
+    let _ = m.div_mod(7, 10);
 }
