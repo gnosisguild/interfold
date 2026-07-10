@@ -159,10 +159,7 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
                 }
             };
 
-            // Verify: only check non-zero coefficients
-            if self.message.coefficients[coeff_idx] != 0 {
-                assert(computed_message == self.message.coefficients[coeff_idx]);
-            }
+            assert(computed_message == self.message.coefficients[coeff_idx]);
         }
     }
 }
