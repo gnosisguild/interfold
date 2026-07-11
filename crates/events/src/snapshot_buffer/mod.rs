@@ -10,6 +10,16 @@ mod batch_router;
 mod snapshot_buffer;
 mod timelock_queue;
 
+use actix::Message;
+use anyhow::Result;
+
+/// Acknowledged shutdown fence that drains every open snapshot batch into its
+/// destination store. Unlike the normal debounce flush, completion means all
+/// previously queued `InsertBatch` handlers have run.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<()>")]
+pub struct FlushPendingSnapshots;
+
 pub use aggregate_config::*;
 pub use snapshot_buffer::*;
 pub use timelock_queue::Tick;

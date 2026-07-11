@@ -6,13 +6,14 @@
 use super::{
     batch::{Batch, Flush},
     timelock_queue::{Clock, StartTimelock},
-    AggregateConfig, UpdateDestination,
+    AggregateConfig, FlushPendingSnapshots, UpdateDestination,
 };
 use crate::{
     AggregateId, EventContextAccessors, EventContextSeq, EventType, Insert, InsertBatch,
     InterfoldEvent, Sequenced, StoreKeys,
 };
-use actix::{Actor, Addr, Handler, Message, Recipient};
+use actix::{Actor, Addr, Handler, Message, Recipient, ResponseFuture};
+use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tracing::{debug, error};
@@ -207,6 +208,24 @@ impl Handler<FlushSeq> for BatchRouter {
             self.batches.remove(&msg.seq());
             self.aggregates.remove(&msg.seq());
         }
+    }
+}
+
+impl Handler<FlushPendingSnapshots> for BatchRouter {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: FlushPendingSnapshots, _: &mut Self::Context) -> Self::Result {
+        let batches: Vec<_> = self.batches.drain().map(|(_, batch)| batch).collect();
+        self.aggregates.clear();
+        Box::pin(async move {
+            for batch in batches {
+                batch
+                    .send(FlushPendingSnapshots)
+                    .await
+                    .context("snapshot batch stopped before its final flush")??;
+            }
+            Ok(())
+        })
     }
 }
 

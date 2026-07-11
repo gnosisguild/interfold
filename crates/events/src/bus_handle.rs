@@ -8,8 +8,17 @@ use actix::{Actor, Addr, Handler, Recipient};
 use anyhow::Result;
 use derivative::Derivative;
 use e3_utils::{actix::channel::oneshot, MAILBOX_LIMIT};
-use std::{future::Future, marker::PhantomData, pin::Pin};
-use tracing::error;
+use std::{
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+};
+use tokio::sync::Notify;
+use tracing::{error, warn};
 
 use crate::{
     event_context::EventContext,
@@ -20,8 +29,9 @@ use crate::{
         ErrorDispatcher, ErrorFactory, EventConstructorWithTimestamp, EventContextAccessors,
         EventFactory, EventPublisher, EventSubscriber,
     },
-    EType, ErrorEvent, EventBus, EventContextManager, EventSource, EventType, HistoryCollector,
-    InterfoldEvent, InterfoldEventData, Sequenced, Subscribe, Unsequenced, Unsubscribe,
+    EType, ErrorEvent, EventBus, EventBusBarrier, EventContextManager, EventSource, EventType,
+    FlushEventStores, HistoryCollector, InterfoldEvent, InterfoldEventData, Sequenced,
+    SequencerBarrier, Shutdown, Subscribe, Unsequenced, Unsubscribe,
 };
 
 /// Typestate marker indicating the BusHandle has not yet been enabled with an HLC clock.
@@ -31,6 +41,58 @@ pub struct Disabled;
 /// Typestate marker indicating the BusHandle has been enabled and is ready for use.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enabled;
+
+#[derive(Debug)]
+struct EventAdmission {
+    accepting: AtomicBool,
+    in_flight: AtomicUsize,
+    drained: Notify,
+}
+
+impl EventAdmission {
+    fn new() -> Self {
+        Self {
+            accepting: AtomicBool::new(true),
+            in_flight: AtomicUsize::new(0),
+            drained: Notify::new(),
+        }
+    }
+
+    fn enter(self: &Arc<Self>) -> Result<EventAdmissionGuard> {
+        if !self.accepting.load(Ordering::Acquire) {
+            anyhow::bail!("event admission is closed because node shutdown has started");
+        }
+
+        self.in_flight.fetch_add(1, Ordering::AcqRel);
+        let guard = EventAdmissionGuard(Arc::clone(self));
+        if !self.accepting.load(Ordering::Acquire) {
+            drop(guard);
+            anyhow::bail!("event admission is closed because node shutdown has started");
+        }
+        Ok(guard)
+    }
+
+    async fn close_and_wait(&self) {
+        self.accepting.store(false, Ordering::Release);
+        loop {
+            let drained = self.drained.notified();
+            if self.in_flight.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            drained.await;
+        }
+    }
+}
+
+struct EventAdmissionGuard(Arc<EventAdmission>);
+
+impl Drop for EventAdmissionGuard {
+    fn drop(&mut self) {
+        if self.0.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.drained.notify_one();
+        }
+    }
+}
 
 #[derive(Derivative)]
 #[derivative(
@@ -49,6 +111,9 @@ pub struct BusHandle<S = Enabled> {
     hlc: HlcFactory,
     /// Temporary context for events the bus publishes
     ctx: Option<EventContext<Sequenced>>,
+    /// Shared admission fence closed before the shutdown event is enqueued.
+    #[derivative(Debug = "ignore", PartialEq = "ignore")]
+    admission: Arc<EventAdmission>,
     #[derivative(Debug = "ignore", PartialEq = "ignore")]
     _state: PhantomData<S>,
 }
@@ -65,6 +130,7 @@ impl BusHandle<Disabled> {
             sequencer,
             hlc,
             ctx: None,
+            admission: Arc::new(EventAdmission::new()),
             _state: PhantomData,
         }
     }
@@ -78,6 +144,7 @@ impl BusHandle<Disabled> {
             sequencer: self.sequencer,
             hlc: self.hlc,
             ctx: None,
+            admission: self.admission,
             _state: PhantomData,
         }
     }
@@ -90,6 +157,7 @@ impl BusHandle<Disabled> {
             sequencer: self.sequencer,
             hlc: self.hlc,
             ctx: None,
+            admission: self.admission,
             _state: PhantomData,
         }
     }
@@ -182,15 +250,55 @@ impl EventPublisher<InterfoldEvent<Unsequenced>> for BusHandle<Enabled> {
     }
 
     fn naked_dispatch(&self, event: InterfoldEvent<Unsequenced>) {
+        let Ok(_admission) = self.admission.enter() else {
+            warn!("Dropping an internal event because node shutdown has closed admission");
+            return;
+        };
         self.sequencer.do_send(event);
     }
 }
 
 impl BusHandle<Enabled> {
     pub async fn naked_dispatch_async(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
+        let _admission = self.admission.enter()?;
         self.sequencer.send(event).await?;
         Ok(())
     }
+
+    /// Persist and broadcast `Shutdown`, waiting until every live EventBus
+    /// subscriber has completed its shutdown handler.
+    pub async fn publish_shutdown_and_wait(&self) -> Result<InterfoldEvent<Sequenced>> {
+        let (recipient, response) = oneshot::<InterfoldEvent<Sequenced>>();
+        self.event_bus
+            .send(Subscribe::new(EventType::Shutdown, recipient.clone()))
+            .await?;
+
+        // Refuse new work and wait until every publisher that entered before
+        // the fence has enqueued its event. Shutdown is therefore ordered after
+        // all admitted work and before every rejected late arrival.
+        self.admission.close_and_wait().await;
+        let event = self.event_from(Shutdown, None)?;
+        self.sequencer.send(event).await?;
+
+        let shutdown = response.await?;
+        // Awaiting this mailbox operation also proves the EventBus has
+        // completed its paused, acknowledged Shutdown fanout.
+        self.event_bus
+            .send(Unsubscribe::new(EventType::Shutdown, recipient))
+            .await?;
+        Ok(shutdown)
+    }
+
+    /// Drain and flush the event pipeline after producers have observed
+    /// `Shutdown`: sequencer -> event-store router -> logs -> sequencer
+    /// responses -> EventBus fanout.
+    pub async fn flush_event_pipeline(&self) -> Result<()> {
+        self.sequencer.send(FlushEventStores).await??;
+        self.sequencer.send(SequencerBarrier).await?;
+        self.event_bus.send(EventBusBarrier).await?;
+        Ok(())
+    }
+
     fn publish_from_remote_impl(
         &self,
         data: impl Into<InterfoldEventData>,
@@ -199,6 +307,7 @@ impl BusHandle<Enabled> {
         block: Option<u64>,
         source: EventSource,
     ) -> Result<()> {
+        let _admission = self.admission.enter()?;
         let evt = self.event_from_remote_source(data, caused_by, remote_ts, block, source)?;
         self.sequencer.do_send(evt);
         Ok(())
@@ -208,6 +317,7 @@ impl BusHandle<Enabled> {
         data: impl Into<InterfoldEventData>,
         caused_by: Option<EventContext<Sequenced>>,
     ) -> Result<()> {
+        let _admission = self.admission.enter()?;
         let evt = self.event_from(data, caused_by)?;
         self.sequencer.do_send(evt);
         Ok(())
@@ -216,6 +326,10 @@ impl BusHandle<Enabled> {
 
 impl<S> ErrorDispatcher<InterfoldEvent<Unsequenced>> for BusHandle<S> {
     fn err(&self, err_type: EType, error: anyhow::Error) {
+        let Ok(_admission) = self.admission.enter() else {
+            error!(%error, "Error event not admitted because node shutdown has started");
+            return;
+        };
         match self.event_from_error(err_type, error, self.get_ctx()) {
             Ok(evt) => self.sequencer.do_send(evt),
             Err(e) => error!("{e}"),

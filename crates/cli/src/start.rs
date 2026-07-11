@@ -15,10 +15,11 @@ use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
 use e3_daemon_server::start_daemon_server;
-use e3_events::{prelude::*, Shutdown};
 use e3_utils::{colorize, Color};
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info, instrument};
+
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
 
 #[instrument(skip_all)]
 pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
@@ -41,7 +42,7 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         result = build_ciphernode(&mut config, peers) => result,
         // if the shutdown signal completes first then do shutdown without the node
         _ = &mut shutdown => {
-            graceful_shutdown(None).await;
+            graceful_shutdown(None).await?;
             return Ok(());
         }
     }?;
@@ -95,7 +96,7 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
     );
 
     shutdown.await;
-    graceful_shutdown(Some(node)).await;
+    graceful_shutdown(Some(node)).await?;
 
     Ok(())
 }
@@ -145,18 +146,26 @@ pub fn shutdown_signal() -> impl std::future::Future<Output = ()> {
     }
 }
 
-pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) {
+pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) -> Result<()> {
     info!("initiating graceful shutdown...");
 
-    if let Some(node) = node {
-        if let Err(e) = node.bus.publish_without_context(Shutdown) {
-            error!("Shutdown failed to publish! {e}");
-        }
-    }
+    let result = match node {
+        Some(node) => node.shutdown(SHUTDOWN_DEADLINE).await,
+        None => Ok(()),
+    };
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    info!("Graceful shutdown complete");
     if let Some(logs) = e3_logger::LogCollector::global() {
         logs.flush();
+    }
+
+    match result {
+        Ok(()) => {
+            info!("Graceful shutdown barrier complete");
+            Ok(())
+        }
+        Err(error) => {
+            error!(%error, "Graceful shutdown failed; process will exit unsuccessfully");
+            Err(error)
+        }
     }
 }

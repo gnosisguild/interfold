@@ -39,8 +39,9 @@ impl SyncPlanner {
         }
     }
 
-    /// True for events the sync flow re-publishes itself (steps 5/8/10) and therefore must not
-    /// replay from the EventStore.
+    /// True for process-lifecycle events that must not be replayed from the EventStore. Most are
+    /// re-published by sync; `Shutdown` is terminal for the previous process and replaying it would
+    /// stop freshly constructed actors during restart.
     pub fn is_infrastructure_event(event: &InterfoldEvent) -> bool {
         matches!(
             event.get_data(),
@@ -48,6 +49,7 @@ impl SyncPlanner {
                 | InterfoldEventData::EffectsEnabled(_)
                 | InterfoldEventData::HistoricalEvmSyncStart(_)
                 | InterfoldEventData::HistoricalNetSyncStart(_)
+                | InterfoldEventData::Shutdown(_)
         )
     }
 
@@ -105,7 +107,7 @@ mod tests {
     use super::*;
     use e3_events::{
         E3Failed, E3RequestComplete, E3Stage, E3id, EffectsEnabled, EvmEventConfig, FailureReason,
-        HistoricalEvmSyncStart, InterfoldEvent, SyncEnded, Unsequenced,
+        HistoricalEvmSyncStart, InterfoldEvent, Shutdown, SyncEnded, Unsequenced,
     };
 
     fn make_historical_evm_sync_start() -> HistoricalEvmSyncStart {
@@ -129,14 +131,19 @@ mod tests {
             .data(make_historical_evm_sync_start())
             .seq(3)
             .build();
+        let shutdown = InterfoldEvent::<Unsequenced>::test_event("shutdown")
+            .data(Shutdown)
+            .seq(4)
+            .build();
         let test_event = InterfoldEvent::<Unsequenced>::test_event("hello")
             .id(42)
-            .seq(4)
+            .seq(5)
             .build();
 
         assert!(SyncPlanner::is_infrastructure_event(&sync_ended));
         assert!(SyncPlanner::is_infrastructure_event(&effects_enabled));
         assert!(SyncPlanner::is_infrastructure_event(&evm_sync_start));
+        assert!(SyncPlanner::is_infrastructure_event(&shutdown));
         assert!(!SyncPlanner::is_infrastructure_event(&test_event));
     }
 

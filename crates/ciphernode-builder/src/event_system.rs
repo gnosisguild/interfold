@@ -221,8 +221,25 @@ impl EventSystem {
     pub fn sequencer(&self) -> Result<Addr<Sequencer>> {
         self.sequencer
             .get_or_try_init(|| {
-                let router = self.eventstore_router()?;
-                Ok(Sequencer::new(&self.eventbus(), router).start())
+                let sequencer = match self.eventstore_addrs()? {
+                    EventStoreAddrs::InMem(addrs) => {
+                        let router = EventStoreRouter::new(addrs).start();
+                        Sequencer::new_with_flush(
+                            &self.eventbus(),
+                            router.clone().recipient(),
+                            router.recipient(),
+                        )
+                    }
+                    EventStoreAddrs::Persisted(addrs) => {
+                        let router = EventStoreRouter::new(addrs).start();
+                        Sequencer::new_with_flush(
+                            &self.eventbus(),
+                            router.clone().recipient(),
+                            router.recipient(),
+                        )
+                    }
+                };
+                Ok(sequencer.start())
             })
             .cloned()
     }
@@ -358,14 +375,14 @@ impl EventSystem {
                 let base = b.get_or_init_store();
                 let buffer = self.buffer()?;
                 buffer.try_send(UpdateDestination::new(base.clone()))?;
-                DataStore::from_in_mem_with_buffer(&base, self.buffer()?)
+                DataStore::from_in_mem_with_snapshot_buffer(&base, self.buffer()?)
             }
             EventSystemBackend::Persisted(b) => {
                 let base = b.get_or_init_store(&self.handle()?)?;
                 let buffer = self.buffer()?;
                 buffer.try_send(UpdateDestination::new(base))?;
 
-                DataStore::from_sled_store_with_buffer(
+                DataStore::from_sled_store_with_snapshot_buffer(
                     &b.get_or_init_store(&self.handle()?)?,
                     self.buffer()?,
                 )
@@ -415,9 +432,9 @@ mod tests {
     use tracing::info;
 
     use super::*;
-    use actix::Actor;
     use actix::Handler;
     use actix::Message;
+    use actix::{Actor, ActorContext};
 
     use e3_events::prelude::*;
     use e3_events::CorrelationId;
@@ -442,6 +459,25 @@ mod tests {
     struct Listener {
         logs: Vec<String>,
         events: Vec<InterfoldEvent>,
+    }
+
+    struct ShutdownSnapshotWriter {
+        store: DataStore,
+    }
+
+    impl Actor for ShutdownSnapshotWriter {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent> for ShutdownSnapshotWriter {
+        type Result = ();
+
+        fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+            if matches!(msg.get_data(), InterfoldEventData::Shutdown(_)) {
+                self.store.write("final-state".to_owned());
+                ctx.stop();
+            }
+        }
     }
 
     impl Handler<InterfoldEvent> for Listener {
@@ -493,6 +529,39 @@ mod tests {
         let system = EventSystem::persisted(tmp.path().join("log"), tmp.path().join("sled"));
         let _handle = system.handle().expect("Failed to get handle");
         system.store().expect("Failed to get store");
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn shutdown_barrier_persists_final_actor_write_before_store_close() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let log_path = tmp.path().join("log");
+        let sled_path = tmp.path().join("sled");
+        let system = EventSystem::persisted(log_path, sled_path.clone()).with_fresh_bus();
+        let bus = system.handle()?.enable("shutdown-test");
+        let store = system.store()?;
+        let final_state = store.base("shutdown/final-state");
+        let writer = ShutdownSnapshotWriter {
+            store: final_state.clone(),
+        }
+        .start();
+        bus.subscribe(EventType::Shutdown, writer.recipient());
+
+        bus.publish_shutdown_and_wait().await?;
+        let late_publish = bus
+            .publish_without_context(TestEvent::new("late-after-shutdown", 1))
+            .expect_err("shutdown must close event admission");
+        assert!(late_publish
+            .to_string()
+            .contains("event admission is closed"));
+        bus.flush_event_pipeline().await?;
+        store.shutdown().await?;
+
+        let disk = e3_data::SledDb::new(&sled_path, "datastore")?;
+        let bytes = disk
+            .get(e3_events::Get::new("shutdown/final-state"))?
+            .expect("final shutdown snapshot must exist");
+        assert_eq!(bincode::deserialize::<String>(&bytes)?, "final-state");
         Ok(())
     }
 

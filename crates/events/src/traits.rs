@@ -177,6 +177,13 @@ pub trait SequenceIndex: Unpin + 'static {
 pub trait EventLog: Unpin + 'static {
     /// Append an event to the log, returning its sequence number
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64>;
+    /// Flush buffered log and index data before a clean process exit.
+    ///
+    /// In-memory and test implementations may use the default no-op. Durable
+    /// implementations should override this and propagate I/O failures.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Read all events starting from the given sequence number (inclusive)
     fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>;
     /// Read at most `limit` events starting from the given sequence number (inclusive).

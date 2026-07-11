@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::traits::{ErrorEvent, Event};
-use crate::EventType;
+use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
 use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -177,17 +177,49 @@ impl<E: Event> Default for EventBus<E> {
 impl<E: Event> Handler<E> for EventBus<E> {
     type Result = ();
 
-    fn handle(&mut self, event: E, _: &mut Context<Self>) {
+    fn handle(&mut self, event: E, ctx: &mut Context<Self>) {
         if self.is_duplicate(&event) {
             return;
         }
+
+        let event_type = event.event_type();
+        if event_type == EventType::Shutdown.as_str() {
+            let listeners = self
+                .listeners
+                .get("*")
+                .into_iter()
+                .flatten()
+                .chain(self.listeners.get(&event_type).into_iter().flatten())
+                .cloned()
+                .collect::<Vec<_>>();
+
+            tracing::info!(
+                listeners = listeners.len(),
+                "Acknowledging Shutdown across EventBus subscribers"
+            );
+            tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
+            self.track(&event);
+
+            ctx.wait(
+                async move {
+                    for listener in listeners {
+                        if let Err(error) = listener.send(event.clone()).await {
+                            tracing::warn!(%error, "Shutdown subscriber was already unavailable");
+                        }
+                    }
+                }
+                .into_actor(self),
+            );
+            return;
+        }
+
         if let Some(listeners) = self.listeners.get("*") {
             for listener in listeners {
                 listener.do_send(event.clone());
             }
         }
 
-        if let Some(listeners) = self.listeners.get(&event.event_type()) {
+        if let Some(listeners) = self.listeners.get(&event_type) {
             for listener in listeners {
                 listener.do_send(event.clone());
             }
@@ -196,6 +228,12 @@ impl<E: Event> Handler<E> for EventBus<E> {
         tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
         self.track(&event);
     }
+}
+
+impl<E: Event> Handler<EventBusBarrier> for EventBus<E> {
+    type Result = ();
+
+    fn handle(&mut self, _: EventBusBarrier, _: &mut Context<Self>) {}
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -485,6 +523,11 @@ mod tests {
     use super::*;
     use crate::{AggregateId, WithAggregateId};
     use std::hash::{Hash, Hasher};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use tokio::sync::Notify;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct CollidingId(u64);
@@ -517,6 +560,7 @@ mod tests {
     struct CollidingEvent {
         id: CollidingId,
         data: TestData,
+        event_type: &'static str,
     }
 
     impl CollidingEvent {
@@ -524,6 +568,15 @@ mod tests {
             Self {
                 id: CollidingId(id),
                 data: TestData,
+                event_type: "CollidingEvent",
+            }
+        }
+
+        fn shutdown(id: u64) -> Self {
+            Self {
+                id: CollidingId(id),
+                data: TestData,
+                event_type: EventType::Shutdown.as_str(),
             }
         }
     }
@@ -543,7 +596,7 @@ mod tests {
         }
 
         fn event_type(&self) -> String {
-            "CollidingEvent".to_owned()
+            self.event_type.to_owned()
         }
 
         fn get_data(&self) -> &Self::Data {
@@ -552,6 +605,28 @@ mod tests {
 
         fn into_data(self) -> Self::Data {
             self.data
+        }
+    }
+
+    struct BlockingShutdownSubscriber {
+        gate: Arc<Notify>,
+        completed: Arc<AtomicBool>,
+    }
+
+    impl Actor for BlockingShutdownSubscriber {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<CollidingEvent> for BlockingShutdownSubscriber {
+        type Result = ResponseFuture<()>;
+
+        fn handle(&mut self, _: CollidingEvent, _: &mut Self::Context) -> Self::Result {
+            let gate = Arc::clone(&self.gate);
+            let completed = Arc::clone(&self.completed);
+            Box::pin(async move {
+                gate.notified().await;
+                completed.store(true, Ordering::SeqCst);
+            })
         }
     }
 
@@ -614,6 +689,35 @@ mod tests {
         let received = history.send(TakeEvents::new(2)).await?;
         assert!(!received.timed_out);
         assert_eq!(received.events.len(), 2);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn shutdown_pauses_event_bus_until_subscriber_acknowledges() -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let gate = Arc::new(Notify::new());
+        let completed = Arc::new(AtomicBool::new(false));
+        let subscriber = BlockingShutdownSubscriber {
+            gate: Arc::clone(&gate),
+            completed: Arc::clone(&completed),
+        }
+        .start();
+
+        bus.send(Subscribe::new(EventType::Shutdown, subscriber.recipient()))
+            .await?;
+        bus.send(CollidingEvent::shutdown(9)).await?;
+
+        let mut fence = Box::pin(bus.send(EventBusBarrier));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut fence)
+                .await
+                .is_err(),
+            "EventBus fence completed before the shutdown subscriber"
+        );
+
+        gate.notify_one();
+        fence.await?;
+        assert!(completed.load(Ordering::SeqCst));
         Ok(())
     }
 }

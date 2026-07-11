@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    events::{StoreEventRequested, StoreEventResponse},
+    events::{FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
@@ -14,6 +14,7 @@ use anyhow::{bail, Result};
 use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
+
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
     log: L,
@@ -253,6 +254,14 @@ impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<
     }
 }
 
+impl<I: SequenceIndex, L: EventLog> Handler<FlushEventStores> for EventStore<I, L> {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: FlushEventStores, _: &mut Self::Context) -> Self::Result {
+        self.log.flush()
+    }
+}
+
 impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStore<I, L> {
     type Result = ();
     fn handle(&mut self, msg: EventStoreQueryBy<Ts>, _: &mut Self::Context) -> Self::Result {
@@ -334,6 +343,7 @@ mod tests {
         events: Vec<InterfoldEvent<Unsequenced>>,
         bounded_read_calls: Option<Arc<AtomicUsize>>,
         bounded_read_limit: Option<Arc<AtomicUsize>>,
+        flushes: Option<Arc<AtomicUsize>>,
         unbounded_read_calls: Option<Arc<AtomicUsize>>,
     }
 
@@ -343,6 +353,7 @@ mod tests {
                 events: Vec::new(),
                 bounded_read_calls: None,
                 bounded_read_limit: None,
+                flushes: None,
                 unbounded_read_calls: None,
             }
         }
@@ -352,6 +363,17 @@ mod tests {
                 events: Vec::new(),
                 bounded_read_calls: None,
                 bounded_read_limit: Some(tracker),
+                flushes: None,
+                unbounded_read_calls: None,
+            }
+        }
+
+        fn with_flush_tracker(tracker: Arc<AtomicUsize>) -> Self {
+            Self {
+                events: Vec::new(),
+                bounded_read_calls: None,
+                bounded_read_limit: None,
+                flushes: Some(tracker),
                 unbounded_read_calls: None,
             }
         }
@@ -366,6 +388,7 @@ mod tests {
                 events,
                 bounded_read_calls: Some(bounded_read_calls),
                 bounded_read_limit: Some(bounded_read_limit),
+                flushes: None,
                 unbounded_read_calls: Some(unbounded_read_calls),
             }
         }
@@ -375,6 +398,13 @@ mod tests {
         fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
             self.events.push(event.clone());
             Ok(self.events.len() as u64)
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            if let Some(flushes) = &self.flushes {
+                flushes.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
         }
 
         fn read_from(
@@ -491,6 +521,20 @@ mod tests {
         assert_eq!(logged.len(), 2);
     }
 
+    #[actix::test]
+    async fn shutdown_flush_message_reaches_event_log() -> Result<()> {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let store = EventStore::new(
+            MockIndex::new(),
+            MockLog::with_flush_tracker(Arc::clone(&flushes)),
+        )
+        .start();
+
+        store.send(FlushEventStores).await??;
+
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
     #[test]
     fn startup_index_reconciliation_reads_log_in_bounded_pages() {
         let event_count = INDEX_RECONCILE_PAGE_SIZE * 2 + 2;

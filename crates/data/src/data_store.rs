@@ -7,12 +7,12 @@
 use std::borrow::Cow;
 
 use crate::{InMemStore, SledStore};
-use actix::{Addr, Recipient};
+use actix::{Addr, Message, Recipient};
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use e3_events::IntoKey;
-use e3_events::{Flush, Get, Insert, InsertSync, Remove};
+use e3_events::{Flush, FlushPendingSnapshots, Get, Insert, InsertSync, Remove, SnapshotBuffer};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -21,6 +21,14 @@ pub enum StoreAddr {
     InMem(Addr<InMemStore>),
     Sled(Addr<SledStore>),
 }
+
+/// Flush and close the underlying store after every snapshot batch has been
+/// acknowledged. This message is intentionally separate from the protocol
+/// `Shutdown` event so storage remains available while actors persist their
+/// final state.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<()>")]
+pub struct ShutdownStore;
 
 impl StoreAddr {
     pub fn to_maybe_in_mem(&self) -> Option<&Addr<InMemStore>> {
@@ -42,6 +50,8 @@ pub struct DataStore {
     insert_sync: Recipient<InsertSync>,
     remove: Recipient<Remove>,
     flush: Recipient<Flush>,
+    flush_pending_snapshots: Option<Recipient<FlushPendingSnapshots>>,
+    shutdown: Recipient<ShutdownStore>,
 }
 
 impl DataStore {
@@ -83,6 +93,21 @@ impl DataStore {
         let msg = InsertSync::new(&self.scope, serialized);
         self.insert_sync.send(msg).await??;
         self.flush.send(Flush).await?; // Write sync will flush all pending writes
+        Ok(())
+    }
+
+    /// Drain the snapshot buffer and durably close the backing store.
+    pub async fn shutdown(&self) -> Result<()> {
+        if let Some(flush_pending) = &self.flush_pending_snapshots {
+            flush_pending
+                .send(FlushPendingSnapshots)
+                .await
+                .context("snapshot buffer stopped during shutdown")??;
+        }
+        self.shutdown
+            .send(ShutdownStore)
+            .await
+            .context("data store stopped during shutdown")??;
         Ok(())
     }
 
@@ -144,6 +169,8 @@ impl DataStore {
             remove: self.remove.clone(),
             scope,
             flush: self.flush.clone(),
+            flush_pending_snapshots: self.flush_pending_snapshots.clone(),
+            shutdown: self.shutdown.clone(),
         }
     }
 
@@ -156,6 +183,8 @@ impl DataStore {
             remove: self.remove.clone(),
             scope: key.into_key(),
             flush: self.flush.clone(),
+            flush_pending_snapshots: self.flush_pending_snapshots.clone(),
+            shutdown: self.shutdown.clone(),
         }
     }
 
@@ -172,6 +201,25 @@ impl DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
+        }
+    }
+
+    pub fn from_sled_store_with_snapshot_buffer(
+        addr: &Addr<SledStore>,
+        snapshot_buffer: Addr<SnapshotBuffer>,
+    ) -> Self {
+        Self {
+            addr: StoreAddr::Sled(addr.clone()),
+            get: addr.clone().recipient(),
+            insert: snapshot_buffer.clone().recipient(),
+            insert_sync: addr.clone().recipient(),
+            remove: addr.clone().recipient(),
+            scope: vec![],
+            flush: addr.clone().recipient(),
+            flush_pending_snapshots: Some(snapshot_buffer.recipient()),
+            shutdown: addr.clone().recipient(),
         }
     }
 
@@ -187,6 +235,25 @@ impl DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
+        }
+    }
+
+    pub fn from_in_mem_with_snapshot_buffer(
+        addr: &Addr<InMemStore>,
+        snapshot_buffer: Addr<SnapshotBuffer>,
+    ) -> Self {
+        Self {
+            addr: StoreAddr::InMem(addr.clone()),
+            get: addr.clone().recipient(),
+            insert: snapshot_buffer.clone().recipient(),
+            insert_sync: addr.clone().recipient(),
+            remove: addr.clone().recipient(),
+            scope: vec![],
+            flush: addr.clone().recipient(),
+            flush_pending_snapshots: Some(snapshot_buffer.recipient()),
+            shutdown: addr.clone().recipient(),
         }
     }
 
@@ -199,6 +266,8 @@ impl DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
         }
     }
 
@@ -211,6 +280,8 @@ impl DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
         }
     }
 }
@@ -225,6 +296,8 @@ impl From<&Addr<SledStore>> for DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
         }
     }
 }
@@ -239,6 +312,8 @@ impl From<&Addr<InMemStore>> for DataStore {
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
+            flush_pending_snapshots: None,
+            shutdown: addr.clone().recipient(),
         }
     }
 }

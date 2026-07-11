@@ -5,12 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 use crate::eventstore::EventStore;
 use crate::{
-    events::{EventStoreQueryResponse, StoreEventRequested},
+    events::{EventStoreQueryResponse, FlushEventStores, StoreEventRequested},
     AggregateId, EventContextAccessors, EventLog, SequenceIndex,
 };
 use crate::{CorrelationId, Die, EventStoreQueryBy, InterfoldEvent, Seq, SeqAgg, Ts, TsAgg};
-use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Recipient};
-use anyhow::Result;
+use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Recipient, ResponseFuture};
+use anyhow::{Context as _, Result};
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
@@ -219,6 +219,23 @@ impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStoreR
 
     fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
         self.handle_store_event_requested(msg);
+    }
+}
+
+impl<I: SequenceIndex, L: EventLog> Handler<FlushEventStores> for EventStoreRouter<I, L> {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: FlushEventStores, _: &mut Self::Context) -> Self::Result {
+        let stores: Vec<_> = self.stores.values().cloned().collect();
+        Box::pin(async move {
+            for store in stores {
+                store
+                    .send(FlushEventStores)
+                    .await
+                    .context("event store stopped before its shutdown flush")??;
+            }
+            Ok(())
+        })
     }
 }
 

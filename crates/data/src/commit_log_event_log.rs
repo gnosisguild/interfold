@@ -107,6 +107,11 @@ impl EventLog for CommitLogEventLog {
         self.append_bytes(&bytes)
     }
 
+    fn flush(&mut self) -> Result<()> {
+        self.log.flush().context("Failed to flush event log")?;
+        Ok(())
+    }
+
     fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
         let events = self.read_from_checked(from).unwrap_or_else(|error| {
             panic!(

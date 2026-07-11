@@ -6,11 +6,11 @@
 use super::{
     batch_router::{BatchRouter, FlushSeq},
     timelock_queue::{Clock, StartTimelock, SystemClock, Tick, TimelockQueue},
-    AggregateConfig,
+    AggregateConfig, FlushPendingSnapshots,
 };
 use crate::{Insert, InsertBatch, InterfoldEvent};
-use actix::{Actor, Addr, Handler, Message, Recipient};
-use anyhow::Result;
+use actix::{Actor, Addr, Handler, Message, Recipient, ResponseFuture};
+use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 use std::sync::Arc;
 use tracing::{info, trace};
@@ -141,6 +141,22 @@ impl Handler<InterfoldEvent> for SnapshotBuffer {
     }
 }
 
+impl Handler<FlushPendingSnapshots> for SnapshotBuffer {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: FlushPendingSnapshots, _: &mut Self::Context) -> Self::Result {
+        let router = self.router.clone();
+        Box::pin(async move {
+            let router = router.context("snapshot buffer has no batch router")?;
+            router
+                .send(FlushPendingSnapshots)
+                .await
+                .context("snapshot batch router stopped during final flush")??;
+            Ok(())
+        })
+    }
+}
+
 impl Handler<Tick> for SnapshotBuffer {
     type Result = ();
     fn handle(&mut self, msg: Tick, _: &mut Self::Context) -> Self::Result {
@@ -197,7 +213,7 @@ mod mock_store {
 mod tests {
     use super::super::timelock_queue::mock_clock::MockClock;
     use super::mock_store::GetEvts;
-    use super::{mock_store, SnapshotBuffer};
+    use super::{mock_store, FlushPendingSnapshots, SnapshotBuffer};
     use crate::snapshot_buffer::timelock_queue::Tick;
     use crate::{
         AggregateConfig, AggregateId, E3id, EventContext, EventContextAccessors, EventContextSeq,
@@ -381,6 +397,7 @@ mod tests {
                 create_ec(7, 3),
             ))
             .await?;
+        buffer.send(FlushPendingSnapshots).await??;
 
         let batches = store.send(GetEvts).await?;
         assert_eq!(

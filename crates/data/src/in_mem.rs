@@ -4,8 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::in_mem_kv_store::{DataOp, InMemKvStore};
-use actix::{Actor, Handler, Message};
+use crate::{
+    in_mem_kv_store::{DataOp, InMemKvStore},
+    ShutdownStore,
+};
+use actix::{Actor, ActorContext, Handler, Message};
 use anyhow::Result;
 use e3_events::{Flush, Get, Insert, InsertBatch, InsertSync, Remove};
 use e3_utils::MAILBOX_LIMIT;
@@ -102,6 +105,15 @@ impl Handler<Flush> for InMemStore {
     type Result = ();
     fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
         // noop
+    }
+}
+
+impl Handler<ShutdownStore> for InMemStore {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: ShutdownStore, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop();
+        Ok(())
     }
 }
 

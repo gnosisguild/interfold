@@ -4,21 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::SledDb;
-use actix::{Actor, ActorContext, Addr, Handler};
-use anyhow::Result;
-use e3_events::{
-    prelude::*, BusHandle, EType, ErrorDispatcher, EventType, Flush, InterfoldEvent,
-    InterfoldEventData, Unsequenced,
-};
+use crate::{ShutdownStore, SledDb};
+use actix::{Actor, ActorContext, Addr, Handler, ResponseFuture};
+use anyhow::{Context, Result};
+use e3_events::{BusHandle, EType, ErrorDispatcher, Flush, InterfoldEvent, Unsequenced};
 use e3_events::{Get, Insert, InsertBatch, InsertSync, Remove};
-use e3_utils::{NotifySync, MAILBOX_LIMIT};
+use e3_utils::MAILBOX_LIMIT;
 use std::path::PathBuf;
 use tracing::{error, info};
 
 pub struct SledStore {
     db: Option<SledDb>,
     bus: Box<dyn ErrorDispatcher<InterfoldEvent<Unsequenced>>>,
+    write_failure: Option<String>,
 }
 
 impl Actor for SledStore {
@@ -30,23 +28,25 @@ impl Actor for SledStore {
 
 impl SledStore {
     pub fn new<S: 'static>(bus: &BusHandle<S>, path: &PathBuf) -> Result<Addr<Self>> {
-        // Note we pass in a generic BusHandle which supports the err method for passing on errors.
-        // This was as stores are required before we can initialize the BusHandle to retrieve the
-        // address so we have a unique node_id.
-        // If BusHandle is Disabled that is fine as our subscriptions and error publishing function
-        // remains intact despite it being enabled elsewhere at a later point
+        // The generic BusHandle is retained only for structured storage errors;
+        // shutdown itself is coordinated explicitly after actor snapshots drain.
         info!("Starting SledStore with {:?}", path);
         let db = SledDb::new(path, "datastore")?;
 
         let store = Self {
             db: Some(db),
             bus: Box::new(bus.clone()),
+            write_failure: None,
         }
         .start();
 
-        bus.subscribe(EventType::Shutdown, store.clone().into());
-
         Ok(store)
+    }
+
+    fn record_write_failure(&mut self, error: &anyhow::Error) {
+        if self.write_failure.is_none() {
+            self.write_failure = Some(format!("{error:#}"));
+        }
     }
 }
 
@@ -56,6 +56,7 @@ impl Handler<Insert> for SledStore {
     fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
             if let Err(err) = db.insert(event) {
+                self.record_write_failure(&err);
                 self.bus.err(EType::Data, err)
             }
         }
@@ -68,6 +69,7 @@ impl Handler<InsertBatch> for SledStore {
     fn handle(&mut self, event: InsertBatch, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
             if let Err(err) = db.insert_batch(event.commands()) {
+                self.record_write_failure(&err);
                 self.bus.err(EType::Data, err)
             }
         }
@@ -79,8 +81,10 @@ impl Handler<InsertSync> for SledStore {
 
     fn handle(&mut self, event: InsertSync, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
-            db.insert(event.into())
-                .map_err(|e| anyhow::anyhow!("{}", e.to_string()))?
+            if let Err(error) = db.insert(event.into()) {
+                self.record_write_failure(&error);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -92,6 +96,7 @@ impl Handler<Remove> for SledStore {
     fn handle(&mut self, event: Remove, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
             if let Err(err) = db.remove(event) {
+                self.record_write_failure(&err);
                 self.bus.err(EType::Data, err)
             }
         }
@@ -122,19 +127,31 @@ impl Handler<Flush> for SledStore {
     fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
         if let Some(ref db) = self.db {
             if let Err(err) = db.flush() {
+                self.record_write_failure(&err);
                 self.bus.err(EType::Data, err)
             }
         }
     }
 }
 
-impl Handler<InterfoldEvent> for SledStore {
-    type Result = ();
-    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
-        if let InterfoldEventData::Shutdown(_) = msg.get_data() {
-            self.notify_sync(ctx, Flush); // Flush all pending writes
-            let _db = self.db.take(); // db will be dropped
-            ctx.stop()
-        }
+impl Handler<ShutdownStore> for SledStore {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: ShutdownStore, ctx: &mut Self::Context) -> Self::Result {
+        let db = self.db.take();
+        let write_failure = self.write_failure.take();
+        ctx.stop();
+
+        Box::pin(async move {
+            let db = db.context("SledStore was already closed")?;
+            tokio::task::spawn_blocking(move || db.flush())
+                .await
+                .context("SledStore flush task failed")??;
+
+            if let Some(error) = write_failure {
+                anyhow::bail!("SledStore observed a write failure before shutdown: {error}");
+            }
+            Ok(())
+        })
     }
 }

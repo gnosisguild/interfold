@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use actix::{Message, Recipient};
+use anyhow::Result;
 
 use crate::{AggregateId, CorrelationId, EventSource, InterfoldEvent, Sequenced, Unsequenced};
 
@@ -67,6 +68,24 @@ impl StoreEventResponse {
         self.0
     }
 }
+
+/// Flush every event store after all previously routed appends have completed.
+/// Used by the clean-shutdown barrier; failures must reach the caller.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<()>")]
+pub struct FlushEventStores;
+
+/// A no-op sequencer mailbox fence. Once its response arrives, every earlier
+/// store response has been forwarded to the EventBus.
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub struct SequencerBarrier;
+
+/// A no-op EventBus mailbox fence. Once handled, every earlier event has been
+/// processed by every live downstream subscriber.
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub struct EventBusBarrier;
 
 /// Trait for various EventStore query types
 pub trait QueryKind {

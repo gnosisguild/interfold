@@ -10,6 +10,9 @@ fail() {
     exit 1
 }
 
+grep -Fq 'stop_grace_period: 45s' "$ROOT_DIR/docker-compose.yml" \
+    || fail "Docker stop grace period must exceed the node shutdown deadline"
+
 assert_contains() {
     grep -Fq "$2" "$1" || fail "expected '$2' in $1"
 }

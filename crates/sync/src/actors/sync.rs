@@ -72,8 +72,9 @@ pub async fn sync(
 
     info!("Replaying events to actors...");
     // 4. Replay the EventStore events to all listeners (except effects).
-    //    Skip infrastructure events (SyncEnded, EffectsEnabled, HistoricalEvmSyncStart) because
-    //    they will be re-published by this sync process (steps 5, 8, 10). Replaying them here
+    //    Skip lifecycle infrastructure events. SyncEnded, EffectsEnabled and sync-start events are
+    //    re-published by this sync process; Shutdown belongs to the previous process and would stop
+    //    freshly constructed actors. Replaying these here
     //    would poison the EventBus deduplication window: the replayed event has the same
     //    EventId (payload hash) as the one we publish later, causing the later event to be
     //    silently dropped.  This is critical for SyncEnded, if the EvmChainGateway never
