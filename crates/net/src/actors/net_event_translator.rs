@@ -66,7 +66,10 @@ impl NetEventTranslator {
                 while let Some(event) = super::recv_net_event(&mut rx, "NetEventTranslator").await {
                     if let NetEvent::GossipData(data) = event {
                         if let GossipData::GossipBytes(_) = data {
-                            addr.do_send(LibP2pEvent(data));
+                            if let Err(error) = addr.send(LibP2pEvent(data)).await {
+                                warn!(%error, "NetEventTranslator stopped; ending gossip ingress");
+                                break;
+                            }
                         }
                     }
                 }

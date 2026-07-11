@@ -109,7 +109,13 @@ impl DocumentPublisher {
                     if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
                         event
                     {
-                        addr.do_send(data)
+                        if let Err(error) = addr.send(data).await {
+                            tracing::warn!(
+                                %error,
+                                "DocumentPublisher stopped; ending DHT notification ingress"
+                            );
+                            break;
+                        }
                     }
                 }
             }

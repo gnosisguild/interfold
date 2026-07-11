@@ -297,14 +297,18 @@ impl NetSyncManager {
             async move {
                 while let Some(event) = super::recv_net_event(&mut events, "NetSyncManager").await {
                     debug!("Received event {:?}", event);
-                    match event {
+                    let delivery = match event {
                         // Someone is asking for our sync
-                        NetEvent::IncomingRequest(value) => addr.do_send(value),
+                        NetEvent::IncomingRequest(value) => addr.send(value).await,
                         NetEvent::AllPeersDialed { connected, total } => {
-                            addr.do_send(AllPeersDialed { connected, total })
+                            addr.send(AllPeersDialed { connected, total }).await
                         }
-                        NetEvent::ConnectionEstablished { .. } => addr.do_send(PeerConnected),
-                        _ => (),
+                        NetEvent::ConnectionEstablished { .. } => addr.send(PeerConnected).await,
+                        _ => continue,
+                    };
+                    if let Err(error) = delivery {
+                        warn!(%error, "NetSyncManager stopped; ending sync ingress");
+                        break;
                     }
                 }
             }
