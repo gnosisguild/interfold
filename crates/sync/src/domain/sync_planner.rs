@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 ///
 /// Infrastructure events (`SyncEnded`, `EffectsEnabled`, `HistoricalEvmSyncStart`,
 /// `HistoricalNetSyncStart`) are re-published by the sync process itself, so replaying them
-/// would poison the EventBus bloom-filter dedup. They must be skipped during replay.
+/// would poison the EventBus deduplication window. They must be skipped during replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayDecision {
     /// Forward the event to listeners.

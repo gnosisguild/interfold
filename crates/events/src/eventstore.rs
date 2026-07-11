@@ -6,39 +6,59 @@
 
 use crate::{
     events::{StoreEventRequested, StoreEventResponse},
-    EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse,
-    InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
+    Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
+    EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
 use actix::{Actor, Handler};
 use anyhow::{bail, Result};
 use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
-const MAX_STORAGE_ERRORS: u64 = 10;
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
     log: L,
-    storage_errors: u64,
 }
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     /// Attempt to store an event. Returns the sequenced event on success,
-    /// `None` if the event was a duplicate, or an error on failure.
+    /// `None` if the complete event is an exact duplicate, or an error on failure.
     pub fn store_event(
         &mut self,
         event: InterfoldEvent<Unsequenced>,
     ) -> Result<Option<InterfoldEvent<Sequenced>>> {
         let ts = event.ts();
-        if self.index.get(ts)?.is_some() {
-            warn!("Event already stored at timestamp {ts}! This might happen when recovering from a snapshot. Skipping storage");
-            self.storage_errors += 1;
-            if self.storage_errors > MAX_STORAGE_ERRORS {
+        if let Some(indexed_seq) = self.index.get(ts)? {
+            let Some((logged_seq, existing)) = self.log.read_from_bounded(indexed_seq, 1).next()
+            else {
                 bail!(
-                    "The eventstore had too many storage errors! {}",
-                    self.storage_errors
+                    "event index corruption at timestamp {ts}: sequence {indexed_seq} is missing \
+                     from the event log"
+                );
+            };
+            if logged_seq != indexed_seq {
+                bail!(
+                    "event index corruption at timestamp {ts}: requested sequence {indexed_seq}, \
+                     log returned sequence {logged_seq}"
                 );
             }
-            return Ok(None);
+            if existing == event {
+                warn!(
+                    timestamp = ts,
+                    sequence = indexed_seq,
+                    event_id = %event.id(),
+                    event_type = %event.get_data().event_type(),
+                    "Ignoring exact duplicate event"
+                );
+                return Ok(None);
+            }
+            bail!(
+                "event timestamp collision at {ts}, sequence {indexed_seq}: existing {} ({}) \
+                 conflicts with incoming {} ({})",
+                existing.id(),
+                existing.get_data().event_type(),
+                event.id(),
+                event.get_data().event_type()
+            );
         }
         let seq = self.log.append(&event)?;
         self.index.insert(ts, seq)?;
@@ -119,11 +139,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     pub fn new(index: I, log: L) -> Self {
-        let mut store = Self {
-            index,
-            log,
-            storage_errors: 0,
-        };
+        let mut store = Self { index, log };
         store.reconcile_index();
         store
     }
@@ -503,36 +519,29 @@ mod tests {
     }
 
     #[test]
-    fn store_event_returns_none_for_duplicate_timestamp() {
+    fn exact_duplicate_is_indefinitely_idempotent() {
         let mut store = new_store();
-        store.store_event(make_local_event(100)).unwrap();
+        let event = make_local_event(100);
+        store.store_event(event.clone()).unwrap();
 
-        let result = store.store_event(make_local_event(100)).unwrap();
-
-        assert!(result.is_none());
-        assert_eq!(store.storage_errors, 1);
-        // Log should still have only one event
-        assert_eq!(store.log.read_from(0).count(), 1);
-    }
-
-    #[test]
-    fn store_event_bails_after_max_storage_errors() {
-        let mut store = new_store();
-        store.store_event(make_local_event(100)).unwrap();
-
-        for _ in 0..MAX_STORAGE_ERRORS {
-            let result = store.store_event(make_local_event(100)).unwrap();
+        for _ in 0..100 {
+            let result = store.store_event(event.clone()).unwrap();
             assert!(result.is_none());
         }
 
-        assert_eq!(store.storage_errors, MAX_STORAGE_ERRORS);
+        assert_eq!(store.log.read_from(1).count(), 1);
+    }
 
-        let result = store.store_event(make_local_event(100));
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("too many storage errors"));
+    #[test]
+    fn conflicting_event_at_same_timestamp_fails_immediately() {
+        let mut store = new_store();
+        store.store_event(make_local_event(100)).unwrap();
+
+        let error = store.store_event(make_network_event(100)).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("timestamp collision"), "{message}");
+        assert!(message.contains("sequence 1"), "{message}");
+        assert_eq!(store.log.read_from(1).count(), 1);
     }
 
     // ===========================================================================

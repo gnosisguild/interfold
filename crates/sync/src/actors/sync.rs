@@ -74,7 +74,7 @@ pub async fn sync(
     // 4. Replay the EventStore events to all listeners (except effects).
     //    Skip infrastructure events (SyncEnded, EffectsEnabled, HistoricalEvmSyncStart) because
     //    they will be re-published by this sync process (steps 5, 8, 10). Replaying them here
-    //    would poison the EventBus bloom-filter deduplication: the replayed event has the same
+    //    would poison the EventBus deduplication window: the replayed event has the same
     //    EventId (payload hash) as the one we publish later, causing the later event to be
     //    silently dropped.  This is critical for SyncEnded, if the EvmChainGateway never
     //    receives it, the gateway stays in BufferUntilLive and all live EVM events are lost.

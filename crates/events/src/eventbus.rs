@@ -7,10 +7,10 @@
 use crate::traits::{ErrorEvent, Event};
 use crate::EventType;
 use actix::prelude::*;
-use bloom::{BloomFilter, ASMS};
 use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -30,10 +30,61 @@ impl Default for EventBusConfig {
     }
 }
 
-fn default_bloomfilter() -> BloomFilter {
-    let num_items = 10000000;
-    let fp_rate = 0.001;
-    BloomFilter::with_rate(fp_rate, num_items)
+/// Number of recently observed event IDs retained for exact deduplication.
+///
+/// This bounds memory while retaining a large replay window. Once full, IDs are
+/// evicted in first-observed order and a later occurrence is accepted again.
+const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
+
+/// A bounded, exact FIFO set.
+///
+/// `HashSet` uses equality to resolve hash collisions, so two distinct event IDs
+/// can never be treated as duplicates solely because they share a hash. Duplicate
+/// observations do not refresh an ID's position, keeping eviction deterministic
+/// and preventing duplicate traffic from growing the queue.
+struct ExactDedup<I> {
+    capacity: usize,
+    ids: HashSet<I>,
+    insertion_order: VecDeque<I>,
+}
+
+impl<I> ExactDedup<I>
+where
+    I: Clone + Eq + Hash,
+{
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            ids: HashSet::new(),
+            insertion_order: VecDeque::new(),
+        }
+    }
+
+    fn contains(&self, id: &I) -> bool {
+        self.ids.contains(id)
+    }
+
+    fn insert(&mut self, id: I) {
+        if self.capacity == 0 || self.ids.contains(&id) {
+            return;
+        }
+
+        if self.ids.len() == self.capacity {
+            let removed = self
+                .insertion_order
+                .pop_front()
+                .is_some_and(|oldest| self.ids.remove(&oldest));
+            if !removed {
+                tracing::error!("exact dedup state diverged; resetting the bounded window");
+                self.ids.clear();
+                self.insertion_order.clear();
+            }
+        }
+
+        if self.ids.insert(id.clone()) {
+            self.insertion_order.push_back(id);
+        }
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -46,7 +97,7 @@ fn default_bloomfilter() -> BloomFilter {
 /// being published.
 pub struct EventBus<E: Event> {
     config: EventBusConfig,
-    ids: BloomFilter,
+    ids: ExactDedup<E::Id>,
     listeners: HashMap<String, Vec<Recipient<E>>>,
 }
 
@@ -59,10 +110,14 @@ impl<E: Event> Actor for EventBus<E> {
 
 impl<E: Event> EventBus<E> {
     pub fn new(config: EventBusConfig) -> Self {
+        Self::with_dedup_capacity(config, DEFAULT_DEDUP_CAPACITY)
+    }
+
+    fn with_dedup_capacity(config: EventBusConfig, dedup_capacity: usize) -> Self {
         EventBus {
             config,
             listeners: HashMap::new(),
-            ids: default_bloomfilter(),
+            ids: ExactDedup::new(dedup_capacity),
         }
     }
 
@@ -98,12 +153,14 @@ impl<E: Event> EventBus<E> {
         source.do_send(Subscribe::new(EventType::All, filter.recipient()));
     }
 
-    fn track(&mut self, event: E) {
-        self.ids.insert(&event.event_id());
+    fn track(&mut self, event: &E) {
+        if self.config.deduplicate {
+            self.ids.insert(event.event_id());
+        }
     }
 
     fn is_duplicate(&self, event: &E) -> bool {
-        self.ids.contains(&event.event_id())
+        self.config.deduplicate && self.ids.contains(&event.event_id())
     }
 }
 
@@ -112,7 +169,7 @@ impl<E: Event> Default for EventBus<E> {
         Self {
             config: EventBusConfig::default(),
             listeners: HashMap::new(),
-            ids: default_bloomfilter(),
+            ids: ExactDedup::new(DEFAULT_DEDUP_CAPACITY),
         }
     }
 }
@@ -137,7 +194,7 @@ impl<E: Event> Handler<E> for EventBus<E> {
         }
 
         tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
-        self.track(event);
+        self.track(&event);
     }
 }
 
@@ -420,5 +477,143 @@ impl<E: Event> Handler<GetEvents<E>> for HistoryCollector<E> {
     type Result = Vec<E>;
     fn handle(&mut self, _: GetEvents<E>, _: &mut Context<Self>) -> Vec<E> {
         self.history.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AggregateId, WithAggregateId};
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct CollidingId(u64);
+
+    impl Hash for CollidingId {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            // Deliberately give every ID the same hash. Exact deduplication must
+            // still distinguish IDs by equality.
+            0_u8.hash(state);
+        }
+    }
+
+    impl fmt::Display for CollidingId {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "collision:{}", self.0)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct TestData;
+
+    impl WithAggregateId for TestData {
+        fn get_aggregate_id(&self) -> AggregateId {
+            AggregateId::new(0)
+        }
+    }
+
+    #[derive(Clone, Debug, Message)]
+    #[rtype(result = "()")]
+    struct CollidingEvent {
+        id: CollidingId,
+        data: TestData,
+    }
+
+    impl CollidingEvent {
+        fn new(id: u64) -> Self {
+            Self {
+                id: CollidingId(id),
+                data: TestData,
+            }
+        }
+    }
+
+    impl fmt::Display for CollidingEvent {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "CollidingEvent({})", self.id)
+        }
+    }
+
+    impl Event for CollidingEvent {
+        type Id = CollidingId;
+        type Data = TestData;
+
+        fn event_id(&self) -> Self::Id {
+            self.id.clone()
+        }
+
+        fn event_type(&self) -> String {
+            "CollidingEvent".to_owned()
+        }
+
+        fn get_data(&self) -> &Self::Data {
+            &self.data
+        }
+
+        fn into_data(self) -> Self::Data {
+            self.data
+        }
+    }
+
+    #[actix::test]
+    async fn distinct_ids_with_identical_hashes_are_both_delivered() -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 4).start();
+        let history = EventBus::history(&bus);
+
+        bus.send(CollidingEvent::new(1)).await?;
+        bus.send(CollidingEvent::new(2)).await?;
+
+        let received = history.send(TakeEvents::new(2)).await?;
+        assert!(!received.timed_out);
+        assert_eq!(
+            received
+                .events
+                .into_iter()
+                .map(|event| event.id.0)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn fifo_eviction_is_deterministic_and_evicted_ids_are_reaccepted() -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let history = EventBus::history(&bus);
+
+        bus.send(CollidingEvent::new(1)).await?;
+        bus.send(CollidingEvent::new(2)).await?;
+        bus.send(CollidingEvent::new(1)).await?; // duplicate; does not refresh FIFO position
+        bus.send(CollidingEvent::new(3)).await?; // evicts 1
+        bus.send(CollidingEvent::new(2)).await?; // duplicate; 2 is still retained
+        bus.send(CollidingEvent::new(1)).await?; // reaccepted; evicts 2
+        bus.send(CollidingEvent::new(2)).await?; // reaccepted
+
+        let received = history.send(TakeEvents::new(5)).await?;
+        assert!(!received.timed_out);
+        assert_eq!(
+            received
+                .events
+                .into_iter()
+                .map(|event| event.id.0)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 1, 2]
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn disabled_deduplication_delivers_repeated_ids() -> anyhow::Result<()> {
+        let config = EventBusConfig { deduplicate: false };
+        let bus = EventBus::with_dedup_capacity(config, 2).start();
+        let history = EventBus::history(&bus);
+
+        bus.send(CollidingEvent::new(1)).await?;
+        bus.send(CollidingEvent::new(1)).await?;
+
+        let received = history.send(TakeEvents::new(2)).await?;
+        assert!(!received.timed_out);
+        assert_eq!(received.events.len(), 2);
+        Ok(())
     }
 }
