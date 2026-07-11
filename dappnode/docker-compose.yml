@@ -21,10 +21,6 @@ services:
       PEERS: ''
       LOG_LEVEL: 'info'
       EXTRA_OPTS: ''
-      # Secrets
-      ENCRYPTION_PASSWORD: ''
-      NETWORK_PRIVATE_KEY: ''
-      PRIVATE_KEY: ''
       # Contracts (variants override these)
       INTERFOLD_CONTRACT: ''
       CIPHERNODE_REGISTRY_CONTRACT: ''
@@ -35,7 +31,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ['CMD', 'pgrep', '-f', 'interfold']
+      test: ['CMD', '/usr/local/bin/healthcheck.sh']
       interval: 30s
       timeout: 10s
       retries: 3
