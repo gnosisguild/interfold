@@ -47,12 +47,10 @@ pub struct ProcessingResponse {
 fn build_compute_request(
     client: &reqwest::Client,
     program_server_url: &str,
-    bearer_token: &str,
     request: &ComputeRequest,
 ) -> reqwest::RequestBuilder {
     client
         .post(format!("{program_server_url}/run_compute"))
-        .bearer_auth(bearer_token)
         .json(request)
 }
 
@@ -74,7 +72,6 @@ pub async fn run_compute(
     let response: ProcessingResponse = build_compute_request(
         &reqwest::Client::new(),
         &CONFIG.program_server_url,
-        &CONFIG.interfold_program_server_token,
         &request,
     )
     .send()
@@ -93,7 +90,7 @@ mod tests {
     use super::{build_compute_request, ComputeRequest};
 
     #[test]
-    fn compute_request_uses_configured_bearer_token() {
+    fn compute_request_does_not_require_authorization() {
         let request = ComputeRequest {
             e3_id: Some(7),
             params: vec![1, 2, 3],
@@ -101,19 +98,12 @@ mod tests {
             callback_url: Some("http://127.0.0.1:4000/state/add-result".to_string()),
         };
 
-        let request = build_compute_request(
-            &reqwest::Client::new(),
-            "http://127.0.0.1:13151",
-            "local-test-token",
-            &request,
-        )
-        .build()
-        .expect("request should build");
+        let request =
+            build_compute_request(&reqwest::Client::new(), "http://127.0.0.1:13151", &request)
+                .build()
+                .expect("request should build");
 
         assert_eq!(request.url().as_str(), "http://127.0.0.1:13151/run_compute");
-        assert_eq!(
-            request.headers().get(AUTHORIZATION).unwrap(),
-            "Bearer local-test-token"
-        );
+        assert!(!request.headers().contains_key(AUTHORIZATION));
     }
 }

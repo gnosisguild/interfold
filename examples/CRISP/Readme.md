@@ -60,10 +60,9 @@ pnpm dev:setup
 pnpm dev:up
 ```
 
-The local profile also contains the shared, non-secret development program-server token and its
-allowed callback origin. The dev launch scripts pass that token to both the authenticated
-development program server and the coordination server. Outside this local profile, both
-components require an operator-managed `INTERFOLD_PROGRAM_SERVER_TOKEN`; neither has a fallback.
+The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
+service, does not authenticate callers or allowlist callback destinations, and must stay isolated
+from production and untrusted networks.
 
 `dev:up` runs `scripts/dev.sh`, which:
 

@@ -16,7 +16,6 @@ export function getProgramRunnerConfig() {
   return {
     PROGRAM_RUNNER_URL: process.env.PROGRAM_RUNNER_URL || 'http://127.0.0.1:13151',
     CALLBACK_URL: process.env.CALLBACK_URL || 'http://127.0.0.1:8080',
-    PROGRAM_SERVER_TOKEN: ensureEnv('INTERFOLD_PROGRAM_SERVER_TOKEN'),
   }
 }
 

@@ -23,16 +23,6 @@ load_crisp_dev_config() {
   CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure-512}"
   CRISP_PROOF_AGGREGATION_ENABLED="${CRISP_PROOF_AGGREGATION_ENABLED:-false}"
 
-  if [[ -z "${INTERFOLD_PROGRAM_SERVER_TOKEN:-}" ]]; then
-    echo "INTERFOLD_PROGRAM_SERVER_TOKEN must be set in ${cfg}" >&2
-    return 1
-  fi
-
-  if [[ -z "${INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN:-}" ]]; then
-    echo "INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN must be set in ${cfg}" >&2
-    return 1
-  fi
-
   case "$CRISP_BFV_PRESET" in
     insecure-512 | secure-8192) ;;
     *)
@@ -56,7 +46,6 @@ load_crisp_dev_config() {
   fi
 
   export CRISP_BFV_PRESET CRISP_PROOF_AGGREGATION_ENABLED CRISP_ROOT REPO_ROOT
-  export INTERFOLD_PROGRAM_SERVER_TOKEN INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN
 }
 
 _set_env_kv() {
@@ -114,8 +103,6 @@ CRISP dev profile (${CRISP_ROOT}/crisp.dev.env):
   CRISP_BFV_PRESET=${CRISP_BFV_PRESET}
   CRISP_PROOF_AGGREGATION_ENABLED=${CRISP_PROOF_AGGREGATION_ENABLED}
   ENABLE_ZK_VERIFICATION=${ENABLE_ZK_VERIFICATION:-false} (used at deploy via dev:up)
-  INTERFOLD_PROGRAM_SERVER_TOKEN=configured (value redacted)
-  INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN=${INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN}
   server/.env E3_PROOF_AGGREGATION_ENABLED synced by dev:setup
   Contract addresses synced by dev:up (deploy → server/.env, client/.env, interfold.config.yaml)
 

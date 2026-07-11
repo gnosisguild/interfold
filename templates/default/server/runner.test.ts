@@ -10,7 +10,6 @@ import { callFheRunner } from './runner'
 
 describe('callFheRunner', () => {
   beforeEach(() => {
-    delete process.env.INTERFOLD_PROGRAM_SERVER_TOKEN
     delete process.env.PROGRAM_RUNNER_URL
     delete process.env.CALLBACK_URL
   })
@@ -20,13 +19,7 @@ describe('callFheRunner', () => {
     vi.unstubAllGlobals()
   })
 
-  it('requires an operator-provided token outside local dev orchestration', async () => {
-    await expect(callFheRunner(7n, '0x01', [])).rejects.toThrow('Missing required env var: INTERFOLD_PROGRAM_SERVER_TOKEN')
-  })
-
-  it('authenticates the request without logging the token or payload', async () => {
-    const token = 'focused-runner-test-token'
-    process.env.INTERFOLD_PROGRAM_SERVER_TOKEN = token
+  it('submits without authorization and does not log the payload', async () => {
     process.env.PROGRAM_RUNNER_URL = 'http://127.0.0.1:13151'
     process.env.CALLBACK_URL = 'http://127.0.0.1:8080'
 
@@ -44,12 +37,10 @@ describe('callFheRunner', () => {
       'http://127.0.0.1:13151/run_compute',
       expect.objectContaining({
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       }),
     )
-    expect(JSON.stringify(logMock.mock.calls)).not.toContain(token)
     expect(JSON.stringify(logMock.mock.calls)).not.toContain('0x0102')
     expect(JSON.stringify(logMock.mock.calls)).not.toContain('0x03')
   })

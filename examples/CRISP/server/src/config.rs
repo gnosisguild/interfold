@@ -9,11 +9,10 @@ use dotenvy::dotenv;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
-// Do not derive `Debug`: this structure owns private keys and service credentials.
+// Do not derive `Debug`: this structure owns private keys and other secrets.
 #[derive(Deserialize)]
 pub struct Config {
     pub program_server_url: String,
-    pub interfold_program_server_token: String,
     pub interfold_server_url: String,
     pub private_key: String,
     pub http_rpc_url: String,
@@ -39,15 +38,6 @@ pub struct Config {
     pub etherscan_api_key: String,
 }
 
-fn validate_program_server_token(token: &str) -> Result<(), ConfigError> {
-    if token.trim().is_empty() {
-        return Err(ConfigError::Message(
-            "INTERFOLD_PROGRAM_SERVER_TOKEN must not be empty".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 impl Config {
     /// Base URL for outbound HTTP clients (program-server webhooks, CLI, cron).
     ///
@@ -67,26 +57,12 @@ impl Config {
         } else {
             dotenv().ok();
         }
-        let config: Self = ConfigManager::builder()
+        ConfigManager::builder()
             .add_source(config::Environment::default())
             .build()?
-            .try_deserialize()?;
-        validate_program_server_token(&config.interfold_program_server_token)?;
-        Ok(config)
+            .try_deserialize()
     }
 }
 
 pub static CONFIG: Lazy<Config> =
     Lazy::new(|| Config::from_env().expect("Failed to load configuration"));
-
-#[cfg(test)]
-mod tests {
-    use super::validate_program_server_token;
-
-    #[test]
-    fn program_server_token_must_be_nonempty() {
-        assert!(validate_program_server_token("operator-token").is_ok());
-        assert!(validate_program_server_token("").is_err());
-        assert!(validate_program_server_token("   ").is_err());
-    }
-}
