@@ -5,15 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::FlushPendingSnapshots;
-use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
+use actix::{Actor, ActorContext, Addr, Handler, Recipient, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 
-use crate::{Die, Insert, InsertBatch};
-
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct Flush;
+use crate::{Insert, InsertBatch};
 
 pub struct Batch {
     inserts: Vec<Insert>,
@@ -46,17 +42,6 @@ impl Handler<Insert> for Batch {
     }
 }
 
-impl Handler<Flush> for Batch {
-    type Result = ();
-    fn handle(&mut self, _: Flush, ctx: &mut Self::Context) -> Self::Result {
-        let inserts = std::mem::take(&mut self.inserts);
-        if !inserts.is_empty() {
-            self.db.do_send(InsertBatch::new(inserts));
-        }
-        ctx.notify(Die);
-    }
-}
-
 impl Handler<FlushPendingSnapshots> for Batch {
     type Result = ResponseFuture<Result<()>>;
 
@@ -72,12 +57,5 @@ impl Handler<FlushPendingSnapshots> for Batch {
             }
             Ok(())
         })
-    }
-}
-
-impl Handler<Die> for Batch {
-    type Result = ();
-    fn handle(&mut self, _: Die, ctx: &mut Self::Context) -> Self::Result {
-        ctx.stop();
     }
 }
