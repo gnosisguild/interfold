@@ -56,6 +56,37 @@ pub(crate) async fn process_log<L: LogProvider>(
     id
 }
 
+/// Handle a log delivered by the subscription stream.
+///
+/// With a positive confirmation depth the subscription is only a wake-up signal. Publishing the
+/// raw notification here would make the historical confirmation gate ineffective, so the periodic
+/// canonical backfill owns delivery instead. With zero confirmations this preserves the existing
+/// low-latency behavior.
+pub(crate) async fn process_live_log<L: LogProvider>(
+    provider: &L,
+    log: Log,
+    chain_id: u64,
+    next: &EvmEventProcessor,
+    timestamp_tracker: &mut TimestampTracker,
+    last_block: &mut u64,
+    confirmations: u64,
+) -> Option<CorrelationId> {
+    if confirmations > 0 {
+        debug!(
+            chain_id,
+            block_number = log.block_number,
+            confirmations,
+            "Deferring live log to confirmed canonical backfill"
+        );
+        return None;
+    }
+
+    if let Some(block_number) = log.block_number {
+        *last_block = (*last_block).max(block_number);
+    }
+    Some(process_log(provider, log, chain_id, next, timestamp_tracker).await)
+}
+
 /// Fetch logs in chunks from `from_block` to `to_block` with retry logic per chunk.
 /// Returns the CorrelationId of the last processed event, if any.
 pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
@@ -269,6 +300,10 @@ mod tests {
 
         fn get_logs_call_count(&self) -> u32 {
             self.inner.lock().unwrap().get_logs_calls
+        }
+
+        fn set_block_number(&self, block_number: u64) {
+            self.inner.lock().unwrap().block_number = block_number;
         }
     }
 
@@ -515,5 +550,49 @@ mod tests {
         assert!(result.is_ok());
         // Advanced only to the confirmed head, not the raw head of 200.
         assert_eq!(last_block, 188);
+    }
+
+    #[actix::test]
+    async fn live_log_waits_for_confirmed_canonical_backfill() -> anyhow::Result<()> {
+        let mock = MockLogProvider::new(200);
+        let (next, mut rx) = setup_collector();
+        let mut ts = TimestampTracker::new();
+        let filter = Filter::new();
+        let mut last_block = 188;
+
+        let delivered = process_live_log(
+            &mock,
+            make_test_log(200),
+            1,
+            &next,
+            &mut ts,
+            &mut last_block,
+            12,
+        )
+        .await;
+        assert!(delivered.is_none());
+        assert_eq!(last_block, 188);
+        tokio::task::yield_now().await;
+        assert!(
+            rx.try_recv().is_err(),
+            "unconfirmed log must not be emitted"
+        );
+
+        mock.set_block_number(211);
+        mock.push_logs(Vec::new());
+        backfill_to_head(&mock, &filter, 1, &next, &mut ts, &mut last_block, 12).await?;
+        assert_eq!(last_block, 199);
+        tokio::task::yield_now().await;
+        assert!(rx.try_recv().is_err(), "eleven blocks is not enough");
+
+        mock.set_block_number(212);
+        mock.push_logs(vec![make_test_log(200)]);
+        backfill_to_head(&mock, &filter, 1, &next, &mut ts, &mut last_block, 12).await?;
+        assert_eq!(last_block, 200);
+        let emitted = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await?
+            .expect("confirmed log should be emitted");
+        assert!(matches!(emitted, InterfoldEvmEvent::Log(_)));
+        Ok(())
     }
 }

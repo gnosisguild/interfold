@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::actors::log_fetcher::{
-    backfill_to_head, fetch_logs_chunked, process_log, TimestampTracker,
+    backfill_to_head, fetch_logs_chunked, process_live_log, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
 use crate::helpers::{EthProvider, ProviderFactory};
@@ -38,6 +38,9 @@ const PROVIDER_RECREATE_MAX_ATTEMPTS: u32 = 3;
 const PROVIDER_RECREATE_INITIAL_DELAY_MS: u64 = 2000;
 /// Consecutive failures before we assume the provider is dead and recreate it.
 const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
+/// Polling is required even while the subscription is quiet: a log becomes confirmed because later
+/// blocks arrive, and those blocks need not contain any matching contract event.
+const CONFIRMED_BACKFILL_INTERVAL_SECS: u64 = 5;
 
 #[derive(Default, serde::Serialize, serde::Deserialize, Clone)]
 pub struct EvmReadInterfaceState {
@@ -398,6 +401,12 @@ async fn stream_from_evm<P: Provider + Clone + 'static>(
                 consecutive_failures = 0;
                 let sub_id: B256 = *subscription.local_id();
                 let mut stream = subscription.into_stream();
+                let mut confirmation_poll =
+                    tokio::time::interval(Duration::from_secs(CONFIRMED_BACKFILL_INTERVAL_SECS));
+                confirmation_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                // Tokio intervals tick immediately once. The outer loop already backfilled, so
+                // consume that tick and wait for the configured period before querying again.
+                confirmation_poll.tick().await;
                 info!(chain_id, "Live event subscription active");
 
                 loop {
@@ -405,12 +414,10 @@ async fn stream_from_evm<P: Provider + Clone + 'static>(
                         maybe_log = stream.next() => {
                             match maybe_log {
                                 Some(log) => {
-                                    if let Some(bn) = log.block_number {
-                                        last_block = last_block.max(bn);
-                                    }
-                                    process_log(
-                                        current_provider.provider(),
-                                        log, chain_id, &next, &mut timestamp_tracker,
+                                    let _ = process_live_log(
+                                        current_provider.provider(), log, chain_id, &next,
+                                        &mut timestamp_tracker, &mut last_block,
+                                        filters.confirmations(),
                                     ).await;
                                 }
                                 None => {
@@ -419,6 +426,26 @@ async fn stream_from_evm<P: Provider + Clone + 'static>(
                                     warn!(chain_id, consecutive_failures, "Live event stream ended, will reconnect");
                                     break;
                                 }
+                            }
+                        }
+                        _ = confirmation_poll.tick(), if filters.confirmations() > 0 => {
+                            if let Err(error) = backfill_to_head(
+                                current_provider.provider(),
+                                &filters.current,
+                                chain_id,
+                                &next,
+                                &mut timestamp_tracker,
+                                &mut last_block,
+                                filters.confirmations(),
+                            ).await {
+                                consecutive_failures += 1;
+                                warn!(
+                                    chain_id,
+                                    error = %error,
+                                    consecutive_failures,
+                                    "Confirmed live-log backfill failed; reconnecting"
+                                );
+                                break;
                             }
                         }
                         _ = &mut shutdown => {
