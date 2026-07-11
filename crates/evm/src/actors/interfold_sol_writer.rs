@@ -7,7 +7,7 @@
 use crate::contracts::IInterfold;
 use crate::domain::error_decoder::format_evm_error;
 use crate::domain::plaintext_publication::validate_plaintext_output;
-use crate::helpers::{encode_zk_proof, EthProvider};
+use crate::helpers::{encode_zk_proof, transaction_nonce_guard, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
 use alloy::{
@@ -312,13 +312,6 @@ async fn publish_plaintext_output<P: Provider + WalletProvider + Clone>(
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = e3_id.try_into()?;
 
-    let from_address = provider.provider().default_signer_address();
-    let current_nonce = provider
-        .provider()
-        .get_transaction_count(from_address)
-        .pending()
-        .await?;
-
     // `None` => proof aggregation disabled; contract accepts empty bytes in that case.
     let proof: Bytes = match decryption_aggregator_proof {
         Some(p) => encode_zk_proof(p)?,
@@ -332,13 +325,23 @@ async fn publish_plaintext_output<P: Provider + WalletProvider + Clone>(
             info!("publishPlaintextOutput() e3_id={:?}", e3_id);
             let decrypted_output = Bytes::from(decrypted_output.clone());
             let proof = proof.clone();
-            let contract = IInterfold::new(contract_address, provider.provider());
+            let provider = provider.clone();
 
             async move {
+                let _nonce_guard = transaction_nonce_guard(&provider).await;
+                let from_address = provider.provider().default_signer_address();
+                let current_nonce = provider
+                    .provider()
+                    .get_transaction_count(from_address)
+                    .pending()
+                    .await?;
+                let contract = IInterfold::new(contract_address, provider.provider());
                 let builder = contract
                     .publishPlaintextOutput(e3_id, decrypted_output, proof)
                     .nonce(current_nonce);
-                let receipt = builder.send().await?.get_receipt().await?;
+                let pending = builder.send().await?;
+                drop(_nonce_guard);
+                let receipt = pending.get_receipt().await?;
                 Ok(receipt)
             }
         },
@@ -366,6 +369,7 @@ async fn process_e3_failure<P: Provider + WalletProvider + Clone>(
 
     info!("processE3Failure() e3_id={:?}", e3_id);
 
+    let _nonce_guard = transaction_nonce_guard(&provider).await;
     let from_address = provider.provider().default_signer_address();
     let current_nonce = provider
         .provider()
@@ -374,6 +378,8 @@ async fn process_e3_failure<P: Provider + WalletProvider + Clone>(
         .await?;
     let contract = IInterfold::new(contract_address, provider.provider());
     let builder = contract.processE3Failure(e3_id).nonce(current_nonce);
-    let receipt = builder.send().await?.get_receipt().await?;
+    let pending = builder.send().await?;
+    drop(_nonce_guard);
+    let receipt = pending.get_receipt().await?;
     Ok(receipt)
 }

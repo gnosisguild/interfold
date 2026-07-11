@@ -8,7 +8,7 @@ use crate::actors::evm_parser::EvmParser;
 use crate::contracts::ICiphernodeRegistry;
 use crate::domain::ciphernode_registry_events::extractor;
 use crate::domain::error_decoder::{decode_error_from_str, format_evm_error};
-use crate::helpers::{encode_zk_proof, send_tx_with_retry, EthProvider};
+use crate::helpers::{encode_zk_proof, send_tx_with_retry, transaction_nonce_guard, EthProvider};
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
 use actix::prelude::*;
 use alloy::{
@@ -365,6 +365,7 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
         let provider = provider.clone();
         async move {
             info!("Calling: contract.submitTicket(..)");
+            let _nonce_guard = transaction_nonce_guard(&provider).await;
             let from_address = provider.provider().default_signer_address();
             let current_nonce = provider
                 .provider()
@@ -375,7 +376,9 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
             let builder = contract
                 .submitTicket(e3_id_u256, ticket_number_u256)
                 .nonce(current_nonce);
-            let receipt = builder.send().await?.get_receipt().await?;
+            let pending = builder.send().await?;
+            drop(_nonce_guard);
+            let receipt = pending.get_receipt().await?;
             Ok(receipt)
         }
     })
@@ -400,6 +403,7 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
             let provider = provider.clone();
             async move {
                 info!("Calling: contract.finalizeCommittee(..)");
+                let _nonce_guard = transaction_nonce_guard(&provider).await;
                 let from_address = provider.provider().default_signer_address();
                 let current_nonce = provider
                     .provider()
@@ -408,7 +412,9 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
                     .await?;
                 let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
                 let builder = contract.finalizeCommittee(e3_id_u256).nonce(current_nonce);
-                let receipt = builder.send().await?.get_receipt().await?;
+                let pending = builder.send().await?;
+                drop(_nonce_guard);
+                let receipt = pending.get_receipt().await?;
                 Ok(receipt)
             }
         },
@@ -504,6 +510,7 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
         let attestation_bundle = attestation_bundle.clone();
         async move {
             info!("Calling: contract.publishCommittee(..)");
+            let _nonce_guard = transaction_nonce_guard(&provider).await;
             let from_address = provider.provider().default_signer_address();
             let current_nonce = provider
                 .provider()
@@ -520,7 +527,9 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
                     attestation_bundle,
                 )
                 .nonce(current_nonce);
-            let receipt = builder.send().await?.get_receipt().await?;
+            let pending = builder.send().await?;
+            drop(_nonce_guard);
+            let receipt = pending.get_receipt().await?;
             Ok(receipt)
         }
     })

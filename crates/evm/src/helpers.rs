@@ -12,7 +12,7 @@ use alloy::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             SimpleNonceManager, WalletFiller,
         },
-        Identity, Provider, ProviderBuilder, RootProvider,
+        Identity, Provider, ProviderBuilder, RootProvider, WalletProvider,
     },
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
@@ -28,7 +28,10 @@ use alloy::{
         Authorization,
     },
 };
-use alloy::{primitives::Bytes, sol_types::SolValue};
+use alloy::{
+    primitives::{Address, Bytes},
+    sol_types::SolValue,
+};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use e3_config::{RpcAuth, RPC};
@@ -36,7 +39,14 @@ use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
 use e3_utils::{retry_with_backoff, RetryError};
-use std::{env, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
+};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::info;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -113,6 +123,34 @@ impl<P: Provider + Clone> EthProvider<P> {
     pub fn chain_id(&self) -> u64 {
         self.chain_id
     }
+}
+
+type NonceLockKey = (u64, Address);
+
+fn nonce_lock(chain_id: u64, signer: Address) -> Arc<AsyncMutex<()>> {
+    static LOCKS: OnceLock<StdMutex<HashMap<NonceLockKey, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(
+        locks
+            .entry((chain_id, signer))
+            .or_insert_with(|| Arc::new(AsyncMutex::new(()))),
+    )
+}
+
+/// Serialize nonce lookup and submission for one signer on one chain.
+///
+/// Independent writer actors share a provider signer and previously raced by reading the same
+/// pending nonce. Writers release the guard after the RPC accepts the transaction, before waiting
+/// for a receipt, so a slow confirmation cannot block unrelated submissions indefinitely.
+pub(crate) async fn transaction_nonce_guard<P>(provider: &EthProvider<P>) -> OwnedMutexGuard<()>
+where
+    P: Provider + WalletProvider + Clone,
+{
+    let signer = provider.provider().default_signer_address();
+    nonce_lock(provider.chain_id(), signer).lock_owned().await
 }
 
 pub type ProviderFactory<P> =
@@ -319,6 +357,7 @@ mod tests {
     use alloy_dyn_abi::DynSolType;
     use e3_events::{CircuitName, Proof};
     use e3_utils::ArcBytes;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Verifies encode_zk_proof produces ABI: abi.decode(proof, (bytes, bytes32[]))
     #[test]
@@ -389,5 +428,30 @@ mod tests {
         assert!(wss.is_websocket());
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn nonce_lock_serializes_one_signer_per_chain() {
+        let key = (9_876_543, Address::repeat_byte(0x42));
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+
+        for _ in 0..32 {
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            tasks.push(tokio::spawn(async move {
+                let _guard = nonce_lock(key.0, key.1).lock_owned().await;
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+
+        for task in tasks {
+            task.await.expect("nonce-lock task must not panic");
+        }
+        assert_eq!(maximum.load(Ordering::SeqCst), 1);
     }
 }

@@ -13,7 +13,7 @@ use crate::contracts::{ICiphernodeRegistry, ISlashingManager};
 use crate::domain::attestation_evidence::encode_attestation_evidence;
 use crate::domain::error_decoder::format_evm_error;
 use crate::domain::slash_submission::{should_submit_slash, submission_delay, submission_rank};
-use crate::helpers::EthProvider;
+use crate::helpers::{transaction_nonce_guard, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
 use actix::Addr;
@@ -218,6 +218,7 @@ async fn submit_slash_proposal<P: Provider + WalletProvider + Clone>(
         let provider = provider.clone();
 
         async move {
+            let _nonce_guard = transaction_nonce_guard(&provider).await;
             let from_address = provider.provider().default_signer_address();
             let current_nonce = provider
                 .provider()
@@ -225,13 +226,11 @@ async fn submit_slash_proposal<P: Provider + WalletProvider + Clone>(
                 .pending()
                 .await?;
             let contract = ISlashingManager::new(contract_address, provider.provider());
-            let receipt = if let Some(pid) = party_id {
+            let pending = if let Some(pid) = party_id {
                 contract
                     .proposeSlashByDkgParty(e3_id, pid, proof)
                     .nonce(current_nonce)
                     .send()
-                    .await?
-                    .get_receipt()
                     .await?
             } else {
                 contract
@@ -239,9 +238,9 @@ async fn submit_slash_proposal<P: Provider + WalletProvider + Clone>(
                     .nonce(current_nonce)
                     .send()
                     .await?
-                    .get_receipt()
-                    .await?
             };
+            drop(_nonce_guard);
+            let receipt = pending.get_receipt().await?;
             Ok(receipt)
         }
     })
