@@ -7,10 +7,10 @@
 use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 const GET_LOGS_CHUNK_SIZE: u64 = 10_000;
 const GET_LOGS_MAX_RETRIES: u32 = 3;
@@ -21,7 +21,7 @@ const GET_LOGS_MAX_RETRIES: u32 = 3;
 pub(crate) trait LogProvider: Send + Sync {
     async fn fetch_logs(&self, filter: &Filter) -> Result<Vec<Log>, anyhow::Error>;
     async fn fetch_block_number(&self) -> Result<u64, anyhow::Error>;
-    async fn fetch_block_timestamp(&self, block_number: u64) -> Option<u64>;
+    async fn fetch_block_timestamp(&self, block_number: u64) -> Result<u64, anyhow::Error>;
 }
 
 #[async_trait]
@@ -32,12 +32,12 @@ impl<P: Provider + Send + Sync> LogProvider for P {
     async fn fetch_block_number(&self) -> Result<u64, anyhow::Error> {
         self.get_block_number().await.map_err(|e| anyhow!("{}", e))
     }
-    async fn fetch_block_timestamp(&self, block_number: u64) -> Option<u64> {
+    async fn fetch_block_timestamp(&self, block_number: u64) -> Result<u64, anyhow::Error> {
         self.get_block_by_number(block_number.into())
             .await
-            .ok()
-            .flatten()
-            .map(|b| b.header.timestamp)
+            .map_err(|error| anyhow!("failed to fetch block {block_number}: {error}"))?
+            .map(|block| block.header.timestamp)
+            .ok_or_else(|| anyhow!("provider returned no block for height {block_number}"))
     }
 }
 
@@ -47,13 +47,13 @@ pub(crate) async fn process_log<L: LogProvider>(
     chain_id: u64,
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
-) -> CorrelationId {
-    let timestamp = timestamp_tracker.get(provider, log.block_number).await;
+) -> Result<CorrelationId, anyhow::Error> {
+    let timestamp = timestamp_tracker.get(provider, log.block_number).await?;
     let evt = InterfoldEvmEvent::Log(EvmLog::new(log, chain_id, timestamp));
     let id = evt.get_id();
     debug!("Sending event({})", id);
     next.do_send(evt);
-    id
+    Ok(id)
 }
 
 /// Handle a log delivered by the subscription stream.
@@ -70,7 +70,7 @@ pub(crate) async fn process_live_log<L: LogProvider>(
     timestamp_tracker: &mut TimestampTracker,
     last_block: &mut u64,
     confirmations: u64,
-) -> Option<CorrelationId> {
+) -> Result<Option<CorrelationId>, anyhow::Error> {
     if confirmations > 0 {
         debug!(
             chain_id,
@@ -78,13 +78,15 @@ pub(crate) async fn process_live_log<L: LogProvider>(
             confirmations,
             "Deferring live log to confirmed canonical backfill"
         );
-        return None;
+        return Ok(None);
     }
 
-    if let Some(block_number) = log.block_number {
+    let block_number = log.block_number;
+    let id = process_log(provider, log, chain_id, next, timestamp_tracker).await?;
+    if let Some(block_number) = block_number {
         *last_block = (*last_block).max(block_number);
     }
-    Some(process_log(provider, log, chain_id, next, timestamp_tracker).await)
+    Ok(Some(id))
 }
 
 /// Fetch logs in chunks from `from_block` to `to_block` with retry logic per chunk.
@@ -135,7 +137,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
                     );
                     for log in logs {
                         last_id = Some(
-                            process_log(provider, log, chain_id, next, timestamp_tracker).await,
+                            process_log(provider, log, chain_id, next, timestamp_tracker).await?,
                         );
                     }
                     success = true;
@@ -237,22 +239,23 @@ impl TimestampTracker {
         Self { current: None }
     }
 
-    pub async fn get<L: LogProvider>(&mut self, provider: &L, block_number: Option<u64>) -> u64 {
-        let Some(bn) = block_number else {
-            error!("BLOCK NUMBER NOT FOUND ON LOG!");
-            return 0;
-        };
+    pub async fn get<L: LogProvider>(
+        &mut self,
+        provider: &L,
+        block_number: Option<u64>,
+    ) -> Result<u64, anyhow::Error> {
+        let bn = block_number.context("provider log is missing its block number")?;
 
         if let Some((cached_bn, ts)) = self.current {
             if bn == cached_bn {
-                return ts;
+                return Ok(ts);
             }
         }
 
-        let ts = provider.fetch_block_timestamp(bn).await.unwrap_or(0);
+        let ts = provider.fetch_block_timestamp(bn).await?;
 
         self.current = Some((bn, ts));
-        ts
+        Ok(ts)
     }
 }
 
@@ -272,6 +275,8 @@ mod tests {
     struct MockState {
         block_number: u64,
         log_responses: VecDeque<Result<Vec<Log>, String>>,
+        timestamp_responses: VecDeque<Result<u64, String>>,
+        timestamp_calls: u32,
         get_logs_calls: u32,
     }
 
@@ -281,6 +286,8 @@ mod tests {
                 inner: Arc::new(Mutex::new(MockState {
                     block_number,
                     log_responses: VecDeque::new(),
+                    timestamp_responses: VecDeque::new(),
+                    timestamp_calls: 0,
                     get_logs_calls: 0,
                 })),
             }
@@ -300,6 +307,26 @@ mod tests {
 
         fn get_logs_call_count(&self) -> u32 {
             self.inner.lock().unwrap().get_logs_calls
+        }
+
+        fn push_timestamp(&self, timestamp: u64) {
+            self.inner
+                .lock()
+                .unwrap()
+                .timestamp_responses
+                .push_back(Ok(timestamp));
+        }
+
+        fn push_timestamp_error(&self, message: &str) {
+            self.inner
+                .lock()
+                .unwrap()
+                .timestamp_responses
+                .push_back(Err(message.to_string()));
+        }
+
+        fn timestamp_call_count(&self) -> u32 {
+            self.inner.lock().unwrap().timestamp_calls
         }
 
         fn set_block_number(&self, block_number: u64) {
@@ -323,8 +350,14 @@ mod tests {
             Ok(self.inner.lock().unwrap().block_number)
         }
 
-        async fn fetch_block_timestamp(&self, _block_number: u64) -> Option<u64> {
-            Some(0)
+        async fn fetch_block_timestamp(&self, _block_number: u64) -> Result<u64, anyhow::Error> {
+            let mut state = self.inner.lock().unwrap();
+            state.timestamp_calls += 1;
+            match state.timestamp_responses.pop_front() {
+                Some(Ok(timestamp)) => Ok(timestamp),
+                Some(Err(message)) => Err(anyhow!(message)),
+                None => Ok(0),
+            }
         }
     }
 
@@ -371,6 +404,47 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
         assert_eq!(mock.get_logs_call_count(), 0);
+    }
+
+    #[actix::test]
+    async fn timestamp_failure_is_not_cached_as_zero() {
+        let mock = MockLogProvider::new(100);
+        mock.push_timestamp_error("RPC unavailable");
+        mock.push_timestamp(1234);
+        let mut tracker = TimestampTracker::new();
+
+        let error = tracker.get(&mock, Some(100)).await.unwrap_err();
+        assert!(error.to_string().contains("RPC unavailable"));
+        assert_eq!(tracker.get(&mock, Some(100)).await.unwrap(), 1234);
+        assert_eq!(tracker.get(&mock, Some(100)).await.unwrap(), 1234);
+        assert_eq!(mock.timestamp_call_count(), 2);
+    }
+
+    #[actix::test]
+    async fn missing_log_block_number_is_rejected_without_rpc_fallback() {
+        let mock = MockLogProvider::new(100);
+        let mut tracker = TimestampTracker::new();
+
+        let error = tracker.get(&mock, None).await.unwrap_err();
+        assert!(error.to_string().contains("missing its block number"));
+        assert_eq!(mock.timestamp_call_count(), 0);
+    }
+
+    #[actix::test]
+    async fn timestamp_rpc_failure_prevents_log_dispatch() {
+        let mock = MockLogProvider::new(100);
+        mock.push_logs(vec![make_test_log(100)]);
+        mock.push_timestamp_error("timestamp RPC unavailable");
+        let (next, mut receiver) = setup_collector();
+        let mut tracker = TimestampTracker::new();
+
+        let error = fetch_logs_chunked(&mock, &Filter::new(), 100, 100, 1, &next, &mut tracker)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("timestamp RPC unavailable"));
+        tokio::task::yield_now().await;
+        assert!(receiver.try_recv().is_err());
     }
 
     #[actix::test]
@@ -569,7 +643,7 @@ mod tests {
             &mut last_block,
             12,
         )
-        .await;
+        .await?;
         assert!(delivered.is_none());
         assert_eq!(last_block, 188);
         tokio::task::yield_now().await;

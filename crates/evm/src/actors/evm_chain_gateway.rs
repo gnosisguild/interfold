@@ -161,6 +161,12 @@ impl EvmChainGateway {
             InterfoldEvmEvent::Log(_) => {
                 bail!("EvmChainGateway received an unparsed EVM log")
             }
+            InterfoldEvmEvent::Rejected(rejected) => bail!(
+                "chain {} rejected provider log {}: {}",
+                rejected.chain_id,
+                rejected.id,
+                rejected.reason
+            ),
             InterfoldEvmEvent::Processed(_) => {
                 bail!("EvmChainGateway received an internal ordering marker")
             }
@@ -242,7 +248,7 @@ impl Handler<InterfoldEvmEvent> for EvmChainGateway {
 
 #[cfg(test)]
 mod tests {
-    use crate::EvmEvent;
+    use crate::{EvmEvent, EvmLogRejected};
 
     use super::*;
     use e3_ciphernode_builder::EventSystem;
@@ -253,6 +259,26 @@ mod tests {
 
     struct SyncEventCollector {
         tx: mpsc::UnboundedSender<HistoricalEvmEventsReceived>,
+    }
+
+    #[actix::test]
+    async fn rejected_log_fails_gateway_readiness() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-rejected-log");
+        let gateway = EvmChainGateway::setup_with_readiness(&bus);
+
+        gateway
+            .addr()
+            .send(InterfoldEvmEvent::Rejected(EvmLogRejected::new(
+                CorrelationId::new(),
+                1,
+                "malformed historical log",
+            )))
+            .await?;
+
+        let error = gateway.wait_until_live().await.unwrap_err();
+        assert!(error.to_string().contains("malformed historical log"));
+        Ok(())
     }
 
     impl Actor for SyncEventCollector {

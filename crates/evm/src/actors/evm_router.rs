@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
+use crate::messages::{EvmEventProcessor, EvmLog, EvmLogRejected, InterfoldEvmEvent};
 use actix::{Actor, Handler};
 use alloy_primitives::Address;
 use e3_utils::MAILBOX_LIMIT;
@@ -59,7 +59,7 @@ impl Handler<InterfoldEvmEvent> for EvmRouter {
     fn handle(&mut self, msg: InterfoldEvmEvent, _: &mut Self::Context) -> Self::Result {
         match msg.clone() {
             // Take all log events and route them
-            InterfoldEvmEvent::Log(EvmLog { log, .. }) => {
+            InterfoldEvmEvent::Log(EvmLog { log, chain_id, .. }) => {
                 let address = log.address();
                 if let Some(dest) = self.routing_table.get(&address) {
                     debug!("Found address {address} in routing table forwarding to destination.");
@@ -68,7 +68,14 @@ impl Handler<InterfoldEvmEvent> for EvmRouter {
                     error!(
                         "Could not find a route for log with address = {:?}",
                         log.address()
-                    )
+                    );
+                    if let Some(fallback) = self.fallback.clone() {
+                        fallback.do_send(InterfoldEvmEvent::Rejected(EvmLogRejected::new(
+                            msg.get_id(),
+                            chain_id,
+                            format!("no configured route for provider log address {address}"),
+                        )));
+                    }
                 }
             }
             _ => {

@@ -137,4 +137,16 @@ mod tests {
         // A Processed marker for the referenced id releases the sync but is not forwarded
         assert_eq!(fixer.process(InterfoldEvmEvent::Processed(id)), vec![sync]);
     }
+
+    #[test]
+    fn rejected_logs_are_forwarded_to_fail_the_gateway() {
+        let mut fixer = HistoricalOrderFixer::new();
+        let rejected = InterfoldEvmEvent::Rejected(crate::messages::EvmLogRejected::new(
+            CorrelationId::new(),
+            1,
+            "malformed",
+        ));
+
+        assert_eq!(fixer.process(rejected.clone()), vec![rejected]);
+    }
 }

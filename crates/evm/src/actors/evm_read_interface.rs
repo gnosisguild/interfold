@@ -414,11 +414,20 @@ async fn stream_from_evm<P: Provider + Clone + 'static>(
                         maybe_log = stream.next() => {
                             match maybe_log {
                                 Some(log) => {
-                                    let _ = process_live_log(
+                                    if let Err(error) = process_live_log(
                                         current_provider.provider(), log, chain_id, &next,
                                         &mut timestamp_tracker, &mut last_block,
                                         filters.confirmations(),
-                                    ).await;
+                                    ).await {
+                                        consecutive_failures += 1;
+                                        warn!(
+                                            chain_id,
+                                            error = %error,
+                                            consecutive_failures,
+                                            "Live log rejected; reconnecting for canonical backfill"
+                                        );
+                                        break;
+                                    }
                                 }
                                 None => {
                                     // Stream ended (server-side close, idle timeout, etc.)
