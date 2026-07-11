@@ -6,7 +6,10 @@
 
 use anyhow::Result;
 use e3_config::AppConfig;
-use e3_logger::{LogCollector, OperationalLogLayer};
+use e3_logger::{
+    is_sensitive_field, telemetry_metadata_is_safe, LogCollector, OperationalLogLayer,
+    REDACTED_FIELD_VALUE,
+};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
@@ -18,7 +21,7 @@ use tracing::{
 use tracing_subscriber::field::RecordFields;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::{FormatFields, Writer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 pub fn setup_simple_tracing(log_level: Level) {
     LogCollector::init("interfold", None);
@@ -57,8 +60,11 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
                 .with_batch_exporter(exporter)
                 .with_resource(Resource::builder().with_service_name(name).build())
                 .build();
-            let telemetry =
-                tracing_opentelemetry::layer().with_tracer(provider.tracer("interfold-ciphernode"));
+            let telemetry = tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer("interfold-ciphernode"))
+                .with_filter(tracing_subscriber::filter::filter_fn(
+                    telemetry_metadata_is_safe,
+                ));
 
             let _ = tracing_subscriber::registry()
                 .with(
@@ -161,7 +167,11 @@ impl<'writer> TerminalFieldVisitor<'writer> {
         }
 
         let name = name.strip_prefix("r#").unwrap_or(name);
-        self.result = write!(self.writer, "{name}={value:?}");
+        if is_sensitive_field(name) {
+            self.result = write!(self.writer, "{name}={REDACTED_FIELD_VALUE:?}");
+        } else {
+            self.result = write!(self.writer, "{name}={value:?}");
+        }
     }
 
     fn record_named_display(&mut self, name: &str, value: impl fmt::Display) {
@@ -170,7 +180,11 @@ impl<'writer> TerminalFieldVisitor<'writer> {
         }
 
         let name = name.strip_prefix("r#").unwrap_or(name);
-        self.result = write!(self.writer, "{name}={value}");
+        if is_sensitive_field(name) {
+            self.result = write!(self.writer, "{name}={REDACTED_FIELD_VALUE}");
+        } else {
+            self.result = write!(self.writer, "{name}={value}");
+        }
     }
 }
 
@@ -213,6 +227,7 @@ impl Visit for TerminalFieldVisitor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
     use std::{
         io,
         sync::{Arc, Mutex},
@@ -277,5 +292,60 @@ mod tests {
         let output = captured.contents();
         assert!(output.contains("\x1b[33mcolored\x1b[0m"));
         assert!(!output.contains("\\x1b[33mcolored\\x1b[0m"));
+    }
+
+    #[test]
+    fn terminal_fields_redact_sensitive_values() {
+        let captured = CapturedLogs::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_ansi(false)
+                .fmt_fields(TerminalFields)
+                .with_writer(captured.clone()),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                private_key = "terminal-private-key-sentinel",
+                tx_hash = "0xsafe"
+            );
+        });
+
+        let output = captured.contents();
+        assert!(!output.contains("terminal-private-key-sentinel"));
+        assert!(output.contains(REDACTED_FIELD_VALUE));
+        assert!(output.contains("0xsafe"));
+    }
+
+    #[test]
+    fn telemetry_layer_excludes_sensitive_callsites() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let telemetry = tracing_opentelemetry::layer()
+            .with_tracer(provider.tracer("redaction-test"))
+            .with_filter(tracing_subscriber::filter::filter_fn(
+                telemetry_metadata_is_safe,
+            ));
+        let subscriber = tracing_subscriber::registry().with(telemetry);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let sensitive = tracing::info_span!(
+                "sensitive-otel-span",
+                private_key = "otel-private-key-sentinel"
+            );
+            drop(sensitive);
+            let safe = tracing::info_span!("safe-otel-span", e3_id = "31337:1");
+            drop(safe);
+        });
+        provider.force_flush().expect("flush in-memory exporter");
+
+        let spans = exporter.get_finished_spans().expect("exported spans");
+        let rendered = format!("{spans:?}");
+        assert!(!rendered.contains("otel-private-key-sentinel"));
+        assert!(!rendered.contains("sensitive-otel-span"));
+        assert!(rendered.contains("safe-otel-span"));
     }
 }

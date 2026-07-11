@@ -21,6 +21,59 @@ const MAX_FIELD_VALUE_CHARS: usize = 1024;
 /// growth from inheriting every ancestor span's fields.
 const MAX_FIELDS: usize = 64;
 
+pub const REDACTED_FIELD_VALUE: &str = "[REDACTED]";
+
+/// Field-name based fail-safe for values that must never reach the in-memory log store or JSONL
+/// exporter. Tracing field names are static callsite metadata, so this check is deterministic and
+/// runs before values are retained or inherited by child spans.
+pub fn is_sensitive_field(name: &str) -> bool {
+    let normalized: String = name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+
+    matches!(
+        normalized.as_str(),
+        "password"
+            | "passphrase"
+            | "mnemonic"
+            | "seed"
+            | "seedphrase"
+            | "seedwords"
+            | "jwt"
+            | "authorization"
+            | "bearer"
+            | "apikey"
+            | "accesstoken"
+            | "refreshtoken"
+            | "rpcauth"
+            | "rpcurl"
+    ) || normalized.contains("privatekey")
+        || normalized.contains("secret")
+        || normalized.contains("keyshare")
+        || normalized.contains("plaintext")
+        || normalized.contains("decrypted")
+        || normalized.contains("credential")
+        || normalized.contains("authorization")
+        || normalized.contains("jwt")
+        || normalized.contains("bearertoken")
+        || normalized.ends_with("apikey")
+        || normalized.ends_with("accesstoken")
+        || normalized.ends_with("refreshtoken")
+        || normalized.ends_with("rpcauth")
+        || normalized.ends_with("rpcurl")
+}
+
+/// OpenTelemetry cannot rewrite a sibling layer's fields. Sensitive callsites
+/// are therefore excluded from that exporter using their static field metadata.
+pub fn telemetry_metadata_is_safe(metadata: &tracing::Metadata<'_>) -> bool {
+    !metadata
+        .fields()
+        .iter()
+        .any(|field| is_sensitive_field(field.name()))
+}
+
 /// Strip ANSI escape sequences (e.g. the terminal colours the event bus adds
 /// to log lines) so the structured store and JSONL file hold clean text.
 fn strip_ansi(input: &str) -> String {
@@ -139,6 +192,11 @@ impl LogVisitor {
                 .map(str::to_owned)
                 .or_else(|| Some(value.to_string()));
         } else {
+            let value = if is_sensitive_field(field.name()) {
+                Value::String(REDACTED_FIELD_VALUE.to_owned())
+            } else {
+                value
+            };
             // Bound the field count so a deeply nested span tree can't grow an
             // entry without limit; always allow overwriting an existing key.
             if self.fields.len() >= MAX_FIELDS && !self.fields.contains_key(field.name()) {
@@ -240,5 +298,80 @@ mod tests {
             entry.message
         );
         assert_eq!(entry.message, ">>> ansi-marker-xyz payload");
+    }
+
+    #[test]
+    fn redacts_sensitive_event_and_span_fields_before_storage() {
+        let collector = LogCollector::init("test-node", None);
+        let subscriber = tracing_subscriber::registry().with(OperationalLogLayer);
+        let sentinels = [
+            "wallet-private-key-sentinel",
+            "keyshare-sentinel",
+            "password-sentinel",
+            "plaintext-sentinel",
+            "credential-sentinel",
+            "jwt-sentinel",
+        ];
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!(
+                "sensitive-span",
+                private_key = sentinels[0],
+                key_share = ?sentinels[1],
+                password = sentinels[2],
+                e3_id = "31337:11"
+            );
+            let _guard = span.enter();
+            tracing::info!(
+                decrypted_plaintext = sentinels[3],
+                signing_credentials = sentinels[4],
+                pinata_jwt = sentinels[5],
+                tx_hash = "0xsafe",
+                "sensitive redaction test"
+            );
+        });
+
+        let result = collector.query(None, Some(10), None, None, Some("sensitive redaction test"));
+        let entry = result.entries.last().expect("captured tracing event");
+        for field in [
+            "private_key",
+            "key_share",
+            "password",
+            "decrypted_plaintext",
+            "signing_credentials",
+            "pinata_jwt",
+        ] {
+            assert_eq!(entry.fields[field], REDACTED_FIELD_VALUE);
+        }
+        assert_eq!(entry.fields["e3_id"], "31337:11");
+        assert_eq!(entry.fields["tx_hash"], "0xsafe");
+
+        let serialized = serde_json::to_string(entry).expect("log entry must serialize");
+        for sentinel in sentinels {
+            assert!(
+                !serialized.contains(sentinel),
+                "sensitive value leaked through field redaction: {sentinel}"
+            );
+        }
+    }
+
+    #[test]
+    fn sensitive_field_matching_handles_common_name_styles() {
+        for field in [
+            "privateKey",
+            "SECRET_KEY",
+            "threshold-keyshare",
+            "raw_plaintext",
+            "rpc_url",
+            "access_token",
+        ] {
+            assert!(is_sensitive_field(field), "field was not redacted: {field}");
+        }
+        for field in ["public_key", "tx_hash", "e3_id", "token_amount"] {
+            assert!(
+                !is_sensitive_field(field),
+                "safe field was redacted: {field}"
+            );
+        }
     }
 }
