@@ -196,10 +196,10 @@ impl ShareVerifier {
 
     /// Check that a party supplied the canonical proof-type layout for this protocol phase.
     ///
-    /// C2/C3 counts are derived from the DKG parameter preset. Variable C4b and C6 counts are
-    /// checked against trusted local state by their producers. This trust-boundary check prevents
-    /// a signed proof for another phase (or a duplicated singleton proof) from satisfying the
-    /// current phase merely because its self-declared [`ProofType`] maps to a valid circuit.
+    /// C2/C3 counts are derived from the threshold parameter preset. Variable C4b and C6 counts
+    /// are checked against trusted local state by their producers. This trust-boundary check
+    /// prevents a signed proof for another phase (or a duplicated singleton proof) from satisfying
+    /// the current phase merely because its self-declared [`ProofType`] maps to a valid circuit.
     fn has_canonical_proof_shape(
         kind: &VerificationKind,
         signed_proofs: &[SignedProofPayload],
@@ -211,17 +211,21 @@ impl ShareVerifier {
                     && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
             }
             VerificationKind::ShareProofs => {
-                // Canonical order is C2a, C2b, C3a x L, C3b x L. Share encryption uses the
-                // DKG counterpart of a threshold preset (or the preset itself when already DKG).
-                let dkg_preset = params_preset.dkg_counterpart().unwrap_or(params_preset);
-                let num_moduli = dkg_preset.metadata().num_moduli;
-                signed_proofs.len() == 2 + (2 * num_moduli)
+                // Canonical order is C2a, C2b, C3a x L, C3b x L. Each C3 proof encrypts one
+                // modulus row of the threshold-parameter Shamir secret, even though encryption
+                // itself uses the paired DKG parameters. The dispatch currently carries that DKG
+                // preset, so recover its threshold counterpart before deriving L.
+                let threshold_preset = params_preset
+                    .threshold_counterpart()
+                    .unwrap_or(params_preset);
+                let num_share_rows = threshold_preset.metadata().num_moduli;
+                signed_proofs.len() == 2 + (2 * num_share_rows)
                     && signed_proofs[0].payload.proof_type == ProofType::C2aSkShareComputation
                     && signed_proofs[1].payload.proof_type == ProofType::C2bESmShareComputation
-                    && signed_proofs[2..2 + num_moduli]
+                    && signed_proofs[2..2 + num_share_rows]
                         .iter()
                         .all(|signed| signed.payload.proof_type == ProofType::C3aSkShareEncryption)
-                    && signed_proofs[2 + num_moduli..]
+                    && signed_proofs[2 + num_share_rows..]
                         .iter()
                         .all(|signed| signed.payload.proof_type == ProofType::C3bESmShareEncryption)
             }
@@ -693,6 +697,24 @@ mod tests {
         SignedProofPayload::sign(payload, s).expect("sign")
     }
 
+    fn signed_share_bundle(
+        s: &PrivateKeySigner,
+        e3_id: &E3id,
+        num_share_rows: usize,
+    ) -> Vec<SignedProofPayload> {
+        let mut proofs = vec![
+            signed_proof(s, e3_id, ProofType::C2aSkShareComputation, 2),
+            signed_proof(s, e3_id, ProofType::C2bESmShareComputation, 3),
+        ];
+        for _ in 0..num_share_rows {
+            proofs.push(signed_proof(s, e3_id, ProofType::C3aSkShareEncryption, 4));
+        }
+        for _ in 0..num_share_rows {
+            proofs.push(signed_proof(s, e3_id, ProofType::C3bESmShareEncryption, 5));
+        }
+        proofs
+    }
+
     /// Build a signed C1 (PkGeneration) proof for `party_id` under `e3_id`,
     /// optionally with a deliberately wrong circuit name.
     fn signed_pk(s: &PrivateKeySigner, e3_id: &E3id, wrong_circuit: bool) -> SignedProofPayload {
@@ -893,12 +915,7 @@ mod tests {
             BfvPreset::InsecureDkg512,
         ));
 
-        let share_bundle = vec![
-            signed_proof(&s, &e3, ProofType::C2aSkShareComputation, 2),
-            signed_proof(&s, &e3, ProofType::C2bESmShareComputation, 3),
-            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 4),
-            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 5),
-        ];
+        let share_bundle = signed_share_bundle(&s, &e3, 2);
         assert!(ShareVerifier::has_canonical_proof_shape(
             &VerificationKind::ShareProofs,
             &share_bundle,
@@ -912,14 +929,7 @@ mod tests {
             BfvPreset::InsecureDkg512,
         ));
 
-        let secure_share_bundle = vec![
-            signed_proof(&s, &e3, ProofType::C2aSkShareComputation, 10),
-            signed_proof(&s, &e3, ProofType::C2bESmShareComputation, 11),
-            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 12),
-            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 13),
-            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 14),
-            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 15),
-        ];
+        let secure_share_bundle = signed_share_bundle(&s, &e3, 3);
         assert!(ShareVerifier::has_canonical_proof_shape(
             &VerificationKind::ShareProofs,
             &secure_share_bundle,
@@ -958,6 +968,42 @@ mod tests {
             &VerificationKind::DecryptionProofs,
             &wrong_c4_tail,
             BfvPreset::InsecureDkg512,
+        ));
+    }
+
+    #[test]
+    fn share_shape_uses_threshold_secret_rows_when_dispatch_carries_dkg_preset() {
+        let s = signer();
+        let e3 = e3();
+
+        // Production dispatch carries the share-encryption (DKG) preset, but C3 requests are
+        // generated from rows of the paired threshold-parameter Shamir secret.
+        let insecure_production_bundle = signed_share_bundle(&s, &e3, 2);
+        assert_eq!(BfvPreset::InsecureDkg512.metadata().num_moduli, 1);
+        assert_eq!(BfvPreset::InsecureThreshold512.metadata().num_moduli, 2);
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &insecure_production_bundle,
+            BfvPreset::InsecureDkg512,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &signed_share_bundle(&s, &e3, 1),
+            BfvPreset::InsecureDkg512,
+        ));
+
+        let secure_production_bundle = signed_share_bundle(&s, &e3, 3);
+        assert_eq!(BfvPreset::SecureDkg8192.metadata().num_moduli, 2);
+        assert_eq!(BfvPreset::SecureThreshold8192.metadata().num_moduli, 3);
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &secure_production_bundle,
+            BfvPreset::SecureDkg8192,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &signed_share_bundle(&s, &e3, 2),
+            BfvPreset::SecureDkg8192,
         ));
     }
 
