@@ -236,7 +236,7 @@ impl NetSyncManager {
             debug!("Spawning event receive loop!");
             let addr = addr.clone();
             async move {
-                while let Ok(event) = events.recv().await {
+                while let Some(event) = super::recv_net_event(&mut events, "NetSyncManager").await {
                     debug!("Received event {:?}", event);
                     match event {
                         // Someone is asking for our sync

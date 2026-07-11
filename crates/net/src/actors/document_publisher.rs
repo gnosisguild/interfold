@@ -102,7 +102,9 @@ impl DocumentPublisher {
             debug!("Spawning event receive loop!");
             let addr = addr.clone();
             async move {
-                while let Ok(event) = events.recv().await {
+                while let Some(event) =
+                    super::recv_net_event(&mut events, "DocumentPublisher").await
+                {
                     debug!("Received event {:?}", event);
                     if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
                         event
