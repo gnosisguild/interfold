@@ -606,6 +606,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │   │     ├─ Dispatches ComputeRequest::zk(ZkRequest::DkgAggregation {
 │   │     │     node_fold_proofs, c5_proof, party_ids, params_preset
 │   │     │   })
+│   │     │   → exactly H NodeFold proofs and H unique party ids
+│   │     │   → exactly N ordered committee addresses (`topNodes`), where canonical H < N
+│   │     │   → Rust validates both dimensions before invoking the compiled circuit
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }
