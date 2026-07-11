@@ -7,8 +7,9 @@
 //! E3Extension that wires up the [`AccusationManager`] per-E3 when the
 //! committee is finalized.
 //!
-//! Listens for [`CommitteeFinalized`], reads `threshold_m` from [`E3Meta`],
-//! parses committee addresses, and starts the actor with full context.
+//! Listens for [`CommitteeFinalized`], derives the on-chain accusation quorum
+//! from the circuit threshold in [`E3Meta`], parses committee addresses, and
+//! starts the actor with full context.
 
 use std::collections::HashMap;
 
@@ -19,7 +20,23 @@ use anyhow::Result;
 use async_trait::async_trait;
 use e3_events::{BusHandle, CommitteeFinalized, Event, InterfoldEvent, InterfoldEventData};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info, warn};
+
+/// Convert the compiled polynomial threshold `T` and committee size `N` into
+/// the honest-party count `H` used by `SlashingManager` as its vote quorum.
+///
+/// `E3Meta.threshold_m` intentionally carries `T` for circuit selection, while
+/// the on-chain committee request and slashing contract use `H = T + 1`. Keep
+/// both values separate so accusation voting agrees with Solidity without
+/// breaking ZK re-verification artifact resolution.
+fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {
+    Ok(
+        CiphernodesCommitteeSize::from_threshold(threshold_t, committee_n)?
+            .values()
+            .h,
+    )
+}
 
 pub struct AccusationManagerExtension {
     bus: BusHandle,
@@ -103,29 +120,45 @@ impl E3Extension for AccusationManagerExtension {
             return;
         }
 
-        // Get threshold from meta
+        // `E3Meta` stores the compiled circuit threshold T. Solidity requires
+        // H votes, so derive and pass both values explicitly.
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             error!("E3Meta not available — cannot start AccusationManager");
             return;
         };
-        let threshold_m = meta.threshold_m;
+        let circuit_threshold_t = meta.threshold_m;
+        let vote_quorum_h = match accusation_vote_quorum(meta.threshold_m, meta.threshold_n) {
+            Ok(quorum) => quorum,
+            Err(err) => {
+                error!(
+                    %e3_id,
+                    threshold_t = meta.threshold_m,
+                    committee_n = meta.threshold_n,
+                    error = %err,
+                    "Unknown committee size — cannot start AccusationManager"
+                );
+                return;
+            }
+        };
 
         info!(
-            "Starting AccusationManager for E3 {} with {} committee members, threshold={}",
+            "Starting AccusationManager for E3 {} with {} committee members, circuit threshold T={}, vote quorum H={}",
             e3_id,
             committee_addresses.len(),
-            threshold_m
+            circuit_threshold_t,
+            vote_quorum_h
         );
 
         let vote_validity_secs = self.vote_validity_secs_for(e3_id.chain_id());
 
-        let addr = AccusationManager::setup(
+        let addr = AccusationManager::setup_with_quorum(
             &self.bus,
             e3_id,
             self.signer.clone(),
             self.slashing_manager,
             committee_addresses,
-            threshold_m,
+            circuit_threshold_t,
+            vote_quorum_h,
             vote_validity_secs,
             self.accusation_deadline_skew_secs,
             meta.params_preset,
@@ -149,8 +182,28 @@ impl E3Extension for AccusationManagerExtension {
     /// - A malicious node cannot exploit restart-induced state loss to prevent slashing:
     ///   restarting only loses *this node's* pending state — all other honest nodes still
     ///   independently verify, vote, and reach quorum without this node's participation
-    ///   (as long as enough honest nodes remain to meet threshold M).
+    ///   (as long as enough honest nodes remain to meet the on-chain quorum H).
     async fn hydrate(&self, _ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accusation_quorum_matches_canonical_on_chain_committee_thresholds() {
+        for (threshold_t, committee_n, expected_h) in [(1, 3, 2), (4, 9, 5), (9, 19, 10)] {
+            assert_eq!(
+                accusation_vote_quorum(threshold_t, committee_n).unwrap(),
+                expected_h
+            );
+        }
+    }
+
+    #[test]
+    fn accusation_quorum_rejects_unknown_committee_parameters() {
+        assert!(accusation_vote_quorum(2, 3).is_err());
     }
 }

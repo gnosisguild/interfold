@@ -134,8 +134,10 @@ pub(crate) struct AccusationVoting {
 
     /// All committee member addresses for this E3.
     committee: Vec<Address>,
-    /// Quorum threshold — matches the cryptographic threshold M.
-    threshold_m: usize,
+    /// Polynomial threshold `T`, used only for ZK circuit artifact resolution.
+    circuit_threshold_t: usize,
+    /// Vote quorum `H`, matching the on-chain `SlashingManager` threshold.
+    vote_quorum_h: usize,
     /// Original committee N fixed at construction for ZK circuit resolution.
     /// Do not derive from [`Self::committee`] after [`Self::on_slash_executed`] shrinks the roster.
     committee_n: usize,
@@ -177,7 +179,8 @@ impl AccusationVoting {
         signer: PrivateKeySigner,
         slashing_manager: Address,
         committee: Vec<Address>,
-        threshold_m: usize,
+        circuit_threshold_t: usize,
+        vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
         params_preset: e3_fhe_params::BfvPreset,
@@ -191,7 +194,8 @@ impl AccusationVoting {
             signer,
             slashing_manager,
             committee,
-            threshold_m,
+            circuit_threshold_t,
+            vote_quorum_h,
             committee_n,
             pending: HashMap::new(),
             accused_proofs: HashSet::new(),
@@ -690,7 +694,7 @@ impl AccusationVoting {
             }
         }
 
-        // Check quorum immediately (in case threshold_m == 1)
+        // Check quorum immediately (defensive for a future H=1 committee).
         self.check_quorum(accusation_id, ec, actions);
     }
 
@@ -848,7 +852,7 @@ impl AccusationVoting {
             let forwarded_clone = forwarded.clone();
 
             let committee_size = match CiphernodesCommitteeSize::from_threshold(
-                self.threshold_m,
+                self.circuit_threshold_t,
                 self.committee_n,
             ) {
                 Ok(c) => c,
@@ -1080,12 +1084,12 @@ impl AccusationVoting {
         };
 
         let agree_count = pending.votes_for.len();
-        if agree_count < self.threshold_m {
+        if agree_count < self.vote_quorum_h {
             // Not yet at quorum.
             return;
         }
 
-        // Reached `M` — decide between AccusedFaulted and Equivocation.
+        // Reached `H` — decide between AccusedFaulted and Equivocation.
         let agree_hashes: HashSet<[u8; 32]> =
             pending.votes_for.iter().map(|v| v.data_hash).collect();
         if agree_hashes.len() > 1 {
@@ -1120,7 +1124,7 @@ impl AccusationVoting {
     ) -> Option<(AccusationQuorumReached, EventContext<Sequenced>)> {
         let pending = self.pending.remove(&accusation_id)?; // Already resolved
 
-        let outcome = if pending.votes_for.len() >= self.threshold_m {
+        let outcome = if pending.votes_for.len() >= self.vote_quorum_h {
             let agree_hashes: HashSet<[u8; 32]> =
                 pending.votes_for.iter().map(|v| v.data_hash).collect();
             if agree_hashes.len() > 1 {
@@ -1380,7 +1384,8 @@ mod tests {
     fn voting_with(
         me: &PrivateKeySigner,
         committee: Vec<Address>,
-        threshold_m: usize,
+        circuit_threshold_t: usize,
+        vote_quorum_h: usize,
     ) -> AccusationVoting {
         AccusationVoting::new(
             E3id::new("42", CHAIN_ID),
@@ -1389,7 +1394,8 @@ mod tests {
                 .parse()
                 .unwrap(),
             committee,
-            threshold_m,
+            circuit_threshold_t,
+            vote_quorum_h,
             VALIDITY,
             SKEW,
             e3_fhe_params::BfvPreset::default(),
@@ -1482,7 +1488,7 @@ mod tests {
         );
     }
 
-    /// A second agreeing vote that reaches `threshold_m` must produce a single
+    /// A second agreeing vote that reaches `vote_quorum_h` must produce a single
     /// AccusedFaulted quorum decision and remove the pending accusation.
     #[test]
     fn tally_reaches_quorum_at_threshold() {
@@ -1490,7 +1496,7 @@ mod tests {
         let b = signer(2);
         let accused = signer(9).address();
         let committee = vec![me.address(), b.address(), accused];
-        let mut v = voting_with(&me, committee, 2);
+        let mut v = voting_with(&me, committee, 1, 2);
         let sm = v.slashing_manager;
         let data_hash = [0x11; 32];
 
@@ -1523,7 +1529,7 @@ mod tests {
         let b = signer(2);
         let accused = signer(9).address();
         let committee = vec![me.address(), b.address(), accused];
-        let mut v = voting_with(&me, committee, 3); // threshold above what 2 votes reach
+        let mut v = voting_with(&me, committee, 1, 3); // quorum above what 2 votes reach
         let sm = v.slashing_manager;
         let data_hash = [0x11; 32];
 
@@ -1556,7 +1562,7 @@ mod tests {
         let c = signer(3);
         let accused = signer(9).address();
         let committee = vec![me.address(), b.address(), c.address(), accused];
-        let mut v = voting_with(&me, committee, 3);
+        let mut v = voting_with(&me, committee, 1, 3);
         let sm = v.slashing_manager;
         let data_hash = [0x11; 32];
 
@@ -1591,7 +1597,7 @@ mod tests {
         let b = signer(2);
         let accused = signer(9).address();
         let committee = vec![me.address(), b.address(), accused];
-        let mut v = voting_with(&me, committee, 2);
+        let mut v = voting_with(&me, committee, 1, 2);
         let sm = v.slashing_manager;
         let data_hash_a = [0x11; 32];
         let data_hash_b = [0x22; 32];
@@ -1621,7 +1627,7 @@ mod tests {
         let me = signer(1);
         let accused = signer(9).address();
         let committee = vec![me.address(), signer(2).address(), accused];
-        let mut v = voting_with(&me, committee, 2);
+        let mut v = voting_with(&me, committee, 1, 2);
         let sm = v.slashing_manager;
         let data_hash = [0x11; 32];
 
@@ -1641,7 +1647,7 @@ mod tests {
         let me = signer(1);
         // Micro committee (T=4, N=9) — canonical pair in `from_threshold`.
         let committee: Vec<Address> = (1..=9u8).map(|b| signer(b).address()).collect();
-        let mut v = voting_with(&me, committee.clone(), 4);
+        let mut v = voting_with(&me, committee.clone(), 4, 5);
 
         let slashed = committee[8];
         v.on_slash_executed(SlashExecuted {
@@ -1656,10 +1662,11 @@ mod tests {
         assert_eq!(v.committee_n, 9);
         // Shrunken roster must not drive circuit resolution.
         assert!(
-            CiphernodesCommitteeSize::from_threshold(v.threshold_m, v.committee.len()).is_err()
+            CiphernodesCommitteeSize::from_threshold(v.circuit_threshold_t, v.committee.len())
+                .is_err()
         );
         assert_eq!(
-            CiphernodesCommitteeSize::from_threshold(v.threshold_m, v.committee_n).unwrap(),
+            CiphernodesCommitteeSize::from_threshold(v.circuit_threshold_t, v.committee_n).unwrap(),
             CiphernodesCommitteeSize::Micro
         );
     }

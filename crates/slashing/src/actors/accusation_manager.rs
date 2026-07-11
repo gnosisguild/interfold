@@ -9,7 +9,7 @@
 //! When a node detects a ZK proof failure from another committee member, it
 //! broadcasts a [`ProofFailureAccusation`] over gossip. Other committee members
 //! independently check the same proof and respond with [`AccusationVote`]s.
-//! Once a quorum of M (the cryptographic threshold) votes is reached, the
+//! Once the on-chain quorum `H` votes is reached, the
 //! actor emits [`AccusationQuorumReached`] for downstream consumers (aggregator
 //! exclusion, on-chain slash submission).
 //!
@@ -49,7 +49,8 @@ use e3_events::{
     ProofVerificationPassed, TypedEvent,
 };
 use e3_utils::NotifySync;
-use tracing::error;
+use e3_zk_helpers::CiphernodesCommitteeSize;
+use tracing::{error, warn};
 
 use crate::domain::accusation_voting::{AccusationVoting, VoteAction};
 
@@ -115,6 +116,24 @@ pub struct AccusationManager {
 }
 
 impl AccusationManager {
+    fn canonical_vote_quorum(circuit_threshold_t: usize, committee_n: usize) -> usize {
+        match CiphernodesCommitteeSize::from_threshold(circuit_threshold_t, committee_n) {
+            Ok(size) => size.values().h,
+            Err(err) => {
+                // Preserve the historical constructor behavior for external callers with a
+                // non-canonical test committee. Production creation is validated by the
+                // extension and uses `setup_with_quorum` below.
+                warn!(
+                    circuit_threshold_t,
+                    committee_n,
+                    error = %err,
+                    "Unknown committee size; falling back to the supplied threshold as vote quorum"
+                );
+                circuit_threshold_t
+            }
+        }
+    }
+
     /// Construct an actor with the production [`SystemClock`]. Use
     /// [`AccusationManager::new_with_clock`] in tests that need deterministic
     /// timestamps.
@@ -125,7 +144,7 @@ impl AccusationManager {
         signer: PrivateKeySigner,
         slashing_manager: Address,
         committee: Vec<Address>,
-        threshold_m: usize,
+        circuit_threshold_t: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
         params_preset: e3_fhe_params::BfvPreset,
@@ -136,7 +155,7 @@ impl AccusationManager {
             signer,
             slashing_manager,
             committee,
-            threshold_m,
+            circuit_threshold_t,
             vote_validity_secs,
             accusation_deadline_skew_secs,
             params_preset,
@@ -153,7 +172,37 @@ impl AccusationManager {
         signer: PrivateKeySigner,
         slashing_manager: Address,
         committee: Vec<Address>,
-        threshold_m: usize,
+        circuit_threshold_t: usize,
+        vote_validity_secs: u64,
+        accusation_deadline_skew_secs: u64,
+        params_preset: e3_fhe_params::BfvPreset,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        let vote_quorum_h = Self::canonical_vote_quorum(circuit_threshold_t, committee.len());
+        Self::new_with_clock_and_quorum(
+            bus,
+            e3_id,
+            signer,
+            slashing_manager,
+            committee,
+            circuit_threshold_t,
+            vote_quorum_h,
+            vote_validity_secs,
+            accusation_deadline_skew_secs,
+            params_preset,
+            clock,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_clock_and_quorum(
+        bus: &BusHandle,
+        e3_id: E3id,
+        signer: PrivateKeySigner,
+        slashing_manager: Address,
+        committee: Vec<Address>,
+        circuit_threshold_t: usize,
+        vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
         params_preset: e3_fhe_params::BfvPreset,
@@ -166,7 +215,8 @@ impl AccusationManager {
                 signer,
                 slashing_manager,
                 committee,
-                threshold_m,
+                circuit_threshold_t,
+                vote_quorum_h,
                 vote_validity_secs,
                 accusation_deadline_skew_secs,
                 params_preset,
@@ -183,21 +233,51 @@ impl AccusationManager {
         signer: PrivateKeySigner,
         slashing_manager: Address,
         committee: Vec<Address>,
-        threshold_m: usize,
+        circuit_threshold_t: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
         params_preset: e3_fhe_params::BfvPreset,
     ) -> Addr<Self> {
-        let addr = Self::new(
+        let vote_quorum_h = Self::canonical_vote_quorum(circuit_threshold_t, committee.len());
+        Self::setup_with_quorum(
             bus,
             e3_id,
             signer,
             slashing_manager,
             committee,
-            threshold_m,
+            circuit_threshold_t,
+            vote_quorum_h,
             vote_validity_secs,
             accusation_deadline_skew_secs,
             params_preset,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn setup_with_quorum(
+        bus: &BusHandle,
+        e3_id: E3id,
+        signer: PrivateKeySigner,
+        slashing_manager: Address,
+        committee: Vec<Address>,
+        circuit_threshold_t: usize,
+        vote_quorum_h: usize,
+        vote_validity_secs: u64,
+        accusation_deadline_skew_secs: u64,
+        params_preset: e3_fhe_params::BfvPreset,
+    ) -> Addr<Self> {
+        let addr = Self::new_with_clock_and_quorum(
+            bus,
+            e3_id,
+            signer,
+            slashing_manager,
+            committee,
+            circuit_threshold_t,
+            vote_quorum_h,
+            vote_validity_secs,
+            accusation_deadline_skew_secs,
+            params_preset,
+            Arc::new(SystemClock),
         )
         .start();
         bus.subscribe(EventType::ProofVerificationFailed, addr.clone().into());
