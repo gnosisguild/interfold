@@ -31,6 +31,9 @@ pub async fn spawn_process(program: &str, args: Vec<String>) -> Result<Child> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // A termination-path error must not turn dropping our last handle into an orphaned
+        // ciphernode. Normal stops still use SIGTERM and the graceful drain in ProcessManager.
+        .kill_on_drop(true)
         .spawn()?;
 
     Ok(child)
@@ -55,14 +58,47 @@ pub enum Query {
     Status { status: SwarmStatus },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProcessStatus {
     Started,
     Stopped,
+    Exited { code: Option<i32> },
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SwarmStatus {
     pub processes: HashMap<String, ProcessStatus>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn process_exists(pid: u32) -> bool {
+        // SAFETY: signal 0 performs an existence/permission check and does not mutate the target.
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[tokio::test]
+    async fn dropping_the_last_child_handle_does_not_orphan_the_process() {
+        let child = spawn_process("sh", vec!["-c".into(), "exec sleep 30".into()])
+            .await
+            .unwrap();
+        let pid = child.id().unwrap();
+        assert!(process_exists(pid));
+
+        drop(child);
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while process_exists(pid) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("kill-on-drop child should exit promptly");
+    }
 }

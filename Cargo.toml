@@ -206,6 +206,7 @@ tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "time"] }
 tracing-test = { version = "=0.2.5", features = ["no-env-filter"] }
 url = "=2.5.4"
 vfs = { git = "https://github.com/ryardley/rust-vfs.git", features = ["async-vfs"] }
+libc = "=0.2.180"
 libp2p = { version = "=0.54.1", features = [
   "gossipsub",
   "identify",

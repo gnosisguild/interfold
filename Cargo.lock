@@ -3351,6 +3351,7 @@ dependencies = [
  "e3-utils",
  "e3-zk-prover",
  "hex",
+ "libc",
  "libp2p",
  "phf",
  "rand 0.9.2",

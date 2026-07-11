@@ -4,11 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::*;
+use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
@@ -22,6 +23,9 @@ use tracing::{error, info, warn};
 use super::nodes::{
     spawn_process, CommandMap, ProcessMap, ProcessRecord, ProcessStatus, SwarmStatus,
 };
+
+const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Forward stdout from child process to parent's stdout
 fn forward_stdout(id: &str, stdout: ChildStdout) -> JoinHandle<()> {
@@ -89,7 +93,15 @@ async fn run_command(id: &str, program: &str, args: Vec<String>) -> Result<Proce
 async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<()> {
     let commands = commands.clone();
     for (id, (program, args)) in commands {
-        let record = run_command(&id, &program, args).await?;
+        let record = match run_command(&id, &program, args).await {
+            Ok(record) => record,
+            Err(error) => {
+                if let Err(cleanup_error) = terminate_processes(processes).await {
+                    error!(%cleanup_error, "Failed to clean up partially started process swarm");
+                }
+                return Err(error).with_context(|| format!("failed to start process {id}"));
+            }
+        };
 
         // Store the process
         let mut processes_guard = processes.lock().await;
@@ -100,8 +112,23 @@ async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<(
 
 /// Start a process
 async fn start(id: &str, commands: &CommandMap, processes: &ProcessMap) -> Result<()> {
-    if processes.lock().await.contains_key(id) {
-        bail!("Process {} already running!", id);
+    {
+        let mut processes = processes.lock().await;
+        let exited = if let Some((child, _)) = processes.get_mut(id) {
+            match child.try_wait().context("failed to inspect child status")? {
+                None => bail!("Process {} already running!", id),
+                Some(_) => true,
+            }
+        } else {
+            false
+        };
+        if exited {
+            if let Some((_, handlers)) = processes.remove(id) {
+                for handler in handlers {
+                    handler.abort();
+                }
+            }
+        }
     }
     let Some(command) = commands.get(id) else {
         bail!("Bad command {}", id);
@@ -118,53 +145,77 @@ async fn start(id: &str, commands: &CommandMap, processes: &ProcessMap) -> Resul
 /// Start a process
 async fn stop(id: &str, processes: &ProcessMap) -> Result<()> {
     warn!("stopping {}...", id);
-    let mut processes_lock = processes.lock().await;
-    if !processes_lock.contains_key(id) {
+    let process_record = processes.lock().await.remove(id);
+    let Some(mut process_record) = process_record else {
         info!("Cannot stop process that isn't running {}", id);
         return Ok(());
     };
-    if let Some(mut process_record) = processes_lock.remove(id) {
-        terminate_process_record(id, &mut process_record).await;
-    }
+    terminate_process_record(id, &mut process_record).await?;
     Ok(())
 }
 
-/// Terminate a process
-async fn terminate_process_record(id: &str, process_record: &mut ProcessRecord) {
+fn send_sigterm(child: &tokio::process::Child) -> Result<()> {
+    let pid = child.id().context("child has no process id")?;
+    // SAFETY: `libc::kill` does not dereference pointers. The PID comes from a live
+    // `tokio::process::Child`, and the signal constant is valid on this Unix-only module.
+    let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error).context("failed to send SIGTERM to child")
+    }
+}
+
+/// Ask a process to shut down, then force-kill it only after the grace period.
+async fn terminate_process_record(id: &str, process_record: &mut ProcessRecord) -> Result<()> {
     info!("Terminating {}", id);
     let (child, handlers) = process_record;
-    for handler in handlers.drain(..) {
-        // drop all stdout/in handlers
-        handler.abort();
+
+    if child.try_wait()?.is_none() {
+        send_sigterm(child)?;
+        match tokio::time::timeout(GRACEFUL_CHILD_SHUTDOWN_TIMEOUT, child.wait()).await {
+            Ok(status) => {
+                status?;
+            }
+            Err(_) => {
+                warn!(
+                    process = id,
+                    timeout_seconds = GRACEFUL_CHILD_SHUTDOWN_TIMEOUT.as_secs(),
+                    "Child did not exit after SIGTERM; sending SIGKILL"
+                );
+                child.kill().await?;
+            }
+        }
     }
 
-    if let Err(e) = child.kill().await {
-        error!("Failed to kill process {}: {}", id, e);
+    for mut handler in handlers.drain(..) {
+        if tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut handler)
+            .await
+            .is_err()
+        {
+            handler.abort();
+        }
     }
-
-    info!("Terminating process: {}...", id);
-    let _ = child.wait().await;
     info!("Process {} terminated.", id);
+    Ok(())
 }
 
 /// Terminate all processes
-async fn terminate_processes(processes: &ProcessMap) {
+async fn terminate_processes(processes: &ProcessMap) -> Result<()> {
     info!("starting to terminate processes...");
-    let keys: Vec<String> = {
-        processes
-            .lock()
-            .await
-            .keys()
-            .map(|k| k.to_string())
-            .collect()
-    };
-
-    let mut processes_guard = processes.lock().await;
-    for id in keys {
-        if let Some(mut process_record) = processes_guard.remove(&id) {
-            terminate_process_record(&id, &mut process_record).await;
+    let records = std::mem::take(&mut *processes.lock().await);
+    let mut first_error = None;
+    for (id, mut process_record) in records {
+        if let Err(error) = terminate_process_record(&id, &mut process_record).await {
+            error!(process = id, %error, "Failed to terminate child process");
+            first_error.get_or_insert(error);
         }
     }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Terminate all child processes
@@ -172,10 +223,18 @@ async fn terminate_processes_and_exit(processes: &ProcessMap) {
     let processes = processes.clone();
     // taking this off the hot path so we can send a response to the client
     tokio::spawn(async move {
-        terminate_processes(&processes).await;
-        info!("SWARM All processes terminated, exiting");
+        let exit_code = match terminate_processes(&processes).await {
+            Ok(()) => {
+                info!("SWARM All processes terminated, exiting");
+                0
+            }
+            Err(error) => {
+                error!(%error, "SWARM child shutdown failed");
+                1
+            }
+        };
         let _ = std::io::stdout().flush();
-        std::process::exit(0);
+        std::process::exit(exit_code);
     });
 }
 
@@ -228,8 +287,7 @@ impl ProcessManager {
     }
 
     pub async fn stop_all(&self) -> Result<()> {
-        terminate_processes(&self.processes).await;
-        Ok(())
+        terminate_processes(&self.processes).await
     }
 
     pub async fn terminate(&self) {
@@ -237,11 +295,19 @@ impl ProcessManager {
     }
 
     pub async fn status(&self, id: &str) -> ProcessStatus {
-        let processes = self.processes.lock().await;
-        if processes.contains_key(id) {
-            ProcessStatus::Started
-        } else {
-            ProcessStatus::Stopped
+        let mut processes = self.processes.lock().await;
+        let Some((child, _)) = processes.get_mut(id) else {
+            return ProcessStatus::Stopped;
+        };
+        match child.try_wait() {
+            Ok(None) => ProcessStatus::Started,
+            Ok(Some(status)) => ProcessStatus::Exited {
+                code: status.code(),
+            },
+            Err(error) => {
+                warn!(process = id, %error, "Failed to inspect child process status");
+                ProcessStatus::Unknown
+            }
         }
     }
 
@@ -258,7 +324,6 @@ impl ProcessManager {
 
 impl From<CommandMap> for ProcessManager {
     fn from(value: CommandMap) -> Self {
-        // TODO: should probably implement a singleton pattern here but rn it doesn't matter
         let processes = Arc::new(Mutex::new(HashMap::new()));
         let manager = Self {
             commands: value,
@@ -268,5 +333,61 @@ impl From<CommandMap> for ProcessManager {
         setup_signal_handlers(&manager);
 
         manager
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn exited_child_is_not_reported_as_started_and_can_be_started_again() {
+        let commands = CommandMap::from([(
+            "short".to_string(),
+            (
+                "sh".to_string(),
+                vec!["-c".to_string(), "exit 7".to_string()],
+            ),
+        )]);
+        let manager = ProcessManager::from(commands);
+        manager.start("short").await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            manager.status("short").await,
+            ProcessStatus::Exited { code: Some(7) }
+        );
+
+        manager.start("short").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            manager.status("short").await,
+            ProcessStatus::Exited { code: Some(7) }
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_sends_sigterm_before_forcing_termination() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("terminated");
+        let script = format!(
+            "trap 'echo terminated > {} ; exit 0' TERM; while true; do sleep 0.05; done",
+            marker.display()
+        );
+        let commands = CommandMap::from([(
+            "long".to_string(),
+            ("sh".to_string(), vec!["-c".to_string(), script]),
+        )]);
+        let manager = ProcessManager::from(commands);
+        manager.start("long").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        manager.stop("long").await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap().trim(),
+            "terminated"
+        );
+        assert_eq!(manager.status("long").await, ProcessStatus::Stopped);
     }
 }
