@@ -60,6 +60,11 @@ pnpm dev:setup
 pnpm dev:up
 ```
 
+The local profile also contains the shared, non-secret development program-server token and its
+allowed callback origin. The dev launch scripts pass that token to both the authenticated
+development program server and the coordination server. Outside this local profile, both
+components require an operator-managed `INTERFOLD_PROGRAM_SERVER_TOKEN`; neither has a fallback.
+
 `dev:up` runs `scripts/dev.sh`, which:
 
 1. Starts the Hardhat node in `packages/crisp-contracts`

@@ -12,6 +12,12 @@ load_template_dev_config() {
   BFV_PRESET="${BFV_PRESET:-insecure-512}"
   COMMITTEE="${COMMITTEE:-minimum}"
 
+  # These defaults are intentionally limited to the template's local development scripts. The
+  # authenticated development program server and TypeScript caller require operators to provide a
+  # credential when launched outside this local orchestration.
+  INTERFOLD_PROGRAM_SERVER_TOKEN="${INTERFOLD_PROGRAM_SERVER_TOKEN:-template-local-development-only}"
+  INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN="${INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN:-http://127.0.0.1:8080}"
+
   case "$BFV_PRESET" in
     insecure-512 | secure-8192) ;;
     *)
@@ -21,6 +27,7 @@ load_template_dev_config() {
   esac
 
   export TEMPLATE_ROOT INTERFOLD_REPO_ROOT BFV_PRESET COMMITTEE
+  export INTERFOLD_PROGRAM_SERVER_TOKEN INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN
 }
 
 template_monorepo_build_available() {

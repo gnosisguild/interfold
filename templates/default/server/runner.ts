@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { getCheckedEnvVars } from './utils'
+import { getProgramRunnerConfig } from './utils'
 
 export async function callFheRunner(e3Id: bigint, params: string, ciphertextInputs: Array<[string, number]>): Promise<void> {
-  const { PROGRAM_RUNNER_URL, CALLBACK_URL } = getCheckedEnvVars()
+  const { PROGRAM_RUNNER_URL, CALLBACK_URL, PROGRAM_SERVER_TOKEN } = getProgramRunnerConfig()
 
   const payload = {
     e3_id: Number(e3Id),
@@ -15,12 +15,12 @@ export async function callFheRunner(e3Id: bigint, params: string, ciphertextInpu
     ciphertext_inputs: ciphertextInputs,
     callback_url: CALLBACK_URL,
   }
-  console.log('payload:')
-  console.log(JSON.stringify(payload))
+  console.log(`Submitting E3 ${e3Id} to FHE runner with ${ciphertextInputs.length} ciphertext input(s)`)
 
   const response = await fetch(`${PROGRAM_RUNNER_URL}/run_compute`, {
     method: 'POST',
     headers: {
+      Authorization: `Bearer ${PROGRAM_SERVER_TOKEN}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),

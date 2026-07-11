@@ -120,6 +120,12 @@ Launch all services with one command:
 pnpm dev:all
 ```
 
+The local dev scripts provide one shared, non-secret credential to the program server and the
+TypeScript coordination server, and restrict callbacks to the local coordination-server origin.
+Running the authenticated development program server or TypeScript coordinator outside these
+scripts requires operators to set `INTERFOLD_PROGRAM_SERVER_TOKEN`; the program server also
+requires `INTERFOLD_PROGRAM_SERVER_CALLBACK_ORIGIN`. Neither component supplies a fallback.
+
 This starts:
 
 - Local Ethereum network (Hardhat)
