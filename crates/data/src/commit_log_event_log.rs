@@ -4,13 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use commitlog::message::MessageSet;
 use commitlog::{CommitLog, LogOptions, ReadLimit};
 use e3_events::{EventLog, InterfoldEvent, Unsequenced};
 use std::path::PathBuf;
-use tracing::error;
 
 /// Maximum message size for both reads and writes (32 MB).
 const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
@@ -36,6 +34,71 @@ impl CommitLogEventLog {
         // Return 1-indexed sequence number
         Ok(offset + 1)
     }
+
+    /// Read and decode every event starting at `from`, failing on the first
+    /// unreadable commit-log segment or invalid event payload.
+    ///
+    /// A commit-log record with a valid frame/CRC but an invalid bincode payload
+    /// is not safe to treat as an ignorable torn tail. Its sequence number has
+    /// already been committed, so skipping it would make replayed state diverge
+    /// from the state that existed before the crash and a later append would turn
+    /// the same record into mid-log corruption. Callers that need a recoverable
+    /// integrity result (for example `interfold node validate`) use this method;
+    /// the [`EventLog`] adapter below fail-stops because its legacy iterator API
+    /// cannot carry an error.
+    pub fn read_from_checked(&self, from: u64) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
+        self.read_from_checked_with_limit(from, None)
+    }
+
+    fn read_from_checked_with_limit(
+        &self,
+        from: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
+        // Convert 1-indexed sequence to 0-indexed offset.
+        let mut current_offset = from.saturating_sub(1);
+        let mut events = Vec::with_capacity(limit.unwrap_or_default().min(1024));
+
+        if limit == Some(0) {
+            return Ok(events);
+        }
+
+        loop {
+            let message_buf = self
+                .log
+                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
+                .map_err(|error| {
+                    anyhow!(
+                        "commit log read failed at sequence {}: {error:?}",
+                        current_offset + 1
+                    )
+                })?;
+
+            let mut count = 0;
+            for msg in message_buf.iter() {
+                let seq = msg.offset() + 1;
+                let event = bincode::deserialize::<InterfoldEvent<Unsequenced>>(msg.payload())
+                    .with_context(|| {
+                        format!(
+                            "commit log event at sequence {seq} failed to decode; log is corrupt"
+                        )
+                    })?;
+                events.push((seq, event));
+                current_offset = msg.offset() + 1;
+                count += 1;
+
+                if limit.is_some_and(|limit| events.len() >= limit) {
+                    break;
+                }
+            }
+
+            if count == 0 || limit.is_some_and(|limit| events.len() >= limit) {
+                break;
+            }
+        }
+
+        Ok(events)
+    }
 }
 
 impl EventLog for CommitLogEventLog {
@@ -44,63 +107,31 @@ impl EventLog for CommitLogEventLog {
         self.append_bytes(&bytes)
     }
 
-    #[allow(clippy::while_let_loop)]
     fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
-        // Convert 1-indexed sequence to 0-indexed offset
-        let mut current_offset = from.saturating_sub(1);
-        let mut events = Vec::new();
-        // Sequence number of the first message that failed to deserialize, if any.
-        // A deserialize failure is only tolerable when it is the *tail* of the log
-        // (a torn write from a crash mid-append). If a corrupt entry is followed by
-        // a valid one it is mid-log corruption and replaying past it would silently
-        // diverge actor state, so we halt loudly instead of skipping.
-        let mut corrupt_at: Option<u64> = None;
+        let events = self.read_from_checked(from).unwrap_or_else(|error| {
+            panic!(
+                "Event log integrity failure: {error:#}. Halting to prevent replay divergence; \
+                 run `interfold node validate` against the stopped node and restore from a \
+                 verified backup or resync."
+            )
+        });
+        Box::new(events.into_iter())
+    }
 
-        loop {
-            let message_buf = match self
-                .log
-                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
-            {
-                Ok(msgs) => msgs,
-                Err(_) => break,
-            };
-
-            let mut count = 0;
-            for msg in message_buf.iter() {
-                let seq = msg.offset() + 1;
-                match bincode::deserialize::<InterfoldEvent<Unsequenced>>(msg.payload()) {
-                    Ok(event) => {
-                        if let Some(bad_seq) = corrupt_at {
-                            // We already saw a corrupt entry and now found a valid one
-                            // after it: the corruption is NOT at the tail.
-                            panic!(
-                                "Non-tail corruption in event log: entry at seq {bad_seq} failed \
-                                 to deserialize but is followed by a valid entry at seq {seq}. \
-                                 Replaying past it would silently drop an event. Halting; operator \
-                                 recovery required."
-                            );
-                        }
-                        // Convert 0-indexed offset back to 1-indexed sequence number
-                        events.push((seq, event));
-                    }
-                    Err(_) => {
-                        // Defer the decision: tolerate only if nothing valid follows.
-                        error!("Error deserializing event in read_from at seq {seq}");
-                        if corrupt_at.is_none() {
-                            corrupt_at = Some(seq);
-                        }
-                    }
-                }
-                current_offset = msg.offset() + 1; // Next offset to read from
-                count += 1;
-            }
-
-            // No more messages to read
-            if count == 0 {
-                break;
-            }
-        }
-
+    fn read_from_bounded(
+        &self,
+        from: u64,
+        limit: usize,
+    ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+        let events = self
+            .read_from_checked_with_limit(from, Some(limit))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Event log integrity failure: {error:#}. Halting to prevent replay divergence; \
+                     run `interfold node validate` against the stopped node and restore from a \
+                     verified backup or resync."
+                )
+            });
         Box::new(events.into_iter())
     }
 
@@ -450,7 +481,22 @@ mod tests {
     }
 
     #[test]
-    fn test_read_from_corruption_at_end_causes_infinite_loop() {
+    fn bounded_read_decodes_only_requested_window() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        for value in 1..=5 {
+            log.append(&event_from(TestEvent::new("event", value)))
+                .unwrap();
+        }
+
+        let events: Vec<_> = log.read_from_bounded(2, 2).collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[1].0, 3);
+    }
+
+    #[test]
+    fn read_from_checked_reports_tail_corruption() {
         let dir = tempdir().unwrap();
         let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
 
@@ -461,12 +507,26 @@ mod tests {
         // Corrupt the last message
         log.append_bytes(b"I am a bad event!").unwrap();
 
-        // Ensure if last message is corrupt we don't end up in an infinite loop
+        let error = log.read_from_checked(1).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("sequence 101"), "{message}");
+        assert!(message.contains("failed to decode"), "{message}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Event log integrity failure")]
+    fn event_log_adapter_fail_stops_on_tail_corruption() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+
+        log.append(&event_from(TestEvent::new("valid", 1))).unwrap();
+        log.append_bytes(b"I am a bad event!").unwrap();
+
         let _: Vec<_> = log.read_from(1).collect();
     }
 
     #[test]
-    #[should_panic(expected = "Non-tail corruption")]
+    #[should_panic(expected = "Event log integrity failure")]
     fn test_read_from_non_tail_corruption_halts() {
         let dir = tempdir().unwrap();
         let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();

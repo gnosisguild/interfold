@@ -37,6 +37,24 @@ impl EventLog for InMemEventLog {
             .collect();
         Box::new(events.into_iter())
     }
+    fn read_from_bounded(
+        &self,
+        from: u64,
+        limit: usize,
+    ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+        // Convert 1-indexed sequence to 0-indexed array position and clone only the requested
+        // window. This path is used by bounded remote historical-sync queries.
+        let start_idx = from.saturating_sub(1) as usize;
+        let events: Vec<_> = self
+            .log
+            .iter()
+            .skip(start_idx)
+            .take(limit)
+            .enumerate()
+            .map(|(i, event)| (from + i as u64, event.clone()))
+            .collect();
+        Box::new(events.into_iter())
+    }
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
         self.log.push(event.to_owned());
         Ok(self.log.len() as u64)
@@ -95,6 +113,20 @@ mod tests {
 
         // Read from offset 2 (should get events 2 and 3)
         let events: Vec<_> = log.read_from(2).collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[1].0, 3);
+    }
+
+    #[test]
+    fn bounded_read_clones_only_requested_window() {
+        let mut log = InMemEventLog::new();
+        for value in 1..=5 {
+            log.append(&event_from(TestEvent::new("event", value)))
+                .unwrap();
+        }
+
+        let events: Vec<_> = log.read_from_bounded(2, 2).collect();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[1].0, 3);

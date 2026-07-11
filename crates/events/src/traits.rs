@@ -179,6 +179,18 @@ pub trait EventLog: Unpin + 'static {
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64>;
     /// Read all events starting from the given sequence number (inclusive)
     fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>;
+    /// Read at most `limit` events starting from the given sequence number (inclusive).
+    ///
+    /// Implementations backed by persistent storage should override this method so a bounded
+    /// query does not materialize the complete remaining log before truncating it. The default
+    /// preserves compatibility for lightweight/custom implementations.
+    fn read_from_bounded(
+        &self,
+        from: u64,
+        limit: usize,
+    ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+        Box::new(self.read_from(from).take(limit))
+    }
     /// The 1-indexed sequence number of the last appended event, or `0` if the log is empty.
     fn head(&self) -> u64;
 }

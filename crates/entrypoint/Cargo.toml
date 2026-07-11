@@ -50,4 +50,5 @@ reqwest = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+commitlog = { workspace = true }
 tempfile = { workspace = true }

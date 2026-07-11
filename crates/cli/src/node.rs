@@ -14,10 +14,10 @@ use e3_entrypoint::validate::validate_node;
 pub enum NodeCommands {
     /// Validate the on-disk state of a single node without starting it.
     ///
-    /// Opens the node's persisted stores read-only and checks that the schema
-    /// is loadable by this binary, the event log is intact, the snapshot cursor
-    /// is consistent, and there are no orphaned committee tickets ("loose
-    /// ends"). Safe to run while the node is stopped; intended as the
+    /// Takes the node's exclusive process fence and checks that the schema is
+    /// loadable by this binary, the event log is intact, the snapshot cursor is
+    /// consistent, and there are no orphaned committee tickets ("loose ends").
+    /// Safe to run while the node is stopped; intended as the
     /// pre-upgrade and post-crash health check. Exits non-zero on failure.
     Validate,
 }

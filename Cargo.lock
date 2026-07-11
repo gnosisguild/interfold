@@ -3328,6 +3328,7 @@ dependencies = [
  "anyhow",
  "bincode 1.3.3",
  "clap",
+ "commitlog",
  "dirs 5.0.1",
  "e3-aggregator",
  "e3-ciphernode-builder",
