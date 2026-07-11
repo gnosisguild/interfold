@@ -3130,6 +3130,7 @@ dependencies = [
  "e3-trbfv",
  "e3-utils",
  "e3-zk-prover",
+ "futures",
  "libp2p",
  "once_cell",
  "rayon",

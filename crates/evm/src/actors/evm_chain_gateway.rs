@@ -7,41 +7,113 @@
 use crate::domain::chain_sync_state::SyncStatus;
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::InterfoldEvmEvent;
-use actix::{Actor, Handler};
+use actix::{Actor, ActorContext, Handler};
 use actix::{Addr, Recipient};
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use e3_events::EType;
 use e3_events::{
-    trap, BusHandle, EventSubscriber, EventType, HistoricalEvmEventsReceived,
+    BusHandle, ErrorDispatcher, EventSubscriber, EventType, HistoricalEvmEventsReceived,
     HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, SyncEnded, Unsequenced,
 };
 use e3_events::{Event, EventPublisher};
 use e3_utils::MAILBOX_LIMIT;
+use tokio::sync::oneshot;
 use tracing::warn;
+
+/// Per-chain bound for events accumulated while the node is synchronizing.
+///
+/// Tests inject a smaller value. Production deliberately fails startup instead
+/// of dropping an observed chain event if this window is exhausted.
+pub const DEFAULT_MAX_BUFFERED_EVM_EVENTS: usize = 100_000;
+
+pub struct EvmChainGatewayHandle {
+    addr: Addr<EvmChainGateway>,
+    readiness: oneshot::Receiver<std::result::Result<(), String>>,
+}
+
+impl EvmChainGatewayHandle {
+    pub fn addr(&self) -> Addr<EvmChainGateway> {
+        self.addr.clone()
+    }
+
+    pub async fn wait_until_live(self) -> Result<()> {
+        self.readiness
+            .await
+            .context("EVM chain gateway stopped before reporting startup status")?
+            .map_err(anyhow::Error::msg)
+    }
+}
 
 /// This component sits between the Evm ingestion for a chain and the Sync actor and the Bus.
 /// It coordinates event flow between these components.
 pub struct EvmChainGateway {
     bus: BusHandle,
     status: SyncStatus<Recipient<HistoricalEvmEventsReceived>>,
+    max_buffered_events: usize,
+    readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
 }
 
 impl EvmChainGateway {
     pub fn new(bus: &BusHandle) -> Self {
+        Self::with_options(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS, None)
+    }
+
+    fn with_options(
+        bus: &BusHandle,
+        max_buffered_events: usize,
+        readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    ) -> Self {
         Self {
             bus: bus.clone(),
             status: SyncStatus::default(),
+            max_buffered_events,
+            readiness,
         }
     }
 
     pub fn setup(bus: &BusHandle) -> Addr<Self> {
-        let addr = Self::new(bus).start();
+        Self::start_and_subscribe(bus, Self::new(bus))
+    }
+
+    pub fn setup_with_readiness(bus: &BusHandle) -> EvmChainGatewayHandle {
+        Self::setup_with_readiness_and_limit(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS)
+    }
+
+    pub fn setup_with_readiness_and_limit(
+        bus: &BusHandle,
+        max_buffered_events: usize,
+    ) -> EvmChainGatewayHandle {
+        let (tx, readiness) = oneshot::channel();
+        let actor = Self::with_options(bus, max_buffered_events, Some(tx));
+        let addr = Self::start_and_subscribe(bus, actor);
+        EvmChainGatewayHandle { addr, readiness }
+    }
+
+    fn start_and_subscribe(bus: &BusHandle, actor: Self) -> Addr<Self> {
+        let addr = actor.start();
         bus.subscribe_all(
             &[EventType::HistoricalEvmSyncStart, EventType::SyncEnded],
             addr.clone().recipient(),
         );
         addr
+    }
+
+    fn signal_startup(&mut self, result: std::result::Result<(), String>) {
+        if let Some(sender) = self.readiness.take() {
+            let _ = sender.send(result);
+        }
+    }
+
+    fn fail_closed(&mut self, error: anyhow::Error, ctx: &mut actix::Context<Self>) {
+        let reason = format!(
+            "EVM chain gateway failed closed: {error:#}. The gateway stopped and will not process \
+             further chain events; inspect the snapshot/deploy block and RPC catch-up range, then \
+             restart the node to replay chain history"
+        );
+        self.status.fail(reason.clone());
+        self.signal_startup(Err(reason.clone()));
+        self.bus.err(EType::Evm, anyhow::anyhow!(reason));
+        ctx.stop();
     }
 
     fn handle_sync_start(&mut self, msg: HistoricalEvmSyncStart) -> Result<()> {
@@ -67,6 +139,7 @@ impl EvmChainGateway {
         for evt in buffer {
             self.publish_evm_event(evt)?;
         }
+        self.signal_startup(Ok(()));
         Ok(())
     }
 
@@ -85,7 +158,12 @@ impl EvmChainGateway {
                 self.process_evm_event(event.into_interfold_event(&self.bus)?)?;
                 Ok(())
             }
-            _ => panic!("EvmChainGateway is only designed to receive InterfoldEvmEvent::HistoricalSyncComplete or InterfoldEvmEvent::Event events"),
+            InterfoldEvmEvent::Log(_) => {
+                bail!("EvmChainGateway received an unparsed EVM log")
+            }
+            InterfoldEvmEvent::Processed(_) => {
+                bail!("EvmChainGateway received an internal ordering marker")
+            }
         }
     }
 
@@ -114,13 +192,11 @@ impl EvmChainGateway {
     }
 
     fn process_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
-        match &mut self.status {
-            SyncStatus::Init { buffer, .. } => buffer.push(msg),
-            SyncStatus::BufferUntilLive(buffer) => buffer.push(msg),
-            SyncStatus::ForwardToSyncActor(state) => state.add_event(msg),
-            SyncStatus::Live => self.publish_evm_event(msg)?,
-        };
-        Ok(())
+        if matches!(self.status, SyncStatus::Live) {
+            return self.publish_evm_event(msg);
+        }
+        self.status
+            .add_buffered_event(msg, self.max_buffered_events)
     }
 }
 
@@ -129,26 +205,38 @@ impl Actor for EvmChainGateway {
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT)
     }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        self.signal_startup(Err(
+            "EVM chain gateway stopped before reaching Live; inspect preceding EVM errors"
+                .to_owned(),
+        ));
+    }
 }
 
 impl Handler<InterfoldEvent> for EvmChainGateway {
     type Result = ();
-    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-        trap(EType::Evm, &self.bus.with_ec(msg.get_ctx()), || {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let result = (|| {
             match msg.into_data() {
                 InterfoldEventData::HistoricalEvmSyncStart(e) => self.handle_sync_start(e)?,
                 InterfoldEventData::SyncEnded(e) => self.handle_sync_ended(e)?,
                 _ => (),
             }
             Ok(())
-        })
+        })();
+        if let Err(error) = result {
+            self.fail_closed(error, ctx);
+        }
     }
 }
 
 impl Handler<InterfoldEvmEvent> for EvmChainGateway {
     type Result = ();
-    fn handle(&mut self, msg: InterfoldEvmEvent, _: &mut Self::Context) -> Self::Result {
-        trap(EType::Evm, &self.bus.clone(), || self.handle_evm_event(msg))
+    fn handle(&mut self, msg: InterfoldEvmEvent, ctx: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.handle_evm_event(msg) {
+            self.fail_closed(error, ctx);
+        }
     }
 }
 
@@ -195,7 +283,8 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let collector = SyncEventCollector { tx }.start();
 
-        let addr = EvmChainGateway::setup(&bus);
+        let gateway = EvmChainGateway::setup_with_readiness(&bus);
+        let addr = gateway.addr();
 
         let chain_id = 1u64;
 
@@ -243,6 +332,7 @@ mod tests {
         // The Synchronizer will publish the SyncEnded event when it has all the information it needs
         // and has published everything to the bus
         bus.publish_without_context(SyncEnded::new())?;
+        gateway.wait_until_live().await?;
 
         let after_event = EvmEvent::new(
             CorrelationId::new(),
@@ -285,6 +375,55 @@ mod tests {
                 "TestEvent"
             ]
         );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn overflow_emits_actionable_error_stops_and_fails_readiness() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus: BusHandle = system.handle()?.enable("test-overflow");
+        let errors = bus.errors();
+        let gateway = EvmChainGateway::setup_with_readiness_and_limit(&bus, 1);
+        let addr = gateway.addr();
+
+        for entropy in [1, 2] {
+            let event = EvmEvent::new(
+                CorrelationId::new(),
+                TestEvent::new("overflow", entropy).into(),
+                100,
+                u128::from(entropy),
+                1,
+            );
+            addr.send(InterfoldEvmEvent::Event(event)).await?;
+        }
+
+        let startup_error = gateway
+            .wait_until_live()
+            .await
+            .expect_err("overflow must fail gateway readiness")
+            .to_string();
+        assert!(startup_error.contains("Init buffer reached its limit of 1 events"));
+        assert!(startup_error.contains("will not process further chain events"));
+        assert!(startup_error.contains("restart the node to replay chain history"));
+
+        let received = errors.send(TakeEvents::new(1)).await?;
+        assert!(!received.timed_out, "overflow error should be observable");
+        let InterfoldEventData::InterfoldError(error) = received.events[0].get_data() else {
+            panic!("expected an InterfoldError event");
+        };
+        assert!(error
+            .message
+            .contains("Init buffer reached its limit of 1 events"));
+        assert!(error.message.contains("snapshot/deploy block"));
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while addr.connected() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .context("overflowed gateway did not stop")?;
+        assert!(!addr.connected(), "overflowed gateway must stop");
         Ok(())
     }
 }

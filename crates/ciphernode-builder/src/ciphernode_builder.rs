@@ -10,7 +10,7 @@ use crate::{
 };
 use actix::{Actor, Addr};
 use alloy::primitives::Address;
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use derivative::Derivative;
 use e3_aggregator::ext::{PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension};
 use e3_aggregator::CommitteeFinalizer;
@@ -23,8 +23,8 @@ use e3_events::{
 };
 use e3_evm::{
     fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
+    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
+    InterfoldSolWriter, ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -73,6 +73,7 @@ pub struct CiphernodeBuilder {
     in_mem_store: Option<Addr<InMemStore>>,
     keyshare: Option<KeyshareKind>,
     logging: bool,
+    max_buffered_evm_events: usize,
     name: Option<String>,
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
@@ -138,6 +139,7 @@ impl CiphernodeBuilder {
             in_mem_store: None,
             keyshare: None,
             logging: false,
+            max_buffered_evm_events: 100_000,
             name: None,
             multithread_cache: None,
             multithread_concurrent_jobs: None,
@@ -377,6 +379,13 @@ impl CiphernodeBuilder {
         self
     }
 
+    /// Bound decoded EVM events retained per chain while initial sync orders historical and live
+    /// observations. Exhaustion fails startup instead of silently dropping chain history.
+    pub fn with_max_buffered_evm_events(mut self, limit: usize) -> Self {
+        self.max_buffered_evm_events = limit;
+        self
+    }
+
     /// Setup a ThresholdPlaintextAggregator
     pub fn with_threshold_plaintext_aggregation(mut self) -> Self {
         self.threshold_plaintext_agg = true;
@@ -470,6 +479,10 @@ impl CiphernodeBuilder {
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+        ensure!(
+            self.max_buffered_evm_events > 0,
+            "max_buffered_evm_events must be greater than zero"
+        );
         let local_bus = self.resolve_bus();
 
         // Optional event collectors for debugging / testing.
@@ -520,7 +533,7 @@ impl CiphernodeBuilder {
         E3LifecycleCoordinator::attach(&bus, store.clone()).await?;
 
         // Setup EVM contract event listeners
-        let evm_config = self.setup_evm_system(&mut provider_cache, &bus).await?;
+        let (evm_config, evm_gateways) = self.setup_evm_system(&mut provider_cache, &bus).await?;
 
         // Fetch on-chain ZK/slashing configuration
         let (dkg_fold_verifier_by_chain, accusation_vote_validity_by_chain) =
@@ -549,14 +562,17 @@ impl CiphernodeBuilder {
         setup_net(topic, bus.clone(), eventstore.ts(), interface)?;
 
         // Run the sync routine
-        sync(
-            &bus,
-            &evm_config,
-            &repositories,
-            &aggregate_config,
-            &eventstore.seq(),
-        )
-        .await?;
+        let seq_eventstore = eventstore.seq();
+        tokio::try_join!(
+            sync(
+                &bus,
+                &evm_config,
+                &repositories,
+                &aggregate_config,
+                &seq_eventstore,
+            ),
+            wait_for_evm_gateways(evm_gateways),
+        )?;
 
         Ok(CiphernodeHandle::new(
             addr.to_owned(),
@@ -635,13 +651,14 @@ impl CiphernodeBuilder {
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
-    ) -> Result<EvmEventConfig> {
+    ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
             &self.chains,
             provider_cache,
             bus,
             &self.contract_components,
             self.pubkey_agg,
+            self.max_buffered_evm_events,
         )
         .await
     }
@@ -918,8 +935,10 @@ async fn setup_evm_system(
     bus: &BusHandle,
     contract_components: &ContractComponents,
     pubkey_agg: bool,
-) -> Result<EvmEventConfig> {
+    max_buffered_evm_events: usize,
+) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let mut evm_config = EvmEventConfig::new();
+    let mut gateways = Vec::new();
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
@@ -930,7 +949,9 @@ async fn setup_evm_system(
             ProviderConfig::new(rpc_url, chain.rpc_auth.clone()).into_read_provider_factory();
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
-        system.with_provider_factory(provider_factory);
+        system
+            .with_provider_factory(provider_factory)
+            .with_buffer_limit(max_buffered_evm_events);
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
@@ -1028,8 +1049,18 @@ async fn setup_evm_system(
             }
         }
 
-        system.build();
+        gateways.push(system.build_with_readiness());
     }
 
-    Ok(evm_config)
+    Ok((evm_config, gateways))
+}
+
+async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<()> {
+    futures::future::try_join_all(
+        gateways
+            .into_iter()
+            .map(EvmChainGatewayHandle::wait_until_live),
+    )
+    .await?;
+    Ok(())
 }

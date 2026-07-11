@@ -64,6 +64,10 @@ pub struct NodeDefinition {
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
     #[serde(default = "default_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
+    /// Maximum decoded EVM events retained per chain while initial sync is ordering historical
+    /// and live data. Exceeding the bound fails startup; events are never silently discarded.
+    #[serde(default = "default_max_buffered_evm_events")]
+    pub max_buffered_evm_events: usize,
 }
 
 fn default_multithread_reserve_threads() -> usize {
@@ -72,6 +76,10 @@ fn default_multithread_reserve_threads() -> usize {
 
 fn default_startup_timeout_secs() -> u64 {
     30 * 60
+}
+
+fn default_max_buffered_evm_events() -> usize {
+    100_000
 }
 
 impl Default for NodeDefinition {
@@ -93,6 +101,7 @@ impl Default for NodeDefinition {
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: None,
             startup_timeout_secs: default_startup_timeout_secs(),
+            max_buffered_evm_events: default_max_buffered_evm_events(),
         }
     }
 }
@@ -179,6 +188,9 @@ impl AppConfig {
         let node = node.clone();
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
+        }
+        if node.max_buffered_evm_events == 0 {
+            bail!("node.max_buffered_evm_events must be greater than zero");
         }
 
         let config_dir_override = (node.config_dir != PathBuf::new())
@@ -368,6 +380,11 @@ impl AppConfig {
     /// Maximum time allowed for construction and initial synchronization.
     pub fn startup_timeout_secs(&self) -> u64 {
         self.node_def().startup_timeout_secs
+    }
+
+    /// Maximum per-chain decoded-event buffer used before EVM gateways become live.
+    pub fn max_buffered_evm_events(&self) -> usize {
+        self.node_def().max_buffered_evm_events
     }
 }
 
@@ -768,6 +785,7 @@ node:
             r#"
 node:
   startup_timeout_secs: 42
+  max_buffered_evm_events: 12345
 "#,
         )?;
         let configured = configured.into_scoped_with_defaults(
@@ -777,6 +795,7 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert_eq!(configured.startup_timeout_secs(), 42);
+        assert_eq!(configured.max_buffered_evm_events(), 12_345);
 
         let default = UnscopedAppConfig::default().into_scoped_with_defaults(
             "_default",
@@ -785,6 +804,7 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert_eq!(default.startup_timeout_secs(), 30 * 60);
+        assert_eq!(default.max_buffered_evm_events(), 100_000);
         Ok(())
     }
 
@@ -807,6 +827,28 @@ node:
         assert!(error
             .to_string()
             .contains("startup_timeout_secs must be greater than zero"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_evm_buffer_limit_is_rejected() -> Result<()> {
+        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  max_buffered_evm_events: 0
+"#,
+        )?;
+        let error = unscoped
+            .into_scoped_with_defaults(
+                "_default",
+                &PathBuf::from("/default/data"),
+                &PathBuf::from("/default/config"),
+                &PathBuf::from("/my/cwd"),
+            )
+            .expect_err("zero EVM buffer limit must fail configuration");
+        assert!(error
+            .to_string()
+            .contains("max_buffered_evm_events must be greater than zero"));
         Ok(())
     }
 

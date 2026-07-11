@@ -57,6 +57,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         .with_contract_interfold_full()
         .with_contract_bonding_registry()
         .with_multithread_config(reserve, concurrent_jobs)
+        .with_max_buffered_evm_events(config.max_buffered_evm_events())
         .with_contract_ciphernode_registry()
         .with_contract_slashing_manager()
         .with_trbfv()
