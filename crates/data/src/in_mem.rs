@@ -6,7 +6,7 @@
 
 use crate::{
     in_mem_kv_store::{DataOp, InMemKvStore},
-    ShutdownStore,
+    ShutdownStore, StoreIsEmpty,
 };
 use actix::{Actor, ActorContext, Handler, Message};
 use anyhow::Result;
@@ -72,6 +72,14 @@ impl Handler<InsertBatch> for InMemStore {
             );
         }
         Ok(())
+    }
+}
+
+impl Handler<StoreIsEmpty> for InMemStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, _: StoreIsEmpty, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.is_empty())
     }
 }
 

@@ -210,9 +210,10 @@ pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
     // framing and decode checks. Cross-check each persisted replay cursor.
     let repositories = get_repositories(config)?;
     let persisted_schema = repositories.schema_version().read().await?;
+    let has_existing_state = total_events > 0 || !repositories.store.is_empty().await?;
     report.push(check_schema_compatibility(
         persisted_schema,
-        total_events > 0,
+        has_existing_state,
     ));
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
@@ -237,24 +238,16 @@ pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
 /// Verify that this binary can safely interpret the persisted schema. A missing
 /// marker is acceptable only for a genuinely empty store; stamping a version on
 /// non-empty legacy bytes would assert compatibility without evidence.
-fn check_schema_compatibility(persisted: Option<u32>, has_events: bool) -> CheckResult {
+fn check_schema_compatibility(persisted: Option<u32>, has_existing_state: bool) -> CheckResult {
     let name = "schema";
-    match decide_schema_version(persisted, SCHEMA_VERSION) {
+    match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
         SchemaVersionDecision::Proceed => CheckResult::pass(
             name,
             format!("on-disk schema version {SCHEMA_VERSION} matches this binary"),
         ),
-        SchemaVersionDecision::WriteCurrent if !has_events => CheckResult::pass(
+        SchemaVersionDecision::WriteCurrent => CheckResult::pass(
             name,
             format!("empty store will be initialized at schema version {SCHEMA_VERSION}"),
-        ),
-        SchemaVersionDecision::WriteCurrent => CheckResult::fail(
-            name,
-            format!(
-                "non-empty event log has no schema marker; compatibility with schema version \
-                 {SCHEMA_VERSION} cannot be proven. Back up the stopped node and use an explicit \
-                 migration or controlled resync"
-            ),
         ),
         SchemaVersionDecision::Halt(reason) => CheckResult::fail(name, reason),
     }

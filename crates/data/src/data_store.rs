@@ -33,6 +33,10 @@ pub enum StoreAddr {
 #[rtype(result = "Result<()>")]
 pub struct ShutdownStore;
 
+#[derive(Message, Debug)]
+#[rtype(result = "Result<bool>")]
+pub(crate) struct StoreIsEmpty;
+
 impl StoreAddr {
     pub fn to_maybe_in_mem(&self) -> Option<&Addr<InMemStore>> {
         match self {
@@ -60,6 +64,17 @@ pub struct DataStore {
 }
 
 impl DataStore {
+    /// Return whether the complete backing key/value store contains no entries.
+    ///
+    /// This intentionally ignores the current scope: schema compatibility is a property of the
+    /// whole physical store, not one repository prefix.
+    pub async fn is_empty(&self) -> Result<bool> {
+        match &self.addr {
+            StoreAddr::InMem(store) => Ok(store.send(StoreIsEmpty).await??),
+            StoreAddr::Sled(store) => Ok(store.send(StoreIsEmpty).await??),
+        }
+    }
+
     /// Read data at the scope location
     pub async fn read<T>(&self) -> Result<Option<T>>
     where

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{ShutdownStore, SledDb};
+use crate::{ShutdownStore, SledDb, StoreIsEmpty};
 use actix::{Actor, ActorContext, Addr, Handler, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_events::{BusHandle, EType, ErrorDispatcher, Flush, InterfoldEvent, Unsequenced};
@@ -144,6 +144,15 @@ impl Handler<Get> for SledStore {
             error!("Attempt to get data from dropped db");
             None
         }
+    }
+}
+
+impl Handler<StoreIsEmpty> for SledStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, _: StoreIsEmpty, _: &mut Self::Context) -> Self::Result {
+        let db = self.db.as_ref().context("SledStore is closed")?;
+        Ok(db.is_empty())
     }
 }
 

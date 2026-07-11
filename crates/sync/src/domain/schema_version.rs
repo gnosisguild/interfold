@@ -33,9 +33,18 @@ pub enum SchemaVersionDecision {
 /// additive evolution and removed the previous `#[serde(default)]` shims, any
 /// version mismatch implies a breaking change with no migration path, so both
 /// older on-disk data (upgrade) and newer on-disk data (downgrade) halt.
-pub fn decide_schema_version(persisted: Option<u32>, current: u32) -> SchemaVersionDecision {
+pub fn decide_schema_version(
+    persisted: Option<u32>,
+    current: u32,
+    has_existing_state: bool,
+) -> SchemaVersionDecision {
     match persisted {
-        None => SchemaVersionDecision::WriteCurrent,
+        None if !has_existing_state => SchemaVersionDecision::WriteCurrent,
+        None => SchemaVersionDecision::Halt(format!(
+            "On-disk state has no schema marker, so compatibility with schema version {current} \
+             cannot be proven. Halting; back up the stopped node and use an explicit migration or \
+             controlled resync."
+        )),
         Some(v) if v == current => SchemaVersionDecision::Proceed,
         Some(v) if v > current => SchemaVersionDecision::Halt(format!(
             "On-disk schema version {v} is newer than this binary's supported version {current}. \
@@ -57,7 +66,7 @@ mod tests {
     #[test]
     fn fresh_store_writes_current() {
         assert_eq!(
-            decide_schema_version(None, 3),
+            decide_schema_version(None, 3, false),
             SchemaVersionDecision::WriteCurrent
         );
     }
@@ -65,14 +74,14 @@ mod tests {
     #[test]
     fn exact_match_proceeds() {
         assert_eq!(
-            decide_schema_version(Some(3), 3),
+            decide_schema_version(Some(3), 3, true),
             SchemaVersionDecision::Proceed
         );
     }
 
     #[test]
     fn older_on_disk_halts_as_upgrade() {
-        let d = decide_schema_version(Some(2), 3);
+        let d = decide_schema_version(Some(2), 3, true);
         match d {
             SchemaVersionDecision::Halt(msg) => {
                 assert!(msg.contains("older"));
@@ -84,11 +93,23 @@ mod tests {
 
     #[test]
     fn newer_on_disk_halts_as_downgrade() {
-        let d = decide_schema_version(Some(4), 3);
+        let d = decide_schema_version(Some(4), 3, true);
         match d {
             SchemaVersionDecision::Halt(msg) => {
                 assert!(msg.contains("newer"));
                 assert!(msg.contains("downgrade"));
+            }
+            other => panic!("expected Halt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_marker_on_existing_state_halts() {
+        let d = decide_schema_version(None, 3, true);
+        match d {
+            SchemaVersionDecision::Halt(message) => {
+                assert!(message.contains("no schema marker"));
+                assert!(message.contains("controlled resync"));
             }
             other => panic!("expected Halt, got {other:?}"),
         }

@@ -87,6 +87,10 @@ impl SledDb {
         Ok(res.map(|v| v.to_vec()))
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.db.is_empty()
+    }
+
     pub fn flush(&self) -> Result<()> {
         self.db.flush()?;
         Ok(())

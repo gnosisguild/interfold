@@ -69,6 +69,10 @@ impl InMemKvStore {
         self.db.get(&key.to_vec()).cloned()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.db.entries().is_empty()
+    }
+
     /// Returns the captured operation log.
     pub fn log(&self) -> Vec<DataOp> {
         self.log.clone()
@@ -103,8 +107,10 @@ mod tests {
     #[test]
     fn insert_get_remove() {
         let mut store = InMemKvStore::new(false);
+        assert!(store.is_empty());
         store.insert(b"a".to_vec(), b"1".to_vec(), None);
         store.insert(b"b".to_vec(), b"2".to_vec(), None);
+        assert!(!store.is_empty());
         assert_eq!(Some(b"1".to_vec()), store.get(b"a"));
         assert_eq!(Some(b"2".to_vec()), store.get(b"b"));
         assert_eq!(None, store.get(b"missing"));

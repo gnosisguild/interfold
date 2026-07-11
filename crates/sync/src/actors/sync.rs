@@ -10,7 +10,7 @@ use crate::domain::{
 };
 use crate::SyncRepositoryFactory;
 use actix::{Message, Recipient};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
     AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventContextAccessors,
@@ -36,7 +36,7 @@ pub async fn sync(
     // 0b. Verify the on-disk schema version is compatible with this binary
     //     before touching any persisted state, so an incompatible upgrade or
     //     downgrade halts loudly instead of silently loading garbage (H19/H20).
-    check_schema_version(repositories).await?;
+    preflight_schema_version(repositories, aggregate_config, eventstore).await?;
 
     // 1. Load snapsshot metadata
     info!("Loading snapshot metadata...");
@@ -184,14 +184,25 @@ fn seed_clock_from_replay(bus: &BusHandle, events: &[InterfoldEvent]) -> Result<
     }
     Ok(())
 }
-/// Verify the on-disk schema version against this binary and either stamp a
-/// fresh marker (first boot) or halt loudly on an incompatible upgrade or
-/// downgrade (H19/H20). Uses a synchronous write so the marker is durable
-/// before any further state is loaded.
-async fn check_schema_version(repositories: &Repositories) -> Result<()> {
+/// Validate or initialize the durable schema marker before runtime actors can write state.
+///
+/// A fresh empty store is stamped synchronously; incompatible or unversioned non-empty state
+/// halts. The check is idempotent so composition roots may run it before actor construction while
+/// [`sync`] retains the same guard for direct callers.
+pub async fn preflight_schema_version(
+    repositories: &Repositories,
+    aggregate_config: &AggregateConfig,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+) -> Result<()> {
     let repo = repositories.schema_version();
     let persisted = repo.read().await?;
-    match decide_schema_version(persisted, SCHEMA_VERSION) {
+    let has_existing_state = if persisted.is_none() {
+        !repositories.store.is_empty().await?
+            || event_logs_have_events(aggregate_config, eventstore).await?
+    } else {
+        false
+    };
+    match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
         SchemaVersionDecision::Proceed => Ok(()),
         SchemaVersionDecision::WriteCurrent => {
             info!("Stamping on-disk schema version {SCHEMA_VERSION}.");
@@ -202,6 +213,27 @@ async fn check_schema_version(repositories: &Repositories) -> Result<()> {
             bail!("Schema version check failed: {reason}");
         }
     }
+}
+
+async fn event_logs_have_events(
+    aggregate_config: &AggregateConfig,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+) -> Result<bool> {
+    let query = aggregate_config
+        .aggregates()
+        .into_iter()
+        .map(|aggregate_id| (aggregate_id, 1))
+        .collect();
+    let (response, receiver) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
+    eventstore
+        .send(EventStoreQueryBy::<SeqAgg>::new(CorrelationId::new(), query, response).with_limit(1))
+        .await
+        .context("event-store router stopped during schema preflight")?;
+    Ok(!receiver
+        .await
+        .context("event-store query stopped during schema preflight")?
+        .into_events()
+        .is_empty())
 }
 
 pub async fn collect_historical_evm_events(
@@ -262,9 +294,12 @@ impl SnapshotLoaded {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_historical_evm_events, seed_clock_from_replay};
+    use super::{
+        collect_historical_evm_events, preflight_schema_version, seed_clock_from_replay,
+    };
     use crate::domain::SyncPlanner;
     use e3_ciphernode_builder::EventSystem;
+    use e3_data::Repositories;
     use e3_events::{
         hlc::{Hlc, HlcTimestamp},
         EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
@@ -298,6 +333,42 @@ mod tests {
             })
             .collect();
         HistoricalEvmEventsReceived::new(events, chain_id)
+    }
+
+    #[actix::test]
+    async fn schema_preflight_rejects_unversioned_snapshot_state() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let store = system.store()?;
+        store.scope("legacy").write_sync(7_u64).await?;
+        let repositories = Repositories::from(&store);
+        let eventstore = system.eventstore_reader()?.seq();
+
+        let error =
+            preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore)
+                .await
+                .unwrap_err();
+
+        assert!(error.to_string().contains("no schema marker"));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn schema_preflight_rejects_unversioned_event_log() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let store = system.store()?;
+        let repositories = Repositories::from(&store);
+        let bus = system.handle()?.enable("unversioned-event-log");
+        bus.publish_without_context(e3_events::TestEvent::new("legacy", 1))?;
+        bus.flush_event_pipeline().await?;
+        let eventstore = system.eventstore_reader()?.seq();
+
+        let error =
+            preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore)
+                .await
+                .unwrap_err();
+
+        assert!(error.to_string().contains("no schema marker"));
+        Ok(())
     }
 
     #[actix::test]

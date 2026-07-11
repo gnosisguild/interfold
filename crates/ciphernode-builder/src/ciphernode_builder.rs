@@ -42,7 +42,7 @@ use e3_sortition::{
     FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
     SortitionRepositoryFactory,
 };
-use e3_sync::sync;
+use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkBackend};
 use libp2p::PeerId;
@@ -532,6 +532,12 @@ impl CiphernodeBuilder {
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
         let repositories = Arc::new(store.repositories());
+
+        // Establish storage compatibility before signers, actors, or forked runtime events can
+        // create durable state. Running this only inside `sync` is too late: actor startup can
+        // make a fresh store non-empty and cause it to look like unversioned legacy data.
+        preflight_schema_version(&repositories, &aggregate_config, &eventstore.seq()).await?;
+
         let mut provider_cache =
             provider_cache.with_write_support(Arc::clone(&self.cipher), Arc::clone(&repositories));
 
