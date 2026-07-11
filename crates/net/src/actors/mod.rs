@@ -20,6 +20,9 @@ pub use document_publisher::{
     handle_document_published_notification, handle_publish_document_requested, DocumentPublisher,
     EventConverter,
 };
+pub use net_event_buffer::{
+    NetEventBufferHandle, DEFAULT_MAX_BUFFERED_NET_BYTES, DEFAULT_MAX_BUFFERED_NET_EVENTS,
+};
 pub use net_event_translator::NetEventTranslator;
 
 // Internal wiring helpers used by `setup_net`; not part of the public API.

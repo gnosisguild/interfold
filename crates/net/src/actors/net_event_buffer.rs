@@ -4,15 +4,34 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use actix::{Actor, AsyncContext, Handler, Message};
-use anyhow::{anyhow, Result};
+use actix::{Actor, ActorContext, AsyncContext, Handler, Message};
+use anyhow::{anyhow, Context, Result};
 use e3_events::{
-    trap, BusHandle, EType, Event, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    BusHandle, EType, ErrorDispatcher, Event, EventSubscriber, EventType, InterfoldEvent,
+    InterfoldEventData,
 };
+use e3_utils::MAILBOX_LIMIT;
 use tokio::sync::broadcast::{self, error::RecvError};
+use tokio::sync::oneshot;
 
 use crate::domain::net_buffer::{BufferDecision, NetEventBufferState};
 use crate::events::NetEvent;
+
+pub const DEFAULT_MAX_BUFFERED_NET_EVENTS: usize = 1_024;
+pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
+
+pub struct NetEventBufferHandle {
+    readiness: oneshot::Receiver<std::result::Result<(), String>>,
+}
+
+impl NetEventBufferHandle {
+    pub async fn wait_until_running(self) -> Result<()> {
+        self.readiness
+            .await
+            .context("network event buffer stopped before reporting startup status")?
+            .map_err(anyhow::Error::msg)
+    }
+}
 
 /// Actor that controls a broadcast channel which will buffer NetEvents until it receives a
 /// `SyncEnded` event, at which time it releases all buffered events to the output channel. The
@@ -22,21 +41,30 @@ pub struct NetEventBuffer {
     input_rx: Option<broadcast::Receiver<NetEvent>>,
     output_tx: broadcast::Sender<NetEvent>,
     bus: BusHandle,
+    max_events: usize,
+    max_bytes: usize,
+    readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
 }
 
 impl NetEventBuffer {
-    pub fn setup(
+    pub(crate) fn setup_with_limits(
         bus: &BusHandle,
         input_rx: &broadcast::Receiver<NetEvent>,
-    ) -> broadcast::Receiver<NetEvent> {
+        max_events: usize,
+        max_bytes: usize,
+    ) -> (broadcast::Receiver<NetEvent>, NetEventBufferHandle) {
         let input_rx = input_rx.resubscribe();
-        let (output_tx, output_rx) = broadcast::channel(1024);
+        let (output_tx, output_rx) = broadcast::channel(max_events);
+        let (readiness_tx, readiness) = oneshot::channel();
 
         let actor = Self {
             state: NetEventBufferState::syncing(),
             input_rx: Some(input_rx),
-            output_tx: output_tx.clone(),
+            output_tx,
             bus: bus.clone(),
+            max_events,
+            max_bytes,
+            readiness: Some(readiness_tx),
         };
 
         let addr = actor.start();
@@ -44,7 +72,7 @@ impl NetEventBuffer {
         // Subscribe to InterfoldEvent on the bus
         bus.subscribe(EventType::SyncEnded, addr.clone().recipient());
 
-        output_rx
+        (output_rx, NetEventBufferHandle { readiness })
     }
 
     fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
@@ -59,6 +87,7 @@ impl NetEventBuffer {
         for event in pending {
             self.forward_event(event)?;
         }
+        self.signal_startup(Ok(()));
         Ok(())
     }
 
@@ -68,12 +97,30 @@ impl NetEventBuffer {
             .map_err(|e| anyhow!("Failed to forward event: {}", e))?;
         Ok(())
     }
+
+    fn signal_startup(&mut self, result: std::result::Result<(), String>) {
+        if let Some(sender) = self.readiness.take() {
+            let _ = sender.send(result);
+        }
+    }
+
+    fn fail_closed(&mut self, error: anyhow::Error, ctx: &mut actix::Context<Self>) {
+        let reason = format!(
+            "network event buffer failed closed: {error:#}; startup will stop rather than drop \
+             live protocol input. Increase the configured buffer only after measuring the sync \
+             backlog, or restore peer/RPC health and restart"
+        );
+        self.signal_startup(Err(reason.clone()));
+        self.bus.err(EType::Net, anyhow!(reason));
+        ctx.stop();
+    }
 }
 
 impl Actor for NetEventBuffer {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         // Spawn task to read from broadcast channel
         let addr = ctx.address();
         let mut input_rx = self.input_rx.take().expect("input_rx should be present");
@@ -81,12 +128,25 @@ impl Actor for NetEventBuffer {
         actix::spawn(async move {
             loop {
                 match input_rx.recv().await {
-                    Ok(event) => addr.do_send(IncomingNetEvent(event)),
-                    Err(RecvError::Lagged(_)) => continue,
+                    Ok(event) => {
+                        if addr.send(IncomingNetEvent(event)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(skipped)) => {
+                        let _ = addr.send(NetInputLagged(skipped)).await;
+                        break;
+                    }
                     Err(RecvError::Closed) => break,
                 }
             }
         });
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        self.signal_startup(Err(
+            "network event buffer stopped before startup synchronization completed".to_owned(),
+        ));
     }
 }
 
@@ -94,26 +154,53 @@ impl Actor for NetEventBuffer {
 #[rtype(result = "()")]
 struct IncomingNetEvent(NetEvent);
 
+#[derive(Message)]
+#[rtype(result = "()")]
+struct NetInputLagged(u64);
+
 impl Handler<IncomingNetEvent> for NetEventBuffer {
     type Result = ();
 
-    fn handle(&mut self, msg: IncomingNetEvent, _: &mut Self::Context) {
-        trap(EType::Net, &self.bus.clone(), || {
-            if let BufferDecision::Forward(event) = self.state.observe(msg.0) {
-                self.forward_event(event)?;
-            }
-            Ok(())
-        })
+    fn handle(&mut self, msg: IncomingNetEvent, ctx: &mut Self::Context) {
+        let event_bytes = if self.state.is_running() {
+            0
+        } else {
+            msg.0.buffered_size_bytes()
+        };
+        let result = self
+            .state
+            .observe(msg.0, event_bytes, self.max_events, self.max_bytes)
+            .and_then(|decision| match decision {
+                BufferDecision::Buffered => Ok(()),
+                BufferDecision::Forward(event) => self.forward_event(event),
+            });
+        if let Err(error) = result {
+            self.fail_closed(error, ctx);
+        }
+    }
+}
+
+impl Handler<NetInputLagged> for NetEventBuffer {
+    type Result = ();
+
+    fn handle(&mut self, msg: NetInputLagged, ctx: &mut Self::Context) {
+        self.fail_closed(
+            anyhow!(
+                "network event input skipped {} events because its bounded broadcast receiver lagged",
+                msg.0
+            ),
+            ctx,
+        );
     }
 }
 
 impl Handler<InterfoldEvent> for NetEventBuffer {
     type Result = ();
 
-    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            self.handle_interfold_event(msg)
-        })
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.handle_interfold_event(msg) {
+            self.fail_closed(error, ctx);
+        }
     }
 }
 
@@ -137,7 +224,12 @@ mod tests {
         let system = EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("test");
         let (input_tx, input_rx) = broadcast::channel(16);
-        let mut output_rx = NetEventBuffer::setup(&bus, &input_rx);
+        let (mut output_rx, handle) = NetEventBuffer::setup_with_limits(
+            &bus,
+            &input_rx,
+            DEFAULT_MAX_BUFFERED_NET_EVENTS,
+            DEFAULT_MAX_BUFFERED_NET_BYTES,
+        );
 
         // Send events while syncing - should be buffered
         let event1 = NetEvent::GossipData(GossipData::GossipBytes(vec![1, 2, 3]));
@@ -158,6 +250,7 @@ mod tests {
 
         // Send SyncEnded event
         bus.publish_without_context(SyncEnded::new()).unwrap();
+        handle.wait_until_running().await?;
 
         // Now buffered events should be forwarded
         let received1 = output_rx.recv().await.unwrap();
@@ -184,6 +277,54 @@ mod tests {
             matches!(received3, NetEvent::GossipData(GossipData::GossipBytes(ref bytes)) if bytes == &vec![7, 8, 9])
         );
 
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-overflow");
+        let (input_tx, input_rx) = broadcast::channel(16);
+        let (_output_rx, handle) =
+            NetEventBuffer::setup_with_limits(&bus, &input_rx, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
+
+        input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+        input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![2])))?;
+
+        let error = timeout(Duration::from_secs(1), handle.wait_until_running())
+            .await
+            .context("network buffer did not report overflow")?
+            .expect_err("overflow must fail startup readiness")
+            .to_string();
+        assert!(error.contains("events=1/1"), "{error}");
+        assert!(
+            error.contains("startup will stop rather than drop"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-byte-overflow");
+        let (input_tx, input_rx) = broadcast::channel(16);
+        let event = NetEvent::GossipData(GossipData::GossipBytes(vec![0; 32]));
+        let estimated_bytes = event.buffered_size_bytes();
+        let (_output_rx, handle) =
+            NetEventBuffer::setup_with_limits(&bus, &input_rx, 16, estimated_bytes - 1);
+
+        input_tx.send(event)?;
+
+        let error = timeout(Duration::from_secs(1), handle.wait_until_running())
+            .await
+            .context("network buffer did not report byte overflow")?
+            .expect_err("byte overflow must fail startup readiness")
+            .to_string();
+        assert!(
+            error.contains(&format!("next_event_bytes={estimated_bytes}")),
+            "{error}"
+        );
         Ok(())
     }
 }

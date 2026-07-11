@@ -25,33 +25,67 @@ pub(crate) enum BufferDecision {
 #[derive(Debug)]
 pub(crate) enum NetEventBufferState {
     Running,
-    Syncing(Vec<NetEvent>),
+    Syncing {
+        events: Vec<NetEvent>,
+        buffered_bytes: usize,
+    },
+    Failed(String),
 }
 
 impl NetEventBufferState {
     /// Create a new buffer in the syncing state.
     pub fn syncing() -> Self {
-        Self::Syncing(Vec::new())
+        Self::Syncing {
+            events: Vec::new(),
+            buffered_bytes: 0,
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running)
     }
 
     /// Observe an incoming event, deciding whether to buffer or forward it.
-    pub fn observe(&mut self, event: NetEvent) -> BufferDecision {
+    pub fn observe(
+        &mut self,
+        event: NetEvent,
+        event_bytes: usize,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> Result<BufferDecision> {
         match self {
-            Self::Syncing(buffer) => {
-                buffer.push(event);
-                BufferDecision::Buffered
+            Self::Syncing {
+                events,
+                buffered_bytes,
+            } => {
+                let next_bytes = buffered_bytes.checked_add(event_bytes).ok_or_else(|| {
+                    anyhow::anyhow!("network startup buffer byte accounting overflowed")
+                })?;
+                if events.len() >= max_events || next_bytes > max_bytes {
+                    let reason = format!(
+                        "network startup buffer limit exceeded before accepting the next event: \
+                         events={}/{max_events}, bytes={}/{max_bytes}, next_event_bytes={event_bytes}",
+                        events.len(), buffered_bytes
+                    );
+                    *self = Self::Failed(reason.clone());
+                    bail!(reason);
+                }
+                events.push(event);
+                *buffered_bytes = next_bytes;
+                Ok(BufferDecision::Buffered)
             }
-            Self::Running => BufferDecision::Forward(event),
+            Self::Running => Ok(BufferDecision::Forward(event)),
+            Self::Failed(reason) => bail!("network startup buffer already failed: {reason}"),
         }
     }
 
     /// Transition to the running state, returning the events buffered while syncing so the
     /// caller can flush them.
     pub fn run(&mut self) -> Result<Vec<NetEvent>> {
-        let Self::Syncing(buffer) = self else {
-            bail!("Cannot change state to Running when state is {:?}", self);
+        let Self::Syncing { events, .. } = self else {
+            bail!("Cannot change state to Running when state is {:?}", self)
         };
-        let buffer = std::mem::take(buffer);
+        let buffer = std::mem::take(events);
         *self = Self::Running;
         Ok(buffer)
     }
@@ -69,8 +103,14 @@ mod tests {
     #[test]
     fn buffers_events_while_syncing() {
         let mut state = NetEventBufferState::syncing();
-        assert!(matches!(state.observe(event(1)), BufferDecision::Buffered));
-        assert!(matches!(state.observe(event(2)), BufferDecision::Buffered));
+        assert!(matches!(
+            state.observe(event(1), 1, 2, 2).unwrap(),
+            BufferDecision::Buffered
+        ));
+        assert!(matches!(
+            state.observe(event(2), 1, 2, 2).unwrap(),
+            BufferDecision::Buffered
+        ));
         let flushed = state.run().unwrap();
         assert_eq!(flushed.len(), 2);
     }
@@ -80,7 +120,7 @@ mod tests {
         let mut state = NetEventBufferState::syncing();
         state.run().unwrap();
         assert!(matches!(
-            state.observe(event(7)),
+            state.observe(event(7), 1, 1, 1).unwrap(),
             BufferDecision::Forward(_)
         ));
     }
@@ -90,5 +130,25 @@ mod tests {
         let mut state = NetEventBufferState::syncing();
         state.run().unwrap();
         assert!(state.run().is_err());
+    }
+
+    #[test]
+    fn event_count_overflow_is_terminal() {
+        let mut state = NetEventBufferState::syncing();
+        state.observe(event(1), 1, 1, 10).unwrap();
+        let error = state.observe(event(2), 1, 1, 10).unwrap_err().to_string();
+        assert!(error.contains("events=1/1"), "{error}");
+        assert!(matches!(state, NetEventBufferState::Failed(_)));
+        assert!(state.run().is_err());
+    }
+
+    #[test]
+    fn byte_overflow_rejects_event_before_retaining_it() {
+        let mut state = NetEventBufferState::syncing();
+        state.observe(event(1), 4, 10, 5).unwrap();
+        let error = state.observe(event(2), 2, 10, 5).unwrap_err().to_string();
+        assert!(error.contains("bytes=4/5"), "{error}");
+        assert!(error.contains("next_event_bytes=2"), "{error}");
+        assert!(matches!(state, NetEventBufferState::Failed(_)));
     }
 }

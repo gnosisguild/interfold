@@ -274,6 +274,51 @@ pub enum PutOrStoreError {
 }
 
 impl NetEvent {
+    /// Conservative size used by the bounded startup buffer.
+    ///
+    /// The enum's inline storage is always counted. Heap-backed protocol payloads that can be
+    /// remotely large are added explicitly; small library error metadata remains covered by the
+    /// event-count limit.
+    pub(crate) fn buffered_size_bytes(&self) -> usize {
+        let dynamic = match self {
+            Self::GossipData(data) => serialized_size(data),
+            Self::GossipPublished { message_id, .. } => message_id.0.len(),
+            Self::DhtGetRecordSucceeded { value, .. } => value.len(),
+            Self::DhtGetRecordError { error, .. } => match error {
+                GetRecordError::NotFound { key, closest_peers } => {
+                    key.as_ref().len().saturating_add(
+                        closest_peers
+                            .len()
+                            .saturating_mul(std::mem::size_of::<PeerId>()),
+                    )
+                }
+                GetRecordError::QuorumFailed { key, records, .. } => {
+                    records
+                        .iter()
+                        .fold(key.as_ref().len(), |total, peer_record| {
+                            total
+                                .saturating_add(peer_record.record.key.as_ref().len())
+                                .saturating_add(peer_record.record.value.len())
+                        })
+                }
+                GetRecordError::Timeout { key } => key.as_ref().len(),
+            },
+            Self::GossipSubscribed { topic, .. } => topic.as_str().len(),
+            Self::IncomingRequest(request) => request.responder.request_len(),
+            Self::OutgoingRequestSucceeded(response) => serialized_size(&response.payload),
+            Self::OutgoingRequestFailed(response) => response.error.len(),
+            Self::GossipPublishError { .. }
+            | Self::DialError { .. }
+            | Self::ConnectionEstablished { .. }
+            | Self::OutgoingConnectionError { .. }
+            | Self::DhtPutRecordSucceeded { .. }
+            | Self::DhtPutRecordError { .. }
+            | Self::AllPeersDialed { .. } => 0,
+        };
+
+        std::mem::size_of::<Self>().saturating_add(dynamic)
+    }
+
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetEvent as N;
         match self {
@@ -288,6 +333,13 @@ impl NetEvent {
             _ => None,
         }
     }
+}
+
+fn serialized_size(value: &impl Serialize) -> usize {
+    bincode::serialized_size(value)
+        .ok()
+        .and_then(|size| usize::try_from(size).ok())
+        .unwrap_or(usize::MAX)
 }
 
 /// Payload that is dispatched as a net -> net gossip event from Kademlia. This event signals that

@@ -31,7 +31,7 @@ use e3_keyshare::ext::ThresholdKeyshareExtension;
 use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
-    create_channel_bridge, setup_libp2p_keypair, setup_net, setup_net_interface,
+    create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
     NetRepositoryFactory,
 };
 use e3_request::E3LifecycleCoordinator;
@@ -74,6 +74,8 @@ pub struct CiphernodeBuilder {
     keyshare: Option<KeyshareKind>,
     logging: bool,
     max_buffered_evm_events: usize,
+    max_buffered_net_bytes: usize,
+    max_buffered_net_events: usize,
     name: Option<String>,
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
@@ -140,6 +142,8 @@ impl CiphernodeBuilder {
             keyshare: None,
             logging: false,
             max_buffered_evm_events: 100_000,
+            max_buffered_net_bytes: 256 * 1024 * 1024,
+            max_buffered_net_events: 1_024,
             name: None,
             multithread_cache: None,
             multithread_concurrent_jobs: None,
@@ -386,6 +390,14 @@ impl CiphernodeBuilder {
         self
     }
 
+    /// Bound count and estimated bytes retained from the network while initial synchronization is
+    /// in progress. Exhaustion fails startup rather than dropping protocol input.
+    pub fn with_network_buffer_limits(mut self, max_events: usize, max_bytes: usize) -> Self {
+        self.max_buffered_net_events = max_events;
+        self.max_buffered_net_bytes = max_bytes;
+        self
+    }
+
     /// Setup a ThresholdPlaintextAggregator
     pub fn with_threshold_plaintext_aggregation(mut self) -> Self {
         self.threshold_plaintext_agg = true;
@@ -483,6 +495,14 @@ impl CiphernodeBuilder {
             self.max_buffered_evm_events > 0,
             "max_buffered_evm_events must be greater than zero"
         );
+        ensure!(
+            self.max_buffered_net_events > 0,
+            "max_buffered_net_events must be greater than zero"
+        );
+        ensure!(
+            self.max_buffered_net_bytes > 0,
+            "max_buffered_net_bytes must be greater than zero"
+        );
         let local_bus = self.resolve_bus();
 
         // Optional event collectors for debugging / testing.
@@ -559,7 +579,14 @@ impl CiphernodeBuilder {
         let topic = "interfold-gossip";
         let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
         let network_status = interface.status();
-        setup_net(topic, bus.clone(), eventstore.ts(), interface)?;
+        let net_buffer = setup_net_with_limits(
+            topic,
+            bus.clone(),
+            eventstore.ts(),
+            interface,
+            self.max_buffered_net_events,
+            self.max_buffered_net_bytes,
+        )?;
 
         // Run the sync routine
         let seq_eventstore = eventstore.seq();
@@ -572,6 +599,7 @@ impl CiphernodeBuilder {
                 &seq_eventstore,
             ),
             wait_for_evm_gateways(evm_gateways),
+            net_buffer.wait_until_running(),
         )?;
 
         Ok(CiphernodeHandle::new(

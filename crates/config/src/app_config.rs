@@ -68,6 +68,12 @@ pub struct NodeDefinition {
     /// and live data. Exceeding the bound fails startup; events are never silently discarded.
     #[serde(default = "default_max_buffered_evm_events")]
     pub max_buffered_evm_events: usize,
+    /// Maximum network events retained while startup synchronization is in progress.
+    #[serde(default = "default_max_buffered_net_events")]
+    pub max_buffered_net_events: usize,
+    /// Maximum estimated bytes retained by the network startup buffer.
+    #[serde(default = "default_max_buffered_net_bytes")]
+    pub max_buffered_net_bytes: usize,
 }
 
 fn default_multithread_reserve_threads() -> usize {
@@ -80,6 +86,14 @@ fn default_startup_timeout_secs() -> u64 {
 
 fn default_max_buffered_evm_events() -> usize {
     100_000
+}
+
+fn default_max_buffered_net_events() -> usize {
+    1_024
+}
+
+fn default_max_buffered_net_bytes() -> usize {
+    256 * 1024 * 1024
 }
 
 impl Default for NodeDefinition {
@@ -102,6 +116,8 @@ impl Default for NodeDefinition {
             multithread_concurrent_jobs: None,
             startup_timeout_secs: default_startup_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
+            max_buffered_net_events: default_max_buffered_net_events(),
+            max_buffered_net_bytes: default_max_buffered_net_bytes(),
         }
     }
 }
@@ -191,6 +207,12 @@ impl AppConfig {
         }
         if node.max_buffered_evm_events == 0 {
             bail!("node.max_buffered_evm_events must be greater than zero");
+        }
+        if node.max_buffered_net_events == 0 {
+            bail!("node.max_buffered_net_events must be greater than zero");
+        }
+        if node.max_buffered_net_bytes == 0 {
+            bail!("node.max_buffered_net_bytes must be greater than zero");
         }
 
         let config_dir_override = (node.config_dir != PathBuf::new())
@@ -385,6 +407,16 @@ impl AppConfig {
     /// Maximum per-chain decoded-event buffer used before EVM gateways become live.
     pub fn max_buffered_evm_events(&self) -> usize {
         self.node_def().max_buffered_evm_events
+    }
+
+    /// Maximum count retained by the network startup buffer.
+    pub fn max_buffered_net_events(&self) -> usize {
+        self.node_def().max_buffered_net_events
+    }
+
+    /// Maximum estimated bytes retained by the network startup buffer.
+    pub fn max_buffered_net_bytes(&self) -> usize {
+        self.node_def().max_buffered_net_bytes
     }
 }
 
@@ -786,6 +818,8 @@ node:
 node:
   startup_timeout_secs: 42
   max_buffered_evm_events: 12345
+  max_buffered_net_events: 321
+  max_buffered_net_bytes: 654321
 "#,
         )?;
         let configured = configured.into_scoped_with_defaults(
@@ -796,6 +830,8 @@ node:
         )?;
         assert_eq!(configured.startup_timeout_secs(), 42);
         assert_eq!(configured.max_buffered_evm_events(), 12_345);
+        assert_eq!(configured.max_buffered_net_events(), 321);
+        assert_eq!(configured.max_buffered_net_bytes(), 654_321);
 
         let default = UnscopedAppConfig::default().into_scoped_with_defaults(
             "_default",
@@ -805,6 +841,8 @@ node:
         )?;
         assert_eq!(default.startup_timeout_secs(), 30 * 60);
         assert_eq!(default.max_buffered_evm_events(), 100_000);
+        assert_eq!(default.max_buffered_net_events(), 1_024);
+        assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
         Ok(())
     }
 
@@ -849,6 +887,27 @@ node:
         assert!(error
             .to_string()
             .contains("max_buffered_evm_events must be greater than zero"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_network_buffer_limits_are_rejected() -> Result<()> {
+        for field in ["max_buffered_net_events", "max_buffered_net_bytes"] {
+            let yaml = format!("node:\n  {field}: 0\n");
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let error = unscoped
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .expect_err("zero network buffer limit must fail configuration");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected validation error for {field}: {error}"
+            );
+        }
         Ok(())
     }
 
