@@ -22,10 +22,10 @@ use e3_events::{
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
-use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_helpers::{compute_dkg_pk_commitment_from_public_key_bytes, CiphernodesCommitteeSize};
 use tracing::{error, info, warn};
 
-use crate::domain::proof_verification::validate_external_key;
+use crate::domain::proof_verification::{validate_external_key, validate_external_key_commitment};
 
 #[derive(Debug, Message)]
 #[rtype(result = "()")]
@@ -58,6 +58,9 @@ pub struct ProofVerificationActor {
     pending: HashMap<(E3id, u64), PendingVerification>,
     /// Tracks preset + committee per E3 so we can derive `artifacts_dir` for proof verification.
     presets: HashMap<E3id, (BfvPreset, CiphernodesCommitteeSize)>,
+    /// Canonical finalized committee in party-id order. A C0 signer must own the party slot whose
+    /// BFV key it advertises; recovering any valid ECDSA address is not sufficient.
+    committees: HashMap<E3id, Vec<Address>>,
 }
 
 impl ProofVerificationActor {
@@ -67,6 +70,7 @@ impl ProofVerificationActor {
             verifier,
             pending: HashMap::new(),
             presets: HashMap::new(),
+            committees: HashMap::new(),
         }
     }
 
@@ -76,7 +80,9 @@ impl ProofVerificationActor {
     ) -> Addr<Self> {
         let addr = Self::new(bus, verifier).start();
         bus.subscribe(EventType::CiphernodeSelected, addr.clone().into());
+        bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
         bus.subscribe(EventType::EncryptionKeyReceived, addr.clone().into());
+        bus.subscribe(EventType::E3RequestComplete, addr.clone().into());
         addr
     }
 
@@ -86,7 +92,44 @@ impl ProofVerificationActor {
         ctx: &Context<Self>,
     ) {
         let (msg, ec) = msg.into_components();
+        let pending_key = (msg.e3_id.clone(), msg.key.party_id);
+        if self.pending.contains_key(&pending_key) {
+            warn!(
+                e3_id = %msg.e3_id,
+                party_id = msg.key.party_id,
+                "C0 verification is already pending for party — ignoring duplicate"
+            );
+            return;
+        }
+
+        let Some((preset, committee_size)) = self.presets.get(&msg.e3_id).copied() else {
+            error!(
+                "No BfvPreset known for e3_id={} — cannot determine circuit artifacts directory. \
+                 This can happen if CiphernodeSelected was missed (e.g. after restart). Rejecting key from party {}.",
+                msg.e3_id, msg.key.party_id
+            );
+            return;
+        };
+        let Some(expected_signer) = self
+            .committees
+            .get(&msg.e3_id)
+            .and_then(|committee| {
+                usize::try_from(msg.key.party_id)
+                    .ok()
+                    .and_then(|i| committee.get(i))
+            })
+            .copied()
+        else {
+            error!(
+                e3_id = %msg.e3_id,
+                party_id = msg.key.party_id,
+                "No finalized committee member for C0 party slot — rejecting key"
+            );
+            return;
+        };
         let validated = match validate_external_key(
+            &msg.e3_id,
+            &expected_signer,
             msg.key.party_id,
             msg.key.proof.as_ref(),
             msg.key.signed_payload.as_ref(),
@@ -102,25 +145,35 @@ impl ProofVerificationActor {
             .proof
             .clone()
             .expect("proof present after validation");
+        let key_commitment =
+            match compute_dkg_pk_commitment_from_public_key_bytes(&msg.key.pk_bfv, preset) {
+                Ok(commitment) => commitment,
+                Err(err) => {
+                    error!(
+                        e3_id = %msg.e3_id,
+                        party_id = msg.key.party_id,
+                        "Could not bind C0 proof to advertised BFV key: {err} — rejecting key"
+                    );
+                    return;
+                }
+            };
+        if let Err(reason) =
+            validate_external_key_commitment(msg.key.party_id, &proof, &key_commitment)
+        {
+            error!("{reason}");
+            return;
+        }
 
         // Store the signed payload so we can reference it in the verification response
         self.pending.insert(
-            (msg.e3_id.clone(), msg.key.party_id),
+            pending_key,
             PendingVerification {
                 signed_payload: validated.signed_payload,
                 recovered_signer: validated.recovered_signer,
             },
         );
 
-        let Some((preset, committee)) = self.presets.get(&msg.e3_id).copied() else {
-            error!(
-                "No BfvPreset known for e3_id={} — cannot determine circuit artifacts directory. \
-                 This can happen if CiphernodeSelected was missed (e.g. after restart). Rejecting key from party {}.",
-                msg.e3_id, msg.key.party_id
-            );
-            return;
-        };
-        let artifacts_dir = preset.artifacts_dir_for_committee(committee.as_str());
+        let artifacts_dir = preset.artifacts_dir_for_committee(committee_size.as_str());
 
         let request = TypedEvent::new(
             ZkVerificationRequest {
@@ -181,8 +234,33 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                     }
                 }
             }
+            InterfoldEventData::CommitteeFinalized(mut data) => {
+                // The EVM decoder already emits canonical address order, but sorting again keeps
+                // this trust boundary correct for replayed/test-produced events as well.
+                data.sort_by_score();
+                let parsed: Result<Vec<Address>, _> =
+                    data.committee.iter().map(|node| node.parse()).collect();
+                match parsed {
+                    Ok(committee) => {
+                        self.committees.insert(data.e3_id, committee);
+                    }
+                    Err(err) => {
+                        error!(
+                            e3_id = %data.e3_id,
+                            "Finalized committee contains an invalid address: {err}; C0 keys will be rejected"
+                        );
+                    }
+                }
+            }
             InterfoldEventData::EncryptionKeyReceived(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                let e3_id = data.e3_id;
+                self.presets.remove(&e3_id);
+                self.committees.remove(&e3_id);
+                self.pending
+                    .retain(|(pending_e3, _), _| pending_e3 != &e3_id);
             }
             _ => (),
         }
