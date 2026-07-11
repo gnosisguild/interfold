@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, fmt, time::Instant};
 
 use chrono::{DateTime, Utc};
 use e3_events::{E3id, PartyId};
@@ -84,20 +84,39 @@ impl DocumentPublishingService {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentExpiryError {
+    AlreadyExpired,
+    OutOfRange,
+}
+
+impl fmt::Display for DocumentExpiryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyExpired => formatter.write_str("document expiry is not in the future"),
+            Self::OutOfRange => formatter.write_str("document expiry is outside Instant range"),
+        }
+    }
+}
+
+impl std::error::Error for DocumentExpiryError {}
+
 /// Convert a future UTC datetime into a monotonic [`Instant`] relative to now.
-///
-/// Returns `None` if the target has already passed.
-pub fn datetime_to_instant_from_now(target: DateTime<Utc>) -> Option<Instant> {
+pub fn datetime_to_instant_from_now(target: DateTime<Utc>) -> Result<Instant, DocumentExpiryError> {
     let now_datetime = Utc::now();
     let now_instant = Instant::now();
 
     if target <= now_datetime {
-        return None; // Already expired
+        return Err(DocumentExpiryError::AlreadyExpired);
     }
 
     let duration = target.signed_duration_since(now_datetime);
-    let std_duration = duration.to_std().ok()?;
-    now_instant.checked_add(std_duration)
+    let std_duration = duration
+        .to_std()
+        .map_err(|_| DocumentExpiryError::OutOfRange)?;
+    now_instant
+        .checked_add(std_duration)
+        .ok_or(DocumentExpiryError::OutOfRange)
 }
 
 #[cfg(test)]
@@ -157,12 +176,15 @@ mod tests {
     }
 
     #[test]
-    fn datetime_helper_is_none_for_past() {
-        assert!(datetime_to_instant_from_now(Utc::now() - chrono::Duration::days(1)).is_none());
+    fn datetime_helper_rejects_past_expiry() {
+        assert_eq!(
+            datetime_to_instant_from_now(Utc::now() - chrono::Duration::days(1)),
+            Err(DocumentExpiryError::AlreadyExpired)
+        );
     }
 
     #[test]
-    fn datetime_helper_is_some_for_future() {
-        assert!(datetime_to_instant_from_now(Utc::now() + chrono::Duration::days(1)).is_some());
+    fn datetime_helper_accepts_future_expiry() {
+        assert!(datetime_to_instant_from_now(Utc::now() + chrono::Duration::days(1)).is_ok());
     }
 }

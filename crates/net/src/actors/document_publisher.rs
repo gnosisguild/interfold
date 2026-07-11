@@ -15,7 +15,7 @@ use crate::{
     ContentHash,
 };
 use actix::prelude::*;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_events::{
     prelude::*, trap, trap_fut, BusHandle, CiphernodeSelected, CorrelationId, DecryptionKeyShared,
     DocumentReceived, E3RequestComplete, E3id, EType, EncryptionKeyCreated, EventSource, EventType,
@@ -248,7 +248,10 @@ pub async fn handle_publish_document_requested(
 ) -> Result<()> {
     let value = event.value;
     let key = ContentHash::from_content(&value);
-    let expires = datetime_to_instant_from_now(event.meta.expires_at);
+    let expires = Some(
+        datetime_to_instant_from_now(event.meta.expires_at)
+            .context("refusing to publish an expired DHT document")?,
+    );
 
     retry_with_backoff(
         || {
@@ -673,6 +676,41 @@ mod tests {
 
         Ok(())
     }
+
+    #[actix::test]
+    async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("expired-document");
+        let (net_cmd_tx, mut net_cmd_rx) = mpsc::channel(1);
+        let (_net_evt_tx, net_evt_rx) = broadcast::channel(1);
+        let event = PublishDocumentRequested {
+            meta: DocumentMeta::new(
+                E3id::new("expired", 1),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() - chrono::Duration::seconds(1)),
+            ),
+            value: ArcBytes::from_bytes(b"stale"),
+        };
+
+        let error = handle_publish_document_requested(
+            net_cmd_tx,
+            Arc::new(net_evt_rx),
+            event,
+            "topic",
+            bus,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("expiry is not in the future"));
+        assert!(matches!(
+            net_cmd_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected)
+        ));
+        Ok(())
+    }
+
     #[actix::test]
     async fn test_get_document_fails_with_exponential_backoff() -> Result<()> {
         let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, _) =
