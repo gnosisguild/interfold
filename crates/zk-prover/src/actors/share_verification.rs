@@ -55,6 +55,9 @@ use crate::domain::share_verification::{
 /// [`ShareVerificationComplete`] with the final dishonest party set.
 pub struct ShareVerificationActor {
     bus: BusHandle,
+    /// Canonical finalized committees in party-id order. Every signed C1-C4/C6 proof must recover
+    /// to the address that owns its outer `sender_party_id` slot.
+    committees: HashMap<E3id, Vec<Address>>,
     /// Tracks pending ZK verifications by correlation ID.
     pending: HashMap<CorrelationId, PendingVerification>,
     /// Tracks pending consistency checks by correlation ID (between ECDSA and ZK).
@@ -65,6 +68,7 @@ impl ShareVerificationActor {
     pub fn new(bus: &BusHandle) -> Self {
         Self {
             bus: bus.clone(),
+            committees: HashMap::new(),
             pending: HashMap::new(),
             pending_consistency: HashMap::new(),
         }
@@ -72,6 +76,7 @@ impl ShareVerificationActor {
 
     pub fn setup(bus: &BusHandle) -> Addr<Self> {
         let addr = Self::new(bus).start();
+        bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
         bus.subscribe(EventType::ShareVerificationDispatched, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
@@ -79,6 +84,7 @@ impl ShareVerificationActor {
             EventType::CommitmentConsistencyCheckComplete,
             addr.clone().into(),
         );
+        bus.subscribe(EventType::E3RequestComplete, addr.clone().into());
         addr
     }
 
@@ -154,7 +160,16 @@ impl ShareVerificationActor {
         // Pure ECDSA validation + proof-commitment preparation lives in the
         // domain service; the actor only emits failures, stores pending state,
         // and publishes the consistency-check request.
-        let outcome = ShareVerifier::validate_and_prepare(&party_proofs, &e3_id_str, label);
+        let committee = self.committees.get(&e3_id).map(Vec::as_slice);
+        let outcome = ShareVerifier::validate_and_prepare(
+            &party_proofs,
+            &e3_id_str,
+            &kind,
+            label,
+            committee,
+            params_preset,
+            committee_size,
+        );
 
         for failure in &outcome.failures {
             self.emit_signed_proof_failed(
@@ -576,6 +591,28 @@ impl Handler<InterfoldEvent> for ShareVerificationActor {
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
         match msg {
+            InterfoldEventData::CommitteeFinalized(mut data) => {
+                // Mirror the C0 verifier's canonical ordering at this trust boundary. Replayed and
+                // test-produced events are not assumed to have passed through the EVM decoder.
+                data.sort_by_score();
+                match data
+                    .committee
+                    .iter()
+                    .map(|member| member.parse())
+                    .collect::<Result<Vec<Address>, _>>()
+                {
+                    Ok(committee) => {
+                        self.committees.insert(data.e3_id, committee);
+                    }
+                    Err(error) => {
+                        error!(
+                            e3_id = %data.e3_id,
+                            %error,
+                            "Finalized committee contains an invalid address; share proofs will be rejected"
+                        );
+                    }
+                }
+            }
             InterfoldEventData::ShareVerificationDispatched(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -587,6 +624,13 @@ impl Handler<InterfoldEvent> for ShareVerificationActor {
             }
             InterfoldEventData::CommitmentConsistencyCheckComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                let e3_id = data.e3_id;
+                self.committees.remove(&e3_id);
+                self.pending.retain(|_, pending| pending.e3_id != e3_id);
+                self.pending_consistency
+                    .retain(|_, pending| pending.e3_id != e3_id);
             }
             _ => (),
         }

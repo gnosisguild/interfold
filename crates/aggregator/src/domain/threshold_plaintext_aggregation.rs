@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use e3_events::CircuitName;
 use e3_events::{
     DecryptionAggregationJobRequest, PartyProofsToVerify, Proof, Seed, SignedProofPayload,
@@ -177,6 +177,17 @@ impl ThresholdPlaintextAggregation {
     ) -> Result<ThresholdPlaintextAggregatorState> {
         info!("Adding share for party_id={}", party_id);
         let current: Collecting = state.try_into()?;
+        let expected_outputs = current.ciphertext_output.len();
+        ensure!(
+            share.len() == expected_outputs,
+            "party {party_id} supplied {} decryption shares for {expected_outputs} ciphertext outputs",
+            share.len()
+        );
+        ensure!(
+            signed_decryption_proofs.len() == expected_outputs,
+            "party {party_id} supplied {} C6 proofs for {expected_outputs} ciphertext outputs",
+            signed_decryption_proofs.len()
+        );
         let ciphertext_output = current.ciphertext_output;
         let threshold_m = current.threshold_m;
         let threshold_n = current.threshold_n;
@@ -447,6 +458,21 @@ mod tests {
         ArcBytes::from_bytes(&[b])
     }
 
+    fn c6_proof(marker: u8) -> SignedProofPayload {
+        SignedProofPayload {
+            payload: e3_events::ProofPayload {
+                e3_id: e3_events::E3id::new("1", 1),
+                proof_type: e3_events::ProofType::C6ThresholdShareDecryption,
+                proof: Proof::new(
+                    CircuitName::ThresholdShareDecryption,
+                    ab(marker),
+                    ab(marker),
+                ),
+            },
+            signature: ab(marker),
+        }
+    }
+
     fn collecting(threshold_m: u64, threshold_n: u64) -> ThresholdPlaintextAggregatorState {
         ThresholdPlaintextAggregatorState::init(
             threshold_m,
@@ -461,7 +487,8 @@ mod tests {
     fn add_share_below_required_stays_collecting() {
         let state = collecting(1, 3);
         let next =
-            ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(10)], vec![], 3).unwrap();
+            ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(10)], vec![c6_proof(10)], 3)
+                .unwrap();
         match next {
             ThresholdPlaintextAggregatorState::Collecting(c) => {
                 assert_eq!(c.shares.len(), 1);
@@ -479,7 +506,7 @@ mod tests {
                 state,
                 pid,
                 vec![ab(pid as u8)],
-                vec![],
+                vec![c6_proof(pid as u8)],
                 3,
             )
             .unwrap();
@@ -514,7 +541,7 @@ mod tests {
                 state,
                 pid,
                 vec![ab(pid as u8)],
-                vec![],
+                vec![c6_proof(pid as u8)],
                 3,
             )
             .unwrap();
@@ -538,7 +565,7 @@ mod tests {
                 state,
                 pid,
                 vec![ab(pid as u8)],
-                vec![],
+                vec![c6_proof(pid as u8)],
                 3,
             )
             .unwrap();
@@ -585,6 +612,24 @@ mod tests {
             next,
             ThresholdPlaintextAggregatorState::Complete(_)
         ));
+    }
+
+    #[test]
+    fn add_share_rejects_c6_share_or_proof_count_mismatch() {
+        let missing_share = ThresholdPlaintextAggregation::add_share(
+            collecting(1, 3),
+            0,
+            vec![],
+            vec![c6_proof(1)],
+            3,
+        )
+        .expect_err("one decryption share is required for one ciphertext");
+        assert!(missing_share.to_string().contains("decryption shares"));
+
+        let missing_proof =
+            ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![ab(1)], vec![], 3)
+                .expect_err("one C6 proof is required for one ciphertext");
+        assert!(missing_proof.to_string().contains("C6 proofs"));
     }
 
     #[test]

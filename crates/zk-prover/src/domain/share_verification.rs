@@ -26,7 +26,7 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{info, warn};
 
 /// Trait for party types whose signed proofs can be ECDSA-validated and ZK-verified.
-pub(crate) trait VerifiableParty: Clone {
+pub(crate) trait VerifiableParty: Clone + PartialEq {
     fn party_id(&self) -> u64;
     fn signed_proofs(&self) -> Vec<SignedProofPayload>;
 }
@@ -194,17 +194,95 @@ impl ShareVerifier {
         keccak256(&msg).into()
     }
 
+    /// Check that a party supplied the canonical proof-type layout for this protocol phase.
+    ///
+    /// C2/C3 counts are derived from the DKG parameter preset. Variable C4b and C6 counts are
+    /// checked against trusted local state by their producers. This trust-boundary check prevents
+    /// a signed proof for another phase (or a duplicated singleton proof) from satisfying the
+    /// current phase merely because its self-declared [`ProofType`] maps to a valid circuit.
+    fn has_canonical_proof_shape(
+        kind: &VerificationKind,
+        signed_proofs: &[SignedProofPayload],
+        params_preset: e3_fhe_params::BfvPreset,
+    ) -> bool {
+        match kind {
+            VerificationKind::PkGenerationProofs => {
+                signed_proofs.len() == 1
+                    && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
+            }
+            VerificationKind::ShareProofs => {
+                // Canonical order is C2a, C2b, C3a x L, C3b x L. Share encryption uses the
+                // DKG counterpart of a threshold preset (or the preset itself when already DKG).
+                let dkg_preset = params_preset.dkg_counterpart().unwrap_or(params_preset);
+                let num_moduli = dkg_preset.metadata().num_moduli;
+                signed_proofs.len() == 2 + (2 * num_moduli)
+                    && signed_proofs[0].payload.proof_type == ProofType::C2aSkShareComputation
+                    && signed_proofs[1].payload.proof_type == ProofType::C2bESmShareComputation
+                    && signed_proofs[2..2 + num_moduli]
+                        .iter()
+                        .all(|signed| signed.payload.proof_type == ProofType::C3aSkShareEncryption)
+                    && signed_proofs[2 + num_moduli..]
+                        .iter()
+                        .all(|signed| signed.payload.proof_type == ProofType::C3bESmShareEncryption)
+            }
+            VerificationKind::DecryptionProofs => {
+                // PartyShareDecryptionProofsToVerify has one distinguished C4a slot followed
+                // by one or more C4b slots. The producer checks the exact C4b count against
+                // `es_poly_sum`; here we bind every signed payload to its structural role because
+                // C4a/C4b share a CircuitName.
+                signed_proofs.len() >= 2
+                    && signed_proofs[0].payload.proof_type == ProofType::C4aSkShareDecryption
+                    && signed_proofs[1..]
+                        .iter()
+                        .all(|signed| signed.payload.proof_type == ProofType::C4bESmShareDecryption)
+            }
+            VerificationKind::ThresholdDecryptionProofs => {
+                !signed_proofs.is_empty()
+                    && signed_proofs.iter().all(|signed| {
+                        signed.payload.proof_type == ProofType::C6ThresholdShareDecryption
+                    })
+            }
+        }
+    }
+
     /// Validate ECDSA properties for a set of signed proofs from one party:
     /// 1. e3_id match
     /// 2. Signature recovery (valid ECDSA)
-    /// 3. Signer consistency (all proofs from same address)
-    /// 4. Circuit name matches expected ProofType circuits
+    /// 3. Recovered signer owns the canonical finalized-committee party slot
+    /// 4. Signer consistency (all proofs from same address)
+    /// 5. Circuit name matches expected ProofType circuits
     pub(crate) fn ecdsa_validate_signed_proofs(
         sender_party_id: u64,
         signed_proofs: &[SignedProofPayload],
         e3_id_str: &str,
         label: &str,
+        expected_signer: Option<Address>,
     ) -> EcdsaPartyResult {
+        if signed_proofs.is_empty() {
+            info!(
+                "{} party {} supplied an empty signed-proof bundle",
+                label, sender_party_id
+            );
+            return EcdsaPartyResult {
+                passed: false,
+                failed_payload: None,
+            };
+        }
+
+        let Some(expected_signer) = expected_signer else {
+            info!(
+                "{} party {} has no canonical finalized-committee slot",
+                label, sender_party_id
+            );
+            return EcdsaPartyResult {
+                passed: false,
+                // The outer party id is not part of the signed payload. Its absence from the
+                // canonical committee is therefore a structural dispatch failure, not
+                // self-authenticating evidence that can safely be attributed to the signer.
+                failed_payload: None,
+            };
+        };
+
         let mut expected_addr: Option<Address> = None;
 
         for signed in signed_proofs {
@@ -223,7 +301,17 @@ impl ShareVerifier {
             // 2. Signature recovery
             match signed.recover_address() {
                 Ok(addr) => {
-                    // 3. Signer consistency
+                    // 3. Canonical party ownership and signer consistency
+                    if addr != expected_signer {
+                        info!(
+                            "{} proof signer {} does not own party {} (expected {})",
+                            label, addr, sender_party_id, expected_signer
+                        );
+                        return EcdsaPartyResult {
+                            passed: false,
+                            failed_payload: Some((signed.clone(), Some(addr))),
+                        };
+                    }
                     match &expected_addr {
                         Some(ea) if *ea != addr => {
                             info!(
@@ -277,17 +365,102 @@ impl ShareVerifier {
     pub(crate) fn validate_and_prepare<P: VerifiableParty>(
         party_proofs: &[P],
         e3_id_str: &str,
+        kind: &VerificationKind,
         label: &str,
+        committee: Option<&[Address]>,
+        params_preset: e3_fhe_params::BfvPreset,
+        committee_size: CiphernodesCommitteeSize,
     ) -> EcdsaValidationOutcome<P> {
         let mut ecdsa_dishonest = HashSet::new();
         let mut failures = Vec::new();
         let mut ecdsa_passed_parties = Vec::new();
         let mut party_addresses: HashMap<u64, Address> = HashMap::new();
 
+        // A finalized committee is a one-to-one party-slot map. The on-chain sortition path
+        // guarantees unique operators, but replayed/test-produced events also cross this
+        // boundary. Refuse an ambiguous map rather than allowing one signer to own two slots.
+        let expected_committee_n = committee_size.values().n;
+        let committee = committee.filter(|members| {
+            let unique_members: HashSet<Address> = members.iter().copied().collect();
+            let is_unique = unique_members.len() == members.len();
+            let has_expected_size = members.len() == expected_committee_n;
+            if !is_unique {
+                warn!(
+                    "{} finalized committee contains duplicate addresses; rejecting proof batch",
+                    label
+                );
+            }
+            if !has_expected_size {
+                warn!(
+                    "{} finalized committee has {} members, expected {}; rejecting proof batch",
+                    label,
+                    members.len(),
+                    expected_committee_n
+                );
+            }
+            is_unique && has_expected_size
+        });
+
+        // Collapse byte-identical replayed bundles idempotently. Two different bundles for the
+        // same outer party id are ambiguous and are both excluded, so a canonical party can
+        // contribute at most one verification result and one set of passed-proof emissions.
+        let mut unique_parties: Vec<&P> = Vec::new();
+        let mut party_positions: HashMap<u64, usize> = HashMap::new();
+        let mut conflicting_party_ids = HashSet::new();
         for party in party_proofs {
+            match party_positions.get(&party.party_id()).copied() {
+                Some(position) if unique_parties[position] == party => {
+                    warn!(
+                        "{} duplicate replay for party {} ignored",
+                        label,
+                        party.party_id()
+                    );
+                }
+                Some(_) => {
+                    warn!(
+                        "{} conflicting proof bundles for party {}; rejecting that party",
+                        label,
+                        party.party_id()
+                    );
+                    conflicting_party_ids.insert(party.party_id());
+                }
+                None => {
+                    party_positions.insert(party.party_id(), unique_parties.len());
+                    unique_parties.push(party);
+                }
+            }
+        }
+
+        for party in unique_parties {
+            if conflicting_party_ids.contains(&party.party_id()) {
+                ecdsa_dishonest.insert(party.party_id());
+                continue;
+            }
+
             let proofs = party.signed_proofs();
-            let result =
-                Self::ecdsa_validate_signed_proofs(party.party_id(), &proofs, e3_id_str, label);
+            if !Self::has_canonical_proof_shape(kind, &proofs, params_preset) {
+                info!(
+                    "{} party {} supplied a non-canonical proof-type multiplicity/order",
+                    label,
+                    party.party_id()
+                );
+                // The verification kind and outer bundle are not signed. Exclude the party,
+                // but do not manufacture slash evidence from an otherwise valid signed proof.
+                ecdsa_dishonest.insert(party.party_id());
+                continue;
+            }
+
+            let expected_signer = usize::try_from(party.party_id())
+                .ok()
+                .and_then(|party_id| committee.and_then(|members| members.get(party_id)))
+                .copied();
+            let result = Self::ecdsa_validate_signed_proofs(
+                party.party_id(),
+                &proofs,
+                e3_id_str,
+                label,
+                expected_signer,
+            );
             if result.passed {
                 ecdsa_passed_parties.push(party.clone());
             } else {
@@ -303,13 +476,11 @@ impl ShareVerifier {
         }
 
         // Store recovered addresses for passed parties.
-        for party in party_proofs {
-            if !ecdsa_dishonest.contains(&party.party_id()) {
-                let proofs = party.signed_proofs();
-                if let Some(first_signed) = proofs.first() {
-                    if let Ok(addr) = first_signed.recover_address() {
-                        party_addresses.insert(party.party_id(), addr);
-                    }
+        for party in &ecdsa_passed_parties {
+            let proofs = party.signed_proofs();
+            if let Some(first_signed) = proofs.first() {
+                if let Ok(addr) = first_signed.recover_address() {
+                    party_addresses.insert(party.party_id(), addr);
                 }
             }
         }
@@ -401,11 +572,45 @@ impl ShareVerifier {
         let mut dishonest: BTreeSet<u64> = pre_dishonest;
         dishonest.extend(ecdsa_dishonest);
 
-        // Cross-check: every dispatched party must appear in results.
-        let returned_party_ids: HashSet<u64> =
-            zk_results.iter().map(|r| r.sender_party_id).collect();
+        // Canonicalize the worker response before tallying. Exact duplicate responses are
+        // harmless replays and are collapsed; conflicting responses for one party fail closed.
+        // This also guarantees at most one Passed/Failed emission per canonical party.
+        let mut unique_results: HashMap<u64, &PartyVerificationResult> = HashMap::new();
+        let mut result_order = Vec::new();
+        let mut conflicting_party_ids = HashSet::new();
+        for result in zk_results {
+            if !dispatched_party_ids.contains(&result.sender_party_id) {
+                warn!(
+                    "ZK result for party {} was not dispatched — ignoring",
+                    result.sender_party_id
+                );
+                continue;
+            }
+
+            match unique_results.get(&result.sender_party_id).copied() {
+                Some(existing) if existing == result => {
+                    warn!(
+                        "Duplicate ZK result replay for party {} ignored",
+                        result.sender_party_id
+                    );
+                }
+                Some(_) => {
+                    warn!(
+                        "Conflicting ZK results for party {} — treating as dishonest",
+                        result.sender_party_id
+                    );
+                    conflicting_party_ids.insert(result.sender_party_id);
+                }
+                None => {
+                    unique_results.insert(result.sender_party_id, result);
+                    result_order.push(result.sender_party_id);
+                }
+            }
+        }
+
+        // Cross-check: every dispatched party must appear exactly once after replay collapse.
         for &dispatched_pid in dispatched_party_ids {
-            if !returned_party_ids.contains(&dispatched_pid) {
+            if !unique_results.contains_key(&dispatched_pid) {
                 warn!(
                     "Party {} was dispatched for ZK verification but missing from results — treating as dishonest",
                     dispatched_pid
@@ -415,15 +620,17 @@ impl ShareVerifier {
         }
 
         let mut emissions = Vec::new();
-        for result in zk_results {
-            // Ignore results for parties we never dispatched (defense-in-depth).
-            if !dispatched_party_ids.contains(&result.sender_party_id) {
-                warn!(
-                    "ZK result for party {} was not dispatched — ignoring",
-                    result.sender_party_id
-                );
+        for party_id in result_order {
+            if conflicting_party_ids.contains(&party_id) {
+                dishonest.insert(party_id);
                 continue;
             }
+            let Some(result) = unique_results.get(&party_id) else {
+                // `result_order` and `unique_results` are populated together above. Keep this
+                // boundary panic-free if that implementation changes later.
+                dishonest.insert(party_id);
+                continue;
+            };
             if !result.all_verified {
                 dishonest.insert(result.sender_party_id);
                 if let Some(ref signed) = result.failed_signed_payload {
@@ -451,9 +658,39 @@ mod tests {
     use super::*;
     use alloy::signers::local::PrivateKeySigner;
     use e3_events::{Proof, ProofPayload, ProofType};
+    use e3_fhe_params::BfvPreset;
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
+    }
+
+    fn minimum_committee(mut members: Vec<Address>) -> Vec<Address> {
+        while members.len() < CiphernodesCommitteeSize::Minimum.values().n {
+            let candidate = signer().address();
+            if !members.contains(&candidate) {
+                members.push(candidate);
+            }
+        }
+        members
+    }
+
+    fn signed_proof(
+        s: &PrivateKeySigner,
+        e3_id: &E3id,
+        proof_type: ProofType,
+        marker: u8,
+    ) -> SignedProofPayload {
+        let proof = Proof::new(
+            proof_type.circuit_names()[0],
+            ArcBytes::from_bytes(&[marker, 2, 3]),
+            ArcBytes::from_bytes(&[4, 5, marker]),
+        );
+        let payload = ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type,
+            proof,
+        };
+        SignedProofPayload::sign(payload, s).expect("sign")
     }
 
     /// Build a signed C1 (PkGeneration) proof for `party_id` under `e3_id`,
@@ -461,6 +698,9 @@ mod tests {
     fn signed_pk(s: &PrivateKeySigner, e3_id: &E3id, wrong_circuit: bool) -> SignedProofPayload {
         use e3_events::CircuitName;
         let proof_type = ProofType::C1PkGeneration;
+        if !wrong_circuit {
+            return signed_proof(s, e3_id, proof_type, 1);
+        }
         let circuit = if wrong_circuit {
             CircuitName::PkBfv
         } else {
@@ -488,7 +728,13 @@ mod tests {
         let s = signer();
         let e3 = e3();
         let p = signed_pk(&s, &e3, false);
-        let res = ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], &e3.to_string(), "C1");
+        let res = ShareVerifier::ecdsa_validate_signed_proofs(
+            7,
+            &[p],
+            &e3.to_string(),
+            "C1",
+            Some(s.address()),
+        );
         assert!(res.passed);
         assert!(res.failed_payload.is_none());
     }
@@ -497,7 +743,8 @@ mod tests {
     fn ecdsa_fails_on_wrong_e3_id() {
         let s = signer();
         let p = signed_pk(&s, &e3(), false);
-        let res = ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], "999/0", "C1");
+        let res =
+            ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], "999/0", "C1", Some(s.address()));
         assert!(!res.passed);
         assert!(res.failed_payload.is_some());
     }
@@ -507,7 +754,13 @@ mod tests {
         let s = signer();
         let e3 = e3();
         let p = signed_pk(&s, &e3, true);
-        let res = ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], &e3.to_string(), "C1");
+        let res = ShareVerifier::ecdsa_validate_signed_proofs(
+            7,
+            &[p],
+            &e3.to_string(),
+            "C1",
+            Some(s.address()),
+        );
         assert!(!res.passed);
     }
 
@@ -518,8 +771,321 @@ mod tests {
         let e3 = e3();
         let p1 = signed_pk(&s1, &e3, false);
         let p2 = signed_pk(&s2, &e3, false);
-        let res = ShareVerifier::ecdsa_validate_signed_proofs(7, &[p1, p2], &e3.to_string(), "C1");
+        let res = ShareVerifier::ecdsa_validate_signed_proofs(
+            7,
+            &[p1, p2],
+            &e3.to_string(),
+            "C1",
+            Some(s1.address()),
+        );
         assert!(!res.passed);
+    }
+
+    #[test]
+    fn ecdsa_fails_when_signer_does_not_own_party_slot() {
+        let proof_signer = signer();
+        let slot_owner = signer();
+        let e3 = e3();
+        let proof = signed_pk(&proof_signer, &e3, false);
+
+        let result = ShareVerifier::ecdsa_validate_signed_proofs(
+            1,
+            &[proof],
+            &e3.to_string(),
+            "C1",
+            Some(slot_owner.address()),
+        );
+
+        assert!(!result.passed);
+        let (_, recovered) = result.failed_payload.expect("attributable mismatch");
+        assert_eq!(recovered, Some(proof_signer.address()));
+    }
+
+    #[test]
+    fn ecdsa_fails_for_empty_bundle_or_missing_party_slot() {
+        let e3 = e3();
+        let owner = signer();
+        let empty = ShareVerifier::ecdsa_validate_signed_proofs(
+            0,
+            &[],
+            &e3.to_string(),
+            "C1",
+            Some(owner.address()),
+        );
+        assert!(!empty.passed);
+        assert!(empty.failed_payload.is_none());
+
+        let proof = signed_pk(&owner, &e3, false);
+        let missing =
+            ShareVerifier::ecdsa_validate_signed_proofs(3, &[proof], &e3.to_string(), "C1", None);
+        assert!(!missing.passed);
+    }
+
+    #[test]
+    fn prepare_rejects_one_signer_relabelled_across_other_party_slots() {
+        let first = signer();
+        let second = signer();
+        let third = signer();
+        let e3 = e3();
+        let parties = vec![
+            PartyProofsToVerify {
+                sender_party_id: 0,
+                signed_proofs: vec![signed_pk(&first, &e3, false)],
+            },
+            PartyProofsToVerify {
+                sender_party_id: 1,
+                // A valid proof from party 0 cannot fill party 1's slot.
+                signed_proofs: vec![signed_pk(&first, &e3, false)],
+            },
+            PartyProofsToVerify {
+                sender_party_id: 2,
+                // Nor can the same signer fill any other canonical slot.
+                signed_proofs: vec![signed_pk(&first, &e3, false)],
+            },
+        ];
+        let committee = [first.address(), second.address(), third.address()];
+
+        let outcome = ShareVerifier::validate_and_prepare(
+            &parties,
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+
+        assert_eq!(outcome.ecdsa_passed_parties.len(), 1);
+        assert_eq!(outcome.ecdsa_passed_parties[0].sender_party_id, 0);
+        assert_eq!(outcome.ecdsa_dishonest, HashSet::from([1, 2]));
+    }
+
+    #[test]
+    fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
+        let s = signer();
+        let e3 = e3();
+
+        let c1 = signed_proof(&s, &e3, ProofType::C1PkGeneration, 1);
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::PkGenerationProofs,
+            std::slice::from_ref(&c1),
+            BfvPreset::InsecureDkg512,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::PkGenerationProofs,
+            &[c1.clone(), c1.clone()],
+            BfvPreset::InsecureDkg512,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ThresholdDecryptionProofs,
+            std::slice::from_ref(&c1),
+            BfvPreset::InsecureDkg512,
+        ));
+        let c6 = signed_proof(&s, &e3, ProofType::C6ThresholdShareDecryption, 9);
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ThresholdDecryptionProofs,
+            std::slice::from_ref(&c6),
+            BfvPreset::InsecureDkg512,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ThresholdDecryptionProofs,
+            &[],
+            BfvPreset::InsecureDkg512,
+        ));
+
+        let share_bundle = vec![
+            signed_proof(&s, &e3, ProofType::C2aSkShareComputation, 2),
+            signed_proof(&s, &e3, ProofType::C2bESmShareComputation, 3),
+            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 4),
+            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 5),
+        ];
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &share_bundle,
+            BfvPreset::InsecureDkg512,
+        ));
+        let mut duplicate_c2a = share_bundle.clone();
+        duplicate_c2a.insert(1, duplicate_c2a[0].clone());
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &duplicate_c2a,
+            BfvPreset::InsecureDkg512,
+        ));
+
+        let secure_share_bundle = vec![
+            signed_proof(&s, &e3, ProofType::C2aSkShareComputation, 10),
+            signed_proof(&s, &e3, ProofType::C2bESmShareComputation, 11),
+            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 12),
+            signed_proof(&s, &e3, ProofType::C3aSkShareEncryption, 13),
+            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 14),
+            signed_proof(&s, &e3, ProofType::C3bESmShareEncryption, 15),
+        ];
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &secure_share_bundle,
+            BfvPreset::SecureThreshold8192,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::ShareProofs,
+            &share_bundle,
+            BfvPreset::SecureThreshold8192,
+        ));
+
+        let c4_bundle = vec![
+            signed_proof(&s, &e3, ProofType::C4aSkShareDecryption, 6),
+            signed_proof(&s, &e3, ProofType::C4bESmShareDecryption, 7),
+        ];
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::DecryptionProofs,
+            &c4_bundle,
+            BfvPreset::InsecureDkg512,
+        ));
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::DecryptionProofs,
+            &c4_bundle[1..],
+            BfvPreset::InsecureDkg512,
+        ));
+        let mut extra_c4b = c4_bundle.clone();
+        extra_c4b.push(c4_bundle[1].clone());
+        assert!(ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::DecryptionProofs,
+            &extra_c4b,
+            BfvPreset::InsecureDkg512,
+        ));
+        let mut wrong_c4_tail = c4_bundle.clone();
+        wrong_c4_tail.push(c6);
+        assert!(!ShareVerifier::has_canonical_proof_shape(
+            &VerificationKind::DecryptionProofs,
+            &wrong_c4_tail,
+            BfvPreset::InsecureDkg512,
+        ));
+    }
+
+    #[test]
+    fn prepare_excludes_wrong_phase_without_creating_slash_evidence() {
+        let s = signer();
+        let e3 = e3();
+        let parties = [PartyProofsToVerify {
+            sender_party_id: 0,
+            signed_proofs: vec![signed_proof(
+                &s,
+                &e3,
+                ProofType::C6ThresholdShareDecryption,
+                9,
+            )],
+        }];
+        let committee = minimum_committee(vec![s.address()]);
+
+        let outcome = ShareVerifier::validate_and_prepare(
+            &parties,
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+
+        assert!(outcome.ecdsa_passed_parties.is_empty());
+        assert_eq!(outcome.ecdsa_dishonest, HashSet::from([0]));
+        assert!(outcome.failures.is_empty());
+    }
+
+    #[test]
+    fn prepare_collapses_identical_party_replay_and_rejects_conflict() {
+        let s = signer();
+        let e3 = e3();
+        let committee = minimum_committee(vec![s.address()]);
+        let party = PartyProofsToVerify {
+            sender_party_id: 0,
+            signed_proofs: vec![signed_proof(&s, &e3, ProofType::C1PkGeneration, 1)],
+        };
+
+        let replayed = ShareVerifier::validate_and_prepare(
+            &[party.clone(), party.clone()],
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+        assert_eq!(replayed.ecdsa_passed_parties, vec![party.clone()]);
+        assert!(replayed.ecdsa_dishonest.is_empty());
+        assert_eq!(replayed.consistency_party_data.len(), 1);
+
+        let conflicting = PartyProofsToVerify {
+            sender_party_id: 0,
+            signed_proofs: vec![signed_proof(&s, &e3, ProofType::C1PkGeneration, 2)],
+        };
+        let conflict = ShareVerifier::validate_and_prepare(
+            &[party, conflicting],
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+        assert!(conflict.ecdsa_passed_parties.is_empty());
+        assert_eq!(conflict.ecdsa_dishonest, HashSet::from([0]));
+        assert!(conflict.failures.is_empty());
+    }
+
+    #[test]
+    fn prepare_rejects_ambiguous_committee_where_one_signer_owns_multiple_slots() {
+        let s = signer();
+        let e3 = e3();
+        let parties = vec![
+            PartyProofsToVerify {
+                sender_party_id: 0,
+                signed_proofs: vec![signed_proof(&s, &e3, ProofType::C1PkGeneration, 1)],
+            },
+            PartyProofsToVerify {
+                sender_party_id: 1,
+                signed_proofs: vec![signed_proof(&s, &e3, ProofType::C1PkGeneration, 2)],
+            },
+        ];
+        let ambiguous_committee = [s.address(), s.address(), signer().address()];
+
+        let outcome = ShareVerifier::validate_and_prepare(
+            &parties,
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&ambiguous_committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+
+        assert!(outcome.ecdsa_passed_parties.is_empty());
+        assert_eq!(outcome.ecdsa_dishonest, HashSet::from([0, 1]));
+        assert!(outcome.failures.is_empty());
+    }
+
+    #[test]
+    fn prepare_rejects_committee_with_wrong_circuit_dimension() {
+        let s = signer();
+        let e3 = e3();
+        let parties = [PartyProofsToVerify {
+            sender_party_id: 0,
+            signed_proofs: vec![signed_proof(&s, &e3, ProofType::C1PkGeneration, 1)],
+        }];
+        let undersized_committee = [s.address()];
+
+        let outcome = ShareVerifier::validate_and_prepare(
+            &parties,
+            &e3.to_string(),
+            &VerificationKind::PkGenerationProofs,
+            "C1",
+            Some(&undersized_committee),
+            BfvPreset::InsecureDkg512,
+            CiphernodesCommitteeSize::Minimum,
+        );
+
+        assert!(outcome.ecdsa_passed_parties.is_empty());
+        assert_eq!(outcome.ecdsa_dishonest, HashSet::from([0]));
+        assert!(outcome.failures.is_empty());
     }
 
     #[test]
@@ -546,6 +1112,56 @@ mod tests {
         let out = ShareVerifier::tally_zk_results(BTreeSet::new(), &ecdsa, &dispatched, &[]);
         assert!(out.dishonest.contains(&1));
         assert!(out.dishonest.contains(&2));
+        assert!(out.emissions.is_empty());
+    }
+
+    #[test]
+    fn tally_collapses_identical_result_replay() {
+        let dispatched = HashSet::from([1]);
+        let result = PartyVerificationResult {
+            sender_party_id: 1,
+            all_verified: true,
+            failed_signed_payload: None,
+            recovered_address: None,
+        };
+
+        let out = ShareVerifier::tally_zk_results(
+            BTreeSet::new(),
+            &HashSet::new(),
+            &dispatched,
+            &[result.clone(), result],
+        );
+
+        assert!(out.dishonest.is_empty());
+        assert_eq!(out.emissions.len(), 1);
+        assert!(matches!(
+            out.emissions[0],
+            ZkPartyEmission::Passed { party_id: 1 }
+        ));
+    }
+
+    #[test]
+    fn tally_rejects_conflicting_results_for_one_party() {
+        let dispatched = HashSet::from([1]);
+        let passed = PartyVerificationResult {
+            sender_party_id: 1,
+            all_verified: true,
+            failed_signed_payload: None,
+            recovered_address: None,
+        };
+        let failed = PartyVerificationResult {
+            all_verified: false,
+            ..passed.clone()
+        };
+
+        let out = ShareVerifier::tally_zk_results(
+            BTreeSet::new(),
+            &HashSet::new(),
+            &dispatched,
+            &[passed, failed],
+        );
+
+        assert_eq!(out.dishonest, BTreeSet::from([1]));
         assert!(out.emissions.is_empty());
     }
 }
