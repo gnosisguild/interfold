@@ -4,9 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use bloom::{BloomFilter, ASMS};
-use e3_events::{prelude::*, Event, InterfoldEvent, InterfoldEventData, Unsequenced};
+use e3_events::{prelude::*, Event, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced};
 use tracing::{trace, warn};
 
 use crate::events::GossipData;
@@ -36,7 +36,7 @@ impl EventTranslationService {
 
     /// Function to determine which events are allowed to be automatically broadcast to the
     /// network. Static so the same rule can be reused elsewhere (e.g. sync responses).
-    pub fn is_forwardable_event(event: &InterfoldEvent) -> bool {
+    pub fn is_forwardable_event<S: SeqState>(event: &InterfoldEvent<S>) -> bool {
         matches!(
             event.get_data(),
             InterfoldEventData::DecryptionshareCreated(_)
@@ -76,6 +76,11 @@ impl EventTranslationService {
     /// for dedup so it is not later rebroadcast.
     pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
         let event: InterfoldEvent<Unsequenced> = data.try_into()?;
+        ensure!(
+            Self::is_forwardable_event(&event),
+            "inbound gossip event type {} is not allowed on the protocol gossip channel",
+            event.event_type()
+        );
         let id = event.id();
         self.sent_events.insert(&id);
         Ok(event)
@@ -85,11 +90,30 @@ impl EventTranslationService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{EventConstructorWithTimestamp, EventSource, TestEvent};
+    use e3_events::{
+        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, TestEvent,
+    };
+    use e3_utils::ArcBytes;
 
     fn local_test_event() -> InterfoldEvent {
         let unsequenced: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             TestEvent::new("hello", 1).into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        unsequenced.into_sequenced(1)
+    }
+
+    fn local_forwardable_event() -> InterfoldEvent {
+        let unsequenced: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            PlaintextAggregated {
+                e3_id: E3id::new("1", 1),
+                decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3])],
+                decryption_aggregator_proofs: vec![],
+            }
+            .into(),
             None,
             42,
             None,
@@ -112,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn inbound_gossip_round_trips_to_event() {
+    fn inbound_gossip_rejects_non_forwardable_internal_events() {
         let mut svc = EventTranslationService::new("topic");
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             TestEvent::new("fish", 7).into(),
@@ -122,7 +146,18 @@ mod tests {
             EventSource::Local,
         );
         let data: GossipData = event.clone().into_sequenced(3).try_into().unwrap();
+        let error = svc.prepare_inbound(data).unwrap_err();
+        assert!(error.to_string().contains("TestEvent"));
+    }
+
+    #[test]
+    fn inbound_gossip_accepts_forwardable_protocol_events() {
+        let mut svc = EventTranslationService::new("topic");
+        let expected = local_forwardable_event();
+        let data: GossipData = expected.clone().try_into().unwrap();
+
         let decoded = svc.prepare_inbound(data).unwrap();
-        assert_eq!(decoded.split().0, TestEvent::new("fish", 7).into());
+
+        assert_eq!(decoded.get_data(), expected.get_data());
     }
 }

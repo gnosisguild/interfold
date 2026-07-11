@@ -528,7 +528,7 @@ async fn fetch_historical_events_for_aggregate(
         .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
         .build();
 
-    fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
+    let events = fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
         requester,
         PeerTarget::Random,
         aggregate_id,
@@ -536,7 +536,31 @@ async fn fetch_historical_events_for_aggregate(
         100,
         budget,
     )
-    .await
+    .await?;
+
+    validate_historical_events(aggregate_id, events)
+}
+
+fn validate_historical_events(
+    aggregate_id: AggregateId,
+    events: Vec<InterfoldEvent<Unsequenced>>,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    for event in &events {
+        if event.aggregate_id() != aggregate_id {
+            bail!(
+                "historical sync peer returned event for aggregate {} while fetching {}",
+                event.aggregate_id(),
+                aggregate_id
+            );
+        }
+        if !EventTranslationService::is_forwardable_event(event) {
+            bail!(
+                "historical sync peer returned non-forwardable event type {}",
+                event.event_type()
+            );
+        }
+    }
+    Ok(events)
 }
 
 async fn handle_sync_request_event(
@@ -847,6 +871,32 @@ mod tests {
             EventSource::Local,
         )
         .into_sequenced(2)
+    }
+
+    fn remote_unsequenced(event: InterfoldEvent) -> InterfoldEvent<Unsequenced> {
+        event.clone_unsequenced().with_source(EventSource::Net)
+    }
+
+    #[test]
+    fn historical_sync_rejects_non_forwardable_remote_events() {
+        let error = validate_historical_events(
+            AggregateId::new(0),
+            vec![remote_unsequenced(local_non_forwardable_event())],
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("non-forwardable event type TestEvent"));
+    }
+
+    #[test]
+    fn historical_sync_rejects_events_from_another_aggregate() {
+        let event = remote_unsequenced(local_forwardable_event("1234"));
+
+        let error = validate_historical_events(AggregateId::new(999), vec![event]).unwrap_err();
+
+        assert!(error.to_string().contains("while fetching 999"));
     }
 
     #[actix::test]

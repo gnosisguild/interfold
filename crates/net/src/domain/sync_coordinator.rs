@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_events::{prelude::*, EventSource, InterfoldEvent, Unsequenced};
+use e3_events::{prelude::*, InterfoldEvent, Unsequenced};
 
 use crate::domain::{
     event_translation::EventTranslationService,
@@ -125,18 +125,15 @@ pub fn build_sync_batch(
     let scan_limit = sync_scan_limit(fetch.limit());
     let aggregate_id = fetch.aggregate_id();
 
-    // Include Net events (received via gossip) and Local events that are gossip-forwardable.
-    // Without the Local check, a node's own gossip events would be excluded from sync responses,
-    // causing syncing peers to miss them.
+    // A remote-origin event is not trusted merely because it was persisted after gossip. Apply
+    // the same protocol allowlist to both local and relayed events so a peer cannot use historical
+    // sync to amplify an internal control event that an older or malicious node accepted.
     let scan_was_full = all_events.len() >= scan_limit;
     let mut events = Vec::with_capacity(limit);
     let mut last_scanned_ts = None;
     for event in all_events.into_iter().take(scan_limit) {
         last_scanned_ts = Some(event.ts());
-        let is_forwardable = event.source() == EventSource::Net
-            || (event.source() == EventSource::Local
-                && EventTranslationService::is_forwardable_event(&event));
-        if is_forwardable {
+        if EventTranslationService::is_forwardable_event(&event) {
             events.push(event.clone_unsequenced());
             if events.len() == limit {
                 break;
@@ -169,7 +166,11 @@ pub fn build_sync_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{AggregateId, EventConstructorWithTimestamp, TestEvent};
+    use e3_events::{
+        AggregateId, E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated,
+        TestEvent,
+    };
+    use e3_utils::ArcBytes;
 
     #[test]
     fn no_peers_publishes_immediately_and_is_idempotent() {
@@ -216,7 +217,23 @@ mod tests {
 
     fn net_event(ts: u128) -> InterfoldEvent {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            TestEvent::new("x", ts as u64).into(),
+            PlaintextAggregated {
+                e3_id: E3id::new(ts.to_string(), 1),
+                decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3])],
+                decryption_aggregator_proofs: vec![],
+            }
+            .into(),
+            None,
+            ts,
+            None,
+            EventSource::Net,
+        )
+        .into_sequenced(ts as u64)
+    }
+
+    fn net_non_forwardable_event(ts: u128) -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("remote-control", ts as u64).into(),
             None,
             ts,
             None,
@@ -248,11 +265,15 @@ mod tests {
     #[test]
     fn build_sync_batch_filters_local_non_forwardable_and_marks_done() {
         let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
-        let outcome = build_sync_batch(vec![net_event(5), local_event(6)], &fetch);
+        let outcome = build_sync_batch(
+            vec![net_event(5), net_non_forwardable_event(6), local_event(7)],
+            &fetch,
+        );
         let SyncBatchOutcome::Batch(batch) = outcome else {
             panic!("expected batch");
         };
-        // Only the Net event survives; the Local TestEvent is not forwardable.
+        // Only the allowlisted protocol event survives. Remote source does not make an internal
+        // TestEvent forwardable.
         assert_eq!(batch.events.len(), 1);
         assert!(matches!(batch.next, BatchCursor::Done));
     }
