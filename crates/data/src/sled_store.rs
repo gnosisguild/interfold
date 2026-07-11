@@ -8,7 +8,7 @@ use crate::{ShutdownStore, SledDb};
 use actix::{Actor, ActorContext, Addr, Handler, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_events::{BusHandle, EType, ErrorDispatcher, Flush, InterfoldEvent, Unsequenced};
-use e3_events::{Get, Insert, InsertBatch, InsertSync, Remove};
+use e3_events::{Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync, Remove};
 use e3_utils::MAILBOX_LIMIT;
 use std::path::PathBuf;
 use tracing::{error, info};
@@ -48,6 +48,12 @@ impl SledStore {
             self.write_failure = Some(format!("{error:#}"));
         }
     }
+
+    fn report_write_failure(&mut self, error: &anyhow::Error) {
+        self.record_write_failure(error);
+        self.bus
+            .err(EType::Data, anyhow::anyhow!(format!("{error:#}")));
+    }
 }
 
 impl Handler<Insert> for SledStore {
@@ -56,21 +62,39 @@ impl Handler<Insert> for SledStore {
     fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
             if let Err(err) = db.insert(event) {
-                self.record_write_failure(&err);
-                self.bus.err(EType::Data, err)
+                self.report_write_failure(&err);
             }
         }
     }
 }
 
 impl Handler<InsertBatch> for SledStore {
-    type Result = ();
+    type Result = Result<()>;
 
     fn handle(&mut self, event: InsertBatch, _: &mut Self::Context) -> Self::Result {
-        if let Some(ref mut db) = &mut self.db {
-            if let Err(err) = db.insert_batch(event.commands()) {
-                self.record_write_failure(&err);
-                self.bus.err(EType::Data, err)
+        let Some(ref mut db) = &mut self.db else {
+            anyhow::bail!("SledStore is closed");
+        };
+        if let Err(error) = db.insert_batch(event.commands()) {
+            self.report_write_failure(&error);
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+impl Handler<InsertBatchIfAbsent> for SledStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, event: InsertBatchIfAbsent, _: &mut Self::Context) -> Self::Result {
+        let Some(ref mut db) = &mut self.db else {
+            anyhow::bail!("SledStore is closed");
+        };
+        match db.insert_batch_if_absent(event.commands()) {
+            Ok(inserted) => Ok(inserted),
+            Err(error) => {
+                self.report_write_failure(&error);
+                Err(error)
             }
         }
     }
@@ -80,11 +104,12 @@ impl Handler<InsertSync> for SledStore {
     type Result = Result<()>;
 
     fn handle(&mut self, event: InsertSync, _: &mut Self::Context) -> Self::Result {
-        if let Some(ref mut db) = &mut self.db {
-            if let Err(error) = db.insert(event.into()) {
-                self.record_write_failure(&error);
-                return Err(error);
-            }
+        let Some(ref mut db) = &mut self.db else {
+            anyhow::bail!("SledStore is closed");
+        };
+        if let Err(error) = db.insert(event.into()) {
+            self.report_write_failure(&error);
+            return Err(error);
         }
         Ok(())
     }
@@ -123,14 +148,16 @@ impl Handler<Get> for SledStore {
 }
 
 impl Handler<Flush> for SledStore {
-    type Result = ();
+    type Result = Result<()>;
     fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
-        if let Some(ref db) = self.db {
-            if let Err(err) = db.flush() {
-                self.record_write_failure(&err);
-                self.bus.err(EType::Data, err)
-            }
+        let Some(ref db) = self.db else {
+            anyhow::bail!("SledStore is closed");
+        };
+        if let Err(error) = db.flush() {
+            self.report_write_failure(&error);
+            return Err(error);
         }
+        Ok(())
     }
 }
 

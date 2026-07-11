@@ -7,7 +7,10 @@
 use crate::sled_utils::{clear_all_caches, get_or_open_db_tree};
 use anyhow::{Context, Result};
 use e3_events::{Get, Insert, Remove};
-use sled::{transaction::ConflictableTransactionError, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError},
+    Tree,
+};
 use std::path::PathBuf;
 
 pub struct SledDb {
@@ -42,6 +45,29 @@ impl SledDb {
             })
             .context("Could not insert batch data into db")?;
         Ok(())
+    }
+
+    /// Atomically insert `msgs` only if none of their keys exist.
+    pub fn insert_batch_if_absent(&mut self, msgs: &[Insert]) -> Result<bool> {
+        let result = self.db.transaction(|tx_db| {
+            for msg in msgs {
+                if tx_db.get(msg.key().as_slice())?.is_some() {
+                    return Err(ConflictableTransactionError::Abort(()));
+                }
+            }
+            for msg in msgs {
+                tx_db.insert(msg.key().as_slice(), msg.value().to_vec())?;
+            }
+            Ok::<(), ConflictableTransactionError<()>>(())
+        });
+
+        match result {
+            Ok(()) => Ok(true),
+            Err(TransactionError::Abort(())) => Ok(false),
+            Err(TransactionError::Storage(error)) => {
+                Err(error).context("Could not conditionally insert batch into db")
+            }
+        }
     }
 
     pub fn remove(&mut self, msg: Remove) -> Result<()> {
@@ -178,6 +204,26 @@ mod tests {
             "Non-existent key should return None"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn conditional_batch_insert_never_overwrites_a_partial_key_set() -> Result<()> {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_conditional_batch.db");
+        let mut db = SledDb::new(&db_path, "datastore")?;
+        db.insert(Insert::new("existing", b"original".to_vec()))?;
+
+        let inserted = db.insert_batch_if_absent(&[
+            Insert::new("existing", b"replacement".to_vec()),
+            Insert::new("missing", b"new".to_vec()),
+        ])?;
+
+        assert!(!inserted);
+        assert_eq!(db.get(Get::new("existing"))?, Some(b"original".to_vec()));
+        assert_eq!(db.get(Get::new("missing"))?, None);
         Ok(())
     }
 }

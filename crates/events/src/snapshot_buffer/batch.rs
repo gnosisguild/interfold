@@ -68,7 +68,7 @@ impl Handler<FlushPendingSnapshots> for Batch {
             if !inserts.is_empty() {
                 db.send(InsertBatch::new(inserts))
                     .await
-                    .context("snapshot destination stopped before accepting its final batch")?;
+                    .context("snapshot destination stopped before accepting its final batch")??;
             }
             Ok(())
         })

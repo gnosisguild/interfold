@@ -194,10 +194,11 @@ mod mock_store {
     }
 
     impl Handler<InsertBatch> for MockStore {
-        type Result = ();
+        type Result = anyhow::Result<()>;
 
         fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
             self.evts.push(msg);
+            Ok(())
         }
     }
 

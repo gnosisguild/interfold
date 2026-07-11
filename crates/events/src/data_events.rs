@@ -51,7 +51,7 @@ impl Insert {
 }
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<()>")]
 pub struct InsertBatch(pub Vec<Insert>);
 impl InsertBatch {
     pub fn new(commands: Vec<Insert>) -> Self {
@@ -59,6 +59,24 @@ impl InsertBatch {
     }
 
     pub fn commands(&self) -> &Vec<Insert> {
+        &self.0
+    }
+}
+
+/// Atomically insert every command only when all target keys are absent.
+///
+/// Returns `true` when the batch was inserted and `false` when at least one key
+/// already existed. Storage failures are returned to the caller.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
+#[rtype(result = "Result<bool>")]
+pub struct InsertBatchIfAbsent(pub Vec<Insert>);
+
+impl InsertBatchIfAbsent {
+    pub fn new(commands: Vec<Insert>) -> Self {
+        Self(commands)
+    }
+
+    pub fn commands(&self) -> &[Insert] {
         &self.0
     }
 }
@@ -113,5 +131,5 @@ impl Remove {
 }
 
 #[derive(Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<()>")]
 pub struct Flush;

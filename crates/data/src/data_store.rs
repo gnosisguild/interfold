@@ -8,11 +8,14 @@ use std::borrow::Cow;
 
 use crate::{InMemStore, SledStore};
 use actix::{Addr, Message, Recipient};
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::{anyhow, ensure};
 use e3_events::IntoKey;
-use e3_events::{Flush, FlushPendingSnapshots, Get, Insert, InsertSync, Remove, SnapshotBuffer};
+use e3_events::{
+    Flush, FlushPendingSnapshots, Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync,
+    Remove, SnapshotBuffer,
+};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -48,6 +51,8 @@ pub struct DataStore {
     get: Recipient<Get>,
     insert: Recipient<Insert>,
     insert_sync: Recipient<InsertSync>,
+    insert_batch: Recipient<InsertBatch>,
+    insert_batch_if_absent: Recipient<InsertBatchIfAbsent>,
     remove: Recipient<Remove>,
     flush: Recipient<Flush>,
     flush_pending_snapshots: Option<Recipient<FlushPendingSnapshots>>,
@@ -92,8 +97,60 @@ impl DataStore {
 
         let msg = InsertSync::new(&self.scope, serialized);
         self.insert_sync.send(msg).await??;
-        self.flush.send(Flush).await?; // Write sync will flush all pending writes
+        self.flush.send(Flush).await??;
         Ok(())
+    }
+
+    fn serialize_batch<K, T, I>(&self, entries: I) -> Result<Vec<Insert>>
+    where
+        K: IntoKey,
+        T: Serialize,
+        I: IntoIterator<Item = (K, T)>,
+    {
+        entries
+            .into_iter()
+            .map(|(key, value)| {
+                let scoped = self.scope(key);
+                let serialized = bincode::serialize(&value).with_context(|| {
+                    let key = scoped.get_scope().unwrap_or(Cow::Borrowed("<bad key>"));
+                    anyhow!("Could not serialize batched value passed to {key}")
+                })?;
+                Ok(Insert::new(scoped.scope_bytes().to_vec(), serialized))
+            })
+            .collect()
+    }
+
+    /// Atomically write and flush a group of same-typed values under this store's scopes.
+    pub async fn write_batch_sync<K, T, I>(&self, entries: I) -> Result<()>
+    where
+        K: IntoKey,
+        T: Serialize,
+        I: IntoIterator<Item = (K, T)>,
+    {
+        let inserts = self.serialize_batch(entries)?;
+        ensure!(!inserts.is_empty(), "cannot write an empty storage batch");
+        self.insert_batch.send(InsertBatch::new(inserts)).await??;
+        self.flush.send(Flush).await??;
+        Ok(())
+    }
+
+    /// Atomically write and flush a group only when every target scope is absent.
+    pub async fn write_batch_if_absent_sync<K, T, I>(&self, entries: I) -> Result<bool>
+    where
+        K: IntoKey,
+        T: Serialize,
+        I: IntoIterator<Item = (K, T)>,
+    {
+        let inserts = self.serialize_batch(entries)?;
+        ensure!(!inserts.is_empty(), "cannot write an empty storage batch");
+        let inserted = self
+            .insert_batch_if_absent
+            .send(InsertBatchIfAbsent::new(inserts))
+            .await??;
+        if inserted {
+            self.flush.send(Flush).await??;
+        }
+        Ok(inserted)
     }
 
     /// Drain the snapshot buffer and durably close the backing store.
@@ -166,6 +223,8 @@ impl DataStore {
             get: self.get.clone(),
             insert: self.insert.clone(),
             insert_sync: self.insert_sync.clone(),
+            insert_batch: self.insert_batch.clone(),
+            insert_batch_if_absent: self.insert_batch_if_absent.clone(),
             remove: self.remove.clone(),
             scope,
             flush: self.flush.clone(),
@@ -180,6 +239,8 @@ impl DataStore {
             get: self.get.clone(),
             insert: self.insert.clone(),
             insert_sync: self.insert_sync.clone(),
+            insert_batch: self.insert_batch.clone(),
+            insert_batch_if_absent: self.insert_batch_if_absent.clone(),
             remove: self.remove.clone(),
             scope: key.into_key(),
             flush: self.flush.clone(),
@@ -198,6 +259,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: snapshot_buffer.into(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -215,6 +278,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: snapshot_buffer.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -232,6 +297,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: snapshot_buffer.into(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -249,6 +316,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: snapshot_buffer.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -263,6 +332,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: addr.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -277,6 +348,8 @@ impl DataStore {
             get: addr.clone().recipient(),
             insert: addr.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -293,6 +366,8 @@ impl From<&Addr<SledStore>> for DataStore {
             get: addr.clone().recipient(),
             insert: addr.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -309,6 +384,8 @@ impl From<&Addr<InMemStore>> for DataStore {
             get: addr.clone().recipient(),
             insert: addr.clone().recipient(),
             insert_sync: addr.clone().recipient(),
+            insert_batch: addr.clone().recipient(),
+            insert_batch_if_absent: addr.clone().recipient(),
             remove: addr.clone().recipient(),
             scope: vec![],
             flush: addr.clone().recipient(),
@@ -332,5 +409,47 @@ mod tests {
             let scope = scoped.get_scope().expect("scope");
             assert_eq!(scope, "//foo/bar/baz");
         });
+    }
+
+    #[actix::test]
+    async fn conditional_batch_write_is_all_or_nothing() -> Result<()> {
+        let addr = InMemStore::new(false).start();
+        let store = DataStore::from(&addr);
+        store
+            .scope("existing")
+            .write_sync(b"original".to_vec())
+            .await?;
+
+        let inserted = store
+            .write_batch_if_absent_sync([
+                ("existing", b"replacement".to_vec()),
+                ("missing", b"new".to_vec()),
+            ])
+            .await?;
+
+        assert!(!inserted);
+        assert_eq!(
+            store.scope("existing").read::<Vec<u8>>().await?,
+            Some(b"original".to_vec())
+        );
+        assert_eq!(store.scope("missing").read::<Vec<u8>>().await?, None);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn batch_write_persists_every_value() -> Result<()> {
+        let addr = InMemStore::new(false).start();
+        let store = DataStore::from(&addr);
+
+        store
+            .write_batch_sync([("first", vec![1_u8]), ("second", vec![2_u8])])
+            .await?;
+
+        assert_eq!(store.scope("first").read::<Vec<u8>>().await?, Some(vec![1]));
+        assert_eq!(
+            store.scope("second").read::<Vec<u8>>().await?,
+            Some(vec![2])
+        );
+        Ok(())
     }
 }

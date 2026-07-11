@@ -409,9 +409,9 @@ impl Actor for NoopBatchReceiver {
 }
 
 impl Handler<InsertBatch> for NoopBatchReceiver {
-    type Result = ();
+    type Result = anyhow::Result<()>;
     fn handle(&mut self, _: InsertBatch, _: &mut Self::Context) -> Self::Result {
-        // do nothing
+        Ok(())
     }
 }
 
