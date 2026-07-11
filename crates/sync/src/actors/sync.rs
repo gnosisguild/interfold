@@ -67,9 +67,10 @@ pub async fn sync(
         snapshot.to_sequence_map(),
         addr,
     ))?;
-    let events = rx.await?.into_events();
+    let mut events = rx.await?.into_events();
     info!("{} EventStore events loaded.", events.len());
     seed_clock_from_replay(bus, &events)?;
+    sort_replay_events(&mut events);
 
     info!("Replaying events to actors...");
     // 4. Replay the EventStore events to all listeners (except effects).
@@ -184,6 +185,14 @@ fn seed_clock_from_replay(bus: &BusHandle, events: &[InterfoldEvent]) -> Result<
     }
     Ok(())
 }
+
+fn sort_replay_events(events: &mut [InterfoldEvent]) {
+    // EventStoreRouter gathers one query response per aggregate. Those actor responses can arrive
+    // in any order, so replay must re-establish the global HLC order before stateful subscribers
+    // observe cross-aggregate dependencies.
+    events.sort_by_key(|event| event.ts());
+}
+
 /// Validate or initialize the durable schema marker before runtime actors can write state.
 ///
 /// A fresh empty store is stamped synchronously; incompatible or unversioned non-empty state
@@ -296,6 +305,7 @@ impl SnapshotLoaded {
 mod tests {
     use super::{
         collect_historical_evm_events, preflight_schema_version, seed_clock_from_replay,
+        sort_replay_events,
     };
     use crate::domain::SyncPlanner;
     use e3_ciphernode_builder::EventSystem;
@@ -486,6 +496,48 @@ mod tests {
         assert!(HlcTimestamp::from(bus.ts()?) > durable);
         Ok(())
     }
+
+    #[actix::test]
+    async fn replay_restores_global_timestamp_order_across_aggregates() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-ordered-sync-replay");
+        let history = bus.history();
+        let mut events = vec![
+            InterfoldEvent::<Unsequenced>::test_event("third")
+                .id(3)
+                .aggregate_id(3)
+                .ts(30)
+                .seq(1)
+                .build(),
+            InterfoldEvent::<Unsequenced>::test_event("first")
+                .id(1)
+                .aggregate_id(1)
+                .ts(10)
+                .seq(1)
+                .build(),
+            InterfoldEvent::<Unsequenced>::test_event("second")
+                .id(2)
+                .aggregate_id(2)
+                .ts(20)
+                .seq(1)
+                .build(),
+        ];
+
+        sort_replay_events(&mut events);
+        for event in events {
+            bus.event_bus().try_send(event)?;
+        }
+
+        let received = history.send(TakeEvents::new(3)).await?;
+        let timestamps = received
+            .events
+            .iter()
+            .map(|event| event.ts())
+            .collect::<Vec<_>>();
+        assert_eq!(timestamps, vec![10, 20, 30]);
+        Ok(())
+    }
+
     /// Verify that `run_once::<EffectsEnabled>` correctly gates event subscriptions.
     ///
     /// Simulates the sync flow:
