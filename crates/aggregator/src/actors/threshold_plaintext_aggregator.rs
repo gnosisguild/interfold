@@ -122,6 +122,23 @@ pub struct ThresholdPlaintextAggregatorParams {
     pub honest_committee_addresses: Vec<Address>,
 }
 
+fn node_owns_committee_party_slot(
+    committee: &[Address],
+    honest_committee: &[Address],
+    node: &str,
+    party_id: u64,
+) -> bool {
+    let Some(expected) = usize::try_from(party_id)
+        .ok()
+        .and_then(|index| committee.get(index))
+    else {
+        return false;
+    };
+    Address::from_str(node)
+        .ok()
+        .is_some_and(|address| &address == expected && honest_committee.contains(&address))
+}
+
 impl ThresholdPlaintextAggregator {
     pub fn new(
         params: ThresholdPlaintextAggregatorParams,
@@ -155,11 +172,16 @@ impl ThresholdPlaintextAggregator {
         self.honest_committee_addresses.len() as u64
     }
 
-    /// True when `node` is in `PublicKeyAggregated.honest_committee_addresses`.
-    fn node_in_aggregated_pk_committee(&self, node: &str) -> bool {
-        Address::from_str(node)
-            .ok()
-            .is_some_and(|addr| self.honest_committee_addresses.contains(&addr))
+    /// True when `node` owns `party_id` in the full canonical committee and is part of the honest
+    /// subset selected during DKG. Membership without the slot check permits a real member to
+    /// relabel a share under another party ID.
+    fn node_owns_aggregated_pk_party_slot(&self, node: &str, party_id: u64) -> bool {
+        node_owns_committee_party_slot(
+            &self.committee_addresses,
+            &self.honest_committee_addresses,
+            node,
+            party_id,
+        )
     }
 
     pub fn add_share(
@@ -319,7 +341,8 @@ impl ThresholdPlaintextAggregator {
         // failure leaves us in VerifyingC6 (retryable) rather than
         // Computing (no retry path).
         // TrBFV scheme size stays N (`threshold_n`); only the share roster is restricted to the
-        // H canonical honest parties in `PublicKeyAggregated` (see `node_in_aggregated_pk_committee`).
+        // H canonical honest parties in `PublicKeyAggregated` (see
+        // `node_owns_aggregated_pk_party_slot`).
         let trbfv_config =
             TrBFVConfig::new(state.params.clone(), state.threshold_n, state.threshold_m);
 
@@ -865,10 +888,11 @@ impl Handler<E3CommitteeContainsResponse<TypedEvent<DecryptionshareCreated>>>
                     trace!("Node {} not found in finalized committee", &msg.node);
                     return Ok(());
                 };
-                if !self.node_in_aggregated_pk_committee(&msg.node) {
+                if !self.node_owns_aggregated_pk_party_slot(&msg.node, msg.party_id) {
                     trace!(
-                        "Node {} not in PublicKeyAggregated honest subset — ignoring decryption share",
-                        &msg.node
+                        "Node {} does not own honest party slot {} — ignoring decryption share",
+                        &msg.node,
+                        msg.party_id
                     );
                     return Ok(());
                 }
@@ -1040,6 +1064,39 @@ mod tests {
             ArcBytes::from_bytes(&[1]),
             ArcBytes::from_bytes(&[2]),
         )
+    }
+
+    #[test]
+    fn decryption_sender_must_own_an_honest_party_slot() {
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        let committee = [first, second];
+        let honest = [first];
+
+        assert!(node_owns_committee_party_slot(
+            &committee,
+            &honest,
+            &first.to_string(),
+            0
+        ));
+        assert!(!node_owns_committee_party_slot(
+            &committee,
+            &honest,
+            &first.to_string(),
+            1
+        ));
+        assert!(!node_owns_committee_party_slot(
+            &committee,
+            &honest,
+            &second.to_string(),
+            1
+        ));
+        assert!(!node_owns_committee_party_slot(
+            &committee,
+            &honest,
+            &first.to_string(),
+            2
+        ));
     }
 
     fn computing_state() -> ThresholdPlaintextAggregatorState {

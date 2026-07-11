@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
+use alloy::primitives::Address;
 
 use e3_events::{prelude::*, AggregatorChanged, Die, InterfoldEvent, InterfoldEventData};
 use e3_utils::MAILBOX_LIMIT;
@@ -16,10 +17,24 @@ use crate::PublicKeyAggregator;
 /// Buffers `KeyshareCreated` events until `CommitteeFinalized` arrives.
 pub struct KeyshareCreatedFilterBuffer {
     dest: Addr<PublicKeyAggregator>,
-    committee: Option<HashSet<String>>,
+    /// Finalized committee in canonical party-id order. A membership set is insufficient here:
+    /// accepting a real member under another member's `party_id` poisons the DKG roster.
+    committee: Option<Vec<String>>,
     buffer: Vec<InterfoldEvent>,
     expelled_nodes: HashSet<String>,
     is_aggregator: bool,
+}
+
+fn committee_member_matches(committee: &[String], party_id: u64, node: &str) -> bool {
+    let Some(expected) = usize::try_from(party_id)
+        .ok()
+        .and_then(|index| committee.get(index))
+        .and_then(|member| member.parse::<Address>().ok())
+    else {
+        return false;
+    };
+    node.parse::<Address>()
+        .is_ok_and(|address| address == expected)
 }
 
 impl KeyshareCreatedFilterBuffer {
@@ -42,7 +57,7 @@ impl KeyshareCreatedFilterBuffer {
             for event in self.buffer.drain(..) {
                 match event.get_data() {
                     InterfoldEventData::KeyshareCreated(data)
-                        if committee.contains(&data.node)
+                        if committee_member_matches(committee, data.party_id, &data.node)
                             && !self.expelled_nodes.contains(&data.node) =>
                     {
                         self.dest.do_send(event);
@@ -77,7 +92,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
             InterfoldEventData::KeyshareCreated(data) => match &self.committee {
                 Some(committee)
                     if self.is_aggregator
-                        && committee.contains(&data.node)
+                        && committee_member_matches(committee, data.party_id, &data.node)
                         && !self.expelled_nodes.contains(&data.node) =>
                 {
                     self.dest.do_send(msg);
@@ -86,7 +101,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     self.buffer.push(msg);
                 }
                 Some(committee)
-                    if committee.contains(&data.node)
+                    if committee_member_matches(committee, data.party_id, &data.node)
                         && !self.expelled_nodes.contains(&data.node) =>
                 {
                     self.buffer.push(msg);
@@ -94,7 +109,9 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 _ => {}
             },
             InterfoldEventData::CommitteeFinalized(data) => {
-                self.committee = Some(data.committee.iter().cloned().collect());
+                let mut data = data.clone();
+                data.sort_by_score();
+                self.committee = Some(data.committee);
                 self.process_buffered_events();
             }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
@@ -111,12 +128,11 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     )
                 });
 
-                if let Some(ref mut committee) = self.committee {
+                if self.committee.is_some() {
                     info!(
                         "KeyshareCreatedFilterBuffer: removing expelled node {} from committee filter (e3_id={})",
                         node_addr, data.e3_id
                     );
-                    committee.remove(&node_addr);
                 }
 
                 if self.is_aggregator {
@@ -145,5 +161,34 @@ impl Handler<Die> for KeyshareCreatedFilterBuffer {
     type Result = ();
     fn handle(&mut self, _: Die, ctx: &mut Self::Context) -> Self::Result {
         ctx.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::committee_member_matches;
+
+    const A: &str = "0x1111111111111111111111111111111111111111";
+    const B: &str = "0x2222222222222222222222222222222222222222";
+
+    #[test]
+    fn committee_membership_is_bound_to_party_slot() {
+        let committee = vec![A.to_owned(), B.to_owned()];
+        assert!(committee_member_matches(&committee, 0, A));
+        assert!(committee_member_matches(&committee, 1, B));
+        assert!(!committee_member_matches(&committee, 0, B));
+        assert!(!committee_member_matches(&committee, 1, A));
+        assert!(!committee_member_matches(&committee, 2, A));
+        assert!(!committee_member_matches(&committee, 0, "not-an-address"));
+    }
+
+    #[test]
+    fn committee_address_comparison_is_case_insensitive() {
+        let committee = vec!["0xAbCd000000000000000000000000000000000000".to_owned()];
+        assert!(committee_member_matches(
+            &committee,
+            0,
+            "0xabcd000000000000000000000000000000000000"
+        ));
     }
 }

@@ -324,7 +324,6 @@ impl PublicKeyAggregator {
             .map(|(pid, node, _)| (*pid, node.clone()))
             .collect();
 
-        let circuit_committee_n = circuit_committee_n;
         let circuit_committee_h = circuit_h;
         self.state.try_mutate(&ec, |_| {
             Ok(PublicKeyAggregatorState::GeneratingC5Proof {
