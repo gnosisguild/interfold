@@ -16,7 +16,7 @@ use e3_events::{
     AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventContextAccessors,
     EventPublisher, EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType,
     EvmEventConfig, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart,
-    InterfoldEvent, InterfoldEventData, SeqAgg, SyncEnded, Unsequenced,
+    InterfoldEvent, InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::time::Duration;
@@ -207,9 +207,9 @@ fn sort_replay_events(events: &mut [InterfoldEvent]) {
 
 /// Validate or initialize the durable schema marker before runtime actors can write state.
 ///
-/// A fresh empty store is stamped synchronously; incompatible or unversioned non-empty state
-/// halts. The check is idempotent so composition roots may run it before actor construction while
-/// [`sync`] retains the same guard for direct callers.
+/// A fresh store is stamped synchronously; incompatible or unversioned protocol state halts. The
+/// check is idempotent so composition roots may run it before actor construction while [`sync`]
+/// retains the same guard for direct callers.
 pub async fn preflight_schema_version(
     repositories: &Repositories,
     aggregate_config: &AggregateConfig,
@@ -218,7 +218,7 @@ pub async fn preflight_schema_version(
     let repo = repositories.schema_version();
     let persisted = repo.read().await?;
     let has_existing_state = if persisted.is_none() {
-        !repositories.store.is_empty().await?
+        has_schema_governed_kv_state(repositories).await?
             || event_logs_have_events(aggregate_config, eventstore).await?
     } else {
         false
@@ -234,6 +234,25 @@ pub async fn preflight_schema_version(
             bail!("Schema version check failed: {reason}");
         }
     }
+}
+
+/// Return whether the key/value store contains state whose interpretation requires a schema
+/// marker.
+///
+/// Wallet setup runs before node startup and atomically writes the encrypted operator and libp2p
+/// identities. That complete pair is the only pre-schema key/value state considered fresh. A
+/// partial identity, any additional key, or any other non-empty key set remains schema-governed so
+/// startup fails closed instead of asserting compatibility with unknown bytes.
+pub async fn has_schema_governed_kv_state(repositories: &Repositories) -> Result<bool> {
+    if repositories.store.is_empty().await? {
+        return Ok(false);
+    }
+
+    let bootstrap_identity_keys = [StoreKeys::eth_private_key(), StoreKeys::libp2p_keypair()];
+    Ok(!repositories
+        .store
+        .has_exact_keys(bootstrap_identity_keys)
+        .await?)
 }
 
 async fn event_logs_have_events(
@@ -316,17 +335,18 @@ impl SnapshotLoaded {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_historical_evm_events, preflight_schema_version, publish_reconciled_history,
-        seed_clock_from_replay, sort_replay_events,
+        collect_historical_evm_events, has_schema_governed_kv_state, preflight_schema_version,
+        publish_reconciled_history, seed_clock_from_replay, sort_replay_events,
     };
     use crate::domain::SyncPlanner;
+    use crate::SyncRepositoryFactory;
     use e3_ciphernode_builder::EventSystem;
     use e3_data::Repositories;
     use e3_events::{
         hlc::{Hlc, HlcTimestamp},
         EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
         EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived, HistoricalEvmSyncStart,
-        InterfoldEvent, InterfoldEventData, SyncEnded, TakeEvents, Unsequenced,
+        InterfoldEvent, InterfoldEventData, StoreKeys, SyncEnded, TakeEvents, Unsequenced,
     };
     use std::collections::BTreeMap;
 
@@ -371,6 +391,96 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.to_string().contains("no schema marker"));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn schema_preflight_initializes_store_with_only_bootstrap_identity() -> anyhow::Result<()>
+    {
+        let system = EventSystem::new().with_fresh_bus();
+        let store = system.store()?;
+        let private_key = vec![1_u8, 2, 3];
+        let network_key = vec![4_u8, 5, 6];
+        store
+            .write_batch_sync([
+                (StoreKeys::eth_private_key(), private_key.clone()),
+                (StoreKeys::libp2p_keypair(), network_key.clone()),
+            ])
+            .await?;
+        let repositories = Repositories::from(&store);
+        let eventstore = system.eventstore_reader()?.seq();
+
+        assert!(!has_schema_governed_kv_state(&repositories).await?);
+        preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore).await?;
+
+        assert_eq!(
+            repositories.schema_version().read().await?,
+            Some(super::SCHEMA_VERSION)
+        );
+        assert_eq!(
+            store
+                .scope(StoreKeys::eth_private_key())
+                .read::<Vec<u8>>()
+                .await?,
+            Some(private_key)
+        );
+        assert_eq!(
+            store
+                .scope(StoreKeys::libp2p_keypair())
+                .read::<Vec<u8>>()
+                .await?,
+            Some(network_key)
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn schema_preflight_rejects_bootstrap_identity_plus_protocol_state() -> anyhow::Result<()>
+    {
+        let system = EventSystem::new().with_fresh_bus();
+        let store = system.store()?;
+        store
+            .write_batch_sync([
+                (StoreKeys::eth_private_key(), vec![1_u8]),
+                (StoreKeys::libp2p_keypair(), vec![2_u8]),
+            ])
+            .await?;
+        store
+            .scope(StoreKeys::sortition())
+            .write_sync(7_u64)
+            .await?;
+        let repositories = Repositories::from(&store);
+        let eventstore = system.eventstore_reader()?.seq();
+
+        assert!(has_schema_governed_kv_state(&repositories).await?);
+        let error =
+            preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore)
+                .await
+                .unwrap_err();
+
+        assert!(error.to_string().contains("no schema marker"));
+        assert_eq!(repositories.schema_version().read().await?, None);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn schema_preflight_rejects_partial_bootstrap_identity() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let store = system.store()?;
+        store
+            .scope(StoreKeys::eth_private_key())
+            .write_sync(vec![1_u8])
+            .await?;
+        let repositories = Repositories::from(&store);
+        let eventstore = system.eventstore_reader()?.seq();
+
+        let error =
+            preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore)
+                .await
+                .unwrap_err();
+
+        assert!(error.to_string().contains("no schema marker"));
+        assert_eq!(repositories.schema_version().read().await?, None);
         Ok(())
     }
 

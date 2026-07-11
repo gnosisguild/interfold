@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{ShutdownStore, SledDb, StoreIsEmpty};
+use crate::{ShutdownStore, SledDb, StoreHasExactKeys, StoreIsEmpty};
 use actix::{Actor, ActorContext, Addr, Handler, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_events::{BusHandle, EType, ErrorDispatcher, Flush, InterfoldEvent, Unsequenced};
@@ -153,6 +153,15 @@ impl Handler<StoreIsEmpty> for SledStore {
     fn handle(&mut self, _: StoreIsEmpty, _: &mut Self::Context) -> Self::Result {
         let db = self.db.as_ref().context("SledStore is closed")?;
         Ok(db.is_empty())
+    }
+}
+
+impl Handler<StoreHasExactKeys> for SledStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, message: StoreHasExactKeys, _: &mut Self::Context) -> Self::Result {
+        let db = self.db.as_ref().context("SledStore is closed")?;
+        db.has_exact_keys(message.keys())
     }
 }
 

@@ -41,7 +41,8 @@ use e3_events::{
 };
 use e3_sortition::{committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore};
 use e3_sync::{
-    decide_schema_version, SchemaVersionDecision, SyncRepositoryFactory, SCHEMA_VERSION,
+    decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
+    SyncRepositoryFactory, SCHEMA_VERSION,
 };
 use e3_utils::enumerate_path;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -210,7 +211,8 @@ pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
     // framing and decode checks. Cross-check each persisted replay cursor.
     let repositories = get_repositories(config)?;
     let persisted_schema = repositories.schema_version().read().await?;
-    let has_existing_state = total_events > 0 || !repositories.store.is_empty().await?;
+    let has_existing_state =
+        total_events > 0 || has_schema_governed_kv_state(&repositories).await?;
     report.push(check_schema_compatibility(
         persisted_schema,
         has_existing_state,
@@ -236,8 +238,9 @@ pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
 }
 
 /// Verify that this binary can safely interpret the persisted schema. A missing
-/// marker is acceptable only for a genuinely empty store; stamping a version on
-/// non-empty legacy bytes would assert compatibility without evidence.
+/// marker is acceptable only for a fresh store (empty or containing the complete bootstrap
+/// identity pair); stamping a version on protocol or unknown bytes would assert compatibility
+/// without evidence.
 fn check_schema_compatibility(persisted: Option<u32>, has_existing_state: bool) -> CheckResult {
     let name = "schema";
     match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {

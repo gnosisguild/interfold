@@ -73,6 +73,15 @@ impl InMemKvStore {
         self.db.entries().is_empty()
     }
 
+    /// Return whether the store contains exactly the supplied keys and no others.
+    pub fn has_exact_keys(&self, keys: &[Vec<u8>]) -> bool {
+        let entries = self.db.entries();
+        entries.len() == keys.len()
+            && keys
+                .iter()
+                .all(|key| entries.iter().any(|(entry_key, _)| entry_key == key))
+    }
+
     /// Returns the captured operation log.
     pub fn log(&self) -> Vec<DataOp> {
         self.log.clone()
@@ -126,6 +135,24 @@ mod tests {
         store.insert(b"k".to_vec(), b"v1".to_vec(), None);
         store.insert(b"k".to_vec(), b"v2".to_vec(), None);
         assert_eq!(Some(b"v2".to_vec()), store.get(b"k"));
+    }
+
+    #[test]
+    fn exact_key_match_rejects_missing_and_extra_keys() {
+        let mut store = InMemKvStore::new(false);
+        store.insert(b"identity-a".to_vec(), b"1".to_vec(), None);
+        store.insert(b"identity-b".to_vec(), b"2".to_vec(), None);
+
+        assert!(store.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()]));
+        assert!(!store.has_exact_keys(&[b"identity-a".to_vec()]));
+        assert!(!store.has_exact_keys(&[
+            b"identity-a".to_vec(),
+            b"identity-b".to_vec(),
+            b"protocol-state".to_vec()
+        ]));
+
+        store.insert(b"protocol-state".to_vec(), b"3".to_vec(), None);
+        assert!(!store.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()]));
     }
 
     #[test]

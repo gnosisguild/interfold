@@ -91,6 +91,28 @@ impl SledDb {
         self.db.is_empty()
     }
 
+    /// Return whether the tree contains exactly the supplied keys and no others.
+    pub fn has_exact_keys(&self, keys: &[Vec<u8>]) -> Result<bool> {
+        let mut expected = keys.to_vec();
+        expected.sort();
+        expected.dedup();
+
+        // `Tree::len` walks the full tree. Schema preflight must remain bounded even when an
+        // unversioned store is unexpectedly large, so inspect at most one key beyond the allowed
+        // set and fail closed on any iterator error.
+        let observed = self
+            .db
+            .iter()
+            .keys()
+            .take(expected.len() + 1)
+            .collect::<sled::Result<Vec<_>>>()?;
+        Ok(observed.len() == expected.len()
+            && observed
+                .iter()
+                .zip(expected)
+                .all(|(observed, expected)| observed.as_ref() == expected.as_slice()))
+    }
+
     pub fn flush(&self) -> Result<()> {
         self.db.flush()?;
         Ok(())
@@ -228,6 +250,24 @@ mod tests {
         assert!(!inserted);
         assert_eq!(db.get(Get::new("existing"))?, Some(b"original".to_vec()));
         assert_eq!(db.get(Get::new("missing"))?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_key_match_rejects_missing_and_extra_keys() -> Result<()> {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_exact_keys.db");
+        let mut db = SledDb::new(&db_path, "datastore")?;
+        db.insert(Insert::new("identity-a", b"1".to_vec()))?;
+        db.insert(Insert::new("identity-b", b"2".to_vec()))?;
+
+        assert!(db.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()])?);
+        assert!(!db.has_exact_keys(&[b"identity-a".to_vec()])?);
+
+        db.insert(Insert::new("protocol-state", b"3".to_vec()))?;
+        assert!(!db.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()])?);
         Ok(())
     }
 }

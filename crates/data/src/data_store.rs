@@ -37,6 +37,29 @@ pub struct ShutdownStore;
 #[rtype(result = "Result<bool>")]
 pub(crate) struct StoreIsEmpty;
 
+#[derive(Message, Debug)]
+#[rtype(result = "Result<bool>")]
+pub(crate) struct StoreHasExactKeys {
+    keys: Vec<Vec<u8>>,
+}
+
+impl StoreHasExactKeys {
+    fn new<K, I>(keys: I) -> Self
+    where
+        K: IntoKey,
+        I: IntoIterator<Item = K>,
+    {
+        let mut keys = keys.into_iter().map(IntoKey::into_key).collect::<Vec<_>>();
+        keys.sort();
+        keys.dedup();
+        Self { keys }
+    }
+
+    pub(crate) fn keys(&self) -> &[Vec<u8>] {
+        &self.keys
+    }
+}
+
 impl StoreAddr {
     pub fn to_maybe_in_mem(&self) -> Option<&Addr<InMemStore>> {
         match self {
@@ -72,6 +95,22 @@ impl DataStore {
         match &self.addr {
             StoreAddr::InMem(store) => Ok(store.send(StoreIsEmpty).await??),
             StoreAddr::Sled(store) => Ok(store.send(StoreIsEmpty).await??),
+        }
+    }
+
+    /// Return whether the complete backing store contains exactly `keys` and no others.
+    ///
+    /// This intentionally ignores the current scope. Callers use it for whole-store safety
+    /// checks where allowing an unknown persisted key would be unsafe.
+    pub async fn has_exact_keys<K, I>(&self, keys: I) -> Result<bool>
+    where
+        K: IntoKey,
+        I: IntoIterator<Item = K>,
+    {
+        let message = StoreHasExactKeys::new(keys);
+        match &self.addr {
+            StoreAddr::InMem(store) => Ok(store.send(message).await??),
+            StoreAddr::Sled(store) => Ok(store.send(message).await??),
         }
     }
 
