@@ -18,6 +18,7 @@ pub(crate) mod net_event_batch;
 mod network_status;
 pub(crate) mod peer_failure_tracker;
 pub(crate) mod sync_coordinator;
+pub(crate) mod wire;
 
 pub use document_publishing::{datetime_to_instant_from_now, DocumentPublishingService};
 pub use event_conversion::{EventConversionService, IncomingDocument};

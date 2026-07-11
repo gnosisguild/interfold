@@ -4,7 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{direct_responder::DirectResponder, ContentHash};
+use crate::{
+    direct_responder::DirectResponder,
+    domain::wire::{decode, MAX_GOSSIP_BYTES},
+    ContentHash,
+};
 use actix::Message;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_events::{
@@ -49,7 +53,7 @@ impl GossipData {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes).context("Could not deserialize GossipData")
+        decode(bytes, MAX_GOSSIP_BYTES).context("Could not deserialize GossipData")
     }
 }
 
@@ -362,7 +366,8 @@ impl DocumentPublishedNotification {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes).context("Could not deserialize DocumentPublishedNotification")
+        decode(bytes, MAX_GOSSIP_BYTES)
+            .context("Could not deserialize DocumentPublishedNotification")
     }
 }
 
@@ -501,5 +506,22 @@ mod tests {
         assert_eq!(ts, 31415);
 
         Ok(())
+    }
+
+    #[test]
+    fn gossip_decode_rejects_forged_collection_length() {
+        let mut bytes = 0_u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+
+        assert!(GossipData::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn gossip_decode_rejects_trailing_bytes() {
+        let mut bytes = GossipData::GossipBytes(vec![1, 2, 3]).to_bytes().unwrap();
+        bytes.push(0);
+
+        let error = GossipData::from_bytes(&bytes).unwrap_err();
+        assert!(format!("{error:#}").contains("trailing bytes"));
     }
 }

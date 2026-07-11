@@ -88,7 +88,7 @@ impl DataStore {
         if bytes == [0] {
             return Ok(None);
         }
-        Ok(Some(bincode::deserialize(&bytes)?))
+        Ok(Some(e3_utils::deserialize_exact(&bytes)?))
     }
 
     /// Writes data to the scope location

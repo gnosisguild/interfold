@@ -3924,6 +3924,7 @@ dependencies = [
  "actix",
  "alloy",
  "anyhow",
+ "bincode 1.3.3",
  "derivative",
  "e3-utils-derive",
  "hex",

@@ -77,12 +77,13 @@ impl CommitLogEventLog {
             let mut count = 0;
             for msg in message_buf.iter() {
                 let seq = msg.offset() + 1;
-                let event = bincode::deserialize::<InterfoldEvent<Unsequenced>>(msg.payload())
-                    .with_context(|| {
+                let event = InterfoldEvent::<Unsequenced>::from_bytes(msg.payload()).with_context(
+                    || {
                         format!(
                             "commit log event at sequence {seq} failed to decode; log is corrupt"
                         )
-                    })?;
+                    },
+                )?;
                 events.push((seq, event));
                 current_offset = msg.offset() + 1;
                 count += 1;

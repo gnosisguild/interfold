@@ -13,6 +13,8 @@ use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+use super::wire::{decode, MAX_DHT_DOCUMENT_BYTES};
+
 /// Wire representation of a document that is published to / received from the network.
 ///
 /// This is the serialized payload stored in the DHT. Disambiguation between the document
@@ -30,7 +32,7 @@ impl ReceivableDocument {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
-        bincode::deserialize(bytes)
+        decode(bytes, MAX_DHT_DOCUMENT_BYTES)
     }
 }
 

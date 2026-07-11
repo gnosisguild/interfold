@@ -87,7 +87,7 @@ impl InMemKvStore {
     /// Reconstructs a store from a bincode `BTreeMap` dump.
     pub fn from_dump(bytes: &[u8], capture: bool) -> Result<Self> {
         let map: BTreeMap<Vec<u8>, Vec<u8>> =
-            bincode::deserialize(bytes).context("Error deserializing in-memory store")?;
+            e3_utils::deserialize_exact(bytes).context("Error deserializing in-memory store")?;
         let mut db = Hamt::new();
         for (k, v) in map {
             db = db.insert(k, v);

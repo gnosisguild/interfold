@@ -17,6 +17,7 @@ use tracing::info;
 use crate::{
     direct_requester::{DirectRequester, WithPeer, WithoutPeer},
     domain::sync_coordinator::effective_sync_limit,
+    domain::wire::{decode, MAX_DIRECT_MESSAGE_BYTES},
     events::PeerTarget,
 };
 
@@ -131,7 +132,7 @@ where
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self> {
-        bincode::deserialize(&value).context("failed to deserialize EventBatch")
+        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize EventBatch")
     }
 }
 
@@ -187,7 +188,7 @@ impl TryFrom<Vec<u8>> for FetchEventsSince {
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self> {
-        bincode::deserialize(&value).context("failed to deserialize FetchEventsSince")
+        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize FetchEventsSince")
     }
 }
 

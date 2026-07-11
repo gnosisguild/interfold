@@ -163,7 +163,7 @@ where
         if bytes == [0] {
             return Ok(None);
         }
-        Ok(Some(bincode::deserialize(&bytes)?))
+        Ok(Some(e3_utils::deserialize_exact(&bytes)?))
     }
 
     fn write_to_store(&self) {

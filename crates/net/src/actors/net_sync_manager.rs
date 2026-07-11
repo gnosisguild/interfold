@@ -33,6 +33,7 @@ use crate::{
             fetch_all_batched_events_with_budget, FetchEventsSince, SyncFetchBudget,
         },
         sync_coordinator::sync_scan_limit,
+        wire::{decode, MAX_DIRECT_MESSAGE_BYTES},
         EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
     },
     events::{
@@ -83,7 +84,7 @@ impl TryFrom<Vec<u8>> for SyncResponseValue {
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        bincode::deserialize(&value).context("failed to deserialize sync response")
+        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize sync response")
     }
 }
 

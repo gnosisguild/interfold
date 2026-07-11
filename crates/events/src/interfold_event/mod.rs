@@ -172,7 +172,9 @@ use std::{
     hash::Hash,
 };
 
-// In crates/events/src/interfold_event/mod.rs
+/// Commit-log records may be larger than the network's 10 MiB transport frame, but never exceed
+/// the 32 MiB durable record cap configured by `e3-data`.
+pub const MAX_ENCODED_EVENT_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Macro to generate EventType enum and implement From traits
 macro_rules! impl_event_types {
@@ -395,7 +397,7 @@ where
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
-        bincode::deserialize(bytes)
+        e3_utils::deserialize_bounded(bytes, MAX_ENCODED_EVENT_BYTES)
     }
 
     pub fn split(self) -> (InterfoldEventData, u128) {
@@ -473,6 +475,26 @@ impl TryFrom<Vec<u8>> for InterfoldEvent<Unsequenced> {
 
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         InterfoldEvent::from_bytes(&value)
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+
+    #[test]
+    fn event_decode_rejects_trailing_bytes() {
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("bounded", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        );
+        let mut bytes = event.to_bytes().unwrap();
+        bytes.push(0);
+
+        assert!(InterfoldEvent::<Unsequenced>::from_bytes(&bytes).is_err());
     }
 }
 
