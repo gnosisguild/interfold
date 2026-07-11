@@ -21,7 +21,7 @@ use e3_events::{
 use e3_utils::actix::channel as actix_toolbox;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
-use tracing::{info, warn};
+use tracing::info;
 
 pub async fn sync(
     bus: &BusHandle,
@@ -118,7 +118,7 @@ pub async fn sync(
     info!("Loading historical blockchain events...");
     let (addr, rx) = actix_toolbox::mpsc::<HistoricalEvmEventsReceived>(256);
     bus.publish_without_context(HistoricalEvmSyncStart::new(addr, evm_config.clone()))?;
-    let historical_evm_events = collect_historical_evm_events(rx, &evm_config).await;
+    let historical_evm_events = collect_historical_evm_events(rx, &evm_config).await?;
     info!(
         "{} historical blockchain events loaded.",
         historical_evm_events.len()
@@ -207,7 +207,7 @@ async fn check_schema_version(repositories: &Repositories) -> Result<()> {
 pub async fn collect_historical_evm_events(
     mut receiver: Receiver<HistoricalEvmEventsReceived>,
     config: &EvmEventConfig,
-) -> Vec<InterfoldEvent<Unsequenced>> {
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     let mut collector = HistoricalEvmCollector::new(config);
     let progress_interval = Duration::from_secs(30);
 
@@ -227,9 +227,8 @@ pub async fn collect_historical_evm_events(
                 }
             }
             Ok(None) => {
-                // Channel closed — sender dropped
-                warn!("Historical events channel closed before all chains reported");
-                break;
+                let remaining = collector.remaining();
+                bail!("historical EVM event channel closed before chains reported: {remaining:?}");
             }
             Err(_) => {
                 // Not a failure — just a progress heartbeat
@@ -243,7 +242,7 @@ pub async fn collect_historical_evm_events(
         }
     }
 
-    collector.into_events()
+    Ok(collector.into_events())
 }
 
 #[derive(Message)]
@@ -263,21 +262,71 @@ impl SnapshotLoaded {
 
 #[cfg(test)]
 mod tests {
-    use super::seed_clock_from_replay;
+    use super::{collect_historical_evm_events, seed_clock_from_replay};
     use crate::domain::SyncPlanner;
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
         hlc::{Hlc, HlcTimestamp},
         EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
-        HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, SyncEnded, TakeEvents,
-        Unsequenced,
+        EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, InterfoldEvent,
+        InterfoldEventData, SyncEnded, TakeEvents, Unsequenced,
     };
+    use std::collections::BTreeMap;
 
     fn make_historical_evm_sync_start() -> HistoricalEvmSyncStart {
         HistoricalEvmSyncStart {
             evm_config: EvmEventConfig::new(),
             sender: None,
         }
+    }
+
+    fn evm_config(chains: &[u64]) -> EvmEventConfig {
+        EvmEventConfig::from_config(
+            chains
+                .iter()
+                .map(|chain_id| (*chain_id, EvmEventConfigChain::new(0)))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    }
+
+    fn historical_batch(chain_id: u64, event_count: usize) -> HistoricalEvmEventsReceived {
+        let events = (0..event_count)
+            .map(|index| {
+                InterfoldEvent::<Unsequenced>::test_event("historical")
+                    .id(index as u64 + 1)
+                    .build()
+            })
+            .collect();
+        HistoricalEvmEventsReceived::new(events, chain_id)
+    }
+
+    #[actix::test]
+    async fn historical_evm_collection_fails_when_any_chain_disconnects() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender.send(historical_batch(1, 2)).await.unwrap();
+        drop(sender);
+
+        let error = collect_historical_evm_events(receiver, &evm_config(&[1, 2, 3]))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "historical EVM event channel closed before chains reported: [2, 3]"
+        );
+    }
+
+    #[actix::test]
+    async fn historical_evm_collection_returns_only_after_every_chain_reports() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender.send(historical_batch(2, 3)).await.unwrap();
+        sender.send(historical_batch(1, 2)).await.unwrap();
+
+        let events = collect_historical_evm_events(receiver, &evm_config(&[1, 2]))
+            .await
+            .unwrap();
+
+        assert_eq!(events.len(), 5);
     }
 
     #[actix::test]

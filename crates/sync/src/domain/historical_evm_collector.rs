@@ -59,7 +59,13 @@ impl HistoricalEvmCollector {
 
     /// Chains still outstanding (expected but not yet received).
     pub fn remaining(&self) -> Vec<u64> {
-        self.expected.difference(&self.received).copied().collect()
+        let mut remaining = self
+            .expected
+            .difference(&self.received)
+            .copied()
+            .collect::<Vec<_>>();
+        remaining.sort_unstable();
+        remaining
     }
 
     /// Consume the collector and return the accumulated events.
