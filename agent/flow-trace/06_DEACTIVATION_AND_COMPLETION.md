@@ -221,6 +221,9 @@ On restart:
 │      → ShareVerificationActor loads canonical party slots from the durable
 │        finalized-committees repository before replay. A snapshotted
 │        CommitteeFinalized event is not guaranteed to appear in the replay window.
+│      → ProofVerificationActor loads the same slots, plus BFV preset/threshold
+│        metadata from durable CiphernodeSelector state. Snapshotted
+│        CiphernodeSelected events are likewise not guaranteed to replay.
 │   2. CiphernodeSelector emits persisted AggregatorChanged state before replay
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
@@ -331,6 +334,13 @@ for signer ownership checks. It is seeded from `Repositories::finalized_committe
 startup, before EventStore replay. Relying only on a `CommitteeFinalized` subscription is incorrect:
 once that event is included in a snapshot, replay starts after it and a restarted aggregator would
 reject every honest C6 signer as having no canonical slot.
+
+The global `ProofVerificationActor` has the same party-slot requirement for C0 and additionally
+needs the request's BFV preset and threshold-derived committee size to choose circuit artifacts and
+recompute the advertised public-key commitment. Builder startup seeds those caches from the durable
+finalized-committee repository and `CiphernodeSelectorState.e3_cache` before replay. Live
+`CommitteeFinalized` / `CiphernodeSelected` events remain authoritative refreshes, while
+`E3RequestComplete` removes both caches.
 
 ---
 

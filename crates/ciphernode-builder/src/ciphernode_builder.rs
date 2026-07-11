@@ -44,7 +44,7 @@ use e3_sortition::{
 };
 use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
-use e3_zk_prover::{setup_zk_actors, ZkBackend};
+use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -776,12 +776,19 @@ impl CiphernodeBuilder {
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let mut e3_builder = E3Router::builder(bus, store.clone());
-        let persisted_committees = store
-            .repositories()
+        let repositories = store.repositories();
+        let persisted_committees = repositories
             .finalized_committees()
             .read()
             .await?
             .unwrap_or_default();
+        let persisted_e3_metadata = repositories
+            .ciphernode_selector()
+            .read()
+            .await?
+            .map(|state| state.e3_cache)
+            .unwrap_or_default();
+        let zk_recovery = ZkActorRecovery::new(persisted_committees, persisted_e3_metadata);
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
@@ -803,7 +810,7 @@ impl CiphernodeBuilder {
                 backend,
                 _signer,
                 dkg_fold_verifier_by_chain.clone(),
-                persisted_committees.clone(),
+                zk_recovery.clone(),
             );
         }
 
@@ -828,7 +835,7 @@ impl CiphernodeBuilder {
                     backend,
                     signer,
                     dkg_fold_verifier_by_chain.clone(),
-                    persisted_committees,
+                    zk_recovery,
                 );
             }
         }

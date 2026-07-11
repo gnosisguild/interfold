@@ -20,8 +20,8 @@ mod witness;
 pub use actors::commitment_links::default_links;
 pub use actors::{
     setup_zk_actors, CommitmentConsistencyCheckerExtension, ProofRequestActor,
-    ProofVerificationActor, ShareVerificationActor, ZkActors, ZkVerificationRequest,
-    ZkVerificationResponse,
+    ProofVerificationActor, ShareVerificationActor, ZkActorRecovery, ZkActors,
+    ZkVerificationRequest, ZkVerificationResponse,
 };
 
 pub use backend::{SetupStatus, ZkBackend};

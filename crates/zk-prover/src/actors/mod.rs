@@ -21,7 +21,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use e3_zk_prover::{ZkBackend, setup_zk_actors};
+//! use e3_zk_prover::{ZkActorRecovery, ZkBackend, setup_zk_actors};
 //! use e3_events::BusHandle;
 //! use alloy::signers::local::PrivateKeySigner;
 //! use std::collections::HashMap;
@@ -31,7 +31,13 @@
 //! let signer = PrivateKeySigner::random();
 //!
 //! // Setup all actors with proper separation of concerns
-//! setup_zk_actors(&bus, &backend, signer, HashMap::new(), HashMap::new());
+//! setup_zk_actors(
+//!     &bus,
+//!     &backend,
+//!     signer,
+//!     HashMap::new(),
+//!     ZkActorRecovery::default(),
+//! );
 //! ```
 
 pub mod accusation_manager;
@@ -59,9 +65,32 @@ use actix::{Actor, Addr};
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{BusHandle, Committee, E3id};
+use e3_request::E3Meta;
 use std::collections::HashMap;
 
 use crate::ZkBackend;
+
+/// Durable inputs needed by global proof-verification actors before EventStore replay begins.
+///
+/// Both maps are projections of canonical protocol events. They are startup seeds, not separate
+/// authorities: live or replayed lifecycle events continue to update the actor caches.
+#[derive(Clone, Debug, Default)]
+pub struct ZkActorRecovery {
+    finalized_committees: HashMap<E3id, Committee>,
+    e3_metadata: HashMap<E3id, E3Meta>,
+}
+
+impl ZkActorRecovery {
+    pub fn new(
+        finalized_committees: HashMap<E3id, Committee>,
+        e3_metadata: HashMap<E3id, E3Meta>,
+    ) -> Self {
+        Self {
+            finalized_committees,
+            e3_metadata,
+        }
+    }
+}
 
 /// Setup all ZK-related actors with proper separation of concerns.
 ///
@@ -70,19 +99,25 @@ use crate::ZkBackend;
 /// `dkg_fold_attestation_verifiers_by_chain` maps each enabled chain's id to
 /// `CiphernodeRegistry.dkgFoldAttestationVerifier()` (EIP-712 `verifyingContract`
 /// for fold attestations). Fetched at node startup when proof aggregation is enabled.
+/// `recovery` seeds global verifier context before EventStore replay.
 pub fn setup_zk_actors(
     bus: &BusHandle,
     backend: &ZkBackend,
     signer: PrivateKeySigner,
     dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
-    persisted_committees: HashMap<E3id, Committee>,
+    recovery: ZkActorRecovery,
 ) -> ZkActors {
+    let ZkActorRecovery {
+        finalized_committees,
+        e3_metadata,
+    } = recovery;
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
 
     let proof_request = ProofRequestActor::setup(bus, signer.clone());
-    let proof_verification = ProofVerificationActor::setup(bus, verifier);
-    let share_verification = ShareVerificationActor::setup(bus, persisted_committees);
+    let proof_verification =
+        ProofVerificationActor::setup(bus, verifier, finalized_committees.clone(), e3_metadata);
+    let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
     let node_proof_aggregator =
         NodeProofAggregator::setup(bus, signer, dkg_fold_attestation_verifiers_by_chain);
 

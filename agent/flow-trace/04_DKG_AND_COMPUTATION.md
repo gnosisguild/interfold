@@ -91,6 +91,8 @@ ProofRequestActor receives EncryptionKeyPending
 └─ RECEIVING NODES verify C0 proof:
      ProofVerificationActor receives EncryptionKeyReceived (from P2P)
      │
+     ├─ Resolves canonical party ownership plus BFV preset/committee artifact scope
+     │   from startup-recovered verifier context; live lifecycle events refresh both caches
      ├─ Recovers ECDSA signer address from signed proof
      ├─ Dispatches ZK verification to ZkActor:
      │   ZkActor runs: bb verify -k vk -p proof.data
