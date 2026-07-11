@@ -5,11 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod backends;
+mod finalized_committee_retention;
 pub mod node_registry;
 pub mod ticket;
 pub mod ticket_sortition;
 
 pub use backends::*;
+pub use finalized_committee_retention::*;
 pub use node_registry::*;
 pub use ticket::*;
 pub use ticket_sortition::*;

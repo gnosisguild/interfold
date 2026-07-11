@@ -218,6 +218,9 @@ On restart:
 │   1. Load snapshot metadata and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
+│      → ShareVerificationActor loads canonical party slots from the durable
+│        finalized-committees repository before replay. A snapshotted
+│        CommitteeFinalized event is not guaranteed to appear in the replay window.
 │   2. CiphernodeSelector emits persisted AggregatorChanged state before replay
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
@@ -322,6 +325,12 @@ its own: after context hydration, `CommitmentConsistencyCheckerExtension` recrea
 recovered `E3Meta` so restarted active aggregators can complete C6 verification. Without this
 recipient, the restarted node can collect honest decryption shares and then wait forever for a
 consistency-check response that no actor is subscribed to publish.
+
+The global `ShareVerificationActor` also requires the finalized committee's ordered party-slot map
+for signer ownership checks. It is seeded from `Repositories::finalized_committees` during builder
+startup, before EventStore replay. Relying only on a `CommitteeFinalized` subscription is incorrect:
+once that event is included in a snapshot, replay starts after it and a restarted aggregator would
+reject every honest C6 signer as having no canonical slot.
 
 ---
 

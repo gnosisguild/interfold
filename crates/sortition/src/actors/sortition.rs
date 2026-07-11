@@ -12,13 +12,14 @@ use crate::messages::{
     GetCommitteeMembersRequest, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
+use crate::FinalizedCommitteeRetention;
 use actix::prelude::*;
 use anyhow::{anyhow, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::{
     prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExpelled, CommitteePublished, ConfigurationUpdated, E3Failed, E3Requested,
-    E3Stage, E3StageChanged, EType, EventContext, EventType, InterfoldEvent,
+    CommitteeMemberExpelled, CommitteePublished, ConfigurationUpdated, E3Failed, E3RequestComplete,
+    E3Requested, E3Stage, E3StageChanged, EType, EventContext, EventType, InterfoldEvent,
     OperatorActivationChanged, PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated,
     TypedEvent,
 };
@@ -120,6 +121,7 @@ impl Sortition {
                 EventType::CommitteeMemberExpelled,
                 EventType::E3Failed,
                 EventType::E3StageChanged,
+                EventType::E3RequestComplete,
             ],
             addr.clone().into(),
         );
@@ -293,6 +295,9 @@ impl Handler<InterfoldEvent> for Sortition {
             }
             InterfoldEventData::E3Failed(data) => self.notify_sync(ctx, TypedEvent::new(data, ec)),
             InterfoldEventData::E3StageChanged(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             _ => (),
@@ -574,6 +579,26 @@ impl Handler<TypedEvent<E3StageChanged>> for Sortition {
                     // Non-terminal stages, no action needed
                 }
             }
+            Ok(())
+        })
+    }
+}
+
+impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<E3RequestComplete>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            self.finalized_committees
+                .try_mutate(msg.get_ctx(), |mut committees| {
+                    FinalizedCommitteeRetention::remove(&mut committees, &msg.e3_id);
+                    Ok(committees)
+                })?;
+            self.pending_expulsions.remove(&msg.e3_id);
             Ok(())
         })
     }

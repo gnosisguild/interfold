@@ -34,13 +34,13 @@ use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
     NetRepositoryFactory,
 };
-use e3_request::E3LifecycleCoordinator;
 use e3_request::E3Router;
+use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
     CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
-    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
-    SortitionRepositoryFactory,
+    FinalizedCommitteeRetention, FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
+    Sortition, SortitionBackend, SortitionRepositoryFactory,
 };
 use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
@@ -668,11 +668,26 @@ impl CiphernodeBuilder {
     ) -> Result<(Addr<Sortition>, Addr<CiphernodeSelector>)> {
         let ciphernode_selector =
             CiphernodeSelector::attach(bus, repositories.ciphernode_selector(), addr).await?;
+        let committees_repo = repositories.finalized_committees();
+        let mut committees = committees_repo.read().await?.unwrap_or_default();
+        let lifecycle = repositories
+            .e3_lifecycle()
+            .read()
+            .await?
+            .unwrap_or_default();
+        let pruned = FinalizedCommitteeRetention::prune_terminal(&mut committees, &lifecycle);
+        if pruned > 0 {
+            committees_repo.write_sync(&committees).await?;
+            info!(
+                pruned,
+                "Removed terminal finalized committees during startup"
+            );
+        }
         let sortition = Sortition::attach(
             bus,
             repositories.sortition(),
             repositories.node_state(),
-            repositories.finalized_committees(),
+            committees_repo,
             self.sortition_backend.clone(),
             ciphernode_selector.clone(),
             addr,
@@ -761,6 +776,12 @@ impl CiphernodeBuilder {
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let mut e3_builder = E3Router::builder(bus, store.clone());
+        let persisted_committees = store
+            .repositories()
+            .finalized_committees()
+            .read()
+            .await?
+            .unwrap_or_default();
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
@@ -777,7 +798,13 @@ impl CiphernodeBuilder {
                 e3_builder.with(ThresholdKeyshareExtension::create(bus, &self.cipher, addr));
 
             info!("Setting up ZK actors");
-            setup_zk_actors(bus, backend, _signer, dkg_fold_verifier_by_chain.clone());
+            setup_zk_actors(
+                bus,
+                backend,
+                _signer,
+                dkg_fold_verifier_by_chain.clone(),
+                persisted_committees.clone(),
+            );
         }
 
         // ── Public key aggregation ──
@@ -796,7 +823,13 @@ impl CiphernodeBuilder {
                     .ok_or_else(|| anyhow::anyhow!("ZK backend is required for aggregator"))?;
                 let signer = provider_cache.ensure_signer().await?;
                 info!("Setting up ZK actors for aggregator");
-                setup_zk_actors(bus, backend, signer, dkg_fold_verifier_by_chain.clone());
+                setup_zk_actors(
+                    bus,
+                    backend,
+                    signer,
+                    dkg_fold_verifier_by_chain.clone(),
+                    persisted_committees,
+                );
             }
         }
 
