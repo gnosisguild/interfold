@@ -22,7 +22,7 @@ use e3_events::{
     EType, EffectsEnabled, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof,
     PublicKeyAggregated, Shutdown, TicketGenerated, TicketId,
 };
-use e3_utils::{ArcBytes, NotifySync, MAILBOX_LIMIT};
+use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info};
 
@@ -379,6 +379,7 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
             let pending = builder.send().await?;
             drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
+            require_successful_receipt("submit ticket", &receipt)?;
             Ok(receipt)
         }
     })
@@ -415,6 +416,7 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
                 let pending = builder.send().await?;
                 drop(_nonce_guard);
                 let receipt = pending.get_receipt().await?;
+                require_successful_receipt("finalize committee", &receipt)?;
                 Ok(receipt)
             }
         },
@@ -530,6 +532,7 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
             let pending = builder.send().await?;
             drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
+            require_successful_receipt("publish committee", &receipt)?;
             Ok(receipt)
         }
     })

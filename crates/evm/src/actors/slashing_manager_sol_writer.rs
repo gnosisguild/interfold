@@ -30,7 +30,7 @@ use e3_events::InterfoldEvent;
 use e3_events::InterfoldEventData;
 use e3_events::Shutdown;
 use e3_events::{AccusationQuorumReached, EType};
-use e3_utils::NotifySync;
+use e3_utils::{require_successful_receipt, NotifySync};
 use tracing::{info, warn};
 
 /// Submits `AccusationQuorumReached` events as slash proposals on-chain.
@@ -241,6 +241,7 @@ async fn submit_slash_proposal<P: Provider + WalletProvider + Clone>(
             };
             drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
+            require_successful_receipt("submit slashing evidence", &receipt)?;
             Ok(receipt)
         }
     })

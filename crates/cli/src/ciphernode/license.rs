@@ -7,6 +7,7 @@
 use alloy::primitives::U256;
 use anyhow::Result;
 use e3_console::{log, Console};
+use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 use super::utils::{ensure_allowance, parse_amount};
@@ -32,6 +33,7 @@ pub(crate) async fn execute(
                 .await?
                 .get_receipt()
                 .await?;
+            require_successful_receipt("unbond license", &receipt)?;
             log!(
                 out,
                 "Queued {} FOLD for exit (tx: {:#x})",
@@ -71,6 +73,7 @@ pub(crate) async fn execute(
                 .await?
                 .get_receipt()
                 .await?;
+            require_successful_receipt("claim exits", &receipt)?;
             log!(out, "Claimed exits (tx: {:#x})", receipt.transaction_hash);
         }
     }
@@ -91,6 +94,7 @@ async fn bond_license(out: Console, ctx: &ChainContext, amount: &str) -> Result<
         .await?
         .get_receipt()
         .await?;
+    require_successful_receipt("bond license", &receipt)?;
     log!(
         out,
         "Bonded {} FOLD (tx: {:#x})",

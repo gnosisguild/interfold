@@ -28,8 +28,7 @@ use e3_events::Shutdown;
 use e3_events::{prelude::*, AggregatorChanged, EffectsEnabled};
 use e3_events::{E3Stage, E3StageChanged};
 use e3_events::{E3id, EType, PlaintextAggregated, Proof};
-use e3_utils::NotifySync;
-use e3_utils::MAILBOX_LIMIT;
+use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
 use tracing::info;
 
@@ -342,6 +341,7 @@ async fn publish_plaintext_output<P: Provider + WalletProvider + Clone>(
                 let pending = builder.send().await?;
                 drop(_nonce_guard);
                 let receipt = pending.get_receipt().await?;
+                require_successful_receipt("publish plaintext output", &receipt)?;
                 Ok(receipt)
             }
         },
@@ -381,5 +381,6 @@ async fn process_e3_failure<P: Provider + WalletProvider + Clone>(
     let pending = builder.send().await?;
     drop(_nonce_guard);
     let receipt = pending.get_receipt().await?;
+    require_successful_receipt("process E3 failure", &receipt)?;
     Ok(receipt)
 }

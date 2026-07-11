@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use alloy::primitives::{Address, U256};
 use anyhow::{bail, Context, Result};
+use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 
@@ -80,11 +81,12 @@ pub(crate) async fn ensure_allowance(
         return Ok(());
     }
 
-    erc20
+    let receipt = erc20
         .approve(spender, amount)
         .send()
         .await?
         .get_receipt()
         .await?;
+    require_successful_receipt("approve token allowance", &receipt)?;
     Ok(())
 }
