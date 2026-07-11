@@ -188,6 +188,7 @@ impl Handler<InterfoldEvent> for E3Router {
                         PostForward::Teardown => {
                             // The original event is forwarded above so children can kill themselves.
                             self.contexts.remove(&e3_id);
+                            self.buffer.remove_e3(&e3_id);
                             self.completed.insert(e3_id);
                         }
                         PostForward::None => (),

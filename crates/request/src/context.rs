@@ -82,15 +82,15 @@ impl E3Context {
 
     pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {
         self.recipients().into_iter().for_each(|(key, recipient)| {
-            // Use composite key of e3_id:recipient_key to scope buffered events per E3 request
-            let buffer_key = format!("{}:{}", self.e3_id, key);
             if let Some(act) = recipient {
-                act.do_send(msg.clone());
-                for m in buffer.take(&buffer_key) {
+                // Events buffered before this extension existed must remain ahead of the event
+                // that caused the extension to be constructed.
+                for m in buffer.take(&self.e3_id, &key) {
                     act.do_send(m);
                 }
+                act.do_send(msg.clone());
             } else {
-                buffer.add(&buffer_key, msg.clone());
+                buffer.add(&self.e3_id, &key, msg.clone());
             }
         });
     }
@@ -178,5 +178,70 @@ impl FromSnapshotWithParams for E3Context {
 impl Checkpoint for E3Context {
     fn repository(&self) -> &Repository<E3ContextSnapshot> {
         &self.repository
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ContextRepositoryFactory;
+    use actix::{Actor, Context, Handler, Message};
+    use e3_data::{DataStore, InMemStore};
+    use e3_events::{Event, InterfoldEventData, Sequenced};
+    use std::sync::{Arc, Mutex};
+
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    impl Actor for Recorder {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent> for Recorder {
+        type Result = ();
+
+        fn handle(&mut self, message: InterfoldEvent, _: &mut Self::Context) {
+            if let InterfoldEventData::TestEvent(event) = message.get_data() {
+                self.0.lock().unwrap().push(event.msg.clone());
+            }
+        }
+    }
+
+    #[derive(Message)]
+    #[rtype(result = "Vec<String>")]
+    struct Recorded;
+
+    impl Handler<Recorded> for Recorder {
+        type Result = Vec<String>;
+
+        fn handle(&mut self, _: Recorded, _: &mut Self::Context) -> Self::Result {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn event(e3_id: &E3id, label: &str, sequence: u64) -> InterfoldEvent {
+        InterfoldEvent::<Sequenced>::test_event(label)
+            .e3_id(e3_id.clone())
+            .seq(sequence)
+            .build()
+    }
+
+    #[actix::test]
+    async fn newly_attached_recipient_observes_buffered_events_before_current_event() {
+        let e3_id = E3id::new("7", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut context = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Recorder(recorded).start();
+        let mut buffer = EventBuffer::default();
+        buffer.add(&e3_id, "keyshare", event(&e3_id, "older", 1));
+        context.set_event_recipient("keyshare", Some(recorder.clone().recipient()));
+
+        context.forward_message(&event(&e3_id, "current", 2), &mut buffer);
+
+        assert_eq!(recorder.send(Recorded).await.unwrap(), ["older", "current"]);
     }
 }
