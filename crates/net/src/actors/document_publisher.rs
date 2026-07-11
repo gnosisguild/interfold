@@ -292,6 +292,11 @@ pub async fn handle_document_published_notification(
     )
     .await?;
 
+    // The gossiped metadata is not covered by the DHT content hash. Bind it to the decoded
+    // payload before persisting DocumentReceived; otherwise a notification for an E3 this node is
+    // interested in can inject a content-addressed document for a different E3 or party route.
+    EventConversionService::validate_received(&event.meta, &value)?;
+
     debug!("Sending received event...");
     bus.publish_from_remote(
         DocumentReceived {
@@ -444,7 +449,7 @@ impl EventConverter {
     /// Note: Filtering already happened in DocumentPublisher before DHT fetch.
     fn handle_document_received(&self, msg: TypedEvent<DocumentReceived>) -> Result<()> {
         let (msg, ctx) = msg.into_components();
-        match EventConversionService::decode_received(&msg.value.extract_bytes())? {
+        match EventConversionService::decode_received(&msg.meta, &msg.value)? {
             IncomingDocument::ThresholdShare(evt) => {
                 self.bus.publish(evt, ctx)?;
             }
@@ -556,7 +561,7 @@ mod tests {
     use chrono::Utc;
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
-        BusHandle, CiphernodeSelected, DocumentKind, DocumentMeta, E3id, GetEvents,
+        BusHandle, CiphernodeSelected, DocumentKind, DocumentMeta, E3id, EncryptionKey, GetEvents,
         HistoryCollector, InterfoldError, InterfoldEvent, PublishDocumentRequested, TakeEvents,
     };
     use libp2p::kad::{GetRecordError, PutRecordError, RecordKey};
@@ -829,9 +834,15 @@ mod tests {
         let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, history, _, _) =
             setup_test()?;
 
-        let value = ArcBytes::from_bytes(b"I am a special document");
         let expires_at = Utc::now() + chrono::Duration::days(1);
         let e3_id = E3id::new("1243", 1);
+        let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+            e3_id: e3_id.clone(),
+            key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+            external: false,
+        })?
+        .expect("local key should produce a document")
+        .value;
         let cid = ContentHash::from_content(&value);
 
         // 1. Ensure the publisher is interested in the id by receiving CiphernodeSelected
@@ -887,7 +898,7 @@ mod tests {
         net_evt_tx.send(NetEvent::DhtGetRecordSucceeded {
             key: cid,
             correlation_id,
-            value, // This will error because this is not a ReceivableDocument which is fine
+            value: value.clone(),
         })?;
 
         // wait for events to settle
@@ -896,22 +907,82 @@ mod tests {
         // Check event was dispatched
         let events = history.send(GetEvents::new()).await?;
         let Some(InterfoldEventData::DocumentReceived(DocumentReceived { value: doc, .. })) =
-            events
-                .iter()
-                // Filter out the error
-                .filter(|e| e.event_type() != "InterfoldError")
-                .last()
-                .map(|e| e.get_data())
+            events.iter().find_map(|event| match event.get_data() {
+                data @ InterfoldEventData::DocumentReceived(_) => Some(data),
+                _ => None,
+            })
         else {
             bail!("No event sent");
         };
 
         assert_eq!(
             doc.extract_bytes(),
-            b"I am a special document",
+            value.extract_bytes(),
             "document did not match"
         );
 
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
+        let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, errors, _) =
+            setup_test()?;
+        let interested_e3 = E3id::new("100", 1);
+        let payload_e3 = E3id::new("200", 1);
+        let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+            e3_id: payload_e3,
+            key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+            external: false,
+        })?
+        .expect("local key should produce a document")
+        .value;
+        let key = ContentHash::from_content(&value);
+
+        bus.publish_without_context(CiphernodeSelected {
+            e3_id: interested_e3.clone(),
+            threshold_m: 3,
+            threshold_n: 5,
+            ..CiphernodeSelected::default()
+        })?;
+        net_evt_tx.send(NetEvent::GossipData(
+            GossipData::DocumentPublishedNotification(DocumentPublishedNotification {
+                key: key.clone(),
+                meta: DocumentMeta::new(
+                    interested_e3,
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(Utc::now() + chrono::Duration::days(1)),
+                ),
+                ts: 100,
+            }),
+        ))?;
+
+        let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+            timeout(Duration::from_secs(1), net_cmd_rx.recv())
+                .await
+                .expect("did not receive DhtGetRecord")
+        else {
+            bail!("msg not as expected");
+        };
+        net_evt_tx.send(NetEvent::DhtGetRecordSucceeded {
+            key,
+            correlation_id,
+            value,
+        })?;
+
+        let error_events = errors.send(TakeEvents::new(1)).await?;
+        let error: InterfoldError = error_events.events.first().unwrap().try_into()?;
+        assert!(error.message.contains("metadata E3 1:100"));
+        assert!(error.message.contains("payload E3 1:200"));
+
+        let events = history.send(GetEvents::new()).await?;
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))),
+            "mismatched document must not be persisted"
+        );
         Ok(())
     }
 

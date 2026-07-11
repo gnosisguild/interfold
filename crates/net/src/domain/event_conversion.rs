@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use e3_events::{
     DecryptionKeyShared, DocumentKind, DocumentMeta, EncryptionKeyCreated, EncryptionKeyReceived,
     Filter, PublishDocumentRequested, ThresholdShareCreated,
@@ -33,6 +33,44 @@ impl ReceivableDocument {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
         decode(bytes, MAX_DHT_DOCUMENT_BYTES)
+    }
+
+    fn e3_id(&self) -> &e3_events::E3id {
+        match self {
+            Self::ThresholdShareCreated(event) => &event.e3_id,
+            Self::EncryptionKeyCreated(event) => &event.e3_id,
+            Self::DecryptionKeyShared(event) => &event.e3_id,
+        }
+    }
+
+    fn validate_meta(&self, meta: &DocumentMeta) -> Result<()> {
+        ensure!(
+            self.e3_id() == &meta.e3_id,
+            "DHT document metadata E3 {} does not match payload E3 {}",
+            meta.e3_id,
+            self.e3_id()
+        );
+        ensure!(
+            matches!(&meta.kind, DocumentKind::TrBFV),
+            "DHT document metadata has an unsupported document kind"
+        );
+
+        match self {
+            Self::ThresholdShareCreated(event) => ensure!(
+                matches!(
+                    meta.filter.as_slice(),
+                    [Filter::Item(target)] if *target == event.target_party_id
+                ),
+                "threshold-share metadata must target payload party {}",
+                event.target_party_id
+            ),
+            Self::EncryptionKeyCreated(_) | Self::DecryptionKeyShared(_) => ensure!(
+                meta.filter.is_empty(),
+                "broadcast key document metadata must not contain party filters"
+            ),
+        }
+
+        Ok(())
     }
 }
 
@@ -106,12 +144,18 @@ impl EventConversionService {
         Ok(Some(PublishDocumentRequested::new(meta, value)))
     }
 
+    /// Validate that independently-gossiped metadata describes the content-addressed DHT payload.
+    pub fn validate_received(meta: &DocumentMeta, bytes: &[u8]) -> Result<()> {
+        let receivable = Self::decode_and_validate(meta, bytes)?;
+        drop(receivable);
+        Ok(())
+    }
+
     /// Decode a received document payload into the internal event that should be published.
     ///
     /// Note: party filtering already happened in `DocumentPublisher` before the DHT fetch.
-    pub fn decode_received(bytes: &[u8]) -> Result<IncomingDocument> {
-        let receivable = ReceivableDocument::from_bytes(bytes)
-            .context("Could not deserialize document bytes")?;
+    pub fn decode_received(meta: &DocumentMeta, bytes: &[u8]) -> Result<IncomingDocument> {
+        let receivable = Self::decode_and_validate(meta, bytes)?;
         Ok(match receivable {
             ReceivableDocument::ThresholdShareCreated(evt) => {
                 debug!(
@@ -148,6 +192,13 @@ impl EventConversionService {
             }
         })
     }
+
+    fn decode_and_validate(meta: &DocumentMeta, bytes: &[u8]) -> Result<ReceivableDocument> {
+        let receivable = ReceivableDocument::from_bytes(bytes)
+            .context("Could not deserialize document bytes")?;
+        receivable.validate_meta(meta)?;
+        Ok(receivable)
+    }
 }
 
 fn encode(doc: &ReceivableDocument) -> Result<ArcBytes> {
@@ -157,9 +208,58 @@ fn encode(doc: &ReceivableDocument) -> Result<ArcBytes> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_events::{E3id, EncryptionKey};
+    use std::sync::Arc;
+
+    fn encryption_key_document(e3_id: E3id) -> ReceivableDocument {
+        ReceivableDocument::EncryptionKeyCreated(EncryptionKeyCreated {
+            e3_id,
+            key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"pk"))),
+            external: false,
+        })
+    }
+
+    fn meta(e3_id: E3id) -> DocumentMeta {
+        DocumentMeta::new(e3_id, DocumentKind::TrBFV, vec![], None)
+    }
 
     #[test]
     fn decode_received_rejects_garbage() {
-        assert!(EventConversionService::decode_received(b"not a document").is_err());
+        assert!(EventConversionService::decode_received(
+            &meta(E3id::new("1", 1)),
+            b"not a document"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn received_document_must_match_metadata_e3_and_chain() {
+        let payload_id = E3id::new("9", 1);
+        let bytes = encryption_key_document(payload_id.clone())
+            .to_bytes()
+            .unwrap();
+
+        EventConversionService::validate_received(&meta(payload_id), &bytes).unwrap();
+
+        let wrong_e3 = EventConversionService::validate_received(&meta(E3id::new("10", 1)), &bytes)
+            .unwrap_err();
+        assert!(wrong_e3.to_string().contains("1:10"));
+        assert!(wrong_e3.to_string().contains("1:9"));
+
+        let wrong_chain =
+            EventConversionService::validate_received(&meta(E3id::new("9", 2)), &bytes)
+                .unwrap_err();
+        assert!(wrong_chain.to_string().contains("2:9"));
+        assert!(wrong_chain.to_string().contains("1:9"));
+    }
+
+    #[test]
+    fn broadcast_key_document_rejects_party_filter_relabeling() {
+        let e3_id = E3id::new("9", 1);
+        let bytes = encryption_key_document(e3_id.clone()).to_bytes().unwrap();
+        let filtered = DocumentMeta::new(e3_id, DocumentKind::TrBFV, vec![Filter::Item(3)], None);
+
+        let error = EventConversionService::validate_received(&filtered, &bytes).unwrap_err();
+        assert!(error.to_string().contains("must not contain party filters"));
     }
 }
