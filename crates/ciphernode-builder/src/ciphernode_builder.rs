@@ -935,8 +935,7 @@ fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
 fn create_aggregate_delay(chain: &ChainConfig, actual_chain_id: u64) -> (AggregateId, Duration) {
     let aggregate_id = AggregateId::from_chain_id(Some(actual_chain_id));
     let finalization_ms = chain.finalization_ms.unwrap_or(0);
-    let delay_us = finalization_ms * 1000; // ms → microseconds
-    (aggregate_id, Duration::from_micros(delay_us))
+    (aggregate_id, Duration::from_millis(finalization_ms))
 }
 
 /// Build delays configuration from chain providers
@@ -1091,4 +1090,54 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_aggregate_delay;
+    use e3_config::{
+        chain_config::ChainConfig,
+        contract::{Contract, ContractAddresses},
+        rpc::RpcAuth,
+    };
+    use std::time::Duration;
+
+    fn chain_with_finalization_ms(finalization_ms: Option<u64>) -> ChainConfig {
+        let contract = || Contract::AddressOnly(Address::ZERO.to_string());
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_owned(),
+            rpc_url: "http://127.0.0.1:8545".to_owned(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms,
+            reorg_confirmations: None,
+            chain_id: Some(1),
+        }
+    }
+
+    use alloy::primitives::Address;
+
+    #[test]
+    fn aggregate_delay_preserves_large_millisecond_values_without_overflow() {
+        let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(Some(u64::MAX)), 1);
+
+        assert_eq!(delay, Duration::from_millis(u64::MAX));
+    }
+
+    #[test]
+    fn aggregate_delay_defaults_to_zero() {
+        let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(None), 1);
+
+        assert_eq!(delay, Duration::ZERO);
+    }
 }
