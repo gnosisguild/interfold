@@ -156,23 +156,35 @@ pub async fn sync(
     SyncPlanner::sort_by_timestamp(&mut historical);
     info!("Historical events sorted.");
 
-    // 8. Enable effects
-    bus.publish_without_context(EffectsEnabled::new())?;
-    info!("Effects enabled");
+    // 8-10. Enable effects, publish canonical history, then enter live mode. Each phase is fenced
+    // through durable storage and EventBus fanout so aggregate-specific EventStore response order
+    // cannot move history ahead of EffectsEnabled or SyncEnded ahead of history.
+    publish_reconciled_history(bus, historical).await?;
+    // normal live operations
 
-    // 9. Publish the new sorted events to the eventstore
+    Ok(())
+}
+
+async fn publish_reconciled_history(
+    bus: &BusHandle,
+    historical: Vec<InterfoldEvent<Unsequenced>>,
+) -> Result<()> {
+    info!("Enabling effects...");
+    bus.publish_without_context(EffectsEnabled::new())?;
+    bus.flush_event_pipeline().await?;
+    info!("Effects enabled.");
+
     info!("Publishing historical events to actors...");
     for event in historical {
         bus.naked_dispatch_async(event).await?;
     }
+    bus.flush_event_pipeline().await?;
     info!("Historical events published.");
 
-    // 10. Publish the SyncEnded event
     info!("Publishing SyncEnded event...");
     bus.publish_without_context(SyncEnded::new())?;
+    bus.flush_event_pipeline().await?;
     info!("Sync finished.");
-    // normal live operations
-
     Ok(())
 }
 
@@ -304,8 +316,8 @@ impl SnapshotLoaded {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_historical_evm_events, preflight_schema_version, seed_clock_from_replay,
-        sort_replay_events,
+        collect_historical_evm_events, preflight_schema_version, publish_reconciled_history,
+        seed_clock_from_replay, sort_replay_events,
     };
     use crate::domain::SyncPlanner;
     use e3_ciphernode_builder::EventSystem;
@@ -313,8 +325,8 @@ mod tests {
     use e3_events::{
         hlc::{Hlc, HlcTimestamp},
         EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
-        EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, InterfoldEvent,
-        InterfoldEventData, SyncEnded, TakeEvents, Unsequenced,
+        EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived, HistoricalEvmSyncStart,
+        InterfoldEvent, InterfoldEventData, SyncEnded, TakeEvents, Unsequenced,
     };
     use std::collections::BTreeMap;
 
@@ -535,6 +547,35 @@ mod tests {
             .map(|event| event.ts())
             .collect::<Vec<_>>();
         assert_eq!(timestamps, vec![10, 20, 30]);
+        Ok(())
+    }
+    #[actix::test]
+    async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-startup-history-fences");
+        let history = bus.history();
+        let historical = vec![
+            InterfoldEvent::<Unsequenced>::test_event("first")
+                .id(1)
+                .ts(10)
+                .build(),
+            InterfoldEvent::<Unsequenced>::test_event("second")
+                .id(2)
+                .ts(20)
+                .build(),
+        ];
+
+        publish_reconciled_history(&bus, historical).await?;
+
+        let received = history.send(GetEvents::new()).await?;
+        let types = received
+            .iter()
+            .map(|event| event.event_type())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            types,
+            ["EffectsEnabled", "TestEvent", "TestEvent", "SyncEnded"]
+        );
         Ok(())
     }
 
