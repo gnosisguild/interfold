@@ -249,20 +249,17 @@ impl Hlc {
         self.node
     }
 
-    /// Seed the clock's physical-time floor so it can never regress below an
-    /// already-emitted timestamp across a restart (H15). A node boots with a
-    /// fresh HLC at `ts: 0` and re-derives time from the system clock, so a
-    /// backward wall-clock jump would let freshly-`tick`ed events sort *before*
-    /// events already persisted before the crash. Seeding `inner.ts` to the
-    /// highest persisted timestamp makes `tick`/`receive` (which both take a
-    /// `max`) monotone with respect to durable history. Counter is reset to 0:
-    /// the very next `tick` at the same `ts` bumps it to 1, staying above the
-    /// persisted value.
-    pub fn seed_physical_floor(&self, ts: u64) {
+    /// Restore the ordering floor from the greatest timestamp in durable history.
+    ///
+    /// The persisted node identifier is deliberately not adopted: it identifies the process
+    /// that created the historical event, while this clock must retain the current node's
+    /// identity. Restoring both the physical time and logical counter guarantees the next tick is
+    /// strictly greater than the persisted timestamp even when wall time has moved backwards.
+    pub fn seed_from_history(&self, persisted: HlcTimestamp) {
         let mut inner = self.inner.lock().unwrap();
-        if ts > inner.ts {
-            inner.ts = ts;
-            inner.counter = 0;
+        if (persisted.ts, persisted.counter) > (inner.ts, inner.counter) {
+            inner.ts = persisted.ts;
+            inner.counter = persisted.counter;
         }
     }
 
@@ -660,25 +657,46 @@ mod tests {
     }
 
     #[test]
-    fn seed_physical_floor_prevents_regression_below_seed() {
+    fn seed_from_history_preserves_logical_counter() {
         // Simulate a restart where the wall clock jumped backwards: the system
         // clock reports an earlier physical time than already-emitted history.
         let hlc = Hlc::new(1).with_clock(|| 1_000);
-        hlc.seed_physical_floor(5_000);
+        let persisted = HlcTimestamp::new(5_000, 17, 99);
+        hlc.seed_from_history(persisted);
 
         let ts = hlc.tick().unwrap();
-        // Even though now_physical() == 1_000, the seed floor keeps us ahead.
+        // Even though now_physical() == 1_000, the full seed keeps us ahead.
         assert_eq!(ts.ts, 5_000);
-        assert_eq!(ts.counter, 1);
+        assert_eq!(ts.counter, 18);
+        assert!(ts > persisted);
     }
 
     #[test]
-    fn seed_physical_floor_is_noop_when_below_current() {
+    fn seed_from_history_uses_counter_to_choose_same_physical_time() {
+        let hlc = Hlc::with_state(5_000, 4, 1).with_clock(|| 1_000);
+        hlc.seed_from_history(HlcTimestamp::new(5_000, 17, 99));
+        let ts = hlc.tick().unwrap();
+        assert_eq!(ts, HlcTimestamp::new(5_000, 18, 1));
+    }
+
+    #[test]
+    fn seed_from_history_is_noop_when_below_current() {
         let hlc = Hlc::with_state(9_000, 4, 1);
-        hlc.seed_physical_floor(5_000);
+        hlc.seed_from_history(HlcTimestamp::new(5_000, u32::MAX, 99));
         let ts = hlc.get();
         assert_eq!(ts.ts, 9_000);
         assert_eq!(ts.counter, 4);
+    }
+
+    #[test]
+    fn seed_from_history_handles_logical_counter_overflow() {
+        let hlc = Hlc::new(1).with_clock(|| 1_000);
+        let persisted = HlcTimestamp::new(5_000, u32::MAX, 99);
+        hlc.seed_from_history(persisted);
+
+        let ts = hlc.tick().unwrap();
+        assert_eq!(ts, HlcTimestamp::new(5_001, 0, 1));
+        assert!(ts > persisted);
     }
 
     #[test]

@@ -190,13 +190,10 @@ impl BusHandle<Enabled> {
         Ok(ts.into())
     }
 
-    /// Seed the HLC physical-time floor from a persisted, packed HLC timestamp
-    /// so freshly-`tick`ed events after a restart never sort before durable
-    /// history (H15). Pass the highest timestamp recovered from persisted
-    /// aggregate state; only the physical-time component is used.
-    pub fn seed_clock(&self, packed_ts: u128) {
-        let ts = HlcTimestamp::from(packed_ts);
-        self.hlc.seed_physical_floor(ts.ts);
+    /// Restore the HLC ordering floor from the greatest persisted packed timestamp.
+    pub fn seed_clock(&self, packed_ts: u128) -> Result<()> {
+        self.hlc.seed_from_history(HlcTimestamp::from(packed_ts))?;
+        Ok(())
     }
 
     /// Pipe events from this handle to the other handle only when the predicate returns true
@@ -486,8 +483,9 @@ mod tests {
     use e3_ciphernode_builder::EventSystem;
     // NOTE: We cannot pull from crate as the features will be missing as they are not default.
     use e3_events::{
-        hlc::Hlc, prelude::*, BusHandle, EventPublisher, EventType, InterfoldEvent,
-        InterfoldEventData, TestEvent,
+        hlc::{Hlc, HlcTimestamp},
+        prelude::*,
+        BusHandle, EventPublisher, EventType, InterfoldEvent, InterfoldEventData, TestEvent,
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::time::sleep;
@@ -497,6 +495,22 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros() as u64
+    }
+
+    #[actix::test]
+    async fn restart_seed_keeps_next_event_after_durable_logical_time() -> anyhow::Result<()> {
+        let bus = EventSystem::new()
+            .with_fresh_bus()
+            .handle()?
+            .enable_with_hlc(Hlc::new(7).with_clock(|| 1_000));
+        let persisted = HlcTimestamp::new(5_000, 17, 99);
+
+        bus.seed_clock(persisted.to_u128())?;
+        let next = HlcTimestamp::from(bus.ts()?);
+
+        assert_eq!(next, HlcTimestamp::new(5_000, 18, 7));
+        assert!(next > persisted);
+        Ok(())
     }
 
     #[actix::test]

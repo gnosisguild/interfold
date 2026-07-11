@@ -96,14 +96,17 @@ impl HlcFactory {
         }
     }
 
-    /// Seed the underlying clock's physical-time floor (H15). No-op until the
-    /// HLC has been enabled. See `Hlc::seed_physical_floor`.
-    pub fn seed_physical_floor(&self, ts: u64) {
-        if let Ok(guard) = self.hlc.lock() {
-            if let HlcState::Ready(hlc) = &*guard {
-                hlc.seed_physical_floor(ts);
-            }
-        }
+    /// Restore the underlying clock's durable ordering floor.
+    ///
+    /// Startup must not silently continue if the clock is unavailable: doing so can create event
+    /// timestamps behind already-persisted history after a wall-clock rollback.
+    pub fn seed_from_history(&self, timestamp: HlcTimestamp) -> Result<(), HlcFactoryError> {
+        let guard = self.hlc.lock()?;
+        let HlcState::Ready(hlc) = &*guard else {
+            return Err(HlcFactoryError::NotReady);
+        };
+        hlc.seed_from_history(timestamp);
+        Ok(())
     }
 }
 

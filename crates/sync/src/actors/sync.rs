@@ -13,10 +13,10 @@ use actix::{Message, Recipient};
 use anyhow::{bail, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
-    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
-    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, SeqAgg, SyncEnded, Unsequenced,
+    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventContextAccessors,
+    EventPublisher, EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType,
+    EvmEventConfig, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart,
+    InterfoldEvent, InterfoldEventData, SeqAgg, SyncEnded, Unsequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::time::Duration;
@@ -48,11 +48,11 @@ pub async fn sync(
         snapshot.aggregates().len()
     );
 
-    // 1b. Seed the HLC physical-time floor from the highest persisted aggregate
-    //     timestamp so events created after this restart never sort before
-    //     durable history, even if the wall clock jumped backwards (H15).
+    // 1b. Restore the HLC ordering floor from the highest persisted aggregate
+    //     timestamp so events created after this restart remain strictly after
+    //     durable history, including its logical counter, even if wall time moved backwards.
     if let Some(max_ts) = snapshot.to_net_config().values().copied().max() {
-        bus.seed_clock(max_ts);
+        bus.seed_clock(max_ts)?;
     }
 
     // 2. Determine the evm blocks to read from based on the SnapshotMeta
@@ -69,6 +69,7 @@ pub async fn sync(
     ))?;
     let events = rx.await?.into_events();
     info!("{} EventStore events loaded.", events.len());
+    seed_clock_from_replay(bus, &events)?;
 
     info!("Replaying events to actors...");
     // 4. Replay the EventStore events to all listeners (except effects).
@@ -174,6 +175,15 @@ pub async fn sync(
     Ok(())
 }
 
+fn seed_clock_from_replay(bus: &BusHandle, events: &[InterfoldEvent]) -> Result<()> {
+    // Snapshot metadata can lag the append-only log after a failed snapshot write. Seed from the
+    // actual replay set before any subscriber can emit follow-up work, otherwise new local events
+    // may receive timestamps behind durable post-snapshot history.
+    if let Some(max_ts) = events.iter().map(EventContextAccessors::ts).max() {
+        bus.seed_clock(max_ts)?;
+    }
+    Ok(())
+}
 /// Verify the on-disk schema version against this binary and either stamp a
 /// fresh marker (first boot) or halt loudly on an incompatible upgrade or
 /// downgrade (H19/H20). Uses a synchronous write so the marker is durable
@@ -253,9 +263,11 @@ impl SnapshotLoaded {
 
 #[cfg(test)]
 mod tests {
+    use super::seed_clock_from_replay;
     use crate::domain::SyncPlanner;
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
+        hlc::{Hlc, HlcTimestamp},
         EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
         HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, SyncEnded, TakeEvents,
         Unsequenced,
@@ -336,6 +348,24 @@ mod tests {
         Ok(())
     }
 
+    #[actix::test]
+    async fn replay_seeds_clock_from_post_snapshot_log_history() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system
+            .handle()?
+            .enable_with_hlc(Hlc::new(7).with_clock(|| 1_000));
+        let durable = HlcTimestamp::new(5_000, 17, 99);
+        let events = vec![InterfoldEvent::<Unsequenced>::test_event("durable")
+            .id(1)
+            .ts(durable.to_u128())
+            .seq(1)
+            .build()];
+
+        seed_clock_from_replay(&bus, &events)?;
+
+        assert!(HlcTimestamp::from(bus.ts()?) > durable);
+        Ok(())
+    }
     /// Verify that `run_once::<EffectsEnabled>` correctly gates event subscriptions.
     ///
     /// Simulates the sync flow:
