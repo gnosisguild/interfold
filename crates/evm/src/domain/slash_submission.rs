@@ -12,10 +12,14 @@
 //! `rank * SUBMITTER_DELAY_SECS` so on-chain `DuplicateEvidence` protection lets
 //! at most one slash execute.
 
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
-use alloy::primitives::Address;
-use e3_events::AccusationOutcome;
+use alloy::primitives::{Address, U256};
+use anyhow::{Context, Result};
+use e3_events::{AccusationOutcome, AccusationQuorumReached};
 
 /// Maximum number of voters eligible to attempt on-chain submission.
 /// Rank 0 submits immediately, rank 1 after one delay interval, etc.
@@ -24,6 +28,103 @@ pub(crate) const MAX_SLASH_SUBMITTERS: usize = 3;
 /// Delay between fallback submission attempts (seconds).
 /// Rank N waits N * SUBMITTER_DELAY_SECS before submitting.
 pub(crate) const SUBMITTER_DELAY_SECS: u64 = 30;
+
+/// The exact semantic replay domain consumed by `SlashingManager._proposeSlash`.
+/// Vote ordering and signatures are deliberately excluded: Solidity permits one
+/// submission for `(chain, E3, operator, proof type)` regardless of evidence encoding.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SlashIntentKey {
+    chain_id: u64,
+    e3_id: U256,
+    operator: Address,
+    proof_type: u8,
+}
+
+impl SlashIntentKey {
+    pub(crate) fn from_quorum(event: &AccusationQuorumReached) -> Result<Self> {
+        Ok(Self {
+            chain_id: event.e3_id.chain_id(),
+            e3_id: event
+                .e3_id
+                .clone()
+                .try_into()
+                .context("slash intent has a non-numeric E3 id")?,
+            operator: event.accused,
+            proof_type: event.proof_type as u8,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlashSubmissionDecision {
+    Defer,
+    Submit,
+    IgnoreDuplicate,
+}
+
+/// Process-local outbox gate for slash submissions.
+///
+/// Replayed intents are retained until `EffectsEnabled`, and semantically equivalent
+/// events are coalesced while deferred, in flight, or already completed. This prevents
+/// startup reconciliation from producing transactions and prevents same-process gas
+/// loss from reordered-but-equivalent quorum payloads.
+#[derive(Default)]
+pub(crate) struct SlashSubmissionGate {
+    effects_enabled: bool,
+    deferred: BTreeMap<SlashIntentKey, AccusationQuorumReached>,
+    in_flight: BTreeSet<SlashIntentKey>,
+    completed: BTreeSet<SlashIntentKey>,
+}
+
+impl SlashSubmissionGate {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn admit(
+        &mut self,
+        event: AccusationQuorumReached,
+    ) -> Result<(SlashIntentKey, SlashSubmissionDecision)> {
+        let key = SlashIntentKey::from_quorum(&event)?;
+        if self.completed.contains(&key)
+            || self.in_flight.contains(&key)
+            || self.deferred.contains_key(&key)
+        {
+            return Ok((key, SlashSubmissionDecision::IgnoreDuplicate));
+        }
+
+        if !self.effects_enabled {
+            self.deferred.insert(key.clone(), event);
+            return Ok((key, SlashSubmissionDecision::Defer));
+        }
+
+        self.in_flight.insert(key.clone());
+        Ok((key, SlashSubmissionDecision::Submit))
+    }
+
+    pub(crate) fn enable_effects(&mut self) -> Vec<(SlashIntentKey, AccusationQuorumReached)> {
+        self.effects_enabled = true;
+        let deferred = std::mem::take(&mut self.deferred);
+        deferred
+            .into_iter()
+            .filter_map(|(key, event)| {
+                if self.completed.contains(&key) || self.in_flight.contains(&key) {
+                    None
+                } else {
+                    self.in_flight.insert(key.clone());
+                    Some((key, event))
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn finish(&mut self, key: &SlashIntentKey, terminal: bool) {
+        self.in_flight.remove(key);
+        if terminal {
+            self.completed.insert(key.clone());
+        }
+    }
+}
 
 /// Determine this node's submission rank: its position in the voter set after
 /// sorting ascending by address. `None` when this node is not among the voters.
@@ -61,6 +162,32 @@ pub(crate) fn submission_delay(rank: usize) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::{Bytes, B256};
+    use e3_events::{AccusationQuorumReached, AccusationVote, E3id, ProofType};
+    use e3_utils::ArcBytes;
+
+    fn vote(voter: Address) -> AccusationVote {
+        AccusationVote {
+            e3_id: E3id::new("1", 1),
+            accusation_id: B256::ZERO.0,
+            voter,
+            data_hash: B256::repeat_byte(7).0,
+            deadline: 100,
+            signature: ArcBytes::from_bytes(b"signature"),
+        }
+    }
+
+    fn quorum(voters: Vec<Address>) -> AccusationQuorumReached {
+        AccusationQuorumReached {
+            e3_id: E3id::new("1", 1),
+            accuser: Address::repeat_byte(9),
+            accused: Address::repeat_byte(8),
+            proof_type: ProofType::C0PkBfv,
+            votes_for: voters.into_iter().map(vote).collect(),
+            outcome: AccusationOutcome::AccusedFaulted,
+            evidence: Bytes::from_static(b"evidence"),
+        }
+    }
 
     #[test]
     fn test_submission_rank_sorts_ascending() {
@@ -121,5 +248,46 @@ mod tests {
             submission_delay(2),
             Duration::from_secs(2 * SUBMITTER_DELAY_SECS)
         );
+    }
+
+    #[test]
+    fn replayed_submission_is_deferred_and_released_once_after_effects() {
+        let mut gate = SlashSubmissionGate::new();
+        let event = quorum(vec![Address::repeat_byte(1)]);
+        let (_, decision) = gate.admit(event.clone()).unwrap();
+        assert_eq!(decision, SlashSubmissionDecision::Defer);
+
+        let released = gate.enable_effects();
+        assert_eq!(released.len(), 1);
+        assert!(gate.enable_effects().is_empty());
+
+        let (_, duplicate) = gate.admit(event).unwrap();
+        assert_eq!(duplicate, SlashSubmissionDecision::IgnoreDuplicate);
+    }
+
+    #[test]
+    fn reordered_votes_share_the_contract_replay_key() {
+        let a = Address::repeat_byte(1);
+        let b = Address::repeat_byte(2);
+        let first = SlashIntentKey::from_quorum(&quorum(vec![a, b])).unwrap();
+        let reordered = SlashIntentKey::from_quorum(&quorum(vec![b, a])).unwrap();
+        assert_eq!(first, reordered);
+    }
+
+    #[test]
+    fn retryable_failure_clears_in_flight_but_terminal_result_does_not() {
+        let event = quorum(vec![Address::repeat_byte(1)]);
+        let mut gate = SlashSubmissionGate::new();
+        gate.enable_effects();
+
+        let (key, first) = gate.admit(event.clone()).unwrap();
+        assert_eq!(first, SlashSubmissionDecision::Submit);
+        gate.finish(&key, false);
+        let (key, retry) = gate.admit(event.clone()).unwrap();
+        assert_eq!(retry, SlashSubmissionDecision::Submit);
+
+        gate.finish(&key, true);
+        let (_, completed) = gate.admit(event).unwrap();
+        assert_eq!(completed, SlashSubmissionDecision::IgnoreDuplicate);
     }
 }

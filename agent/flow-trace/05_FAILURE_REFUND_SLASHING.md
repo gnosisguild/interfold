@@ -434,7 +434,12 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │
 ├─ Only for SLASHABLE outcomes (AccusedFaulted, Equivocation):
 │
-├─ 1. STAGGERED SUBMISSION (fallback submitters):
+├─ 1. EFFECT AND REPLAY GATE:
+│     Before EffectsEnabled (startup replay), retain the intent without sending a transaction
+│     Coalesce by the contract replay tuple (chainId, e3Id, accused, proofType)
+│     After EffectsEnabled, release each retained intent once and track it in flight
+│
+├─ 2. STAGGERED SUBMISSION (fallback submitters):
 │     Rank all agreeing voters by address (sorted ascending)
 │     My rank = position in sorted list
 │     │
@@ -445,21 +450,24 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → Prevents multiple nodes wasting gas on same slash
 │     → Higher-rank submitters expect DuplicateEvidence revert
 │
-├─ 2. Encode attestation evidence:
+├─ 3. Encode attestation evidence:
 │     proof = abi.encode(
 │       proofType,       // uint256 — which proof failed (C0-C7)
 │       voters[],        // address[] — sorted ascending
-│       agrees[],        // bool[] — all true (only agreeing votes submitted)
 │       dataHashes[],    // bytes32[] — per-voter data hashes
+│       evidence,        // bytes — shared evidence preimage
+│       deadline,        // uint256 — common signed deadline
 │       signatures[]     // bytes[] — per-voter ECDSA signatures
 │     )
 │
-├─ 3. Call SlashingManager.proposeSlash(e3Id, accused, proof)
+├─ 4. Prefer proposeSlashByDkgParty(e3Id, partyId, proof) when the
+│     canonical DKG slot resolves; otherwise call proposeSlash(e3Id, accused, proof)
 │     → On-chain verification happens (see Lane A below)
 │
-└─ 4. Handle result:
+└─ 5. Handle result:
      ├─ Success: log transaction hash
-     └─ DuplicateEvidence: expected for fallback submitters (logged as warning)
+     ├─ DuplicateEvidence / stale committee attribution: terminal and logged as warning
+     └─ Other RPC or contract failures: reported and made eligible for a later retry event
 ```
 
 ### Lane A: Attestation-Based Slashing (Permissionless, Atomic)
@@ -961,7 +969,9 @@ Slash Reasons (derived from ProofType for Lane A):
 │     └─ AccusationQuorumReached event published                 │
 │                                                                 │
 │  7. ON-CHAIN SUBMISSION (SlashingManagerSolWriter)             │
-│     ├─ Staggered: rank 0 submits immediately                  │
+│     ├─ Defers replayed intents until EffectsEnabled            │
+│     ├─ Coalesces the contract replay tuple while in flight     │
+│     ├─ Staggered: rank 0 submits immediately                   │
 │     │   ranks 1+ wait rank×30s as fallback                     │
 │     ├─ Encodes attestation evidence (votes + signatures)       │
 │     └─ Calls SlashingManager.proposeSlash(e3Id, operator, proof)│

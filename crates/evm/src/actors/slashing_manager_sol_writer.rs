@@ -12,7 +12,10 @@
 use crate::contracts::{ICiphernodeRegistry, ISlashingManager};
 use crate::domain::attestation_evidence::encode_attestation_evidence;
 use crate::domain::error_decoder::format_evm_error;
-use crate::domain::slash_submission::{should_submit_slash, submission_delay, submission_rank};
+use crate::domain::slash_submission::{
+    should_submit_slash, submission_delay, submission_rank, SlashIntentKey,
+    SlashSubmissionDecision, SlashSubmissionGate,
+};
 use crate::helpers::{transaction_nonce_guard, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
@@ -30,7 +33,7 @@ use e3_events::InterfoldEvent;
 use e3_events::InterfoldEventData;
 use e3_events::Shutdown;
 use e3_events::{AccusationQuorumReached, EType};
-use e3_utils::{require_successful_receipt, NotifySync};
+use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
 use tracing::{info, warn};
 
 /// Submits `AccusationQuorumReached` events as slash proposals on-chain.
@@ -38,6 +41,21 @@ pub struct SlashingManagerSolWriter<P> {
     provider: EthProvider<P>,
     contract_address: Address,
     bus: BusHandle,
+    submissions: SlashSubmissionGate,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubmitSlashIntent {
+    key: SlashIntentKey,
+    event: AccusationQuorumReached,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SlashSubmissionFinished {
+    key: SlashIntentKey,
+    terminal: bool,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P> {
@@ -50,6 +68,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
             provider,
             contract_address,
             bus: bus.clone(),
+            submissions: SlashSubmissionGate::new(),
         })
     }
 
@@ -60,7 +79,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
     ) -> Result<Addr<SlashingManagerSolWriter<P>>> {
         let addr = SlashingManagerSolWriter::new(bus, provider, contract_address)?.start();
         bus.subscribe_all(
-            &[EventType::AccusationQuorumReached, EventType::Shutdown],
+            &[
+                EventType::AccusationQuorumReached,
+                EventType::EffectsEnabled,
+                EventType::Shutdown,
+            ],
             addr.clone().into(),
         );
         Ok(addr)
@@ -69,6 +92,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
 
 impl<P: Provider + WalletProvider + Clone + 'static> Actor for SlashingManagerSolWriter<P> {
     type Context = actix::Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+    }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
@@ -96,7 +123,51 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     &data.outcome,
                     rank,
                 ) {
-                    ctx.notify(data);
+                    if encode_attestation_evidence(&data).is_none() {
+                        self.bus.err(
+                            EType::Evm,
+                            anyhow::anyhow!(
+                                "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
+                                data.e3_id
+                            ),
+                        );
+                        return;
+                    }
+                    match self.submissions.admit(data.clone()) {
+                        Ok((key, SlashSubmissionDecision::Submit)) => {
+                            ctx.notify(SubmitSlashIntent { key, event: data });
+                        }
+                        Ok((_, SlashSubmissionDecision::Defer)) => {
+                            info!(e3_id = %data.e3_id, "Deferred slash intent until effects are enabled");
+                        }
+                        Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
+                            info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
+                        }
+                        Err(error) => self.bus.err(EType::Evm, error),
+                    }
+                }
+            }
+            InterfoldEventData::EffectsEnabled(_) => {
+                let deferred = self.submissions.enable_effects();
+                if !deferred.is_empty() {
+                    info!(
+                        intents = deferred.len(),
+                        "Releasing deferred slash intents after startup reconciliation"
+                    );
+                    let address = ctx.address();
+                    ctx.spawn(
+                        async move {
+                            for (key, event) in deferred {
+                                if let Err(error) =
+                                    address.send(SubmitSlashIntent { key, event }).await
+                                {
+                                    warn!(%error, "Slashing writer stopped with deferred intents pending");
+                                    break;
+                                }
+                            }
+                        }
+                        .into_actor(self),
+                    );
                 }
             }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
@@ -105,18 +176,20 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     }
 }
 
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<AccusationQuorumReached>
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
     for SlashingManagerSolWriter<P>
 {
     type Result = ResponseFuture<()>;
 
-    fn handle(&mut self, msg: AccusationQuorumReached, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SubmitSlashIntent, ctx: &mut Self::Context) -> Self::Result {
         Box::pin({
             let contract_address = self.contract_address;
             let provider = self.provider.clone();
             let bus = self.bus.clone();
             let my_addr = self.provider.provider().default_signer_address();
+            let address = ctx.address();
             async move {
+                let SubmitSlashIntent { key, event: msg } = msg;
                 // Compute this node's submission rank for staggered fallback
                 let rank =
                     submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr).unwrap_or(0);
@@ -132,16 +205,17 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AccusationQuorumRea
                 }
 
                 let result = submit_slash_proposal(provider, contract_address, msg).await;
-                match result {
+                let terminal = match result {
                     Ok(receipt) => {
                         info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
+                        true
                     }
                     Err(err) => {
                         let decoded = format_evm_error(&err);
                         let benign = decoded.contains("OperatorNotInCommittee")
                             || decoded.contains("VoterNotInCommittee")
                             || decoded.contains("DuplicateEvidence");
-                        if rank > 0 || benign {
+                        if benign {
                             // Fallback submitters expect DuplicateEvidence reverts
                             // when the primary submitter has already landed the tx.
                             // Operator/VoterNotInCommittee indicate a stale off-chain accusation
@@ -153,10 +227,27 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AccusationQuorumRea
                                 anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
                             );
                         }
+                        benign
                     }
+                };
+                if let Err(error) = address
+                    .send(SlashSubmissionFinished { key, terminal })
+                    .await
+                {
+                    warn!(%error, "Slashing writer stopped before recording submission outcome");
                 }
             }
         })
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SlashSubmissionFinished>
+    for SlashingManagerSolWriter<P>
+{
+    type Result = ();
+
+    fn handle(&mut self, msg: SlashSubmissionFinished, _: &mut Self::Context) -> Self::Result {
+        self.submissions.finish(&msg.key, msg.terminal);
     }
 }
 
