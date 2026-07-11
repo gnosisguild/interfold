@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{anyhow, Result};
-use e3_fhe_params::{build_bfv_params_arc, DEFAULT_BFV_PRESET};
+use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
 use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
 use e3_zk_helpers::circuits::Computation;
@@ -13,6 +13,16 @@ use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
+
+fn build_client_params(
+    degree: usize,
+    plaintext_modulus: u64,
+    moduli: &[u64],
+    error1_variance: Option<&str>,
+) -> Result<std::sync::Arc<fhe::bfv::BfvParameters>> {
+    try_build_bfv_params_arc(degree, plaintext_modulus, moduli, error1_variance)
+        .map_err(|error| anyhow!("Invalid BFV parameters: {error}"))
+}
 
 /// Encrypt some data using BFV homomorphic encryption
 ///
@@ -42,7 +52,7 @@ pub fn bfv_encrypt<T>(
 where
     Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,
 {
-    let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, None);
+    let params = build_client_params(degree, plaintext_modulus, moduli, None)?;
 
     let pk = PublicKey::from_bytes(&public_key, &params)
         .map_err(|e| anyhow!("Error deserializing public key:{e}"))?;
@@ -93,7 +103,21 @@ pub fn bfv_verifiable_encrypt<T>(
 where
     Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,
 {
-    let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
+    let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, &moduli)
+        .ok_or_else(|| {
+            anyhow!(
+                "Unsupported BFV threshold parameters for verifiable encryption: degree={degree}, \
+                 plaintext_modulus={plaintext_modulus}, moduli_count={}",
+                moduli.len()
+            )
+        })?;
+    let preset_parameters = BfvParamSet::from(preset);
+    let params = build_client_params(
+        degree,
+        plaintext_modulus,
+        &moduli,
+        preset_parameters.error1_variance,
+    )?;
 
     let pk = PublicKey::from_bytes(&public_key, &params)
         .map_err(|e| anyhow!("Error deserializing public key: {}", e))?;
@@ -102,7 +126,7 @@ where
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {}", e))?;
 
     let inputs = UserDataEncryptionInputs::compute(
-        DEFAULT_BFV_PRESET,
+        preset,
         &UserDataEncryptionCircuitData {
             public_key: pk,
             plaintext,
@@ -132,7 +156,7 @@ pub fn generate_public_key(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<Vec<u8>> {
-    let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
+    let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
     // Generate keys.
     let mut rng = rng();
@@ -150,7 +174,7 @@ pub fn compute_pk_commitment(
 ) -> Result<[u8; 32]> {
     use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
 
-    let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
+    let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
     let public_key = PublicKey::from_bytes(&public_key, &params)
         .map_err(|e| anyhow!("Error deserializing public key: {}", e))?;
@@ -169,7 +193,7 @@ pub fn compute_ct_commitment(
 ) -> Result<[u8; 32]> {
     use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
 
-    let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
+    let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
     let ct = Ciphertext::from_bytes(&ct, &params)
         .map_err(|e| anyhow!("Error deserializing ciphertext: {}", e))?;
@@ -187,6 +211,51 @@ mod tests {
     use fhe_traits::FheDecoder;
 
     use super::*;
+
+    #[test]
+    fn verifiable_encryption_rejects_noncanonical_parameter_tuple_before_key_decode() {
+        let parameters: BfvParamSet = DEFAULT_BFV_PRESET.into();
+        let mut moduli = parameters.moduli.to_vec();
+        moduli[0] ^= 1;
+
+        let error = bfv_verifiable_encrypt(
+            [1_u64],
+            Vec::new(),
+            parameters.degree,
+            parameters.plaintext_modulus,
+            moduli,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Unsupported BFV threshold parameters"));
+    }
+
+    #[test]
+    fn public_key_generation_returns_error_for_invalid_parameters() {
+        let error = generate_public_key(7, 17, vec![97]).unwrap_err();
+        assert!(error.to_string().contains("Invalid BFV parameters"));
+    }
+
+    #[test]
+    fn verifiable_parameter_builder_uses_the_canonical_error_variance() {
+        for preset in BfvPreset::PAIR_PRESETS {
+            let parameters = BfvParamSet::from(preset);
+            let built = build_client_params(
+                parameters.degree,
+                parameters.plaintext_modulus,
+                parameters.moduli,
+                parameters.error1_variance,
+            )
+            .unwrap();
+
+            assert_eq!(
+                built.get_error1_variance().to_string(),
+                parameters.error1_variance.unwrap()
+            );
+        }
+    }
 
     #[test]
     fn test_bfv_encrypt_a64() {

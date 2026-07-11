@@ -464,6 +464,13 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
     ),
 ];
 
+/// Starting polynomial degree (power of 2) for parameter search
+pub const D_POW2_START: u64 = 256;
+/// Maximum polynomial degree (power of 2) to search up to
+pub const D_POW2_MAX: u64 = 32768;
+/// Maximum number of votes/plaintext additions (k_plain_eff)
+pub const K_MAX: u128 = 1u128 << 25; // 33,554,432
+
 #[cfg(test)]
 mod tests {
     use super::NTT_PRIMES_BY_BITS;
@@ -479,13 +486,13 @@ mod tests {
             return false;
         }
         for p in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37] {
-            if n % p == 0 {
+            if n.is_multiple_of(p) {
                 return n == p;
             }
         }
         let mut d = n - 1;
         let mut r = 0;
-        while d % 2 == 0 {
+        while d.is_multiple_of(2) {
             d /= 2;
             r += 1;
         }
@@ -544,10 +551,3 @@ mod tests {
         }
     }
 }
-
-/// Starting polynomial degree (power of 2) for parameter search
-pub const D_POW2_START: u64 = 256;
-/// Maximum polynomial degree (power of 2) to search up to
-pub const D_POW2_MAX: u64 = 32768;
-/// Maximum number of votes/plaintext additions (k_plain_eff)
-pub const K_MAX: u128 = 1u128 << 25; // 33,554,432
