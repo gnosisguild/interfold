@@ -9,7 +9,7 @@ use crate::{
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
-use actix::{Actor, Handler};
+use actix::{Actor, AsyncContext, Handler, Recipient, WrapFuture};
 use anyhow::{bail, Result};
 use tracing::{error, warn};
 
@@ -264,41 +264,64 @@ impl<I: SequenceIndex, L: EventLog> Handler<FlushEventStores> for EventStore<I, 
 
 impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStore<I, L> {
     type Result = ();
-    fn handle(&mut self, msg: EventStoreQueryBy<Ts>, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: EventStoreQueryBy<Ts>, ctx: &mut Self::Context) -> Self::Result {
         let query = msg.query();
         let id = msg.id();
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        match self.query_by_ts(query, filter, limit) {
-            Ok(evts) => {
-                if let Err(e) = sender.try_send(EventStoreQueryResponse::new(id, evts)) {
-                    error!("{e}");
+        let response = self
+            .query_by_ts(query, filter, limit)
+            .map(|events| EventStoreQueryResponse::new(id, events));
+        ctx.wait(
+            async move {
+                match response {
+                    Ok(response) => {
+                        if let Err(error) = deliver_query_response(sender, response).await {
+                            error!(%error, "Event-store query recipient closed");
+                        }
+                    }
+                    Err(error) => error!(%error, "Event-store timestamp query failed"),
                 }
             }
-            Err(e) => error!("{e}"),
-        }
+            .into_actor(self),
+        );
     }
 }
 
 impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventStore<I, L> {
     type Result = ();
-    fn handle(&mut self, msg: EventStoreQueryBy<Seq>, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: EventStoreQueryBy<Seq>, ctx: &mut Self::Context) -> Self::Result {
         let id = msg.id();
         let query = msg.query();
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
         let evts = self.query_by_seq(query, filter, limit);
-        if let Err(e) = sender.try_send(EventStoreQueryResponse::new(id, evts)) {
-            error!("{e}");
-        }
+        let response = EventStoreQueryResponse::new(id, evts);
+        ctx.wait(
+            async move {
+                if let Err(error) = deliver_query_response(sender, response).await {
+                    error!(%error, "Event-store query recipient closed");
+                }
+            }
+            .into_actor(self),
+        );
     }
+}
+
+async fn deliver_query_response(
+    sender: Recipient<EventStoreQueryResponse>,
+    response: EventStoreQueryResponse,
+) -> std::result::Result<(), actix::MailboxError> {
+    sender.send(response).await
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{EventConstructorWithTimestamp, EventContextSeq, EventSource, TestEvent};
+    use crate::{
+        CorrelationId, EventConstructorWithTimestamp, EventContextSeq, EventSource, TestEvent,
+    };
 
     use super::*;
     use anyhow::Result;
@@ -535,6 +558,78 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
         Ok(())
     }
+
+    #[actix::test]
+    async fn query_response_waits_for_a_full_recipient_mailbox() {
+        use tokio::sync::{mpsc, Notify};
+
+        struct SaturatedResponseSink {
+            block_first: bool,
+            gate: Arc<Notify>,
+            received: mpsc::UnboundedSender<()>,
+        }
+
+        impl Actor for SaturatedResponseSink {
+            type Context = actix::Context<Self>;
+
+            fn started(&mut self, ctx: &mut Self::Context) {
+                ctx.set_mailbox_capacity(1);
+            }
+        }
+
+        impl Handler<EventStoreQueryResponse> for SaturatedResponseSink {
+            type Result = ();
+
+            fn handle(
+                &mut self,
+                _: EventStoreQueryResponse,
+                ctx: &mut Self::Context,
+            ) -> Self::Result {
+                self.received.send(()).unwrap();
+                if self.block_first {
+                    self.block_first = false;
+                    let gate = Arc::clone(&self.gate);
+                    ctx.wait(async move { gate.notified().await }.into_actor(self));
+                }
+            }
+        }
+
+        let gate = Arc::new(Notify::new());
+        let (received_tx, mut received_rx) = mpsc::unbounded_channel();
+        let sink = SaturatedResponseSink {
+            block_first: true,
+            gate: Arc::clone(&gate),
+            received: received_tx,
+        }
+        .start();
+        let recipient = sink.recipient();
+
+        recipient.do_send(EventStoreQueryResponse::new(CorrelationId::new(), vec![]));
+        received_rx.recv().await.unwrap();
+        recipient
+            .try_send(EventStoreQueryResponse::new(CorrelationId::new(), vec![]))
+            .unwrap();
+
+        let delivery = tokio::spawn(deliver_query_response(
+            recipient,
+            EventStoreQueryResponse::new(CorrelationId::new(), vec![]),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(
+            !delivery.is_finished(),
+            "delivery must wait instead of dropping a full-mailbox response"
+        );
+
+        gate.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), delivery)
+            .await
+            .expect("response delivery should resume after mailbox capacity is available")
+            .unwrap()
+            .unwrap();
+        received_rx.recv().await.unwrap();
+        received_rx.recv().await.unwrap();
+    }
+
     #[test]
     fn startup_index_reconciliation_reads_log_in_bounded_pages() {
         let event_count = INDEX_RECONCILE_PAGE_SIZE * 2 + 2;

@@ -4,24 +4,32 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+#[cfg(test)]
+use crate::domain::ReplayDecision;
 use crate::domain::{
-    decide_schema_version, CollectOutcome, HistoricalEvmCollector, ReplayDecision,
-    SchemaVersionDecision, SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
+    decide_schema_version, CollectOutcome, HistoricalEvmCollector, SchemaVersionDecision,
+    SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
 };
+use crate::replay_spool::ReplaySpool;
 use crate::SyncRepositoryFactory;
 use actix::{Message, Recipient};
 use anyhow::{bail, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventContextAccessors,
-    EventPublisher, EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType,
-    EvmEventConfig, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart,
-    InterfoldEvent, InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
+    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
+    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
+    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
+    InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
 };
+#[cfg(test)]
+use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
 use e3_utils::actix::channel as actix_toolbox;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 use tracing::info;
+
+#[cfg(test)]
+const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
 pub async fn sync(
     bus: &BusHandle,
@@ -59,18 +67,11 @@ pub async fn sync(
     let evm_config = snapshot.to_evm_config();
     let snapshot_net_config = snapshot.to_net_config();
 
-    // 3. Load EventStore events since the sequence number found in the snapshot into memory.
-    info!("Loading EventStore events...");
-    let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
-    eventstore.try_send(EventStoreQueryBy::<SeqAgg>::new(
-        CorrelationId::new(),
-        snapshot.to_sequence_map(),
-        addr,
-    ))?;
-    let mut events = rx.await?.into_events();
-    info!("{} EventStore events loaded.", events.len());
-    seed_clock_from_replay(bus, &events)?;
-    sort_replay_events(&mut events);
+    // 3. Page post-snapshot EventStore history into sorted temporary runs. This preserves the
+    // global HLC replay order without retaining the complete backlog in memory.
+    info!("Loading EventStore replay pages...");
+    let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;
+    info!("{} EventStore events spooled.", replay_spool.total_events());
 
     info!("Replaying events to actors...");
     // 4. Replay the EventStore events to all listeners (except effects).
@@ -81,13 +82,8 @@ pub async fn sync(
     //    EventId (payload hash) as the one we publish later, causing the later event to be
     //    silently dropped.  This is critical for SyncEnded, if the EvmChainGateway never
     //    receives it, the gateway stays in BufferUntilLive and all live EVM events are lost.
-    for event in events {
-        if SyncPlanner::classify_replay(&event) == ReplayDecision::SkipInfrastructure {
-            continue;
-        }
-        bus.event_bus().try_send(event)?;
-    }
-    info!("Events replayed.");
+    let replayed = replay_spool.replay(bus).await?;
+    info!(replayed_events = replayed, "Events replayed.");
 
     // Loose ends after a crash:
     //
@@ -188,21 +184,48 @@ async fn publish_reconciled_history(
     Ok(())
 }
 
-fn seed_clock_from_replay(bus: &BusHandle, events: &[InterfoldEvent]) -> Result<()> {
+#[cfg(test)]
+async fn replay_eventstore_events(
+    bus: &BusHandle,
+    mut events: Vec<InterfoldEvent>,
+) -> Result<usize> {
+    let total_events = events.len();
+    let mut replayed = 0usize;
+
     // Snapshot metadata can lag the append-only log after a failed snapshot write. Seed from the
     // actual replay set before any subscriber can emit follow-up work, otherwise new local events
     // may receive timestamps behind durable post-snapshot history.
     if let Some(max_ts) = events.iter().map(EventContextAccessors::ts).max() {
         bus.seed_clock(max_ts)?;
     }
-    Ok(())
-}
 
-fn sort_replay_events(events: &mut [InterfoldEvent]) {
     // EventStoreRouter gathers one query response per aggregate. Those actor responses can arrive
     // in any order, so replay must re-establish the global HLC order before stateful subscribers
     // observe cross-aggregate dependencies.
     events.sort_by_key(|event| event.ts());
+
+    for event in events {
+        if SyncPlanner::classify_replay(&event) == ReplayDecision::SkipInfrastructure {
+            continue;
+        }
+        // Await EventBus handling before submitting the next event. `try_send` lets this producer
+        // outrun the bounded mailbox and aborts startup when it fills; the awaited Actix request
+        // preserves replay order, yields between events, and reports a closed mailbox.
+        bus.event_bus().send(EventBusFanout(event)).await??;
+        replayed += 1;
+
+        if replayed.is_multiple_of(REPLAY_PROGRESS_INTERVAL) {
+            info!(
+                replayed_events = replayed,
+                total_events, "EventStore replay progress"
+            );
+        }
+    }
+    // The EventBus acknowledges its own handler before an awaited subscriber fanout finishes.
+    // A fence queued after the final replay event therefore proves the last downstream handler
+    // has completed before startup advances to canonical-chain reconciliation.
+    bus.event_bus().send(EventBusBarrier).await?;
+    Ok(replayed)
 }
 
 /// Validate or initialize the durable schema marker before runtime actors can write state.
@@ -336,18 +359,19 @@ impl SnapshotLoaded {
 mod tests {
     use super::{
         collect_historical_evm_events, has_schema_governed_kv_state, preflight_schema_version,
-        publish_reconciled_history, seed_clock_from_replay, sort_replay_events,
+        publish_reconciled_history, replay_eventstore_events,
     };
-    use crate::domain::SyncPlanner;
     use crate::SyncRepositoryFactory;
     use e3_ciphernode_builder::EventSystem;
     use e3_data::Repositories;
     use e3_events::{
         hlc::{Hlc, HlcTimestamp},
-        EffectsEnabled, Event, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
-        EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived, HistoricalEvmSyncStart,
-        InterfoldEvent, InterfoldEventData, StoreKeys, SyncEnded, TakeEvents, Unsequenced,
+        EffectsEnabled, Event, EventContextAccessors, EventPublisher, EventSubscriber, EventType,
+        EvmEventConfig, EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived,
+        HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, StoreKeys, SyncEnded,
+        TakeEvents, Unsequenced,
     };
+    use e3_utils::MAILBOX_LIMIT_LARGE;
     use std::collections::BTreeMap;
 
     fn make_historical_evm_sync_start() -> HistoricalEvmSyncStart {
@@ -561,12 +585,8 @@ mod tests {
                 .build(),
         ];
 
-        for event in events {
-            if SyncPlanner::is_infrastructure_event(&event) {
-                continue;
-            }
-            bus.event_bus().try_send(event)?;
-        }
+        let replayed = replay_eventstore_events(&bus, events).await?;
+        assert_eq!(replayed, 2);
 
         let received = history.send(TakeEvents::new(2)).await?;
 
@@ -601,21 +621,26 @@ mod tests {
     }
 
     #[actix::test]
-    async fn replay_seeds_clock_from_post_snapshot_log_history() -> anyhow::Result<()> {
+    async fn replay_backlog_larger_than_event_bus_mailbox_is_delivered() -> anyhow::Result<()> {
         let system = EventSystem::new().with_fresh_bus();
-        let bus = system
-            .handle()?
-            .enable_with_hlc(Hlc::new(7).with_clock(|| 1_000));
-        let durable = HlcTimestamp::new(5_000, 17, 99);
-        let events = vec![InterfoldEvent::<Unsequenced>::test_event("durable")
-            .id(1)
-            .ts(durable.to_u128())
-            .seq(1)
-            .build()];
+        let bus = system.handle()?.enable("test-large-sync-replay");
+        let history = bus.history();
+        let count = MAILBOX_LIMIT_LARGE * 2;
+        let events = (0..count)
+            .map(|i| {
+                InterfoldEvent::<Unsequenced>::test_event("replay")
+                    .id(i as u64 + 1)
+                    .seq(i as u64 + 1)
+                    .build()
+            })
+            .collect();
 
-        seed_clock_from_replay(&bus, &events)?;
+        let replayed = replay_eventstore_events(&bus, events).await?;
+        assert_eq!(replayed, count);
 
-        assert!(HlcTimestamp::from(bus.ts()?) > durable);
+        let received = history.send(TakeEvents::new(count)).await?;
+        assert!(!received.timed_out, "all replay events should be delivered");
+        assert_eq!(received.events.len(), count);
         Ok(())
     }
 
@@ -624,7 +649,7 @@ mod tests {
         let system = EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("test-ordered-sync-replay");
         let history = bus.history();
-        let mut events = vec![
+        let events = vec![
             InterfoldEvent::<Unsequenced>::test_event("third")
                 .id(3)
                 .aggregate_id(3)
@@ -645,10 +670,7 @@ mod tests {
                 .build(),
         ];
 
-        sort_replay_events(&mut events);
-        for event in events {
-            bus.event_bus().try_send(event)?;
-        }
+        replay_eventstore_events(&bus, events).await?;
 
         let received = history.send(TakeEvents::new(3)).await?;
         let timestamps = received
@@ -659,6 +681,26 @@ mod tests {
         assert_eq!(timestamps, vec![10, 20, 30]);
         Ok(())
     }
+
+    #[actix::test]
+    async fn replay_seeds_clock_from_post_snapshot_log_history() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system
+            .handle()?
+            .enable_with_hlc(Hlc::new(7).with_clock(|| 1_000));
+        let durable = HlcTimestamp::new(5_000, 17, 99);
+        let events = vec![InterfoldEvent::<Unsequenced>::test_event("durable")
+            .id(1)
+            .ts(durable.to_u128())
+            .seq(1)
+            .build()];
+
+        replay_eventstore_events(&bus, events).await?;
+
+        assert!(HlcTimestamp::from(bus.ts()?) > durable);
+        Ok(())
+    }
+
     #[actix::test]
     async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Result<()> {
         let system = EventSystem::new().with_fresh_bus();

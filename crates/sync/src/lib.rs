@@ -6,6 +6,7 @@
 
 mod actors;
 mod domain;
+mod replay_spool;
 mod repo;
 
 pub use actors::*;

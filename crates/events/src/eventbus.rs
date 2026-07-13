@@ -8,6 +8,7 @@ use crate::traits::{ErrorEvent, Event};
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
 use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
+use futures_util::future::join_all;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::hash::Hash;
@@ -35,6 +36,11 @@ impl Default for EventBusConfig {
 /// This bounds memory while retaining a large replay window. Once full, IDs are
 /// evicted in first-observed order and a later occurrence is accepted again.
 const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
+
+/// Actor handlers are expected to hand long-running work to child futures. A
+/// full mailbox that cannot accept one event within this window is unhealthy;
+/// replay fails closed instead of hanging startup forever.
+const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A bounded, exact FIFO set.
 ///
@@ -162,7 +168,72 @@ impl<E: Event> EventBus<E> {
     fn is_duplicate(&self, event: &E) -> bool {
         self.config.deduplicate && self.ids.contains(&event.event_id())
     }
+
+    fn live_listeners_for(&mut self, event_type: &str) -> Vec<Recipient<E>> {
+        let mut listeners = Vec::new();
+        if let Some(all) = self.listeners.get_mut("*") {
+            all.retain(Recipient::connected);
+            listeners.extend(all.iter().cloned());
+        }
+        if event_type != "*" {
+            if let Some(specific) = self.listeners.get_mut(event_type) {
+                specific.retain(Recipient::connected);
+                listeners.extend(specific.iter().cloned());
+            }
+        }
+        listeners
+    }
+
+    fn prepare_fanout(&mut self, event: &E) -> Option<(String, Vec<Recipient<E>>)> {
+        if self.is_duplicate(event) {
+            return None;
+        }
+
+        let event_type = event.event_type();
+        let listeners = self.live_listeners_for(&event_type);
+        if event_type == EventType::Shutdown.as_str() {
+            tracing::info!(
+                listeners = listeners.len(),
+                "Acknowledging Shutdown across EventBus subscribers"
+            );
+        }
+
+        tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
+        self.track(event);
+        Some((event_type, listeners))
+    }
 }
+
+async fn fanout<E: Event>(
+    event: E,
+    event_type: String,
+    listeners: Vec<Recipient<E>>,
+) -> anyhow::Result<()> {
+    let deliveries = listeners.into_iter().map(|listener| {
+        let event = event.clone();
+        async move { tokio::time::timeout(FANOUT_ACCEPT_TIMEOUT, listener.send(event)).await }
+    });
+
+    for delivery in join_all(deliveries).await {
+        match delivery {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => anyhow::bail!(
+                "EventBus subscriber was unavailable while accepting {event_type}: {error}"
+            ),
+            Err(_) => anyhow::bail!(
+                "EventBus subscriber did not accept {event_type} within {:?}",
+                FANOUT_ACCEPT_TIMEOUT
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// Replay-only acknowledged delivery. Unlike the ordinary event message, this
+/// returns mailbox saturation to the sync caller so startup can fail closed.
+#[derive(Message)]
+#[rtype(result = "anyhow::Result<()>")]
+pub struct EventBusFanout<E: Event>(pub E);
 
 impl<E: Event> Default for EventBus<E> {
     fn default() -> Self {
@@ -178,62 +249,52 @@ impl<E: Event> Handler<E> for EventBus<E> {
     type Result = ();
 
     fn handle(&mut self, event: E, ctx: &mut Context<Self>) {
-        if self.is_duplicate(&event) {
+        let Some((event_type, listeners)) = self.prepare_fanout(&event) else {
             return;
-        }
+        };
 
-        let event_type = event.event_type();
-        if event_type == EventType::Shutdown.as_str() {
-            let listeners = self
-                .listeners
-                .get("*")
-                .into_iter()
-                .flatten()
-                .chain(self.listeners.get(&event_type).into_iter().flatten())
-                .cloned()
-                .collect::<Vec<_>>();
-
-            tracing::info!(
-                listeners = listeners.len(),
-                "Acknowledging Shutdown across EventBus subscribers"
-            );
-            tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
-            self.track(&event);
-
-            ctx.wait(
-                async move {
-                    for listener in listeners {
-                        if let Err(error) = listener.send(event.clone()).await {
-                            tracing::warn!(%error, "Shutdown subscriber was already unavailable");
-                        }
+        // `Recipient::do_send` bypasses mailbox capacity. During startup replay that turns a
+        // bounded EventBus into an unbounded multiplier: every replayed event is cloned into each
+        // subscriber even when its mailbox is full. Await subscriber capacity concurrently and
+        // pause this actor so at most one subsequent event can be queued while downstream actors
+        // catch up. A wedged subscriber is bounded by FANOUT_ACCEPT_TIMEOUT.
+        // This also makes EventBusBarrier an acknowledgement of completed fanout rather than mere
+        // enqueueing.
+        ctx.wait(
+            async move { fanout(event, event_type.clone(), listeners).await }
+                .into_actor(self)
+                .map(|result, _, _| {
+                    if let Err(error) = result {
+                        tracing::error!(%error, "EventBus fanout did not complete");
                     }
+                }),
+        );
+    }
+}
+
+impl<E: Event> Handler<EventBusFanout<E>> for EventBus<E> {
+    type Result = AtomicResponse<Self, anyhow::Result<()>>;
+
+    fn handle(&mut self, msg: EventBusFanout<E>, _: &mut Context<Self>) -> Self::Result {
+        let event = msg.0;
+        let prepared = self.prepare_fanout(&event);
+        AtomicResponse::new(Box::pin(
+            async move {
+                if let Some((event_type, listeners)) = prepared {
+                    fanout(event, event_type, listeners).await
+                } else {
+                    Ok(())
                 }
-                .into_actor(self),
-            );
-            return;
-        }
-
-        if let Some(listeners) = self.listeners.get("*") {
-            for listener in listeners {
-                listener.do_send(event.clone());
             }
-        }
-
-        if let Some(listeners) = self.listeners.get(&event_type) {
-            for listener in listeners {
-                listener.do_send(event.clone());
-            }
-        }
-
-        tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
-        self.track(&event);
+            .into_actor(self),
+        ))
     }
 }
 
 impl<E: Event> Handler<EventBusBarrier> for EventBus<E> {
     type Result = ();
 
-    fn handle(&mut self, _: EventBusBarrier, _: &mut Context<Self>) {}
+    fn handle(&mut self, _: EventBusBarrier, _: &mut Context<Self>) -> Self::Result {}
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -527,7 +588,7 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    use tokio::sync::Notify;
+    use tokio::sync::{mpsc, Notify};
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct CollidingId(u64);
@@ -608,16 +669,16 @@ mod tests {
         }
     }
 
-    struct BlockingShutdownSubscriber {
+    struct BlockingSubscriber {
         gate: Arc<Notify>,
         completed: Arc<AtomicBool>,
     }
 
-    impl Actor for BlockingShutdownSubscriber {
+    impl Actor for BlockingSubscriber {
         type Context = actix::Context<Self>;
     }
 
-    impl Handler<CollidingEvent> for BlockingShutdownSubscriber {
+    impl Handler<CollidingEvent> for BlockingSubscriber {
         type Result = ResponseFuture<()>;
 
         fn handle(&mut self, _: CollidingEvent, _: &mut Self::Context) -> Self::Result {
@@ -627,6 +688,20 @@ mod tests {
                 gate.notified().await;
                 completed.store(true, Ordering::SeqCst);
             })
+        }
+    }
+
+    struct NotifyingSubscriber(mpsc::UnboundedSender<u64>);
+
+    impl Actor for NotifyingSubscriber {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<CollidingEvent> for NotifyingSubscriber {
+        type Result = ();
+
+        fn handle(&mut self, event: CollidingEvent, _: &mut Self::Context) {
+            let _ = self.0.send(event.id.0);
         }
     }
 
@@ -697,7 +772,7 @@ mod tests {
         let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
         let gate = Arc::new(Notify::new());
         let completed = Arc::new(AtomicBool::new(false));
-        let subscriber = BlockingShutdownSubscriber {
+        let subscriber = BlockingSubscriber {
             gate: Arc::clone(&gate),
             completed: Arc::clone(&completed),
         }
@@ -718,6 +793,75 @@ mod tests {
         gate.notify_one();
         fence.await?;
         assert!(completed.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn ordinary_fanout_pauses_event_bus_until_subscriber_acknowledges() -> anyhow::Result<()>
+    {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let gate = Arc::new(Notify::new());
+        let completed = Arc::new(AtomicBool::new(false));
+        let subscriber = BlockingSubscriber {
+            gate: Arc::clone(&gate),
+            completed: Arc::clone(&completed),
+        }
+        .start();
+
+        bus.send(Subscribe::new("CollidingEvent", subscriber.recipient()))
+            .await?;
+        bus.send(CollidingEvent::new(9)).await?;
+
+        let mut fence = Box::pin(bus.send(EventBusBarrier));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut fence)
+                .await
+                .is_err(),
+            "EventBus fence completed before the ordinary subscriber"
+        );
+
+        gate.notify_one();
+        fence.await?;
+        assert!(completed.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn acknowledged_fanout_does_not_head_of_line_block_other_subscribers(
+    ) -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let gate = Arc::new(Notify::new());
+        let completed = Arc::new(AtomicBool::new(false));
+        let blocked = BlockingSubscriber {
+            gate: Arc::clone(&gate),
+            completed,
+        }
+        .start();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let immediate = NotifyingSubscriber(tx).start();
+
+        bus.send(Subscribe::new("CollidingEvent", blocked.recipient()))
+            .await?;
+        bus.send(Subscribe::new("CollidingEvent", immediate.recipient()))
+            .await?;
+
+        let mut fanout = Box::pin(bus.send(EventBusFanout(CollidingEvent::new(9))));
+        let received = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await?
+            .expect("healthy subscriber stopped");
+        assert_eq!(
+            received, 9,
+            "the healthy subscriber should receive concurrently"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut fanout)
+                .await
+                .is_err(),
+            "acknowledged fanout completed while one subscriber was still blocked"
+        );
+
+        gate.notify_one();
+        fanout.await??;
         Ok(())
     }
 }

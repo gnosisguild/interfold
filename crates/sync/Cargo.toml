@@ -9,12 +9,14 @@ repository = "https://github.com/theinterfold/interfold/crates/sync"
 [dependencies]
 actix.workspace = true
 anyhow.workspace = true
+bincode.workspace = true
 e3-events.workspace = true
 e3-data.workspace = true
 e3-config.workspace = true
 e3-utils.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 e3-events = { workspace = true, features = ["test-helpers"] }
