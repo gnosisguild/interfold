@@ -404,7 +404,7 @@ async fn process_swarm_event(
             if let Some(ref failed_peer) = peer_id {
                 if let DialError::WrongPeerId {
                     obtained,
-                    ref endpoint,
+                    ref address,
                 } = error
                 {
                     // The node at this address has a new PeerId (e.g. restarted with new keys).
@@ -412,7 +412,7 @@ async fn process_swarm_event(
                     // The stale entry can be re-learned from other peers' routing tables,
                     // so repeats are expected: handle them quietly (debug, no bootstrap)
                     // to avoid flooding the logs and re-fueling the dial loop.
-                    let remote_addr = endpoint.get_remote_address().clone();
+                    let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
                     // The stale ID is being removed from the routing table, so its
@@ -609,6 +609,7 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::Message {
                 peer,
+                connection_id,
                 message:
                     RequestResponseMessage::Request {
                         request,
@@ -618,8 +619,8 @@ async fn process_swarm_event(
             },
         )) => {
             debug!(
-                "Incoming request received (peer={}, id={})",
-                peer, request_id
+                "Incoming request received (peer={}, connection={}, id={})",
+                peer, connection_id, request_id
             );
             let responder = DirectResponder::new(request_id, ChannelType::Channel(channel), cmd_tx)
                 .with_request(request);
@@ -656,13 +657,14 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::OutboundFailure {
                 peer,
+                connection_id,
                 request_id,
                 error,
             },
         )) => {
             warn!(
-                "Outbound request failed: peer={}, id={}, error={:?}",
-                peer, request_id, error
+                "Outbound request failed: peer={}, connection={}, id={}, error={:?}",
+                peer, connection_id, request_id, error
             );
             let correlation_id = correlator.expire(request_id)?;
             event_tx.send(NetEvent::OutgoingRequestFailed(OutgoingRequestFailed {
@@ -674,20 +676,28 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::InboundFailure {
                 peer,
+                connection_id,
                 request_id,
                 error,
             },
         )) => {
             warn!(
-                "Inbound request failed: peer={}, id={}, error={:?}",
-                peer, request_id, error
+                "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
+                peer, connection_id, request_id, error
             );
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
-            RequestResponseEvent::ResponseSent { peer, request_id },
+            RequestResponseEvent::ResponseSent {
+                peer,
+                connection_id,
+                request_id,
+            },
         )) => {
-            debug!("Response sent to peer={}, id={}", peer, request_id);
+            debug!(
+                "Response sent to peer={}, connection={}, id={}",
+                peer, connection_id, request_id
+            );
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(

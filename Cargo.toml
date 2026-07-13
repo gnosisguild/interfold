@@ -206,10 +206,11 @@ tracing-test = { version = "=0.2.5", features = ["no-env-filter"] }
 url = "=2.5.4"
 vfs = { git = "https://github.com/ryardley/rust-vfs.git", features = ["async-vfs"] }
 libc = "=0.2.180"
-libp2p = { version = "=0.54.1", features = [
+libp2p = { version = "=0.56.0", features = [
   "gossipsub",
   "identify",
   "dns",
+  "ed25519",
   "kad",
   "macros",
   "mdns",
