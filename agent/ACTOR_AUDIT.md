@@ -1,8 +1,8 @@
 # Ciphernode Actor Audit
 
-This audit records the repository-wide review of production `src/actors/` directories performed
-for the thin-actor refactor. Read it with [`ARCHITECTURE.md`](ARCHITECTURE.md), which defines the
-target, and [`CRATES_ARCHITECTURE.md`](CRATES_ARCHITECTURE.md), which describes the implementation.
+This audit records the repository-wide thin-actor and source-layout review. Read it with
+[`ARCHITECTURE.md`](ARCHITECTURE.md), which defines the target, and
+[`CRATES_ARCHITECTURE.md`](CRATES_ARCHITECTURE.md), which describes the implementation.
 
 ## Method
 
@@ -12,26 +12,30 @@ production lines triggers a responsibility review; tests, generated bindings, an
 cryptographic algorithms are judged separately.
 
 The audit checked all nine crates that originally contained `src/actors/`. Before this refactor,
-17 production actor modules
-were over the review threshold; the largest were `ThresholdKeyshare` (2,198 lines),
-`PublicKeyAggregator` (1,591), `ProofRequestActor` (1,344), and
-`ThresholdPlaintextAggregator` (1,029). After the refactor, complex actors follow the same
-`mod.rs` / `handlers` / `runtime` / `tests` package structure. The largest actor/workflow source is
-the 309-line node-fold collector; every other file in those trees is below the review trigger.
+17 production actor modules were over the review threshold; the largest were `ThresholdKeyshare`
+(2,198 lines), `PublicKeyAggregator` (1,591), `ProofRequestActor` (1,344), and
+`ThresholdPlaintextAggregator` (1,029).
+
+The first extraction made the actors thin but retained layer-first `actors/`, `workflow/`, and
+`domain/` trees. That made placement hard to infer because one protocol capability was scattered
+across several top-level folders. The follow-up layout groups implementation by capability and uses
+the same role vocabulary inside each capability. Root compatibility files preserve established
+Rust paths; they do not own implementation. Inline test suites were also moved beside the roles
+they exercise so production responsibility size remains visible.
 
 ## Findings by crate
 
 | Crate | Actors reviewed | Result |
 | --- | --- | --- |
-| `e3-aggregator` | committee finalizer, keyshare/decryption buffers, public-key aggregator, plaintext aggregator | Aggregation state and deterministic decisions live under `workflow/`; handlers are mailbox entry points and C1/C5/C6/C7/completion effect glue is below actor `runtime/`. |
-| `e3-evm` | parser/router/hub, chain gateway, readers, registry/interfold/slashing writers, log fetcher | Provider log fetching moved out of `actors/` to `adapters/`. Complex writers/readers use `handlers` plus `runtime` for provider recovery, streams, preflights, and transaction effects. |
-| `e3-keyshare` | encryption/share/decryption collectors, `ThresholdKeyshare` | Collection actors are cohesive. `ThresholdKeyshare` remains the request-local DKG coordinator; all phase-specific effect/correlation code is below `runtime/`, transient async-gap data is grouped in `PendingKeyshareWork`, and persisted protocol state remains in `domain::keyshare_state`. |
+| `e3-aggregator` | committee finalizer, keyshare/decryption buffers, public-key aggregator, plaintext aggregator | `committee_finalization`, `public_key_aggregation`, and `plaintext_aggregation` each contain their actor, handlers, workflow/state, semantic effects, and tests. |
+| `e3-evm` | parser/router/hub, chain gateway, readers, registry/interfold/slashing writers, log fetcher | Each chain capability owns its actor plus events/workflow/effects. `log_fetching` is explicitly an adapter capability; provider and transaction work is no longer hidden below actor `runtime/`. |
+| `e3-keyshare` | encryption/share/decryption collectors, `ThresholdKeyshare` | The `threshold_keyshare` capability contains the request-local coordinator, collectors, persisted state, pure DKG calculations, handlers, and semantically named effect operations. Transient async-gap data remains grouped in `PendingKeyshareWork`. |
 | `e3-net` | event buffer/translator, sync manager, document publisher/converter | Admission, readiness, rebroadcast, historical sync, conversion, and DHT/gossip effects are isolated. The actors now own transport ordering and lifecycle rather than document-validation policy. |
-| `e3-request` | lifecycle coordinator, E3 router | The router now has the standard package split: mailbox routing in `handlers.rs`, builder/snapshot integration in `runtime/`, and deterministic decisions in `domain/`. |
-| `e3-slashing` | accusation manager, commitment consistency checker | `AccusationManager` is a timer/effect shell over `workflow::accusation_voting`; deterministic digest, admission, re-verification, vote, and quorum logic lives below workflow `transitions/`. |
-| `e3-sortition` | sortition, ciphernode selector | Sortition message families are below `handlers/`. The selector owns its persisted cache and aggregator-change publication; canonical selection rules remain in `domain/`. |
-| `e3-sync` | bootstrap/replay functions and messages | This directory did not contain an Actix actor. It was removed from `actors/`; effectful startup orchestration now has the honest path `runtime/sync/`. |
-| `e3-zk-prover` | proof requester, share verifier, C0 verifier, node proof aggregator, ZK worker, commitment links | Proof state and deterministic verification live under `workflow/` or `domain/`; correlations, worker dispatch, signing, and publication are below actor `runtime/`. Pure commitment links moved from `actors/` to `domain/`. |
+| `e3-request` | lifecycle coordinator, E3 router | `routing` and `lifecycle` contain predictable actor/workflow roles; context construction, snapshots, and the request event buffer are named beside routing instead of hidden in a generic runtime package. |
+| `e3-slashing` | accusation manager, commitment consistency checker | `accusation_voting` and `commitment_consistency` each co-locate the actor shell with deterministic workflow decisions and adjacent tests. |
+| `e3-sortition` | sortition, ciphernode selector | `sortition` contains actor, registry, selection backend, ticket rules, and retention; `ciphernode_selection` contains its actor and handlers. |
+| `e3-sync` | bootstrap/replay functions and messages | This crate has no Actix actor. The `sync` capability honestly names its service, state, workflow, preflight, history collection, and tests. |
+| `e3-zk-prover` | proof requester, share verifier, C0 verifier, node proof aggregator, ZK worker, commitment links | Proof capabilities co-locate actor, handlers, state/workflow, effects, and tests. Effect files use semantic proof-operation names instead of unexplained `c0`–`c7` filenames; pure commitment links have their own capability. |
 
 ## State classification applied
 

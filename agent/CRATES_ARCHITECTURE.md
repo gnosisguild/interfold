@@ -176,8 +176,9 @@ Protocol workflow crates also depend directly on Actix and concrete repositories
 These are real constraints in the current code and are not papered over with empty
 port traits.
 
-The resulting domain/workflow/actor/adapter placement is module-level rather than a
-clean crate boundary:
+The resulting workflow/actor/effect separation is module-level rather than a clean
+crate boundary. On disk, those roles are grouped by protocol capability; the labels in
+this diagram describe responsibilities, not top-level source directories:
 
 ```mermaid
 flowchart LR
@@ -280,11 +281,13 @@ flowchart LR
 ```
 
 Actors own scheduling, mailbox ordering, subscriptions, and lifecycle. Deterministic
-decisions that have already been separated live in modules such as
-`request::domain::lifecycle`, `sync::domain::sync_planner`,
-`net::domain::net_buffer`, `slashing::workflow::accusation_voting`,
-`zk_prover::workflow::{proof_request, share_verification}`, and the typed aggregation
-workflows. Several `BusHandle`, `Sequencer`, `EventStoreRouter`, and snapshot edges still
+decisions are physically co-located with their capabilities, including
+`request/src/lifecycle/workflow.rs`, `sync/src/sync/workflow.rs`,
+`net/src/event_buffer/workflow.rs`, `slashing/src/accusation_voting/workflow.rs`,
+`zk-prover/src/{proof_request,share_verification}/workflow.rs`, and the typed aggregation
+workflows. Compatibility views such as `domain.rs` and `workflow.rs` preserve established
+Rust module paths while that migration settles; they contain declarations, not business logic.
+Several `BusHandle`, `Sequencer`, `EventStoreRouter`, and snapshot edges still
 contain Actix `do_send`, so the pipeline is not end-to-end backpressured. That debt is
 called out explicitly below. ZK proof actors are
 composition-scoped EventBus subscribers. Threshold
@@ -293,26 +296,29 @@ created by `E3Router` extensions and reached through `E3Context`; they are not d
 EventBus subscribers. Per-E3 accusation and consistency actors are context-owned but
 also install direct subscriptions for the proof and slash events they consume.
 
-### Actor refactor map
+### Capability refactor map
 
-Every production `src/actors/` directory was inventoried during the architecture
-refactor. Thinness is judged by ownership, not raw line count; roughly 300 production
-lines is a review trigger. Complex actors now follow the same package vocabulary:
-`mod.rs` for identity/construction, `handlers` for mailbox entry points, `runtime` for
-effect/correlation glue, and `tests` for actor tests. Protocol phase names occur below
-`runtime` or workflow `transitions`, not as unclassified top-level files.
+Every production actor was inventoried during the architecture refactor. Thinness is
+judged by ownership, not raw line count; roughly 300 production lines is a review
+trigger. The actor-bearing crates now use one filesystem rule: capability directories
+contain predictable role files such as `actor.rs`, `handlers.rs`, `state.rs`,
+`workflow.rs`, `effects.rs`, and adjacent tests. A role becomes a subdirectory only
+when it has several independent concerns, and those files receive semantic operation
+names rather than circuit-stage labels. No `src/actors/`, `src/domain/`,
+`src/workflow/`, `src/adapters/`, or `src/runtime/` layer directory remains in these
+crates.
 
-| Crate | Runtime boundary after refactor | Business logic / effects extracted to |
+| Crate | Capability directories | Boundary after refactor |
 | --- | --- | --- |
-| `e3-aggregator` | Committee timing plus request-local PK/plaintext actor shells | `workflow/{publickey_aggregation,threshold_plaintext_aggregation}`; effect execution under each actor's `runtime/` |
-| `e3-keyshare` | One request-local `ThresholdKeyshare` mailbox and small collection actors | deterministic calculations in `domain/`; DKG/decryption correlation and effects under `actors/threshold_keyshare/runtime/` |
-| `e3-zk-prover` | Proof dispatch, verification, and node-fold mailbox boundaries | `workflow/{proof_request,share_verification}`, pure commitment links and fold checks in `domain/`, effect correlation under actor `runtime/` |
-| `e3-slashing` | `AccusationManager` applies returned actions and owns timers | `workflow/accusation_voting/transitions/`; actor action/timer glue under `actors/accusation_manager/runtime/` |
-| `e3-sortition` | Chain/request routing and selector mailbox ownership | message families under `actors/sortition/handlers/`; pure selection backends in `domain/` |
-| `e3-net` | Network-event ordering, readiness, sync, and publication mailboxes | actor `runtime/` packages for readiness/rebroadcast/history and DHT/gossip effects; pure decisions in `domain/` |
-| `e3-evm` | Per-chain reader/writer mailboxes and in-flight concurrency guards | provider fetching in `adapters/log_fetcher/`; provider/transaction execution below actor `runtime/` |
-| `e3-request` | E3 context ownership, routing, and lifecycle coordination | router mailbox entry in `handlers.rs`, construction/snapshot integration in `runtime/`, routing decisions in `domain/` |
-| `e3-sync` | No Actix actor; acknowledged startup/replay coordinator | effectful orchestration in `runtime/sync/`, deterministic schema/replay planning in `domain/` |
+| `e3-aggregator` | `committee_finalization`, `public_key_aggregation`, `plaintext_aggregation` | Request-local actor shells own timing and routing; workflows own aggregation decisions and semantic effect files own proof/publication work. |
+| `e3-keyshare` | `threshold_keyshare` | One request-local mailbox coordinates DKG; collectors, state, pure key/share calculations, handlers, and effect operations are co-located by capability. |
+| `e3-zk-prover` | `proof_request`, `proof_verification`, `share_verification`, `node_proof_aggregation`, `commitment_links` | Proof mailboxes dispatch work; workflows and commitment-link modules own pure decisions, while semantic effect files own circuit requests and publication. |
+| `e3-slashing` | `accusation_voting`, `commitment_consistency` | Actors own timers and message routing; workflow files own admission, verification, voting, quorum, and commitment decisions. |
+| `e3-sortition` | `sortition`, `ciphernode_selection` | Actors own chain/request routing and cache lifecycle; selection backends, ticket rules, and registry decisions sit beside them. |
+| `e3-net` | `event_buffer`, `event_conversion`, `event_translation`, `network_sync`, `document_publishing` | Mailboxes own transport ordering and lifecycle; workflow/model files own decisions and effects own DHT, gossip, and history I/O. |
+| `e3-evm` | `chain_gateway`, `chain_reader`, `event_decoding`, registry/interfold/slashing read and write capabilities, `log_fetching` | Per-chain mailboxes own concurrency; provider recovery, log fetching, transaction preflight, and submission live with the chain capability they serve. |
+| `e3-request` | `routing`, `lifecycle` | Context routing and lifecycle mailboxes call deterministic workflows; snapshot/context construction is co-located with routing. |
+| `e3-sync` | `sync` | No Actix actor: an acknowledged startup/replay service contains its state, plan, preflight, history collection, and tests in one capability. |
 
 The remaining large non-actor files are not automatically actor violations. Generated
 contract bindings and cohesive circuit/FHE algorithms are reviewed by their own

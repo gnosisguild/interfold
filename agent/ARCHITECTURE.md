@@ -48,90 +48,112 @@ protocol migration and requires explicit versioning and compatibility tests.
 
 ## Canonical Module Structure (Normative)
 
-The directory names below are architectural vocabulary, not suggestions. Code with the same role
-must use the same name in every crate. Do not create parallel synonyms such as `services/`,
-`business/`, `core/`, `manager_logic/`, or `helpers/` for these responsibilities.
+The filesystem is organized by capability first and role second:
+
+> Folders answer “what protocol capability am I changing?” Files answer “what role does this code
+> play in that capability?”
+
+This keeps all code needed to understand one protocol slice together. It also avoids top-level
+layer directories whose contents grow into unrelated lists of actor names, workflow names, and
+domain names.
 
 ```text
 crates/<crate>/src/
-  lib.rs        module declarations, public re-exports, and composition only
-  domain/       protocol values, invariants, calculations, deterministic validation
-  workflow/     workflow state, accepted inputs, transitions, and effect intents
-  actors/       Actix mailbox ownership, scheduling, supervision, and dispatch
-  adapters/     concrete storage, FHE/ZK, EVM, libp2p, clock, and process I/O
-  runtime/      startup/composition coordinators that are not actors, when needed
-  messages.rs   stable crate-owned message vocabulary, when needed
-  repo.rs       repository ports, keys, and factories, when needed
+  lib.rs
+  <small_capability>.rs
+  <capability>/
+    actor.rs
+    handlers.rs
+    state.rs
+    workflow.rs
+    transitions.rs
+    intents.rs
+    effects.rs
+    validation.rs
+    tests.rs
+  messages.rs
+  repo.rs
 ```
 
-Every actor-bearing protocol crate uses `domain/`, `workflow/`, and `actors/` when it has those
-responsibilities. An adapter crate such as `e3-evm` may legitimately have no workflow; a leaf math
-crate has no reason to create empty actor or adapter directories. Omitting an inapplicable layer is
-allowed. Renaming a layer or placing its responsibility in another layer is not.
+Only create the files a capability needs. A pure capability that fits in one file stays at the
+crate root, for example `network_status.rs`. Once it needs multiple roles, create one capability
+directory and move the implementation into it. Do not create an empty directory hierarchy in
+advance.
 
-Business logic has exactly two homes:
+The standard role names are:
 
-- `domain/` for rules and calculations that do not know which workflow stage invoked them;
-- `workflow/` for deterministic progression across stages and the intents that progression emits.
+| File | Owns |
+| --- | --- |
+| `actor.rs` | actor identity, construction, owned runtime state, lifecycle, and public surface |
+| `handlers.rs` | mailbox entry points and outer-envelope validation |
+| `state.rs` | durable or derivable capability state and accepted input values |
+| `workflow.rs` | deterministic decisions, transitions, and intent production |
+| `transitions.rs` | reducer implementation when separating it makes `workflow.rs` a clearer surface |
+| `intents.rs` | typed effect intents when they would obscure the workflow |
+| `effects.rs` | persistence, crypto workers, bus publication, timers, network, chain, and process I/O |
+| `validation.rs` | reusable pure protocol validation |
+| `tests.rs` | focused capability tests when only one suite is needed |
 
-It does not live in `actors/`, `adapters/`, `lib.rs`, or an unclassified support file.
+Use `handlers/`, `effects/`, `transitions/`, or `tests/` only after the corresponding single file has several
+independent concerns. Files below those directories use semantic operation names such as
+`publish_result.rs`, `verify_key_proofs.rs`, or `fetch_history.rs`. Stage labels such as `c1.rs`,
+`c5.rs`, and generic names such as `runtime.rs`, `helpers.rs`, `logic.rs`, or `utils.rs` are not
+acceptable substitutes for a responsibility.
 
-### Actor package template
+When a capability needs separate suites for separate roles, name them after the role:
+`actor_tests.rs`, `workflow_tests.rs`, `state_tests.rs`, or the corresponding directory form. This
+is preferable to several unrelated test modules hidden behind one generic `tests.rs`.
 
-A cohesive actor that fits in one production file may use `actors/<actor>.rs`. Once it needs a
-second responsibility or approaches the 300-line review threshold, it becomes a directory with
-this shape:
+A specialized pure algorithm may use a semantic filename beside the standard roles when forcing it
+into `workflow.rs` or `validation.rs` would hide what it does. Examples include
+`derive_decryption_key.rs` and `ticket_selection.rs`. Its name must describe the protocol operation,
+not its implementation mechanism or historical location.
+
+### Where a new file goes
+
+Use this decision order:
+
+1. Identify the protocol capability that owns the behavior. Extend that directory; do not choose a
+   top-level layer first.
+2. If the behavior decides what should happen from explicit inputs, put it in `workflow.rs`,
+   `validation.rs`, or a named pure algorithm file.
+3. If it performs I/O or dispatches work, put it in `effects.rs` (or a semantic file below
+   `effects/`).
+4. If it receives an Actix message, put the entry point in `handlers.rs`; actor construction and
+   lifecycle stay in `actor.rs`.
+5. If no existing capability owns it, start with `<capability>.rs`. Promote it to a directory only
+   when a second role appears.
+
+`lib.rs` declares modules, composes the public surface, and re-exports stable APIs. Crate-wide
+`messages.rs` and `repo.rs` are allowed when several capabilities genuinely share that vocabulary.
+Concrete cross-capability adapters or startup composition may also remain at the crate root, but a
+one-capability adapter belongs with its capability.
+
+Root files named `actors.rs`, `domain.rs`, `workflow.rs`, `adapters.rs`, or `runtime.rs` may exist as
+temporary compatibility views. They use `#[path = "..."]` declarations to preserve established
+Rust module paths while implementation files live in capability directories. They must not acquire
+new business logic and must not grow back into layer directories.
+
+### Responsibility and dependency rules
+
+Business logic lives with its capability. Pure protocol rules and calculations do not know which
+actor invoked them; workflows deterministically turn state plus input into a new state and typed
+intents. Actors apply those decisions and effects execute the resulting I/O.
 
 ```text
-actors/<actor>/
-  mod.rs          actor struct, owned runtime state, parameters, construction, public surface
-  handlers.rs     Handler/Actor implementations, or handlers/ when grouped by message family
-  runtime/        correlation, bounded dispatch, persistence, timers, and concrete effect calls
-  tests.rs        focused actor tests, or tests/ when several test concerns exist
+<capability>/actor.rs + handlers.rs ──► workflow.rs ──► state.rs / validation.rs
+                 │                           │
+                 └──────────────────────────► effects.rs ──► external systems
 ```
 
-`mod.rs`, `handlers`, `runtime`, and `tests` are the only top-level categories in a complex actor
-package. Protocol names such as `c4`, `dkg`, `completion`, `rebroadcast`, or `transactions` belong
-under `runtime/`; message-family names belong under `handlers/`. This gives every actor the same
-entry points while still allowing protocol-specific vocabulary one level lower.
-
-`handlers` may validate the outer envelope, call a workflow transition, commit the result, and
-dispatch returned intents. `runtime` may translate intents into existing bus/worker calls. Neither
-category owns threshold rules, canonical ordering, proof validity, or state-machine legality.
-
-### Workflow package template
-
-```text
-workflow/<workflow>/
-  mod.rs          public workflow surface and module wiring
-  state.rs        durable/derivable workflow state and accepted input types
-  transitions.rs  deterministic reducer, or transitions/ when grouped by input/phase
-  intents.rs      typed effect intents when they are not declared beside the transition
-  validation.rs   workflow-specific pure validation, when needed
-  tests.rs        actor-free transition tests, or tests/ when several concerns exist
-```
-
-Phase names may occur below `transitions/`, never as unexplained peers of `state.rs`. A workflow
-must not import from `crate::actors`, and a domain module must not import from either `workflow` or
-`actors`.
-
-Dependencies point inward:
-
-```text
-actors/runtime ───► workflow ───► domain
-      │                 │
-      └──────────► adapter ports
-                        ▲
-                  concrete adapters
-```
-
-- `domain` must not depend on Actix, Tokio, repositories, network clients, wall-clock calls, or
-  process execution.
-- `workflow` must not call concrete I/O. It returns explicit intents.
-- `actors` and `runtime` may depend on the workflow API and adapter ports, but must not implement
-  cryptographic or protocol calculations inline.
-- `adapters` implement effect ports and translate external data at trust boundaries. They do not
-  decide protocol progression.
+- `state`, `validation`, workflows, and pure algorithm files must not depend on Actix,
+  repositories, network clients, wall-clock calls, or process execution.
+- A workflow must not call concrete I/O. It returns explicit intents or typed decisions.
+- Actors and handlers own serialization, scheduling, supervision, and dispatch; they do not own
+  threshold rules, canonical ordering, proof validity, or state-machine legality.
+- Effects translate typed intents into bounded concrete work. They do not decide protocol
+  progression.
+- Compatibility views may expose old module paths but may not invert these dependencies.
 
 Cross-crate dependencies must follow the workspace layering documented in
 [`CRATES_ARCHITECTURE.md`](CRATES_ARCHITECTURE.md). A lower-level crate must not import an
