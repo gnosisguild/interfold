@@ -16,13 +16,14 @@ mod prover;
 pub mod test_utils;
 mod traits;
 mod witness;
+mod workflow;
 
-pub use actors::commitment_links::default_links;
 pub use actors::{
     setup_zk_actors, CommitmentConsistencyCheckerExtension, ProofRequestActor,
     ProofVerificationActor, ShareVerificationActor, ZkActorRecovery, ZkActors,
     ZkVerificationRequest, ZkVerificationResponse,
 };
+pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;

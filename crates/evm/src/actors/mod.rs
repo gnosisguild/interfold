@@ -17,7 +17,6 @@ mod evm_router;
 mod fix_historical_order;
 mod interfold_sol_reader;
 mod interfold_sol_writer;
-mod log_fetcher;
 mod slashing_manager_sol_reader;
 mod slashing_manager_sol_writer;
 mod sync_start_extractor;

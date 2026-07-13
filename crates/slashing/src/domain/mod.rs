@@ -4,10 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Plain, synchronous domain services. These own all protocol state and
-//! business logic; they perform **no** I/O (no event bus, no actix context,
-//! no timers). The thin actors in [`crate::actors`] drive them and execute the
-//! decisions/data they return.
+//! Pure fault-attribution invariants and commitment calculations.
 
-pub(crate) mod accusation_voting;
 pub(crate) mod commitment_consistency;

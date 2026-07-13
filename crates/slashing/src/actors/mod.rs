@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Thin actix shells that translate [`InterfoldEvent`]s into pure-domain calls
-//! and perform the I/O those domain services request.
+//! Thin actix shells that translate [`InterfoldEvent`]s into workflow inputs
+//! and perform the effects returned by deterministic transitions.
 //!
 //! [`InterfoldEvent`]: e3_events::InterfoldEvent
 

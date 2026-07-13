@@ -6,17 +6,10 @@
 
 //! Actor-based components for ZK proof generation and verification.
 //!
-//! ## Architecture
-//!
-//! This module follows a clean separation between core business logic and IO operations:
-//!
-//! ### Core Actors (Business Logic - No IO)
-//! - [`ProofRequestActor`]: Converts `EncryptionKeyPending` → `ComputeRequest` and handles responses
-//! - [`ProofVerificationActor`]: Verifies `EncryptionKeyReceived` and converts to `EncryptionKeyCreated`
-//! - [`ShareVerificationActor`]: Handles ECDSA + ZK verification for C2/C3/C4 share proofs
-//!
-//! ### IO Actors (File System Operations)
-//! - [`ZkActor`]: Performs actual proof generation/verification using disk-based circuits and bb binary
+//! Deterministic proof state, validation, and dispatch planning live in `crate::workflow` and
+//! `crate::domain`. Complex actor packages use `mod.rs` for identity, `handlers` for mailbox entry,
+//! and `runtime` for correlation, signing, worker dispatch, and publication. [`ZkActor`] is the
+//! concrete proof-generation/verification worker around disk artifacts and the `bb` process.
 //!
 //! ## Usage
 //!
@@ -44,7 +37,6 @@ pub mod accusation_manager;
 pub mod accusation_manager_ext;
 pub mod commitment_consistency_checker;
 pub mod commitment_consistency_checker_ext;
-pub mod commitment_links;
 pub mod node_proof_aggregator;
 pub mod proof_request;
 pub mod proof_verification;

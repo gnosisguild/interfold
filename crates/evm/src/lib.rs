@@ -8,11 +8,12 @@
 //!
 //! - [`domain`] holds pure, synchronous, unit-testable services (no actix /
 //!   `BusHandle` / provider types in their cores).
-//! - [`actors`] holds the thin actix message-passing shells that wire those
-//!   services together and perform the EVM/provider I/O.
+//! - [`actors`] holds the thin actix message-passing shells.
+//! - `adapters` holds concrete EVM/provider I/O.
 //! - [`messages`] holds the actix message and event types exchanged between them.
 
 mod actors;
+mod adapters;
 mod contracts;
 mod domain;
 mod messages;

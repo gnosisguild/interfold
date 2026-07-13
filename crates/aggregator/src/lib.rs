@@ -6,16 +6,17 @@
 
 //! Public-key and threshold-plaintext aggregation.
 //!
-//! The crate is organised into two layers:
+//! The crate is organised into three layers:
 //! - [`actors`] — thin actix actors that own persistence and the event bus and
-//!   route messages between the protocol and the domain services.
-//! - [`domain`] — pure, synchronous services holding the aggregation state
-//!   machines and cryptographic combination logic, unit-tested in isolation.
+//!   route messages between the protocol and workflow services.
+//! - [`workflow`] — persisted aggregation state machines and deterministic transitions.
+//! - [`domain`] — pure protocol values, invariants, and calculations.
 
 mod actors;
 mod domain;
 pub mod ext;
 mod repo;
+mod workflow;
 
 pub use actors::*;
 pub use domain::committee_hash;

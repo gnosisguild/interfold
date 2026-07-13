@@ -12,14 +12,15 @@ use tokio::sync::broadcast::{error::RecvError, Receiver};
 use tracing::{debug, warn};
 
 mod document_publisher;
+mod event_converter;
 mod net_event_buffer;
 mod net_event_translator;
 mod net_sync_manager;
 
 pub use document_publisher::{
     handle_document_published_notification, handle_publish_document_requested, DocumentPublisher,
-    EventConverter,
 };
+pub use event_converter::EventConverter;
 pub use net_event_buffer::{
     NetEventBufferHandle, DEFAULT_MAX_BUFFERED_NET_BYTES, DEFAULT_MAX_BUFFERED_NET_EVENTS,
 };

@@ -256,7 +256,12 @@ Same scenario as above, then 2 nodes are slashed for 300,000 each:
 
 ### Off-Chain Fault Attribution: AccusationManager
 
-**Actor:** `AccusationManager` (`crates/zk-prover/src/actors/accusation_manager.rs`)
+**Actor:** `AccusationManager` (`crates/slashing/src/actors/accusation_manager/mod.rs`; the
+`zk-prover` path is a compatibility re-export)
+
+**Deterministic workflow:** `crates/slashing/src/workflow/accusation_voting/` owns deadlines,
+EIP-712 digests, admission, vote/quorum decisions, and re-verification state. The actor owns timers
+and executes the workflow's returned `VoteAction`s.
 
 The AccusationManager is a per-E3 ephemeral actor created when `SortitionCommitteeFinalized` (the
 `ICiphernodeRegistry` event) fires. It bridges proof verification failures to on-chain slashing

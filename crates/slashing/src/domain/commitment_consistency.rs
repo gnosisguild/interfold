@@ -13,7 +13,7 @@
 //! - evaluating registered [`CommitmentLink`]s across the three [`LinkScope`]s
 //! - building the evidence preimage for [`CommitmentConsistencyViolation`]s
 //!
-//! Following the same pattern as [`crate::domain::accusation_voting`], the
+//! Following the same pattern as [`crate::workflow::accusation_voting`], the
 //! [`CommitmentConsistency`] service owns the protocol state and exposes plain
 //! methods that mutate that state and **return decisions/data** (violations to
 //! emit, the pre-ZK completion message). The service itself performs **no**
