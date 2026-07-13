@@ -88,6 +88,9 @@ pub type ProtocolResponseChannel = ResponseChannel<ProtocolResponse>;
 #[rtype("()")]
 /// Remote has sent us a request
 pub struct IncomingRequest {
+    /// Authenticated libp2p peer which opened the request stream. This is transport-local metadata
+    /// and is not part of the sync wire payload.
+    pub peer: PeerId,
     pub responder: DirectResponder,
 }
 

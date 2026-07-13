@@ -11,6 +11,23 @@ use crate::domain::{
     net_event_batch::{BatchCursor, EventBatch, FetchEventsSince},
 };
 
+/// Maximum number of forwardable events a remote peer may request in one sync response.
+pub(crate) const MAX_SYNC_BATCH_SIZE: usize = 100;
+
+/// A sync page may contain non-forwardable local events which are filtered after storage. Scan a
+/// small, bounded multiple of the response size so those events cannot prematurely terminate sync,
+/// while preventing a request from materializing the complete remaining history.
+const SYNC_SCAN_MULTIPLIER: usize = 4;
+pub(crate) const MAX_SYNC_SCAN_EVENTS: usize = MAX_SYNC_BATCH_SIZE * SYNC_SCAN_MULTIPLIER;
+
+pub(crate) fn effective_sync_limit(requested: usize) -> usize {
+    requested.min(MAX_SYNC_BATCH_SIZE)
+}
+
+pub(crate) fn sync_scan_limit(requested: usize) -> usize {
+    (effective_sync_limit(requested) * SYNC_SCAN_MULTIPLIER).min(MAX_SYNC_SCAN_EVENTS)
+}
+
 /// What the owning actor should do after a readiness signal.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReadinessDecision {
@@ -94,38 +111,53 @@ pub enum SyncBatchOutcome {
 /// Build a sync response batch from the events returned by the event store.
 ///
 /// Only includes events that are safe to forward over the network: events received via gossip
-/// (`Net`) and locally-produced events that are themselves gossip-forwardable. The cursor advances
-/// to the timestamp of the last returned event when the limit is reached.
+/// (`Net`) and locally-produced events that are themselves gossip-forwardable. The cursor is an
+/// inclusive storage cursor, so it advances to one timestamp after the last returned or scanned
+/// event. Both response work and storage scanning are capped independently of the peer's input.
 pub fn build_sync_batch(
     all_events: Vec<InterfoldEvent>,
     fetch: &FetchEventsSince,
 ) -> SyncBatchOutcome {
-    let limit = fetch.limit();
-    if limit == 0 {
+    if fetch.limit() == 0 {
         return SyncBatchOutcome::BadRequest("limit must be greater than 0".to_string());
     }
+    let limit = effective_sync_limit(fetch.limit());
+    let scan_limit = sync_scan_limit(fetch.limit());
     let aggregate_id = fetch.aggregate_id();
 
     // Include Net events (received via gossip) and Local events that are gossip-forwardable.
     // Without the Local check, a node's own gossip events would be excluded from sync responses,
     // causing syncing peers to miss them.
-    let events: Vec<InterfoldEvent<Unsequenced>> = all_events
-        .into_iter()
-        .filter(|e| {
-            e.source() == EventSource::Net
-                || (e.source() == EventSource::Local
-                    && EventTranslationService::is_forwardable_event(e))
-        })
-        .take(limit)
-        .map(|ev| ev.clone_unsequenced())
-        .collect();
+    let scan_was_full = all_events.len() >= scan_limit;
+    let mut events = Vec::with_capacity(limit);
+    let mut last_scanned_ts = None;
+    for event in all_events.into_iter().take(scan_limit) {
+        last_scanned_ts = Some(event.ts());
+        let is_forwardable = event.source() == EventSource::Net
+            || (event.source() == EventSource::Local
+                && EventTranslationService::is_forwardable_event(&event));
+        if is_forwardable {
+            events.push(event.clone_unsequenced());
+            if events.len() == limit {
+                break;
+            }
+        }
+    }
 
-    let next = if events.len() == limit {
-        let last_event_ts = events.last().map(|e| e.ts()).unwrap_or(0);
-        BatchCursor::Next(last_event_ts)
+    // Timestamp queries are inclusive. Advancing to exactly the last timestamp would repeat that
+    // event and, for limit=1, loop forever. When a bounded scan contains only filtered events,
+    // advance past the last scanned event so a later forwardable event remains reachable.
+    let cursor_base = if events.len() == limit {
+        events.last().map(|event| event.ts())
+    } else if scan_was_full {
+        last_scanned_ts
     } else {
-        BatchCursor::Done
+        None
     };
+    let next = cursor_base
+        .and_then(|timestamp| timestamp.checked_add(1))
+        .map(BatchCursor::Next)
+        .unwrap_or(BatchCursor::Done);
 
     SyncBatchOutcome::Batch(EventBatch {
         events,
@@ -226,13 +258,60 @@ mod tests {
     }
 
     #[test]
-    fn build_sync_batch_advances_cursor_when_limit_reached() {
+    fn build_sync_batch_limit_one_advances_past_inclusive_cursor() {
         let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 1);
         let outcome = build_sync_batch(vec![net_event(5), net_event(9)], &fetch);
         let SyncBatchOutcome::Batch(batch) = outcome else {
             panic!("expected batch");
         };
         assert_eq!(batch.events.len(), 1);
-        assert!(matches!(batch.next, BatchCursor::Next(5)));
+        assert!(matches!(batch.next, BatchCursor::Next(6)));
+    }
+
+    #[test]
+    fn build_sync_batch_caps_malicious_huge_limit() {
+        let fetch = FetchEventsSince::new(AggregateId::new(1), 0, usize::MAX);
+        let events = (1..=MAX_SYNC_BATCH_SIZE + 1)
+            .map(|ts| net_event(ts as u128))
+            .collect();
+        let SyncBatchOutcome::Batch(batch) = build_sync_batch(events, &fetch) else {
+            panic!("expected batch");
+        };
+
+        assert_eq!(batch.events.len(), MAX_SYNC_BATCH_SIZE);
+        assert!(matches!(
+            batch.next,
+            BatchCursor::Next(next) if next == MAX_SYNC_BATCH_SIZE as u128 + 1
+        ));
+        assert_eq!(sync_scan_limit(fetch.limit()), MAX_SYNC_SCAN_EVENTS);
+    }
+
+    #[test]
+    fn build_sync_batch_advances_past_full_filtered_scan() {
+        let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 1);
+        let events = (1..=sync_scan_limit(fetch.limit()))
+            .map(|ts| local_event(ts as u128))
+            .collect();
+        let SyncBatchOutcome::Batch(batch) = build_sync_batch(events, &fetch) else {
+            panic!("expected batch");
+        };
+
+        assert!(batch.events.is_empty());
+        assert!(matches!(
+            batch.next,
+            BatchCursor::Next(next) if next == sync_scan_limit(fetch.limit()) as u128 + 1
+        ));
+    }
+
+    #[test]
+    fn build_sync_batch_stops_at_max_timestamp() {
+        let fetch = FetchEventsSince::new(AggregateId::new(1), u128::MAX, 1);
+        let SyncBatchOutcome::Batch(batch) = build_sync_batch(vec![net_event(u128::MAX)], &fetch)
+        else {
+            panic!("expected batch");
+        };
+
+        assert_eq!(batch.events.len(), 1);
+        assert!(matches!(batch.next, BatchCursor::Done));
     }
 }

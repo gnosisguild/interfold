@@ -13,6 +13,7 @@ use e3_events::{
     NetReady, TsAgg, TypedEvent, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -28,10 +29,16 @@ use crate::{
     direct_responder::DirectResponder,
     domain::{
         build_sync_batch,
-        net_event_batch::{fetch_all_batched_events, FetchEventsSince},
+        net_event_batch::{
+            fetch_all_batched_events_with_budget, FetchEventsSince, SyncFetchBudget,
+        },
+        sync_coordinator::sync_scan_limit,
         EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
     },
-    events::{await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget},
+    events::{
+        await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget,
+        ProtocolResponse,
+    },
 };
 
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
@@ -48,6 +55,15 @@ const SYNC_RECOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Number of recovery rounds to try for failed aggregates after the initial fetch pass.
 const SYNC_RECOVERY_MAX_ATTEMPTS: usize = 3;
+
+/// Bound remote work independently of the actor mailbox. Per-peer admission prevents one
+/// authenticated transport identity from occupying the global allowance.
+const MAX_IN_FLIGHT_SYNC_REQUESTS: usize = 16;
+const MAX_IN_FLIGHT_SYNC_REQUESTS_PER_PEER: usize = 2;
+
+/// Expire storage requests before libp2p's 30-second request timeout so a failed local query cannot
+/// retain a responder and permanently consume one of the bounded in-flight slots.
+const INCOMING_SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponseValue {
@@ -76,6 +92,11 @@ pub struct SyncRequestSucceeded {
     pub response: SyncResponseValue,
 }
 
+struct PendingSyncRequest {
+    peer: PeerId,
+    responder: DirectResponder,
+}
+
 pub struct NetSyncManager {
     /// Interfold EventBus
     bus: BusHandle,
@@ -84,7 +105,7 @@ pub struct NetSyncManager {
     /// NetEvents receiver to receive events
     rx: Arc<broadcast::Receiver<NetEvent>>,
     eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
-    requests: HashMap<CorrelationId, DirectResponder>,
+    requests: HashMap<CorrelationId, PendingSyncRequest>,
     /// Pure readiness state machine.
     readiness: NetReadiness,
     /// Gossipsub topic used to re-broadcast our own forwardable artifacts after a restart.
@@ -130,6 +151,43 @@ impl NetSyncManager {
         Ok(())
     }
 
+    fn request_capacity_error(&self, peer: &PeerId) -> Option<&'static str> {
+        if self.requests.len() >= MAX_IN_FLIGHT_SYNC_REQUESTS {
+            return Some("too many in-flight sync requests");
+        }
+        let peer_requests = self
+            .requests
+            .values()
+            .filter(|request| &request.peer == peer)
+            .count();
+        if peer_requests >= MAX_IN_FLIGHT_SYNC_REQUESTS_PER_PEER {
+            return Some("too many in-flight sync requests from this peer");
+        }
+        None
+    }
+
+    fn expire_sync_request(&mut self, id: CorrelationId) {
+        let Some(pending) = self.requests.remove(&id) else {
+            return;
+        };
+        warn!(
+            peer = %pending.peer,
+            correlation_id = %id,
+            timeout_ms = INCOMING_SYNC_REQUEST_TIMEOUT.as_millis(),
+            "Incoming historical-sync storage query timed out"
+        );
+        if let Err(error) = pending.responder.respond(ProtocolResponse::Error(
+            "historical sync request timed out".to_string(),
+        )) {
+            warn!(
+                peer = %pending.peer,
+                correlation_id = %id,
+                %error,
+                "Failed to send historical-sync timeout response"
+            );
+        }
+    }
+
     /// After a restart, proactively re-gossip this node's own already-produced forwardable DKG
     /// artifacts (H3/H11). Resume from a persisted phase is otherwise passive: the restored
     /// keyshare/aggregator actors wait for peer documents and never re-emit their own outputs, so
@@ -137,7 +195,7 @@ impl NetSyncManager {
     /// node to its phase timeout.
     ///
     /// The artifacts are sent straight to libp2p as `GossipPublish`, bypassing both the EventBus
-    /// dedup bloom (which already tracked them during replay) and the translator (which is only
+    /// dedup window (which already tracked them during replay) and the translator (which is only
     /// created on `EffectsEnabled`). Re-broadcasting the byte-identical original payload is
     /// equivocation-safe (peers dedup by event id) and idempotent. The query is bounded to the
     /// snapshot-cursor window so only the in-flight (un-delivered) artifacts are re-sent.
@@ -340,18 +398,58 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
 impl Handler<IncomingRequest> for NetSyncManager {
     type Result = ();
     fn handle(&mut self, msg: IncomingRequest, ctx: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus, || {
+        trap(EType::Net, &self.bus.clone(), || {
+            let IncomingRequest { peer, responder } = msg;
+            let fetch_request: FetchEventsSince = match responder.try_request_into() {
+                Ok(request) => request,
+                Err(error) => {
+                    warn!(%peer, %error, "Rejecting malformed historical-sync request");
+                    responder.bad_request("malformed historical sync request")?;
+                    return Ok(());
+                }
+            };
+            if fetch_request.limit() == 0 {
+                responder.bad_request("limit must be greater than 0")?;
+                return Ok(());
+            }
+            if let Some(reason) = self.request_capacity_error(&peer) {
+                warn!(
+                    %peer,
+                    in_flight = self.requests.len(),
+                    "Rejecting historical-sync request: {reason}"
+                );
+                responder.bad_request(reason)?;
+                return Ok(());
+            }
+
             let id = CorrelationId::new();
-            info!("Processing incoming request with correlation={}", id);
-            let fetch_request: FetchEventsSince = msg.responder.try_request_into()?;
-            self.requests.insert(id, msg.responder);
+            let scan_limit = sync_scan_limit(fetch_request.limit());
+            info!(
+                peer = %peer,
+                correlation_id = %id,
+                requested_limit = fetch_request.limit(),
+                scan_limit,
+                "Processing incoming historical-sync request"
+            );
             let query: HashMap<AggregateId, u128> =
                 HashMap::from([(fetch_request.aggregate_id(), fetch_request.since())]);
-            self.eventstore.try_send(EventStoreQueryBy::<TsAgg>::new(
-                id,
-                query,
-                ctx.address().recipient(),
-            ))?;
+            self.requests
+                .insert(id, PendingSyncRequest { peer, responder });
+            let storage_query =
+                EventStoreQueryBy::<TsAgg>::new(id, query, ctx.address().recipient())
+                    .with_limit(scan_limit as u64);
+            if let Err(error) = self.eventstore.try_send(storage_query) {
+                if let Some(pending) = self.requests.remove(&id) {
+                    pending.responder.respond(ProtocolResponse::Error(
+                        "historical sync storage unavailable".to_string(),
+                    ))?;
+                }
+                warn!(%peer, correlation_id = %id, %error, "Failed to query EventStore for sync");
+                return Ok(());
+            }
+            ctx.run_later(INCOMING_SYNC_REQUEST_TIMEOUT, move |this, _| {
+                this.expire_sync_request(id);
+            });
             Ok(())
         });
     }
@@ -369,14 +467,14 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
         }
         trap(EType::Net, &self.bus.clone(), || {
             info!("Received response from eventstore.");
-            let Some(responder) = self.requests.remove(&msg.id()) else {
+            let Some(pending) = self.requests.remove(&msg.id()) else {
                 bail!("responder not found for {}", msg.id());
             };
 
-            let fetch_request: FetchEventsSince = responder.try_request_into()?;
+            let fetch_request: FetchEventsSince = pending.responder.try_request_into()?;
             match build_sync_batch(msg.into_events(), &fetch_request) {
-                SyncBatchOutcome::BadRequest(reason) => responder.bad_request(reason)?,
-                SyncBatchOutcome::Batch(batch) => responder.ok(batch)?,
+                SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
+                SyncBatchOutcome::Batch(batch) => pending.responder.ok(batch)?,
             }
 
             Ok(())
@@ -423,18 +521,20 @@ async fn fetch_historical_events_for_aggregate(
     net_events: &Arc<broadcast::Receiver<NetEvent>>,
     aggregate_id: AggregateId,
     since: u128,
+    budget: &mut SyncFetchBudget,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
         .max_retries(SYNC_FETCH_MAX_RETRIES)
         .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
         .build();
 
-    fetch_all_batched_events::<InterfoldEvent<Unsequenced>>(
+    fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
         requester,
         PeerTarget::Random,
         aggregate_id,
         since,
         100,
+        budget,
     )
     .await
 }
@@ -486,14 +586,21 @@ async fn handle_sync_request_event(
     let mut all_events: Vec<InterfoldEvent<Unsequenced>> = Vec::new();
     let mut latest_timestamp: u128 = 0;
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
+    let mut budget = SyncFetchBudget::production();
 
     for (aggregate_id, since) in event.since.iter() {
         info!(
             "Requesting batched events for aggregate_id={} since={}",
             aggregate_id, since
         );
-        match fetch_historical_events_for_aggregate(&net_cmds, &net_events, *aggregate_id, *since)
-            .await
+        match fetch_historical_events_for_aggregate(
+            &net_cmds,
+            &net_events,
+            *aggregate_id,
+            *since,
+            &mut budget,
+        )
+        .await
         {
             Ok(events) => {
                 info!(
@@ -510,6 +617,9 @@ async fn handle_sync_request_event(
                 }
             }
             Err(e) => {
+                if budget.is_exhausted() {
+                    return Err(e).context("historical net sync exhausted its global budget");
+                }
                 warn!(
                     "Failed to fetch events for aggregate_id={}: {e}. Continuing with available events.",
                     aggregate_id
@@ -568,6 +678,7 @@ async fn handle_sync_request_event(
                     &net_events,
                     aggregate_id,
                     since,
+                    &mut budget,
                 )
                 .await
                 {
@@ -587,6 +698,10 @@ async fn handle_sync_request_event(
                         }
                     }
                     Err(e) => {
+                        if budget.is_exhausted() {
+                            return Err(e)
+                                .context("historical net sync exhausted its global budget");
+                        }
                         warn!(
                             attempt = recovery_attempt,
                             "Retry failed for aggregate_id={}: {e}", aggregate_id
@@ -629,14 +744,17 @@ async fn handle_sync_request_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::NetCommand;
+    use crate::{
+        direct_responder::ChannelType,
+        events::{IncomingRequest, NetCommand},
+    };
     use actix::{Actor, Context as ActixContext, Handler};
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
         E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced,
     };
     use e3_utils::ArcBytes;
-    use tokio::sync::{broadcast, mpsc};
+    use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
 
     /// Minimal EventStore stand-in so `NetSyncManager::new` can be constructed in tests; the
     /// re-broadcast unit test drives `handle_rebroadcast_response` directly and never queries it.
@@ -647,6 +765,61 @@ mod tests {
     impl Handler<EventStoreQueryBy<TsAgg>> for NoopEventStore {
         type Result = ();
         fn handle(&mut self, _: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {}
+    }
+
+    struct RecordingEventStore {
+        queries: UnboundedSender<Option<u64>>,
+    }
+
+    impl Actor for RecordingEventStore {
+        type Context = ActixContext<Self>;
+    }
+
+    impl Handler<EventStoreQueryBy<TsAgg>> for RecordingEventStore {
+        type Result = ();
+        fn handle(&mut self, msg: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {
+            let _ = self.queries.send(msg.limit());
+            // Intentionally retain no response. Tests exercise the manager's in-flight bounds.
+        }
+    }
+
+    fn manager_with_recording_store(
+        query_tx: UnboundedSender<Option<u64>>,
+    ) -> (NetSyncManager, mpsc::Receiver<NetCommand>) {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle().unwrap().enable("test");
+        let (tx, rx) = mpsc::channel::<NetCommand>(100);
+        let (_evt_tx, evt_rx) = broadcast::channel::<NetEvent>(100);
+        let evt_rx = Arc::new(evt_rx);
+        let eventstore = RecordingEventStore { queries: query_tx }
+            .start()
+            .recipient();
+
+        (
+            NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic"),
+            rx,
+        )
+    }
+
+    fn incoming_sync_request(
+        peer: PeerId,
+        id: u64,
+        limit: usize,
+        tx: &mpsc::Sender<NetCommand>,
+    ) -> IncomingRequest {
+        let request: Vec<u8> = FetchEventsSince::new(AggregateId::new(1), 0, limit)
+            .try_into()
+            .unwrap();
+        let responder = DirectResponder::new(id, ChannelType::Test(format!("request-{id}")), tx)
+            .with_request(request);
+        IncomingRequest { peer, responder }
+    }
+
+    fn protocol_response(command: NetCommand) -> ProtocolResponse {
+        let NetCommand::IncomingResponse(incoming) = command else {
+            panic!("expected IncomingResponse, got {command:?}");
+        };
+        incoming.responder.to_response().unwrap().1
     }
 
     fn local_forwardable_event(e3: &str) -> InterfoldEvent {
@@ -709,5 +882,132 @@ mod tests {
             rx.try_recv().is_err(),
             "non-forwardable event should not be re-broadcast"
         );
+    }
+
+    #[actix::test]
+    async fn malicious_huge_limit_is_capped_before_storage_query() {
+        let (query_tx, mut query_rx) = mpsc::unbounded_channel();
+        let (manager, _net_rx) = manager_with_recording_store(query_tx);
+        let net_tx = manager.tx.clone();
+        let manager = manager.start();
+
+        manager
+            .send(incoming_sync_request(
+                PeerId::random(),
+                1,
+                usize::MAX,
+                &net_tx,
+            ))
+            .await
+            .unwrap();
+
+        let queried_limit = tokio::time::timeout(Duration::from_secs(1), query_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(queried_limit, Some(sync_scan_limit(usize::MAX) as u64));
+    }
+
+    #[actix::test]
+    async fn concurrent_sync_requests_are_globally_bounded() {
+        let (query_tx, mut query_rx) = mpsc::unbounded_channel();
+        let (manager, mut net_rx) = manager_with_recording_store(query_tx);
+        let net_tx = manager.tx.clone();
+        let manager = manager.start();
+
+        for id in 0..MAX_IN_FLIGHT_SYNC_REQUESTS as u64 {
+            manager
+                .send(incoming_sync_request(PeerId::random(), id, 1, &net_tx))
+                .await
+                .unwrap();
+        }
+        manager
+            .send(incoming_sync_request(
+                PeerId::random(),
+                MAX_IN_FLIGHT_SYNC_REQUESTS as u64,
+                1,
+                &net_tx,
+            ))
+            .await
+            .unwrap();
+
+        for _ in 0..MAX_IN_FLIGHT_SYNC_REQUESTS {
+            tokio::time::timeout(Duration::from_secs(1), query_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert!(
+            query_rx.try_recv().is_err(),
+            "overflow request reached storage"
+        );
+        let response = tokio::time::timeout(Duration::from_secs(1), net_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            protocol_response(response),
+            ProtocolResponse::BadRequest(reason) if reason.contains("too many in-flight")
+        ));
+    }
+
+    #[actix::test]
+    async fn concurrent_sync_requests_are_bounded_per_authenticated_peer() {
+        let (query_tx, mut query_rx) = mpsc::unbounded_channel();
+        let (manager, mut net_rx) = manager_with_recording_store(query_tx);
+        let net_tx = manager.tx.clone();
+        let manager = manager.start();
+        let peer = PeerId::random();
+
+        for id in 0..=MAX_IN_FLIGHT_SYNC_REQUESTS_PER_PEER as u64 {
+            manager
+                .send(incoming_sync_request(peer, id, 1, &net_tx))
+                .await
+                .unwrap();
+        }
+
+        for _ in 0..MAX_IN_FLIGHT_SYNC_REQUESTS_PER_PEER {
+            tokio::time::timeout(Duration::from_secs(1), query_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert!(
+            query_rx.try_recv().is_err(),
+            "per-peer overflow reached storage"
+        );
+        let response = tokio::time::timeout(Duration::from_secs(1), net_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            protocol_response(response),
+            ProtocolResponse::BadRequest(reason) if reason.contains("this peer")
+        ));
+    }
+
+    #[actix::test]
+    async fn timed_out_sync_request_releases_its_in_flight_slot() {
+        let (query_tx, _query_rx) = mpsc::unbounded_channel();
+        let (mut manager, mut net_rx) = manager_with_recording_store(query_tx);
+        let net_tx = manager.tx.clone();
+        let peer = PeerId::random();
+        let IncomingRequest { responder, .. } = incoming_sync_request(peer, 1, 1, &net_tx);
+        let id = CorrelationId::new();
+        manager
+            .requests
+            .insert(id, PendingSyncRequest { peer, responder });
+
+        manager.expire_sync_request(id);
+
+        assert!(manager.requests.is_empty());
+        let response = tokio::time::timeout(Duration::from_secs(1), net_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            protocol_response(response),
+            ProtocolResponse::Error(reason) if reason.contains("timed out")
+        ));
     }
 }
