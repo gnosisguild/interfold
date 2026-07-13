@@ -608,18 +608,18 @@ impl CiphernodeBuilder {
             net_buffer.wait_until_running(),
         )?;
 
-        Ok(CiphernodeHandle::new(
-            addr.to_owned(),
+        Ok(CiphernodeHandle {
+            address: addr.to_owned(),
             store,
             bus,
             history,
             errors,
             peer_id,
-            net_kind,
+            net_interface: net_kind,
             network_status,
             eventstore,
-            aggregate_config.indexed_ids(),
-        ))
+            aggregate_ids: aggregate_config.indexed_ids(),
+        })
     }
 
     // ── build() sub-functions ──────────────────────────────────────────

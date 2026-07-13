@@ -79,32 +79,6 @@ impl PartialEq for CiphernodeHandle {
 impl Eq for CiphernodeHandle {}
 
 impl CiphernodeHandle {
-    pub fn new(
-        address: String,
-        store: DataStore,
-        bus: BusHandle,
-        history: Option<Addr<HistoryCollector<InterfoldEvent>>>,
-        errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
-        peer_id: PeerId,
-        net_interface: NetInterfaceKind,
-        network_status: NetworkStatus,
-        eventstore: EventStoreReader,
-        aggregate_ids: Vec<usize>,
-    ) -> Self {
-        Self {
-            address,
-            store,
-            bus,
-            history,
-            errors,
-            peer_id,
-            net_interface,
-            network_status,
-            eventstore,
-            aggregate_ids,
-        }
-    }
-
     pub fn bus(&self) -> &BusHandle {
         &self.bus
     }
