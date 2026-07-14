@@ -14,6 +14,6 @@ pub struct InterfoldSolReader;
 
 impl InterfoldSolReader {
     pub fn setup(next: &EvmEventProcessor) -> Addr<EvmParser> {
-        EvmParser::new(next, extractor).start()
+        EvmParser::new_version_aware(next, extractor).start()
     }
 }

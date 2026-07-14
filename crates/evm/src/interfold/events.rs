@@ -9,6 +9,7 @@
 use crate::contracts::IInterfold;
 use alloy::primitives::{LogData, B256};
 use alloy::sol_types::SolEvent;
+use anyhow::{anyhow, Context as _, Result};
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
 use e3_events::{
@@ -20,7 +21,7 @@ use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use num_bigint::BigUint;
-use tracing::{error, info, trace, warn};
+use tracing::{info, trace, warn};
 
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
 
@@ -296,32 +297,27 @@ fn indexed_u256(
     topics: &[B256],
     index: usize,
     event_type: &str,
-) -> Option<alloy::primitives::U256> {
+) -> Result<alloy::primitives::U256> {
     topics
         .get(index)
         .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))
-        .or_else(|| {
-            error!("{event_type} missing indexed topic {index}");
-            None
-        })
+        .ok_or_else(|| anyhow!("{event_type} missing indexed topic {index}"))
 }
 
 pub(crate) fn extractor(
     data: &LogData,
     topics: &[B256],
     chain_id: u64,
-) -> Option<InterfoldEventData> {
+) -> Result<Option<InterfoldEventData>> {
     let topic0 = topics.first();
     match topic0 {
         Some(&IInterfold::E3Requested::SIGNATURE_HASH) => {
-            let Ok(event) = IInterfold::E3Requested::decode_log_data(data) else {
-                error!("Error parsing event E3Requested after topic matched!");
-                return None;
-            };
+            let event = IInterfold::E3Requested::decode_log_data(data)
+                .context("failed to decode E3Requested after its topic matched")?;
             match E3RequestedWithChainId(event, chain_id).try_into_e3_requested() {
-                Ok(payload) => Some(payload.into()),
+                Ok(payload) => Ok(Some(payload.into())),
                 Err(e) => {
-                    error!(
+                    warn!(
                         chain_id = chain_id,
                         "Skipping E3Requested: this node cannot process it and will NOT participate \
                          in this E3. This usually indicates a version skew between the ciphernode \
@@ -329,59 +325,51 @@ pub(crate) fn extractor(
                          size). Cause: {}",
                         e
                     );
-                    None
+                    Ok(None)
                 }
             }
         }
         Some(&IInterfold::CiphertextOutputPublished::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::CiphertextOutputPublished::decode_log_data(data) else {
-                error!("Error parsing event CiphertextOutputPublished after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::CiphertextOutputPublished::decode_log_data(data)
+                .context("failed to decode CiphertextOutputPublished after its topic matched")?;
             // e3Id is indexed → extract from topics[1], not log data
             if let Some(e3_id_topic) = topics.get(1) {
                 event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
             } else {
-                error!("CiphertextOutputPublished missing indexed e3Id in topics!");
-                return None;
+                return Err(anyhow!(
+                    "CiphertextOutputPublished missing indexed e3Id in topics"
+                ));
             }
-            Some(InterfoldEventData::from(
+            Ok(Some(InterfoldEventData::from(
                 CiphertextOutputPublishedWithChainId(event, chain_id),
-            ))
+            )))
         }
         Some(&IInterfold::InputPublished::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::InputPublished::decode_log_data(data) else {
-                error!("Error parsing event InputPublished after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::InputPublished::decode_log_data(data)
+                .context("failed to decode InputPublished after its topic matched")?;
             event.e3Id = indexed_u256(topics, 1, "InputPublished")?;
-            Some(InputPublishedWithChainId(event, chain_id).into())
+            Ok(Some(InputPublishedWithChainId(event, chain_id).into()))
         }
         Some(&IInterfold::E3Failed::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::E3Failed::decode_log_data(data) else {
-                error!("Error parsing event E3Failed after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::E3Failed::decode_log_data(data)
+                .context("failed to decode E3Failed after its topic matched")?;
             event.e3Id = indexed_u256(topics, 1, "E3Failed")?;
             info!(
                 "E3Failed event received: e3_id={}, stage={:?}, reason={:?}",
                 event.e3Id, event.failedAtStage, event.reason
             );
-            Some(InterfoldEventData::from(E3FailedWithChainId(
+            Ok(Some(InterfoldEventData::from(E3FailedWithChainId(
                 event, chain_id,
-            )))
+            ))))
         }
         Some(&IInterfold::E3StageChanged::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::E3StageChanged::decode_log_data(data) else {
-                error!("Error parsing event E3StageChanged after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::E3StageChanged::decode_log_data(data)
+                .context("failed to decode E3StageChanged after its topic matched")?;
             // e3Id is indexed → extract from topics[1], not log data
             if let Some(e3_id_topic) = topics.get(1) {
                 event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
             } else {
-                error!("E3StageChanged missing indexed e3Id in topics!");
-                return None;
+                return Err(anyhow!("E3StageChanged missing indexed e3Id in topics"));
             }
             trace!(
                 "E3StageChanged event received: e3_id={}, {:?} -> {:?}",
@@ -389,65 +377,58 @@ pub(crate) fn extractor(
                 event.previousStage,
                 event.newStage
             );
-            Some(InterfoldEventData::from(E3StageChangedWithChainId(
+            Ok(Some(InterfoldEventData::from(E3StageChangedWithChainId(
                 event, chain_id,
-            )))
+            ))))
         }
         Some(&IInterfold::PlaintextOutputPublished::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::PlaintextOutputPublished::decode_log_data(data) else {
-                error!("Error parsing event PlaintextOutputPublished after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::PlaintextOutputPublished::decode_log_data(data)
+                .context("failed to decode PlaintextOutputPublished after its topic matched")?;
             // e3Id is indexed → extract from topics[1], not log data
             if let Some(e3_id_topic) = topics.get(1) {
                 event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
             } else {
-                error!("PlaintextOutputPublished missing indexed e3Id in topics!");
-                return None;
+                return Err(anyhow!(
+                    "PlaintextOutputPublished missing indexed e3Id in topics"
+                ));
             }
             info!(
                 "PlaintextOutputPublished event received: e3_id={}",
                 event.e3Id
             );
-            Some(InterfoldEventData::from(
+            Ok(Some(InterfoldEventData::from(
                 PlaintextOutputPublishedWithChainId(event, chain_id),
-            ))
+            )))
         }
         Some(&IInterfold::RewardsDistributed::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::RewardsDistributed::decode_log_data(data) else {
-                error!("Error parsing event RewardsDistributed after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::RewardsDistributed::decode_log_data(data)
+                .context("failed to decode RewardsDistributed after its topic matched")?;
             event.e3Id = indexed_u256(topics, 1, "RewardsDistributed")?;
-            Some(RewardsDistributedWithChainId(event, chain_id).into())
+            Ok(Some(RewardsDistributedWithChainId(event, chain_id).into()))
         }
         Some(&IInterfold::RewardCredited::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::RewardCredited::decode_log_data(data) else {
-                error!("Error parsing event RewardCredited after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::RewardCredited::decode_log_data(data)
+                .context("failed to decode RewardCredited after its topic matched")?;
             event.e3Id = indexed_u256(topics, 1, "RewardCredited")?;
-            Some(RewardCreditedWithChainId(event, chain_id).into())
+            Ok(Some(RewardCreditedWithChainId(event, chain_id).into()))
         }
         Some(&IInterfold::RewardClaimed::SIGNATURE_HASH) => {
-            let Ok(mut event) = IInterfold::RewardClaimed::decode_log_data(data) else {
-                error!("Error parsing event RewardClaimed after topic matched!");
-                return None;
-            };
+            let mut event = IInterfold::RewardClaimed::decode_log_data(data)
+                .context("failed to decode RewardClaimed after its topic matched")?;
             event.e3Id = indexed_u256(topics, 1, "RewardClaimed")?;
-            Some(RewardClaimedWithChainId(event, chain_id).into())
+            Ok(Some(RewardClaimedWithChainId(event, chain_id).into()))
         }
         _ => {
             trace!(
                 topic=?topic0,
                 "Preserving event without a typed Interfold.sol decoder"
             );
-            Some(crate::domain::evm_log_observation::observe(
+            Ok(Some(crate::domain::evm_log_observation::observe(
                 "Interfold",
                 data,
                 topics,
                 chain_id,
-            ))
+            )))
         }
     }
 }
@@ -490,7 +471,8 @@ mod tests {
             &log_data,
             &[IInterfold::E3StageChanged::SIGNATURE_HASH, e3_id_topic],
             7,
-        );
+        )
+        .unwrap();
         match out {
             Some(InterfoldEventData::E3StageChanged(data)) => {
                 assert_eq!(data.previous_stage, E3Stage::Requested);
@@ -505,11 +487,11 @@ mod tests {
     fn test_extractor_preserves_unknown_topic() {
         let log_data = LogData::default();
         assert!(matches!(
-            extractor(&log_data, &[B256::ZERO], 1),
+            extractor(&log_data, &[B256::ZERO], 1).unwrap(),
             Some(InterfoldEventData::EvmLogObserved(_))
         ));
         assert!(matches!(
-            extractor(&log_data, &[], 1),
+            extractor(&log_data, &[], 1).unwrap(),
             Some(InterfoldEventData::EvmLogObserved(_))
         ));
     }
@@ -523,7 +505,7 @@ mod tests {
             index: U256::from(3),
         };
         let input_log = input.encode_log_data();
-        let out = extractor(&input_log, input_log.topics(), 10);
+        let out = extractor(&input_log, input_log.topics(), 10).unwrap();
         match out {
             Some(InterfoldEventData::InputPublished(event)) => {
                 assert_eq!(event.e3_id, E3id::new("8", 10));
@@ -540,7 +522,7 @@ mod tests {
             amount: U256::from(500),
         };
         let reward_log = reward.encode_log_data();
-        let out = extractor(&reward_log, reward_log.topics(), 10);
+        let out = extractor(&reward_log, reward_log.topics(), 10).unwrap();
         match out {
             Some(InterfoldEventData::RewardCredited(event)) => {
                 assert_eq!(event.e3_id, E3id::new("8", 10));
@@ -559,7 +541,7 @@ mod tests {
             proof: Bytes::from_static(b"c7"),
         };
         let log = event.encode_log_data();
-        let out = extractor(&log, log.topics(), 100);
+        let out = extractor(&log, log.topics(), 100).unwrap();
         match out {
             Some(InterfoldEventData::PlaintextOutputPublished(event)) => {
                 assert_eq!(event.e3_id, E3id::new("18", 100));
@@ -568,5 +550,43 @@ mod tests {
             }
             other => panic!("expected PlaintextOutputPublished, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn unsupported_e3_requested_is_a_benign_skip() {
+        let event = IInterfold::E3Requested {
+            e3Id: U256::from(19),
+            e3: IInterfold::E3 {
+                seed: U256::ZERO,
+                committeeSize: u8::MAX,
+                requestBlock: U256::ZERO,
+                inputWindow: [U256::ZERO; 2],
+                encryptionSchemeId: B256::ZERO,
+                e3Program: Address::ZERO,
+                paramSet: 0,
+                customParams: Bytes::new(),
+                decryptionVerifier: Address::ZERO,
+                pkVerifier: Address::ZERO,
+                committeePublicKey: B256::ZERO,
+                ciphertextOutput: B256::ZERO,
+                plaintextOutput: Bytes::new(),
+                requester: Address::ZERO,
+                proofAggregationEnabled: false,
+            },
+            e3Program: Address::ZERO,
+        };
+        let log = event.encode_log_data();
+
+        assert!(extractor(&log, log.topics(), 100).unwrap().is_none());
+    }
+
+    #[test]
+    fn malformed_e3_requested_is_rejected() {
+        let malformed = LogData::new_unchecked(
+            vec![IInterfold::E3Requested::SIGNATURE_HASH],
+            Default::default(),
+        );
+
+        assert!(extractor(&malformed, malformed.topics(), 100).is_err());
     }
 }

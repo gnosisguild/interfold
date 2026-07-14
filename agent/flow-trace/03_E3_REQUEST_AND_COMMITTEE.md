@@ -122,6 +122,10 @@ When the running ciphernodes detect `E3Requested` and `CommitteeRequested` event
 ```
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
+├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
+│  binary supports, records the provider log as internally processed and skips participation;
+│  historical ordering advances, while malformed ABI data still fails chain ingestion closed
+│
 ├─ Publishes InterfoldEvent::E3Requested {
 │     e3_id, threshold_m, threshold_n,
 │     seed, params, error_size, esi_per_ct
