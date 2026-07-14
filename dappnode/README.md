@@ -170,7 +170,9 @@ Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copie
 of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
 Interfold v0.1.8 image. Any failed command aborts startup. Wallet and network keys are encrypted in
 `/data`; v0.1.8 stores its password key there as a mode-`0400` file. After successful persistence,
-the entrypoint removes the combined plaintext upload.
+the entrypoint removes the combined plaintext upload. Provisioning sends the secrets through the
+CLI's hidden TTY prompts over stdin; plaintext credentials are never placed in process arguments or
+container environment variables.
 
 The Ethereum key must correspond to `NODE_ADDRESS`. Keep an encrypted offline backup of this JSON;
 do not paste its contents into package environment variables, `EXTRA_OPTS`, logs, or support
@@ -207,7 +209,8 @@ At container startup, `entrypoint.sh`:
 - contract addresses and deploy blocks
 
 4. Validates the uploaded credential file and programs password, network key, and wallet key. The
-   pinned v0.1.8 network-key command is `interfold net keypair set`; failures stop startup.
+   pinned v0.1.8 network-key command is `interfold net keypair set`; an isolated Expect helper feeds
+   its hidden prompts from stdin and failures stop startup.
 5. Builds CLI args, including verbosity and `--peer` flags from `PEERS`.
 6. Executes:
 

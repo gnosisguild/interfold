@@ -109,14 +109,18 @@ impl Cli {
                         command: CiphernodeCommands::Setup {
                             rpc_url,
                             password,
+                            password_stdin,
                             private_key,
+                            private_key_stdin,
                         }
                     } => {
                         ciphernode::setup::execute(
                             out,
                             rpc_url,
                             password,
+                            password_stdin,
                             private_key,
+                            private_key_stdin,
                         )
                         .await?;
                     }
@@ -126,7 +130,9 @@ impl Cli {
                             out,
                             None,
                             None,
+                            false,
                             None,
+                            false,
                         )
                         .await?;
                     },

@@ -10,7 +10,10 @@ use e3_config::AppConfig;
 use e3_console::Console;
 use zeroize::Zeroizing;
 
-use crate::{helpers::ensure_hex_zeroizing, wallet_get, wallet_set};
+use crate::{
+    helpers::{ensure_hex_zeroizing, read_secret_line},
+    wallet_get, wallet_set,
+};
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum WalletCommands {
@@ -18,8 +21,16 @@ pub enum WalletCommands {
     Set {
         /// The private key - note we are leaving as hex string as it is easier to manage with
         /// the allow Signer coercion
-        #[arg(long = "private-key", value_parser = ensure_hex_zeroizing)]
+        #[arg(
+            long = "private-key",
+            value_parser = ensure_hex_zeroizing,
+            conflicts_with = "private_key_stdin"
+        )]
         private_key: Option<Zeroizing<String>>,
+
+        /// Read the private key from one line on stdin
+        #[arg(long, conflicts_with = "private_key")]
+        private_key_stdin: bool,
     },
     /// Get your wallet address
     Get,
@@ -27,7 +38,18 @@ pub enum WalletCommands {
 
 pub async fn execute(out: Console, command: WalletCommands, config: AppConfig) -> Result<()> {
     match command {
-        WalletCommands::Set { private_key } => {
+        WalletCommands::Set {
+            private_key,
+            private_key_stdin,
+        } => {
+            let private_key = if private_key_stdin {
+                Some(read_secret_line(
+                    &mut std::io::stdin().lock(),
+                    "private key",
+                )?)
+            } else {
+                private_key
+            };
             wallet_set::execute(out, &config, private_key).await?
         }
         WalletCommands::Get => wallet_get::execute(out, &config).await?,

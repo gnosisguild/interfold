@@ -10,15 +10,19 @@ use e3_config::AppConfig;
 use e3_console::Console;
 use zeroize::Zeroizing;
 
-use crate::{helpers::parse_zeroizing, password_delete, password_set};
+use crate::{helpers::parse_zeroizing, helpers::read_secret_line, password_delete, password_set};
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum PasswordCommands {
     /// Set (or overwrite) a password
     Set {
         /// The new password
-        #[arg(short, long, value_parser = parse_zeroizing)]
+        #[arg(short, long, value_parser = parse_zeroizing, conflicts_with = "password_stdin")]
         password: Option<Zeroizing<String>>,
+
+        /// Read the new password from one line on stdin
+        #[arg(long, conflicts_with = "password")]
+        password_stdin: bool,
     },
 
     /// Delete the current password
@@ -27,7 +31,17 @@ pub enum PasswordCommands {
 
 pub async fn execute(out: Console, command: PasswordCommands, config: &AppConfig) -> Result<()> {
     match command {
-        PasswordCommands::Set { password } => password_set::execute(out, config, password).await?,
+        PasswordCommands::Set {
+            password,
+            password_stdin,
+        } => {
+            let password = if password_stdin {
+                Some(read_secret_line(&mut std::io::stdin().lock(), "password")?)
+            } else {
+                password
+            };
+            password_set::execute(out, config, password).await?
+        }
         PasswordCommands::Delete => password_delete::execute(&out, config).await?,
     };
 

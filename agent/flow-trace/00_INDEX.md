@@ -18,6 +18,7 @@
 ```
 1. SETUP        interfold ciphernode setup
                   → Config, password, private key stored locally
+                  → Automation passes secrets over stdin, never argv/environment metadata
 
 2. BOND         interfold ciphernode license bond --amount N
                   → FOLD tokens locked in BondingRegistry

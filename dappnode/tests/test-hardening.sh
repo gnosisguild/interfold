@@ -14,11 +14,11 @@ grep -Fq 'stop_grace_period: 45s' "$ROOT_DIR/docker-compose.yml" \
     || fail "Docker stop grace period must exceed the node shutdown deadline"
 
 assert_contains() {
-    grep -Fq "$2" "$1" || fail "expected '$2' in $1"
+    grep -Fq -- "$2" "$1" || fail "expected '$2' in $1"
 }
 
 assert_not_contains() {
-    if grep -Fq "$2" "$1"; then
+    if grep -Fq -- "$2" "$1"; then
         fail "did not expect '$2' in $1"
     fi
 }
@@ -37,20 +37,34 @@ make_mock_interfold() {
         '  *) operation=unexpected ;;' \
         'esac' \
         'printf "%s\n" "$operation" >> "$CALL_LOG"' \
+        'tr "\0" " " < /proc/$$/cmdline >> "$ARGV_LOG"' \
+        'printf "\n" >> "$ARGV_LOG"' \
         '[ "${FAIL_ON:-}" != "$operation" ] || exit 42' \
-        'if [ "$operation" = password ]; then' \
-        '  password=' \
-        '  while [ "$#" -gt 0 ]; do' \
-        '    if [ "$1" = --password ]; then password=$2; break; fi' \
-        '    shift' \
-        '  done' \
+        '[ "$operation" != unexpected ]' \
+        > "$bin_dir/interfold"
+    chmod +x "$bin_dir/interfold"
+}
+
+make_mock_expect() {
+    local bin_dir=$1
+    printf '%s\n' \
+        '#!/bin/bash' \
+        'set -Eeuo pipefail' \
+        'read -r password_b64' \
+        'read -r network_key_b64' \
+        'read -r private_key_b64' \
+        'password=$(printf "%s" "$password_b64" | base64 -d)' \
+        'if [ "$3" = new ]; then' \
+        '  interfold password set --config "$2"' \
         '  mkdir -p "$(dirname "$PASSWORD_FILE")"' \
         '  printf "%s" "$password" > "$PASSWORD_FILE"' \
         '  chmod 400 "$PASSWORD_FILE"' \
         'fi' \
-        '[ "$operation" != unexpected ]' \
-        > "$bin_dir/interfold"
-    chmod +x "$bin_dir/interfold"
+        'interfold net keypair set --config "$2"' \
+        'interfold wallet set --config "$2"' \
+        'unset password password_b64 network_key_b64 private_key_b64' \
+        > "$bin_dir/expect"
+    chmod +x "$bin_dir/expect"
 }
 
 write_secrets() {
@@ -67,7 +81,9 @@ run_entrypoint() {
     shift
     mkdir -p "$case_dir/data" "$case_dir/secrets" "$case_dir/bin"
     : > "$case_dir/calls"
+    : > "$case_dir/argv"
     make_mock_interfold "$case_dir/bin"
+    make_mock_expect "$case_dir/bin"
 
     env -u ENCRYPTION_PASSWORD -u NETWORK_PRIVATE_KEY -u PRIVATE_KEY \
         PATH="$case_dir/bin:$PATH" \
@@ -75,8 +91,10 @@ run_entrypoint() {
         CONFIG_FILE="$case_dir/data/config.yaml" \
         TEMPLATE_FILE="$ROOT_DIR/config.template.yaml" \
         SECRETS_FILE="$case_dir/secrets/secrets.json" \
+        CREDENTIAL_PROVISIONER="$ROOT_DIR/provision-credentials.exp" \
         PASSWORD_FILE="$case_dir/data/password" \
         CALL_LOG="$case_dir/calls" \
+        ARGV_LOG="$case_dir/argv" \
         RPC_URL="ws://127.0.0.1:8545" \
         NODE_ADDRESS="0x3333333333333333333333333333333333333333" \
         INTERFOLD_CONTRACT="0x4444444444444444444444444444444444444444" \
@@ -97,6 +115,9 @@ write_secrets "$success_dir/secrets/secrets.json"
 run_entrypoint "$success_dir"
 [ ! -e "$success_dir/secrets/secrets.json" ] || fail "successful setup retained plaintext credentials"
 [ "$(tr '\n' ' ' < "$success_dir/calls")" = "password network wallet start " ] || fail "unexpected successful command order"
+assert_not_contains "$success_dir/argv" 'correct horse battery staple'
+assert_not_contains "$success_dir/argv" '0x1111111111111111111111111111111111111111111111111111111111111111'
+assert_not_contains "$success_dir/argv" '0x2222222222222222222222222222222222222222222222222222222222222222'
 assert_contains "$success_dir/data/config.yaml" 'autopassword: false'
 assert_contains "$success_dir/data/config.yaml" 'autonetkey: false'
 assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
@@ -153,6 +174,12 @@ printf '%s' 'persisted-password' > "$legacy_dir/data/password"
 if TEST_PRIVATE_KEY=legacy run_entrypoint "$legacy_dir"; then
     fail "legacy secret environment variable was accepted"
 fi
+
+# Entrypoint regressions: credential values must never be expanded into CLI
+# flags, even if those legacy flags remain available for interactive users.
+assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
+assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
+assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
 
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.

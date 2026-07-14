@@ -8,6 +8,7 @@ CONFIG_DIR="${CONFIG_DIR:-/data}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.yaml}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-/opt/config.template.yaml}"
 SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
+CREDENTIAL_PROVISIONER="${CREDENTIAL_PROVISIONER:-/opt/provision-credentials.exp}"
 # Interfold v0.1.8 resolves a relative `key_file: key` beside a discovered
 # /data/config.yaml to this path for the default node profile.
 PASSWORD_FILE="${PASSWORD_FILE:-$CONFIG_DIR/.enclave/config/_default/key}"
@@ -81,29 +82,22 @@ validate_persisted_password_file() {
 configure_credentials() {
     validate_secret_file
 
-    local password private_key network_private_key
-    password=$(jq -er '.password' "$SECRETS_FILE")
-    private_key=$(jq -er '.private_key' "$SECRETS_FILE")
-    network_private_key=$(jq -er '.network_private_key' "$SECRETS_FILE")
+    [ -r "$CREDENTIAL_PROVISIONER" ] || fail "credential provisioner is not readable: $CREDENTIAL_PROVISIONER"
+
+    local provisioning_mode=new
 
     if [ -e "$PASSWORD_FILE" ]; then
         validate_persisted_password_file
-        printf '%s' "$password" | cmp -s - "$PASSWORD_FILE" || fail "uploaded password does not match the persisted credential key"
+        jq -er '.password' "$SECRETS_FILE" | tr -d '\n' | cmp -s - "$PASSWORD_FILE" \
+            || fail "uploaded password does not match the persisted credential key"
+        provisioning_mode=existing
         log "Using the matching persisted encryption password."
-    else
-        log "Setting encryption password..."
-        interfold password set --config "$CONFIG_FILE" --password "$password"
     fi
 
-    # v0.1.8 nests this operation under `net keypair`; `net set-key` is not a
-    # valid command for the image pinned by this package.
-    log "Setting network key..."
-    interfold net keypair set --config "$CONFIG_FILE" --net-keypair "$network_private_key"
-
-    log "Setting wallet key..."
-    interfold wallet set --config "$CONFIG_FILE" --private-key "$private_key"
-
-    unset password private_key network_private_key
+    log "Provisioning encrypted credentials through hidden stdin prompts..."
+    jq -jr '[.password, .network_private_key, .private_key][] | @base64 + "\n"' "$SECRETS_FILE" \
+        | expect "$CREDENTIAL_PROVISIONER" "$CONFIG_FILE" "$provisioning_mode" \
+        || fail "one or more credential commands failed"
 
     # DAppNode copies fileUpload content into this container before startup.
     # Wallet/network keys are encrypted in /data and v0.1.8 stores the password
