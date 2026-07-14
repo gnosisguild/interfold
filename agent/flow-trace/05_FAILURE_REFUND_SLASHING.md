@@ -1076,7 +1076,8 @@ When CommitteeMemberExpelled event arrives from EVM:
 │
 ├─ KeyshareCreatedFilterBuffer (aggregator):
 │   ├─ Only processes raw events (party_id: None)
-│   └─ Removes expelled node from committee filter set
+│   └─ Stores the expelled node as `alloy::Address` and removes/blocks keyshares by parsed
+│       address, so differently cased self-reported node strings cannot bypass expulsion
 │
 └─ When E3Failed(timeout) / E3StageChanged(Complete) arrives:
     │

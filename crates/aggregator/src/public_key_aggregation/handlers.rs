@@ -41,7 +41,7 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     return;
                 }
 
-                let node_addr = data.node.to_string();
+                let node_addr = data.node;
 
                 if data.e3_id != self.e3_id {
                     error!("Wrong e3_id sent to PublicKeyAggregator for expulsion. This should not happen.");
@@ -58,7 +58,7 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                         Some(PublicKeyAggregatorState::Collecting { .. })
                     );
 
-                    self.handle_member_expelled(&node_addr, &ec)?;
+                    self.handle_member_expelled(node_addr, &ec)?;
 
                     // If we just transitioned to VerifyingC1, dispatch C1 verification
                     // using the c1_proofs now stored in the VerifyingC1 state (already

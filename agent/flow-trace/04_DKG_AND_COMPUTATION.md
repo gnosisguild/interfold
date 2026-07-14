@@ -561,6 +561,8 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │
 ├─ KeyshareCreatedFilterBuffer gates events:
   │   └─ Only accepts KeyshareCreated from verified committee members
+  │   └─ Compares committee, keyshare, and expulsion identities as parsed EVM addresses;
+  │      EIP-55 casing differences cannot bypass an expulsion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
   │   └─ On expulsion-driven handoff, the next active aggregator flushes its existing buffer
 │

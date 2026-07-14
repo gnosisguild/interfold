@@ -191,7 +191,7 @@ impl PublicKeyAggregation {
     /// collections aligned and transitioning to `VerifyingC1` when enough keyshares remain.
     pub(crate) fn handle_member_expelled(
         mut state: PublicKeyAggregatorState,
-        node: &str,
+        node: Address,
     ) -> Result<PublicKeyAggregatorState> {
         let PublicKeyAggregatorState::Collecting {
             threshold_n,
@@ -208,17 +208,29 @@ impl PublicKeyAggregation {
             return Ok(state);
         };
 
-        let node_str = node.to_string();
-
         // Find the expelled node's index in submission_order and remove from
         // all parallel collections so they stay aligned.
-        if let Some(idx) = submission_order.iter().position(|(_, n, _)| n == &node_str) {
+        if let Some(idx) = submission_order.iter().position(|(_, candidate, _)| {
+            candidate
+                .parse::<Address>()
+                .is_ok_and(|candidate| candidate == node)
+        }) {
             let (_, _, expelled_keyshare) = submission_order.remove(idx);
             keyshares.remove(&expelled_keyshare);
             c1_proofs.remove(idx);
         }
 
-        nodes.remove(&node_str);
+        let expelled_node = nodes
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .parse::<Address>()
+                    .is_ok_and(|candidate| candidate == node)
+            })
+            .cloned();
+        if let Some(expelled_node) = expelled_node {
+            nodes.remove(&expelled_node);
+        }
 
         if *threshold_n > 0 {
             *threshold_n -= 1;

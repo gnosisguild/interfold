@@ -21,7 +21,7 @@ pub struct KeyshareCreatedFilterBuffer {
     /// accepting a real member under another member's `party_id` poisons the DKG roster.
     committee: Option<Vec<String>>,
     buffer: Vec<InterfoldEvent>,
-    expelled_nodes: HashSet<String>,
+    expelled_nodes: HashSet<Address>,
     is_aggregator: bool,
 }
 
@@ -33,6 +33,11 @@ fn committee_member_matches(committee: &[String], party_id: u64, node: &str) -> 
     else {
         return false;
     };
+    node.parse::<Address>()
+        .is_ok_and(|address| address == expected)
+}
+
+fn address_matches(node: &str, expected: Address) -> bool {
     node.parse::<Address>()
         .is_ok_and(|address| address == expected)
 }
@@ -58,7 +63,10 @@ impl KeyshareCreatedFilterBuffer {
                 match event.get_data() {
                     InterfoldEventData::KeyshareCreated(data)
                         if committee_member_matches(committee, data.party_id, &data.node)
-                            && !self.expelled_nodes.contains(&data.node) =>
+                            && !data
+                                .node
+                                .parse::<Address>()
+                                .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
                     {
                         self.dest.do_send(event);
                     }
@@ -93,7 +101,10 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 Some(committee)
                     if self.is_aggregator
                         && committee_member_matches(committee, data.party_id, &data.node)
-                        && !self.expelled_nodes.contains(&data.node) =>
+                        && !data
+                            .node
+                            .parse::<Address>()
+                            .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
                 {
                     self.dest.do_send(msg);
                 }
@@ -102,7 +113,10 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 }
                 Some(committee)
                     if committee_member_matches(committee, data.party_id, &data.node)
-                        && !self.expelled_nodes.contains(&data.node) =>
+                        && !data
+                            .node
+                            .parse::<Address>()
+                            .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
                 {
                     self.buffer.push(msg);
                 }
@@ -119,12 +133,13 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     return;
                 }
 
-                let node_addr = data.node.to_string();
-                self.expelled_nodes.insert(node_addr.clone());
+                let node_addr = data.node;
+                self.expelled_nodes.insert(node_addr);
                 self.buffer.retain(|event| {
                     !matches!(
                         event.get_data(),
-                        InterfoldEventData::KeyshareCreated(share) if share.node == node_addr
+                        InterfoldEventData::KeyshareCreated(share)
+                            if address_matches(&share.node, node_addr)
                     )
                 });
 
@@ -166,7 +181,8 @@ impl Handler<Die> for KeyshareCreatedFilterBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::committee_member_matches;
+    use super::{address_matches, committee_member_matches};
+    use alloy::primitives::Address;
 
     const A: &str = "0x1111111111111111111111111111111111111111";
     const B: &str = "0x2222222222222222222222222222222222222222";
@@ -189,6 +205,17 @@ mod tests {
             &committee,
             0,
             "0xabcd000000000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn expelled_address_comparison_is_case_insensitive() {
+        let expelled = "0xAbCd000000000000000000000000000000000000"
+            .parse::<Address>()
+            .unwrap();
+        assert!(address_matches(
+            "0xabcd000000000000000000000000000000000000",
+            expelled
         ));
     }
 }

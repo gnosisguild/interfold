@@ -152,18 +152,28 @@ fn select_honest_set_fails_when_at_or_below_threshold_m() {
 #[test]
 fn handle_member_expelled_removes_and_reduces_threshold() {
     let mut state = collecting(3, 1);
-    for pid in 0..2u64 {
+    let nodes = [
+        "0xabcdef0000000000000000000000000000000000",
+        "0x2222222222222222222222222222222222222222",
+    ];
+    for (pid, node) in nodes.into_iter().enumerate() {
         state = PublicKeyAggregation::add_keyshare(
             state,
             ks(pid as u8),
-            format!("node-{pid}"),
-            pid,
+            node.to_owned(),
+            pid as u64,
             None,
         )
         .unwrap();
     }
     // expel node-0; threshold_n 3 -> 2, keyshares now 1 (< 2) -> stays Collecting
-    let state = PublicKeyAggregation::handle_member_expelled(state, "node-0").unwrap();
+    let state = PublicKeyAggregation::handle_member_expelled(
+        state,
+        "0xAbCdEf0000000000000000000000000000000000"
+            .parse()
+            .unwrap(),
+    )
+    .unwrap();
     match state {
         PublicKeyAggregatorState::Collecting {
             threshold_n,
@@ -173,7 +183,7 @@ fn handle_member_expelled_removes_and_reduces_threshold() {
         } => {
             assert_eq!(threshold_n, 2);
             assert_eq!(submission_order.len(), 1);
-            assert!(!nodes.contains(&"node-0".to_string()));
+            assert!(!nodes.contains(&"0xabcdef0000000000000000000000000000000000".to_string()));
         }
         _ => panic!("expected Collecting"),
     }
@@ -191,13 +201,30 @@ fn handle_member_expelled_transitions_when_enough_remain() {
         keyshares: OrderedSet::from(vec![ks(10), ks(11)]),
         c1_proofs: vec![None, None],
         seed: Seed([0u8; 32]),
-        nodes: OrderedSet::from(vec!["node-0".to_string(), "node-1".to_string()]),
+        nodes: OrderedSet::from(vec![
+            "0xabcdef0000000000000000000000000000000000".to_string(),
+            "0x2222222222222222222222222222222222222222".to_string(),
+        ]),
         submission_order: vec![
-            (0, "node-0".to_string(), ks(10)),
-            (1, "node-1".to_string(), ks(11)),
+            (
+                0,
+                "0xabcdef0000000000000000000000000000000000".to_string(),
+                ks(10),
+            ),
+            (
+                1,
+                "0x2222222222222222222222222222222222222222".to_string(),
+                ks(11),
+            ),
         ],
     };
-    let next = PublicKeyAggregation::handle_member_expelled(state, "node-0").unwrap();
+    let next = PublicKeyAggregation::handle_member_expelled(
+        state,
+        "0xAbCdEf0000000000000000000000000000000000"
+            .parse()
+            .unwrap(),
+    )
+    .unwrap();
     match next {
         PublicKeyAggregatorState::VerifyingC1 {
             circuit_committee_n,

@@ -7,6 +7,7 @@
 //! Effect execution for public-key aggregation.
 
 use super::*;
+use alloy::primitives::Address;
 
 mod aggregate_dkg_proofs;
 mod aggregate_public_key;
@@ -18,7 +19,7 @@ mod verify_key_proofs;
 impl PublicKeyAggregator {
     pub fn handle_member_expelled(
         &mut self,
-        node: &str,
+        node: Address,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
         self.state.try_mutate(ec, |state| {
