@@ -1,7 +1,7 @@
 {
   "name": "interfold-ciphernode.public.dappnode.eth",
-  "version": "0.1.8",
-  "upstreamVersion": "0.1.8",
+  "version": "0.2.3",
+  "upstreamVersion": "0.2.3",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",
   "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",

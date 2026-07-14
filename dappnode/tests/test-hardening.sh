@@ -51,23 +51,27 @@ make_mock_expect() {
         '#!/bin/bash' \
         'set -Eeuo pipefail' \
         'read -r password_b64' \
-        'read -r network_key_b64' \
         'read -r private_key_b64' \
         'password=$(printf "%s" "$password_b64" | base64 -d)' \
-        'if [ "$3" = new ]; then' \
-        '  interfold password set --config "$2"' \
-        '  mkdir -p "$(dirname "$PASSWORD_FILE")"' \
-        '  printf "%s" "$password" > "$PASSWORD_FILE"' \
-        '  chmod 400 "$PASSWORD_FILE"' \
-        'fi' \
-        'interfold net keypair set --config "$2"' \
+        'interfold password set --config "$2"' \
+        'mkdir -p "$(dirname "$PASSWORD_FILE")"' \
+        'printf "%s" "$password" > "$PASSWORD_FILE"' \
+        'chmod 400 "$PASSWORD_FILE"' \
         'interfold wallet set --config "$2"' \
-        'unset password password_b64 network_key_b64 private_key_b64' \
+        'unset password password_b64 private_key_b64' \
         > "$bin_dir/expect"
     chmod +x "$bin_dir/expect"
 }
 
 write_secrets() {
+    local path=$1
+    printf '%s\n' '{' \
+        '  "password": "correct horse battery staple",' \
+        '  "private_key": "0x1111111111111111111111111111111111111111111111111111111111111111"' \
+        '}' > "$path"
+}
+
+write_legacy_secrets() {
     local path=$1
     printf '%s\n' '{' \
         '  "password": "correct horse battery staple",' \
@@ -107,17 +111,16 @@ run_entrypoint() {
         "$@" bash "$ROOT_DIR/entrypoint.sh" > "$case_dir/output" 2>&1
 }
 
-# Successful provisioning uses the exact v0.1.8 commands, removes the
+# Successful provisioning uses the v0.2.3 atomic wallet command, removes the
 # plaintext upload, and starts only after every credential command succeeds.
 success_dir="$TEST_ROOT/success"
 mkdir -p "$success_dir/secrets"
 write_secrets "$success_dir/secrets/secrets.json"
 run_entrypoint "$success_dir"
 [ ! -e "$success_dir/secrets/secrets.json" ] || fail "successful setup retained plaintext credentials"
-[ "$(tr '\n' ' ' < "$success_dir/calls")" = "password network wallet start " ] || fail "unexpected successful command order"
+[ "$(tr '\n' ' ' < "$success_dir/calls")" = "password wallet start " ] || fail "unexpected successful command order"
 assert_not_contains "$success_dir/argv" 'correct horse battery staple'
 assert_not_contains "$success_dir/argv" '0x1111111111111111111111111111111111111111111111111111111111111111'
-assert_not_contains "$success_dir/argv" '0x2222222222222222222222222222222222222222222222222222222222222222'
 assert_contains "$success_dir/data/config.yaml" 'autopassword: false'
 assert_contains "$success_dir/data/config.yaml" 'autonetkey: false'
 assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
@@ -126,10 +129,10 @@ assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
 failure_dir="$TEST_ROOT/failure"
 mkdir -p "$failure_dir/secrets"
 write_secrets "$failure_dir/secrets/secrets.json"
-if run_entrypoint "$failure_dir" FAIL_ON=network; then
-    fail "network credential failure was ignored"
+if run_entrypoint "$failure_dir" FAIL_ON=wallet; then
+    fail "wallet credential failure was ignored"
 fi
-assert_contains "$failure_dir/calls" 'network'
+assert_contains "$failure_dir/calls" 'wallet'
 assert_not_contains "$failure_dir/calls" 'start'
 [ -e "$failure_dir/secrets/secrets.json" ] || fail "failed setup removed recovery input"
 
@@ -142,6 +145,24 @@ if run_entrypoint "$mismatch_dir"; then
     fail "mismatched persisted password was accepted"
 fi
 [ ! -s "$mismatch_dir/calls" ] || fail "password mismatch mutated credentials"
+
+# A matching upload on existing state must not rotate either persisted identity.
+matching_dir="$TEST_ROOT/password-match"
+mkdir -p "$matching_dir/data" "$matching_dir/secrets"
+printf '%s' 'correct horse battery staple' > "$matching_dir/data/password"
+write_secrets "$matching_dir/secrets/secrets.json"
+run_entrypoint "$matching_dir"
+[ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
+[ ! -e "$matching_dir/secrets/secrets.json" ] || fail "matching upload was not removed"
+
+# Legacy three-field uploads remain accepted; v0.2.3 derives the libp2p key
+# atomically from the wallet key and ignores the obsolete separate network key.
+legacy_credentials_dir="$TEST_ROOT/legacy-credentials"
+mkdir -p "$legacy_credentials_dir/secrets"
+write_legacy_secrets "$legacy_credentials_dir/secrets/secrets.json"
+run_entrypoint "$legacy_credentials_dir"
+[ "$(tr '\n' ' ' < "$legacy_credentials_dir/calls")" = "password wallet start " ] \
+    || fail "legacy credential upload was not accepted"
 
 # Malformed or absent first-start credentials fail before invoking Interfold.
 malformed_dir="$TEST_ROOT/malformed"
@@ -167,6 +188,26 @@ chmod 400 "$restart_dir/data/password"
 run_entrypoint "$restart_dir"
 [ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
 
+# The 0.1.8 -> 0.2.3 bridge moves the complete custom-config namespace in one
+# rename, preserving the unversioned DB/event log for v0.2.3 to stamp schema 1.
+upgrade_dir="$TEST_ROOT/legacy-upgrade"
+mkdir -p "$upgrade_dir/data/.enclave/config/_default" "$upgrade_dir/data/.enclave/data/_default/db" \
+    "$upgrade_dir/data/.enclave/data/_default/log.0"
+printf '%s' 'persisted-password' > "$upgrade_dir/data/.enclave/config/_default/key"
+printf '%s' 'legacy-state' > "$upgrade_dir/data/.enclave/data/_default/db/sentinel"
+run_entrypoint "$upgrade_dir" \
+    PASSWORD_FILE="$upgrade_dir/data/.interfold/config/_default/key"
+[ ! -e "$upgrade_dir/data/.enclave" ] || fail "legacy state namespace remained after upgrade"
+assert_contains "$upgrade_dir/data/.interfold/data/_default/db/sentinel" 'legacy-state'
+[ "$(tr '\n' ' ' < "$upgrade_dir/calls")" = "start " ] || fail "legacy state upgrade did not start"
+
+ambiguous_dir="$TEST_ROOT/ambiguous-upgrade"
+mkdir -p "$ambiguous_dir/data/.enclave" "$ambiguous_dir/data/.interfold"
+if run_entrypoint "$ambiguous_dir"; then
+    fail "ambiguous legacy/current state was accepted"
+fi
+[ ! -s "$ambiguous_dir/calls" ] || fail "ambiguous state invoked Interfold"
+
 # Legacy secret environment variables are explicitly rejected.
 legacy_dir="$TEST_ROOT/legacy-env"
 mkdir -p "$legacy_dir/data"
@@ -180,6 +221,9 @@ fi
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
+assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.2.3"'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.2.3'
+assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.

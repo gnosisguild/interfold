@@ -1,5 +1,5 @@
 #!/bin/sh
-# Best available local health signal for the v0.1.8 image. That release has no
+# Best available local health signal for the v0.2.3 image. That release has no
 # readiness HTTP/control endpoint, so require the expected PID 1, its exact
 # start/config arguments, protected local credential/config files, and the QUIC
 # listener. This is stronger than PID-only liveness but is not a chain-sync or
@@ -8,9 +8,9 @@ set -eu
 
 PROC_ROOT="${PROC_ROOT:-/proc}"
 CONFIG_FILE="${CONFIG_FILE:-/data/config.yaml}"
-PASSWORD_FILE="${PASSWORD_FILE:-/data/.enclave/config/_default/key}"
-DB_PATH="${DB_PATH:-/data/.enclave/data/_default/db}"
-EVENT_LOG_PATH="${EVENT_LOG_PATH:-/data/.enclave/data/_default/log.0}"
+PASSWORD_FILE="${PASSWORD_FILE:-/data/.interfold/config/_default/key}"
+DB_PATH="${DB_PATH:-/data/.interfold/data/_default/db}"
+EVENT_LOG_PATH="${EVENT_LOG_PATH:-/data/.interfold/data/_default/log.0}"
 QUIC_PORT="${QUIC_PORT:-37173}"
 SS_BIN="${SS_BIN:-ss}"
 STAT_BIN="${STAT_BIN:-stat}"

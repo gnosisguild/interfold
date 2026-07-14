@@ -135,8 +135,7 @@ fields:
       ```json
       {
         "password": "a strong encryption password",
-        "private_key": "0x<64 hex characters>",
-        "network_private_key": "0x<64 hex characters>"
+        "private_key": "0x<64 hex characters>"
       }
       ```
 

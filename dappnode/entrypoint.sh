@@ -9,9 +9,11 @@ CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.yaml}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-/opt/config.template.yaml}"
 SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
 CREDENTIAL_PROVISIONER="${CREDENTIAL_PROVISIONER:-/opt/provision-credentials.exp}"
-# Interfold v0.1.8 resolves a relative `key_file: key` beside a discovered
+LEGACY_STATE_DIR="${LEGACY_STATE_DIR:-$CONFIG_DIR/.enclave}"
+CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
+# Interfold v0.2.3 resolves a relative `key_file: key` beside a discovered
 # /data/config.yaml to this path for the default node profile.
-PASSWORD_FILE="${PASSWORD_FILE:-$CONFIG_DIR/.enclave/config/_default/key}"
+PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1"; }
 fail() {
@@ -35,6 +37,28 @@ fi
 
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"
+
+migrate_legacy_state() {
+    if [ -L "$LEGACY_STATE_DIR" ] || [ -L "$CURRENT_STATE_DIR" ]; then
+        fail "legacy/current state paths must not be symbolic links"
+    fi
+    if [ -e "$LEGACY_STATE_DIR" ] && [ ! -d "$LEGACY_STATE_DIR" ]; then
+        fail "legacy state path is not a directory: $LEGACY_STATE_DIR"
+    fi
+    if [ -e "$CURRENT_STATE_DIR" ] && [ ! -d "$CURRENT_STATE_DIR" ]; then
+        fail "current state path is not a directory: $CURRENT_STATE_DIR"
+    fi
+    if [ -d "$LEGACY_STATE_DIR" ] && [ -e "$CURRENT_STATE_DIR" ]; then
+        fail "both legacy and current state directories exist; refusing an ambiguous upgrade"
+    fi
+    if [ -d "$LEGACY_STATE_DIR" ]; then
+        log "Migrating the v0.1.8 state namespace to Interfold v0.2.3..."
+        mv -- "$LEGACY_STATE_DIR" "$CURRENT_STATE_DIR" \
+            || fail "could not migrate legacy state into $CURRENT_STATE_DIR"
+    fi
+}
+
+migrate_legacy_state
 
 # Set non-secret defaults.
 export NETWORK="${NETWORK:-sepolia}"
@@ -64,12 +88,14 @@ validate_secret_file() {
 
     jq -e '
         type == "object" and
-        (keys | sort == ["network_private_key", "password", "private_key"]) and
+        ((keys | sort == ["password", "private_key"]) or
+            (keys | sort == ["network_private_key", "password", "private_key"])) and
         (.password | type == "string" and length > 0 and length <= 1024 and
             test("^[^\\r\\n\\u0000]+$") and . == gsub("^\\s+|\\s+$"; "")) and
         (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")) and
-        (.network_private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
-    ' "$SECRETS_FILE" >/dev/null || fail "credentials file must contain valid password, private_key, and network_private_key strings"
+        ((has("network_private_key") | not) or
+            (.network_private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")))
+    ' "$SECRETS_FILE" >/dev/null || fail "credentials file must contain valid password and private_key strings"
 }
 
 validate_persisted_password_file() {
@@ -82,25 +108,24 @@ validate_persisted_password_file() {
 configure_credentials() {
     validate_secret_file
 
-    [ -r "$CREDENTIAL_PROVISIONER" ] || fail "credential provisioner is not readable: $CREDENTIAL_PROVISIONER"
-
-    local provisioning_mode=new
-
     if [ -e "$PASSWORD_FILE" ]; then
         validate_persisted_password_file
         jq -er '.password' "$SECRETS_FILE" | tr -d '\n' | cmp -s - "$PASSWORD_FILE" \
             || fail "uploaded password does not match the persisted credential key"
-        provisioning_mode=existing
         log "Using the matching persisted encryption password."
+        rm -f "$SECRETS_FILE"
+        log "Existing encrypted wallet/network identity was preserved."
+        return
     fi
 
+    [ -r "$CREDENTIAL_PROVISIONER" ] || fail "credential provisioner is not readable: $CREDENTIAL_PROVISIONER"
     log "Provisioning encrypted credentials through hidden stdin prompts..."
-    jq -jr '[.password, .network_private_key, .private_key][] | @base64 + "\n"' "$SECRETS_FILE" \
-        | expect "$CREDENTIAL_PROVISIONER" "$CONFIG_FILE" "$provisioning_mode" \
+    jq -jr '[.password, .private_key][] | @base64 + "\n"' "$SECRETS_FILE" \
+        | expect "$CREDENTIAL_PROVISIONER" "$CONFIG_FILE" \
         || fail "one or more credential commands failed"
 
     # DAppNode copies fileUpload content into this container before startup.
-    # Wallet/network keys are encrypted in /data and v0.1.8 stores the password
+    # Wallet/network keys are encrypted in /data and v0.2.3 stores the password
     # key there with mode 0400. Remove the combined plaintext upload.
     rm -f "$SECRETS_FILE"
     log "Credential setup completed."

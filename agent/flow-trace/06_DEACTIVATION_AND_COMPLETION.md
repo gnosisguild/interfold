@@ -287,6 +287,11 @@ recovery as startup and refuses to remove indexed records. Runtime EventStore qu
 returned to the correlated caller rather than panicking the actor; committed corruption remains a
 startup/integrity failure.
 
+For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state.
+It atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
+operator/libp2p identity, and lets the v0.2.3 binary stamp schema version 1 before later binaries
+enforce the marker. An ambiguous volume containing both roots fails closed.
+
 ### Restart + Persist State Diagram
 
 ```mermaid

@@ -249,6 +249,10 @@ identity pair as fresh. A partial identity, any additional unversioned key, any 
 log without a marker, upgrades, and downgrades fail closed. This narrow exception is
 required because autowallet atomically creates the two bootstrap identities before the
 builder can stamp the schema; it does not let protocol state bypass compatibility checks.
+The DAppNode v0.2.3 package is the explicit bridge for the previously shipped v0.1.8
+state: its entrypoint atomically moves `/data/.enclave` to `/data/.interfold`, and the
+v0.2.3 release stamps schema version 1 before a later fail-closed binary is installed.
+If both namespace roots exist, the bridge refuses to choose between them.
 
 ## Actor and message topology
 
