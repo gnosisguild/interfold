@@ -63,7 +63,9 @@ impl NetEventTranslator {
         tokio::spawn({
             let addr = addr.clone();
             async move {
-                while let Some(event) = super::recv_net_event(&mut rx, "NetEventTranslator").await {
+                while let Some(event) =
+                    crate::event_subscription::recv_net_event(&mut rx, "NetEventTranslator").await
+                {
                     if let NetEvent::GossipData(data) = event {
                         if let GossipData::GossipBytes(_) = data {
                             if let Err(error) = addr.send(LibP2pEvent(data)).await {

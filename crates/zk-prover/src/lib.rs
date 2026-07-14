@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod actor_system;
 mod actors;
 mod backend;
 mod circuits;
@@ -18,10 +19,10 @@ mod traits;
 mod witness;
 mod workflow;
 
+pub use actor_system::{setup_zk_actors, ZkActorRecovery, ZkActors};
 pub use actors::{
-    setup_zk_actors, CommitmentConsistencyCheckerExtension, ProofRequestActor,
-    ProofVerificationActor, ShareVerificationActor, ZkActorRecovery, ZkActors,
-    ZkVerificationRequest, ZkVerificationResponse,
+    CommitmentConsistencyCheckerExtension, ProofRequestActor, ProofVerificationActor,
+    ShareVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
 

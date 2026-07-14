@@ -56,7 +56,7 @@ impl NetSyncManager {
             let addr = addr.clone();
             async move {
                 while let Some(event) =
-                    crate::actors::recv_net_event(&mut events, "NetSyncManager").await
+                    crate::event_subscription::recv_net_event(&mut events, "NetSyncManager").await
                 {
                     debug!("Received event {:?}", event);
                     let delivery = match event {

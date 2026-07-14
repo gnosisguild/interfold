@@ -101,7 +101,8 @@ impl DocumentPublisher {
             let addr = addr.clone();
             async move {
                 while let Some(event) =
-                    super::recv_net_event(&mut events, "DocumentPublisher").await
+                    crate::event_subscription::recv_net_event(&mut events, "DocumentPublisher")
+                        .await
                 {
                     debug!("Received event {:?}", event);
                     if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
