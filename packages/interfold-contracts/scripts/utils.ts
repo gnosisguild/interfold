@@ -118,6 +118,22 @@ export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
   return { hi: 2, lo: 3 };
 }
 
+/**
+ * `publicInputs` start indices for the `party_ids`/`expected_sk`/`expected_esm`
+ * columns (each `threshold + 1` wide), matching `BfvDecryptionVerifier`'s
+ * `partyIdColOffset`/`skColOffset`/`esmColOffset`.
+ */
+export function bfvDecPartyColOffsets(threshold: number): {
+  partyId: number;
+  sk: number;
+  esm: number;
+} {
+  const partyId = 5; // 4 + DEC_RETURN_PREFIX_LEN
+  const sk = partyId + (threshold + 1);
+  const esm = sk + (threshold + 1);
+  return { partyId, sk, esm };
+}
+
 /** Recursive VK hashes for `BfvPkVerifier` sub-circuits (from `pnpm compile:circuits`). */
 export function getBfvPkSubCircuitVkHashPaths() {
   const root = getRepoRoot();

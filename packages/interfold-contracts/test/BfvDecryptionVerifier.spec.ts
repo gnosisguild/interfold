@@ -6,13 +6,16 @@
 import { expect } from "chai";
 import { network } from "hardhat";
 
+import MockCiphernodeRegistryModule from "../ignition/modules/mockCiphernodeRegistry";
 import MockCircuitVerifierModule from "../ignition/modules/mockSlashingVerifier";
 import {
   BFV_THRESHOLD_T,
   bfvDecExpectedPublicInputsLen,
+  bfvDecPartyColOffsets,
 } from "../scripts/utils";
 import {
   BfvDecryptionVerifier__factory as BfvDecryptionVerifierFactory,
+  MockCiphernodeRegistry__factory as MockCiphernodeRegistryFactory,
   MockCircuitVerifier__factory as MockCircuitVerifierFactory,
 } from "../types";
 
@@ -36,6 +39,28 @@ const EXPECTED_PUBLIC_INPUTS_LEN = bfvDecExpectedPublicInputsLen(THRESHOLD);
 const COMMITTEE_HASH_HI_IDX = 2;
 const COMMITTEE_HASH_LO_IDX = 3;
 
+/** `party_ids`/`expected_sk`/`expected_esm` column start indices for `THRESHOLD`. */
+const { partyId: PARTY_ID_COL_OFFSET, sk: SK_COL_OFFSET, esm: ESM_COL_OFFSET } =
+  bfvDecPartyColOffsets(THRESHOLD);
+
+/**
+ * Default DKG anchors for `THRESHOLD + 1` reconstructing parties, consistent across
+ * circuit-side (1-indexed) and registry-side (0-indexed) party id conventions.
+ */
+const DEFAULT_REGISTRY_PARTY_IDS = Array.from(
+  { length: THRESHOLD + 1 },
+  (_, i) => i,
+); // 0-indexed, matches `dkgPartyIds`/`topNodes`
+const DEFAULT_CIRCUIT_PARTY_IDS = DEFAULT_REGISTRY_PARTY_IDS.map(
+  (id) => id + 1,
+); // 1-indexed Shamir x-coordinates, as emitted by `decryption_aggregator`
+const DEFAULT_SK_COMMITS = DEFAULT_REGISTRY_PARTY_IDS.map((id) =>
+  ethers.id(`sk-${id}`),
+);
+const DEFAULT_ESM_COMMITS = DEFAULT_REGISTRY_PARTY_IDS.map((id) =>
+  ethers.id(`esm-${id}`),
+);
+
 function committeeHashHi(committeeHash: string): string {
   const v = BigInt(committeeHash);
   return "0x" + (v >> 128n).toString(16).padStart(64, "0");
@@ -55,6 +80,12 @@ function buildPublicInputsWithMessage(
     EXPECTED_C7_KEY_HASH,
   ],
   committeeHash = ethers.ZeroHash,
+  // Circuit-side (1-indexed) party_ids and their sk/esm commitments. Defaults
+  // match `DEFAULT_REGISTRY_PARTY_IDS`'s anchors as configured by `deployWithMockCircuit`,
+  // so tests unrelated to DKG-anchor binding pass that check transparently.
+  partyIds: bigint[] = DEFAULT_CIRCUIT_PARTY_IDS.map(BigInt),
+  skCommits: string[] = DEFAULT_SK_COMMITS,
+  esmCommits: string[] = DEFAULT_ESM_COMMITS,
 ): string[] {
   const arr: string[] = new Array(totalInputs);
   arr[0] = subCircuitHashes[0];
@@ -64,6 +95,16 @@ function buildPublicInputsWithMessage(
   }
   arr[COMMITTEE_HASH_HI_IDX] = committeeHashHi(committeeHash);
   arr[COMMITTEE_HASH_LO_IDX] = committeeHashLo(committeeHash);
+  for (let i = 0; i < partyIds.length; i++) {
+    arr[PARTY_ID_COL_OFFSET + i] =
+      "0x" + partyIds[i].toString(16).padStart(64, "0");
+  }
+  for (let i = 0; i < skCommits.length; i++) {
+    arr[SK_COL_OFFSET + i] = skCommits[i];
+  }
+  for (let i = 0; i < esmCommits.length; i++) {
+    arr[ESM_COL_OFFSET + i] = esmCommits[i];
+  }
   const offset = totalInputs - MESSAGE_COEFFS_COUNT;
   for (let i = 0; i < messageCoeffs.length && i < MESSAGE_COEFFS_COUNT; i++) {
     arr[offset + i] = "0x" + messageCoeffs[i].toString(16).padStart(64, "0");
@@ -97,6 +138,8 @@ function encodeProof(rawProof: string, publicInputs: string[]): string {
 }
 
 describe("BfvDecryptionVerifier", function () {
+  const E3_ID = 7n;
+
   const deployWithMockCircuit = async () => {
     const [owner] = await ethers.getSigners();
     const { mockCircuitVerifier } = await ignition.deploy(
@@ -104,10 +147,26 @@ describe("BfvDecryptionVerifier", function () {
     );
     const mockAddr = await mockCircuitVerifier.getAddress();
 
+    const { mockCiphernodeRegistry } = await ignition.deploy(
+      MockCiphernodeRegistryModule,
+    );
+    const registryAddr = await mockCiphernodeRegistry.getAddress();
+    const registry = MockCiphernodeRegistryFactory.connect(
+      registryAddr,
+      owner,
+    );
+    await registry.setDkgAnchors(
+      E3_ID,
+      DEFAULT_REGISTRY_PARTY_IDS,
+      DEFAULT_SK_COMMITS,
+      DEFAULT_ESM_COMMITS,
+    );
+
     const bfvDecryptionVerifier = await (
       await ethers.getContractFactory("BfvDecryptionVerifier")
     ).deploy(
       mockAddr,
+      registryAddr,
       EXPECTED_C6_FOLD_KEY_HASH,
       EXPECTED_C7_KEY_HASH,
       THRESHOLD,
@@ -119,12 +178,16 @@ describe("BfvDecryptionVerifier", function () {
       owner,
     );
     const mc = MockCircuitVerifierFactory.connect(mockAddr, owner);
-    return { bfvDecryptionVerifier: dv, mockCircuit: mc };
+    return {
+      bfvDecryptionVerifier: dv,
+      mockCircuit: mc,
+      mockCiphernodeRegistry: registry,
+    };
   };
 
   /** Contextual params forwarded to verify; not checked against circuit outputs (future domain binding). */
   const ctx = () => {
-    const e3Id = 7n;
+    const e3Id = E3_ID;
     const root = BigInt(ethers.id("test-root"));
     const nodes = [testSigner.address];
     const ciphertextHash = ethers.id("ct-hash");
@@ -372,15 +435,19 @@ describe("BfvDecryptionVerifier", function () {
     });
 
     it("reverts VkHashMismatch when constructor expected hashes do not match proof", async function () {
-      const { mockCircuit } = await loadFixture(deployWithMockCircuit);
+      const { mockCircuit, mockCiphernodeRegistry } = await loadFixture(
+        deployWithMockCircuit,
+      );
       await mockCircuit.setReturnValue(true);
       const mockAddr = await mockCircuit.getAddress();
+      const registryAddr = await mockCiphernodeRegistry.getAddress();
       const { e3Id, root, nodes, ciphertextHash, committeePk } = ctx();
 
       const bfvDecryptionVerifier = await (
         await ethers.getContractFactory("BfvDecryptionVerifier")
       ).deploy(
         mockAddr,
+        registryAddr,
         ethers.id("wrong-c6"),
         ethers.id("wrong-c7"),
         THRESHOLD,
@@ -404,6 +471,160 @@ describe("BfvDecryptionVerifier", function () {
           proof,
         ),
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "VkHashMismatch");
+    });
+
+    it("reverts DkgAnchorMismatch when a party's sk commitment doesn't match the stored DKG anchor", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { e3Id, root, nodes, ciphertextHash, committeePk } = ctx();
+
+      const messageCoeffs = [1n, 2n, 3n];
+      const forgedSkCommits = [ethers.id("forged-sk-0"), DEFAULT_SK_COMMITS[1]];
+      const publicInputs = buildPublicInputsWithMessage(
+        messageCoeffs,
+        EXPECTED_PUBLIC_INPUTS_LEN,
+        [EXPECTED_C6_FOLD_KEY_HASH, EXPECTED_C7_KEY_HASH],
+        ethers.ZeroHash,
+        DEFAULT_CIRCUIT_PARTY_IDS.map(BigInt),
+        forgedSkCommits,
+        DEFAULT_ESM_COMMITS,
+      );
+      const plaintextHash = plaintextToHash(messageCoeffs);
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          e3Id,
+          root,
+          nodes,
+          ciphertextHash,
+          committeePk,
+          plaintextHash,
+          ethers.ZeroHash,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(
+        bfvDecryptionVerifier,
+        "DkgAnchorMismatch",
+      );
+    });
+
+    it("reverts DkgAnchorMismatch when a party's esm commitment doesn't match the stored DKG anchor", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { e3Id, root, nodes, ciphertextHash, committeePk } = ctx();
+
+      const messageCoeffs = [1n, 2n, 3n];
+      const forgedEsmCommits = [
+        DEFAULT_ESM_COMMITS[0],
+        ethers.id("forged-esm-1"),
+      ];
+      const publicInputs = buildPublicInputsWithMessage(
+        messageCoeffs,
+        EXPECTED_PUBLIC_INPUTS_LEN,
+        [EXPECTED_C6_FOLD_KEY_HASH, EXPECTED_C7_KEY_HASH],
+        ethers.ZeroHash,
+        DEFAULT_CIRCUIT_PARTY_IDS.map(BigInt),
+        DEFAULT_SK_COMMITS,
+        forgedEsmCommits,
+      );
+      const plaintextHash = plaintextToHash(messageCoeffs);
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          e3Id,
+          root,
+          nodes,
+          ciphertextHash,
+          committeePk,
+          plaintextHash,
+          ethers.ZeroHash,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(
+        bfvDecryptionVerifier,
+        "DkgAnchorMismatch",
+      );
+    });
+
+    it("reverts DkgAnchorNotFound when a party_id is not present in the stored DKG anchors", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { e3Id, root, nodes, ciphertextHash, committeePk } = ctx();
+
+      // Registry only has anchors for 0-indexed party ids [0, 1] (circuit-side [1, 2]).
+      // Circuit-side id 99 has no corresponding registry entry at any offset.
+      const messageCoeffs = [1n, 2n, 3n];
+      const unknownPartyIds = [99n, ...DEFAULT_CIRCUIT_PARTY_IDS.slice(1).map(BigInt)];
+      const publicInputs = buildPublicInputsWithMessage(
+        messageCoeffs,
+        EXPECTED_PUBLIC_INPUTS_LEN,
+        [EXPECTED_C6_FOLD_KEY_HASH, EXPECTED_C7_KEY_HASH],
+        ethers.ZeroHash,
+        unknownPartyIds,
+        DEFAULT_SK_COMMITS,
+        DEFAULT_ESM_COMMITS,
+      );
+      const plaintextHash = plaintextToHash(messageCoeffs);
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          e3Id,
+          root,
+          nodes,
+          ciphertextHash,
+          committeePk,
+          plaintextHash,
+          ethers.ZeroHash,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(
+        bfvDecryptionVerifier,
+        "DkgAnchorNotFound",
+      );
+    });
+
+    it("reverts (arithmetic underflow) when circuit party_id is 0 -- x=0 is the secret's own point, never a valid share", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { e3Id, root, nodes, ciphertextHash, committeePk } = ctx();
+
+      const messageCoeffs = [1n, 2n, 3n];
+      const zeroPartyIds = [0n, ...DEFAULT_CIRCUIT_PARTY_IDS.slice(1).map(BigInt)];
+      const publicInputs = buildPublicInputsWithMessage(
+        messageCoeffs,
+        EXPECTED_PUBLIC_INPUTS_LEN,
+        [EXPECTED_C6_FOLD_KEY_HASH, EXPECTED_C7_KEY_HASH],
+        ethers.ZeroHash,
+        zeroPartyIds,
+        DEFAULT_SK_COMMITS,
+        DEFAULT_ESM_COMMITS,
+      );
+      const plaintextHash = plaintextToHash(messageCoeffs);
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          e3Id,
+          root,
+          nodes,
+          ciphertextHash,
+          committeePk,
+          plaintextHash,
+          ethers.ZeroHash,
+          proof,
+        ),
+      ).to.be.revert(ethers);
     });
   });
 
@@ -569,6 +790,14 @@ describe("BfvDecryptionVerifier", function () {
       );
       expect(await bfvDecryptionVerifier.expectedC7KeyHash()).to.equal(
         EXPECTED_C7_KEY_HASH,
+      );
+    });
+
+    it("exposes correct ciphernodeRegistry", async function () {
+      const { bfvDecryptionVerifier, mockCiphernodeRegistry } =
+        await loadFixture(deployWithMockCircuit);
+      expect(await bfvDecryptionVerifier.ciphernodeRegistry()).to.equal(
+        await mockCiphernodeRegistry.getAddress(),
       );
     });
   });

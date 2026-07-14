@@ -20,6 +20,7 @@ import {
 
 export const deployAndSaveBfvDecryptionVerifier = async (
   hre: HardhatRuntimeEnvironment,
+  ciphernodeRegistryAddress: string,
 ): Promise<{
   bfvDecryptionVerifier: BfvDecryptionVerifier;
 }> => {
@@ -66,6 +67,7 @@ export const deployAndSaveBfvDecryptionVerifier = async (
   );
   const bfvDecryptionVerifier = await bfvDecryptionVerifierFactory.deploy(
     circuitVerifierArgs.address,
+    ciphernodeRegistryAddress,
     expectedC6FoldKeyHash,
     expectedC7KeyHash,
     BFV_THRESHOLD_T,

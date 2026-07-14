@@ -36,6 +36,12 @@ interface IDecryptionVerifier {
     /// @notice The domain-binding public-input slot does not equal the value
     ///         recomputed on-chain from the call context.
     error DomainBindingMismatch();
+    /// @notice A `party_id` returned by the proof is not present in the
+    ///         registry's stored DKG anchors for this E3.
+    error DkgAnchorNotFound();
+    /// @notice The proof's `expected_sk`/`expected_esm` commitment for a
+    ///         party does not match the registry's stored DKG anchor.
+    error DkgAnchorMismatch();
 
     /// @notice Verify a DecryptionAggregator EVM proof and bind it to the full
     ///         on-chain call context.

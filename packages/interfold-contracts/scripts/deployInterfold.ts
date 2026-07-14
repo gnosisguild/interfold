@@ -553,8 +553,10 @@ export const deployInterfold = async (
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvDecryptionVerifier and registering for prod...");
-    const { bfvDecryptionVerifier } =
-      await deployAndSaveBfvDecryptionVerifier(hre);
+    const { bfvDecryptionVerifier } = await deployAndSaveBfvDecryptionVerifier(
+      hre,
+      ciphernodeRegistryAddress,
+    );
     const bfvDecryptionVerifierAddress =
       await bfvDecryptionVerifier.getAddress();
     const deployedDecryptionVerifier =

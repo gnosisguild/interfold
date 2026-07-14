@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { IDecryptionVerifier } from "../../interfaces/IDecryptionVerifier.sol";
 import { ICircuitVerifier } from "../../interfaces/ICircuitVerifier.sol";
+import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
 
 /**
@@ -31,12 +32,19 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      construction; this anchors the recursive aggregation trust and
  *      prevents a malicious aggregator from substituting a forged sub-VK.
  *
- *      NOTE -- domain binding relaxation: wrapper-level chainId/deployment/e3Id
- *      binding requires a dedicated circuit public input. The current circuits
- *      do not expose such a slot. Full cryptographic enforcement tracked as
- *      future work. The caller-supplied `e3Id`, `committeeRoot`, `sortedNodes`,
- *      `ciphertextOutputHash`, and `committeePublicKey` are preserved in the
- *      interface for forward compatibility.
+ *      The `party_ids`/`expected_sk`/`expected_esm` columns are cross-checked
+ *      against `ciphernodeRegistry.getDkgAnchors(e3Id)` (`_verifyDkgAnchors`):
+ *      the circuit only proves a decryption share is internally consistent
+ *      with some self-declared commitment, so this binds that commitment to
+ *      the address-signed DKG output actually recorded for this E3.
+ *
+ *      NOTE -- binding relaxation still open: there is no ciphertext-binding
+ *      check (the circuits do not expose a ciphertext commitment on this
+ *      proof) and no wrapper-level chainId/deployment binding beyond the
+ *      committee-hash and DKG-anchor checks above. The caller-supplied
+ *      `committeeRoot`, `sortedNodes`, `ciphertextOutputHash`, and
+ *      `committeePublicKey` are preserved in the interface for forward
+ *      compatibility but not yet checked.
  */
 contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev Message is always the last 100 public inputs (100 uint64 coeffs = 800 bytes plaintext).
@@ -45,7 +53,9 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + MESSAGE_COEFFS_COUNT` fields.
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
 
-    /// @dev `decryption_aggregator` return columns after the leading key hash (sk, esm, ct).
+    /// @dev `decryption_aggregator` return columns after the leading key hash
+    ///      (party_ids, expected_sk, expected_esm). NOTE: despite the name, there is
+    ///      no ciphertext column here -- `decryption_aggregator` does not expose one.
     uint256 internal constant DEC_RETURN_COLUMN_COUNT = 3;
 
     /// @dev `publicInputs` index for `committee_hash_hi` (after sub-circuit key hashes).
@@ -60,8 +70,25 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev `4 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
     uint256 internal immutable expectedPublicInputsLen;
 
+    /// @dev `publicInputs` start index of the `party_ids[T+1]` column.
+    ///      Circuit-side `party_ids` are 1-indexed Shamir x-coordinates
+    ///      (1..N_PARTIES); the registry's `dkgPartyIds` are 0-indexed
+    ///      sortition slots, so comparisons subtract 1 (see `_verifyDkgAnchors`).
+    uint256 internal immutable partyIdColOffset;
+
+    /// @dev `publicInputs` start index of the `expected_sk[T+1]` column.
+    uint256 internal immutable skColOffset;
+
+    /// @dev `publicInputs` start index of the `expected_esm[T+1]` column.
+    uint256 internal immutable esmColOffset;
+
     /// @notice Underlying Honk verifier for the DecryptionAggregator circuit.
     ICircuitVerifier public immutable circuitVerifier;
+
+    /// @notice Registry holding the per-E3 DKG anchors (`dkgPartyIds`,
+    ///         `dkgSkAggCommits`, `dkgEsmAggCommits`) that the proof's
+    ///         `party_ids`/`expected_sk`/`expected_esm` outputs must match.
+    ICiphernodeRegistry public immutable ciphernodeRegistry;
 
     /// @notice keccak256 commitment to the C6-fold recursive VK; expected at
     ///         `publicInputs[0]`. Provenance: `bb verify_key -b
@@ -75,6 +102,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
 
     constructor(
         address _circuitVerifier,
+        address _ciphernodeRegistry,
         bytes32 _expectedC6FoldKeyHash,
         bytes32 _expectedC7KeyHash,
         uint256 _threshold
@@ -87,7 +115,12 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
             MESSAGE_COEFFS_COUNT;
 
+        partyIdColOffset = 4 + DEC_RETURN_PREFIX_LEN;
+        skColOffset = partyIdColOffset + (_threshold + 1);
+        esmColOffset = skColOffset + (_threshold + 1);
+
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
+        ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
         expectedC6FoldKeyHash = _expectedC6FoldKeyHash;
         expectedC7KeyHash = _expectedC7KeyHash;
     }
@@ -139,9 +172,12 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             revert PlaintextHashMismatch();
         }
 
+        // Cross-phase binding: the proof's per-party sk/esm commitments must match
+        // the DKG anchors this registry recorded (address-signed) for this E3.
+        _verifyDkgAnchors(e3Id, publicInputs);
+
         // Suppress unused-variable warnings for forward-compatibility params.
         // These will be used for circuit-level domain binding in a future circuit update.
-        e3Id;
         committeeRoot;
         sortedNodes;
         ciphertextOutputHash;
@@ -167,5 +203,48 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             }
         }
         return keccak256(plaintext) == expected;
+    }
+
+    /// @dev Binds the proof's `party_ids`/`expected_sk`/`expected_esm` outputs to the
+    ///      registry's stored DKG anchors for this E3, closing the gap where the circuit
+    ///      only proves internal self-consistency ("I know a share matching some claimed
+    ///      commitment") without tying that commitment to the address-signed DKG output.
+    ///
+    ///      Index note: circuit `party_ids` are 1-indexed Shamir x-coordinates
+    ///      (1..N_PARTIES); `getDkgAnchors` returns the registry's 0-indexed sortition
+    ///      `party_id` (matching `topNodes`/`canonicalCommitteeNodeAt`). Subtract 1
+    ///      before comparing.
+    function _verifyDkgAnchors(
+        uint256 e3Id,
+        bytes32[] memory publicInputs
+    ) internal view {
+        (
+            uint256[] memory dkgPartyIds,
+            bytes32[] memory dkgSkAggCommits,
+            bytes32[] memory dkgEsmAggCommits
+        ) = ciphernodeRegistry.getDkgAnchors(e3Id);
+
+        for (uint256 i = 0; i < threshold + 1; i++) {
+            uint256 circuitPartyId = uint256(publicInputs[partyIdColOffset + i]);
+            uint256 registryPartyId = circuitPartyId - 1;
+
+            uint256 matchedIdx = type(uint256).max;
+            for (uint256 j = 0; j < dkgPartyIds.length; j++) {
+                if (dkgPartyIds[j] == registryPartyId) {
+                    matchedIdx = j;
+                    break;
+                }
+            }
+            if (matchedIdx == type(uint256).max) {
+                revert DkgAnchorNotFound();
+            }
+
+            if (
+                publicInputs[skColOffset + i] != dkgSkAggCommits[matchedIdx] ||
+                publicInputs[esmColOffset + i] != dkgEsmAggCommits[matchedIdx]
+            ) {
+                revert DkgAnchorMismatch();
+            }
+        }
     }
 }

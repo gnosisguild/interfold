@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import MockCiphernodeRegistryModule from "../ignition/modules/mockCiphernodeRegistry";
 import {
   BFV_DKG_H,
   BFV_THRESHOLD_T,
@@ -16,6 +17,7 @@ import {
   assertBfvPkVerifierSubCircuitVkHashes,
   bfvDecCommitteeHashIndices,
   bfvDecExpectedPublicInputsLen,
+  bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
   bfvPkExpectedPublicInputsLen,
   committeeHashFromLimbs,
@@ -23,9 +25,13 @@ import {
   getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
-import type { BfvDecryptionVerifier, BfvPkVerifier } from "../types";
+import type {
+  BfvDecryptionVerifier,
+  BfvPkVerifier,
+  MockCiphernodeRegistry,
+} from "../types";
 
-const { ethers, networkHelpers } = await network.connect();
+const { ethers, ignition, networkHelpers } = await network.connect();
 const { loadFixture } = networkHelpers;
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -138,6 +144,11 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 
 describe("BfvVkBindingIntegration", function () {
   const deployHonkAndBfv = async () => {
+    const { mockCiphernodeRegistry } = await ignition.deploy(
+      MockCiphernodeRegistryModule,
+    );
+    const registryAddr = await mockCiphernodeRegistry.getAddress();
+
     const libFactory = await ethers.getContractFactory(
       "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
     );
@@ -196,6 +207,7 @@ describe("BfvVkBindingIntegration", function () {
       await ethers.getContractFactory("BfvDecryptionVerifier")
     ).deploy(
       await decAgg.getAddress(),
+      registryAddr,
       expectedC6FoldKeyHash,
       expectedC7KeyHash,
       BFV_THRESHOLD_T,
@@ -205,6 +217,8 @@ describe("BfvVkBindingIntegration", function () {
     return {
       bfvPk: bfvPk as unknown as BfvPkVerifier,
       bfvDec: bfvDec as unknown as BfvDecryptionVerifier,
+      mockCiphernodeRegistry:
+        mockCiphernodeRegistry as unknown as MockCiphernodeRegistry,
     };
   };
 
@@ -240,6 +254,7 @@ describe("BfvVkBindingIntegration", function () {
         await ethers.getContractFactory("BfvDecryptionVerifier")
       ).deploy(
         await bfvDec.circuitVerifier(),
+        await bfvDec.ciphernodeRegistry(),
         ethers.id("stale-c6"),
         ethers.id("stale-c7"),
         BFV_THRESHOLD_T,
@@ -326,12 +341,33 @@ describe("BfvVkBindingIntegration", function () {
 
       await networkHelpers.setBlockGasLimit(HONK_VERIFY_GAS_LIMIT);
 
-      const { bfvPk, bfvDec } = await deployHonkAndBfv();
+      const { bfvPk, bfvDec, mockCiphernodeRegistry } =
+        await deployHonkAndBfv();
       const [testSigner] = await ethers.getSigners();
       const testE3Id = 1n;
       const testRoot = BigInt(ethers.id("test-root"));
       const abiCoder = ethers.AbiCoder.defaultAbiCoder();
       const verifyOverrides = { gasLimit: HONK_VERIFY_GAS_LIMIT };
+
+      // Derive DKG anchors straight from the real folded proof's own public inputs
+      // (circuit-side party_ids are 1-indexed; registry-side are 0-indexed) so the
+      // new cross-phase sk/esm binding check passes for this genuine proof.
+      const { partyId: partyIdOffset, sk: skOffset, esm: esmOffset } =
+        bfvDecPartyColOffsets(BFV_THRESHOLD_T);
+      const registryPartyIds: bigint[] = [];
+      const skCommits: string[] = [];
+      const esmCommits: string[] = [];
+      for (let i = 0; i < BFV_THRESHOLD_T + 1; i++) {
+        registryPartyIds.push(BigInt(decPublicInputs[partyIdOffset + i]) - 1n);
+        skCommits.push(decPublicInputs[skOffset + i]);
+        esmCommits.push(decPublicInputs[esmOffset + i]);
+      }
+      await mockCiphernodeRegistry.setDkgAnchors(
+        testE3Id,
+        registryPartyIds,
+        skCommits,
+        esmCommits,
+      );
 
       const dkgEncoded = abiCoder.encode(
         ["bytes", "bytes32[]"],
