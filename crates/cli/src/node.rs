@@ -14,23 +14,28 @@ use e3_entrypoint::validate::validate_node;
 pub enum NodeCommands {
     /// Validate the on-disk state of a single node without starting it.
     ///
-    /// Opens the node's persisted stores read-only and checks that the schema
-    /// is loadable by this binary, the event log is intact, the snapshot cursor
-    /// is consistent, and there are no orphaned committee tickets ("loose
-    /// ends"). Safe to run while the node is stopped; intended as the
-    /// pre-upgrade and post-crash health check. Exits non-zero on failure.
-    Validate,
+    /// Takes the node's exclusive process fence and checks that the schema is
+    /// loadable by this binary, the event log is intact, the snapshot cursor is
+    /// consistent, and there are no orphaned committee tickets ("loose ends").
+    /// Safe to run while the node is stopped; intended as the pre-upgrade and
+    /// post-crash health check. Exits non-zero on failure. Without `--repair`,
+    /// no files are changed.
+    Validate {
+        /// Repair only a provably uncommitted torn/unindexed event-log tail
+        #[arg(long)]
+        repair: bool,
+    },
 }
 
 pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) -> Result<()> {
     match command {
-        NodeCommands::Validate => {
+        NodeCommands::Validate { repair } => {
             // Offline-only contract: hold the same cross-host fence `start` uses so the
             // validator cannot read state out from under a live node or race a concurrent
             // `interfold start`. Released when this scope ends.
             let _fence =
                 e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
-            let report = validate_node(config).await?;
+            let report = validate_node(config, repair).await?;
             log!(out, "{}", report.render());
             if report.has_failure() {
                 bail!("node validation failed");

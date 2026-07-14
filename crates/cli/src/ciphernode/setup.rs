@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use tracing::instrument;
 use zeroize::Zeroizing;
 
+use crate::helpers::read_secret_line;
 use crate::password_set::ask_for_password;
 use crate::wallet_set::ask_for_private_key;
 
@@ -22,9 +23,20 @@ use crate::wallet_set::ask_for_private_key;
 pub async fn execute(
     out: Console,
     rpc_url: Option<String>,
-    password: Option<Zeroizing<String>>,
-    private_key: Option<Zeroizing<String>>,
+    mut password: Option<Zeroizing<String>>,
+    password_stdin: bool,
+    mut private_key: Option<Zeroizing<String>>,
+    private_key_stdin: bool,
 ) -> Result<()> {
+    if password_stdin || private_key_stdin {
+        let mut stdin = std::io::stdin().lock();
+        if password_stdin {
+            password = Some(read_secret_line(&mut stdin, "password")?);
+        }
+        if private_key_stdin {
+            private_key = Some(read_secret_line(&mut stdin, "private key")?);
+        }
+    }
     let pw = ask_for_password(password)?;
     let rpc_url = match rpc_url {
         Some(url) => {

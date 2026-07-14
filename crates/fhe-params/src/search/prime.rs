@@ -35,7 +35,7 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
         if filter(*bits) {
             continue;
         }
-        for &phex in arr.into_iter() {
+        for &phex in arr.iter() {
             let v = parse_hex_big(phex);
             vec.push(PrimeItem {
                 bitlen: *bits,

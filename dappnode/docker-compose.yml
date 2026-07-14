@@ -4,9 +4,11 @@ services:
     build:
       context: .
       args:
-        UPSTREAM_VERSION: 0.1.8
-    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.1.8'
+        UPSTREAM_VERSION: 0.2.3
+    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.2.3'
     restart: unless-stopped
+    # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.
+    stop_grace_period: 45s
     volumes:
       - 'ciphernode_data:/data'
     ports:
@@ -21,10 +23,6 @@ services:
       PEERS: ''
       LOG_LEVEL: 'info'
       EXTRA_OPTS: ''
-      # Secrets
-      ENCRYPTION_PASSWORD: ''
-      NETWORK_PRIVATE_KEY: ''
-      PRIVATE_KEY: ''
       # Contracts (variants override these)
       INTERFOLD_CONTRACT: ''
       CIPHERNODE_REGISTRY_CONTRACT: ''
@@ -35,7 +33,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ['CMD', 'pgrep', '-f', 'interfold']
+      test: ['CMD', '/usr/local/bin/healthcheck.sh']
       interval: 30s
       timeout: 10s
       retries: 3

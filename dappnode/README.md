@@ -27,15 +27,17 @@ dappnode/
 ├── Dockerfile            # Builds the DAppNode image from the upstream ciphernode image
 ├── docker-compose.yml    # DAppNode service definition (single variant)
 ├── dappnode_package.json # Package metadata (name, version, links, backup, etc.)
-├── setup-wizard.yml      # DAppNode UI form -> environment variables
+├── setup-wizard.yml      # DAppNode UI form -> configuration and credential upload
 ├── entrypoint.sh         # Startup script (validates env, renders config, runs interfold)
+├── healthcheck.sh        # Local process, credential, config, and QUIC listener checks
 ├── config.template.yaml  # Interfold config template (filled via envsubst)
 ├── releases.json         # Release metadata used by DAppNode
 └── avatar-default.png    # Icon shown in the DAppNode UI
 ```
 
-All configuration is done via **environment variables**, wired through `docker-compose.yml` and
-`setup-wizard.yml`.
+Non-secret configuration is supplied through environment variables. Credentials use DAppNode's
+`fileUpload` setup-wizard target and are copied to `/run/secrets/secrets.json` before startup; they
+are never accepted through container environment variables.
 
 ## Quick Start
 
@@ -49,7 +51,8 @@ Once this package is published to the DAppStore:
    - `RPC_URL` – WebSocket RPC endpoint (e.g. `wss://ethereum-sepolia-rpc.publicnode.com`)
    - `NETWORK` – e.g. `sepolia`, `mainnet`, `localhost`
    - Contract addresses + deploy blocks
-   - Optional keys and peers
+   - A required ciphernode credentials JSON file
+   - Optional peers
 
 4. Confirm and finish the installation.
 5. Go to **Packages → interfold-ciphernode.public.dappnode.eth → Logs** to verify the node started
@@ -115,7 +118,7 @@ Fill in the wizard fields, then install.
 
 ## Configuration
 
-All runtime configuration is done via environment variables. They are:
+Non-secret runtime configuration is provided through environment variables:
 
 ### Core
 
@@ -150,16 +153,36 @@ Used to populate the `chains[0].contracts` section in `config.yaml`:
 These are all required in the setup wizard so that the node can index chain events from the correct
 block heights.
 
-### Secrets and keys
+### Credentials file
 
-- **`ENCRYPTION_PASSWORD`** Optional local encryption password. If set, `entrypoint.sh` calls:
-  - `interfold password set --config /data/config.yaml`
+Create a local JSON file containing the password and operator key:
 
-- **`NETWORK_PRIVATE_KEY`** Optional libp2p network key. If set, `entrypoint.sh` calls:
-  - `interfold net set-key --config /data/config.yaml --net-keypair "$NETWORK_PRIVATE_KEY"`
+```json
+{
+  "password": "a strong encryption password",
+  "private_key": "0x<64 hex characters>"
+}
+```
 
-- **`PRIVATE_KEY`** Optional Ethereum private key (hex). If set, `entrypoint.sh` calls:
-  - `interfold wallet set --config /data/config.yaml --private-key "$PRIVATE_KEY"`
+Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copies it to
+`/run/secrets/secrets.json` before starting the container. The entrypoint validates a maximum size
+of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
+Interfold v0.2.3 image. Any failed command aborts startup. The wallet command atomically derives and
+stores both the Ethereum and libp2p identities. Both keys are encrypted in `/data`; v0.2.3 stores
+its password key there as a mode-`0400` file. After successful persistence,
+the entrypoint removes the combined plaintext upload. Provisioning sends the secrets through the
+CLI's hidden TTY prompts over stdin; plaintext credentials are never placed in process arguments or
+container environment variables.
+
+Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
+but v0.2.3 ignores that obsolete field on a fresh setup. When encrypted identity state already
+exists, a matching upload is removed without rewriting either identity; a password mismatch fails
+closed.
+
+The Ethereum key must correspond to `NODE_ADDRESS`. Keep an encrypted offline backup of this JSON;
+do not paste its contents into package environment variables, `EXTRA_OPTS`, logs, or support
+bundles. On an ordinary restart, persisted credential state is reused from `/data` and the upload is
+not required again. Uploading a different password while state already exists fails closed.
 
 ### Peers
 
@@ -190,7 +213,8 @@ At container startup, `entrypoint.sh`:
 - network name and RPC URL
 - contract addresses and deploy blocks
 
-4. Optionally programs password, network key, and wallet key via the `interfold` CLI.
+4. Validates the uploaded credential file and programs the password plus atomic wallet/network
+   identity. An isolated Expect helper feeds hidden prompts from stdin and failures stop startup.
 5. Builds CLI args, including verbosity and `--peer` flags from `PEERS`.
 6. Executes:
 
@@ -199,7 +223,32 @@ At container startup, `entrypoint.sh`:
    ```
 
 The state and databases live under `/data` inside the container, which is backed by the
-`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`.
+`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. Because
+that volume includes the password key, DAppNode backups of `/data` must be encrypted and
+access-controlled even though the wallet and network keys inside the volume are encrypted.
+
+### Required v0.1.8 upgrade bridge
+
+DAppNode package v0.2.3 is the required bridge from the shipped v0.1.8 package to later binaries.
+On its first start it atomically renames the custom-config state root from `/data/.enclave` to
+`/data/.interfold`, refusing to proceed if both roots exist. The v0.2.3 binary then stamps schema
+version 1 using its release-era compatibility behavior. Later fail-closed binaries can therefore
+verify the marker instead of rejecting the old unversioned datastore. Do not skip this package when
+upgrading an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has started
+successfully.
+
+## Health semantics
+
+Interfold v0.2.3 does not expose a local readiness endpoint. The package health check therefore uses
+the strongest non-invasive local signals available in that release: PID 1 must be the expected
+`interfold start` command using `/data/config.yaml`, the protected config/password files must exist,
+the v0.2.3 Sled/event-log directories must be initialized, and the configured QUIC UDP listener must
+be bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as
+well as missing credentials, uninitialized persistence, and a dead network listener.
+
+This remains a liveness/startup check, not proof of canonical chain sync, healthy RPC responses,
+honest peers, registration, or safe protocol participation. Operators must inspect logs and on-chain
+status before treating the node as protocol-ready.
 
 ## Data & Ports
 

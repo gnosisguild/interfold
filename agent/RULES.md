@@ -12,6 +12,9 @@ its content.
 - `tests/` — Integration tests
 - `agent/` — LLM context documentation
 
+For Rust work, read both `agent/ARCHITECTURE.md` (contribution rules) and
+`agent/CRATES_ARCHITECTURE.md` (the implemented runtime, persistence, and protocol topology).
+
 ## Build configuration: preset and committee
 
 Two orthogonal axes pick what gets compiled into `circuits/bin/`:

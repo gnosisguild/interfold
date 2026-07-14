@@ -44,6 +44,16 @@ pub struct ProcessingResponse {
     pub e3_id: u64,
 }
 
+fn build_compute_request(
+    client: &reqwest::Client,
+    program_server_url: &str,
+    request: &ComputeRequest,
+) -> reqwest::RequestBuilder {
+    client
+        .post(format!("{program_server_url}/run_compute"))
+        .json(request)
+}
+
 pub async fn run_compute(
     e3_id: u64,
     params: Vec<u8>,
@@ -59,13 +69,41 @@ pub async fn run_compute(
 
     println!("Sending request");
 
-    let response: ProcessingResponse = reqwest::Client::new()
-        .post(format!("{}/{}", CONFIG.program_server_url, "run_compute"))
-        .json(&request)
-        .send()
-        .await?
-        .json()
-        .await?;
+    let response: ProcessingResponse = build_compute_request(
+        &reqwest::Client::new(),
+        &CONFIG.program_server_url,
+        &request,
+    )
+    .send()
+    .await?
+    .error_for_status()?
+    .json()
+    .await?;
 
     Ok((response.e3_id, response.status))
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::header::AUTHORIZATION;
+
+    use super::{build_compute_request, ComputeRequest};
+
+    #[test]
+    fn compute_request_does_not_require_authorization() {
+        let request = ComputeRequest {
+            e3_id: Some(7),
+            params: vec![1, 2, 3],
+            ciphertext_inputs: vec![],
+            callback_url: Some("http://127.0.0.1:4000/state/add-result".to_string()),
+        };
+
+        let request =
+            build_compute_request(&reqwest::Client::new(), "http://127.0.0.1:13151", &request)
+                .build()
+                .expect("request should build");
+
+        assert_eq!(request.url().as_str(), "http://127.0.0.1:13151/run_compute");
+        assert!(!request.headers().contains_key(AUTHORIZATION));
+    }
 }

@@ -9,7 +9,8 @@ use dotenvy::dotenv;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+// Do not derive `Debug`: this structure owns private keys and other secrets.
+#[derive(Deserialize)]
 pub struct Config {
     pub program_server_url: String,
     pub interfold_server_url: String,

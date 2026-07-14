@@ -122,6 +122,26 @@ pub fn build_bfv_params_arc(
         .unwrap_or_else(|e| panic!("Failed to build BFV Parameters wrapped in Arc: {}", e))
 }
 
+/// Fallible BFV parameter construction for public or otherwise untrusted inputs.
+pub fn try_build_bfv_params_arc(
+    degree: usize,
+    plaintext_modulus: u64,
+    moduli: &[u64],
+    error1_variance: Option<&str>,
+) -> Result<Arc<BfvParameters>, fhe::Error> {
+    let mut builder = BfvParametersBuilder::new();
+    builder
+        .set_degree(degree)
+        .set_plaintext_modulus(plaintext_modulus)
+        .set_moduli(moduli);
+
+    if let Some(error1_variance) = error1_variance {
+        builder.set_error1_variance_str(error1_variance)?;
+    }
+
+    builder.build_arc()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +185,12 @@ mod tests {
             params.get_error1_variance(),
             &BigUint::from_str(insecure_512::dkg::ERROR1_VARIANCE).unwrap()
         );
+    }
+
+    #[test]
+    fn fallible_builder_rejects_invalid_degree_without_panicking() {
+        let result = try_build_bfv_params_arc(7, 17, &[97], None);
+        assert!(result.is_err());
     }
 
     #[test]

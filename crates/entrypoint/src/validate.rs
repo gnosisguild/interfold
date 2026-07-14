@@ -7,14 +7,14 @@
 //! Offline node-state validation.
 //!
 //! Backs the `interfold node validate` CLI command. It opens a node's persisted
-//! stores **read-only** (no actors, no network, no chain writes) and answers the
+//! stores offline (no network or chain writes) and answers the
 //! operator question: *"Is my on-disk state intact, internally consistent, free
 //! of loose ends, and will this binary be able to load it after an upgrade?"*
 //!
-//! It is deliberately non-destructive. It never mutates the store, never talks to
-//! the chain, and never starts the node. It is safe to run while the node is
-//! stopped (the recommended pre-upgrade step) and surfaces problems as a
-//! structured report with a non-zero exit on failure.
+//! It never mutates protocol state, talks to the chain, or starts the node. By
+//! default it is fully non-destructive. The explicit `--repair` mode may only
+//! truncate a provably uncommitted physical event-log tail and rebuild index
+//! entries for complete CRC-valid tail records.
 //!
 //! ## Checks performed
 //!
@@ -31,19 +31,22 @@
 //!    orphaned tickets that a crash mid-E3 can leave behind; they are the
 //!    "loose ends" a restart should clean up.
 
-use crate::helpers::datastore::{get_eventstore_reader, get_repositories};
-use anyhow::{anyhow, Result};
-use e3_ciphernode_builder::global_eventstore_cache::EventStoreReader;
+use crate::helpers::datastore::get_repositories;
+use anyhow::{bail, Context, Result};
 use e3_config::AppConfig;
-use e3_data::Repositories;
+use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
-    AggregateId, CorrelationId, E3Stage, Event, EventContextAccessors, EventContextSeq,
-    EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData, SeqAgg,
+    AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
+    InterfoldEventData,
 };
 use e3_sortition::{committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore};
-use e3_sync::SyncRepositoryFactory;
-use e3_utils::actix::channel as actix_toolbox;
+use e3_sync::{
+    decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
+    SyncRepositoryFactory, SCHEMA_VERSION,
+};
+use e3_utils::enumerate_path;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 /// Outcome severity for a single validation check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,27 +156,68 @@ impl ValidationReport {
 
 /// Run every validation check against the node configured by `config`.
 ///
-/// Opens the persisted stores read-only. Returns the full report; callers decide
-/// how to surface it (the CLI prints it and exits non-zero on failure).
-pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
-    let repositories = get_repositories(config)?;
-    let eventstore = get_eventstore_reader(config)?;
+/// Opens the persisted stores while holding the node's exclusive process fence.
+/// Returns the full report; callers decide how to surface it (the CLI prints it
+/// and exits non-zero on failure).
+pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<ValidationReport> {
     let aggregate_ids = aggregate_ids(config);
-
     let mut report = ValidationReport::default();
 
-    // 1 + 2. Read every event per aggregate, check integrity + cursor consistency,
-    //        and collect the terminal-event keys for the open-loop audit.
+    // 1. Read the commit logs directly before starting any EventStore actor. The
+    // checked reader lets the operator receive a structured validation report.
     let mut terminal_keys: HashSet<String> = HashSet::new();
     let mut total_events: u64 = 0;
+    let mut events_by_aggregate = Vec::with_capacity(aggregate_ids.len());
+    let mut unreadable_logs = 0usize;
     for agg in &aggregate_ids {
-        let events = read_all_events(&eventstore, *agg).await?;
-        total_events += events.len() as u64;
+        let path = enumerate_path(&config.log_file(), agg.to_usize());
+        match read_event_log(&path, *agg, repair) {
+            Ok(events) => {
+                total_events += events.len() as u64;
+                collect_terminal_keys(&events, &mut terminal_keys);
 
-        collect_terminal_keys(&events, &mut terminal_keys);
+                let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
+                report.push(check_sequence_integrity(*agg, &seqs));
+                events_by_aggregate.push((*agg, events));
+            }
+            Err(error) => {
+                unreadable_logs += 1;
+                report.push(CheckResult::fail(
+                    "event-log",
+                    format!(
+                        "aggregate {} at {} is unreadable or corrupt: {error:#}",
+                        agg.to_usize(),
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    }
 
+    if unreadable_logs > 0 {
+        report.push(CheckResult::fail(
+            "event-store",
+            format!(
+                "{unreadable_logs} of {} aggregate log(s) could not be decoded; snapshot and \
+                 open-loop checks were skipped because their inputs are incomplete",
+                aggregate_ids.len()
+            ),
+        ));
+        return Ok(report);
+    }
+
+    // 2. Only open the snapshot store after every source-of-truth log passed its
+    // framing and decode checks. Cross-check each persisted replay cursor.
+    let repositories = get_repositories(config)?;
+    let persisted_schema = repositories.schema_version().read().await?;
+    let has_existing_state =
+        total_events > 0 || has_schema_governed_kv_state(&repositories).await?;
+    report.push(check_schema_compatibility(
+        persisted_schema,
+        has_existing_state,
+    ));
+    for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
-        report.push(check_sequence_integrity(*agg, &seqs));
 
         let cursor = repositories.aggregate_seq(*agg).read().await?.unwrap_or(0);
         report.push(check_cursor_consistency(*agg, cursor, &seqs));
@@ -190,6 +234,25 @@ pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
     report.push(check_open_loops(&repositories, &terminal_keys).await?);
 
     Ok(report)
+}
+
+/// Verify that this binary can safely interpret the persisted schema. A missing
+/// marker is acceptable only for a fresh store (empty or containing the complete bootstrap
+/// identity pair); stamping a version on protocol or unknown bytes would assert compatibility
+/// without evidence.
+fn check_schema_compatibility(persisted: Option<u32>, has_existing_state: bool) -> CheckResult {
+    let name = "schema";
+    match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
+        SchemaVersionDecision::Proceed => CheckResult::pass(
+            name,
+            format!("on-disk schema version {SCHEMA_VERSION} matches this binary"),
+        ),
+        SchemaVersionDecision::WriteCurrent => CheckResult::pass(
+            name,
+            format!("empty store will be initialized at schema version {SCHEMA_VERSION}"),
+        ),
+        SchemaVersionDecision::Halt(reason) => CheckResult::fail(name, reason),
+    }
 }
 
 /// The set of aggregate ids to inspect: the local aggregate (0) plus one per
@@ -423,49 +486,47 @@ fn collect_terminal_keys(events: &[InterfoldEvent], out: &mut HashSet<String>) {
     }
 }
 
-/// Read every event for a single aggregate from sequence 0, paginating until the
-/// store is exhausted.
-async fn read_all_events(
-    eventstore: &EventStoreReader,
-    aggregate: AggregateId,
+/// Read one aggregate's source-of-truth commit log without creating an empty log
+/// as a side effect when the node has never persisted that aggregate.
+fn read_event_log(
+    path: &Path,
+    expected_aggregate: AggregateId,
+    repair: bool,
 ) -> Result<Vec<InterfoldEvent>> {
-    const PAGE: u64 = 1024;
-    let mut all: Vec<InterfoldEvent> = Vec::new();
-    let mut since: u64 = 0;
-    loop {
-        let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
-        let msg = EventStoreQueryBy::<SeqAgg>::new(
-            CorrelationId::new(),
-            HashMap::from([(aggregate, since)]),
-            addr,
-        )
-        .with_limit(PAGE);
-        eventstore
-            .seq()
-            .try_send(msg)
-            .map_err(|e| anyhow!("event store query failed: {e}"))?;
-        let page = rx.await?.into_events();
-        if page.is_empty() {
-            break;
-        }
-        let max_seq = page.iter().map(|e| e.seq()).max().unwrap_or(since);
-        all.extend(page);
-        // Advance past the highest sequence we just read. If the store could not
-        // advance (defensive), stop to avoid an infinite loop.
-        let next = max_seq.saturating_add(1);
-        if next <= since {
-            break;
-        }
-        since = next;
+    if !path.exists() {
+        return Ok(Vec::new());
     }
-    // The store may interleave aggregates depending on the query; keep only this
-    // aggregate's events and order them by sequence for the integrity check. Do not
-    // deduplicate by seq — repeated sequence numbers are exactly the corruption the
-    // integrity check must surface (pagination advances strictly past the last seq,
-    // so it never produces legitimate duplicates).
-    all.retain(|e| e.aggregate_id() == aggregate);
-    all.sort_by_key(|e| e.seq());
-    Ok(all)
+
+    let mode = if repair {
+        EventLogOpenMode::RecoverTail
+    } else {
+        EventLogOpenMode::ValidateOnly
+    };
+    let log = CommitLogEventLog::open(path, mode)
+        .with_context(|| format!("failed to open commit log {}", path.display()))?;
+    let events: Vec<InterfoldEvent> = log
+        .read_from_checked(1)
+        .with_context(|| format!("failed integrity scan for {}", path.display()))
+        .map(|events| {
+            events
+                .into_iter()
+                .map(|(seq, event)| event.into_sequenced(seq))
+                .collect()
+        })?;
+
+    if let Some(event) = events
+        .iter()
+        .find(|event| event.aggregate_id() != expected_aggregate)
+    {
+        bail!(
+            "event at sequence {} belongs to aggregate {}, but log path is for aggregate {}",
+            event.seq(),
+            event.aggregate_id().to_usize(),
+            expected_aggregate.to_usize()
+        );
+    }
+
+    Ok(events)
 }
 
 /// A non-empty `BTreeMap` alias kept for readability in tests.
@@ -475,7 +536,113 @@ type SeqMap = BTreeMap<AggregateId, u64>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use commitlog::{CommitLog, LogOptions};
+    use e3_events::{EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, Unsequenced};
     use e3_sortition::OpenCommittee;
+    use std::{fs::OpenOptions, io::Write};
+    use tempfile::tempdir;
+
+    #[test]
+    fn validator_reader_reports_corrupt_tail_instead_of_skipping_it() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("log.0");
+        let mut raw_log = CommitLog::new(LogOptions::new(&log_path)).unwrap();
+        raw_log
+            .append_msg(b"valid commit-log frame, invalid event payload")
+            .unwrap();
+        drop(raw_log);
+
+        let error = read_event_log(&log_path, AggregateId::new(0), false).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("sequence 1"), "{message}");
+        assert!(message.contains("failed to decode"), "{message}");
+    }
+
+    #[test]
+    fn validator_reader_does_not_create_a_missing_log() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("log.0");
+
+        assert!(read_event_log(&log_path, AggregateId::new(0), false)
+            .unwrap()
+            .is_empty());
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn validator_repair_recovers_only_an_uncommitted_physical_tail() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("log.0");
+        let segment_path = log_path.join("00000000000000000000.log");
+        let mut log = CommitLogEventLog::new(&log_path).unwrap();
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("valid", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        );
+        log.append(&event).unwrap();
+        log.flush().unwrap();
+        drop(log);
+        OpenOptions::new()
+            .append(true)
+            .open(segment_path)
+            .unwrap()
+            .write_all(b"torn")
+            .unwrap();
+
+        let detection = format!(
+            "{:#}",
+            read_event_log(&log_path, AggregateId::new(0), false).unwrap_err()
+        );
+        assert!(detection.contains("recoverable uncommitted event-log tail"));
+
+        let events = read_event_log(&log_path, AggregateId::new(0), true).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq(), 1);
+    }
+
+    #[test]
+    fn validator_reader_rejects_event_in_wrong_aggregate_log() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("log.1");
+        let mut log = CommitLogEventLog::new(&log_path).unwrap();
+        let aggregate_zero_event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("misfiled", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        );
+        log.append(&aggregate_zero_event).unwrap();
+        drop(log);
+
+        let error = read_event_log(&log_path, AggregateId::new(1), false).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("belongs to aggregate 0"), "{message}");
+        assert!(message.contains("for aggregate 1"), "{message}");
+    }
+
+    #[test]
+    fn schema_check_accepts_exact_version() {
+        let result = check_schema_compatibility(Some(SCHEMA_VERSION), true);
+        assert_eq!(result.severity, Severity::Pass);
+    }
+
+    #[test]
+    fn schema_check_rejects_missing_marker_on_nonempty_log() {
+        let result = check_schema_compatibility(None, true);
+        assert_eq!(result.severity, Severity::Fail);
+        assert!(result.detail.contains("no schema marker"));
+    }
+
+    #[test]
+    fn schema_check_rejects_incompatible_version() {
+        let result = check_schema_compatibility(Some(SCHEMA_VERSION + 1), true);
+        assert_eq!(result.severity, Severity::Fail);
+        assert!(result.detail.contains("newer"));
+    }
 
     #[test]
     fn sequence_ok_when_contiguous() {

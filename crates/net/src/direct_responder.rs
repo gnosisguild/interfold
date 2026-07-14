@@ -109,6 +109,11 @@ impl DirectResponder {
         self.request.clone()
     }
 
+    /// Size of the retained request without cloning its payload.
+    pub fn request_len(&self) -> usize {
+        self.request.len()
+    }
+
     /// Get the request data
     pub fn try_request_into<T>(&self) -> Result<T>
     where

@@ -15,7 +15,10 @@ use crate::utils::compute_safe;
 use ark_bn254::Fr as Field;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
+use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
+use fhe::bfv::PublicKey;
+use fhe_traits::DeserializeParametrized;
 use num_bigint::BigInt;
 use std::slice::from_ref;
 
@@ -195,6 +198,50 @@ pub fn compute_dkg_pk_commitment(pk0: &CrtPolynomial, pk1: &CrtPolynomial, bit_p
     let commitment_field = compute_commitments(payload, DS_PK, io_pattern)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// Compute the C0 `pk_commitment` for a serialized DKG BFV public key.
+///
+/// The C0 proof attests to the two polynomials inside the advertised public key. Network
+/// consumers must compare this value with the proof's public output before accepting the key;
+/// verifying a proof without that comparison would allow the proof for one key to be attached to
+/// different key bytes.
+pub fn compute_dkg_pk_commitment_from_public_key_bytes(
+    public_key_bytes: &[u8],
+    preset: BfvPreset,
+) -> Result<[u8; 32], crate::CircuitsErrors> {
+    // `build_pair_for_preset` accepts the threshold member of a preset pair. Callers may already
+    // have resolved the DKG counterpart, so normalize either representation here.
+    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
+    let (_, dkg_params) = build_pair_for_preset(threshold_preset)
+        .map_err(|e| crate::CircuitsErrors::Other(format!("BFV preset pair: {e}")))?;
+    let public_key = PublicKey::from_bytes(public_key_bytes, &dkg_params)
+        .map_err(|e| crate::CircuitsErrors::Other(format!("PublicKey deserialize: {e:?}")))?;
+
+    let pk0 = public_key
+        .c
+        .first()
+        .ok_or_else(|| crate::CircuitsErrors::Other("PublicKey is missing pk0".to_string()))?;
+    let pk1 = public_key
+        .c
+        .get(1)
+        .ok_or_else(|| crate::CircuitsErrors::Other("PublicKey is missing pk1".to_string()))?;
+    let moduli = dkg_params.moduli();
+    let pk0 = crate::math::fhe_poly_to_crt_centered(pk0, moduli)
+        .map_err(|e| crate::CircuitsErrors::Other(format!("pk0 conversion: {e}")))?;
+    let pk1 = crate::math::fhe_poly_to_crt_centered(pk1, moduli)
+        .map_err(|e| crate::CircuitsErrors::Other(format!("pk1 conversion: {e}")))?;
+    let commitment = compute_dkg_pk_commitment(&pk0, &pk1, crate::compute_modulus_bit(&dkg_params));
+
+    let (_, be_bytes) = commitment.to_bytes_be();
+    if be_bytes.len() > 32 {
+        return Err(crate::CircuitsErrors::Other(
+            "C0 pk_commitment does not fit in a field element".to_string(),
+        ));
+    }
+    let mut padded = [0u8; 32];
+    padded[32 - be_bytes.len()..].copy_from_slice(&be_bytes);
+    Ok(padded)
 }
 
 /// Compute a commitment to the threshold public key by flattening pk0 and hashing.
@@ -708,5 +755,42 @@ mod tests {
         expected_padded[start..].copy_from_slice(&be_bytes[..be_bytes.len().min(32)]);
 
         assert_eq!(commitment, expected_padded);
+    }
+
+    #[test]
+    fn compute_dkg_pk_commitment_from_public_key_bytes_matches_circuit_inputs() {
+        use crate::circuits::dkg::pk::{Bits, Inputs, PkCircuitData};
+        use crate::Computation;
+        use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+        use fhe::bfv::{PublicKey, SecretKey};
+        use fhe_traits::Serialize;
+
+        let preset = BfvPreset::InsecureThreshold512;
+        let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
+        let mut rng = rand::rng();
+        let secret_key = SecretKey::random(&dkg_params, &mut rng);
+        let public_key = PublicKey::new(&secret_key, &mut rng);
+        let public_key_bytes = public_key.to_bytes();
+
+        let actual =
+            compute_dkg_pk_commitment_from_public_key_bytes(&public_key_bytes, preset).unwrap();
+
+        let inputs = Inputs::compute(preset, &PkCircuitData { public_key }).unwrap();
+        let bits = Bits::compute(preset, &()).unwrap();
+        let expected = compute_dkg_pk_commitment(&inputs.pk0is, &inputs.pk1is, bits.pk_bit);
+        let (_, expected_bytes) = expected.to_bytes_be();
+        let mut expected_padded = [0u8; 32];
+        expected_padded[32 - expected_bytes.len()..].copy_from_slice(&expected_bytes);
+
+        assert_eq!(actual, expected_padded);
+    }
+
+    #[test]
+    fn compute_dkg_pk_commitment_rejects_malformed_public_key() {
+        assert!(compute_dkg_pk_commitment_from_public_key_bytes(
+            b"not a BFV public key",
+            e3_fhe_params::BfvPreset::InsecureThreshold512,
+        )
+        .is_err());
     }
 }

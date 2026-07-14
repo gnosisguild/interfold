@@ -120,6 +120,10 @@ Launch all services with one command:
 pnpm dev:all
 ```
 
+The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
+service, does not authenticate callers or allowlist callback destinations, and must stay isolated
+from production and untrusted networks.
+
 This starts:
 
 - Local Ethereum network (Hardhat)

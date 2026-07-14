@@ -345,6 +345,20 @@ impl BfvPreset {
         Self::PAIR_PRESETS.contains(self)
     }
 
+    /// Resolve an exact threshold parameter tuple to the preset whose circuit statement uses it.
+    pub fn from_threshold_parameters(
+        degree: usize,
+        plaintext_modulus: u64,
+        moduli: &[u64],
+    ) -> Option<Self> {
+        Self::PAIR_PRESETS.iter().copied().find(|preset| {
+            let parameters = BfvParamSet::from(*preset);
+            parameters.degree == degree
+                && parameters.plaintext_modulus == plaintext_modulus
+                && parameters.moduli == moduli
+        })
+    }
+
     /// Returns the DKG preset that pairs with this threshold preset.
     ///
     /// Used when you have a threshold preset (e.g. for encryption/decryption) and need
@@ -523,6 +537,39 @@ mod tests {
             let parsed = BfvPreset::from_name(preset.name()).expect("preset should parse");
             assert_eq!(parsed, preset);
         }
+    }
+
+    #[test]
+    fn threshold_parameter_tuple_resolves_only_exact_supported_presets() {
+        for preset in BfvPreset::PAIR_PRESETS {
+            let parameters = BfvParamSet::from(preset);
+            assert_eq!(
+                BfvPreset::from_threshold_parameters(
+                    parameters.degree,
+                    parameters.plaintext_modulus,
+                    parameters.moduli,
+                ),
+                Some(preset)
+            );
+        }
+
+        let dkg = BfvParamSet::from(BfvPreset::InsecureDkg512);
+        assert_eq!(
+            BfvPreset::from_threshold_parameters(dkg.degree, dkg.plaintext_modulus, dkg.moduli,),
+            None
+        );
+
+        let threshold = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+        let mut changed_moduli = threshold.moduli.to_vec();
+        changed_moduli[0] ^= 1;
+        assert_eq!(
+            BfvPreset::from_threshold_parameters(
+                threshold.degree,
+                threshold.plaintext_modulus,
+                &changed_moduli,
+            ),
+            None
+        );
     }
 
     #[test]

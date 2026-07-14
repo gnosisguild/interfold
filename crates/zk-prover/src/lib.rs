@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod actor_system;
 mod actors;
 mod backend;
 mod circuits;
@@ -16,13 +17,14 @@ mod prover;
 pub mod test_utils;
 mod traits;
 mod witness;
+mod workflow;
 
-pub use actors::commitment_links::default_links;
+pub use actor_system::{setup_zk_actors, ZkActorRecovery, ZkActors};
 pub use actors::{
-    setup_zk_actors, CommitmentConsistencyCheckerExtension, ProofRequestActor,
-    ProofVerificationActor, ShareVerificationActor, ZkActors, ZkVerificationRequest,
-    ZkVerificationResponse,
+    CommitmentConsistencyCheckerExtension, ProofRequestActor, ProofVerificationActor,
+    ShareVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
 };
+pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;

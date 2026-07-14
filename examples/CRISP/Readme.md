@@ -60,6 +60,10 @@ pnpm dev:setup
 pnpm dev:up
 ```
 
+The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
+service, does not authenticate callers or allowlist callback destinations, and must stay isolated
+from production and untrusted networks.
+
 `dev:up` runs `scripts/dev.sh`, which:
 
 1. Starts the Hardhat node in `packages/crisp-contracts`

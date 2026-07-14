@@ -76,7 +76,7 @@ async fn fetch_events(
     .with_limit(limit);
 
     eventstore.seq().do_send(msg);
-    let events = rx.await?.into_events();
+    let events = rx.await?.into_events()?;
     let next = compute_seq_cursor(&events, limit as usize);
 
     Ok((events, next))

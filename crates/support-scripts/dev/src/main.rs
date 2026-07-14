@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
             fhe_processor(&inputs),
         ))
     })
-    .build();
+    .build()?;
 
     server.run().await?;
     Ok(())

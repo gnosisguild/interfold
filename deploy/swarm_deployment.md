@@ -126,7 +126,7 @@ Remember to modify any highlighted files before use with unique secrets.
 To deploy
 
 ```
-./deploy/deploy.sh interfold ghcr.io/gnosisguild/ciphernode:latest
+./deploy/deploy.sh interfold ghcr.io/gnosisguild/ciphernode:<release-version>
 ```
 
 This will deploy the following services:
@@ -134,10 +134,10 @@ This will deploy the following services:
 ```
 ❯ docker service ls
 ID             NAME                 MODE         REPLICAS   IMAGE                  PORTS
-tr44go8vevh1   interfold_cn4          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-kdqktv85xcuv   interfold_cn1          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-nguul381w6mu   interfold_cn2          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-zgmwmv7cd63j   interfold_cn3          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
+tr44go8vevh1   interfold_cn4          replicated   1/1        ghcr.io/gnosisguild/ciphernode:<release-version>
+kdqktv85xcuv   interfold_cn1          replicated   1/1        ghcr.io/gnosisguild/ciphernode:<release-version>
+nguul381w6mu   interfold_cn2          replicated   1/1        ghcr.io/gnosisguild/ciphernode:<release-version>
+zgmwmv7cd63j   interfold_cn3          replicated   1/1        ghcr.io/gnosisguild/ciphernode:<release-version>
 ```
 
 # Get the logs

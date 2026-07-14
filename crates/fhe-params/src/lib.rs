@@ -16,7 +16,7 @@ pub mod search;
 
 pub use builder::{
     build_bfv_params, build_bfv_params_arc, build_bfv_params_from_set,
-    build_bfv_params_from_set_arc, build_pair_for_preset,
+    build_bfv_params_from_set_arc, build_pair_for_preset, try_build_bfv_params_arc,
 };
 pub use crp::{create_deterministic_crp_from_default_seed, create_deterministic_crp_from_seed};
 #[cfg(feature = "abi-encoding")]

@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use actix::{Message, Recipient};
+use anyhow::Result;
 
 use crate::{AggregateId, CorrelationId, EventSource, InterfoldEvent, Sequenced, Unsequenced};
 
@@ -40,16 +41,26 @@ impl StoreEventRequested {
 #[rtype("()")]
 pub struct EventStoreQueryResponse {
     id: CorrelationId,
-    events: Vec<InterfoldEvent<Sequenced>>,
+    result: std::result::Result<Vec<InterfoldEvent<Sequenced>>, String>,
 }
 
 impl EventStoreQueryResponse {
     pub fn new(id: CorrelationId, events: Vec<InterfoldEvent>) -> Self {
-        Self { id, events }
+        Self {
+            id,
+            result: Ok(events),
+        }
     }
 
-    pub fn into_events(self) -> Vec<InterfoldEvent> {
-        self.events
+    pub fn from_result(id: CorrelationId, result: Result<Vec<InterfoldEvent>>) -> Self {
+        Self {
+            id,
+            result: result.map_err(|error| format!("{error:#}")),
+        }
+    }
+
+    pub fn into_events(self) -> Result<Vec<InterfoldEvent>> {
+        self.result.map_err(anyhow::Error::msg)
     }
 
     pub fn id(&self) -> CorrelationId {
@@ -67,6 +78,24 @@ impl StoreEventResponse {
         self.0
     }
 }
+
+/// Flush every event store after all previously routed appends have completed.
+/// Used by the clean-shutdown barrier; failures must reach the caller.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<()>")]
+pub struct FlushEventStores;
+
+/// A no-op sequencer mailbox fence. Once its response arrives, every earlier
+/// store response has been forwarded to the EventBus.
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub struct SequencerBarrier;
+
+/// A no-op EventBus mailbox fence. Once handled, every earlier event has been
+/// processed by every live downstream subscriber.
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub struct EventBusBarrier;
 
 /// Trait for various EventStore query types
 pub trait QueryKind {

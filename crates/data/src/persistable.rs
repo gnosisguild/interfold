@@ -163,33 +163,41 @@ where
         if bytes == [0] {
             return Ok(None);
         }
-        Ok(Some(bincode::deserialize(&bytes)?))
+        Ok(Some(e3_utils::deserialize_exact(&bytes)?))
     }
 
-    fn write_to_store(&self) {
+    fn write_value_to_store(&self, data: &T) -> Result<()> {
         if self.staging_mode {
-            return;
+            return Ok(());
         }
 
-        let Some(ref data) = self.data else {
-            return;
-        };
-        let Result::Ok(serialized) = bincode::serialize(data) else {
-            tracing::error!("Could not serialize value for persistable");
-            return;
-        };
+        let serialized =
+            bincode::serialize(data).context("could not serialize value for persistable")?;
 
         let msg = if let Some(ctx) = self.ctx.clone() {
             Insert::new_with_context(&self.connector.key, serialized, ctx)
         } else {
             Insert::new(&self.connector.key, serialized)
         };
-        self.connector.insert.do_send(msg);
+        self.connector
+            .insert
+            .try_send(msg)
+            .context("persistable store mailbox rejected snapshot write")?;
+        Ok(())
+    }
+
+    fn write_to_store(&self) -> Result<()> {
+        let Some(ref data) = self.data else {
+            return Ok(());
+        };
+        self.write_value_to_store(data)
     }
 
     /// Save the data in the container to the store
     pub fn save(self) -> Self {
-        self.write_to_store();
+        if let Err(error) = self.write_to_store() {
+            tracing::error!(%error, "Could not enqueue persistable snapshot");
+        }
         self
     }
 
@@ -212,25 +220,43 @@ where
     where
         F: FnOnce(T) -> Result<T>,
     {
-        self.ctx = ctx; // Set the context
+        self.ctx = ctx;
         let content = self.data.clone().ok_or(anyhow!("Data has not been set"))?;
-        self.data = Some(mutator(content)?);
-        self.write_to_store();
+        let next = mutator(content)?;
+        // Accept the snapshot write before exposing the new state in memory.
+        // The append-only event log remains the durable source of truth; this
+        // ordering prevents a saturated store mailbox from silently advancing
+        // only the actor-local snapshot.
+        self.write_value_to_store(&next)?;
+        self.data = Some(next);
         Ok(())
     }
 
     /// Set the data on both the persistable and the store
     pub fn set(&mut self, data: T) {
+        if self.staging_mode {
+            self.data = Some(data);
+            return;
+        }
+        if let Err(error) = self.write_value_to_store(&data) {
+            tracing::error!(%error, "Could not enqueue persistable snapshot");
+            return;
+        }
         self.data = Some(data);
-        self.write_to_store();
     }
 
     /// Clear the data from both the persistable and the store
     pub fn clear(&mut self) {
-        self.data = None;
-        self.connector
+        match self
+            .connector
             .remove
-            .do_send(Remove::new(&self.connector.key));
+            .try_send(Remove::new(&self.connector.key))
+        {
+            std::result::Result::Ok(()) => self.data = None,
+            std::result::Result::Err(error) => {
+                tracing::error!(%error, "Could not enqueue persistable snapshot removal")
+            }
+        }
     }
 
     /// Get the data currently stored on the container as an Option<T>
@@ -258,7 +284,10 @@ where
     /// Commit mode - writes current state and enables persistence
     pub fn commit(&mut self) {
         self.staging_mode = false;
-        self.write_to_store();
+        if let Err(error) = self.write_to_store() {
+            self.staging_mode = true;
+            tracing::error!(%error, "Could not enqueue staged persistable snapshot");
+        }
     }
 }
 
@@ -300,6 +329,10 @@ mod tests {
     #[rtype("Vec<Evts>")]
     struct GetEvents;
 
+    #[derive(Message)]
+    #[rtype(result = "()")]
+    struct Stop;
+
     impl Actor for MockConnector {
         type Context = actix::Context<Self>;
         fn started(&mut self, ctx: &mut Self::Context) {
@@ -311,6 +344,15 @@ mod tests {
         type Result = Vec<Evts>;
         fn handle(&mut self, _msg: GetEvents, _ctx: &mut Self::Context) -> Self::Result {
             self.events.clone()
+        }
+    }
+
+    impl Handler<Stop> for MockConnector {
+        type Result = ();
+
+        fn handle(&mut self, _: Stop, ctx: &mut Self::Context) -> Self::Result {
+            use actix::ActorContext as _;
+            ctx.stop();
         }
     }
 
@@ -383,5 +425,21 @@ mod tests {
         assert!(
             matches!(&events[1], Evts::Insert(msg) if msg.value() == &bincode::serialize(&200i32).unwrap())
         );
+    }
+
+    #[actix::test]
+    async fn rejected_snapshot_write_does_not_advance_in_memory_state() {
+        let (addr, connector) = MockConnector::new(b"loc").to_store_connector();
+        let mut persistable = Persistable::new(Some(42i32), connector);
+
+        addr.send(Stop).await.unwrap();
+        actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+
+        let error = persistable
+            .try_mutate_without_context(|value| Ok(value + 1))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mailbox rejected"));
+        assert_eq!(persistable.get(), Some(42));
     }
 }

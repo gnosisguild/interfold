@@ -5,13 +5,29 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::Addr;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
 use e3_net::{NetChannelBridge, NetworkStatus};
 use libp2p::PeerId;
+use std::{future::Future, time::Duration};
+use tracing::info;
 
 use crate::global_eventstore_cache::EventStoreReader;
+
+async fn enforce_shutdown_deadline<F>(deadline: Duration, shutdown: F) -> Result<()>
+where
+    F: Future<Output = Result<()>>,
+{
+    tokio::time::timeout(deadline, shutdown)
+        .await
+        .with_context(|| {
+            format!(
+                "ciphernode shutdown exceeded its {:.3}s deadline",
+                deadline.as_secs_f64()
+            )
+        })?
+}
 
 /// The kind of network interface backing a ciphernode.
 #[derive(Debug, Clone)]
@@ -63,32 +79,6 @@ impl PartialEq for CiphernodeHandle {
 impl Eq for CiphernodeHandle {}
 
 impl CiphernodeHandle {
-    pub fn new(
-        address: String,
-        store: DataStore,
-        bus: BusHandle,
-        history: Option<Addr<HistoryCollector<InterfoldEvent>>>,
-        errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
-        peer_id: PeerId,
-        net_interface: NetInterfaceKind,
-        network_status: NetworkStatus,
-        eventstore: EventStoreReader,
-        aggregate_ids: Vec<usize>,
-    ) -> Self {
-        Self {
-            address,
-            store,
-            bus,
-            history,
-            errors,
-            peer_id,
-            net_interface,
-            network_status,
-            eventstore,
-            aggregate_ids,
-        }
-    }
-
     pub fn bus(&self) -> &BusHandle {
         &self.bus
     }
@@ -133,5 +123,59 @@ impl CiphernodeHandle {
             return Some(store);
         }
         None
+    }
+
+    /// Stop protocol actors and make persisted state durable within `deadline`.
+    ///
+    /// The ordering is deliberate: the persisted `Shutdown` event first stops
+    /// producers and awaits subscriber final-state handlers; the event pipeline
+    /// is then flushed; finally snapshot batches drain before the backing store
+    /// is flushed and closed.
+    pub async fn shutdown(self, deadline: Duration) -> Result<()> {
+        enforce_shutdown_deadline(deadline, async move {
+            info!(stage = "actor-drain", "Ciphernode shutdown barrier started");
+            self.bus
+                .publish_shutdown_and_wait()
+                .await
+                .context("failed to persist or acknowledge Shutdown")?;
+
+            info!(
+                stage = "event-flush",
+                "Ciphernode shutdown barrier advanced"
+            );
+            self.bus
+                .flush_event_pipeline()
+                .await
+                .context("failed to drain or flush the event pipeline")?;
+
+            info!(
+                stage = "store-flush",
+                "Ciphernode shutdown barrier advanced"
+            );
+            self.store
+                .shutdown()
+                .await
+                .context("failed to drain snapshots or flush the data store")?;
+            Ok(())
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_deadline_is_enforced() {
+        let error = enforce_shutdown_deadline(
+            Duration::from_millis(10),
+            std::future::pending::<Result<()>>(),
+        )
+        .await
+        .expect_err("pending shutdown must time out")
+        .to_string();
+
+        assert!(error.contains("shutdown exceeded its 0.010s deadline"));
     }
 }

@@ -183,6 +183,7 @@ publishPlaintextOutput() succeeds
     ├─ Sortition: decrements activeJobs for each committee member
     │   → Node becomes available for future E3s
     │   → Removes e3_id from node_state.e3_committees map
+    │   → Removes the durable finalized-committee and pending-expulsion records
     │
     ├─ CiphernodeSelector: removes e3_id from e3_cache, committee, expelled set,
     │  and persisted aggregator designation for the E3
@@ -207,26 +208,48 @@ interfold start → running node
 │
 ├─ Ctrl+C / SIGINT / SIGTERM
 │
-└─ listen_for_shutdown():
-    ├─ Signals EventBus to stop
-    ├─ Awaits join_handle (main actor system)
-    ├─ Persists final state to Sled DB
-    └─ Clean exit
+└─ graceful_shutdown():
+    ├─ Persists Shutdown and waits for acknowledged EventBus fanout
+    ├─ Flushes the sequencer and event-store pipeline
+    ├─ Drains open snapshot batches, flushes the backing store, and closes it
+    ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
+    └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Event-log open:
+│   → validates physical frames against the commitlog index
+│   → truncates only a CRC/length-invalid suffix after the final indexed record
+│   → restores complete CRC-valid, decodable frames whose tail index write was lost
+│   → rejects indexed corruption, decode failure, gaps, and offset mismatches
 ├─ Sync module replays:
 │   1. Load snapshot metadata and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
+│      → ShareVerificationActor loads canonical party slots from the durable
+│        finalized-committees repository before replay. A snapshotted
+│        CommitteeFinalized event is not guaranteed to appear in the replay window.
+│      → ProofVerificationActor loads the same slots, plus BFV preset/threshold
+│        metadata from durable CiphernodeSelector state. Snapshotted
+│        CiphernodeSelected events are likewise not guaranteed to replay.
+│      → Terminal lifecycle state prunes stale finalized-committee and
+│        pending-expulsion records before actors start.
 │   2. CiphernodeSelector emits persisted AggregatorChanged state before replay
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
 │        with the correct active-aggregator flag
 │   3. Replay EventStore events since last snapshot (effects still disabled)
+│      → Read each aggregate in 1,024-event pages, sort bounded temporary runs,
+│        and perform a bounded-fan-in global merge by HLC timestamp
+│      → Each concurrent EventBus fanout is acknowledged before the next event;
+│        an unavailable or blocked listener aborts recovery after a bounded wait
+│      → Structured progress is emitted every 10,000 EventBus-handled events
 │   4. Fetch historical EVM events from last known block
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
 │   6. Sort & publish merged events by HLC timestamp
+│      → A logical event returned by a peer with its source changed from Local to Net is
+│        idempotent when timestamp, stable event ID, and payload match the stored record;
+│        a different payload at the same timestamp still fails closed as a collision
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   7. Enable effects (writers may submit only after this point)
@@ -235,6 +258,39 @@ On restart:
 │   8. SyncEnded → live operations begin
 └─ Node resumes from where it left off
 ```
+
+The shutdown barrier proves that the persisted `Shutdown` event reached its current subscribers,
+the event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
+deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
+operators must continue to follow the production shutdown precautions.
+
+The three long-lived libp2p `NetEvent` broadcast consumers (`NetEventTranslator`,
+`DocumentPublisher`, and `NetSyncManager`) treat Tokio's `Lagged(n)` receive result as a recoverable
+overload signal: they emit a bounded structured warning containing only the static consumer name and
+skipped-event count, then continue from the oldest retained event. Only channel closure ends a
+receive task. A lag can still drop the reported `n` events, but a single burst no longer permanently
+disables gossip translation, document notifications, or historical-sync/readiness handling.
+`NetEventBuffer` applies the same continue policy only after `SyncEnded`; lag during its startup
+buffering window remains a fail-closed readiness error because those skipped events cannot yet be
+reconciled safely.
+
+EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
+temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
+concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot
+accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
+contains asynchronous edges, so this does not claim that every downstream actor is synchronously
+durable at each replay step.
+
+`interfold node validate` detects a recoverable uncommitted event-log tail without changing it.
+With the node stopped, `interfold node validate --repair` applies the same boundary-checked tail
+recovery as startup and refuses to remove indexed records. Runtime EventStore query failures are
+returned to the correlated caller rather than panicking the actor; committed corruption remains a
+startup/integrity failure.
+
+For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state.
+It atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
+operator/libp2p identity, and lets the v0.2.3 binary stamp schema version 1 before later binaries
+enforce the marker. An ambiguous volume containing both roots fails closed.
 
 ### Restart + Persist State Diagram
 
@@ -298,30 +354,48 @@ settlement observations) remain in EventStore for auditing and operator projecti
 not deliver them to a completed per-E3 context because they report settlement; they do not resume
 protocol execution.
 
+`CiphernodeSelector` also emits every persisted `AggregatorChanged` entry before EventStore replay.
+If a prior snapshot failed to persist the selector's completion cleanup, the request router may log
+that emission as unexpected for an already-completed E3. The router converts it to an
+`InterfoldError`; it does not abort EventBus replay. Treat the warning as evidence of stale snapshot
+state rather than suppressing it unconditionally.
+
 For crashes after key publication but before ciphertext publication, the recovered active aggregator
 may not have a `ThresholdPlaintextAggregator` actor yet when the persisted `AggregatorChanged` event
-is re-emitted. The plaintext extension records that role in the live E3 context, then seeds the later
-`DecryptionshareCreatedBuffer` from it. Committee and honest-committee addresses are recovered
+is re-emitted. The plaintext extension records that role in the live E3 context, then seeds the
+later `DecryptionshareCreatedBuffer` from it. Committee and honest-committee addresses are recovered
 from completed public-key aggregation state, in-flight public-key aggregation state, or the
 persisted `ThresholdKeyshareState.honest_parties` set during async context hydration. Replayed
 `CommitteePublished` can also restore the full committee address dependency, but cannot infer the
 H-sized honest subset when `N > H`; that subset must come from `PublicKeyAggregated`,
 `PublicKeyAggregatorState::GeneratingC5Proof`, or threshold-keyshare state. The synchronous
 `on_event` path must not read actor-backed repositories directly, because blocking the router while
-waiting for the store can freeze live gossip and make peers time out.
-If `CiphertextOutputPublished` is replayed before those committee dependencies are ready, the
-extension records the ciphertext in the E3 context and retries plaintext actor creation when
-`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains any ciphertext/decryption-share events into the newly-created
-plaintext path.
+waiting for the store can freeze live gossip and make peers time out. If `CiphertextOutputPublished`
+is replayed before those committee dependencies are ready, the extension records the ciphertext in
+the E3 context and retries plaintext actor creation when `PublicKeyAggregated` or
+`CommitteePublished` supplies the missing facts; the router's existing recipient buffer then drains
+any ciphertext/decryption-share events into the newly-created plaintext path.
 
-`ShareVerificationActor` gates C1/C6 proof verification behind
-`CommitmentConsistencyCheckRequested` / `CommitmentConsistencyCheckComplete`. The per-E3
-`CommitmentConsistencyChecker` is therefore restart-critical even though it has no durable state of
-its own: after context hydration, `CommitmentConsistencyCheckerExtension` recreates it from the
-recovered `E3Meta` so restarted active aggregators can complete C6 verification. Without this
-recipient, the restarted node can collect honest decryption shares and then wait forever for a
-consistency-check response that no actor is subscribed to publish.
+`ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
+/ `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
+restart-critical even though it has no durable state of its own: after context hydration,
+`CommitmentConsistencyCheckerExtension` recreates it from the recovered `E3Meta` so restarted active
+aggregators can complete C6 verification. Without this recipient, the restarted node can collect
+honest decryption shares and then wait forever for a consistency-check response that no actor is
+subscribed to publish.
+
+The global `ShareVerificationActor` also requires the finalized committee's ordered party-slot map
+for signer ownership checks. It is seeded from `Repositories::finalized_committees` during builder
+startup, before EventStore replay. Relying only on a `CommitteeFinalized` subscription is incorrect:
+once that event is included in a snapshot, replay starts after it and a restarted aggregator would
+reject every honest C6 signer as having no canonical slot.
+
+The global `ProofVerificationActor` has the same party-slot requirement for C0 and additionally
+needs the request's BFV preset and threshold-derived committee size to choose circuit artifacts and
+recompute the advertised public-key commitment. Builder startup seeds those caches from the durable
+finalized-committee repository and `CiphernodeSelectorState.e3_cache` before replay. Live
+`CommitteeFinalized` / `CiphernodeSelected` events remain authoritative refreshes, while
+`E3RequestComplete` removes both caches.
 
 ---
 
@@ -329,15 +403,15 @@ consistency-check response that no actor is subscribed to publish.
 
 The node is choreographed — each subsystem reacts to bus events independently — so there is no
 single component that _drives_ the protocol. The `E3LifecycleCoordinator` (in `e3-request`) is an
-**additive, durable observer** that gives the node a single source of truth for "what stage is each
-E3 at?". It never emits protocol events and never drives subsystems; it only records stage and
-supports restart-resume and shutdown awareness.
+**additive persisted-stage observer** that gives the live node one projection of "what stage is each
+E3 at?". It never emits protocol events and never drives subsystems; it records stage and supports
+restart-resume and shutdown awareness subject to the asynchronous persistence caveats above.
 
 ```
 E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build())
 │
 ├─ Loads persisted stage map from Repository(StoreKeys::e3_lifecycle())
-│   → on restart, every in-flight E3's last known stage is rehydrated
+│   → on restart, every successfully persisted in-flight stage is rehydrated
 │
 ├─ Subscribes to lifecycle-bearing events:
 │     E3Requested              → Requested
@@ -355,11 +429,11 @@ E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build(
 │     • Advance is MONOTONIC (forward-only by stage rank)
 │     • Out-of-order earlier-stage events are logged (Regressed) and ignored
 │     • Once Complete/Failed, the stage is frozen (Terminal)
-│   On Advanced/Terminal the snapshot is persisted (set on Persistable)
+│   On Advanced/Terminal, updates memory and enqueues a snapshot write
 │
 └─ On Shutdown event:
       logs the set of still-active (non-terminal) E3s and their stages,
-      persists the final snapshot, then stops.
+      enqueues a final snapshot write, then stops without awaiting durability.
 ```
 
 The coordinator is safe by construction during EventStore replay: observing a replayed lifecycle

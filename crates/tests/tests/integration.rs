@@ -39,8 +39,6 @@ use e3_zk_prover::{VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2367,8 +2365,6 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
-    let seed = Seed(ChaCha20Rng::seed_from_u64(123).get_seed());
-
     // Setup elements in test
     let (cmd_tx, _) = mpsc::channel(100); // Transmit byte events to the network
     let (event_tx, event_rx) = broadcast::channel(100); // Receive byte events from the network
@@ -2379,13 +2375,12 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     NetEventTranslator::setup(&bus, &cmd_tx, &Arc::new(event_rx), "mytopic");
 
     // Capture messages from output on msgs vec
-    let event = E3Requested {
+    // Only protocol artifacts may cross the gossip trust boundary. Requests originate from the
+    // canonical chain listener, so use a genuinely forwardable result artifact here.
+    let event = PlaintextAggregated {
         e3_id: E3id::new("1235", 1),
-        threshold_m: 3,
-        threshold_n: 3,
-        seed,
-        params: ArcBytes::from_bytes(&[1, 2, 3, 4]),
-        ..E3Requested::default()
+        decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3, 4])],
+        decryption_aggregator_proofs: vec![],
     };
 
     // lets send an event from the network

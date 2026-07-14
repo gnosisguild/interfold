@@ -7,6 +7,7 @@
 use alloy::primitives::U256;
 use anyhow::{bail, Result};
 use e3_console::{log, Console};
+use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 use super::utils::{format_amount, parse_amount};
@@ -19,6 +20,7 @@ pub(crate) async fn register(out: Console, ctx: &ChainContext) -> Result<()> {
         .await?
         .get_receipt()
         .await?;
+    require_successful_receipt("register ciphernode", &receipt)?;
     log!(
         out,
         "Registered ciphernode on {} (tx: {:#x})",
@@ -36,6 +38,7 @@ pub(crate) async fn deregister(out: Console, ctx: &ChainContext) -> Result<()> {
         .await?
         .get_receipt()
         .await?;
+    require_successful_receipt("deregister ciphernode", &receipt)?;
     log!(
         out,
         "Deregistration requested (tx: {:#x})",
@@ -71,6 +74,7 @@ pub(crate) async fn deactivate(
             .await?
             .get_receipt()
             .await?;
+        require_successful_receipt("remove ticket balance", &receipt)?;
         log!(
             out,
             "Removed {} tickets (tx: {:#x})",
@@ -90,6 +94,7 @@ pub(crate) async fn deactivate(
             .await?
             .get_receipt()
             .await?;
+        require_successful_receipt("unbond license", &receipt)?;
         log!(
             out,
             "Queued {} FOLD for exit (tx: {:#x})",

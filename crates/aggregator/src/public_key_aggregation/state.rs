@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Persisted public-key aggregation state schema.
+
+use super::*;
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum PublicKeyAggregatorState {
+    Collecting {
+        /// Live committee size after expulsions; used only to decide when enough keyshares arrived.
+        threshold_n: usize,
+        threshold_m: usize,
+        /// Canonical on-chain / circuit committee size N (unchanged after expulsion).
+        circuit_committee_n: usize,
+        /// Canonical honest-party count H for circuit public IO.
+        circuit_committee_h: usize,
+        keyshares: OrderedSet<ArcBytes>,
+        /// C1 proofs collected from KeyshareCreated events, indexed by insertion order
+        /// (matches `submission_order`).
+        c1_proofs: Vec<Option<SignedProofPayload>>,
+        seed: Seed,
+        nodes: OrderedSet<String>,
+        /// Insertion-ordered (real sortition `party_id`, node, keyshare) triples.
+        /// Index matches `c1_proofs`. The real `party_id` comes from `KeyshareCreated`
+        /// and must be used for all downstream circuit slot indexing — arrival order
+        /// is non-deterministic and does not match sortition's committee position.
+        submission_order: Vec<(u64, String, ArcBytes)>,
+    },
+    VerifyingC1 {
+        /// Insertion-ordered (party_id, node, keyshare) triples from Collecting.
+        submission_order: Vec<(u64, String, ArcBytes)>,
+        threshold_m: usize,
+        /// Canonical on-chain / circuit committee size N (for `committee_h` lookup).
+        circuit_committee_n: usize,
+        /// Canonical honest-party count H for circuit public IO.
+        circuit_committee_h: usize,
+        /// C1 proofs in the same insertion order as `submission_order`.
+        c1_proofs: Vec<Option<SignedProofPayload>>,
+        /// Real party_ids that submitted no C1 proof — treated as dishonest.
+        no_proof_parties: Vec<u64>,
+    },
+    GeneratingC5Proof {
+        public_key: ArcBytes,
+        keyshare_bytes: Vec<ArcBytes>,
+        nodes: OrderedSet<String>,
+        /// Registered node address per sortition `party_id` for the **full** committee
+        /// (all `N` parties that submitted a keyshare, honest or not). Honest-only lookups
+        /// must intersect with `honest_party_ids`.
+        party_nodes: HashMap<u64, String>,
+        /// DKG recursive proofs per party (restart-critical).
+        dkg_node_proofs: HashMap<u64, Option<Proof>>,
+        /// Per-party fold attestations collected with honest DKG folds.
+        dkg_fold_attestations: HashMap<u64, SignedDkgFoldAttestation>,
+        honest_party_ids: BTreeSet<u64>,
+        dishonest_parties: BTreeSet<u64>,
+        /// Circuit committee size N (NodeFold / DKG public IO layout).
+        circuit_committee_n: usize,
+        /// Circuit honest-party count H (NodeFold / DKG public IO layout).
+        circuit_committee_h: usize,
+        /// In-flight [`ZkRequest::DkgAggregation`], if any.
+        dkg_aggregation_correlation: Option<e3_events::CorrelationId>,
+        /// Result from [`ZkResponse::DkgAggregation`] (replaces pairwise `FoldProofs`).
+        dkg_aggregated_proof: Option<Proof>,
+        c5_proof_pending: Option<Proof>,
+        last_ec: Option<e3_events::EventContext<e3_events::Sequenced>>,
+        /// Accumulated nodes_fold proof after `nodes_fold_completed_slots` streaming steps.
+        nodes_fold_accumulator: Option<Proof>,
+        /// Number of slots folded so far; equals the next slot index to dispatch.
+        nodes_fold_completed_slots: u32,
+        /// Correlation ID of the in-flight [`ZkRequest::NodesFoldStep`], if any.
+        nodes_fold_step_correlation: Option<e3_events::CorrelationId>,
+    },
+    Complete {
+        public_key: ArcBytes,
+        keyshares: OrderedSet<ArcBytes>,
+        nodes: OrderedSet<String>,
+        /// Ascending `party_id` order (matches on-chain `topNodes` after finalize sort).
+        committee_addresses: Vec<Address>,
+        /// Honest subset (H entries) for decryption-share gating after restart.
+        honest_committee_addresses: Vec<Address>,
+    },
+}
+
+impl PublicKeyAggregatorState {
+    /// Ordered `topNodes` when the committee set is known (post–committee formation).
+    pub fn committee_nodes(&self) -> Option<&OrderedSet<String>> {
+        match self {
+            PublicKeyAggregatorState::Collecting { nodes, .. } if !nodes.is_empty() => Some(nodes),
+            PublicKeyAggregatorState::GeneratingC5Proof { nodes, .. } => Some(nodes),
+            PublicKeyAggregatorState::Complete { nodes, .. } => Some(nodes),
+            _ => None,
+        }
+    }
+
+    pub fn committee_addresses(&self) -> Option<&[Address]> {
+        match self {
+            PublicKeyAggregatorState::Complete {
+                committee_addresses,
+                ..
+            } if !committee_addresses.is_empty() => Some(committee_addresses.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn honest_committee_addresses(&self) -> Option<&[Address]> {
+        match self {
+            PublicKeyAggregatorState::Complete {
+                honest_committee_addresses,
+                ..
+            } if !honest_committee_addresses.is_empty() => {
+                Some(honest_committee_addresses.as_slice())
+            }
+            _ => None,
+        }
+    }
+
+    pub fn init(threshold_n: usize, threshold_m: usize, seed: Seed) -> Self {
+        let circuit_committee_h = committee_h_for(threshold_m, threshold_n)
+            .unwrap_or_else(|e| panic!("invalid committee at init: {e}"));
+        PublicKeyAggregatorState::Collecting {
+            threshold_n,
+            threshold_m,
+            circuit_committee_n: threshold_n,
+            circuit_committee_h,
+            keyshares: OrderedSet::new(),
+            c1_proofs: Vec::new(),
+            seed,
+            nodes: OrderedSet::new(),
+            submission_order: Vec::new(),
+        }
+    }
+}

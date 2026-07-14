@@ -164,8 +164,12 @@ For containerized deployments, you can run the ciphernode Docker image directly.
 
 ### Pull the Image
 
+Pull and run an explicit versioned release tag for an operator node. Do not use the mutable `latest`
+tag:
+
 ```bash
-docker pull ghcr.io/gnosisguild/ciphernode:latest
+export CIPHERNODE_IMAGE='ghcr.io/gnosisguild/ciphernode:<release-version>'
+docker pull "$CIPHERNODE_IMAGE"
 ```
 
 ### Create Configuration
@@ -205,17 +209,42 @@ chains:
         deploy_block: 11124533
 ```
 
+### Create the Credentials Secret
+
+The image entrypoint requires a JSON secret mounted at `/run/secrets/secrets.json`. It does not read
+wallet credentials from `PRIVATE_KEY` or `ENCRYPTION_PASSWORD` environment variables. Create this
+file on the host with restrictive permissions; do not commit it, paste it into shell history, or
+reuse the example/development keys from the repository:
+
+```bash
+umask 077
+install -m 600 /dev/null secrets.json
+${EDITOR:-vi} secrets.json
+```
+
+```json
+{
+  "password": "<strong-key-encryption-password>",
+  "private_key": "<operator-wallet-private-key>",
+  "network_private_key": "<unique-libp2p-network-private-key>"
+}
+```
+
+All three values are required. Back up the encrypted node data, this password, and the network key
+through your secret-management system. Keep the wallet key in the project-approved signing system.
+
 ### Run the Container
 
 ```bash
 docker run -d \
   --name ciphernode \
+  --restart unless-stopped \
+  --stop-timeout 300 \
   -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
+  -v $(pwd)/secrets.json:/run/secrets/secrets.json:ro \
   -v ciphernode-data:/home/ciphernode/.local/share/interfold \
   -p 9091:9091/udp \
-  -e ENCRYPTION_PASSWORD=your_password \
-  -e PRIVATE_KEY=0xYourPrivateKey \
-  ghcr.io/gnosisguild/ciphernode:latest
+  "$CIPHERNODE_IMAGE"
 ```
 
 ### Docker Compose
@@ -225,20 +254,40 @@ For a more manageable setup, use Docker Compose:
 ```yaml
 services:
   ciphernode:
-    image: ghcr.io/gnosisguild/ciphernode:latest
+    image: ${CIPHERNODE_IMAGE:?CIPHERNODE_IMAGE-must-use-a-versioned-release-tag}
     restart: unless-stopped
+    stop_grace_period: 5m
     volumes:
       - ./config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
       - ciphernode-data:/home/ciphernode/.local/share/interfold
+    secrets:
+      - source: ciphernode_credentials
+        target: secrets.json
     ports:
       - '9091:9091/udp'
-    environment:
-      ENCRYPTION_PASSWORD: ${ENCRYPTION_PASSWORD}
-      PRIVATE_KEY: ${PRIVATE_KEY}
+
+secrets:
+  ciphernode_credentials:
+    file: ./secrets.json
 
 volumes:
   ciphernode-data:
 ```
+
+Before starting after a crash, restore, or binary upgrade, keep the container stopped and run the
+same release's offline integrity check against the mounted configuration and data:
+
+```bash
+docker run --rm \
+  -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
+  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+  --entrypoint interfold \
+  "$CIPHERNODE_IMAGE" \
+  node validate --config /home/ciphernode/.config/interfold/config.yaml
+```
+
+Do not start the node when validation reports `FAIL`; preserve a copy of the volume before repair,
+restore, or controlled resynchronization.
 
 ### View Logs
 

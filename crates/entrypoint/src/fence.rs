@@ -43,6 +43,15 @@ pub struct ProcessFence {
     path: PathBuf,
 }
 
+impl Drop for ProcessFence {
+    fn drop(&mut self) {
+        // Closing normally releases the lock, but an overlapping process spawn can
+        // briefly inherit the open file description between fork and exec. Unlock
+        // it explicitly so shutdown makes the fence immediately reacquirable.
+        let _ = self._file.unlock();
+    }
+}
+
 impl ProcessFence {
     /// The path to the lock file being held.
     pub fn path(&self) -> &Path {

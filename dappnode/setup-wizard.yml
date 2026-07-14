@@ -37,21 +37,10 @@ fields:
       name: NODE_ADDRESS
       service: ciphernode
     title: 'Node Address'
-    description: 'Public address for this node (must match the private key below if set).'
+    description: 'Public address for this node (must match private_key in the credentials JSON file).'
     required: true
     pattern: '^0x[a-fA-F0-9]{40}$'
     patternErrorMessage: 'Must be a valid 20-byte hex address (0x...)'
-
-  - id: PRIVATE_KEY
-    target:
-      type: environment
-      name: PRIVATE_KEY
-      service: ciphernode
-    title: 'Private Key'
-    description: 'Private key for this node. Must correspond to the Node Address above.'
-    secret: true
-    required: false
-    pattern: '^(0x[a-fA-F0-9]{64})?$'
 
   # Contracts
   - id: INTERFOLD_CONTRACT
@@ -132,27 +121,28 @@ fields:
       Leave empty for auto-discovery.
     required: false
 
-  # Secrets
-  - id: ENCRYPTION_PASSWORD
+  # Credentials are uploaded as a file so they are not stored in container
+  # environment/process metadata. DAppNode copies the file before startup.
+  - id: CREDENTIALS_FILE
     target:
-      type: environment
-      name: ENCRYPTION_PASSWORD
+      type: fileUpload
+      path: /run/secrets/secrets.json
       service: ciphernode
-    title: 'Encryption Password'
-    description: 'Password for local encryption. Leave empty to auto-generate.'
-    secret: true
-    required: false
+    title: 'Ciphernode Credentials JSON'
+    description: |
+      Upload a JSON file with exactly the credentials used by this node:
 
-  - id: NETWORK_PRIVATE_KEY
-    target:
-      type: environment
-      name: NETWORK_PRIVATE_KEY
-      service: ciphernode
-    title: 'Network Private Key'
-    description: 'libp2p network key for consistent peer ID across restarts. Leave empty to auto-generate.'
-    secret: true
-    required: false
-    pattern: '^(0x[a-fA-F0-9]{64})?$'
+      ```json
+      {
+        "password": "a strong encryption password",
+        "private_key": "0x<64 hex characters>"
+      }
+      ```
+
+      The Ethereum private key must correspond to the Node Address above. Keep
+      an encrypted backup; the plaintext upload is removed after successful
+      credential provisioning.
+    required: true
 
   # Advanced
   - id: LOG_LEVEL

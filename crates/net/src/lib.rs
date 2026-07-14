@@ -10,6 +10,7 @@ mod dialer;
 pub mod direct_requester;
 pub mod direct_responder;
 mod domain;
+mod event_subscription;
 pub mod events;
 mod keypair;
 mod net_interface;
@@ -79,6 +80,30 @@ pub fn setup_net(
     eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
     interface: impl NetInterface,
 ) -> Result<()> {
+    setup_net_with_limits(
+        topic,
+        bus,
+        eventstore,
+        interface,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+    )?;
+    Ok(())
+}
+
+/// Set up networking with an explicit fail-closed startup buffer bound and return the readiness
+/// handle used by production startup.
+pub fn setup_net_with_limits(
+    topic: &str,
+    bus: BusHandle,
+    eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
+    interface: impl NetInterface,
+    max_buffered_events: usize,
+    max_buffered_bytes: usize,
+) -> Result<NetEventBufferHandle> {
+    if max_buffered_events == 0 || max_buffered_bytes == 0 {
+        bail!("network startup buffer limits must both be greater than zero");
+    }
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -90,7 +115,13 @@ pub fn setup_net(
     );
 
     // Buffer all incoming events until SyncEnded
-    let rx = Arc::new(NetEventBuffer::setup(&bus, &interface.rx()));
+    let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
+        &bus,
+        &interface.rx(),
+        max_buffered_events,
+        max_buffered_bytes,
+    );
+    let rx = Arc::new(rx);
     let tx = interface.tx();
 
     let runner = run_once::<EffectsEnabled>({
@@ -107,5 +138,5 @@ pub fn setup_net(
 
     bus.subscribe(e3_events::EventType::EffectsEnabled, runner.recipient());
 
-    Ok(())
+    Ok(buffer_handle)
 }

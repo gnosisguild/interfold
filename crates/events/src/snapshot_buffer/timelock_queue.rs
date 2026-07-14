@@ -3,6 +3,8 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
+#[cfg(test)]
+use crate::AggregateId;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient};
 use e3_utils::MAILBOX_LIMIT;
 use std::{
@@ -13,23 +15,24 @@ use std::{
 };
 use tracing::debug;
 
-use super::batch_router::FlushSeq;
+use super::batch_router::{FlushSeq, SnapshotKey};
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct StartTimelock {
-    seq: u64,
+    key: SnapshotKey,
     now: Duration,
     delay: Duration,
 }
 
 impl StartTimelock {
-    pub fn new(seq: u64, now: Duration, delay: Duration) -> Self {
-        Self { seq, now, delay }
+    pub(super) fn new(key: SnapshotKey, now: Duration, delay: Duration) -> Self {
+        Self { key, now, delay }
     }
-    pub fn new_micros(seq: u64, now: u64, delay: u64) -> Self {
+    #[cfg(test)]
+    fn new_micros(seq: u64, now: u64, delay: u64) -> Self {
         Self::new(
-            seq,
+            SnapshotKey::new(AggregateId::new(0), seq),
             Duration::from_micros(now),
             Duration::from_micros(delay),
         )
@@ -60,18 +63,20 @@ pub struct Tick;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Timelock {
     expiry: Duration,
-    seq: u64,
+    key: SnapshotKey,
 }
 
 impl Timelock {
-    pub fn new(expiry: Duration, seq: u64) -> Self {
-        Self { expiry, seq }
+    pub fn new(expiry: Duration, key: SnapshotKey) -> Self {
+        Self { expiry, key }
     }
 }
 
 impl Ord for Timelock {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.expiry.cmp(&other.expiry)
+        self.expiry
+            .cmp(&other.expiry)
+            .then_with(|| self.key.cmp(&other.key))
     }
 }
 
@@ -142,7 +147,7 @@ impl Handler<StartTimelock> for TimelockQueue {
     fn handle(&mut self, msg: StartTimelock, _: &mut Self::Context) -> Self::Result {
         debug!("Start timelock: {:?}", msg.delay);
         let expiry = msg.now + msg.delay;
-        self.timelocks.push(Reverse(Timelock::new(expiry, msg.seq)));
+        self.timelocks.push(Reverse(Timelock::new(expiry, msg.key)));
     }
 }
 
@@ -160,9 +165,13 @@ impl Handler<Tick> for TimelockQueue {
 
         while !self.timelocks.is_empty() && self.next_timelock_lt(now_time) {
             if let Some(tl) = self.timelocks.pop() {
-                let seq = tl.0.seq;
-                debug!("Flushing seq {}", seq);
-                self.batch_router.do_send(FlushSeq(seq));
+                let key = tl.0.key;
+                debug!(
+                    aggregate = %key.aggregate_id(),
+                    seq = key.seq(),
+                    "Flushing expired snapshot batch"
+                );
+                self.batch_router.do_send(FlushSeq(key));
             }
         }
     }
@@ -239,7 +248,7 @@ mod tests {
         type Result = ();
 
         fn handle(&mut self, msg: FlushSeq, _: &mut Self::Context) -> Self::Result {
-            self.received_seqs.lock().unwrap().push(msg.0);
+            self.received_seqs.lock().unwrap().push(msg.seq());
         }
     }
 

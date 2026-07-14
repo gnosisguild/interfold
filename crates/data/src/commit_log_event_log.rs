@@ -4,28 +4,105 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Context;
-use anyhow::Result;
-use commitlog::message::MessageSet;
+use anyhow::{anyhow, Context, Result};
+use commitlog::message::{MessageBuf, MessageSet};
 use commitlog::{CommitLog, LogOptions, ReadLimit};
 use e3_events::{EventLog, InterfoldEvent, Unsequenced};
-use std::path::PathBuf;
-use tracing::error;
+use std::{
+    collections::BTreeSet,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+};
+use tracing::warn;
 
 /// Maximum message size for both reads and writes (32 MB).
 const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+const COMMITLOG_HEADER_BYTES: usize = 20;
+const COMMITLOG_INDEX_ENTRY_BYTES: usize = 8;
+const COMMITLOG_SEGMENT_MAGIC: [u8; 2] = [0xff, 0xff];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventLogOpenMode {
+    /// Repair only a provably uncommitted physical tail before opening.
+    RecoverTail,
+    /// Detect a recoverable tail without changing any on-disk bytes.
+    ValidateOnly,
+}
+
+#[derive(Debug)]
+struct TailRecoveryPlan {
+    segment_path: PathBuf,
+    indexed_end: u64,
+    physical_end: u64,
+    next_offset: u64,
+    recovered_payloads: Vec<Vec<u8>>,
+}
+
+#[derive(Debug)]
+enum PhysicalFrame {
+    Complete {
+        offset: u64,
+        payload: Vec<u8>,
+        end: u64,
+    },
+    Incomplete(String),
+}
 
 pub struct CommitLogEventLog {
     log: CommitLog,
 }
 
 impl CommitLogEventLog {
-    pub fn new(path: &PathBuf) -> Result<Self> {
+    pub fn new(path: &Path) -> Result<Self> {
+        Self::open(path, EventLogOpenMode::RecoverTail)
+    }
+
+    pub fn open(path: &Path, mode: EventLogOpenMode) -> Result<Self> {
+        let recovery = inspect_active_tail(path)?;
+        if let Some(plan) = recovery.as_ref() {
+            match mode {
+                EventLogOpenMode::RecoverTail => apply_tail_recovery(plan)?,
+                EventLogOpenMode::ValidateOnly => {
+                    let complete = plan.recovered_payloads.len();
+                    let tail_bytes = plan.physical_end.saturating_sub(plan.indexed_end);
+                    anyhow::bail!(
+                        "recoverable uncommitted event-log tail detected in {}: {complete} complete \
+                         unindexed record(s), {tail_bytes} physical tail byte(s); rerun with \
+                         `interfold node validate --repair` while the node is stopped",
+                        plan.segment_path.display()
+                    );
+                }
+            }
+        }
+
         let mut opts = LogOptions::new(path);
         // TODO: derive this from config - currently set high to be permissive
         opts.message_max_bytes(MAX_MESSAGE_BYTES);
-        let log = CommitLog::new(opts)?;
-        Ok(Self { log })
+        let mut log = CommitLog::new(opts)?;
+
+        if let Some(plan) = recovery {
+            for (index, payload) in plan.recovered_payloads.iter().enumerate() {
+                let expected_offset = plan.next_offset + index as u64;
+                let actual_offset = log
+                    .append_msg(payload)
+                    .context("failed to restore a complete unindexed event-log tail record")?;
+                if actual_offset != expected_offset {
+                    anyhow::bail!(
+                        "event-log tail recovery offset mismatch: expected {expected_offset}, got \
+                         {actual_offset}"
+                    );
+                }
+            }
+            log.flush()
+                .context("failed to flush repaired event-log tail")?;
+        }
+
+        let opened = Self { log };
+        opened
+            .read_from_checked(1)
+            .context("event log integrity check failed during open")?;
+        Ok(opened)
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) -> Result<u64> {
@@ -36,6 +113,362 @@ impl CommitLogEventLog {
         // Return 1-indexed sequence number
         Ok(offset + 1)
     }
+
+    /// Read and decode every event starting at `from`, failing on the first
+    /// unreadable commit-log segment or invalid event payload.
+    ///
+    /// A commit-log record with a valid frame/CRC but an invalid bincode payload
+    /// is not safe to treat as an ignorable torn tail. Its sequence number has
+    /// already been committed, so skipping it would make replayed state diverge
+    /// from the state that existed before the crash and a later append would turn
+    /// the same record into mid-log corruption. The [`EventLog`] adapter carries
+    /// this error to startup and query callers instead of panicking an actor.
+    pub fn read_from_checked(&self, from: u64) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
+        self.read_from_checked_with_limit(from, None)
+    }
+
+    fn read_from_checked_with_limit(
+        &self,
+        from: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
+        // Convert 1-indexed sequence to 0-indexed offset.
+        let mut current_offset = from.saturating_sub(1);
+        let mut events = Vec::with_capacity(limit.unwrap_or_default().min(1024));
+
+        if limit == Some(0) {
+            return Ok(events);
+        }
+
+        loop {
+            let message_buf = self
+                .log
+                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
+                .map_err(|error| {
+                    anyhow!(
+                        "commit log read failed at sequence {}: {error:?}",
+                        current_offset + 1
+                    )
+                })?;
+
+            let mut count = 0;
+            for msg in message_buf.iter() {
+                let seq = msg.offset() + 1;
+                if usize::from(msg.metadata_size()) > msg.size() as usize {
+                    anyhow::bail!(
+                        "commit log event at sequence {seq} has invalid frame metadata length; \
+                         log is corrupt"
+                    );
+                }
+                let event = InterfoldEvent::<Unsequenced>::from_bytes(msg.payload()).with_context(
+                    || {
+                        format!(
+                            "commit log event at sequence {seq} failed to decode; log is corrupt"
+                        )
+                    },
+                )?;
+                events.push((seq, event));
+                current_offset = msg.offset() + 1;
+                count += 1;
+
+                if limit.is_some_and(|limit| events.len() >= limit) {
+                    break;
+                }
+            }
+
+            if count == 0 || limit.is_some_and(|limit| events.len() >= limit) {
+                break;
+            }
+        }
+
+        Ok(events)
+    }
+}
+
+fn inspect_active_tail(path: &Path) -> Result<Option<TailRecoveryPlan>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let mut segments = BTreeSet::new();
+    let mut indexes = BTreeSet::new();
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to list event-log directory {}", path.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let file_path = entry.path();
+        let Some(stem) = file_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if stem.len() != 20 || !stem.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let base_offset = stem.parse::<u64>().with_context(|| {
+            format!(
+                "invalid commit-log segment base offset in {}",
+                file_path.display()
+            )
+        })?;
+        match file_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+        {
+            Some("log") => {
+                segments.insert(base_offset);
+            }
+            Some("index") => {
+                indexes.insert(base_offset);
+            }
+            _ => {}
+        }
+    }
+
+    if segments != indexes {
+        anyhow::bail!(
+            "commit-log segment/index set mismatch in {} (segments: {segments:?}, indexes: \
+             {indexes:?})",
+            path.display()
+        );
+    }
+    let Some(base_offset) = segments.last().copied() else {
+        return Ok(None);
+    };
+
+    let segment_path = path.join(format!("{base_offset:020}.log"));
+    let index_path = path.join(format!("{base_offset:020}.index"));
+    let mut index_bytes = Vec::new();
+    File::open(&index_path)
+        .with_context(|| format!("failed to open commit-log index {}", index_path.display()))?
+        .read_to_end(&mut index_bytes)?;
+    if index_bytes.len() % COMMITLOG_INDEX_ENTRY_BYTES != 0 {
+        anyhow::bail!(
+            "commit-log index {} has invalid length {}",
+            index_path.display(),
+            index_bytes.len()
+        );
+    }
+
+    let mut index_entries = Vec::new();
+    let mut reached_empty = false;
+    for entry in index_bytes.chunks_exact(COMMITLOG_INDEX_ENTRY_BYTES) {
+        let relative_offset = u32::from_le_bytes(entry[0..4].try_into().unwrap());
+        let file_position = u32::from_le_bytes(entry[4..8].try_into().unwrap());
+        if relative_offset == 0 && file_position == 0 {
+            reached_empty = true;
+            continue;
+        }
+        if reached_empty {
+            anyhow::bail!(
+                "commit-log index {} contains a non-empty entry after its first empty slot",
+                index_path.display()
+            );
+        }
+        let expected_relative = u32::try_from(index_entries.len())
+            .context("commit-log index contains more than u32::MAX entries")?;
+        if relative_offset != expected_relative {
+            anyhow::bail!(
+                "commit-log index {} is non-contiguous at entry {}: expected relative offset {}, \
+                 got {}",
+                index_path.display(),
+                index_entries.len(),
+                expected_relative,
+                relative_offset
+            );
+        }
+        index_entries.push(u64::from(file_position));
+    }
+
+    let mut segment = File::open(&segment_path).with_context(|| {
+        format!(
+            "failed to open commit-log segment {}",
+            segment_path.display()
+        )
+    })?;
+    let physical_end = segment.metadata()?.len();
+    let mut magic = [0u8; 2];
+    segment.read_exact(&mut magic).with_context(|| {
+        format!(
+            "commit-log segment {} is missing its header",
+            segment_path.display()
+        )
+    })?;
+    if magic != COMMITLOG_SEGMENT_MAGIC {
+        anyhow::bail!(
+            "commit-log segment {} has invalid version magic",
+            segment_path.display()
+        );
+    }
+
+    let mut indexed_end = COMMITLOG_SEGMENT_MAGIC.len() as u64;
+    for (index, position) in index_entries.iter().copied().enumerate() {
+        if position != indexed_end {
+            anyhow::bail!(
+                "commit-log index {} points entry {} at byte {}, expected byte {}",
+                index_path.display(),
+                index,
+                position,
+                indexed_end
+            );
+        }
+        let expected_offset = base_offset + index as u64;
+        let expected_sequence = expected_offset + 1;
+        let PhysicalFrame::Complete {
+            offset,
+            payload,
+            end,
+        } = read_physical_frame(&mut segment, position, physical_end)?
+        else {
+            anyhow::bail!(
+                "committed event-log record at offset {expected_offset} is truncated or has an \
+                 invalid CRC"
+            );
+        };
+        if offset != expected_offset {
+            anyhow::bail!(
+                "committed event-log record offset mismatch: expected {expected_offset}, got \
+                 {offset}"
+            );
+        }
+        InterfoldEvent::<Unsequenced>::from_bytes(&payload).with_context(|| {
+            format!("committed event-log record at sequence {expected_sequence} failed to decode")
+        })?;
+        indexed_end = end;
+    }
+
+    let next_offset = base_offset + index_entries.len() as u64;
+    let mut position = indexed_end;
+    let mut recovered_payloads = Vec::new();
+    while position < physical_end {
+        match read_physical_frame(&mut segment, position, physical_end)? {
+            PhysicalFrame::Complete {
+                offset,
+                payload,
+                end,
+            } => {
+                let expected_offset = next_offset + recovered_payloads.len() as u64;
+                if offset != expected_offset {
+                    anyhow::bail!(
+                        "unindexed event-log record offset mismatch at byte {position}: expected \
+                         {expected_offset}, got {offset}"
+                    );
+                }
+                InterfoldEvent::<Unsequenced>::from_bytes(&payload).with_context(|| {
+                    format!(
+                        "CRC-valid unindexed event-log record at offset {offset} failed to decode; \
+                         refusing to discard a potentially committed event"
+                    )
+                })?;
+                recovered_payloads.push(payload);
+                position = end;
+            }
+            PhysicalFrame::Incomplete(reason) => {
+                warn!(
+                    segment = %segment_path.display(),
+                    byte = position,
+                    %reason,
+                    "Detected an uncommitted torn event-log tail"
+                );
+                break;
+            }
+        }
+    }
+
+    if position == physical_end && recovered_payloads.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(TailRecoveryPlan {
+        segment_path,
+        indexed_end,
+        physical_end,
+        next_offset,
+        recovered_payloads,
+    }))
+}
+
+fn read_physical_frame(file: &mut File, position: u64, physical_end: u64) -> Result<PhysicalFrame> {
+    let header_end = position.saturating_add(COMMITLOG_HEADER_BYTES as u64);
+    if header_end > physical_end {
+        return Ok(PhysicalFrame::Incomplete(format!(
+            "only {} of {COMMITLOG_HEADER_BYTES} header bytes were written",
+            physical_end.saturating_sub(position)
+        )));
+    }
+
+    file.seek(SeekFrom::Start(position))?;
+    let mut header = [0u8; COMMITLOG_HEADER_BYTES];
+    file.read_exact(&mut header)?;
+    let offset = u64::from_le_bytes(header[0..8].try_into().unwrap());
+    let body_size = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
+    let metadata_size = u16::from_le_bytes(header[18..20].try_into().unwrap()) as usize;
+    if body_size > MAX_MESSAGE_BYTES || metadata_size > body_size {
+        return Ok(PhysicalFrame::Incomplete(format!(
+            "invalid frame sizes (body {body_size}, metadata {metadata_size})"
+        )));
+    }
+    let frame_size = COMMITLOG_HEADER_BYTES
+        .checked_add(body_size)
+        .context("commit-log frame size overflow")?;
+    let end = position
+        .checked_add(frame_size as u64)
+        .context("commit-log frame position overflow")?;
+    if end > physical_end {
+        return Ok(PhysicalFrame::Incomplete(format!(
+            "frame declares {frame_size} bytes but only {} remain",
+            physical_end.saturating_sub(position)
+        )));
+    }
+
+    let mut frame = vec![0u8; frame_size];
+    frame[..COMMITLOG_HEADER_BYTES].copy_from_slice(&header);
+    file.read_exact(&mut frame[COMMITLOG_HEADER_BYTES..])?;
+    let message_buf = match MessageBuf::from_bytes(frame) {
+        Ok(message_buf) => message_buf,
+        Err(error) => {
+            return Ok(PhysicalFrame::Incomplete(format!(
+                "frame CRC/length validation failed: {error:?}"
+            )))
+        }
+    };
+    let message = message_buf
+        .iter()
+        .next()
+        .context("commit-log frame contained no message")?;
+    Ok(PhysicalFrame::Complete {
+        offset,
+        payload: message.payload().to_vec(),
+        end,
+    })
+}
+
+fn apply_tail_recovery(plan: &TailRecoveryPlan) -> Result<()> {
+    let mut segment = OpenOptions::new()
+        .write(true)
+        .open(&plan.segment_path)
+        .with_context(|| {
+            format!(
+                "failed to open recoverable event-log tail {}",
+                plan.segment_path.display()
+            )
+        })?;
+    segment.set_len(plan.indexed_end).with_context(|| {
+        format!(
+            "failed to truncate uncommitted event-log tail in {}",
+            plan.segment_path.display()
+        )
+    })?;
+    segment.flush()?;
+    segment.sync_all()?;
+    warn!(
+        segment = %plan.segment_path.display(),
+        removed_bytes = plan.physical_end.saturating_sub(plan.indexed_end),
+        recovered_records = plan.recovered_payloads.len(),
+        "Recovered uncommitted event-log tail"
+    );
+    Ok(())
 }
 
 impl EventLog for CommitLogEventLog {
@@ -44,64 +477,27 @@ impl EventLog for CommitLogEventLog {
         self.append_bytes(&bytes)
     }
 
-    #[allow(clippy::while_let_loop)]
-    fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
-        // Convert 1-indexed sequence to 0-indexed offset
-        let mut current_offset = from.saturating_sub(1);
-        let mut events = Vec::new();
-        // Sequence number of the first message that failed to deserialize, if any.
-        // A deserialize failure is only tolerable when it is the *tail* of the log
-        // (a torn write from a crash mid-append). If a corrupt entry is followed by
-        // a valid one it is mid-log corruption and replaying past it would silently
-        // diverge actor state, so we halt loudly instead of skipping.
-        let mut corrupt_at: Option<u64> = None;
+    fn flush(&mut self) -> Result<()> {
+        self.log.flush().context("Failed to flush event log")?;
+        Ok(())
+    }
 
-        loop {
-            let message_buf = match self
-                .log
-                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
-            {
-                Ok(msgs) => msgs,
-                Err(_) => break,
-            };
+    fn read_from(
+        &self,
+        from: u64,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        Ok(Box::new(self.read_from_checked(from)?.into_iter()))
+    }
 
-            let mut count = 0;
-            for msg in message_buf.iter() {
-                let seq = msg.offset() + 1;
-                match bincode::deserialize::<InterfoldEvent<Unsequenced>>(msg.payload()) {
-                    Ok(event) => {
-                        if let Some(bad_seq) = corrupt_at {
-                            // We already saw a corrupt entry and now found a valid one
-                            // after it: the corruption is NOT at the tail.
-                            panic!(
-                                "Non-tail corruption in event log: entry at seq {bad_seq} failed \
-                                 to deserialize but is followed by a valid entry at seq {seq}. \
-                                 Replaying past it would silently drop an event. Halting; operator \
-                                 recovery required."
-                            );
-                        }
-                        // Convert 0-indexed offset back to 1-indexed sequence number
-                        events.push((seq, event));
-                    }
-                    Err(_) => {
-                        // Defer the decision: tolerate only if nothing valid follows.
-                        error!("Error deserializing event in read_from at seq {seq}");
-                        if corrupt_at.is_none() {
-                            corrupt_at = Some(seq);
-                        }
-                    }
-                }
-                current_offset = msg.offset() + 1; // Next offset to read from
-                count += 1;
-            }
-
-            // No more messages to read
-            if count == 0 {
-                break;
-            }
-        }
-
-        Box::new(events.into_iter())
+    fn read_from_bounded(
+        &self,
+        from: u64,
+        limit: usize,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        Ok(Box::new(
+            self.read_from_checked_with_limit(from, Some(limit))?
+                .into_iter(),
+        ))
     }
 
     fn head(&self) -> u64 {
@@ -114,6 +510,7 @@ impl EventLog for CommitLogEventLog {
 mod tests {
     use super::*;
     use e3_events::{EventConstructorWithTimestamp, EventSource, InterfoldEventData, TestEvent};
+    use std::io::{Seek, SeekFrom, Write};
     use tempfile::tempdir;
 
     // ── Event size reporting ─────────────────────────────────────────────────
@@ -411,7 +808,7 @@ mod tests {
     #[test]
     fn test_append_and_read() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
 
         let event1 = event_from(TestEvent::new("one", 1));
         let event2 = event_from(TestEvent::new("two", 2));
@@ -423,7 +820,7 @@ mod tests {
         assert_eq!(offset2, 2);
 
         // Read back from the beginning
-        let events: Vec<_> = log.read_from(1).collect();
+        let events: Vec<_> = log.read_from(1).unwrap().collect();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 1);
         assert_eq!(events[1].0, 2);
@@ -432,7 +829,7 @@ mod tests {
     #[test]
     fn test_read_from_offset() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
 
         let event1 = event_from(TestEvent::new("one", 1));
         let event2 = event_from(TestEvent::new("two", 2));
@@ -443,16 +840,31 @@ mod tests {
         log.append(&event3).unwrap();
 
         // Read from offset 2 (should get events 2 and 3)
-        let events: Vec<_> = log.read_from(2).collect();
+        let events: Vec<_> = log.read_from(2).unwrap().collect();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[1].0, 3);
     }
 
     #[test]
-    fn test_read_from_corruption_at_end_causes_infinite_loop() {
+    fn bounded_read_decodes_only_requested_window() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        for value in 1..=5 {
+            log.append(&event_from(TestEvent::new("event", value)))
+                .unwrap();
+        }
+
+        let events: Vec<_> = log.read_from_bounded(2, 2).unwrap().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[1].0, 3);
+    }
+
+    #[test]
+    fn read_from_checked_reports_tail_corruption() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
 
         for i in 0..100 {
             let e = event_from(TestEvent::new("myevent", i));
@@ -461,15 +873,128 @@ mod tests {
         // Corrupt the last message
         log.append_bytes(b"I am a bad event!").unwrap();
 
-        // Ensure if last message is corrupt we don't end up in an infinite loop
-        let _: Vec<_> = log.read_from(1).collect();
+        let error = log.read_from_checked(1).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("sequence 101"), "{message}");
+        assert!(message.contains("failed to decode"), "{message}");
     }
 
     #[test]
-    #[should_panic(expected = "Non-tail corruption")]
-    fn test_read_from_non_tail_corruption_halts() {
+    fn startup_truncates_a_torn_unindexed_tail_and_remains_appendable() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let path = dir.path().to_path_buf();
+        let segment_path = path.join("00000000000000000000.log");
+        let mut log = CommitLogEventLog::new(&path).unwrap();
+        log.append(&event_from(TestEvent::new("before-crash", 1)))
+            .unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let indexed_len = fs::metadata(&segment_path).unwrap().len();
+        OpenOptions::new()
+            .append(true)
+            .open(&segment_path)
+            .unwrap()
+            .write_all(b"partial-frame")
+            .unwrap();
+
+        let error = CommitLogEventLog::open(&path, EventLogOpenMode::ValidateOnly)
+            .err()
+            .unwrap();
+        assert!(
+            format!("{error:#}").contains("recoverable uncommitted event-log tail"),
+            "{error:#}"
+        );
+        assert_eq!(
+            fs::metadata(&segment_path).unwrap().len(),
+            indexed_len + b"partial-frame".len() as u64,
+            "detection-only validation must not mutate the segment"
+        );
+
+        let mut recovered = CommitLogEventLog::new(&path).unwrap();
+        assert_eq!(fs::metadata(&segment_path).unwrap().len(), indexed_len);
+        assert_eq!(recovered.read_from(1).unwrap().count(), 1);
+        recovered
+            .append(&event_from(TestEvent::new("after-recovery", 2)))
+            .unwrap();
+        assert_eq!(recovered.head(), 2);
+        assert_eq!(recovered.read_from(1).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn startup_reindexes_complete_crc_valid_tail_records() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let index_path = path.join("00000000000000000000.index");
+        let mut log = CommitLogEventLog::new(&path).unwrap();
+        log.append(&event_from(TestEvent::new("indexed", 1)))
+            .unwrap();
+        log.append(&event_from(TestEvent::new("index-lost", 2)))
+            .unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let mut index = OpenOptions::new().write(true).open(&index_path).unwrap();
+        index.seek(SeekFrom::Start(8)).unwrap();
+        index.write_all(&[0u8; 8]).unwrap();
+        index.sync_all().unwrap();
+        drop(index);
+
+        let error = CommitLogEventLog::open(&path, EventLogOpenMode::ValidateOnly)
+            .err()
+            .unwrap();
+        assert!(format!("{error:#}").contains("1 complete unindexed record"));
+
+        let recovered = CommitLogEventLog::new(&path).unwrap();
+        let events: Vec<_> = recovered.read_from(1).unwrap().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, 1);
+        assert_eq!(events[1].0, 2);
+        assert_eq!(recovered.head(), 2);
+    }
+
+    #[test]
+    fn startup_refuses_crc_corruption_in_an_indexed_record() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let segment_path = path.join("00000000000000000000.log");
+        let mut log = CommitLogEventLog::new(&path).unwrap();
+        log.append(&event_from(TestEvent::new("committed", 1)))
+            .unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let mut segment = OpenOptions::new().write(true).open(&segment_path).unwrap();
+        segment
+            .seek(SeekFrom::Start(
+                (COMMITLOG_SEGMENT_MAGIC.len() + COMMITLOG_HEADER_BYTES) as u64,
+            ))
+            .unwrap();
+        segment.write_all(&[0xff]).unwrap();
+        segment.sync_all().unwrap();
+
+        let error = CommitLogEventLog::new(&path).err().unwrap();
+        let message = format!("{error:#}");
+        assert!(message.contains("committed event-log record"), "{message}");
+        assert!(message.contains("invalid CRC"), "{message}");
+    }
+
+    #[test]
+    fn event_log_adapter_returns_tail_corruption() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+
+        log.append(&event_from(TestEvent::new("valid", 1))).unwrap();
+        log.append_bytes(b"I am a bad event!").unwrap();
+
+        let error = log.read_from(1).err().unwrap();
+        assert!(format!("{error:#}").contains("sequence 2"));
+    }
+
+    #[test]
+    fn test_read_from_non_tail_corruption_returns_error() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
 
         for i in 0..10 {
             let e = event_from(TestEvent::new("before", i));
@@ -483,13 +1008,14 @@ mod tests {
             log.append(&e).unwrap();
         }
 
-        let _: Vec<_> = log.read_from(1).collect();
+        let error = log.read_from(1).err().unwrap();
+        assert!(format!("{error:#}").contains("failed to decode"));
     }
 
     #[test]
     fn test_head_reports_last_sequence() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
         assert_eq!(log.head(), 0);
         log.append(&event_from(TestEvent::new("one", 1))).unwrap();
         log.append(&event_from(TestEvent::new("two", 2))).unwrap();
@@ -499,22 +1025,22 @@ mod tests {
     #[test]
     fn test_read_empty_log() {
         let dir = tempdir().unwrap();
-        let log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let log = CommitLogEventLog::new(dir.path()).unwrap();
 
-        let events: Vec<_> = log.read_from(1).collect();
+        let events: Vec<_> = log.read_from(1).unwrap().collect();
         assert!(events.is_empty());
     }
 
     #[test]
     fn test_read_past_end() {
         let dir = tempdir().unwrap();
-        let mut log = CommitLogEventLog::new(&dir.path().to_path_buf()).unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
 
         let event = event_from(TestEvent::new("one", 1));
         log.append(&event).unwrap();
 
         // Read from offset beyond what exists
-        let events: Vec<_> = log.read_from(100).collect();
+        let events: Vec<_> = log.read_from(100).unwrap().collect();
         assert!(events.is_empty());
     }
 }

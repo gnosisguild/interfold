@@ -24,7 +24,10 @@ impl Default for InMemEventLog {
 }
 
 impl EventLog for InMemEventLog {
-    fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+    fn read_from(
+        &self,
+        from: u64,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         // Convert 1-indexed sequence to 0-indexed array position
         let start_idx = from.saturating_sub(1) as usize;
 
@@ -35,7 +38,25 @@ impl EventLog for InMemEventLog {
             .enumerate()
             .map(|(i, event)| (from + i as u64, event.clone()))
             .collect();
-        Box::new(events.into_iter())
+        Ok(Box::new(events.into_iter()))
+    }
+    fn read_from_bounded(
+        &self,
+        from: u64,
+        limit: usize,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        // Convert 1-indexed sequence to 0-indexed array position and clone only the requested
+        // window. This path is used by bounded remote historical-sync queries.
+        let start_idx = from.saturating_sub(1) as usize;
+        let events: Vec<_> = self
+            .log
+            .iter()
+            .skip(start_idx)
+            .take(limit)
+            .enumerate()
+            .map(|(i, event)| (from + i as u64, event.clone()))
+            .collect();
+        Ok(Box::new(events.into_iter()))
     }
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
         self.log.push(event.to_owned());
@@ -75,7 +96,7 @@ mod tests {
         assert_eq!(offset2, 2);
 
         // Read back from the beginning
-        let events: Vec<_> = log.read_from(1).collect();
+        let events: Vec<_> = log.read_from(1).unwrap().collect();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 1);
         assert_eq!(events[1].0, 2);
@@ -94,7 +115,21 @@ mod tests {
         log.append(&event3).unwrap();
 
         // Read from offset 2 (should get events 2 and 3)
-        let events: Vec<_> = log.read_from(2).collect();
+        let events: Vec<_> = log.read_from(2).unwrap().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[1].0, 3);
+    }
+
+    #[test]
+    fn bounded_read_clones_only_requested_window() {
+        let mut log = InMemEventLog::new();
+        for value in 1..=5 {
+            log.append(&event_from(TestEvent::new("event", value)))
+                .unwrap();
+        }
+
+        let events: Vec<_> = log.read_from_bounded(2, 2).unwrap().collect();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[1].0, 3);
@@ -104,7 +139,7 @@ mod tests {
     fn test_read_empty_log() {
         let log = InMemEventLog::new();
 
-        let events: Vec<_> = log.read_from(1).collect();
+        let events: Vec<_> = log.read_from(1).unwrap().collect();
         assert!(events.is_empty());
     }
 
@@ -116,7 +151,7 @@ mod tests {
         log.append(&event).unwrap();
 
         // Read from offset beyond what exists
-        let events: Vec<_> = log.read_from(100).collect();
+        let events: Vec<_> = log.read_from(100).unwrap().collect();
         assert!(events.is_empty());
     }
 }

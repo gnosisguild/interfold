@@ -4,39 +4,68 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 use super::{
-    batch::{Batch, Flush},
+    batch::Batch,
     timelock_queue::{Clock, StartTimelock},
-    AggregateConfig, UpdateDestination,
+    AggregateConfig, FlushPendingSnapshots, UpdateDestination,
 };
 use crate::{
     AggregateId, EventContextAccessors, EventContextSeq, EventType, Insert, InsertBatch,
     InterfoldEvent, Sequenced, StoreKeys,
 };
-use actix::{Actor, Addr, Handler, Message, Recipient};
+use actix::{
+    Actor, ActorFutureExt, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture,
+    WrapFuture,
+};
+use anyhow::Result;
 use e3_utils::MAILBOX_LIMIT;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tracing::{debug, error};
 
 type Seq = u64;
 
+/// Snapshot batches are scoped by both aggregate and per-aggregate sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(super) struct SnapshotKey {
+    aggregate_id: AggregateId,
+    seq: Seq,
+}
+
+impl SnapshotKey {
+    pub(super) fn new(aggregate_id: AggregateId, seq: Seq) -> Self {
+        Self { aggregate_id, seq }
+    }
+
+    pub(super) fn aggregate_id(self) -> AggregateId {
+        self.aggregate_id
+    }
+
+    pub(super) fn seq(self) -> Seq {
+        self.seq
+    }
+}
+
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct FlushSeq(pub Seq);
+pub struct FlushSeq(pub(super) SnapshotKey);
 
 impl FlushSeq {
     pub fn seq(&self) -> u64 {
-        self.0
+        self.0.seq()
+    }
+
+    pub fn aggregate_id(&self) -> AggregateId {
+        self.0.aggregate_id()
     }
 }
 
 pub struct BatchRouter {
     config: AggregateConfig,
-    aggregates: HashMap<Seq, AggregateId>,
-    batches: HashMap<Seq, Addr<Batch>>,
+    batches: HashMap<SnapshotKey, Addr<Batch>>,
     block_height_seen: HashMap<AggregateId, u64>,
     timelock_queue: Recipient<StartTimelock>,
     db: Recipient<InsertBatch>,
     clock: Arc<dyn Clock>,
+    write_failure: Option<String>,
 }
 
 impl Actor for BatchRouter {
@@ -69,12 +98,12 @@ impl BatchRouter {
     ) -> Self {
         Self {
             batches: HashMap::new(),
-            aggregates: HashMap::new(),
             config: config.clone(),
             timelock_queue: timelock_queue.into(),
             block_height_seen: HashMap::new(),
             db: db.into(),
             clock,
+            write_failure: None,
         }
     }
 
@@ -89,19 +118,12 @@ impl BatchRouter {
         highest
     }
 
-    /// Force-flush every open batch to disk and clear routing state. Used on
-    /// shutdown so debounced batches that have not yet hit their timelock are
-    /// committed before the process exits, instead of being lost in the
-    /// ~500ms durability window (H2/GF-5).
-    fn flush_all(&mut self) {
-        if self.batches.is_empty() {
-            return;
+    fn record_write_failure(&mut self, error: anyhow::Error) {
+        let error = format!("{error:#}");
+        error!(%error, "Snapshot batch flush failed");
+        if self.write_failure.is_none() {
+            self.write_failure = Some(error);
         }
-        debug!("Force-flushing {} open batch(es)", self.batches.len());
-        for (_, batch) in self.batches.drain() {
-            batch.do_send(Flush);
-        }
-        self.aggregates.clear();
     }
 }
 
@@ -117,16 +139,22 @@ impl Handler<Insert> for BatchRouter {
         };
 
         // Route to existing batch, or fall back to disk
-        match self.batches.get(&ctx.seq()) {
+        let key = SnapshotKey::new(ctx.aggregate_id(), ctx.seq());
+        match self.batches.get(&key) {
             Some(batch) => {
-                debug!("Forwarding to batch actor for seq={}", ctx.seq());
+                debug!(
+                    aggregate = %key.aggregate_id(),
+                    seq = key.seq(),
+                    "Forwarding insert to snapshot batch"
+                );
                 batch.do_send(msg);
             }
             // This must mean that this insert is late
             None => {
                 debug!(
-                    "No batch available for seq={} assuming this is late. Flushing to disk.",
-                    ctx.seq()
+                    aggregate = %key.aggregate_id(),
+                    seq = key.seq(),
+                    "No snapshot batch is open; flushing late insert directly"
                 );
                 self.db.do_send(InsertBatch::new(vec![msg]));
             }
@@ -137,40 +165,46 @@ impl Handler<Insert> for BatchRouter {
 impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
-        // On shutdown, force every still-open batch to disk before the process
-        // exits. The batch that carries the Shutdown event itself is committed
-        // by the normal path below; this drains any earlier debounced batches
-        // whose timelock has not yet fired (H2/GF-5).
+        // Keep every open batch registered until the acknowledged
+        // `FlushPendingSnapshots` fence drains it. Enqueueing child flushes here and clearing the
+        // map lets the later fence return before the destination store has handled them.
         if msg.event_type_enum() == EventType::Shutdown {
-            self.flush_all();
+            debug!(
+                open_batches = self.batches.len(),
+                "Shutdown observed; snapshot batches await the acknowledged drain"
+            );
             return;
         }
 
         let ec = msg.get_ctx();
-        let prev_seq = ec.seq() - 1;
-        if self.batches.contains_key(&prev_seq) {
-            let Some(prev_agg) = self.aggregates.get(&prev_seq) else {
-                error!(
-                    "invariant violation: prev_agg must exist if batches has a batch for seq={}",
-                    prev_seq
+        let agg_id = ec.aggregate_id();
+        if let Some(prev_seq) = ec.seq().checked_sub(1) {
+            let previous = SnapshotKey::new(agg_id, prev_seq);
+            if self.batches.contains_key(&previous) {
+                debug!(
+                        aggregate = %agg_id,
+                        seq = prev_seq,
+                        "Scheduling previous snapshot batch"
                 );
-                return;
-            };
+                let delay = self.config.get_delay(&agg_id);
 
-            debug!(
-                "Preparing timelock to clear batch for seq={}, agg={}",
-                prev_seq, prev_agg
-            );
-            let delay = self.config.get_delay(prev_agg);
+                let now = Duration::from_micros(self.clock.now_micros());
 
-            let now = Duration::from_micros(self.clock.now_micros());
-
-            self.timelock_queue
-                .do_send(StartTimelock::new(prev_seq, now, delay));
+                self.timelock_queue
+                    .do_send(StartTimelock::new(previous, now, delay));
+            }
         }
 
-        debug!("Creating batch for {}", ec.seq());
-        let agg_id = ec.aggregate_id();
+        let key = SnapshotKey::new(agg_id, ec.seq());
+        if self.batches.contains_key(&key) {
+            error!(
+                aggregate = %agg_id,
+                seq = ec.seq(),
+                "Snapshot batch already exists for event context; retaining the original batch"
+            );
+            return;
+        }
+        debug!(aggregate = %agg_id, seq = ec.seq(), "Creating snapshot batch");
         let highest_block = self.get_highest_block(agg_id, ec.block());
         let batch = Batch::spawn(
             self.db.clone(),
@@ -193,20 +227,77 @@ impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
             ],
         );
 
-        self.batches.insert(ec.seq(), batch);
-        self.aggregates.insert(ec.seq(), ec.aggregate_id());
+        self.batches.insert(key, batch);
     }
 }
 
 impl Handler<FlushSeq> for BatchRouter {
     type Result = ();
-    fn handle(&mut self, msg: FlushSeq, _: &mut Self::Context) -> Self::Result {
-        debug!("Flushing sequence... {}", msg.seq());
-        if let Some(batch) = self.batches.get(&msg.seq()) {
-            batch.do_send(Flush);
-            self.batches.remove(&msg.seq());
-            self.aggregates.remove(&msg.seq());
+    fn handle(&mut self, msg: FlushSeq, ctx: &mut Self::Context) -> Self::Result {
+        let key = msg.0;
+        debug!(
+            aggregate = %key.aggregate_id(),
+            seq = key.seq(),
+            "Flushing snapshot batch"
+        );
+        let Some(batch) = self.batches.remove(&key) else {
+            return;
+        };
+
+        let flush = async move {
+            batch
+                .send(FlushPendingSnapshots)
+                .await
+                .map_err(anyhow::Error::from)??;
+            Ok::<(), anyhow::Error>(())
         }
+        .into_actor(self)
+        .map(|result, actor, _| {
+            if let Err(error) = result {
+                actor.record_write_failure(error);
+            }
+        });
+
+        // Preserve event/insert ordering and ensure the shutdown fence cannot overtake a normal
+        // timelock flush that is already in the router mailbox.
+        ctx.wait(flush);
+    }
+}
+
+impl Handler<FlushPendingSnapshots> for BatchRouter {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: FlushPendingSnapshots, _: &mut Self::Context) -> Self::Result {
+        let batches: Vec<_> = self.batches.drain().map(|(_, batch)| batch).collect();
+        let db = self.db.clone();
+        let previous_failure = self.write_failure.take();
+        Box::pin(async move {
+            let mut failures = previous_failure.into_iter().collect::<Vec<_>>();
+            for batch in batches {
+                match batch.send(FlushPendingSnapshots).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => failures.push(format!("{error:#}")),
+                    Err(error) => failures.push(format!(
+                        "snapshot batch stopped before its final flush: {error}"
+                    )),
+                }
+            }
+
+            // Destination-mailbox barrier for late/direct inserts that were already sent by this
+            // router before the shutdown fence. The empty transactional batch has no data effect.
+            match db.send(InsertBatch::new(vec![])).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => failures.push(format!("{error:#}")),
+                Err(error) => failures.push(format!(
+                    "snapshot destination stopped before its final barrier: {error}"
+                )),
+            }
+
+            if !failures.is_empty() {
+                anyhow::bail!("snapshot drain failed: {}", failures.join("; "));
+            }
+            Ok(())
+        })
     }
 }
 

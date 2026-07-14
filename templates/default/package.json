@@ -19,7 +19,8 @@
     "dev:server": "./scripts/dev_server.sh",
     "predev:all": "[ ! -f './.interfold/generated/contracts/ImageID.sol' ] && interfold program compile || true",
     "test": "hardhat test",
-    "test:integration": "./scripts/test_integration.sh"
+    "test:server": "vitest run ./server/runner.test.ts",
+    "test:integration": "pnpm test:server && ./scripts/test_integration.sh"
   },
   "dependencies": {
     "@interfold/contracts": "workspace:*",

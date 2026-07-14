@@ -23,7 +23,7 @@ export enum InterfoldEventType {
 export enum RegistryEventType {
   COMMITTEE_REQUESTED = 'CommitteeRequested',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
-  COMMITTEE_FINALIZED = 'CommitteeFinalized',
+  COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',

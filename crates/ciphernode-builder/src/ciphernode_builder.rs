@@ -10,7 +10,7 @@ use crate::{
 };
 use actix::{Actor, Addr};
 use alloy::primitives::Address;
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use derivative::Derivative;
 use e3_aggregator::ext::{PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension};
 use e3_aggregator::CommitteeFinalizer;
@@ -23,28 +23,28 @@ use e3_events::{
 };
 use e3_evm::{
     fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
+    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
+    InterfoldSolWriter, ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
 use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
-    create_channel_bridge, setup_libp2p_keypair, setup_net, setup_net_interface,
+    create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
     NetRepositoryFactory,
 };
-use e3_request::E3LifecycleCoordinator;
 use e3_request::E3Router;
+use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
     CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
-    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
-    SortitionRepositoryFactory,
+    FinalizedCommitteeRetention, FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
+    Sortition, SortitionBackend, SortitionRepositoryFactory,
 };
-use e3_sync::sync;
+use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
-use e3_zk_prover::{setup_zk_actors, ZkBackend};
+use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -73,6 +73,9 @@ pub struct CiphernodeBuilder {
     in_mem_store: Option<Addr<InMemStore>>,
     keyshare: Option<KeyshareKind>,
     logging: bool,
+    max_buffered_evm_events: usize,
+    max_buffered_net_bytes: usize,
+    max_buffered_net_events: usize,
     name: Option<String>,
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
@@ -138,6 +141,9 @@ impl CiphernodeBuilder {
             in_mem_store: None,
             keyshare: None,
             logging: false,
+            max_buffered_evm_events: 100_000,
+            max_buffered_net_bytes: 256 * 1024 * 1024,
+            max_buffered_net_events: 1_024,
             name: None,
             multithread_cache: None,
             multithread_concurrent_jobs: None,
@@ -377,6 +383,21 @@ impl CiphernodeBuilder {
         self
     }
 
+    /// Bound decoded EVM events retained per chain while initial sync orders historical and live
+    /// observations. Exhaustion fails startup instead of silently dropping chain history.
+    pub fn with_max_buffered_evm_events(mut self, limit: usize) -> Self {
+        self.max_buffered_evm_events = limit;
+        self
+    }
+
+    /// Bound count and estimated bytes retained from the network while initial synchronization is
+    /// in progress. Exhaustion fails startup rather than dropping protocol input.
+    pub fn with_network_buffer_limits(mut self, max_events: usize, max_bytes: usize) -> Self {
+        self.max_buffered_net_events = max_events;
+        self.max_buffered_net_bytes = max_bytes;
+        self
+    }
+
     /// Setup a ThresholdPlaintextAggregator
     pub fn with_threshold_plaintext_aggregation(mut self) -> Self {
         self.threshold_plaintext_agg = true;
@@ -470,6 +491,18 @@ impl CiphernodeBuilder {
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+        ensure!(
+            self.max_buffered_evm_events > 0,
+            "max_buffered_evm_events must be greater than zero"
+        );
+        ensure!(
+            self.max_buffered_net_events > 0,
+            "max_buffered_net_events must be greater than zero"
+        );
+        ensure!(
+            self.max_buffered_net_bytes > 0,
+            "max_buffered_net_bytes must be greater than zero"
+        );
         let local_bus = self.resolve_bus();
 
         // Optional event collectors for debugging / testing.
@@ -499,6 +532,12 @@ impl CiphernodeBuilder {
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
         let repositories = Arc::new(store.repositories());
+
+        // Establish storage compatibility before signers, actors, or forked runtime events can
+        // create durable state. Running this only inside `sync` is too late: actor startup can
+        // make a fresh store non-empty and cause it to look like unversioned legacy data.
+        preflight_schema_version(&repositories, &aggregate_config, &eventstore.seq()).await?;
+
         let mut provider_cache =
             provider_cache.with_write_support(Arc::clone(&self.cipher), Arc::clone(&repositories));
 
@@ -520,7 +559,7 @@ impl CiphernodeBuilder {
         E3LifecycleCoordinator::attach(&bus, store.clone()).await?;
 
         // Setup EVM contract event listeners
-        let evm_config = self.setup_evm_system(&mut provider_cache, &bus).await?;
+        let (evm_config, evm_gateways) = self.setup_evm_system(&mut provider_cache, &bus).await?;
 
         // Fetch on-chain ZK/slashing configuration
         let (dkg_fold_verifier_by_chain, accusation_vote_validity_by_chain) =
@@ -546,30 +585,41 @@ impl CiphernodeBuilder {
         let topic = "interfold-gossip";
         let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
         let network_status = interface.status();
-        setup_net(topic, bus.clone(), eventstore.ts(), interface)?;
+        let net_buffer = setup_net_with_limits(
+            topic,
+            bus.clone(),
+            eventstore.ts(),
+            interface,
+            self.max_buffered_net_events,
+            self.max_buffered_net_bytes,
+        )?;
 
         // Run the sync routine
-        sync(
-            &bus,
-            &evm_config,
-            &repositories,
-            &aggregate_config,
-            &eventstore.seq(),
-        )
-        .await?;
+        let seq_eventstore = eventstore.seq();
+        tokio::try_join!(
+            sync(
+                &bus,
+                &evm_config,
+                &repositories,
+                &aggregate_config,
+                &seq_eventstore,
+            ),
+            wait_for_evm_gateways(evm_gateways),
+            net_buffer.wait_until_running(),
+        )?;
 
-        Ok(CiphernodeHandle::new(
-            addr.to_owned(),
+        Ok(CiphernodeHandle {
+            address: addr.to_owned(),
             store,
             bus,
             history,
             errors,
             peer_id,
-            net_kind,
+            net_interface: net_kind,
             network_status,
             eventstore,
-            aggregate_config.indexed_ids(),
-        ))
+            aggregate_ids: aggregate_config.indexed_ids(),
+        })
     }
 
     // ── build() sub-functions ──────────────────────────────────────────
@@ -618,11 +668,26 @@ impl CiphernodeBuilder {
     ) -> Result<(Addr<Sortition>, Addr<CiphernodeSelector>)> {
         let ciphernode_selector =
             CiphernodeSelector::attach(bus, repositories.ciphernode_selector(), addr).await?;
+        let committees_repo = repositories.finalized_committees();
+        let mut committees = committees_repo.read().await?.unwrap_or_default();
+        let lifecycle = repositories
+            .e3_lifecycle()
+            .read()
+            .await?
+            .unwrap_or_default();
+        let pruned = FinalizedCommitteeRetention::prune_terminal(&mut committees, &lifecycle);
+        if pruned > 0 {
+            committees_repo.write_sync(&committees).await?;
+            info!(
+                pruned,
+                "Removed terminal finalized committees during startup"
+            );
+        }
         let sortition = Sortition::attach(
             bus,
             repositories.sortition(),
             repositories.node_state(),
-            repositories.finalized_committees(),
+            committees_repo,
             self.sortition_backend.clone(),
             ciphernode_selector.clone(),
             addr,
@@ -635,13 +700,14 @@ impl CiphernodeBuilder {
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
-    ) -> Result<EvmEventConfig> {
+    ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
             &self.chains,
             provider_cache,
             bus,
             &self.contract_components,
             self.pubkey_agg,
+            self.max_buffered_evm_events,
         )
         .await
     }
@@ -710,6 +776,19 @@ impl CiphernodeBuilder {
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let mut e3_builder = E3Router::builder(bus, store.clone());
+        let repositories = store.repositories();
+        let persisted_committees = repositories
+            .finalized_committees()
+            .read()
+            .await?
+            .unwrap_or_default();
+        let persisted_e3_metadata = repositories
+            .ciphernode_selector()
+            .read()
+            .await?
+            .map(|state| state.e3_cache)
+            .unwrap_or_default();
+        let zk_recovery = ZkActorRecovery::new(persisted_committees, persisted_e3_metadata);
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
@@ -726,7 +805,13 @@ impl CiphernodeBuilder {
                 e3_builder.with(ThresholdKeyshareExtension::create(bus, &self.cipher, addr));
 
             info!("Setting up ZK actors");
-            setup_zk_actors(bus, backend, _signer, dkg_fold_verifier_by_chain.clone());
+            setup_zk_actors(
+                bus,
+                backend,
+                _signer,
+                dkg_fold_verifier_by_chain.clone(),
+                zk_recovery.clone(),
+            );
         }
 
         // ── Public key aggregation ──
@@ -745,7 +830,13 @@ impl CiphernodeBuilder {
                     .ok_or_else(|| anyhow::anyhow!("ZK backend is required for aggregator"))?;
                 let signer = provider_cache.ensure_signer().await?;
                 info!("Setting up ZK actors for aggregator");
-                setup_zk_actors(bus, backend, signer, dkg_fold_verifier_by_chain.clone());
+                setup_zk_actors(
+                    bus,
+                    backend,
+                    signer,
+                    dkg_fold_verifier_by_chain.clone(),
+                    zk_recovery,
+                );
             }
         }
 
@@ -890,8 +981,7 @@ fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
 fn create_aggregate_delay(chain: &ChainConfig, actual_chain_id: u64) -> (AggregateId, Duration) {
     let aggregate_id = AggregateId::from_chain_id(Some(actual_chain_id));
     let finalization_ms = chain.finalization_ms.unwrap_or(0);
-    let delay_us = finalization_ms * 1000; // ms → microseconds
-    (aggregate_id, Duration::from_micros(delay_us))
+    (aggregate_id, Duration::from_millis(finalization_ms))
 }
 
 /// Build delays configuration from chain providers
@@ -918,8 +1008,10 @@ async fn setup_evm_system(
     bus: &BusHandle,
     contract_components: &ContractComponents,
     pubkey_agg: bool,
-) -> Result<EvmEventConfig> {
+    max_buffered_evm_events: usize,
+) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let mut evm_config = EvmEventConfig::new();
+    let mut gateways = Vec::new();
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
@@ -930,7 +1022,9 @@ async fn setup_evm_system(
             ProviderConfig::new(rpc_url, chain.rpc_auth.clone()).into_read_provider_factory();
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
-        system.with_provider_factory(provider_factory);
+        system
+            .with_provider_factory(provider_factory)
+            .with_buffer_limit(max_buffered_evm_events);
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
@@ -1028,8 +1122,68 @@ async fn setup_evm_system(
             }
         }
 
-        system.build();
+        gateways.push(system.build_with_readiness());
     }
 
-    Ok(evm_config)
+    Ok((evm_config, gateways))
+}
+
+async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<()> {
+    futures::future::try_join_all(
+        gateways
+            .into_iter()
+            .map(EvmChainGatewayHandle::wait_until_live),
+    )
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_aggregate_delay;
+    use e3_config::{
+        chain_config::ChainConfig,
+        contract::{Contract, ContractAddresses},
+        rpc::RpcAuth,
+    };
+    use std::time::Duration;
+
+    fn chain_with_finalization_ms(finalization_ms: Option<u64>) -> ChainConfig {
+        let contract = || Contract::AddressOnly(Address::ZERO.to_string());
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_owned(),
+            rpc_url: "http://127.0.0.1:8545".to_owned(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms,
+            reorg_confirmations: None,
+            chain_id: Some(1),
+        }
+    }
+
+    use alloy::primitives::Address;
+
+    #[test]
+    fn aggregate_delay_preserves_large_millisecond_values_without_overflow() {
+        let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(Some(u64::MAX)), 1);
+
+        assert_eq!(delay, Duration::from_millis(u64::MAX));
+    }
+
+    #[test]
+    fn aggregate_delay_defaults_to_zero() {
+        let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(None), 1);
+
+        assert_eq!(delay, Duration::ZERO);
+    }
 }

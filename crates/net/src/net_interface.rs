@@ -14,7 +14,11 @@ use crate::{
 };
 use crate::{
     direct_responder::{ChannelType, DirectResponder},
-    domain::{correlator::Correlator, peer_failure_tracker::PeerFailureTracker},
+    domain::{
+        correlator::Correlator,
+        peer_failure_tracker::PeerFailureTracker,
+        wire::{MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
+    },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
     keypair::Libp2pKeypair,
     net_interface_handle::NetInterfaceHandle,
@@ -57,12 +61,28 @@ use tracing::{debug, error, info, trace, warn};
 
 const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/interfold/kad/1.0.0");
 const MAX_KADEMLIA_PAYLOAD_MB: usize = 100;
-const MAX_KADEMLIA_RECORD_MB: usize = 25; // Largest record: ~21MB ThresholdShare with prod params
 const DHT_MAX_RECORDS: usize = 4096;
-const MAX_GOSSIP_MSG_SIZE_KB: usize = 10240; // 10MB — prod params C6 proofs are ~4.6MB
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 40;
 const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
+
+/// Independent failure counters used to recover peer connectivity.
+///
+/// Identity mismatches are tracked separately because ordinary dial failures
+/// must not consume the one-time recovery action for a peer whose key changed.
+struct PeerConnectionFailures {
+    dial: PeerFailureTracker,
+    identity_mismatch: PeerFailureTracker,
+}
+
+impl PeerConnectionFailures {
+    fn new() -> Self {
+        Self {
+            dial: PeerFailureTracker::new(),
+            identity_mismatch: PeerFailureTracker::new(),
+        }
+    }
+}
 
 /// Returns true if the multiaddr contains a loopback IP (127.0.0.0/8 or ::1).
 /// Loopback addresses are only meaningful on the local machine and must not be
@@ -185,12 +205,7 @@ impl Libp2pNetInterface {
         let cmd_tx = self.cmd_tx.clone();
         let cmd_rx = &mut self.cmd_rx;
         let mut correlator = Correlator::new();
-        let mut peer_failures = PeerFailureTracker::new();
-        // Tracks WrongPeerId occurrences per stale peer ID, separately from
-        // generic dial failures: a node that was offline accumulates ordinary
-        // failures before coming back with new keys, and the first mismatch
-        // must still be treated as the first (triggering redial + bootstrap).
-        let mut peer_id_mismatches = PeerFailureTracker::new();
+        let mut peer_failures = PeerConnectionFailures::new();
         // This is to make sure we dont spam warnings in the logs
         let mut last_backpressure_warn = Instant::now();
 
@@ -247,7 +262,7 @@ impl Libp2pNetInterface {
                 }
                 // Process events
                 event = self.swarm.select_next_some() =>  {
-                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, &self.status, event).await {
+                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &self.status, event).await {
                         Ok(_) => (),
                         Err(e) => error!("Error processing NetEvent: {e}")
                     }
@@ -281,7 +296,7 @@ fn create_behaviour(
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
-        .max_transmit_size(MAX_GOSSIP_MSG_SIZE_KB * 1024)
+        .max_transmit_size(MAX_GOSSIP_BYTES)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()
         .map_err(Error::other)?;
@@ -306,7 +321,7 @@ fn create_behaviour(
         .set_query_timeout(Duration::from_secs(30));
     let store_config = MemoryStoreConfig {
         max_records: DHT_MAX_RECORDS,
-        max_value_bytes: MAX_KADEMLIA_RECORD_MB * 1024 * 1024,
+        max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
         max_providers_per_key: usize::MAX,
         max_provided_keys: DHT_MAX_RECORDS,
     };
@@ -329,8 +344,7 @@ async fn process_swarm_event(
     event_tx: &broadcast::Sender<NetEvent>,
     cmd_tx: &mpsc::Sender<NetCommand>,
     correlator: &mut Correlator,
-    peer_failures: &mut PeerFailureTracker,
-    peer_id_mismatches: &mut PeerFailureTracker,
+    peer_failures: &mut PeerConnectionFailures,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
@@ -343,8 +357,8 @@ async fn process_swarm_event(
             ..
         } => {
             // Reset failure counts on successful connection
-            peer_failures.reset(&peer_id);
-            peer_id_mismatches.reset(&peer_id);
+            peer_failures.dial.reset(&peer_id);
+            peer_failures.identity_mismatch.reset(&peer_id);
             if num_established.get() == 1 {
                 let total = swarm.connected_peers().count();
                 info!("Peer connected: {peer_id} (total: {total})");
@@ -390,7 +404,7 @@ async fn process_swarm_event(
             if let Some(ref failed_peer) = peer_id {
                 if let DialError::WrongPeerId {
                     obtained,
-                    ref endpoint,
+                    ref address,
                 } = error
                 {
                     // The node at this address has a new PeerId (e.g. restarted with new keys).
@@ -398,11 +412,12 @@ async fn process_swarm_event(
                     // The stale entry can be re-learned from other peers' routing tables,
                     // so repeats are expected: handle them quietly (debug, no bootstrap)
                     // to avoid flooding the logs and re-fueling the dial loop.
-                    let remote_addr = endpoint.get_remote_address().clone();
-                    let mismatch_count = peer_id_mismatches.record_failure(failed_peer);
+                    let remote_addr = address.clone();
+                    let mismatch_count =
+                        peer_failures.identity_mismatch.record_failure(failed_peer);
                     // The stale ID is being removed from the routing table, so its
                     // generic dial-failure history is no longer meaningful.
-                    peer_failures.reset(failed_peer);
+                    peer_failures.dial.reset(failed_peer);
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
@@ -457,14 +472,14 @@ async fn process_swarm_event(
                         }
                     }
                 } else {
-                    let count = peer_failures.record_failure(failed_peer);
+                    let count = peer_failures.dial.record_failure(failed_peer);
 
                     if count >= MAX_CONSECUTIVE_DIAL_FAILURES {
                         info!(
                             "Evicting unreachable peer {failed_peer} after {count} consecutive failures"
                         );
                         swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
-                        peer_failures.reset(failed_peer);
+                        peer_failures.dial.reset(failed_peer);
                     } else {
                         debug!(
                             "Dial failure for {failed_peer} (attempt {count}/{MAX_CONSECUTIVE_DIAL_FAILURES}): {error}"
@@ -593,21 +608,28 @@ async fn process_swarm_event(
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::Message {
+                peer,
+                connection_id,
                 message:
                     RequestResponseMessage::Request {
                         request,
                         channel,
                         request_id,
                     },
-                ..
             },
         )) => {
-            debug!("Incoming request received (id={})", request_id);
+            debug!(
+                "Incoming request received (peer={}, connection={}, id={})",
+                peer, connection_id, request_id
+            );
             let responder = DirectResponder::new(request_id, ChannelType::Channel(channel), cmd_tx)
                 .with_request(request);
 
             // received a request for events
-            event_tx.send(NetEvent::IncomingRequest(IncomingRequest { responder }))?;
+            event_tx.send(NetEvent::IncomingRequest(IncomingRequest {
+                peer,
+                responder,
+            }))?;
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
@@ -635,13 +657,14 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::OutboundFailure {
                 peer,
+                connection_id,
                 request_id,
                 error,
             },
         )) => {
             warn!(
-                "Outbound request failed: peer={}, id={}, error={:?}",
-                peer, request_id, error
+                "Outbound request failed: peer={}, connection={}, id={}, error={:?}",
+                peer, connection_id, request_id, error
             );
             let correlation_id = correlator.expire(request_id)?;
             event_tx.send(NetEvent::OutgoingRequestFailed(OutgoingRequestFailed {
@@ -653,20 +676,28 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             RequestResponseEvent::InboundFailure {
                 peer,
+                connection_id,
                 request_id,
                 error,
             },
         )) => {
             warn!(
-                "Inbound request failed: peer={}, id={}, error={:?}",
-                peer, request_id, error
+                "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
+                peer, connection_id, request_id, error
             );
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
-            RequestResponseEvent::ResponseSent { peer, request_id },
+            RequestResponseEvent::ResponseSent {
+                peer,
+                connection_id,
+                request_id,
+            },
         )) => {
-            debug!("Response sent to peer={}, id={}", peer, request_id);
+            debug!(
+                "Response sent to peer={}, connection={}, id={}",
+                peer, connection_id, request_id
+            );
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(

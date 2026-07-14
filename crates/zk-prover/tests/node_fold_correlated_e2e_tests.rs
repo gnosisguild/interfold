@@ -157,7 +157,8 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     let (backend, temp) = setup_test_prover(&bb).await;
     let prover = ZkProver::new(&backend);
-    let artifacts_dir = preset.artifacts_dir();
+    let artifacts_dir =
+        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
 
     for g in [
         "pk",

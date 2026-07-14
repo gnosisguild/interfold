@@ -4,9 +4,12 @@
 node:
   address: '${NODE_ADDRESS}'
   quic_port: ${QUIC_PORT}
-  autonetkey: true
-  autopassword: true
-  autowallet: true
+  # Credentials are provisioned from /run/secrets/secrets.json before start.
+  # Fail closed if required credential state is absent instead of generating a
+  # different identity during a restart or maintenance CLI invocation.
+  autonetkey: false
+  autopassword: false
+  autowallet: false
 
 chains:
   - name: '${NETWORK}'

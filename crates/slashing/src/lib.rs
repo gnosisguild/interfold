@@ -11,6 +11,7 @@
 
 mod actors;
 mod domain;
+mod workflow;
 
 pub mod accusation_manager_ext;
 pub mod commitment_consistency_checker_ext;

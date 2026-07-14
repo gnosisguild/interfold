@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use e3_console::{log, Console};
+use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 use super::utils::{ensure_allowance, parse_amount};
@@ -31,6 +32,7 @@ pub(crate) async fn execute(
                 .await?
                 .get_receipt()
                 .await?;
+            require_successful_receipt("add ticket balance", &receipt)?;
             log!(
                 out,
                 "Purchased {} tickets (tx: {:#x})",
@@ -49,6 +51,7 @@ pub(crate) async fn execute(
                 .await?
                 .get_receipt()
                 .await?;
+            require_successful_receipt("remove ticket balance", &receipt)?;
             log!(
                 out,
                 "Removed {} tickets (tx: {:#x})",

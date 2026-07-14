@@ -7,7 +7,10 @@
 use crate::sled_utils::{clear_all_caches, get_or_open_db_tree};
 use anyhow::{Context, Result};
 use e3_events::{Get, Insert, Remove};
-use sled::{transaction::ConflictableTransactionError, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError},
+    Tree,
+};
 use std::path::PathBuf;
 
 pub struct SledDb {
@@ -44,6 +47,29 @@ impl SledDb {
         Ok(())
     }
 
+    /// Atomically insert `msgs` only if none of their keys exist.
+    pub fn insert_batch_if_absent(&mut self, msgs: &[Insert]) -> Result<bool> {
+        let result = self.db.transaction(|tx_db| {
+            for msg in msgs {
+                if tx_db.get(msg.key().as_slice())?.is_some() {
+                    return Err(ConflictableTransactionError::Abort(()));
+                }
+            }
+            for msg in msgs {
+                tx_db.insert(msg.key().as_slice(), msg.value().to_vec())?;
+            }
+            Ok::<(), ConflictableTransactionError<()>>(())
+        });
+
+        match result {
+            Ok(()) => Ok(true),
+            Err(TransactionError::Abort(())) => Ok(false),
+            Err(TransactionError::Storage(error)) => {
+                Err(error).context("Could not conditionally insert batch into db")
+            }
+        }
+    }
+
     pub fn remove(&mut self, msg: Remove) -> Result<()> {
         self.db
             .remove(msg.key())
@@ -59,6 +85,32 @@ impl SledDb {
             .get(key)
             .context(format!("Failed to fetch {}", str_key))?;
         Ok(res.map(|v| v.to_vec()))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.db.is_empty()
+    }
+
+    /// Return whether the tree contains exactly the supplied keys and no others.
+    pub fn has_exact_keys(&self, keys: &[Vec<u8>]) -> Result<bool> {
+        let mut expected = keys.to_vec();
+        expected.sort();
+        expected.dedup();
+
+        // `Tree::len` walks the full tree. Schema preflight must remain bounded even when an
+        // unversioned store is unexpectedly large, so inspect at most one key beyond the allowed
+        // set and fail closed on any iterator error.
+        let observed = self
+            .db
+            .iter()
+            .keys()
+            .take(expected.len() + 1)
+            .collect::<sled::Result<Vec<_>>>()?;
+        Ok(observed.len() == expected.len()
+            && observed
+                .iter()
+                .zip(expected)
+                .all(|(observed, expected)| observed.as_ref() == expected.as_slice()))
     }
 
     pub fn flush(&self) -> Result<()> {
@@ -178,6 +230,44 @@ mod tests {
             "Non-existent key should return None"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn conditional_batch_insert_never_overwrites_a_partial_key_set() -> Result<()> {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_conditional_batch.db");
+        let mut db = SledDb::new(&db_path, "datastore")?;
+        db.insert(Insert::new("existing", b"original".to_vec()))?;
+
+        let inserted = db.insert_batch_if_absent(&[
+            Insert::new("existing", b"replacement".to_vec()),
+            Insert::new("missing", b"new".to_vec()),
+        ])?;
+
+        assert!(!inserted);
+        assert_eq!(db.get(Get::new("existing"))?, Some(b"original".to_vec()));
+        assert_eq!(db.get(Get::new("missing"))?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_key_match_rejects_missing_and_extra_keys() -> Result<()> {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_exact_keys.db");
+        let mut db = SledDb::new(&db_path, "datastore")?;
+        db.insert(Insert::new("identity-a", b"1".to_vec()))?;
+        db.insert(Insert::new("identity-b", b"2".to_vec()))?;
+
+        assert!(db.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()])?);
+        assert!(!db.has_exact_keys(&[b"identity-a".to_vec()])?);
+
+        db.insert(Insert::new("protocol-state", b"3".to_vec()))?;
+        assert!(!db.has_exact_keys(&[b"identity-a".to_vec(), b"identity-b".to_vec()])?);
         Ok(())
     }
 }

@@ -1,5 +1,7 @@
 #!/bin/bash
-set -e
+set -Eeuo pipefail
+
+umask 077
 
 # Paths to config and secrets
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
@@ -16,28 +18,26 @@ if [ ! -f "$SECRETS_FILE" ]; then
     exit 1
 fi
 
-# Read secrets from the JSON file
-PRIVATE_KEY=$(jq -r '.private_key' "$SECRETS_FILE")
-PASSWORD=$(jq -r '.password' "$SECRETS_FILE")
-NETWORK_PRIVATE_KEY=$(jq -r '.network_private_key' "$SECRETS_FILE")
-
-if [ -z "$PRIVATE_KEY" ] || [ -z "$PASSWORD" ] || [ -z "$NETWORK_PRIVATE_KEY" ]; then
-    echo "Error: Missing 'private_key', 'password' or 'network_private_key' in secrets file!"
+jq -e '
+    type == "object" and
+    (.password | type == "string" and length > 0) and
+    (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
+' "$SECRETS_FILE" >/dev/null || {
+    echo "Error: Invalid 'password' or 'private_key' in secrets file!"
     exit 1
-fi
+}
 
 # Set password
 echo "Setting password"
-interfold password set --config "$CONFIG_FILE" --password "$PASSWORD"
-
-# Set network private key
-echo "Setting network private key"
-interfold net set-key --config "$CONFIG_FILE" --net-keypair "$NETWORK_PRIVATE_KEY"
+jq -er '.password' "$SECRETS_FILE" | interfold password set --config "$CONFIG_FILE" --password-stdin
 
 echo "Setting wallet key"
-interfold wallet set --config "$CONFIG_FILE" --private-key "$PRIVATE_KEY"
+# The refactored wallet command atomically derives and stores the libp2p key
+# from the operator key, so a separate network-key command is no longer used.
+jq -er '.private_key' "$SECRETS_FILE" | interfold wallet set --config "$CONFIG_FILE" --private-key-stdin
+
+rm -f "$SECRETS_FILE"
 
 echo "Starting ciphernode"
 exec interfold start -v --config "$CONFIG_FILE"
-
 

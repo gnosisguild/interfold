@@ -158,7 +158,7 @@ impl DashboardState {
         let response = tokio::time::timeout(Duration::from_secs(5), response)
             .await
             .context("EventStore dashboard query timed out")??;
-        Ok(response.into_events())
+        response.into_events()
     }
 
     async fn refresh_operator_status(&self) -> OperatorStatusSnapshot {

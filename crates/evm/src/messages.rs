@@ -22,6 +22,26 @@ pub struct HistoricalSyncComplete {
     pub id: CorrelationId,
 }
 
+/// Explicit negative acknowledgement for a provider log that cannot enter the
+/// canonical event pipeline. Historical synchronization must fail closed on
+/// this message rather than letting a later log advance its completion marker.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EvmLogRejected {
+    pub id: CorrelationId,
+    pub chain_id: u64,
+    pub reason: String,
+}
+
+impl EvmLogRejected {
+    pub fn new(id: CorrelationId, chain_id: u64, reason: impl Into<String>) -> Self {
+        Self {
+            id,
+            chain_id,
+            reason: reason.into(),
+        }
+    }
+}
+
 impl HistoricalSyncComplete {
     pub fn new(chain_id: u64, prev_event: Option<CorrelationId>) -> Self {
         let id = CorrelationId::new();
@@ -97,6 +117,8 @@ pub enum InterfoldEvmEvent {
     Event(EvmEvent),
     /// Raw log data from the provider
     Log(EvmLog),
+    /// A raw log was rejected before it could become a canonical event.
+    Rejected(EvmLogRejected),
     /// Dummy event to report that an event was processed. This is required to ensure that the
     /// appropriate events are ordered correctly
     Processed(CorrelationId),
@@ -107,6 +129,7 @@ impl InterfoldEvmEvent {
         match self {
             InterfoldEvmEvent::HistoricalSyncComplete(e) => e.get_id(),
             InterfoldEvmEvent::Log(e) => e.get_id(),
+            InterfoldEvmEvent::Rejected(e) => e.id,
             InterfoldEvmEvent::Event(e) => e.get_id(),
             InterfoldEvmEvent::Processed(id) => id.to_owned(),
         }

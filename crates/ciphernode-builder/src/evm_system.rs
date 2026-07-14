@@ -8,8 +8,8 @@ use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
 use e3_evm::{
-    EthProvider, EvmChainGateway, EvmEventProcessor, EvmReadInterface, EvmRouter, Filters,
-    FixHistoricalOrder, ProviderFactory,
+    EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmReadInterface,
+    EvmRouter, Filters, FixHistoricalOrder, ProviderFactory, DEFAULT_MAX_BUFFERED_EVM_EVENTS,
 };
 
 pub trait RouteFn: FnOnce(EvmEventProcessor) -> EvmEventProcessor + Send {}
@@ -23,6 +23,7 @@ pub struct EvmSystemChainBuilder<P> {
     provider_factory: Option<ProviderFactory<P>>,
     bus: BusHandle,
     chain_id: u64,
+    max_buffered_events: usize,
     route_factories: Vec<(Address, RouteFactory)>,
 }
 
@@ -34,8 +35,14 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             provider: provider.clone(),
             provider_factory: None,
             chain_id,
+            max_buffered_events: DEFAULT_MAX_BUFFERED_EVM_EVENTS,
             route_factories: Vec::new(),
         }
+    }
+
+    pub fn with_buffer_limit(&mut self, max_buffered_events: usize) -> &mut Self {
+        self.max_buffered_events = max_buffered_events;
+        self
     }
 
     pub fn with_provider_factory(&mut self, factory: ProviderFactory<P>) -> &mut Self {
@@ -53,10 +60,16 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
     }
 
     pub fn build(&mut self) {
+        drop(self.build_with_readiness());
+    }
+
+    pub(crate) fn build_with_readiness(&mut self) -> EvmChainGatewayHandle {
         // Think about the following in reverse order
 
         // Gateway is the final step before connecting to the bus
-        let next = EvmChainGateway::setup(&self.bus);
+        let gateway =
+            EvmChainGateway::setup_with_readiness_and_limit(&self.bus, self.max_buffered_events);
+        let next = gateway.addr();
 
         // Fix the historical order to avoid missing historical events
         let next = FixHistoricalOrder::setup(next);
@@ -100,6 +113,8 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         // Finaly subscribe to the bus and wait for HistoricalEvmSyncStart
         self.bus
             .subscribe(EventType::HistoricalEvmSyncStart, next.recipient());
+
+        gateway
     }
 }
 

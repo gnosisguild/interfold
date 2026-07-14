@@ -21,6 +21,7 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::time::Instant;
 
 fn proof_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
@@ -378,6 +379,53 @@ pub struct DkgAggregationInput<'a> {
     pub committee_addresses: &'a [Address],
 }
 
+fn validate_dkg_aggregation_shape(
+    node_fold_count: usize,
+    party_ids: &[u64],
+    committee_address_count: usize,
+    committee: CiphernodesCommitteeSize,
+) -> Result<(), ZkError> {
+    let expected = committee.values();
+    if node_fold_count != party_ids.len() {
+        return Err(ZkError::InvalidInput(
+            "node_fold_proofs and party_ids length mismatch".into(),
+        ));
+    }
+    if node_fold_count != expected.h {
+        return Err(ZkError::InvalidInput(format!(
+            "DkgAggregator requires H={} honest NodeFold proofs for committee {}, got {}",
+            expected.h, committee, node_fold_count
+        )));
+    }
+    if committee_address_count != expected.n {
+        return Err(ZkError::InvalidInput(format!(
+            "DkgAggregator requires N={} full committee addresses for committee {}, got {}",
+            expected.n, committee, committee_address_count
+        )));
+    }
+
+    let mut seen = HashSet::with_capacity(party_ids.len());
+    for &party_id in party_ids {
+        let party_index = usize::try_from(party_id).map_err(|_| {
+            ZkError::InvalidInput(format!(
+                "DkgAggregator party id {party_id} does not fit a committee index"
+            ))
+        })?;
+        if party_index >= expected.n {
+            return Err(ZkError::InvalidInput(format!(
+                "DkgAggregator party id {party_id} is outside committee N={}",
+                expected.n
+            )));
+        }
+        if !seen.insert(party_id) {
+            return Err(ZkError::InvalidInput(format!(
+                "DkgAggregator party id {party_id} is duplicated"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct DkgAggregatorWitness {
     nodes_fold_vk: Vec<String>,
@@ -403,35 +451,15 @@ pub fn prove_dkg_aggregation(
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
 ) -> Result<Proof, ZkError> {
+    validate_dkg_aggregation_shape(
+        input.node_fold_proofs.len(),
+        input.party_ids,
+        input.committee_addresses.len(),
+        committee,
+    )?;
     let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
     let artifacts_dir = artifacts_dir.as_str();
-    if input.node_fold_proofs.len() != input.party_ids.len() {
-        return Err(ZkError::InvalidInput(
-            "node_fold_proofs and party_ids length mismatch".into(),
-        ));
-    }
-    if input.node_fold_proofs.is_empty() {
-        return Err(ZkError::InvalidInput(
-            "prove_dkg_aggregation: need at least one NodeFold proof".into(),
-        ));
-    }
     let h = input.node_fold_proofs.len();
-    // Full on-chain `topNodes` (must match compiled `N_PARTIES` in the circuit artifact).
-    // Do not use `preset.metadata().num_parties` — that is BFV search metadata, not circuit size.
-    let n_registered = input.committee_addresses.len();
-    if n_registered == 0 {
-        return Err(ZkError::InvalidInput(
-            "prove_dkg_aggregation: committee_addresses must be non-empty (on-chain topNodes)"
-                .into(),
-        ));
-    }
-    #[cfg(debug_assertions)]
-    {
-        debug_assert_eq!(
-            h, n_registered,
-            "DkgAggregator honest-set H must equal registered committee size until expulsion enables H < N"
-        );
-    }
     let nodes_fold_proof = if let Some(precomputed) = input.nodes_fold_proof {
         precomputed.clone()
     } else {
@@ -609,4 +637,59 @@ pub fn prove_decryption_aggregation_jobs(
         out.push(proof);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_dkg_aggregation_shape;
+    use e3_zk_helpers::CiphernodesCommitteeSize;
+
+    #[test]
+    fn dkg_aggregation_accepts_all_canonical_h_of_n_shapes() {
+        for (committee, h, n) in [
+            (CiphernodesCommitteeSize::Minimum, 2, 3),
+            (CiphernodesCommitteeSize::Micro, 5, 9),
+            (CiphernodesCommitteeSize::Small, 10, 19),
+        ] {
+            let party_ids: Vec<u64> = (0..h as u64).collect();
+            validate_dkg_aggregation_shape(h, &party_ids, n, committee)
+                .expect("canonical committee must have H honest proofs and N addresses");
+        }
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_h_equal_to_n_for_minimum_committee() {
+        let error =
+            validate_dkg_aggregation_shape(3, &[0, 1, 2], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(error.to_string().contains("requires H=2"));
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_incomplete_honest_set() {
+        let error = validate_dkg_aggregation_shape(1, &[0], 3, CiphernodesCommitteeSize::Minimum)
+            .unwrap_err();
+        assert!(error.to_string().contains("requires H=2"));
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_wrong_full_committee_size() {
+        let error =
+            validate_dkg_aggregation_shape(2, &[0, 1], 2, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(error.to_string().contains("requires N=3"));
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_duplicate_or_out_of_range_party_ids() {
+        let duplicate =
+            validate_dkg_aggregation_shape(2, &[1, 1], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicated"));
+
+        let out_of_range =
+            validate_dkg_aggregation_shape(2, &[0, 3], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(out_of_range.to_string().contains("outside committee N=3"));
+    }
 }

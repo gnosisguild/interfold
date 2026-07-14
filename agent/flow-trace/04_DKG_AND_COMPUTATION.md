@@ -54,7 +54,11 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
 
-**Actor:** `ProofRequestActor` (`crates/zk-prover/src/actors/proof_request.rs`)
+**Actor:** `ProofRequestActor` (`crates/zk-prover/src/proof_request/actor.rs`)
+
+**Deterministic workflow:** pending proof state and canonical dispatch sequence planning live in
+`crates/zk-prover/src/proof_request/{state,workflow,transitions}.rs`; `handlers.rs` owns mailbox
+entry and the semantic files below `effects/` own correlation, signing, and compute dispatch.
 
 ```
 ProofRequestActor receives EncryptionKeyPending
@@ -91,6 +95,8 @@ ProofRequestActor receives EncryptionKeyPending
 └─ RECEIVING NODES verify C0 proof:
      ProofVerificationActor receives EncryptionKeyReceived (from P2P)
      │
+     ├─ Resolves canonical party ownership plus BFV preset/committee artifact scope
+     │   from startup-recovered verifier context; live lifecycle events refresh both caches
      ├─ Recovers ECDSA signer address from signed proof
      ├─ Dispatches ZK verification to ZkActor:
      │   ZkActor runs: bb verify -k vk -p proof.data
@@ -360,12 +366,17 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 
 ### Step 6a: C2/C3 Share Proof Verification
 
-**Actor:** `ShareVerificationActor` (`crates/zk-prover/src/actors/share_verification.rs`)
+**Actor:** `ShareVerificationActor` (`crates/zk-prover/src/share_verification/actor.rs`)
+
+**Deterministic workflow:** signature/slot validation, replay normalization, consistency filtering,
+and result tallying live in `crates/zk-prover/src/share_verification/{state,workflow}.rs`. The
+capability's `handlers.rs` owns mailbox entry and its semantic effect files own correlation state
+and publish returned decisions.
 
 ```
 ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │
-├─ PHASE 1: Lightweight ECDSA Validation (inline):
+├─ PHASE 1: Lightweight ECDSA Validation (workflow service):
 │   │
 │   ├─ For EACH party's proofs:
 │   │   ├─ Verify e3_id matches
@@ -550,6 +561,8 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │
 ├─ KeyshareCreatedFilterBuffer gates events:
   │   └─ Only accepts KeyshareCreated from verified committee members
+  │   └─ Compares committee, keyshare, and expulsion identities as parsed EVM addresses;
+  │      EIP-55 casing differences cannot bypass an expulsion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
   │   └─ On expulsion-driven handoff, the next active aggregator flushes its existing buffer
 │
@@ -604,6 +617,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │   │     ├─ Dispatches ComputeRequest::zk(ZkRequest::DkgAggregation {
 │   │     │     node_fold_proofs, c5_proof, party_ids, params_preset
 │   │     │   })
+│   │     │   → exactly H NodeFold proofs and H unique party ids
+│   │     │   → exactly N ordered committee addresses (`topNodes`), where canonical H < N
+│   │     │   → Rust validates both dimensions before invoking the compiled circuit
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }

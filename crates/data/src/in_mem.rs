@@ -4,10 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::in_mem_kv_store::{DataOp, InMemKvStore};
-use actix::{Actor, Handler, Message};
+use crate::{
+    in_mem_kv_store::{DataOp, InMemKvStore},
+    ShutdownStore, StoreHasExactKeys, StoreIsEmpty,
+};
+use actix::{Actor, ActorContext, Handler, Message};
 use anyhow::Result;
-use e3_events::{Flush, Get, Insert, InsertBatch, InsertSync, Remove};
+use e3_events::{Flush, Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync, Remove};
 use e3_utils::MAILBOX_LIMIT;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
@@ -59,7 +62,7 @@ impl Handler<Insert> for InMemStore {
 }
 
 impl Handler<InsertBatch> for InMemStore {
-    type Result = ();
+    type Result = Result<()>;
     fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
         for cmd in msg.commands() {
             self.store.insert(
@@ -68,6 +71,45 @@ impl Handler<InsertBatch> for InMemStore {
                 Some(DataOp::Insert(cmd.clone())),
             );
         }
+        Ok(())
+    }
+}
+
+impl Handler<StoreIsEmpty> for InMemStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, _: StoreIsEmpty, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.is_empty())
+    }
+}
+
+impl Handler<StoreHasExactKeys> for InMemStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, message: StoreHasExactKeys, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.has_exact_keys(message.keys()))
+    }
+}
+
+impl Handler<InsertBatchIfAbsent> for InMemStore {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, msg: InsertBatchIfAbsent, _: &mut Self::Context) -> Self::Result {
+        if msg
+            .commands()
+            .iter()
+            .any(|command| self.store.get(command.key()).is_some())
+        {
+            return Ok(false);
+        }
+        for command in msg.commands() {
+            self.store.insert(
+                command.key().to_owned(),
+                command.value().to_owned(),
+                Some(DataOp::Insert(command.clone())),
+            );
+        }
+        Ok(true)
     }
 }
 
@@ -99,9 +141,18 @@ impl Handler<Get> for InMemStore {
 }
 
 impl Handler<Flush> for InMemStore {
-    type Result = ();
+    type Result = Result<()>;
     fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
-        // noop
+        Ok(())
+    }
+}
+
+impl Handler<ShutdownStore> for InMemStore {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: ShutdownStore, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop();
+        Ok(())
     }
 }
 

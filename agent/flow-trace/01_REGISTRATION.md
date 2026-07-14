@@ -6,6 +6,11 @@ A ciphernode operator goes from zero to registered on-chain through a series of 
 configure local state, encrypt credentials, and submit an on-chain transaction to the
 `BondingRegistry`.
 
+For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
+`--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
+hidden-prompt paths so encryption passwords and private keys do not appear in process arguments or
+environment metadata.
+
 ---
 
 ## Step 1: `interfold ciphernode setup`

@@ -6,11 +6,11 @@
 use super::{
     batch_router::{BatchRouter, FlushSeq},
     timelock_queue::{Clock, StartTimelock, SystemClock, Tick, TimelockQueue},
-    AggregateConfig,
+    AggregateConfig, FlushPendingSnapshots,
 };
 use crate::{Insert, InsertBatch, InterfoldEvent};
-use actix::{Actor, Addr, Handler, Message, Recipient};
-use anyhow::Result;
+use actix::{Actor, Addr, Handler, Message, Recipient, ResponseFuture};
+use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 use std::sync::Arc;
 use tracing::{info, trace};
@@ -141,6 +141,22 @@ impl Handler<InterfoldEvent> for SnapshotBuffer {
     }
 }
 
+impl Handler<FlushPendingSnapshots> for SnapshotBuffer {
+    type Result = ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, _: FlushPendingSnapshots, _: &mut Self::Context) -> Self::Result {
+        let router = self.router.clone();
+        Box::pin(async move {
+            let router = router.context("snapshot buffer has no batch router")?;
+            router
+                .send(FlushPendingSnapshots)
+                .await
+                .context("snapshot batch router stopped during final flush")??;
+            Ok(())
+        })
+    }
+}
+
 impl Handler<Tick> for SnapshotBuffer {
     type Result = ();
     fn handle(&mut self, msg: Tick, _: &mut Self::Context) -> Self::Result {
@@ -178,10 +194,13 @@ mod mock_store {
     }
 
     impl Handler<InsertBatch> for MockStore {
-        type Result = ();
+        type Result = anyhow::Result<()>;
 
         fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
-            self.evts.push(msg);
+            if !msg.commands().is_empty() {
+                self.evts.push(msg);
+            }
+            Ok(())
         }
     }
 
@@ -197,20 +216,60 @@ mod mock_store {
 mod tests {
     use super::super::timelock_queue::mock_clock::MockClock;
     use super::mock_store::GetEvts;
-    use super::{mock_store, SnapshotBuffer};
+    use super::{mock_store, FlushPendingSnapshots, SnapshotBuffer};
     use crate::snapshot_buffer::timelock_queue::Tick;
     use crate::{
         AggregateConfig, AggregateId, E3id, EventContext, EventContextAccessors, EventContextSeq,
         EventId, EventSource, Insert, InsertBatch, InterfoldEvent, Sequenced, Shutdown, SyncEnded,
         TestEvent,
     };
-    use actix::Actor;
-    use anyhow::Result;
+    use actix::{Actor, Handler, ResponseFuture};
+    use anyhow::{Context, Result};
     use e3_test_helpers::with_tracing;
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use std::time::Duration;
+    use tokio::sync::oneshot;
     use tracing::info;
+
+    struct GatedStore {
+        entered: Option<oneshot::Sender<()>>,
+        release: Option<oneshot::Receiver<()>>,
+        write_completed: Arc<AtomicBool>,
+    }
+
+    impl Actor for GatedStore {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InsertBatch> for GatedStore {
+        type Result = ResponseFuture<Result<()>>;
+
+        fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
+            if msg.commands().is_empty() {
+                return Box::pin(async { Ok(()) });
+            }
+
+            let entered = self.entered.take();
+            let release = self.release.take();
+            let write_completed = self.write_completed.clone();
+            Box::pin(async move {
+                entered
+                    .context("gated store received more than one data batch")?
+                    .send(())
+                    .map_err(|_| anyhow::anyhow!("flush test stopped before the write began"))?;
+                release
+                    .context("gated store received more than one data batch")?
+                    .await
+                    .context("flush test dropped the destination write gate")?;
+                write_completed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
 
     fn create_ec(ag: usize, seq: u64) -> EventContext<Sequenced> {
         EventContext::new_origin(
@@ -247,71 +306,43 @@ mod tests {
         let (buffer, timelock) =
             SnapshotBuffer::with_clock(config, store.clone(), clock.clone(), None)?;
 
-        buffer
-            .send(InterfoldEvent::from_data_ec(
-                SyncEnded::new().into(),
-                create_ec(0, 9),
-            ))
-            .await?;
+        let ec = create_ec(23, 1);
+        let aggregate_23_first = create_event(&ec);
 
-        info!("TimelockQueue should be empty");
-        timelock.send(Tick).await?;
-
-        let ec = create_ec(23, 10);
-        let interfold_10 = create_event(&ec);
-
-        let inserts_10 = [
+        let aggregate_23_inserts = [
             Insert::new_with_context("one", b"one".to_vec(), ec.clone()),
             Insert::new_with_context("two", b"two".to_vec(), ec.clone()),
         ];
 
-        let ec = create_ec(1, 11);
-        let interfold_11 = create_event(&ec);
+        let ec = create_ec(1, 1);
+        let aggregate_1_first = create_event(&ec);
 
-        let inserts_11 = [
+        let aggregate_1_inserts = [
             Insert::new_with_context("one", b"one".to_vec(), ec.clone()),
             Insert::new_with_context("two", b"two".to_vec(), ec.clone()),
         ];
 
-        let ec = create_ec(0, 12);
-        let interfold_12 = create_event(&ec);
+        buffer.send(aggregate_23_first).await?;
+        buffer.send(aggregate_23_inserts[0].clone()).await?;
+        // The next sequence for the same aggregate starts its predecessor's timelock.
+        buffer.send(create_event(&create_ec(23, 2))).await?;
+        // State written during the grace period still belongs to aggregate 23, sequence 1.
+        buffer.send(aggregate_23_inserts[1].clone()).await?;
 
-        // send event 10
-        buffer.send(interfold_10).await?;
-
-        info!("TimelockQueue should hold all seq=9 inserts");
-        timelock.send(Tick).await?;
-
-        // send the first insert for seq 10
-        buffer.send(inserts_10[0].clone()).await?;
-
-        // send event 11
-        info!("Sending event seq=11 this should start the timelock for all the seq=10 inserts");
-        buffer.send(interfold_11).await?;
-
-        // send a late insert for 10
-        buffer.send(inserts_10[1].clone()).await?;
-
-        // send the other inserts for 11
-        buffer.send(inserts_11[0].clone()).await?;
-        buffer.send(inserts_11[1].clone()).await?;
-
-        // send event 12
-        info!("Sending event seq=12 this should start the timelock for all the seq=11 inserts");
-        buffer.send(interfold_12).await?;
+        buffer.send(aggregate_1_first).await?;
+        buffer.send(aggregate_1_inserts[0].clone()).await?;
+        buffer.send(aggregate_1_inserts[1].clone()).await?;
+        buffer.send(create_event(&create_ec(1, 2))).await?;
 
         // Nothing happens as there has not been enough delay
         info!("Clock=1020 : Checking for events but there should be nothing that has flushed...");
         clock.set(Duration::from_micros(1020));
         timelock.send(Tick).await?;
         let batches = store.send(GetEvts).await?;
-        // assert_eq!(0, batches.len());
-        assert_eq!(1, batches.len());
-        let InsertBatch(inserts) = batches.first().unwrap();
-        assert_eq!(3, inserts.len()); // Have sequence,block and ts written as inserts
+        assert_eq!(0, batches.len());
 
         // Time is up so lets flush aggregate 23 (but not aggregate 1)
-        info!("Clock=1030 : Checking for events Tick should flush batch 10...");
+        info!("Clock=1030 : aggregate 23 sequence 1 should flush...");
         clock.set(Duration::from_micros(1030));
         timelock.send(Tick).await?;
         let batches = store.send(GetEvts).await?;
@@ -327,7 +358,7 @@ mod tests {
         assert_eq!(0, batches.len());
 
         // Time is up so lets flush aggregate 1
-        info!("Clock=1060 : should have all aggregate 1 changes in batch 11...");
+        info!("Clock=1060 : aggregate 1 sequence 1 should flush...");
         clock.set(Duration::from_micros(1060));
         timelock.send(Tick).await?;
         let batches = store.send(GetEvts).await?;
@@ -335,6 +366,92 @@ mod tests {
         let InsertBatch(inserts) = batches.first().unwrap();
         assert_eq!(5, inserts.len()); // Have 5 inserts as sequence,block and ts get written
 
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn equal_sequences_from_different_aggregates_use_distinct_batches() -> Result<()> {
+        let config = &AggregateConfig::new(HashMap::from([
+            (AggregateId::new(1), Duration::from_secs(60)),
+            (AggregateId::new(2), Duration::from_secs(60)),
+        ]));
+        let store = mock_store::MockStore::default().start();
+        let clock = Arc::new(MockClock::new(1000));
+        let (buffer, _) = SnapshotBuffer::with_clock(config, store.clone(), clock.clone(), None)?;
+
+        let first = create_ec(1, 1);
+        let second = create_ec(2, 1);
+        buffer.send(create_event(&first)).await?;
+        buffer.send(create_event(&second)).await?;
+        buffer
+            .send(Insert::new_with_context("aggregate-one", vec![1], first))
+            .await?;
+        buffer
+            .send(Insert::new_with_context("aggregate-two", vec![2], second))
+            .await?;
+
+        buffer.send(FlushPendingSnapshots).await??;
+
+        let batches = store.send(GetEvts).await?;
+        assert_eq!(batches.len(), 2);
+        let aggregate_ids = batches
+            .iter()
+            .flat_map(|batch| batch.commands())
+            .filter_map(Insert::ctx)
+            .map(EventContextAccessors::aggregate_id)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            aggregate_ids,
+            HashSet::from([AggregateId::new(1), AggregateId::new(2)])
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn final_flush_waits_for_destination_acknowledgement() -> Result<()> {
+        let config = &AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::from_secs(60),
+        )]));
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let write_completed = Arc::new(AtomicBool::new(false));
+        let store = GatedStore {
+            entered: Some(entered_tx),
+            release: Some(release_rx),
+            write_completed: write_completed.clone(),
+        }
+        .start();
+        let clock = Arc::new(MockClock::new(1000));
+        let (buffer, _) = SnapshotBuffer::with_clock(config, store, clock, None)?;
+
+        let context = create_ec(1, 1);
+        buffer.send(create_event(&context)).await?;
+        buffer
+            .send(Insert::new_with_context("state", vec![1], context))
+            .await?;
+
+        let mut flush = Box::pin(buffer.send(FlushPendingSnapshots));
+        tokio::select! {
+            result = &mut flush => anyhow::bail!("final flush returned before its data write began: {result:?}"),
+            result = entered_rx => result.context("destination write never began")?,
+        }
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut flush)
+                .await
+                .is_err(),
+            "final flush returned while the destination write was still blocked"
+        );
+        assert!(!write_completed.load(Ordering::SeqCst));
+
+        release_tx
+            .send(())
+            .map_err(|_| anyhow::anyhow!("destination write stopped before gate release"))?;
+        flush
+            .await
+            .context("snapshot buffer stopped during final flush")??;
+        assert!(write_completed.load(Ordering::SeqCst));
         Ok(())
     }
 
@@ -381,6 +498,7 @@ mod tests {
                 create_ec(7, 3),
             ))
             .await?;
+        buffer.send(FlushPendingSnapshots).await??;
 
         let batches = store.send(GetEvts).await?;
         assert_eq!(

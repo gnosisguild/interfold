@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}/.."
+
 echo "Waiting for evm node..."
 pnpm wait-on tcp:localhost:8545
 echo "Waiting for contracts to be deployed..."

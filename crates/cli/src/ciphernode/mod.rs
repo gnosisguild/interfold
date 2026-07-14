@@ -44,12 +44,30 @@ pub enum CiphernodeCommands {
         rpc_url: Option<String>,
 
         /// The password
-        #[arg(short='p', long, value_parser = parse_zeroizing)]
+        #[arg(
+            short = 'p',
+            long,
+            value_parser = parse_zeroizing,
+            conflicts_with = "password_stdin"
+        )]
         password: Option<Zeroizing<String>>,
 
+        /// Read the password from the first requested line on stdin
+        #[arg(long, conflicts_with = "password")]
+        password_stdin: bool,
+
         /// Wallet Private Key
-        #[arg(short='k', long, value_parser = ensure_hex_zeroizing)]
+        #[arg(
+            short = 'k',
+            long,
+            value_parser = ensure_hex_zeroizing,
+            conflicts_with = "private_key_stdin"
+        )]
         private_key: Option<Zeroizing<String>>,
+
+        /// Read the private key from the next requested line on stdin
+        #[arg(long, conflicts_with = "private_key")]
+        private_key_stdin: bool,
     },
     /// Manage FOLD license tokens and bonding state
     License {

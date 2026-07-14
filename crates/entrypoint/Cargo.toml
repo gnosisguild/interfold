@@ -27,6 +27,7 @@ hex = { workspace = true }
 e3-keyshare = { workspace = true }
 e3-logger = { workspace = true }
 libp2p = { workspace = true }
+libc = { workspace = true }
 e3-net = { workspace = true }
 phf = { workspace = true }
 rand = { workspace = true }
@@ -50,4 +51,5 @@ reqwest = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+commitlog = { workspace = true }
 tempfile = { workspace = true }

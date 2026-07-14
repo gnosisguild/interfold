@@ -465,6 +465,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
 
         let builder = contract.request(e3_request).nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
+        e3_utils::require_successful_receipt("request E3", &receipt)?;
 
         Ok((receipt, e3_id))
     }
@@ -479,6 +480,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let contract = Interfold::new(self.contract_address, &self.provider);
         let builder = contract.registerE3Program(e3_program).nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
+        e3_utils::require_successful_receipt("register E3 program", &receipt)?;
 
         Ok(receipt)
     }
@@ -500,6 +502,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             .publishCiphertextOutput(e3_id, data, proof)
             .nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
+        e3_utils::require_successful_receipt("publish ciphertext output", &receipt)?;
 
         Ok(receipt)
     }
@@ -521,6 +524,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             .publishPlaintextOutput(e3_id, data, proof)
             .nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
+        e3_utils::require_successful_receipt("publish plaintext output", &receipt)?;
 
         Ok(receipt)
     }
