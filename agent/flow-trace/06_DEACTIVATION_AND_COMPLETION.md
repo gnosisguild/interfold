@@ -262,6 +262,9 @@ overload signal: they emit a bounded structured warning containing only the stat
 skipped-event count, then continue from the oldest retained event. Only channel closure ends a
 receive task. A lag can still drop the reported `n` events, but a single burst no longer permanently
 disables gossip translation, document notifications, or historical-sync/readiness handling.
+`NetEventBuffer` applies the same continue policy only after `SyncEnded`; lag during its startup
+buffering window remains a fail-closed readiness error because those skipped events cannot yet be
+reconciled safely.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for

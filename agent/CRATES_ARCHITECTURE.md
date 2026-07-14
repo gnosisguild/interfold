@@ -433,7 +433,8 @@ transport channels. Gossipsub and direct-request/DHT decoding have explicit byte
 limits. Translation actors accept only the protocol event allowlist before publishing
 remote events, and their broadcast-to-actor ingress loops await mailbox acceptance and
 stop when the destination actor closes. Startup buffering is bounded by both event
-count and estimated bytes and fails readiness on overflow or broadcast lag. Historical
+count and estimated bytes and fails readiness on overflow or broadcast lag; after
+`SyncEnded`, broadcast lag is warned and skipped without stopping the ingress loop. Historical
 direct sync requires advancing cursors and enforces one cumulative page, event, byte,
 and time budget across all aggregate fetches and recovery retries in a startup attempt.
 

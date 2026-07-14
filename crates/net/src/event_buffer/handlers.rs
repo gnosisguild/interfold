@@ -29,8 +29,9 @@ impl Actor for NetEventBuffer {
                         }
                     }
                     Err(RecvError::Lagged(skipped)) => {
-                        let _ = addr.send(NetInputLagged(skipped)).await;
-                        break;
+                        if addr.send(NetInputLagged(skipped)).await.is_err() {
+                            break;
+                        }
                     }
                     Err(RecvError::Closed) => break,
                 }
@@ -71,6 +72,13 @@ impl Handler<NetInputLagged> for NetEventBuffer {
     type Result = ();
 
     fn handle(&mut self, msg: NetInputLagged, ctx: &mut Self::Context) {
+        if self.state.is_running() {
+            warn!(
+                skipped_events = msg.0,
+                "Network event buffer input lagged after startup; continuing from the oldest retained event"
+            );
+            return;
+        }
         self.fail_closed(
             anyhow!(
                 "network event input skipped {} events because its bounded broadcast receiver lagged",
@@ -88,5 +96,49 @@ impl Handler<InterfoldEvent> for NetEventBuffer {
         if let Err(error) = self.handle_interfold_event(msg) {
             self.fail_closed(error, ctx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::GossipData;
+    use e3_ciphernode_builder::EventSystem;
+    use std::time::Duration;
+
+    #[actix::test]
+    async fn lag_after_startup_keeps_the_buffer_actor_live() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("post-startup-lag");
+        let (_input_tx, input_rx) = broadcast::channel(1);
+        let (output_tx, mut output_rx) = broadcast::channel(8);
+        let (readiness, _readiness_rx) = oneshot::channel();
+        let mut state = NetEventBufferState::syncing();
+        state.run()?;
+        let actor = NetEventBuffer {
+            state,
+            input_rx: Some(input_rx),
+            output_tx,
+            bus,
+            max_events: 8,
+            max_bytes: 1_024,
+            readiness: Some(readiness),
+        }
+        .start();
+
+        actor.send(NetInputLagged(4)).await?;
+        actor
+            .send(IncomingNetEvent(NetEvent::GossipData(
+                GossipData::GossipBytes(vec![7]),
+            )))
+            .await?;
+
+        let forwarded = tokio::time::timeout(Duration::from_secs(1), output_rx.recv()).await??;
+        assert!(matches!(
+            forwarded,
+            NetEvent::GossipData(GossipData::GossipBytes(bytes)) if bytes == vec![7]
+        ));
+        assert!(actor.connected());
+        Ok(())
     }
 }
