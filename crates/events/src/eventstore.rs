@@ -10,7 +10,7 @@ use crate::{
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
 use actix::{Actor, AsyncContext, Handler, Recipient, WrapFuture};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
@@ -31,7 +31,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     ) -> Result<Option<InterfoldEvent<Sequenced>>> {
         let ts = event.ts();
         if let Some(indexed_seq) = self.index.get(ts)? {
-            let Some((logged_seq, existing)) = self.log.read_from_bounded(indexed_seq, 1).next()
+            let Some((logged_seq, existing)) = self.log.read_from_bounded(indexed_seq, 1)?.next()
             else {
                 bail!(
                     "event index corruption at timestamp {ts}: sequence {indexed_seq} is missing \
@@ -110,8 +110,8 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         let events = match (filter.as_ref(), limit) {
             (None, Some(limit)) => self
                 .log
-                .read_from_bounded(seq, usize::try_from(limit).unwrap_or(usize::MAX)),
-            _ => self.log.read_from(seq),
+                .read_from_bounded(seq, usize::try_from(limit).unwrap_or(usize::MAX))?,
+            _ => self.log.read_from(seq)?,
         };
         let result = self.collect_events(events, filter, limit);
         Ok(result)
@@ -123,7 +123,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         query: u64,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
-    ) -> Vec<InterfoldEvent<Sequenced>> {
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         // H7: the replay cursor must never point past the log head. The snapshot
         // cursor is committed atomically with its snapshot data, so a cursor ahead
         // of the log can only happen if the two unsynchronised flush timers
@@ -131,22 +131,25 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         // Replaying an empty range past the gap would be silent divergence, so we
         // halt loudly. `query == head + 1` is the legitimate "fully caught up" case.
         let head = self.log.head();
-        if query > head + 1 {
-            panic!(
+        let caught_up = head
+            .checked_add(1)
+            .context("event-log sequence overflow while checking replay cursor")?;
+        if query > caught_up {
+            bail!(
                 "Replay cursor seq {query} is ahead of the event-log head {head}: the snapshot \
                  cursor references events the log does not contain (lost in a crash flush window). \
                  Halting; operator recovery required."
             );
         }
-        self.collect_events(self.log.read_from(query), filter, limit)
+        Ok(self.collect_events(self.log.read_from(query)?, filter, limit))
     }
 }
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
-    pub fn new(index: I, log: L) -> Self {
+    pub fn new(index: I, log: L) -> Result<Self> {
         let mut store = Self { index, log };
-        store.reconcile_index();
-        store
+        store.reconcile_index()?;
+        Ok(store)
     }
 
     /// H5: the commitlog append and the ts→seq index insert are two non-atomic
@@ -155,10 +158,10 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     /// subscriber cursor) silently miss it until reconciled. On startup we walk
     /// the log (the source of truth) and backfill any missing index rows so the
     /// derived index can never lag the log across a restart.
-    fn reconcile_index(&mut self) {
+    fn reconcile_index(&mut self) -> Result<()> {
         let head = self.log.head();
         if head == 0 {
-            return;
+            return Ok(());
         }
         let mut repaired = 0u64;
         let mut next_sequence = 1u64;
@@ -167,16 +170,22 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             for (seq, event) in self
                 .log
                 .read_from_bounded(next_sequence, INDEX_RECONCILE_PAGE_SIZE)
+                .with_context(|| {
+                    format!(
+                        "event log integrity failure during index reconciliation at sequence \
+                         {next_sequence}"
+                    )
+                })?
             {
                 if seq != next_sequence {
-                    panic!(
+                    bail!(
                         "Event log integrity failure during index reconciliation: expected sequence \
                          {next_sequence}, got {seq}. Halting; run `interfold node validate` and \
                          recover from a verified backup or controlled resync."
                     );
                 }
                 if seq > head {
-                    panic!(
+                    bail!(
                         "Event log changed during index reconciliation: captured head {head}, but \
                          bounded read returned sequence {seq}. Halting to avoid an inconsistent \
                          derived index."
@@ -186,26 +195,32 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                 let ts = event.ts();
                 match self.index.get(ts) {
                     Ok(Some(_)) => {}
-                    Ok(None) => match self.index.insert(ts, seq) {
-                        Ok(()) => repaired += 1,
-                        Err(error) => panic!(
-                            "Failed to backfill event index at sequence {seq}: {error}. Halting to \
-                             avoid serving an incomplete timestamp index."
-                        ),
-                    },
-                    Err(error) => panic!(
-                        "Failed to read event index at timestamp {ts}: {error}. Halting to avoid \
-                         serving an unverified timestamp index."
-                    ),
+                    Ok(None) => {
+                        self.index.insert(ts, seq).with_context(|| {
+                            format!(
+                                "failed to backfill event index at sequence {seq}; refusing to \
+                                 serve an incomplete timestamp index"
+                            )
+                        })?;
+                        repaired += 1;
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "failed to read event index at timestamp {ts}; refusing to serve \
+                                 an unverified timestamp index"
+                            )
+                        })
+                    }
                 }
-                next_sequence = seq.checked_add(1).unwrap_or_else(|| {
-                    panic!("Event log sequence overflow while reconciling sequence {seq}")
-                });
+                next_sequence = seq.checked_add(1).with_context(|| {
+                    format!("event log sequence overflow while reconciling sequence {seq}")
+                })?;
                 page_len += 1;
             }
 
             if page_len == 0 {
-                panic!(
+                bail!(
                     "Event log integrity failure during index reconciliation: log head is {head}, \
                      but no event was returned for sequence {next_sequence}. Halting; run \
                      `interfold node validate` and recover from a verified backup or controlled \
@@ -213,7 +228,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                 );
             }
             if page_len > INDEX_RECONCILE_PAGE_SIZE {
-                panic!(
+                bail!(
                     "Event log violated bounded-read contract during index reconciliation: \
                      returned {page_len} events for limit {INDEX_RECONCILE_PAGE_SIZE}."
                 );
@@ -224,6 +239,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                 "Reconciled event index on startup: backfilled {repaired} missing ts→seq entries"
             );
         }
+        Ok(())
     }
 }
 
@@ -274,18 +290,12 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStor
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let response = self
-            .query_by_ts(query, filter, limit)
-            .map(|events| EventStoreQueryResponse::new(id, events));
+        let response =
+            EventStoreQueryResponse::from_result(id, self.query_by_ts(query, filter, limit));
         ctx.wait(
             async move {
-                match response {
-                    Ok(response) => {
-                        if let Err(error) = deliver_query_response(sender, response).await {
-                            error!(%error, "Event-store query recipient closed");
-                        }
-                    }
-                    Err(error) => error!(%error, "Event-store timestamp query failed"),
+                if let Err(error) = deliver_query_response(sender, response).await {
+                    error!(%error, "Event-store query recipient closed");
                 }
             }
             .into_actor(self),
@@ -301,8 +311,8 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let evts = self.query_by_seq(query, filter, limit);
-        let response = EventStoreQueryResponse::new(id, evts);
+        let response =
+            EventStoreQueryResponse::from_result(id, self.query_by_seq(query, filter, limit));
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -372,6 +382,7 @@ mod tests {
         bounded_read_limit: Option<Arc<AtomicUsize>>,
         flushes: Option<Arc<AtomicUsize>>,
         unbounded_read_calls: Option<Arc<AtomicUsize>>,
+        fail_reads: bool,
     }
 
     impl MockLog {
@@ -382,6 +393,7 @@ mod tests {
                 bounded_read_limit: None,
                 flushes: None,
                 unbounded_read_calls: None,
+                fail_reads: false,
             }
         }
 
@@ -392,6 +404,7 @@ mod tests {
                 bounded_read_limit: Some(tracker),
                 flushes: None,
                 unbounded_read_calls: None,
+                fail_reads: false,
             }
         }
 
@@ -402,6 +415,7 @@ mod tests {
                 bounded_read_limit: None,
                 flushes: Some(tracker),
                 unbounded_read_calls: None,
+                fail_reads: false,
             }
         }
 
@@ -417,6 +431,14 @@ mod tests {
                 bounded_read_limit: Some(bounded_read_limit),
                 flushes: None,
                 unbounded_read_calls: Some(unbounded_read_calls),
+                fail_reads: false,
+            }
+        }
+
+        fn failing_reads() -> Self {
+            Self {
+                fail_reads: true,
+                ..Self::new()
             }
         }
     }
@@ -437,7 +459,10 @@ mod tests {
         fn read_from(
             &self,
             from: u64,
-        ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+        ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+            if self.fail_reads {
+                bail!("simulated event-log integrity failure");
+            }
             if let Some(calls) = &self.unbounded_read_calls {
                 calls.fetch_add(1, Ordering::SeqCst);
             }
@@ -448,14 +473,17 @@ mod tests {
                 .filter(move |(i, _)| (*i as u64 + 1) >= from)
                 .map(|(i, e)| (i as u64 + 1, e.clone()))
                 .collect();
-            Box::new(items.into_iter())
+            Ok(Box::new(items.into_iter()))
         }
 
         fn read_from_bounded(
             &self,
             from: u64,
             limit: usize,
-        ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
+        ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+            if self.fail_reads {
+                bail!("simulated event-log integrity failure");
+            }
             if let Some(calls) = &self.bounded_read_calls {
                 calls.fetch_add(1, Ordering::SeqCst);
             }
@@ -470,7 +498,7 @@ mod tests {
                 .take(limit)
                 .map(|(i, event)| (i as u64 + 1, event.clone()))
                 .collect();
-            Box::new(items.into_iter())
+            Ok(Box::new(items.into_iter()))
         }
 
         fn head(&self) -> u64 {
@@ -510,7 +538,7 @@ mod tests {
     }
 
     fn new_store() -> EventStore<MockIndex, MockLog> {
-        EventStore::new(MockIndex::new(), MockLog::new())
+        EventStore::new(MockIndex::new(), MockLog::new()).unwrap()
     }
 
     fn populated_store(events: &[InterfoldEvent<Unsequenced>]) -> EventStore<MockIndex, MockLog> {
@@ -554,7 +582,7 @@ mod tests {
         store.store_event(make_local_event(100)).unwrap();
         store.store_event(make_local_event(200)).unwrap();
 
-        let logged: Vec<_> = store.log.read_from(1).collect();
+        let logged: Vec<_> = store.log.read_from(1).unwrap().collect();
         assert_eq!(logged.len(), 2);
     }
 
@@ -565,6 +593,7 @@ mod tests {
             MockIndex::new(),
             MockLog::with_flush_tracker(Arc::clone(&flushes)),
         )
+        .unwrap()
         .start();
 
         store.send(FlushEventStores).await??;
@@ -644,6 +673,45 @@ mod tests {
         received_rx.recv().await.unwrap();
     }
 
+    #[actix::test]
+    async fn query_read_failure_is_returned_without_panicking_the_actor() {
+        struct ResponseSink(Option<tokio::sync::oneshot::Sender<EventStoreQueryResponse>>);
+
+        impl Actor for ResponseSink {
+            type Context = actix::Context<Self>;
+        }
+
+        impl Handler<EventStoreQueryResponse> for ResponseSink {
+            type Result = ();
+
+            fn handle(
+                &mut self,
+                msg: EventStoreQueryResponse,
+                _: &mut Self::Context,
+            ) -> Self::Result {
+                self.0.take().unwrap().send(msg).ok();
+            }
+        }
+
+        let store = EventStore::new(MockIndex::new(), MockLog::failing_reads())
+            .unwrap()
+            .start();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let sink = ResponseSink(Some(sender)).start();
+        store.do_send(EventStoreQueryBy::<Seq>::new(
+            CorrelationId::new(),
+            1,
+            sink.recipient(),
+        ));
+
+        let response = receiver.await.unwrap();
+        let error = response.into_events().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("simulated event-log integrity failure"));
+        store.send(FlushEventStores).await.unwrap().unwrap();
+    }
+
     #[test]
     fn startup_index_reconciliation_reads_log_in_bounded_pages() {
         let event_count = INDEX_RECONCILE_PAGE_SIZE * 2 + 2;
@@ -660,7 +728,7 @@ mod tests {
             Arc::clone(&unbounded_calls),
         );
 
-        let store = EventStore::new(MockIndex::new(), log);
+        let store = EventStore::new(MockIndex::new(), log).unwrap();
 
         assert_eq!(unbounded_calls.load(Ordering::SeqCst), 0);
         assert_eq!(bounded_calls.load(Ordering::SeqCst), 3);
@@ -682,7 +750,7 @@ mod tests {
             assert!(result.is_none());
         }
 
-        assert_eq!(store.log.read_from(1).count(), 1);
+        assert_eq!(store.log.read_from(1).unwrap().count(), 1);
     }
 
     #[test]
@@ -694,9 +762,9 @@ mod tests {
             .store_event(make_network_event(100))
             .unwrap()
             .is_none());
-        let stored = store.log.read_from(1).next().unwrap().1;
+        let stored = store.log.read_from(1).unwrap().next().unwrap().1;
         assert_eq!(stored.source(), EventSource::Local);
-        assert_eq!(store.log.read_from(1).count(), 1);
+        assert_eq!(store.log.read_from(1).unwrap().count(), 1);
     }
 
     #[test]
@@ -710,7 +778,7 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("timestamp collision"), "{message}");
         assert!(message.contains("sequence 1"), "{message}");
-        assert_eq!(store.log.read_from(1).count(), 1);
+        assert_eq!(store.log.read_from(1).unwrap().count(), 1);
     }
 
     // ===========================================================================
@@ -725,7 +793,7 @@ mod tests {
             make_local_event(300),
         ]);
 
-        let events = store.query_by_seq(1, None, None);
+        let events = store.query_by_seq(1, None, None).unwrap();
 
         assert_eq!(events.len(), 3);
     }
@@ -739,7 +807,7 @@ mod tests {
             make_local_event(400),
         ]);
 
-        let events = store.query_by_seq(3, None, None);
+        let events = store.query_by_seq(3, None, None).unwrap();
 
         assert_eq!(events.len(), 2);
     }
@@ -753,8 +821,9 @@ mod tests {
             make_network_event(400),
         ]);
 
-        let events =
-            store.query_by_seq(1, Some(EventStoreFilter::Source(EventSource::Local)), None);
+        let events = store
+            .query_by_seq(1, Some(EventStoreFilter::Source(EventSource::Local)), None)
+            .unwrap();
 
         assert_eq!(events.len(), 2);
         for e in &events {
@@ -772,7 +841,7 @@ mod tests {
             make_local_event(500),
         ]);
 
-        let events = store.query_by_seq(1, None, Some(2));
+        let events = store.query_by_seq(1, None, Some(2)).unwrap();
 
         assert_eq!(events.len(), 2);
     }
@@ -787,11 +856,13 @@ mod tests {
             make_network_event(500),
         ]);
 
-        let events = store.query_by_seq(
-            1,
-            Some(EventStoreFilter::Source(EventSource::Local)),
-            Some(2),
-        );
+        let events = store
+            .query_by_seq(
+                1,
+                Some(EventStoreFilter::Source(EventSource::Local)),
+                Some(2),
+            )
+            .unwrap();
 
         assert_eq!(events.len(), 2);
         for e in &events {
@@ -803,7 +874,7 @@ mod tests {
     fn seq_query_on_empty_log_returns_empty() {
         let store = new_store();
 
-        let events = store.query_by_seq(1, None, None);
+        let events = store.query_by_seq(1, None, None).unwrap();
 
         assert!(events.is_empty());
     }
@@ -892,7 +963,7 @@ mod tests {
     fn ts_query_pushes_unfiltered_limit_into_event_log() {
         let observed_limit = Arc::new(AtomicUsize::new(0));
         let log = MockLog::with_bounded_read_tracker(observed_limit.clone());
-        let mut store = EventStore::new(MockIndex::new(), log);
+        let mut store = EventStore::new(MockIndex::new(), log).unwrap();
         for timestamp in [100, 200, 300, 400] {
             store.store_event(make_local_event(timestamp)).unwrap();
         }
@@ -990,12 +1061,12 @@ mod tests {
             make_local_event(300),
         ]);
 
-        let page1 = store.query_by_seq(1, None, Some(2));
+        let page1 = store.query_by_seq(1, None, Some(2)).unwrap();
         assert_eq!(page1.len(), 2);
         assert_eq!(page1[0].seq(), 1);
         assert_eq!(page1[1].seq(), 2);
 
-        let page2 = store.query_by_seq(2, None, Some(2));
+        let page2 = store.query_by_seq(2, None, Some(2)).unwrap();
         assert_eq!(page2.len(), 2);
         assert_eq!(page2[0].seq(), 2);
         assert_eq!(page2[1].seq(), 3);
@@ -1009,13 +1080,13 @@ mod tests {
             make_local_event(300),
         ]);
 
-        let page1 = store.query_by_seq(1, None, Some(2));
+        let page1 = store.query_by_seq(1, None, Some(2)).unwrap();
         assert_eq!(page1.len(), 2);
 
         let cursor_seq = page1.last().unwrap().seq();
         assert_eq!(cursor_seq, 2);
 
-        let page2 = store.query_by_seq(cursor_seq, None, None);
+        let page2 = store.query_by_seq(cursor_seq, None, None).unwrap();
         assert_eq!(page2.len(), 2);
 
         let total: Vec<_> = page1.iter().chain(page2.iter()).collect();

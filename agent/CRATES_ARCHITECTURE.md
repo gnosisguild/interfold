@@ -364,9 +364,13 @@ flowchart TD
 ```
 
 The append-only event log is the durable source of truth. The timestamp index and
-snapshots are derived state. EventStore construction reconciles missing index rows from
-the log in strict 1,024-record pages and fail-stops on a gap or unusable index; it does
-not decode the complete log solely to rebuild the index.
+snapshots are derived state. Before `commitlog` opens, startup validates the active
+segment's physical frames against its index. A CRC/length-invalid suffix after the last
+indexed record is an uncommitted crash tail and is truncated; complete CRC-valid,
+decodable frames whose index writes were lost are re-indexed. Indexed decode/CRC
+failures and any offset/index mismatch remain fatal. EventStore construction then
+performs a full integrity scan and reconciles missing timestamp-index rows from the log
+in strict 1,024-record pages.
 Timestamp admission deduplicates by stable event ID plus payload, so the same logical event may
 return through historical network sync with a different transport source without colliding. A
 different payload at an already-indexed HLC timestamp remains an integrity failure.
@@ -387,6 +391,9 @@ one burst, and EventBus subscriber fanout no longer bypasses downstream mailbox 
 EventStore query responses also await recipient capacity, preventing a full aggregation
 mailbox from dropping one aggregate response and hanging startup. Recovery publishes
 `EffectsEnabled`, canonical history, and `SyncEnded` as three separately fenced phases.
+Runtime log-read failures are returned in the correlated query response and flow through
+the existing error paths; a remote sync query therefore cannot panic the EventStore
+actor. The fail-stop behavior below applies to durable append/index-write failures.
 An event-log or timestamp-index write error panics the affected EventStore before live
 dispatch. This preserves durable-before-dispatch safety, but under the default unwind
 profile an Actix actor panic is contained at its spawned task boundary: it can kill the
@@ -704,7 +711,9 @@ The whole barrier is time-bounded. Failure to drain or flush is returned to the 
 and produces a non-zero exit. On restart, the process fence prevents two local
 writers from sharing one database. Schema preflight rejects unsupported upgrades or
 downgrades. `interfold node validate` provides offline integrity and loose-end
-diagnostics; destructive automatic repair is not performed.
+diagnostics without mutation by default. `interfold node validate --repair` is narrowly
+allowed to perform the same safe uncommitted-tail recovery used at normal startup; it
+never removes an indexed record.
 
 The implemented restart and operator-controlled recovery boundary is:
 
@@ -712,7 +721,10 @@ The implemented restart and operator-controlled recovery boundary is:
 flowchart TD
     Incident[unclean exit, corruption warning, or unsupported schema] --> Stop[stop the node and preserve its data]
     Stop --> Validate[run interfold node validate offline]
-    Validate --> Decision{event log and schema usable?}
+    Validate --> Tail{recoverable uncommitted log tail?}
+    Tail -->|yes| Repair[run node validate --repair or start normally]
+    Repair --> Validate
+    Tail -->|no| Decision{event log and schema usable?}
     Decision -->|yes| Restart[normal node start]
     Restart --> Preflight[schema preflight and bounded index reconciliation]
     Preflight --> Replay[local snapshot plus event-log replay]
@@ -732,9 +744,11 @@ flowchart TD
     class Blocked,Reset,Empty residual
 ```
 
-There is no in-process repair, event-log rollback, backup/restore command, or dedicated
-full-resync command in the Rust crates. Backup restore is an offline filesystem
-operation. A destructive reset removes the local event log—the node's source of
+There is no rollback of indexed event records, backup/restore command, or dedicated
+full-resync command in the Rust crates. The only automatic repair truncates bytes after
+the last index boundary and restores complete CRC-valid/decodable frames whose index
+entries were lost; committed corruption still fails closed. Backup restore is an offline
+filesystem operation. A destructive reset removes the local event log—the node's source of
 truth—and can reconstruct only observations still available from configured EVM ranges
 and peers. One historical network startup attempt, including all aggregates and
 retries, is capped at 512 pages, 50,000 events, 128 MiB, and five minutes, with no

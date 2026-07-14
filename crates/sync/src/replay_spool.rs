@@ -164,10 +164,10 @@ async fn query_page(
         )
         .await
         .context("EventStore router stopped during paged replay")?;
-    Ok(rx
-        .await
+    rx.await
         .context("EventStore did not return a paged replay response")?
-        .into_events())
+        .into_events()
+        .context("EventStore paged replay query failed")
 }
 
 fn event_order_key(event: &InterfoldEvent) -> (u128, AggregateId, u64) {

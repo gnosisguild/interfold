@@ -150,20 +150,37 @@ impl Handler<IncomingRequest> for NetSyncManager {
 impl Handler<EventStoreQueryResponse> for NetSyncManager {
     type Result = ();
     fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
-        // Post-restart re-broadcast response (own forwardable artifacts) — handled separately from
-        // peer sync-request responses.
-        if self.rebroadcast_query_ids.remove(&msg.id()) {
-            self.handle_rebroadcast_response(msg.into_events());
-            return;
-        }
+        let response_id = msg.id();
+        let is_rebroadcast = self.rebroadcast_query_ids.remove(&response_id);
         trap(EType::Net, &self.bus.clone(), || {
+            let events = match msg.into_events() {
+                Ok(events) => events,
+                Err(error) => {
+                    if !is_rebroadcast {
+                        if let Some(pending) = self.requests.remove(&response_id) {
+                            pending.responder.respond(ProtocolResponse::Error(
+                                "historical sync storage unavailable".to_string(),
+                            ))?;
+                        }
+                    }
+                    return Err(error);
+                }
+            };
+
+            // Post-restart re-broadcast response (own forwardable artifacts) — handled separately from
+            // peer sync-request responses.
+            if is_rebroadcast {
+                self.handle_rebroadcast_response(events);
+                return Ok(());
+            }
+
             info!("Received response from eventstore.");
-            let Some(pending) = self.requests.remove(&msg.id()) else {
-                bail!("responder not found for {}", msg.id());
+            let Some(pending) = self.requests.remove(&response_id) else {
+                bail!("responder not found for {response_id}");
             };
 
             let fetch_request: FetchEventsSince = pending.responder.try_request_into()?;
-            match build_sync_batch(msg.into_events(), &fetch_request) {
+            match build_sync_batch(events, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
                 SyncBatchOutcome::Batch(batch) => pending.responder.ok(batch)?,
             }

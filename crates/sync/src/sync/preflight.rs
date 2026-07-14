@@ -63,5 +63,6 @@ async fn event_logs_have_events(
         .await
         .context("event-store query stopped during schema preflight")?
         .into_events()
+        .context("event-store query failed during schema preflight")?
         .is_empty())
 }

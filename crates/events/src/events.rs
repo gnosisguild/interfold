@@ -41,16 +41,26 @@ impl StoreEventRequested {
 #[rtype("()")]
 pub struct EventStoreQueryResponse {
     id: CorrelationId,
-    events: Vec<InterfoldEvent<Sequenced>>,
+    result: std::result::Result<Vec<InterfoldEvent<Sequenced>>, String>,
 }
 
 impl EventStoreQueryResponse {
     pub fn new(id: CorrelationId, events: Vec<InterfoldEvent>) -> Self {
-        Self { id, events }
+        Self {
+            id,
+            result: Ok(events),
+        }
     }
 
-    pub fn into_events(self) -> Vec<InterfoldEvent> {
-        self.events
+    pub fn from_result(id: CorrelationId, result: Result<Vec<InterfoldEvent>>) -> Self {
+        Self {
+            id,
+            result: result.map_err(|error| format!("{error:#}")),
+        }
+    }
+
+    pub fn into_events(self) -> Result<Vec<InterfoldEvent>> {
+        self.result.map_err(anyhow::Error::msg)
     }
 
     pub fn id(&self) -> CorrelationId {

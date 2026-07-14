@@ -11,10 +11,10 @@
 //! operator question: *"Is my on-disk state intact, internally consistent, free
 //! of loose ends, and will this binary be able to load it after an upgrade?"*
 //!
-//! It is deliberately non-destructive. It never mutates protocol state, never
-//! talks to the chain, and never starts the node. It is safe to run while the node is
-//! stopped (the recommended pre-upgrade step) and surfaces problems as a
-//! structured report with a non-zero exit on failure.
+//! It never mutates protocol state, talks to the chain, or starts the node. By
+//! default it is fully non-destructive. The explicit `--repair` mode may only
+//! truncate a provably uncommitted physical event-log tail and rebuild index
+//! entries for complete CRC-valid tail records.
 //!
 //! ## Checks performed
 //!
@@ -34,7 +34,7 @@
 use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
 use e3_config::AppConfig;
-use e3_data::{CommitLogEventLog, Repositories};
+use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
     AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
     InterfoldEventData,
@@ -159,20 +159,19 @@ impl ValidationReport {
 /// Opens the persisted stores while holding the node's exclusive process fence.
 /// Returns the full report; callers decide how to surface it (the CLI prints it
 /// and exits non-zero on failure).
-pub async fn validate_node(config: &AppConfig) -> Result<ValidationReport> {
+pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<ValidationReport> {
     let aggregate_ids = aggregate_ids(config);
     let mut report = ValidationReport::default();
 
     // 1. Read the commit logs directly before starting any EventStore actor. The
-    // actor-facing iterator intentionally fail-stops on corruption; the checked
-    // reader used here lets the operator receive a structured validation report.
+    // checked reader lets the operator receive a structured validation report.
     let mut terminal_keys: HashSet<String> = HashSet::new();
     let mut total_events: u64 = 0;
     let mut events_by_aggregate = Vec::with_capacity(aggregate_ids.len());
     let mut unreadable_logs = 0usize;
     for agg in &aggregate_ids {
         let path = enumerate_path(&config.log_file(), agg.to_usize());
-        match read_event_log(&path, *agg) {
+        match read_event_log(&path, *agg, repair) {
             Ok(events) => {
                 total_events += events.len() as u64;
                 collect_terminal_keys(&events, &mut terminal_keys);
@@ -489,12 +488,21 @@ fn collect_terminal_keys(events: &[InterfoldEvent], out: &mut HashSet<String>) {
 
 /// Read one aggregate's source-of-truth commit log without creating an empty log
 /// as a side effect when the node has never persisted that aggregate.
-fn read_event_log(path: &Path, expected_aggregate: AggregateId) -> Result<Vec<InterfoldEvent>> {
+fn read_event_log(
+    path: &Path,
+    expected_aggregate: AggregateId,
+    repair: bool,
+) -> Result<Vec<InterfoldEvent>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let log = CommitLogEventLog::new(&path.to_path_buf())
+    let mode = if repair {
+        EventLogOpenMode::RecoverTail
+    } else {
+        EventLogOpenMode::ValidateOnly
+    };
+    let log = CommitLogEventLog::open(path, mode)
         .with_context(|| format!("failed to open commit log {}", path.display()))?;
     let events: Vec<InterfoldEvent> = log
         .read_from_checked(1)
@@ -531,6 +539,7 @@ mod tests {
     use commitlog::{CommitLog, LogOptions};
     use e3_events::{EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, Unsequenced};
     use e3_sortition::OpenCommittee;
+    use std::{fs::OpenOptions, io::Write};
     use tempfile::tempdir;
 
     #[test]
@@ -543,7 +552,7 @@ mod tests {
             .unwrap();
         drop(raw_log);
 
-        let error = read_event_log(&log_path, AggregateId::new(0)).unwrap_err();
+        let error = read_event_log(&log_path, AggregateId::new(0), false).unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("sequence 1"), "{message}");
         assert!(message.contains("failed to decode"), "{message}");
@@ -554,10 +563,44 @@ mod tests {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("log.0");
 
-        assert!(read_event_log(&log_path, AggregateId::new(0))
+        assert!(read_event_log(&log_path, AggregateId::new(0), false)
             .unwrap()
             .is_empty());
         assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn validator_repair_recovers_only_an_uncommitted_physical_tail() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("log.0");
+        let segment_path = log_path.join("00000000000000000000.log");
+        let mut log = CommitLogEventLog::new(&log_path).unwrap();
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("valid", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        );
+        log.append(&event).unwrap();
+        log.flush().unwrap();
+        drop(log);
+        OpenOptions::new()
+            .append(true)
+            .open(segment_path)
+            .unwrap()
+            .write_all(b"torn")
+            .unwrap();
+
+        let detection = format!(
+            "{:#}",
+            read_event_log(&log_path, AggregateId::new(0), false).unwrap_err()
+        );
+        assert!(detection.contains("recoverable uncommitted event-log tail"));
+
+        let events = read_event_log(&log_path, AggregateId::new(0), true).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq(), 1);
     }
 
     #[test]
@@ -575,7 +618,7 @@ mod tests {
         log.append(&aggregate_zero_event).unwrap();
         drop(log);
 
-        let error = read_event_log(&log_path, AggregateId::new(1)).unwrap_err();
+        let error = read_event_log(&log_path, AggregateId::new(1), false).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("belongs to aggregate 0"), "{message}");
         assert!(message.contains("for aggregate 1"), "{message}");

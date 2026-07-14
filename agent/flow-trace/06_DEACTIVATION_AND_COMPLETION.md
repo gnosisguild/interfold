@@ -216,6 +216,11 @@ interfold start → running node
     └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Event-log open:
+│   → validates physical frames against the commitlog index
+│   → truncates only a CRC/length-invalid suffix after the final indexed record
+│   → restores complete CRC-valid, decodable frames whose tail index write was lost
+│   → rejects indexed corruption, decode failure, gaps, and offset mismatches
 ├─ Sync module replays:
 │   1. Load snapshot metadata and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
@@ -275,6 +280,12 @@ concurrent EventBus listener acceptance for each event. A listener that is unava
 accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
 contains asynchronous edges, so this does not claim that every downstream actor is synchronously
 durable at each replay step.
+
+`interfold node validate` detects a recoverable uncommitted event-log tail without changing it.
+With the node stopped, `interfold node validate --repair` applies the same boundary-checked tail
+recovery as startup and refuses to remove indexed records. Runtime EventStore query failures are
+returned to the correlated caller rather than panicking the actor; committed corruption remains a
+startup/integrity failure.
 
 ### Restart + Persist State Diagram
 

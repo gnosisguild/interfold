@@ -185,7 +185,10 @@ pub trait EventLog: Unpin + 'static {
         Ok(())
     }
     /// Read all events starting from the given sequence number (inclusive)
-    fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>;
+    fn read_from(
+        &self,
+        from: u64,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>>;
     /// Read at most `limit` events starting from the given sequence number (inclusive).
     ///
     /// Implementations backed by persistent storage should override this method so a bounded
@@ -195,8 +198,8 @@ pub trait EventLog: Unpin + 'static {
         &self,
         from: u64,
         limit: usize,
-    ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
-        Box::new(self.read_from(from).take(limit))
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        Ok(Box::new(self.read_from(from)?.take(limit)))
     }
     /// The 1-indexed sequence number of the last appended event, or `0` if the log is empty.
     fn head(&self) -> u64;

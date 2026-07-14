@@ -8,7 +8,7 @@ use crate::get_interfold_event_bus;
 use crate::global_eventstore_cache::{share_eventstore_reader, EventStoreReader};
 use crate::global_store_cache::share_store;
 use actix::{Actor, Addr, Handler, Recipient};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use e3_data::{
     CommitLogEventLog, DataStore, InMemEventLog, InMemSequenceIndex, InMemStore, SledSequenceIndex,
     SledStore,
@@ -264,6 +264,7 @@ impl EventSystem {
                                             InMemSequenceIndex::new(),
                                             InMemEventLog::new(),
                                         )
+                                        .expect("in-memory EventStore reconciliation cannot fail")
                                         .start(),
                                     );
                                 }
@@ -287,8 +288,17 @@ impl EventSystem {
                                     let index_store =
                                         SledSequenceIndex::new(&b.sled_path, &tree_name)?;
                                     let log = CommitLogEventLog::new(&enumerated_log_path)?;
-                                    eventstore_map
-                                        .insert(index, EventStore::new(index_store, log).start());
+                                    eventstore_map.insert(
+                                        index,
+                                        EventStore::new(index_store, log)
+                                            .with_context(|| {
+                                                format!(
+                                                    "failed to reconcile EventStore aggregate \
+                                                     {index}"
+                                                )
+                                            })?
+                                            .start(),
+                                    );
                                 }
                                 Ok(eventstore_map)
                             })?
@@ -514,7 +524,9 @@ mod tests {
     impl Handler<EventStoreQueryResponse> for Listener {
         type Result = ();
         fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
-            self.events = msg.into_events();
+            self.events = msg
+                .into_events()
+                .expect("test EventStore query should succeed");
         }
     }
 

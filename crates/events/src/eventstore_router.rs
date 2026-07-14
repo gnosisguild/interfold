@@ -59,7 +59,23 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 aggregate_id,
                 self.pending.len()
             );
-            self.collected_events.extend(msg.into_events());
+            let events = match msg.into_events() {
+                Ok(events) => events,
+                Err(error) => {
+                    error!(
+                        %error,
+                        ?aggregate_id,
+                        "Aggregate EventStore query failed; forwarding the failure"
+                    );
+                    self.sender.do_send(EventStoreQueryResponse::from_result(
+                        self.parent_id,
+                        Err(error),
+                    ));
+                    ctx.notify(Die);
+                    return;
+                }
+            };
+            self.collected_events.extend(events);
 
             if self.pending.is_empty() {
                 debug!("All aggregates fulfilled, sending response");
