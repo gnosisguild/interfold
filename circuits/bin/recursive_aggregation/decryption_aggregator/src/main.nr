@@ -41,6 +41,17 @@ pub global C7_MESSAGE_OFFSET: u32 = 2 * (T + 1);
 
 pub global C7_PUBLIC_LEN: u32 = (2 * (T + 1)) + MAX_MSG_NON_ZERO_COEFFS;
 
+/// Validates a single circuit-side `party_id`: must be a 1-indexed Shamir x-coordinate
+/// in `[1, N_PARTIES]`. `x=0` is reserved for the secret itself (see DKG
+/// `share_computation.nr`'s `y[...][party_idx + 1]`) and must never be accepted as a
+/// participating share -- regression coverage for the off-by-one this circuit
+
+fn assert_valid_party_id(id: Field) {
+    let id_u32 = id as u32;
+    assert(id_u32 >= 1);
+    assert(id_u32 <= N_PARTIES);
+}
+
 fn main(
     c6_fold_vk: UltraHonkVerificationKey,
     c6_fold_proof: UltraHonkProof,
@@ -83,11 +94,11 @@ fn main(
         expected_sk[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_SK_COL_OFFSET + i];
         expected_esm[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_ESM_COL_OFFSET + i];
 
-        // Range-check each participating `party_ids[i]` against the full committee size
-        // `N_PARTIES`, so `committee_members[party_ids[i]]` is a well-defined committee slot.
-        // Structural pre-condition for future per-party signer/identity constraints.
-        let id = party_ids[i] as u32;
-        assert(id < N_PARTIES);
+        // `committee_members` and `topNodes` are 0-indexed; a future per-party
+        // signer/identity check must index them with `committee_members[party_ids[i] - 1]`,
+        // not `party_ids[i]` (which is a 1-indexed Shamir x-coordinate -- see
+        // `assert_valid_party_id`).
+        assert_valid_party_id(party_ids[i]);
     }
 
     let mut message: [Field; MAX_MSG_NON_ZERO_COEFFS] = [0; MAX_MSG_NON_ZERO_COEFFS];
@@ -96,4 +107,28 @@ fn main(
     }
 
     (key_hash, party_ids, expected_sk, expected_esm, message)
+}
+
+// ------------------------------ TESTS ------------------------------
+
+#[test]
+fn test_party_id_min_valid() {
+    assert_valid_party_id(1);
+}
+
+#[test]
+fn test_party_id_max_valid() {
+    assert_valid_party_id(N_PARTIES as Field);
+}
+
+#[test(should_fail)]
+fn test_party_id_zero_rejected() {
+    // x=0 is the secret's own evaluation point, never a valid share -- this is the
+    // exact value the old `id < N_PARTIES` bound wrongly admitted.
+    assert_valid_party_id(0);
+}
+
+#[test(should_fail)]
+fn test_party_id_above_n_parties_rejected() {
+    assert_valid_party_id((N_PARTIES + 1) as Field);
 }
