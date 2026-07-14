@@ -6,16 +6,16 @@
 
 //! Public-key and threshold-plaintext aggregation.
 //!
-//! The crate is organised into two layers:
-//! - [`actors`] — thin actix actors that own persistence and the event bus and
-//!   route messages between the protocol and the domain services.
-//! - [`domain`] — pure, synchronous services holding the aggregation state
-//!   machines and cryptographic combination logic, unit-tested in isolation.
+//! Implementation is grouped by the `committee_finalization`,
+//! `public_key_aggregation`, and `plaintext_aggregation` capabilities. The private
+//! [`actors`], [`workflow`], and [`domain`] modules are compatibility views that
+//! preserve established Rust paths; they do not define the filesystem layout.
 
 mod actors;
 mod domain;
 pub mod ext;
 mod repo;
+mod workflow;
 
 pub use actors::*;
 pub use domain::committee_hash;

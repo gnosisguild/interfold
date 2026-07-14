@@ -10,6 +10,7 @@ mod dialer;
 pub mod direct_requester;
 pub mod direct_responder;
 mod domain;
+mod event_subscription;
 pub mod events;
 mod keypair;
 mod net_interface;

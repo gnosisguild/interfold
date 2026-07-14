@@ -54,7 +54,11 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
 
-**Actor:** `ProofRequestActor` (`crates/zk-prover/src/actors/proof_request.rs`)
+**Actor:** `ProofRequestActor` (`crates/zk-prover/src/proof_request/actor.rs`)
+
+**Deterministic workflow:** pending proof state and canonical dispatch sequence planning live in
+`crates/zk-prover/src/proof_request/{state,workflow,transitions}.rs`; `handlers.rs` owns mailbox
+entry and the semantic files below `effects/` own correlation, signing, and compute dispatch.
 
 ```
 ProofRequestActor receives EncryptionKeyPending
@@ -362,12 +366,17 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 
 ### Step 6a: C2/C3 Share Proof Verification
 
-**Actor:** `ShareVerificationActor` (`crates/zk-prover/src/actors/share_verification.rs`)
+**Actor:** `ShareVerificationActor` (`crates/zk-prover/src/share_verification/actor.rs`)
+
+**Deterministic workflow:** signature/slot validation, replay normalization, consistency filtering,
+and result tallying live in `crates/zk-prover/src/share_verification/{state,workflow}.rs`. The
+capability's `handlers.rs` owns mailbox entry and its semantic effect files own correlation state
+and publish returned decisions.
 
 ```
 ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │
-├─ PHASE 1: Lightweight ECDSA Validation (inline):
+├─ PHASE 1: Lightweight ECDSA Validation (workflow service):
 │   │
 │   ├─ For EACH party's proofs:
 │   │   ├─ Verify e3_id matches

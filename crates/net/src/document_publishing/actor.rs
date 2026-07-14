@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use crate::{
+    domain::{datetime_to_instant_from_now, DocumentPublishingService},
+    events::{
+        call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
+    },
+    ContentHash,
+};
+use actix::prelude::*;
+use anyhow::{Context, Result};
+use e3_events::{
+    prelude::*, trap, trap_fut, BusHandle, CiphernodeSelected, CorrelationId, DocumentReceived,
+    E3RequestComplete, E3id, EType, EventSource, EventType, InterfoldEvent, InterfoldEventData,
+    PartyId, PublishDocumentRequested, TypedEvent,
+};
+use e3_utils::ArcBytes;
+use e3_utils::NotifySync;
+use e3_utils::{
+    retry::{retry_with_backoff, to_retry},
+    MAILBOX_LIMIT,
+};
+use futures::TryFutureExt;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::{broadcast, mpsc};
+use tracing::{debug, info};
+
+use super::event_converter::EventConverter;
+
+const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(30);
+const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(30);
+const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// DocumentPublisher is an actor that monitors events from both the Libp2pNetInterface and the
+/// Interfold EventBus in order to manage document publishing interactions. The decision/state logic
+/// lives in [`DocumentPublishingService`]; this actor only wires events to that service and
+/// performs the resulting libp2p/Kademlia I/O.
+pub struct DocumentPublisher {
+    /// Interfold EventBus
+    bus: BusHandle,
+    /// NetCommand sender to forward commands to the Libp2pNetInterface
+    tx: mpsc::Sender<NetCommand>,
+    /// NetEvent receiver to resubscribe for events from the Libp2pNetInterface. This is in an Arc
+    /// so that we do not do excessive resubscribes without actually listening for events.
+    rx: Arc<broadcast::Receiver<NetEvent>>,
+    /// The gossipsub broadcast topic
+    topic: String,
+    /// Pure decision/state service.
+    service: DocumentPublishingService,
+}
+
+impl DocumentPublisher {
+    /// Create a new DocumentPublisher actor
+    pub fn new(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        topic: impl Into<String>,
+    ) -> Self {
+        Self {
+            bus: bus.clone(),
+            tx: tx.clone(),
+            rx: rx.clone(),
+            topic: topic.into(),
+            service: DocumentPublishingService::new(),
+        }
+    }
+
+    /// This is needed to create simulation libp2p event routers
+    pub fn is_document_publisher_event(event: &InterfoldEvent) -> bool {
+        // Add a list of events with paylods for the DHT
+        matches!(
+            event.get_data(),
+            InterfoldEventData::PublishDocumentRequested(_)
+                | InterfoldEventData::ThresholdShareCreated(_)
+                | InterfoldEventData::EncryptionKeyCreated(_)
+                | InterfoldEventData::DecryptionKeyShared(_)
+        )
+    }
+
+    /// Setup the DocumentPublisher and start listening for GossipEvents
+    pub fn setup(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        topic: impl Into<String>,
+    ) -> Addr<Self> {
+        let mut events = rx.resubscribe();
+        let addr = Self::new(bus, tx, rx, topic).start();
+        EventConverter::setup(bus);
+        // Listen on all events
+        bus.subscribe(EventType::All, addr.clone().recipient());
+
+        // Forward gossip data from NetEvent
+        tokio::spawn({
+            debug!("Spawning event receive loop!");
+            let addr = addr.clone();
+            async move {
+                while let Some(event) =
+                    crate::event_subscription::recv_net_event(&mut events, "DocumentPublisher")
+                        .await
+                {
+                    debug!("Received event {:?}", event);
+                    if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
+                        event
+                    {
+                        if let Err(error) = addr.send(data).await {
+                            tracing::warn!(
+                                %error,
+                                "DocumentPublisher stopped; ending DHT notification ingress"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        addr
+    }
+
+    fn handle_ciphernode_selected(&mut self, event: CiphernodeSelected) -> Result<()> {
+        let CiphernodeSelected {
+            e3_id, party_id, ..
+        } = event;
+        self.service.register_interest(e3_id, party_id);
+        Ok(())
+    }
+
+    fn handle_e3_request_complete(&mut self, event: E3RequestComplete) -> Result<()> {
+        let keys = self.service.complete_e3(&event.e3_id);
+        if !keys.is_empty() {
+            info!(
+                "Pruning {} DHT records for completed E3 {}",
+                keys.len(),
+                event.e3_id
+            );
+            let _ = self.tx.try_send(NetCommand::DhtRemoveRecords { keys });
+        }
+        Ok(())
+    }
+}
+
+#[path = "effects.rs"]
+mod effects;
+#[path = "handlers.rs"]
+mod handlers;
+
+pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod tests;
