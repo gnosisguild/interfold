@@ -367,6 +367,9 @@ The append-only event log is the durable source of truth. The timestamp index an
 snapshots are derived state. EventStore construction reconciles missing index rows from
 the log in strict 1,024-record pages and fail-stops on a gap or unusable index; it does
 not decode the complete log solely to rebuild the index.
+Timestamp admission deduplicates by stable event ID plus payload, so the same logical event may
+return through historical network sync with a different transport source without colliding. A
+different payload at an already-indexed HLC timestamp remains an integrity failure.
 Post-snapshot events are queried per aggregate in 1,024-event pages and sorted into
 secure temporary runs. Runs are compacted with bounded fan-in and merged globally by
 persisted HLC timestamp, so memory and open-file use do not scale with the entire

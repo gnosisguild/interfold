@@ -22,7 +22,9 @@ pub struct EventStore<I: SequenceIndex, L: EventLog> {
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     /// Attempt to store an event. Returns the sequenced event on success,
-    /// `None` if the complete event is an exact duplicate, or an error on failure.
+    /// `None` if the event has the same stable identity and payload as the stored event, or an
+    /// error on failure. Transport context such as `Local` versus `Net` is not part of the
+    /// logical event identity and may legitimately change during historical redelivery.
     pub fn store_event(
         &mut self,
         event: InterfoldEvent<Unsequenced>,
@@ -42,13 +44,15 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                      log returned sequence {logged_seq}"
                 );
             }
-            if existing == event {
+            if existing.id() == event.id() && existing.get_data() == event.get_data() {
                 warn!(
                     timestamp = ts,
                     sequence = indexed_seq,
                     event_id = %event.id(),
                     event_type = %event.get_data().event_type(),
-                    "Ignoring exact duplicate event"
+                    incoming_source = ?event.source(),
+                    stored_source = ?existing.source(),
+                    "Ignoring duplicate logical event"
                 );
                 return Ok(None);
             }
@@ -487,6 +491,16 @@ mod tests {
         )
     }
 
+    fn make_distinct_event(ts: u128, source: EventSource) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("different", 2).into(),
+            None,
+            ts,
+            None,
+            source,
+        )
+    }
+
     fn make_local_event(ts: u128) -> InterfoldEvent<Unsequenced> {
         make_event(ts, EventSource::Local)
     }
@@ -672,11 +686,27 @@ mod tests {
     }
 
     #[test]
-    fn conflicting_event_at_same_timestamp_fails_immediately() {
+    fn local_event_redelivered_from_network_is_idempotent() {
         let mut store = new_store();
         store.store_event(make_local_event(100)).unwrap();
 
-        let error = store.store_event(make_network_event(100)).unwrap_err();
+        assert!(store
+            .store_event(make_network_event(100))
+            .unwrap()
+            .is_none());
+        let stored = store.log.read_from(1).next().unwrap().1;
+        assert_eq!(stored.source(), EventSource::Local);
+        assert_eq!(store.log.read_from(1).count(), 1);
+    }
+
+    #[test]
+    fn conflicting_payload_at_same_timestamp_fails_immediately() {
+        let mut store = new_store();
+        store.store_event(make_local_event(100)).unwrap();
+
+        let error = store
+            .store_event(make_distinct_event(100, EventSource::Net))
+            .unwrap_err();
         let message = error.to_string();
         assert!(message.contains("timestamp collision"), "{message}");
         assert!(message.contains("sequence 1"), "{message}");

@@ -242,6 +242,9 @@ On restart:
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
 │   6. Sort & publish merged events by HLC timestamp
+│      → A logical event returned by a peer with its source changed from Local to Net is
+│        idempotent when timestamp, stable event ID, and payload match the stored record;
+│        a different payload at the same timestamp still fails closed as a collision
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   7. Enable effects (writers may submit only after this point)
