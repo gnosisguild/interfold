@@ -44,12 +44,23 @@ pub global C7_PUBLIC_LEN: u32 = (2 * (T + 1)) + MAX_MSG_NON_ZERO_COEFFS;
 /// Validates a single circuit-side `party_id`: must be a 1-indexed Shamir x-coordinate
 /// in `[1, N_PARTIES]`. `x=0` is reserved for the secret itself (see DKG
 /// `share_computation.nr`'s `y[...][party_idx + 1]`) and must never be accepted as a
-/// participating share -- regression coverage for the off-by-one this circuit
-
-fn assert_valid_party_id(id: Field) {
+/// participating share. Returns the `u32` cast for reuse by the caller (e.g. the
+/// strictly-increasing check below), avoiding a second `Field -> u32` cast.
+fn assert_valid_party_id(id: Field) -> u32 {
     let id_u32 = id as u32;
     assert(id_u32 >= 1);
     assert(id_u32 <= N_PARTIES);
+    id_u32
+}
+
+/// Asserts `curr > prev`. Used to force the `T + 1` reconstructing `party_ids` to be
+/// strictly increasing, which (a) implies distinctness -- no party's share can occupy
+/// two reconstruction slots, which would let a single real share masquerade as T+1
+/// independent contributions and silently defeat the T+1 honest-party threshold -- and
+/// (b) matches the ordering `decrypted_shares_aggregation.nr`'s own Lagrange
+/// sign-computation already assumes but never enforced.
+fn assert_strictly_increasing(prev: u32, curr: u32) {
+    assert(curr > prev);
 }
 
 fn main(
@@ -89,6 +100,7 @@ fn main(
     let mut party_ids: [Field; T + 1] = [0; T + 1];
     let mut expected_sk: [Field; T + 1] = [0; T + 1];
     let mut expected_esm: [Field; T + 1] = [0; T + 1];
+    let mut prev_party_id: u32 = 0;
     for i in 0..(T + 1) {
         party_ids[i] = c7_public[C7_PARTY_ID_OFFSET + i];
         expected_sk[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_SK_COL_OFFSET + i];
@@ -98,7 +110,11 @@ fn main(
         // signer/identity check must index them with `committee_members[party_ids[i] - 1]`,
         // not `party_ids[i]` (which is a 1-indexed Shamir x-coordinate -- see
         // `assert_valid_party_id`).
-        assert_valid_party_id(party_ids[i]);
+        let id_u32 = assert_valid_party_id(party_ids[i]);
+        if i > 0 {
+            assert_strictly_increasing(prev_party_id, id_u32);
+        }
+        prev_party_id = id_u32;
     }
 
     let mut message: [Field; MAX_MSG_NON_ZERO_COEFFS] = [0; MAX_MSG_NON_ZERO_COEFFS];
@@ -113,22 +129,39 @@ fn main(
 
 #[test]
 fn test_party_id_min_valid() {
-    assert_valid_party_id(1);
+    let _ = assert_valid_party_id(1);
 }
 
 #[test]
 fn test_party_id_max_valid() {
-    assert_valid_party_id(N_PARTIES as Field);
+    let _ = assert_valid_party_id(N_PARTIES as Field);
 }
 
 #[test(should_fail)]
 fn test_party_id_zero_rejected() {
     // x=0 is the secret's own evaluation point, never a valid share -- this is the
     // exact value the old `id < N_PARTIES` bound wrongly admitted.
-    assert_valid_party_id(0);
+    let _ = assert_valid_party_id(0);
 }
 
 #[test(should_fail)]
 fn test_party_id_above_n_parties_rejected() {
-    assert_valid_party_id((N_PARTIES + 1) as Field);
+    let _ = assert_valid_party_id((N_PARTIES + 1) as Field);
+}
+
+#[test]
+fn test_strictly_increasing_accepts_ascending_pair() {
+    assert_strictly_increasing(1, 2);
+}
+
+#[test(should_fail)]
+fn test_strictly_increasing_rejects_duplicate() {
+    // The exact attack this closes: the same party's share occupying two
+    // reconstruction slots, letting one real share masquerade as two.
+    assert_strictly_increasing(3, 3);
+}
+
+#[test(should_fail)]
+fn test_strictly_increasing_rejects_descending_pair() {
+    assert_strictly_increasing(5, 2);
 }
