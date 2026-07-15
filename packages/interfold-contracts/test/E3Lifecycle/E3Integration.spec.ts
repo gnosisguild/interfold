@@ -291,6 +291,124 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(unchanged.treasury).to.equal(originalTreasury);
       expect(unchanged.allocation.committeeFormationBps).to.equal(1000);
     });
+
+    it("AUD-M04: drains an in-flight E3 through request-time dependencies", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        bondingRegistry,
+        registry,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        treasury,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+      const rotationTestWindow = 100;
+      await registry
+        .connect(owner)
+        .setSortitionSubmissionWindow(rotationTestWindow);
+      await makeRequest();
+
+      const interfoldAddress = await interfold.getAddress();
+      const refundManagerAddress = await e3RefundManager.getAddress();
+      const registryAddress = await registry.getAddress();
+      const bondingAddress = await bondingRegistry.getAddress();
+
+      const policy = await e3RefundManager.getE3PolicySnapshot(0);
+      expect(policy.interfold).to.equal(interfoldAddress);
+      const dependencies = await slashingManager.getE3Dependencies(0);
+      expect(dependencies.bonding).to.equal(bondingAddress);
+      expect(dependencies.registry).to.equal(registryAddress);
+      expect(dependencies.interfoldContract).to.equal(interfoldAddress);
+      expect(dependencies.refundManager).to.equal(refundManagerAddress);
+
+      const rotatedRegistry = await requester.getAddress();
+      const rotatedBonding = await computeProvider.getAddress();
+      const rotatedRefundManager = await treasury.getAddress();
+      const rotatedSlashingManager = await owner.getAddress();
+
+      // Rotate every global dependency after the E3 has been requested. EOAs are
+      // deliberate canaries: any accidental read through a live global pointer
+      // will fail instead of silently succeeding through another deployment.
+      await interfold.connect(owner).setCiphernodeRegistry(rotatedRegistry);
+      await interfold.connect(owner).setBondingRegistry(rotatedBonding);
+      await interfold.connect(owner).setE3RefundManager(rotatedRefundManager);
+      await interfold.connect(owner).setSlashingManager(rotatedSlashingManager);
+      await registry.connect(owner).setInterfold(rotatedRegistry);
+      await registry.connect(owner).setBondingRegistry(rotatedBonding);
+      await registry.connect(owner).setSlashingManager(rotatedSlashingManager);
+      await e3RefundManager.connect(owner).setInterfold(rotatedRegistry);
+      await slashingManager.connect(owner).setBondingRegistry(rotatedBonding);
+      await slashingManager
+        .connect(owner)
+        .setCiphernodeRegistry(rotatedRegistry);
+      await slashingManager.connect(owner).setInterfold(rotatedRegistry);
+      await slashingManager
+        .connect(owner)
+        .setE3RefundManager(rotatedRefundManager);
+
+      // Committee selection still reads eligibility and ticket checkpoints from
+      // the original bonding registry, then calls back into the original Interfold.
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await time.increase(rotationTestWindow + 1);
+      await registry.finalizeCommittee(0);
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      await registry.publishCommittee(
+        0,
+        publicKey,
+        ethers.keccak256(publicKey),
+        "0x",
+        "0x",
+      );
+
+      // Slashing also stays bound to the original registry, bonding, Interfold,
+      // and refund manager even though all four global pointers were rotated.
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        0,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      const refundBalanceBefore =
+        await usdcToken.balanceOf(refundManagerAddress);
+      await slashingManager.proposeSlash(
+        0,
+        await operator1.getAddress(),
+        proof,
+      );
+      expect(await usdcToken.balanceOf(refundManagerAddress)).to.be.gt(
+        refundBalanceBefore,
+      );
+
+      const e3 = await interfold.getE3(0);
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      await interfold.publishCiphertextOutput(
+        0,
+        "0x" + "ab".repeat(100),
+        "0x1337",
+      );
+      await interfold.publishPlaintextOutput(
+        0,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
+
+      expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
+    });
   });
 
   describe("Committee Formed Integration", function () {
@@ -783,7 +901,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         interfold,
         e3RefundManager,
         makeRequest,
-        owner,
         operator1,
         operator2,
         operator3,
@@ -808,11 +925,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const requesterGap =
         distributionBefore.originalPayment - distributionBefore.requesterAmount;
 
-      // Escrow slashed funds via the interfold proxy (swap interfold address for test)
+      // Call from the Interfold frozen in the E3 policy snapshot. Rotating the
+      // manager's live pointer must not grant settlement authority for old E3s.
       const originalInterfold = await e3RefundManager.interfold();
-      await e3RefundManager.setInterfold(await owner.getAddress());
-      await e3RefundManager.connect(owner).escrowSlashedFunds(0, slashedAmount);
-      await e3RefundManager.setInterfold(originalInterfold);
+      await ethers.provider.send("hardhat_impersonateAccount", [
+        originalInterfold,
+      ]);
+      await ethers.provider.send("hardhat_setBalance", [
+        originalInterfold,
+        "0x1000000000000000000",
+      ]);
+      await e3RefundManager
+        .connect(await ethers.getSigner(originalInterfold))
+        .escrowSlashedFunds(0, slashedAmount);
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [
+        originalInterfold,
+      ]);
 
       const distributionAfter = await e3RefundManager.getRefundDistribution(0);
 
@@ -835,7 +963,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         interfold,
         e3RefundManager,
         makeRequest,
-        owner,
         operator1,
         operator2,
         operator3,
@@ -856,9 +983,19 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Escrow slashed funds BEFORE processE3Failure — should be queued
       const originalInterfold = await e3RefundManager.interfold();
-      await e3RefundManager.setInterfold(await owner.getAddress());
-      await e3RefundManager.connect(owner).escrowSlashedFunds(0, slashedAmount);
-      await e3RefundManager.setInterfold(originalInterfold);
+      await ethers.provider.send("hardhat_impersonateAccount", [
+        originalInterfold,
+      ]);
+      await ethers.provider.send("hardhat_setBalance", [
+        originalInterfold,
+        "0x1000000000000000000",
+      ]);
+      await e3RefundManager
+        .connect(await ethers.getSigner(originalInterfold))
+        .escrowSlashedFunds(0, slashedAmount);
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [
+        originalInterfold,
+      ]);
 
       // Distribution should not exist yet
       const distBefore = await e3RefundManager.getRefundDistribution(0);

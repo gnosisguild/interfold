@@ -123,6 +123,12 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     );
     await slashingManager.setInterfold(addressOne);
     await slashingManager.setE3RefundManager(addressOne);
+    await networkHelpers.setBalance(addressOne, ethers.parseEther("1"));
+    await networkHelpers.impersonateAccount(addressOne);
+    await slashingManager
+      .connect(await ethers.getSigner(addressOne))
+      .snapshotE3Dependencies(0);
+    await networkHelpers.stopImpersonatingAccount(addressOne);
 
     return {
       owner,

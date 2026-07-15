@@ -86,6 +86,18 @@ contract SlashingManager is
     /// @notice Reference to the E3 Refund Manager for routing slashed funds
     IE3RefundManager public e3RefundManager;
 
+    struct E3Dependencies {
+        IBondingRegistry bonding;
+        ICiphernodeRegistry registry;
+        IInterfold interfoldContract;
+        IE3RefundManager refundManager;
+        bool initialized;
+    }
+
+    /// @notice Contracts frozen for each E3's complete slashing lifecycle.
+    mapping(uint256 e3Id => E3Dependencies dependencies)
+        internal _e3Dependencies;
+
     /// @notice Mapping from slash reason hash to its configured policy
     mapping(bytes32 reason => SlashPolicy policy) public slashPolicies;
 
@@ -249,6 +261,44 @@ contract SlashingManager is
         return _domainSeparatorV4();
     }
 
+    /// @inheritdoc ISlashingManager
+    function getE3Dependencies(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            address bonding,
+            address registry,
+            address interfoldContract,
+            address refundManager
+        )
+    {
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        return (
+            address(dependencies.bonding),
+            address(dependencies.registry),
+            address(dependencies.interfoldContract),
+            address(dependencies.refundManager)
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function snapshotE3Dependencies(uint256 e3Id) external {
+        require(
+            msg.sender == address(interfold) ||
+                msg.sender == address(ciphernodeRegistry),
+            Unauthorized()
+        );
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        require(!dependencies.initialized, InvalidProposal());
+        dependencies.bonding = bondingRegistry;
+        dependencies.registry = ciphernodeRegistry;
+        dependencies.interfoldContract = interfold;
+        dependencies.refundManager = e3RefundManager;
+        dependencies.initialized = true;
+    }
+
     // ======================
     // Admin Functions
     // ======================
@@ -386,7 +436,7 @@ contract SlashingManager is
         require(policy.requiresProof, InvalidPolicy());
 
         require(
-            ciphernodeRegistry.isCommitteeMember(e3Id, operator),
+            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -449,9 +499,8 @@ contract SlashingManager is
         uint256 e3Id,
         uint256 partyId
     ) internal view returns (address operator) {
-        (uint256[] memory partyIds, , ) = ciphernodeRegistry.getDkgAnchors(
-            e3Id
-        );
+        ICiphernodeRegistry registry = _dependenciesFor(e3Id).registry;
+        (uint256[] memory partyIds, , ) = registry.getDkgAnchors(e3Id);
         bool found = false;
         for (uint256 i = 0; i < partyIds.length; i++) {
             if (partyIds[i] == partyId) {
@@ -460,7 +509,7 @@ contract SlashingManager is
             }
         }
         require(found, PartyIdNotInDkgAnchors());
-        return ciphernodeRegistry.canonicalCommitteeNodeAt(e3Id, partyId);
+        return registry.canonicalCommitteeNodeAt(e3Id, partyId);
     }
 
     /// @inheritdoc ISlashingManager
@@ -584,8 +633,7 @@ contract SlashingManager is
 
         // Get committee threshold — need at least M agreeing votes
         {
-            (, uint32 thresholdM, , ) = ciphernodeRegistry
-                .getCommitteeViability(e3Id);
+            uint32 thresholdM = _committeeThresholdM(e3Id);
             require(thresholdM > 0, InvalidProposal());
             require(numVotes >= thresholdM, InsufficientAttestations());
         }
@@ -614,7 +662,7 @@ contract SlashingManager is
 
             // Verify voter is an active committee member for this E3
             require(
-                ciphernodeRegistry.isCommitteeMemberActive(e3Id, voter),
+                _isCommitteeMemberActive(e3Id, voter),
                 VoterNotInCommittee()
             );
 
@@ -641,6 +689,25 @@ contract SlashingManager is
         }
     }
 
+    function _committeeThresholdM(
+        uint256 e3Id
+    ) internal view returns (uint32 thresholdM) {
+        (, thresholdM, , ) = _dependenciesFor(e3Id)
+            .registry
+            .getCommitteeViability(e3Id);
+    }
+
+    function _isCommitteeMemberActive(
+        uint256 e3Id,
+        address voter
+    ) internal view returns (bool) {
+        return
+            _dependenciesFor(e3Id).registry.isCommitteeMemberActive(
+                e3Id,
+                voter
+            );
+    }
+
     /// @dev Executes a slash: applies financial penalties, optional ban, and committee expulsion.
     ///      Lane B: if the operator deregistered or exited during the appeal window, penalties
     ///      gracefully become 0 (BondingRegistry uses min(requested, available)). Accepted tradeoff.
@@ -653,12 +720,13 @@ contract SlashingManager is
     ///      the primary defence; this ordering provides defence-in-depth.
     function _executeSlash(uint256 proposalId, Lane lane) internal {
         SlashProposal storage p = _proposals[proposalId];
+        E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
-            actualTicketSlashed = bondingRegistry.slashTicketBalance(
+            actualTicketSlashed = dependencies.bonding.slashTicketBalance(
                 p.operator,
                 p.ticketAmount,
                 p.reason
@@ -666,7 +734,7 @@ contract SlashingManager is
         }
 
         if (p.licenseAmount > 0) {
-            bondingRegistry.slashLicenseBond(
+            dependencies.bonding.slashLicenseBond(
                 p.operator,
                 p.licenseAmount,
                 p.reason
@@ -689,14 +757,20 @@ contract SlashingManager is
         // Committee expulsion for E3-scoped slashes (uses snapshotted behavioral flags)
         // expelCommitteeMember returns (activeCount, thresholdM) — one call instead of three
         if (p.affectsCommittee) {
-            (uint256 activeCount, uint32 thresholdM) = ciphernodeRegistry
+            (uint256 activeCount, uint32 thresholdM) = dependencies
+                .registry
                 .expelCommitteeMember(p.e3Id, p.operator, p.reason);
 
             // If active count drops below M, fail the E3
             if (activeCount < thresholdM && p.failureReason > 0) {
                 // NOTE: catch block must not be empty (solc optimizer bug, see below)
                 // solhint-disable-next-line no-empty-blocks
-                try interfold.onE3Failed(p.e3Id, p.failureReason) {
+                try
+                    dependencies.interfoldContract.onE3Failed(
+                        p.e3Id,
+                        p.failureReason
+                    )
+                {
                     // Side effects occur in the external call
                 } catch {
                     // E3 already failed or other error — slash still proceeds
@@ -705,17 +779,11 @@ contract SlashingManager is
             }
         }
 
-        // Escrow slashed ticket funds for deferred distribution.
-        // Self-call for try/catch atomicity — on failure, funds stay in BondingRegistry.
+        // Escrow slashed ticket funds for deferred distribution. The self-call
+        // keeps payout and accounting atomic. A routing failure reverts the
+        // whole slash so the proposal remains retryable.
         if (actualTicketSlashed > 0) {
-            // NOTE: catch must not be empty — solc >=0.8.28 optimizer bug.
-            // solhint-disable no-empty-blocks
-            try
-                this.escrowSlashedFundsToRefund(p.e3Id, actualTicketSlashed)
-            {} catch {
-                // solhint-enable no-empty-blocks
-                emit RoutingFailed(p.e3Id, actualTicketSlashed);
-            }
+            this.escrowSlashedFundsToRefund(p.e3Id, actualTicketSlashed);
         }
 
         emit SlashExecuted(
@@ -735,11 +803,19 @@ contract SlashingManager is
     ///      External with self-only access for try/catch atomicity.
     function escrowSlashedFundsToRefund(uint256 e3Id, uint256 amount) external {
         require(msg.sender == address(this), Unauthorized());
-        address refundManager = address(e3RefundManager);
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        address refundManager = address(dependencies.refundManager);
         require(refundManager != address(0), ZeroAddress());
-        bondingRegistry.redirectSlashedTicketFunds(refundManager, amount);
-        interfold.escrowSlashedFunds(e3Id, amount);
+        dependencies.bonding.redirectSlashedTicketFunds(refundManager, amount);
+        dependencies.interfoldContract.escrowSlashedFunds(e3Id, amount);
         emit SlashedFundsEscrowedToRefund(e3Id, amount);
+    }
+
+    function _dependenciesFor(
+        uint256 e3Id
+    ) internal view returns (E3Dependencies memory dependencies) {
+        dependencies = _e3Dependencies[e3Id];
+        require(dependencies.initialized, InvalidProposal());
     }
 
     // ======================

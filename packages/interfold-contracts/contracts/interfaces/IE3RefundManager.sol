@@ -30,6 +30,7 @@ interface IE3RefundManager {
     struct E3PolicySnapshot {
         WorkValueAllocation allocation;
         address treasury;
+        address interfold;
         uint64 version;
         bool initialized;
     }
@@ -114,6 +115,7 @@ interface IE3RefundManager {
         uint256 indexed e3Id,
         uint64 indexed version,
         address indexed treasury,
+        address interfold,
         WorkValueAllocation allocation
     );
     /// @notice Emitted when orphaned slashed funds are withdrawn to treasury

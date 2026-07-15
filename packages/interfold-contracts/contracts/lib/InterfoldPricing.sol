@@ -6,6 +6,8 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 
 /**
  * @title InterfoldPricing
@@ -26,6 +28,94 @@ library InterfoldPricing {
     uint16 internal constant MAX_PROTOCOL_SHARE_BPS = 5_000;
     uint16 internal constant MAX_MARGIN_BPS = 5_000;
     uint32 internal constant MAX_COMMITTEE_SIZE = 256;
+
+    event ParamSetRegistered(uint8 paramSet, bytes encodedParams);
+    event ParamSetUpdated(
+        uint8 paramSet,
+        bytes previousParams,
+        bytes newParams
+    );
+
+    function emitParamSetChange(
+        uint8 paramSet,
+        bytes calldata previous,
+        bytes calldata current
+    ) external {
+        if (previous.length == 0) {
+            emit ParamSetRegistered(paramSet, current);
+        } else {
+            emit ParamSetUpdated(paramSet, previous, current);
+        }
+    }
+
+    function validateRegistryCaller(
+        address caller,
+        address registry
+    ) external pure {
+        require(caller == registry, IInterfold.OnlyCiphernodeRegistry());
+    }
+
+    function validateSlashCaller(
+        address caller,
+        address slashManager
+    ) external pure {
+        require(caller == slashManager, IInterfold.OnlySlashingManager());
+    }
+
+    function validateRegistryOrSlashCaller(
+        address caller,
+        address registry,
+        address slashManager
+    ) external pure {
+        require(
+            caller == registry || caller == slashManager,
+            IInterfold.OnlyCiphernodeRegistryOrSlashingManager()
+        );
+    }
+
+    function verifyPlaintext(
+        address verifierAddress,
+        address registryAddress,
+        uint256 e3Id,
+        bytes32 ciphertextHash,
+        bytes32 committeePublicKey,
+        bytes32 plaintextHash,
+        bytes calldata proof
+    ) external view {
+        IDecryptionVerifier(verifierAddress).verify(
+            e3Id,
+            ICiphernodeRegistry(registryAddress).rootAt(e3Id),
+            ICiphernodeRegistry(registryAddress).getCommitteeNodes(e3Id),
+            ciphertextHash,
+            committeePublicKey,
+            plaintextHash,
+            ICiphernodeRegistry(registryAddress).getCommitteeHash(e3Id),
+            proof
+        );
+    }
+
+    function honestNodes(
+        address registryAddress,
+        uint256 e3Id,
+        uint8 reason
+    ) external view returns (address[] memory) {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+        if (
+            reason ==
+            uint8(IInterfold.FailureReason.CommitteeFormationTimeout) ||
+            reason ==
+            uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+        ) return new address[](0);
+
+        try registry.getActiveCommitteeNodes(e3Id) returns (
+            address[] memory nodes,
+            uint256[] memory
+        ) {
+            return nodes;
+        } catch {
+            return new address[](0);
+        }
+    }
 
     /// @notice Writes the default {IInterfold.PricingConfig} directly to
     ///         the linked {Interfold} storage starting at slot 24. Called

@@ -44,7 +44,7 @@ describe("Interfold", function () {
   const inputWindowDuration = 300;
 
   const setup = async () => {
-    const sys = await deployInterfoldSystem({ wireSlashingManager: false });
+    const sys = await deployInterfoldSystem({ wireSlashingManager: true });
     const dkgFoldAttestationVerifier = await ethers.deployContract(
       "DkgFoldAttestationVerifier",
     );

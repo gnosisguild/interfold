@@ -417,6 +417,23 @@ interface ISlashingManager {
         address operator
     ) external view returns (bool);
 
+    /// @notice Freeze all contracts used to validate and execute slashes for an E3.
+    /// @dev Called exactly once by the configured Interfold during E3 creation.
+    function snapshotE3Dependencies(uint256 e3Id) external;
+
+    /// @notice Return the contracts frozen for an E3's slashing lifecycle.
+    function getE3Dependencies(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            address bonding,
+            address registry,
+            address interfoldContract,
+            address refundManager
+        );
+
     /**
      * @notice Returns the bonding registry contract used for executing slashes
      * @return registry The IBondingRegistry contract instance

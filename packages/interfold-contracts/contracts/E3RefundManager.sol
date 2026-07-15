@@ -87,6 +87,15 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         _;
     }
 
+    /// @dev Authorizes the Interfold contract frozen for an existing E3.
+    modifier onlyE3Interfold(uint256 e3Id) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        if (!policy.initialized || msg.sender != policy.interfold) {
+            revert Unauthorized();
+        }
+        _;
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                   Initialization                       //
@@ -159,28 +168,18 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 originalPayment,
         address[] calldata honestNodes,
         IERC20 paymentToken
-    ) external onlyInterfold {
+    ) external onlyE3Interfold(e3Id) {
         require(!_distributions[e3Id].calculated, "Already calculated");
         require(originalPayment > 0, "No payment");
         require(address(paymentToken) != address(0), "Invalid fee token");
 
-        E3PolicySnapshot memory policy = _policyFor(e3Id);
-
         // Calculate work value based on stage and the request-time policy.
         IInterfold.E3Stage failedAt = _getFailedAtStage(e3Id);
         (
-            uint16 workCompletedBps,
-            uint16 workRemainingBps
-        ) = _calculateWorkValue(failedAt, policy.allocation);
-
-        // Calculate base distribution
-        uint256 honestNodeAmount = (originalPayment * workCompletedBps) /
-            BPS_BASE;
-        uint256 requesterAmount = (originalPayment * workRemainingBps) /
-            BPS_BASE;
-        uint256 protocolAmount = originalPayment -
-            honestNodeAmount -
-            requesterAmount;
+            uint256 honestNodeAmount,
+            uint256 requesterAmount,
+            uint256 protocolAmount
+        ) = _baseDistribution(e3Id, originalPayment, failedAt);
 
         // No honest nodes: fold work share into the requester refund (mirrors
         // {Interfold._distributeRewards} success-path). Avoids per-failure dust
@@ -213,9 +212,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         // Credit protocol fee via pull-payment so a malicious/reverting/blacklisted
         // treasury cannot brick failed-E3 processing.
         if (protocolAmount > 0) {
-            _pendingTreasury[policy.treasury][paymentToken] += protocolAmount;
+            address policyTreasury = _treasuryFor(e3Id);
+            _pendingTreasury[policyTreasury][paymentToken] += protocolAmount;
             emit TreasurySlashedCredited(
-                policy.treasury,
+                policyTreasury,
                 paymentToken,
                 protocolAmount
             );
@@ -245,6 +245,28 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             finalDist.protocolAmount,
             finalDist.totalSlashed
         );
+    }
+
+    function _baseDistribution(
+        uint256 e3Id,
+        uint256 originalPayment,
+        IInterfold.E3Stage failedAt
+    )
+        internal
+        view
+        returns (
+            uint256 honestNodeAmount,
+            uint256 requesterAmount,
+            uint256 protocolAmount
+        )
+    {
+        (
+            uint16 workCompletedBps,
+            uint16 workRemainingBps
+        ) = _calculateWorkValue(failedAt, _allocationFor(e3Id));
+        honestNodeAmount = (originalPayment * workCompletedBps) / BPS_BASE;
+        requesterAmount = (originalPayment * workRemainingBps) / BPS_BASE;
+        protocolAmount = originalPayment - honestNodeAmount - requesterAmount;
     }
 
     /// @notice Get the stage at which E3 failed (for work calculation)
@@ -427,7 +449,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function escrowSlashedFunds(
         uint256 e3Id,
         uint256 amount
-    ) external onlyInterfold {
+    ) external onlyE3Interfold(e3Id) {
         require(amount > 0, "Zero amount");
 
         RefundDistribution storage dist = _distributions[e3Id];
@@ -479,7 +501,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         address[] calldata honestNodes,
         IERC20 paymentToken
-    ) external onlyInterfold {
+    ) external onlyE3Interfold(e3Id) {
         uint256 escrowed = _pendingSlashedFunds[e3Id];
         if (escrowed == 0) return;
         _pendingSlashedFunds[e3Id] = 0;
@@ -487,53 +509,56 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(address(paymentToken) != address(0), "Invalid fee token");
         _slashedSuccessToken[e3Id] = paymentToken;
 
-        E3PolicySnapshot memory policy = _policyFor(e3Id);
-        uint256 toNodes = (escrowed * policy.allocation.successSlashedNodeBps) /
+        address policyTreasury = _treasuryFor(e3Id);
+        uint256 toNodes = (escrowed * _successSlashedNodeBpsFor(e3Id)) /
             BPS_BASE;
         uint256 toProtocol = escrowed - toNodes;
 
         // Credit treasury share — pull only.
         if (toProtocol > 0) {
-            _pendingTreasury[policy.treasury][paymentToken] += toProtocol;
+            _pendingTreasury[policyTreasury][paymentToken] += toProtocol;
             emit TreasurySlashedCredited(
-                policy.treasury,
+                policyTreasury,
                 paymentToken,
                 toProtocol
             );
         }
 
         if (toNodes > 0 && honestNodes.length > 0) {
-            uint256 perNode = toNodes / honestNodes.length;
-            uint256 distributed = 0;
-            for (uint256 i = 0; i < honestNodes.length; i++) {
-                uint256 nodeAmount = perNode;
-                if (i == honestNodes.length - 1) {
-                    nodeAmount = toNodes - distributed;
-                }
-                if (nodeAmount > 0) {
-                    // credit per-node so one blacklisted/reverting recipient
-                    // does not brick payouts for the rest of the committee.
-                    _pendingSlashedSuccess[e3Id][honestNodes[i]] += nodeAmount;
-                    emit SlashedFundsCredited(
-                        e3Id,
-                        honestNodes[i],
-                        paymentToken,
-                        nodeAmount
-                    );
-                }
-                distributed += nodeAmount;
-            }
+            _creditSuccessSlashed(e3Id, honestNodes, paymentToken, toNodes);
         } else if (toNodes > 0) {
             // No honest nodes — funnel the node share to treasury for governance triage.
-            _pendingTreasury[policy.treasury][paymentToken] += toNodes;
-            emit TreasurySlashedCredited(
-                policy.treasury,
-                paymentToken,
-                toNodes
-            );
+            _pendingTreasury[policyTreasury][paymentToken] += toNodes;
+            emit TreasurySlashedCredited(policyTreasury, paymentToken, toNodes);
         }
 
         emit SlashedFundsDistributedOnSuccess(e3Id, toNodes, toProtocol);
+    }
+
+    function _creditSuccessSlashed(
+        uint256 e3Id,
+        address[] calldata honestNodes,
+        IERC20 paymentToken,
+        uint256 toNodes
+    ) internal {
+        uint256 perNode = toNodes / honestNodes.length;
+        uint256 distributed = 0;
+        for (uint256 i = 0; i < honestNodes.length; i++) {
+            uint256 nodeAmount = perNode;
+            if (i == honestNodes.length - 1) {
+                nodeAmount = toNodes - distributed;
+            }
+            if (nodeAmount > 0) {
+                _pendingSlashedSuccess[e3Id][honestNodes[i]] += nodeAmount;
+                emit SlashedFundsCredited(
+                    e3Id,
+                    honestNodes[i],
+                    paymentToken,
+                    nodeAmount
+                );
+            }
+            distributed += nodeAmount;
+        }
     }
 
     /// @notice Apply slashed funds to an E3's refund distribution
@@ -637,30 +662,43 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         if (policyVersion == 0) policyVersion = 1;
         snapshot.allocation = _workAllocation;
         snapshot.treasury = treasury;
+        snapshot.interfold = msg.sender;
         snapshot.version = policyVersion;
         snapshot.initialized = true;
         emit E3PolicySnapshotted(
             e3Id,
             policyVersion,
             treasury,
+            msg.sender,
             _workAllocation
         );
-    }
-
-    function _policyFor(
-        uint256 e3Id
-    ) internal view returns (E3PolicySnapshot memory policy) {
-        policy = _e3PolicySnapshots[e3Id];
-        if (!policy.initialized) {
-            policy.allocation = _workAllocation;
-            policy.treasury = treasury;
-            policy.version = policyVersion;
-        }
     }
 
     function _treasuryFor(uint256 e3Id) internal view returns (address) {
         E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
         return policy.treasury;
+    }
+
+    function _interfoldFor(uint256 e3Id) internal view returns (IInterfold) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        return IInterfold(policy.interfold);
+    }
+
+    function _allocationFor(
+        uint256 e3Id
+    ) internal view returns (WorkValueAllocation memory allocation) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        return policy.initialized ? policy.allocation : _workAllocation;
+    }
+
+    function _successSlashedNodeBpsFor(
+        uint256 e3Id
+    ) internal view returns (uint16) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        return
+            policy.initialized
+                ? policy.allocation.successSlashedNodeBps
+                : _workAllocation.successSlashedNodeBps;
     }
 
     ////////////////////////////////////////////////////////////

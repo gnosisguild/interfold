@@ -64,7 +64,7 @@ describe("E3 Pricing", function () {
     const treasurySigner = signers[5];
     const sys = await deployInterfoldSystem({
       treasury: treasurySigner,
-      wireSlashingManager: false,
+      wireSlashingManager: true,
     });
     await mine(1);
     return {

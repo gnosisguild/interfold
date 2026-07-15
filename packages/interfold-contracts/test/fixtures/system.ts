@@ -107,7 +107,7 @@ export interface DeployInterfoldSystemOptions {
    *  - `registry.setSlashingManager`
    *  - `slashingManager.{setCiphernodeRegistry,setInterfold,setE3RefundManager}`
    *
-   * Pass `false` for legacy fixtures that only wire the
+   * Pass `false` for isolated fixtures that only wire the
    * `bondingRegistry <-> slashingManager` link (always wired).
    */
   wireSlashingManager?: boolean;

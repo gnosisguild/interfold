@@ -883,6 +883,21 @@ Design rationale:
   and apply only to later E3 requests; existing snapshots never migrate implicitly.
 ```
 
+### In-flight dependency rotation (AUD M-04)
+
+Every slash and settlement route resolves the dependency graph frozen when the E3 was requested:
+
+- `Interfold` uses the per-E3 registry, refund manager, and slashing manager for callbacks,
+  committee reads, verification, rewards, failure settlement, and slash escrow.
+- `CiphernodeRegistryOwnable` uses the per-E3 Interfold, bonding registry, and slashing manager for
+  ticket eligibility, committee callbacks, and expulsion authorization.
+- `SlashingManager` uses the per-E3 bonding registry, ciphernode registry, Interfold, and refund
+  manager for attestations, penalties, expulsion, failure callbacks, and fund routing.
+- `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
+
+Admin setters update the live defaults for future requests only. Each E3 must have a complete
+request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied.
+
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 
 ```

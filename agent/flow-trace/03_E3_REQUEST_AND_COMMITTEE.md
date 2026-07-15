@@ -56,8 +56,12 @@ Requester calls: Interfold.request({
 │
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
-│   ├─ e3RefundManager.snapshotE3Policy(e3Id)
-│   │   → freezes refund/slash allocation, treasury, and policy version
+│   ├─ Snapshot Interfold dependencies for this E3:
+│   │   registry, refund manager, and slashing manager
+│   │   → later global rotations apply only to new requests
+│   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id)
+│   │   → freezes refund/slash allocation, treasury, policy version,
+│   │     and the request-time Interfold authorized to settle this E3
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → On chains without `prevrandao`, the value is still deterministic
 │   │     per-block; downstream sortition relies on the per-E3 snapshot of
@@ -89,10 +93,14 @@ Requester calls: Interfold.request({
 │   │   │  │                                                     │
 │   │   │  │  requestCommittee(e3Id, seed, threshold) {          │
 │   │   │  │    1. require(!committees[e3Id].initialized)        │
-│   │   │  │    2. require(threshold[1] <=                       │
+│   │   │  │    2. Snapshot request-time Interfold, bonding,     │
+│   │   │  │       and slashing manager for this committee       │
+│   │   │  │       → ask SlashingManager to snapshot its         │
+│   │   │  │         bonding, registry, Interfold, refund routes │
+│   │   │  │    3. require(threshold[1] <=                       │
 │   │   │  │         bondingRegistry.numActiveOperators())       │
 │   │   │  │       → Enough active nodes must exist              │
-│   │   │  │    3. committees[e3Id] = Committee {                │
+│   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: seed,                                 │
 │   │   │  │         requestBlock: block.timestamp, // H-26      │
@@ -100,10 +108,10 @@ Requester calls: Interfold.request({
 │   │   │  │           block.timestamp + sortitionWindow,        │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
-│   │   │  │    4. roots[e3Id] = ciphernodes._root()             │
+│   │   │  │    5. roots[e3Id] = ciphernodes._root()             │
 │   │   │  │       → SNAPSHOT the IMT root at this moment        │
 │   │   │  │       → Only nodes in tree at request time eligible │
-│   │   │  │    5. Emit CommitteeRequested(e3Id, seed, threshold,│
+│   │   │  │    6. Emit CommitteeRequested(e3Id, seed, threshold,│
 │   │   │  │              requestBlock, committeeDeadline)       │
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
@@ -402,6 +410,12 @@ If any deadline is missed → anyone can call markE3Failed()
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee.
+
+7. **Dependency graph snapshot**: Each E3 drains through its request-time registry, bonding,
+   slashing, refund, and Interfold relationships. Admin rotation changes defaults for later E3s but
+   cannot redirect or brick committee callbacks, proof checks, failure settlement, rewards, or
+   slashed-fund routing for an in-flight E3. A request atomically records the complete graph before
+   committee formation begins.
 
 ---
 
