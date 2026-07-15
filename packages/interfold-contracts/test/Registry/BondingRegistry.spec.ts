@@ -1254,6 +1254,12 @@ describe("BondingRegistry", function () {
       await expect(
         bondingRegistry.connect(operator1).removeTicketBalance(step),
       ).to.be.revertedWithCustomError(bondingRegistry, "TooManyTranches");
+
+      // Draining the 64 ticket-only tranches must release all 64 slots even
+      // though the independent license head never advanced through them.
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+      await bondingRegistry.connect(operator1).claimExits(step * 64n, 0);
+      await bondingRegistry.connect(operator1).removeTicketBalance(step);
     });
 
     /**

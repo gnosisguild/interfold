@@ -46,12 +46,14 @@ library ExitQueueLib {
      * @param queueHeadIndexTicket Maps operator addresses to the head index for tickets
      * @param queueHeadIndexLicense Maps operator addresses to the head index for licenses
      * @param pendingTotals Maps operator addresses to their total pending amounts
+     * @param liveTrancheCount Maps operators to the number of non-empty tranches.
      */
     struct ExitQueueState {
         mapping(address operator => ExitTranche[] operatorQueues) operatorQueues;
         mapping(address operator => uint256 queueHeadIndexTicket) queueHeadIndexTicket;
         mapping(address operator => uint256 queueHeadIndexLicense) queueHeadIndexLicense;
         mapping(address operator => PendingAmounts operatorPendings) pendingTotals;
+        mapping(address operator => uint256 count) liveTrancheCount;
     }
 
     /**
@@ -171,15 +173,8 @@ library ExitQueueLib {
         }
 
         if (!merged) {
-            // Enforce a hard cap on the number of LIVE tranches an operator
-            // can hold simultaneously. "Live" = tranches at or after the
-            // earliest per-asset head (the lower of the two head indices).
-            // See `MAX_ACTIVE_TRANCHES`.
-            uint256 headT = state.queueHeadIndexTicket[operator];
-            uint256 headL = state.queueHeadIndexLicense[operator];
-            uint256 earliestHead = headT < headL ? headT : headL;
             require(
-                len - earliestHead < MAX_ACTIVE_TRANCHES,
+                state.liveTrancheCount[operator] < MAX_ACTIVE_TRANCHES,
                 TooManyTranches()
             );
 
@@ -187,6 +182,7 @@ library ExitQueueLib {
             t.unlockTimestamp = unlockTimestamp;
             t.ticketAmount = ticketAmount;
             t.licenseAmount = licenseAmount;
+            state.liveTrancheCount[operator]++;
         }
 
         _updatePendingTotals(
@@ -502,6 +498,10 @@ library ExitQueueLib {
                 tranche.ticketAmount -= amountToTake;
             } else {
                 tranche.licenseAmount -= amountToTake;
+            }
+
+            if (tranche.ticketAmount == 0 && tranche.licenseAmount == 0) {
+                state.liveTrancheCount[operator]--;
             }
 
             remainingWanted -= amountToTake;
