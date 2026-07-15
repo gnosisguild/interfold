@@ -49,6 +49,10 @@ interface IBondingRegistry {
     ///         financial slash proposal against them remains unresolved.
     error OperatorUnderSlash();
 
+    /// @notice Treasury withdrawal or generic routing attempted to consume funds
+    ///         reserved for a pending E3 slash route.
+    error ReservedSlashedFunds();
+
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
 
@@ -343,6 +347,12 @@ interface IBondingRegistry {
      */
     function slashedTicketBalance() external view returns (uint256);
 
+    /// @notice Get slashed ticket funds reserved for retryable E3 routing.
+    function reservedSlashedTicketBalance() external view returns (uint256);
+
+    /// @notice Get the ticket wrapper whose underlying asset backs ticket slashes.
+    function ticketToken() external view returns (InterfoldTicketToken);
+
     /**
      * @notice Get total slashed license bond
      * @return Amount of license bond slashed and available for treasury withdrawal
@@ -444,6 +454,17 @@ interface IBondingRegistry {
      *      from burned ticket tokens. Assumes underlying stablecoin matches the E3 fee token.
      */
     function redirectSlashedTicketFunds(address to, uint256 amount) external;
+
+    /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
+    /// @dev Only callable by the configured slashing manager.
+    function reserveSlashedTicketFunds(uint256 amount) external;
+
+    /// @notice Route and consume previously reserved slashed ticket funds.
+    /// @dev Only callable by the configured slashing manager.
+    function redirectReservedSlashedTicketFunds(
+        address to,
+        uint256 amount
+    ) external;
 
     // ======================
     // Reward Distribution Functions

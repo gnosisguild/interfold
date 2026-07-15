@@ -123,6 +123,11 @@
     },
     {
       "inputs": [],
+      "name": "ReservedSlashedFunds",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "Unauthorized",
       "type": "error"
     },
@@ -784,6 +789,24 @@
           "type": "uint256"
         }
       ],
+      "name": "redirectReservedSlashedTicketFunds",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
       "name": "redirectSlashedTicketFunds",
       "outputs": [],
       "stateMutability": "nonpayable",
@@ -807,6 +830,32 @@
       "name": "removeTicketBalance",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "reserveSlashedTicketFunds",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "reservedSlashedTicketBalance",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -1064,6 +1113,19 @@
           "internalType": "uint256",
           "name": "",
           "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "ticketToken",
+      "outputs": [
+        {
+          "internalType": "contract InterfoldTicketToken",
+          "name": "",
+          "type": "address"
         }
       ],
       "stateMutability": "view",

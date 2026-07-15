@@ -104,6 +104,14 @@ interface ISlashingManager {
         uint8 failureReason;
     }
 
+    /// @notice Durable routing record for slashed ticket funds awaiting escrow.
+    struct PendingSlashRoute {
+        uint256 e3Id;
+        address token;
+        uint256 amount;
+        bool pending;
+    }
+
     // ======================
     // Errors
     // ======================
@@ -215,6 +223,10 @@ interface ISlashingManager {
 
     /// @notice Thrown when no pending ban proposal exists for the target node
     error NoPendingBan();
+
+    /// @notice The slash transaction did not leave enough gas for its bounded
+    ///         initial routing attempt.
+    error InsufficientRoutingGas();
 
     // ======================
     // Events
@@ -348,6 +360,22 @@ interface ISlashingManager {
      */
     event RoutingFailed(uint256 indexed e3Id, uint256 amount);
 
+    /// @notice Emitted before a slash route is attempted and durably reserved.
+    event SlashRoutePending(
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
+
+    /// @notice Emitted after a pending slash route reaches E3 escrow.
+    event SlashRouteCompleted(
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
+
     /**
      * @notice Emitted when the bonding registry is set
      * @param bondingRegistry Address of the bonding registry
@@ -433,6 +461,23 @@ interface ISlashingManager {
             address interfoldContract,
             address refundManager
         );
+
+    /// @notice Return a slash route that remains pending after an initial failure.
+    function getPendingSlashRoute(
+        uint256 proposalId
+    ) external view returns (PendingSlashRoute memory);
+
+    /// @notice Permissionlessly retry a pending slash route.
+    /// @return routed True when this call completed the route; false when the
+    ///         proposal had already been routed or never created a ticket route.
+    function retrySlashRoute(uint256 proposalId) external returns (bool routed);
+
+    /// @notice Atomically consume a proposal's reserved funds and account them
+    ///         in the snapshotted E3 refund manager.
+    /// @dev Self-call only; exposed for try/catch transaction atomicity.
+    function routePendingSlashFunds(
+        uint256 proposalId
+    ) external returns (bool routed);
 
     /**
      * @notice Returns the bonding registry contract used for executing slashes

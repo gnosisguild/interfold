@@ -734,18 +734,30 @@ _executeSlash(proposalId):
 │     │  Always escrows — regardless of E3 stage.
 │     │  Destination decided later at terminal state.
 │     │
-│     │  Self-call for atomicity:
-│     │  try this.escrowSlashedFundsToRefund(e3Id, actualTicketSlashed)
+│     ├─ Reserve and record BEFORE attempting the route:
+│     │    bondingRegistry.reserveSlashedTicketFunds(amount)
+│     │    pendingSlashRoutes[proposalId] = {
+│     │      e3Id, token: ticketToken.underlying(), amount, pending: true
+│     │    }
+│     │    → Generic redirect and treasury withdrawal cannot spend reserve
+│     │    → Emit SlashRoutePending
+│     │
+│     │  Bounded self-call for initial atomic attempt:
+│     │  try this.routePendingSlashFunds(proposalId)
 │     │  │
-│     │  │  ┌─── escrowSlashedFundsToRefund() ───────────────────┐
+│     │  │  ┌─── routePendingSlashFunds() ───────────────────────┐
 │     │  │  │  require(msg.sender == address(this))              │
 │     │  │  │  → Self-call only (for try/catch atomicity)        │
+│     │  │  │  require(route.pending)                             │
+│     │  │  │  route.pending = false before interactions         │
+│     │  │  │  → Callback cannot consume the reserve twice       │
+│     │  │  │  → Any later revert restores pending=true          │
 │     │  │  │                                                    │
 │     │  │  │  Step A: Move USDC from BondingRegistry            │
-│     │  │  │    bondingRegistry.redirectSlashedTicketFunds(      │
+│     │  │  │    bondingRegistry.redirectReservedSlashedTicketFunds(
 │     │  │  │      e3RefundManager, amount                       │
 │     │  │  │    )                                               │
-│     │  │  │    │                                               │
+│     │  │  │    ├─ reservedSlashedTicketBalance -= amount        │
 │     │  │  │    ├─ slashedTicketBalance -= amount                │
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
 │     │  │  │       → Transfers UNDERLYING USDC (not ticket      │
@@ -767,19 +779,19 @@ _executeSlash(proposalId):
 │     │  │  │          (see priority logic below — failure path)  │
 │     │  │  │                                                    │
 │     │  │  │  If EITHER step reverts → both revert together     │
-│     │  │  │  → Funds stay in BondingRegistry for treasury      │
+│     │  │  │  → Route remains pending and funds stay reserved    │
 │     │  │  │  → Slash itself still proceeds                     │
+│     │  │  │  On success emit SlashRouteCompleted                │
 │     │  │  └────────────────────────────────────────────────────┘
 │     │
 │     └─ catch: emit RoutingFailed(e3Id, actualTicketSlashed)
-│        → Slash is NOT rolled back, only fund escrowing fails
+│        → Slash is NOT rolled back; anyone may retry the route
 │
-├─ 6. proposal.executed = true
-│     → Set AFTER the two bondingRegistry.slash* calls (and AFTER ban
-│       update), so an OOG / revert during slashing leaves `executed`
-│       false and the proposal can be retried (audit H-21b, defence in
-│       depth). Reentrancy is already blocked by `_executeSlash` itself
-│       being reachable only through nonReentrant entry points.
+├─ 6. PERMISSIONLESS ROUTE RETRY (only after an initial failure):
+│     anyone calls retrySlashRoute(proposalId)
+│     ├─ pending == false → return false (idempotent no-op)
+│     └─ pending == true → self-call routePendingSlashFunds
+│        → transfer + accounting succeed atomically, or all state reverts
 │
 └─ 7. Emit SlashExecuted(proposalId, e3Id, operator, reason,
        ticketSlashed, licenseSlashed, banned)
@@ -1036,13 +1048,15 @@ state:
 
 ```
 STEP 1: ESCROWING (always, at slash time)
-  Triggered by: _executeSlash → escrowSlashedFundsToRefund
+  Triggered by: _executeSlash → reserve + routePendingSlashFunds
   When: Any slash with actualTicketSlashed > 0, regardless of E3 stage
-  Flow: BondingRegistry.redirectSlashedTicketFunds(refundManager, amount)
+  Flow: BondingRegistry.redirectReservedSlashedTicketFunds(refundManager, amount)
     → ticketToken.payout(refundManager, amount)
     → USDC moves to E3RefundManager
     → _pendingSlashedFunds[e3Id] += amount (if not yet calculated)
   Effect: slashedTicketBalance goes UP (during slash) then DOWN (during redirect)
+  Failure: route stays pending and the same amount remains reserved against
+    generic redirects/treasury withdrawal until permissionless retry succeeds
 
 STEP 2a: E3 FAILS → Requester-first distribution
   Triggered by: processE3Failure → calculateRefund drains pending queue

@@ -7,6 +7,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import InterfoldModule from "../../ignition/modules/interfold";
+import type { MockBlacklistUSDC } from "../../types";
 import { Interfold__factory as InterfoldFactory } from "../../types";
 import {
   deployInterfoldSystem,
@@ -70,6 +71,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       slashedFundsTreasury: treasury,
       timeoutConfig: defaultTimeoutConfig,
       treasury,
+      useBlacklistFeeToken: true,
       wireSlashingManager: true,
     });
 
@@ -819,6 +821,100 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(requesterBalanceAfter - requesterBalanceBefore).to.equal(
         distributionAfter.requesterAmount,
       );
+    });
+
+    it("AUD-M05: reserves a failed slash route and retries it permissionlessly", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        slashingManager,
+        bondingRegistry,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+
+      await makeRequest(requester, 0);
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      await registry.publishCommittee(
+        0,
+        publicKey,
+        ethers.keccak256(publicKey),
+        "0x",
+        "0x",
+      );
+
+      const e3 = await interfold.getE3(0);
+      const computeDeadline =
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
+      await time.increaseTo(computeDeadline + 1);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      const blacklistToken = usdcToken as unknown as MockBlacklistUSDC;
+      const refundManagerAddress = await e3RefundManager.getAddress();
+      await blacklistToken.blacklist(refundManagerAddress);
+
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        0,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await expect(
+        slashingManager.proposeSlash(0, await operator1.getAddress(), proof),
+      ).to.emit(slashingManager, "SlashRoutePending");
+
+      const pending = await slashingManager.getPendingSlashRoute(0);
+      expect(pending.pending).to.equal(true);
+      expect(pending.e3Id).to.equal(0);
+      expect(pending.token).to.equal(await usdcToken.getAddress());
+      expect(pending.amount).to.be.gt(0);
+      expect(await bondingRegistry.reservedSlashedTicketBalance()).to.equal(
+        pending.amount,
+      );
+      expect(await bondingRegistry.slashedTicketBalance()).to.equal(
+        pending.amount,
+      );
+
+      await expect(
+        bondingRegistry.connect(owner).withdrawSlashedFunds(pending.amount, 0),
+      ).to.be.revertedWithCustomError(bondingRegistry, "ReservedSlashedFunds");
+
+      await blacklistToken.unblacklist(refundManagerAddress);
+      const refundBalanceBefore =
+        await usdcToken.balanceOf(refundManagerAddress);
+      await expect(slashingManager.connect(requester).retrySlashRoute(0))
+        .to.emit(slashingManager, "SlashRouteCompleted")
+        .withArgs(0, 0, await usdcToken.getAddress(), pending.amount);
+
+      expect(
+        (await usdcToken.balanceOf(refundManagerAddress)) - refundBalanceBefore,
+      ).to.equal(pending.amount);
+      expect((await slashingManager.getPendingSlashRoute(0)).pending).to.equal(
+        false,
+      );
+      expect(await bondingRegistry.reservedSlashedTicketBalance()).to.equal(0);
+      expect(await bondingRegistry.slashedTicketBalance()).to.equal(0);
+      expect(
+        await slashingManager.connect(requester).retrySlashRoute.staticCall(0),
+      ).to.equal(false);
     });
 
     it("E2E: honest nodes can claim their share after slashed funds are escrowed", async function () {

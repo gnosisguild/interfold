@@ -153,6 +153,9 @@ contract BondingRegistry is
     /// @notice One-way lock for every parameter that affects operator eligibility.
     bool public eligibilityConfigurationLocked;
 
+    /// @notice Slashed tickets committed to retryable E3 refund routes.
+    uint256 public reservedSlashedTicketBalance;
+
     // ======================
     // Modifiers
     // ======================
@@ -630,8 +633,37 @@ contract BondingRegistry is
     ) external onlySlashingManager {
         require(to != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
-        require(amount <= slashedTicketBalance, InsufficientBalance());
+        require(
+            amount <= slashedTicketBalance - reservedSlashedTicketBalance,
+            ReservedSlashedFunds()
+        );
 
+        slashedTicketBalance -= amount;
+        ticketToken.payout(to, amount);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function reserveSlashedTicketFunds(
+        uint256 amount
+    ) external onlySlashingManager {
+        require(amount > 0, ZeroAmount());
+        require(
+            amount <= slashedTicketBalance - reservedSlashedTicketBalance,
+            InsufficientBalance()
+        );
+        reservedSlashedTicketBalance += amount;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function redirectReservedSlashedTicketFunds(
+        address to,
+        uint256 amount
+    ) external onlySlashingManager {
+        require(to != address(0), ZeroAddress());
+        require(amount > 0, ZeroAmount());
+        require(amount <= reservedSlashedTicketBalance, InsufficientBalance());
+
+        reservedSlashedTicketBalance -= amount;
         slashedTicketBalance -= amount;
         ticketToken.payout(to, amount);
     }
@@ -848,7 +880,10 @@ contract BondingRegistry is
         uint256 ticketAmount,
         uint256 licenseAmount
     ) public onlyOwner {
-        require(ticketAmount <= slashedTicketBalance, InsufficientBalance());
+        require(
+            ticketAmount <= slashedTicketBalance - reservedSlashedTicketBalance,
+            ReservedSlashedFunds()
+        );
         require(licenseAmount <= slashedLicenseBond, InsufficientBalance());
 
         if (ticketAmount > 0) {

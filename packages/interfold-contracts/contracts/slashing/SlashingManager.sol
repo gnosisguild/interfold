@@ -98,6 +98,13 @@ contract SlashingManager is
     mapping(uint256 e3Id => E3Dependencies dependencies)
         internal _e3Dependencies;
 
+    /// @notice Slash routes retained until their reserved ticket funds reach E3 escrow.
+    mapping(uint256 proposalId => PendingSlashRoute route)
+        internal _pendingSlashRoutes;
+
+    uint256 internal constant INITIAL_ROUTE_GAS = 400_000;
+    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 450_000;
+
     /// @notice Mapping from slash reason hash to its configured policy
     mapping(bytes32 reason => SlashPolicy policy) public slashPolicies;
 
@@ -281,6 +288,21 @@ contract SlashingManager is
             address(dependencies.interfoldContract),
             address(dependencies.refundManager)
         );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function getPendingSlashRoute(
+        uint256 proposalId
+    ) external view returns (PendingSlashRoute memory) {
+        return _pendingSlashRoutes[proposalId];
+    }
+
+    /// @inheritdoc ISlashingManager
+    function retrySlashRoute(
+        uint256 proposalId
+    ) external returns (bool routed) {
+        if (!_pendingSlashRoutes[proposalId].pending) return false;
+        return this.routePendingSlashFunds(proposalId);
     }
 
     /// @inheritdoc ISlashingManager
@@ -779,11 +801,37 @@ contract SlashingManager is
             }
         }
 
-        // Escrow slashed ticket funds for deferred distribution. The self-call
-        // keeps payout and accounting atomic. A routing failure reverts the
-        // whole slash so the proposal remains retryable.
+        // Reserve and attempt escrow. Failure leaves both a durable proposal
+        // route and a matching BondingRegistry reservation for permissionless retry.
         if (actualTicketSlashed > 0) {
-            this.escrowSlashedFundsToRefund(p.e3Id, actualTicketSlashed);
+            dependencies.bonding.reserveSlashedTicketFunds(actualTicketSlashed);
+            PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
+            route.e3Id = p.e3Id;
+            route.token = address(
+                dependencies.bonding.ticketToken().underlying()
+            );
+            route.amount = actualTicketSlashed;
+            route.pending = true;
+            emit SlashRoutePending(
+                proposalId,
+                p.e3Id,
+                route.token,
+                actualTicketSlashed
+            );
+
+            require(
+                gasleft() >= MIN_INITIAL_ROUTE_GAS,
+                InsufficientRoutingGas()
+            );
+            try
+                this.routePendingSlashFunds{ gas: INITIAL_ROUTE_GAS }(
+                    proposalId
+                )
+            returns (bool routed) {
+                require(routed, InvalidProposal());
+            } catch {
+                emit RoutingFailed(p.e3Id, actualTicketSlashed);
+            }
         }
 
         emit SlashExecuted(
@@ -809,6 +857,37 @@ contract SlashingManager is
         dependencies.bonding.redirectSlashedTicketFunds(refundManager, amount);
         dependencies.interfoldContract.escrowSlashedFunds(e3Id, amount);
         emit SlashedFundsEscrowedToRefund(e3Id, amount);
+    }
+
+    /// @inheritdoc ISlashingManager
+    function routePendingSlashFunds(
+        uint256 proposalId
+    ) external returns (bool routed) {
+        require(msg.sender == address(this), Unauthorized());
+        PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
+        require(route.pending, InvalidProposal());
+
+        E3Dependencies memory dependencies = _dependenciesFor(route.e3Id);
+        // Clear before interacting so a callback cannot route the same reserve
+        // twice. Any downstream failure reverts this write together with the
+        // transfer and accounting, leaving the route pending for another retry.
+        route.pending = false;
+        dependencies.bonding.redirectReservedSlashedTicketFunds(
+            address(dependencies.refundManager),
+            route.amount
+        );
+        dependencies.interfoldContract.escrowSlashedFunds(
+            route.e3Id,
+            route.amount
+        );
+        emit SlashedFundsEscrowedToRefund(route.e3Id, route.amount);
+        emit SlashRouteCompleted(
+            proposalId,
+            route.e3Id,
+            route.token,
+            route.amount
+        );
+        return true;
     }
 
     function _dependenciesFor(
