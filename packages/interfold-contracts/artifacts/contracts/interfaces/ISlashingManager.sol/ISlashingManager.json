@@ -1071,25 +1071,6 @@
           "type": "address"
         }
       ],
-      "name": "hasOpenLaneBProposal",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "",
-          "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "operator",
-          "type": "address"
-        }
-      ],
       "name": "hasOpenSlashProposal",
       "outputs": [
         {
@@ -1469,5 +1450,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-b6d88351d9521822c693319be886d5618e91683c"
+  "buildInfoId": "solc-0_8_28-60a110ad1306dba588e2305638dcf9f89d966d5a"
 }

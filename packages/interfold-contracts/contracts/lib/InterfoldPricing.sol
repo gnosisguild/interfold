@@ -176,7 +176,7 @@ library InterfoldPricing {
     ///               computeUtilizationBps(2) | decryptUtilizationBps(2) }
     ///           32: packed { minCommitteeSize(4) | minThreshold(4) }
     ///         The contract storage layout snapshot in
-    ///         `audits/storage-layouts/Interfold-v1.json` MUST keep these
+    ///         `audits/storage-layouts/Interfold.json` MUST keep these
     ///         slots stable; any storage reordering requires updating the
     ///         constants below.
     function applyDefaultPricingConfig() external {
@@ -201,7 +201,7 @@ library InterfoldPricing {
             sstore(29, 1000000) // publicationBase        = 1.00 USDC
             sstore(30, 5000) // verificationPerProof      = 0.005 USDC
             sstore(31, slot31)
-            // slot 32 (minCommitteeSize | minThreshold) stays zero.
+            sstore(32, 0) // minCommitteeSize | minThreshold
         }
     }
 

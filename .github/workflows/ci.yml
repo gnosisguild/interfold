@@ -379,6 +379,9 @@ jobs:
       - name: 'Enforce production contract size budget'
         run: 'pnpm --filter @interfold/contracts size:check'
 
+      - name: 'Validate upgrade storage layouts'
+        run: 'pnpm --filter @interfold/contracts validate:upgrade'
+
       - name: 'Test the contracts and generate the coverage report'
         run: 'pnpm coverage'
 
