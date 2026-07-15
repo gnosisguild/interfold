@@ -351,7 +351,11 @@ interface ISlashingManager {
      * @param e3Id ID of the E3 computation
      * @param amount Amount of slashed funds escrowed (underlying stablecoin)
      */
-    event SlashedFundsEscrowedToRefund(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowedToRefund(
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
 
     /**
      * @notice Emitted when routing slashed funds fails (funds remain in BondingRegistry)

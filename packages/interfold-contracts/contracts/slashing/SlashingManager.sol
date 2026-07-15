@@ -11,6 +11,7 @@ import {
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
@@ -854,9 +855,16 @@ contract SlashingManager is
         E3Dependencies memory dependencies = _dependenciesFor(e3Id);
         address refundManager = address(dependencies.refundManager);
         require(refundManager != address(0), ZeroAddress());
+        address token = address(
+            dependencies.bonding.ticketToken().underlying()
+        );
         dependencies.bonding.redirectSlashedTicketFunds(refundManager, amount);
-        dependencies.interfoldContract.escrowSlashedFunds(e3Id, amount);
-        emit SlashedFundsEscrowedToRefund(e3Id, amount);
+        dependencies.interfoldContract.escrowSlashedFunds(
+            e3Id,
+            IERC20(token),
+            amount
+        );
+        emit SlashedFundsEscrowedToRefund(e3Id, token, amount);
     }
 
     /// @inheritdoc ISlashingManager
@@ -878,9 +886,14 @@ contract SlashingManager is
         );
         dependencies.interfoldContract.escrowSlashedFunds(
             route.e3Id,
+            IERC20(route.token),
             route.amount
         );
-        emit SlashedFundsEscrowedToRefund(route.e3Id, route.amount);
+        emit SlashedFundsEscrowedToRefund(
+            route.e3Id,
+            route.token,
+            route.amount
+        );
         emit SlashRouteCompleted(
             proposalId,
             route.e3Id,

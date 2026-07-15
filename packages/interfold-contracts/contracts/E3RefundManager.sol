@@ -56,14 +56,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     mapping(uint256 e3Id => uint256 amount) internal _totalHonestNodePaid;
     /// @notice Maps E3 ID to honest node addresses
     mapping(uint256 e3Id => address[] nodes) internal _honestNodes;
-    /// @notice Pending slashed funds awaiting E3 terminal state
-    mapping(uint256 e3Id => uint256 amount) internal _pendingSlashedFunds;
-
-    /// @notice Pull-payment ledger for success-path slashed-fund credits (e3Id => node => amount)
-    mapping(uint256 e3Id => mapping(address account => uint256 amount))
-        internal _pendingSlashedSuccess;
-    /// @notice Snapshotted payment token for success-path slashed-fund credits
-    mapping(uint256 e3Id => IERC20 token) internal _slashedSuccessToken;
     /// @notice Treasury pull-payment ledger for protocol slashed-fund share and dust.
     /// @dev Per-treasury so historical treasuries can drain even after rotation.
     mapping(address treasury => mapping(IERC20 token => uint256 amount))
@@ -76,6 +68,19 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         internal _e3PolicySnapshots;
     /// @notice Monotonic version for allocation or treasury changes.
     uint64 public policyVersion;
+    /// @notice Unsettled slash escrow keyed by its actual underlying asset.
+    mapping(uint256 e3Id => mapping(IERC20 token => uint256 amount))
+        internal _pendingSlashedByToken;
+    /// @notice Pull-payment slash entitlements, preserving token denomination.
+    mapping(uint256 e3Id => mapping(IERC20 token => mapping(address account => uint256 amount)))
+        internal _pendingSlashedClaims;
+    /// @notice Slashed portion of the shared treasury pull ledger.
+    mapping(address account => mapping(IERC20 token => uint256 amount))
+        internal _pendingTrackedTreasury;
+    /// @notice Protected slashed-fund liabilities for each token.
+    mapping(IERC20 token => uint256 amount) internal _tokenLiability;
+    /// @notice Whether completion recorded the honest-node set for slash settlement.
+    mapping(uint256 e3Id => bool ready) internal _successSettlementReady;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -182,9 +187,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         ) = _baseDistribution(e3Id, originalPayment, failedAt);
 
         // No honest nodes: fold work share into the requester refund (mirrors
-        // {Interfold._distributeRewards} success-path). Avoids per-failure dust
-        // stranded outside `_pendingSlashedFunds` (which `withdrawOrphanedSlashedFunds`
-        // cannot reach).
+        // {Interfold._distributeRewards} success-path).
         if (honestNodes.length == 0 && honestNodeAmount > 0) {
             requesterAmount += honestNodeAmount;
             honestNodeAmount = 0;
@@ -221,21 +224,17 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             );
         }
 
-        // Apply any slashed funds that arrived before the distribution was calculated
-        uint256 pending = _pendingSlashedFunds[e3Id];
-        if (pending > 0) {
-            _pendingSlashedFunds[e3Id] = 0;
-            _applySlashedFunds(e3Id, pending);
-        }
-
-        // Snapshot per-honest-node payout AFTER folding in pre-distribution slashed
-        // funds. `claimHonestNodeReward` reads this directly so the per-node payout
-        // is immutable for the distribution's lifetime.
+        // Snapshot the base fee-token payout. Slashed assets are deliberately
+        // separate token-specific pull claims and never mutate these amounts.
         RefundDistribution storage finalDist = _distributions[e3Id];
         if (honestNodes.length > 0) {
             finalDist.perNodeAmount =
                 finalDist.honestNodeAmount /
                 honestNodes.length;
+        }
+
+        if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
+            _settleSlashedFunds(e3Id, paymentToken);
         }
 
         emit RefundDistributionCalculated(
@@ -273,7 +272,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function _getFailedAtStage(
         uint256 e3Id
     ) internal view returns (IInterfold.E3Stage) {
-        IInterfold.FailureReason reason = interfold.getFailureReason(e3Id);
+        IInterfold.FailureReason reason = _interfoldFor(e3Id).getFailureReason(
+            e3Id
+        );
 
         // Map failure reason to stage
         if (
@@ -353,13 +354,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         RefundDistribution storage dist = _distributions[e3Id];
         if (!dist.calculated) revert RefundNotCalculated(e3Id);
 
-        // Guard against pre-upgrade records where feeToken was not yet stored
+        // A calculated distribution must always retain its settlement token.
         require(
             address(dist.feeToken) != address(0),
             "feeToken not initialized"
         );
 
-        address requester = interfold.getRequester(e3Id);
+        address requester = _interfoldFor(e3Id).getRequester(e3Id);
         if (msg.sender != requester) revert NotRequester(e3Id, msg.sender);
 
         if (_requesterClaimed[e3Id][msg.sender]) {
@@ -373,7 +374,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         _claimCount[e3Id]++;
 
         // Use the per-E3 fee token (not the global one, which may have been rotated)
-        dist.feeToken.safeTransfer(msg.sender, amount);
+        _transferPreservingSlashedLiability(dist.feeToken, msg.sender, amount);
 
         emit RefundClaimed(e3Id, msg.sender, amount, "REQUESTER");
     }
@@ -385,7 +386,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         RefundDistribution storage dist = _distributions[e3Id];
         require(dist.calculated, RefundNotCalculated(e3Id));
 
-        // Guard against pre-upgrade records where feeToken was not yet stored
+        // A calculated distribution must always retain its settlement token.
         require(
             address(dist.feeToken) != address(0),
             "feeToken not initialized"
@@ -406,8 +407,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
         require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
         // Read the snapshot taken at `calculateRefund` time — immutable for the
-        // distribution's lifetime; post-claim slashed funds are routed to
-        // `_pendingSlashedFunds` and never mutate `dist.honestNodeAmount`.
+        // distribution's lifetime; post-claim slashed funds remain in the
+        // token-specific slash ledger and never mutate `dist.honestNodeAmount`.
         uint256 perNodeAmount = dist.perNodeAmount;
         require(perNodeAmount > 0, NoRefundAvailable(e3Id));
 
@@ -440,7 +441,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         // Direct transfer to the honest node (refund path; bypasses BondingRegistry
         // distributor authorization and operator-registered checks).
         IERC20 token = dist.feeToken;
-        token.safeTransfer(msg.sender, amount);
+        _transferPreservingSlashedLiability(token, msg.sender, amount);
 
         emit RefundClaimed(e3Id, msg.sender, amount, "HONEST_NODE");
     }
@@ -448,52 +449,30 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @inheritdoc IE3RefundManager
     function escrowSlashedFunds(
         uint256 e3Id,
+        IERC20 token,
         uint256 amount
     ) external onlyE3Interfold(e3Id) {
         require(amount > 0, "Zero amount");
+        require(address(token) != address(0), "Invalid slash token");
 
-        RefundDistribution storage dist = _distributions[e3Id];
-        if (dist.calculated) {
-            if (_claimCount[e3Id] == 0) {
-                _applySlashedFunds(e3Id, amount);
-            } else if (dist.honestNodeCount > 0) {
-                // Distribution calculated and a claim has landed, but honest nodes existed.
-                // Credit the latecomer slash to the honest committee (pull via
-                // `claimSlashedFundsOnSuccess`) instead of orphaning to the treasury.
-                // No double-pay risk: requester + unclaimed honest portions were already
-                // settled by the initial `_applySlashedFunds`.
-                IERC20 token = dist.feeToken;
-                if (address(_slashedSuccessToken[e3Id]) == address(0)) {
-                    _slashedSuccessToken[e3Id] = token;
-                }
-                address[] storage nodes = _honestNodes[e3Id];
-                uint256 n = nodes.length;
-                uint256 perNode = amount / n;
-                uint256 distributed = 0;
-                for (uint256 i = 0; i < n; i++) {
-                    uint256 nodeAmount = perNode;
-                    if (i == n - 1) {
-                        nodeAmount = amount - distributed;
-                    }
-                    if (nodeAmount > 0) {
-                        _pendingSlashedSuccess[e3Id][nodes[i]] += nodeAmount;
-                        emit SlashedFundsCredited(
-                            e3Id,
-                            nodes[i],
-                            token,
-                            nodeAmount
-                        );
-                    }
-                    distributed += nodeAmount;
-                }
-            } else {
-                _pendingSlashedFunds[e3Id] += amount;
-            }
-        } else {
-            _pendingSlashedFunds[e3Id] += amount;
+        _pendingSlashedByToken[e3Id][token] += amount;
+        _increaseTokenLiability(token, amount);
+
+        if (_distributions[e3Id].calculated || _successSettlementReady[e3Id]) {
+            _settleSlashedFunds(e3Id, token);
         }
 
-        emit SlashedFundsEscrowed(e3Id, amount);
+        emit SlashedFundsEscrowed(e3Id, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function settleSlashedFunds(uint256 e3Id, IERC20 token) external {
+        require(_pendingSlashedByToken[e3Id][token] > 0, NothingToClaim());
+        require(
+            _distributions[e3Id].calculated || _successSettlementReady[e3Id],
+            "E3 not settled"
+        );
+        _settleSlashedFunds(e3Id, token);
     }
 
     /// @inheritdoc IE3RefundManager
@@ -502,113 +481,113 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address[] calldata honestNodes,
         IERC20 paymentToken
     ) external onlyE3Interfold(e3Id) {
-        uint256 escrowed = _pendingSlashedFunds[e3Id];
-        if (escrowed == 0) return;
-        _pendingSlashedFunds[e3Id] = 0;
-
         require(address(paymentToken) != address(0), "Invalid fee token");
-        _slashedSuccessToken[e3Id] = paymentToken;
-
-        address policyTreasury = _treasuryFor(e3Id);
-        uint256 toNodes = (escrowed * _successSlashedNodeBpsFor(e3Id)) /
-            BPS_BASE;
-        uint256 toProtocol = escrowed - toNodes;
-
-        // Credit treasury share — pull only.
-        if (toProtocol > 0) {
-            _pendingTreasury[policyTreasury][paymentToken] += toProtocol;
-            emit TreasurySlashedCredited(
-                policyTreasury,
-                paymentToken,
-                toProtocol
-            );
+        require(!_successSettlementReady[e3Id], "Already initialized");
+        for (uint256 i = 0; i < honestNodes.length; i++) {
+            _honestNodes[e3Id].push(honestNodes[i]);
         }
+        _successSettlementReady[e3Id] = true;
 
-        if (toNodes > 0 && honestNodes.length > 0) {
-            _creditSuccessSlashed(e3Id, honestNodes, paymentToken, toNodes);
-        } else if (toNodes > 0) {
-            // No honest nodes — funnel the node share to treasury for governance triage.
-            _pendingTreasury[policyTreasury][paymentToken] += toNodes;
-            emit TreasurySlashedCredited(policyTreasury, paymentToken, toNodes);
+        if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
+            _settleSlashedFunds(e3Id, paymentToken);
         }
-
-        emit SlashedFundsDistributedOnSuccess(e3Id, toNodes, toProtocol);
     }
 
-    function _creditSuccessSlashed(
+    function _settleSlashedFunds(uint256 e3Id, IERC20 token) internal {
+        uint256 amount = _pendingSlashedByToken[e3Id][token];
+        _pendingSlashedByToken[e3Id][token] = 0;
+
+        if (_distributions[e3Id].calculated) {
+            _settleFailedE3Slash(e3Id, token, amount);
+        } else {
+            _settleSuccessfulE3Slash(e3Id, token, amount);
+        }
+    }
+
+    function _settleFailedE3Slash(
         uint256 e3Id,
-        address[] calldata honestNodes,
-        IERC20 paymentToken,
-        uint256 toNodes
+        IERC20 token,
+        uint256 amount
     ) internal {
-        uint256 perNode = toNodes / honestNodes.length;
-        uint256 distributed = 0;
-        for (uint256 i = 0; i < honestNodes.length; i++) {
-            uint256 nodeAmount = perNode;
-            if (i == honestNodes.length - 1) {
-                nodeAmount = toNodes - distributed;
-            }
-            if (nodeAmount > 0) {
-                _pendingSlashedSuccess[e3Id][honestNodes[i]] += nodeAmount;
-                emit SlashedFundsCredited(
-                    e3Id,
-                    honestNodes[i],
-                    paymentToken,
-                    nodeAmount
-                );
-            }
+        address[] storage nodes = _honestNodes[e3Id];
+        uint256 toRequester;
+        uint256 toHonestNodes;
+        if (nodes.length == 0) {
+            toRequester = amount;
+        } else {
+            (uint16 completedBps, uint16 remainingBps) = _calculateWorkValue(
+                _getFailedAtStage(e3Id),
+                _allocationFor(e3Id)
+            );
+            uint256 compensationBps = uint256(completedBps) + remainingBps;
+            toRequester = compensationBps == 0
+                ? amount
+                : (amount * remainingBps) / compensationBps;
+            toHonestNodes = amount - toRequester;
+        }
+
+        address requester = _interfoldFor(e3Id).getRequester(e3Id);
+        _creditSlashedClaim(e3Id, token, requester, toRequester);
+        _creditNodeSlashedClaims(e3Id, token, nodes, toHonestNodes);
+        emit SlashedFundsApplied(e3Id, token, toRequester, toHonestNodes);
+    }
+
+    function _settleSuccessfulE3Slash(
+        uint256 e3Id,
+        IERC20 token,
+        uint256 amount
+    ) internal {
+        address[] storage nodes = _honestNodes[e3Id];
+        uint256 toNodes = (amount * _successSlashedNodeBpsFor(e3Id)) / BPS_BASE;
+        uint256 toProtocol = amount - toNodes;
+        if (nodes.length == 0) {
+            toProtocol += toNodes;
+            toNodes = 0;
+        }
+
+        _creditNodeSlashedClaims(e3Id, token, nodes, toNodes);
+        _creditTrackedTreasury(_treasuryFor(e3Id), token, toProtocol);
+        emit SlashedFundsDistributedOnSuccess(e3Id, token, toNodes, toProtocol);
+    }
+
+    function _creditNodeSlashedClaims(
+        uint256 e3Id,
+        IERC20 token,
+        address[] storage nodes,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        uint256 perNode = amount / nodes.length;
+        uint256 distributed;
+        for (uint256 i = 0; i < nodes.length; i++) {
+            uint256 nodeAmount = i == nodes.length - 1
+                ? amount - distributed
+                : perNode;
+            _creditSlashedClaim(e3Id, token, nodes[i], nodeAmount);
             distributed += nodeAmount;
         }
     }
 
-    /// @notice Apply slashed funds to an E3's refund distribution
-    /// @dev This function is ONLY called on the failure path.Priority: make requester whole first,
-    ///      then distribute remainder to honest nodes.
-    ///      The requester is filled up to their original E3 payment before honest nodes receive
-    ///      any portion, ensuring the party who paid for the computation is compensated first.
-    /// @param e3Id The E3 ID
-    /// @param amount The slashed amount to apply
-    function _applySlashedFunds(uint256 e3Id, uint256 amount) internal {
-        RefundDistribution storage dist = _distributions[e3Id];
+    function _creditSlashedClaim(
+        uint256 e3Id,
+        IERC20 token,
+        address account,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        _pendingSlashedClaims[e3Id][token][account] += amount;
+        emit SlashedFundsCredited(e3Id, account, token, amount);
+    }
 
-        // Priority: make requester whole first
-        // requesterGap = how much more the requester needs to reach their original payment
-        uint256 requesterGap = dist.originalPayment > dist.requesterAmount
-            ? dist.originalPayment - dist.requesterAmount
-            : 0;
-        uint256 toRequester = amount >= requesterGap ? requesterGap : amount;
-        uint256 toHonestNodes = amount - toRequester;
-
-        // No honest nodes: residual would be unclaimable (`claimHonestNodeReward`
-        // reverts and `withdrawOrphanedSlashedFunds` only drains `_pendingSlashedFunds`).
-        // Route to treasury pull-pool; requester cap (originalPayment) is preserved.
-        if (dist.honestNodeCount == 0 && toHonestNodes > 0) {
-            IERC20 token = dist.feeToken;
-            if (address(token) != address(0)) {
-                address policyTreasury = _treasuryFor(e3Id);
-                _pendingTreasury[policyTreasury][token] += toHonestNodes;
-                emit TreasurySlashedCredited(
-                    policyTreasury,
-                    token,
-                    toHonestNodes
-                );
-            }
-            toHonestNodes = 0;
-        }
-
-        dist.requesterAmount += toRequester;
-        dist.honestNodeAmount += toHonestNodes;
-        dist.totalSlashed += amount;
-
-        // Re-snapshot perNodeAmount for the pre-first-claim path (gated by
-        // `_claimCount==0` in `escrowSlashedFunds`). Post-first-claim funds bypass
-        // this code via `_pendingSlashedFunds`, so the snapshot stays immutable
-        // across the claim window.
-        if (dist.honestNodeCount > 0) {
-            dist.perNodeAmount = dist.honestNodeAmount / dist.honestNodeCount;
-        }
-
-        emit SlashedFundsApplied(e3Id, toRequester, toHonestNodes);
+    function _creditTrackedTreasury(
+        address account,
+        IERC20 token,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        _pendingTreasury[account][token] += amount;
+        _pendingTrackedTreasury[account][token] += amount;
+        emit TreasurySlashedCredited(account, token, amount);
     }
 
     ////////////////////////////////////////////////////////////
@@ -621,6 +600,28 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id
     ) external view returns (RefundDistribution memory) {
         return _distributions[e3Id];
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function pendingSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
+    ) external view returns (uint256) {
+        return _pendingSlashedByToken[e3Id][token];
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function pendingSlashedClaim(
+        uint256 e3Id,
+        IERC20 token,
+        address account
+    ) external view returns (uint256) {
+        return _pendingSlashedClaims[e3Id][token][account];
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function tokenLiability(IERC20 token) external view returns (uint256) {
+        return _tokenLiability[token];
     }
 
     /// @inheritdoc IE3RefundManager
@@ -688,17 +689,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id
     ) internal view returns (WorkValueAllocation memory allocation) {
         E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
-        return policy.initialized ? policy.allocation : _workAllocation;
+        return policy.allocation;
     }
 
     function _successSlashedNodeBpsFor(
         uint256 e3Id
     ) internal view returns (uint16) {
         E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
-        return
-            policy.initialized
-                ? policy.allocation.successSlashedNodeBps
-                : _workAllocation.successSlashedNodeBps;
+        return policy.allocation.successSlashedNodeBps;
     }
 
     ////////////////////////////////////////////////////////////
@@ -748,52 +746,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit TreasuryUpdated(oldValue, _treasury);
     }
 
-    /// @notice Recover orphaned slashed funds for an E3 that has already completed
-    ///         or whose failure was already fully processed.
-    /// @dev When a slash executes after an E3 has completed (or after failure claims
-    ///      have started), funds accumulate in `_pendingSlashedFunds` with no drain
-    ///      path. This function allows the owner to redirect them to the treasury.
-    ///      Only callable when the E3 is in a terminal state (Complete or Failed)
-    ///      and the funds cannot be distributed through normal channels.
-    /// @param e3Id The E3 ID
-    /// @param paymentToken The token the slashed funds are denominated in
-    function withdrawOrphanedSlashedFunds(
-        uint256 e3Id,
-        IERC20 paymentToken
-    ) external onlyOwner {
-        uint256 amount = _pendingSlashedFunds[e3Id];
-        require(amount > 0, "No orphaned funds");
-
-        // Only allow withdrawal when E3 is in a terminal state
-        IInterfold.E3Stage stage = interfold.getE3Stage(e3Id);
-        require(
-            stage == IInterfold.E3Stage.Complete ||
-                stage == IInterfold.E3Stage.Failed,
-            "E3 not in terminal state"
-        );
-
-        // If E3 is Failed and distribution hasn't been calculated yet,
-        // funds should flow through the normal processE3Failure path
-        if (stage == IInterfold.E3Stage.Failed) {
-            RefundDistribution storage dist = _distributions[e3Id];
-            require(dist.calculated, "Use processE3Failure first");
-            // refuse to redirect to treasury when honest nodes existed — the
-            // latecomer crediting in `escrowSlashedFunds` should have routed funds
-            // to them. Reaching this branch with honest nodes implies an invariant
-            // violation that governance must triage off-chain.
-            require(
-                dist.honestNodeCount == 0,
-                "Honest nodes present; use slash crediting"
-            );
-        }
-
-        _pendingSlashedFunds[e3Id] = 0;
-        require(address(paymentToken) != address(0), "Invalid fee token");
-        paymentToken.safeTransfer(_treasuryFor(e3Id), amount);
-
-        emit OrphanedSlashedFundsWithdrawn(e3Id, amount);
-    }
-
     ////////////////////////////////////////////////////////////
     //                                                        //
     //              Pull-Payment Claim Functions              //
@@ -801,43 +753,16 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     ////////////////////////////////////////////////////////////
 
     /// @inheritdoc IE3RefundManager
-    function claimSlashedFundsOnSuccess(
-        uint256 e3Id
+    function claimSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
     ) external returns (uint256 amount) {
-        amount = _claimSlashedFundsOnSuccess(e3Id, msg.sender);
+        amount = _pendingSlashedClaims[e3Id][token][msg.sender];
         require(amount > 0, NothingToClaim());
-    }
-
-    /// @inheritdoc IE3RefundManager
-    function claimSlashedFundsOnSuccessBatch(
-        uint256[] calldata e3Ids
-    ) external {
-        uint256 len = e3Ids.length;
-        uint256 totalClaimed;
-        for (uint256 i = 0; i < len; i++) {
-            totalClaimed += _claimSlashedFundsOnSuccess(e3Ids[i], msg.sender);
-        }
-        require(totalClaimed > 0, NothingToClaim());
-    }
-
-    function _claimSlashedFundsOnSuccess(
-        uint256 e3Id,
-        address account
-    ) internal returns (uint256 amount) {
-        amount = _pendingSlashedSuccess[e3Id][account];
-        if (amount == 0) return 0;
-        _pendingSlashedSuccess[e3Id][account] = 0;
-        IERC20 token = _slashedSuccessToken[e3Id];
-        token.safeTransfer(account, amount);
-        emit SlashedFundsClaimed(e3Id, account, token, amount);
-    }
-
-    /// @inheritdoc IE3RefundManager
-    function pendingSlashedFundsOnSuccess(
-        uint256 e3Id,
-        address account
-    ) external view returns (uint256) {
-        return _pendingSlashedSuccess[e3Id][account];
+        _pendingSlashedClaims[e3Id][token][msg.sender] = 0;
+        _decreaseTokenLiability(token, amount);
+        _transferPreservingSlashedLiability(token, msg.sender, amount);
+        emit SlashedFundsClaimed(e3Id, msg.sender, token, amount);
     }
 
     /// @inheritdoc IE3RefundManager
@@ -845,7 +770,12 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         amount = _pendingTreasury[msg.sender][token];
         require(amount > 0, NothingToClaim());
         _pendingTreasury[msg.sender][token] = 0;
-        token.safeTransfer(msg.sender, amount);
+        uint256 tracked = _pendingTrackedTreasury[msg.sender][token];
+        if (tracked > 0) {
+            _pendingTrackedTreasury[msg.sender][token] = 0;
+            _decreaseTokenLiability(token, tracked);
+        }
+        _transferPreservingSlashedLiability(token, msg.sender, amount);
         emit TreasurySlashedClaimed(msg.sender, token, amount);
     }
 
@@ -855,6 +785,32 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         IERC20 token
     ) external view returns (uint256) {
         return _pendingTreasury[treasuryAddr][token];
+    }
+
+    function _increaseTokenLiability(IERC20 token, uint256 amount) internal {
+        _tokenLiability[token] += amount;
+        _assertTokenSolvent(token);
+    }
+
+    function _decreaseTokenLiability(IERC20 token, uint256 amount) internal {
+        _tokenLiability[token] -= amount;
+    }
+
+    function _transferPreservingSlashedLiability(
+        IERC20 token,
+        address recipient,
+        uint256 amount
+    ) internal {
+        token.safeTransfer(recipient, amount);
+        _assertTokenSolvent(token);
+    }
+
+    function _assertTokenSolvent(IERC20 token) internal view {
+        uint256 liability = _tokenLiability[token];
+        uint256 balance = token.balanceOf(address(this));
+        if (balance < liability) {
+            revert InsolventToken(token, liability, balance);
+        }
     }
 
     ////////////////////////////////////////////////////////////

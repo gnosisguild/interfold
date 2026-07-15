@@ -138,21 +138,18 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │  H-08: if honestNodes.length == 0 and                 │
 │     │  │  honestNodeAmount > 0, fold honestNodeAmount back     │
 │     │  │  into requesterAmount before storing — the work-      │
-│     │  │  completed share would otherwise be stranded forever  │
-│     │  │  (claimHonestNodeReward requires honestNodeCount>0,   │
-│     │  │  withdrawOrphanedSlashedFunds only drains             │
-│     │  │  _pendingSlashedFunds).                               │
+│     │  │  completed share would otherwise have no eligible     │
+│     │  │  honest-node claimant.                                │
 │     │  │                                                       │
-│     │  │  5. Drain pending slashed funds queue:                │
-│     │  │     pending = _pendingSlashedFunds[e3Id]              │
-│     │  │     if pending > 0:                                   │
-│     │  │       _applySlashedFunds(e3Id, pending)               │
-│     │  │       (see "Slashed Funds Routing" section below)     │
-│     │  │     → Handles slashes that arrived BEFORE             │
-│     │  │       processE3Failure was called                     │
+│     │  │  5. Preserve slashed assets as separate claims:       │
+│     │  │     → New escrows are keyed by (e3Id, actual token)   │
+│     │  │     → A pending entry matching paymentToken may settle │
+│     │  │       now; other tokens remain permissionlessly       │
+│     │  │       settleable without being relabeled              │
+│     │  │     → Legacy untyped pending state is migrated only   │
+│     │  │       to the E3's historically recorded fee token     │
 │     │  │                                                       │
-│     │  │  M-09: snapshot perNodeAmount AFTER the pending       │
-│     │  │  drain so it reflects the final post-escrow pool:     │
+│     │  │  M-09: snapshot the base fee-token per-node payout:   │
 │     │  │     if honestNodeCount > 0:                           │
 │     │  │       dist.perNodeAmount =                            │
 │     │  │         honestNodeAmount / honestNodeCount            │
@@ -179,7 +176,6 @@ REQUESTER claims:
 ├─ require(!requester refund already claimed)
 ├─ requesterAmount includes BOTH:
 │   • Base refund (from work-value BPS allocation)
-│   • Slashed funds (requester filled first, up to originalPayment)
 ├─ Transfer requesterAmount in the per-E3 fee token
 └─ Emit RefundClaimed(e3Id, requester, amount)
 
@@ -191,19 +187,23 @@ HONEST NODE claims:
 ├─ require(!honest-node reward already claimed by this node)
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements
-├─ honestNodeAmount includes BOTH:
-│   • Base compensation (from work-value BPS allocation)
-│   • Slashed funds surplus (after requester is made whole)
+├─ honestNodeAmount is base fee-token compensation from the work-value allocation
 ├─ perNodeAmount = honestNodeAmount / honestNodeCount
-│   • SNAPSHOTTED at calculateRefund (M-09); also re-snapshotted
-│     inside _applySlashedFunds while _claimCount == 0 so pre-first-
-│     claim escrows are reflected. Post-first-claim escrows route to
-│     _pendingSlashedFunds and never mutate the snapshot.
+│   • SNAPSHOTTED at calculateRefund (M-09) and never changed by
+│     slashed assets, even when the slash token equals the fee token.
 ├─ Last claimer routes the residual dust to _pendingTreasury via
 │   TreasurySlashedCredited (pull); the last node never gets a
 │   silently-inflated payout, and no per-claim dust is stranded.
 ├─ Transfer directly to node (not via BondingRegistry)
 └─ Emit RefundClaimed(e3Id, node, amount)
+
+SLASH RECIPIENT claims a token-specific entitlement:
+  E3RefundManager.claimSlashedFunds(e3Id, actualToken)
+│
+├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]
+├─ Clear the claim and reduce actualToken's protected liability
+├─ Transfer that exact token; base refunds never consume the protected reserve
+└─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
 ```
 
 ### Refund Example (Base Only)
@@ -227,29 +227,27 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
 ### Refund Example (With Slashed Funds)
 
 ```
-Same scenario as above, then 2 nodes are slashed for 300,000 each:
+Same scenario as above, then 2 nodes are slashed for 300,000 units of
+TICKET-USD each (which may be a different token/decimal scheme from USDC):
 
   Before slash:
     requesterAmount  = 550,000
     honestNodeAmount = 400,000
     originalPayment  = 1,000,000
 
-  Slash #1: 300,000 escrowed to refund pool
-    Requester gap = 1,000,000 - 550,000 = 450,000
-    toRequester   = min(300,000, 450,000) = 300,000
-    toHonestNodes = 300,000 - 300,000 = 0
-    → requesterAmount = 850,000, honestNodeAmount = 400,000
-
-  Slash #2: 300,000 escrowed to refund pool
-    Requester gap = 1,000,000 - 850,000 = 150,000
-    toRequester   = min(300,000, 150,000) = 150,000
-    toHonestNodes = 300,000 - 150,000 = 150,000
-    → requesterAmount = 1,000,000, honestNodeAmount = 550,000
+  Each slash is recorded as (e3Id, TICKET-USD, 300,000).
+  Failure compensation excludes the 5% protocol weight:
+    requester weight = 55 / (55 + 40)
+    honest-node weight = 40 / (55 + 40)
 
   Final:
-    Requester claims:      1,000,000 (fully made whole)
-    Each honest node gets:   550,000 / 3 = 183,333
-    Treasury received:        50,000 (at processE3Failure time)
+    Base USDC claims remain: requester 550,000; nodes 400,000 total
+    Separate TICKET-USD claims:
+      requester:   347,368
+      honest nodes: 252,632 total (dust assigned deterministically)
+    Treasury base USDC credit: 50,000
+
+  No TICKET-USD amount is compared to or relabeled as USDC.
 ```
 
 ---
@@ -766,17 +764,18 @@ _executeSlash(proposalId):
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
 │     │  │  │  Step B: Update escrow accounting                  │
-│     │  │  │    interfold.escrowSlashedFunds(e3Id, amount)         │
-│     │  │  │    → e3RefundManager.escrowSlashedFunds(e3Id, amt)  │
+│     │  │  │    interfold.escrowSlashedFunds(e3Id, token, amount)│
+│     │  │  │    → e3RefundManager.escrowSlashedFunds(            │
+│     │  │  │        e3Id, token, amount)                          │
 │     │  │  │      │                                             │
 │     │  │  │      ├─ If refund distribution NOT yet calculated:  │
-│     │  │  │      │   _pendingSlashedFunds[e3Id] += amount       │
-│     │  │  │      │   → Queued until terminal state is reached   │
+│     │  │  │      │   _pendingSlashedByToken[e3Id][token] += amt │
+│     │  │  │      │   tokenLiability[token] += amount            │
+│     │  │  │      │   → Require balance >= protected liability   │
 │     │  │  │      │                                             │
 │     │  │  │      └─ If refund distribution IS calculated:       │
-│     │  │  │          require(no claims started yet)             │
-│     │  │  │          _applySlashedFunds(e3Id, amount)           │
-│     │  │  │          (see priority logic below — failure path)  │
+│     │  │  │          settle token-specific pull claims now      │
+│     │  │  │          → Never mutate fee-token refund buckets    │
 │     │  │  │                                                    │
 │     │  │  │  If EITHER step reverts → both revert together     │
 │     │  │  │  → Route remains pending and funds stay reserved    │
@@ -803,48 +802,32 @@ _executeSlash(proposalId):
 > short-pays the treasury. Booking has already been zeroed before the transfer; the event exists for
 > indexer-side reconciliation (audit M-13).
 
-### Slashed Funds Priority Logic (Failure Path): \_applySlashedFunds()
+### Token-Aware Slashed Funds Settlement (Failure Path)
 
 ```
-_applySlashedFunds(e3Id, amount):
+settleSlashedFunds(e3Id, actualToken):
 │
-├─ Priority: MAKE REQUESTER WHOLE FIRST
+├─ Read and clear _pendingSlashedByToken[e3Id][actualToken]
 │
-├─ requesterGap = originalPayment - dist.requesterAmount
-│   → How much more the requester needs to reach their original payment
+├─ If there are no honest nodes: credit the whole amount to requester
 │
-├─ toRequester = min(amount, requesterGap)
-│   → Fill requester up to originalPayment, no more
+├─ Otherwise split with dimensionless failure-stage work weights:
+│   toRequester = amount * workRemainingBps /
+│                 (workRemainingBps + workCompletedBps)
+│   toHonestNodes = amount - toRequester
 │
-├─ toHonestNodes = amount - toRequester
-│   → Surplus (after requester is whole) goes to honest nodes
+├─ Credit _pendingSlashedClaims[e3Id][actualToken][recipient]
+│   → Base fee-token RefundDistribution fields never change
+│   → Decimal/unit differences cannot corrupt the base refund
 │
-├─ H-08: if dist.honestNodeCount == 0 and toHonestNodes > 0,
-│   route toHonestNodes to the treasury pull-credit pool
-│   (_pendingTreasury[treasury][feeToken]) and emit
-│   TreasurySlashedCredited. The requester cap (originalPayment)
-│   is preserved; the honest-node bucket would otherwise be
-│   unclaimable since `claimHonestNodeReward` reverts when
-│   honestNodeCount == 0.
-│
-├─ dist.requesterAmount += toRequester
-├─ dist.honestNodeAmount += toHonestNodes
-├─ dist.totalSlashed += amount
-│
-├─ M-09: if honestNodeCount > 0, re-snapshot
-│   dist.perNodeAmount = honestNodeAmount / honestNodeCount.
-│   escrowSlashedFunds gates this path on _claimCount == 0, so the
-│   snapshot only moves before any claim has landed; later escrows
-│   land in _pendingSlashedFunds and surface via
-│   withdrawOrphanedSlashedFunds.
-│
-└─ Emit SlashedFundsApplied(e3Id, toRequester, toHonestNodes)
+└─ Emit SlashedFundsApplied(e3Id, actualToken,
+       toRequester, toHonestNodes)
 
 Design rationale:
-  The requester PAID for the computation and got nothing. They should
-  be made whole before honest nodes receive any slash-based bonus.
-  Honest nodes already receive compensation via the base BPS allocation
-  for work they completed.
+  The protocol cannot compare or cap amounts across unrelated token units
+  without a trusted conversion price. A dimensionless stage-weight split
+  preserves the intended requester/honest-node priorities while every
+  recipient claims the exact asset that was slashed.
 ```
 
 ### Slashed Funds Distribution (Success Path): distributeSlashedFundsOnSuccess()
@@ -854,11 +837,10 @@ distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
 │
 ├─ Called by Interfold._distributeRewards() when E3 completes successfully
 │
-├─ escrowed = _pendingSlashedFunds[e3Id]
-│   if escrowed == 0: return (nothing to distribute)
-│
-├─ _pendingSlashedFunds[e3Id] = 0
-├─ _slashedSuccessToken[e3Id] = paymentToken   // snapshot for later claims
+├─ Store the activeNodes set and mark success settlement ready
+├─ Legacy untyped escrow may migrate only to the recorded paymentToken
+├─ Every explicitly recorded token settles independently via
+│   settleSlashedFunds(e3Id, actualToken)
 │
 ├─ Load the immutable E3PolicySnapshot captured by Interfold.request
 │   (allocation, treasury, policy version)
@@ -869,18 +851,18 @@ distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
 ├─ Credit (pull-payment, H-01/M-02) — funds are NOT pushed here:
 │   for node in activeNodes:
 │       perNode = toNodes / activeNodes.length  (dust → last node)
-│       _pendingSlashedSuccess[e3Id][node] += perNode
-│       Emit SlashedFundsCredited(e3Id, node, paymentToken, perNode)
+│       _pendingSlashedClaims[e3Id][actualToken][node] += perNode
+│       Emit SlashedFundsCredited(e3Id, node, actualToken, perNode)
 │
 ├─ Credit treasury for protocol share:
-│   _pendingTreasury[snapshot.treasury][paymentToken] += toTreasury
-│   Emit TreasurySlashedCredited(snapshot.treasury, paymentToken, toTreasury)
+│   _pendingTreasury[snapshot.treasury][actualToken] += toTreasury
+│   Emit TreasurySlashedCredited(snapshot.treasury, actualToken, toTreasury)
 │
-└─ Emit SlashedFundsDistributedOnSuccess(e3Id, toNodes, toTreasury)
+└─ Emit SlashedFundsDistributedOnSuccess(e3Id, actualToken,
+       toNodes, toTreasury)
 
 Claim flow (separate transactions, pull-only):
-  honest node     → e3RefundManager.claimSlashedFundsOnSuccess(e3Id)
-                    / claimSlashedFundsOnSuccessBatch(e3Ids[])
+  honest node     → e3RefundManager.claimSlashedFunds(e3Id, actualToken)
                     → Emits SlashedFundsClaimed(e3Id, node, token, amt)
   protocol treasury → e3RefundManager.treasuryClaim(token)
                     → Emits TreasurySlashedClaimed(treasury, token, amt)
@@ -913,34 +895,33 @@ request-time snapshot; lifecycle calls fail closed if that invariant is not sati
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 
 ```
-Slashing always escrows funds in _pendingSlashedFunds[e3Id],
-regardless of the current E3 stage. The destination is decided
-only when the E3 reaches a terminal state (Complete or Failed).
+Slashing always escrows funds in
+_pendingSlashedByToken[e3Id][ticketUnderlying], regardless of the
+current E3 stage. Settlement never substitutes the E3 fee token.
 
 ── FAILURE PATH ──────────────────────────────────────────────
 
 Case 1: Slash happens BEFORE processE3Failure
   → escrowSlashedFunds sees !dist.calculated
-  → Funds queued in _pendingSlashedFunds[e3Id]
+  → Funds queued under their actual token and liability protected
   → When processE3Failure → calculateRefund runs:
-     drains pending queue via _applySlashedFunds
-     (requester filled first, surplus to honest nodes)
+     matching fee-token escrows may settle immediately; every other
+     recorded token is permissionlessly settled with settleSlashedFunds
 
 Case 2: Slash happens AFTER processE3Failure
   → escrowSlashedFunds sees dist.calculated
-  → _applySlashedFunds runs immediately
-  → require(no claims started) — reverts if too late
+  → token-specific requester/node pull credits are created immediately
+  → Base refund claims may already have started; ledgers remain independent
 
 Case 3: Multiple slashes on same E3 (failure)
   → Each slash independently escrows funds
-  → Priority logic runs per-slash: requester filled first each time
-  → totalSlashed accumulates across all slashes
+  → Every token retains an independent pending/claim/liability ledger
 
 ── SUCCESS PATH ──────────────────────────────────────────────
 
 Case 4: E3 completes successfully with escrowed slashed funds
   → _distributeRewards calls distributeSlashedFundsOnSuccess
-  → _pendingSlashedFunds[e3Id] split between nodes and treasury
+  → Stores active nodes and enables per-token permissionless settlement
   → Nodes receive successSlashedNodeBps portion (default 50%)
   → Treasury receives the remainder
 ```
@@ -1052,34 +1033,32 @@ STEP 1: ESCROWING (always, at slash time)
   When: Any slash with actualTicketSlashed > 0, regardless of E3 stage
   Flow: BondingRegistry.redirectReservedSlashedTicketFunds(refundManager, amount)
     → ticketToken.payout(refundManager, amount)
-    → USDC moves to E3RefundManager
-    → _pendingSlashedFunds[e3Id] += amount (if not yet calculated)
+    → actual ticket underlying moves to E3RefundManager
+    → _pendingSlashedByToken[e3Id][actualToken] += amount
+    → tokenLiability[actualToken] protects the balance
   Effect: slashedTicketBalance goes UP (during slash) then DOWN (during redirect)
   Failure: route stays pending and the same amount remains reserved against
     generic redirects/treasury withdrawal until permissionless retry succeeds
 
-STEP 2a: E3 FAILS → Requester-first distribution
-  Triggered by: processE3Failure → calculateRefund drains pending queue
-    OR: escrowSlashedFunds after distribution is calculated
-  Flow: _applySlashedFunds(e3Id, amount)
-    → Requester filled up to originalPayment first
-    → Surplus to honest nodes
-  Claims: requester and honest nodes claim via claimRequesterRefund / claimHonestNodeReward
+STEP 2a: E3 FAILS → Token-specific compensation
+  Triggered by: terminal escrow or permissionless settleSlashedFunds
+  Flow: settleSlashedFunds(e3Id, actualToken)
+    → Requester/honest-node weights come from failure-stage work BPS
+    → Credits stay in actualToken; fee-token refund buckets are unchanged
+  Claims: claimSlashedFunds(e3Id, actualToken)
 
 STEP 2b: E3 SUCCEEDS → Nodes + Treasury split
   Triggered by: _distributeRewards → distributeSlashedFundsOnSuccess
-  Flow: _pendingSlashedFunds[e3Id] split by successSlashedNodeBps
+  Flow: each actualToken amount split by successSlashedNodeBps
     → Nodes receive their share evenly (with dust to last)
     → Treasury receives the remainder
-  Effect: _pendingSlashedFunds[e3Id] set to 0
+  Effect: only _pendingSlashedByToken[e3Id][actualToken] is cleared
 
-FALLBACK: TREASURY WITHDRAWAL
-  Triggered by: Owner calls BondingRegistry.withdrawSlashedFunds()
-  When: Escrowing failed (catch block) or leftover balance
-  Flow: BondingRegistry sends to slashedFundsTreasury
-    → ticketToken.payout(treasury, ticketAmount)
-    → licenseToken.safeTransfer(treasury, licenseAmount)
-  Effect: slashedTicketBalance decremented
+FALLBACK: RETRY, NOT OWNER RELABELING
+  Failed routes remain reserved in BondingRegistry and retryable by anyone.
+  E3RefundManager has no owner function that accepts an arbitrary token to
+  relabel an untyped amount. Its transfer helper preserves each token's
+  protected slash liability after base refunds and treasury claims.
 
 License bond slashes always go to treasury (no escrow routing for FOLD).
 ```
@@ -1191,12 +1170,12 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
   seven-day governance resolution grace, `expireAppeal` permissionlessly upholds it and clears its
   gate.
 
-### Pull-payment slashed funds (H-07, H-09)
+### Pull-payment slashed funds (H-01, H-07, H-09)
 
-- Slashed funds are routed through the same pull-payment pull-pool as E3 rewards (Cluster 3 / H-08
-  path). Recipients claim via `claimReward(e3Id)`; failed-transfer attackers cannot grief the whole
-  distribution. Late credits (e.g. `_applySlashedFunds` racing a prior reward claim) are accumulated
-  rather than lost.
+- Slashed funds use their own `(e3Id, token, recipient)` pull-payment ledger rather than the normal
+  reward or refund bucket. Recipients call `claimSlashedFunds(e3Id, token)`; failed-transfer
+  recipients cannot grief other claims, different token decimals never mix, and late credits remain
+  independently claimable.
 
 ### Two-step ban (M-14, M-15)
 

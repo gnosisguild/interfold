@@ -39,7 +39,7 @@ interface IE3RefundManager {
         uint256 requesterAmount; // Amount for requester
         uint256 honestNodeAmount; // Total amount for honest nodes
         uint256 protocolAmount; // Amount for protocol treasury
-        uint256 totalSlashed; // Slashed funds added
+        uint256 totalSlashed; // Legacy same-token aggregate; new token-aware escrows do not mutate it
         uint256 honestNodeCount; // Number of honest nodes
         bool calculated; // Whether distribution is calculated
         IERC20 feeToken; // The fee token used for this E3's payment (stored per-E3 to survive token rotations)
@@ -67,10 +67,15 @@ interface IE3RefundManager {
         bytes32 claimType
     );
     /// @notice Emitted when slashed funds are escrowed for an E3
-    event SlashedFundsEscrowed(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowed(
+        uint256 indexed e3Id,
+        IERC20 indexed token,
+        uint256 amount
+    );
     /// @notice Emitted when slashed funds are applied to a failed E3's refund distribution
     event SlashedFundsApplied(
         uint256 indexed e3Id,
+        IERC20 indexed token,
         uint256 toRequester,
         uint256 toHonestNodes
     );
@@ -79,6 +84,7 @@ interface IE3RefundManager {
     ///      `SlashedFundsCredited` / `TreasurySlashedCredited` for per-recipient detail.
     event SlashedFundsDistributedOnSuccess(
         uint256 indexed e3Id,
+        IERC20 indexed token,
         uint256 toNodes,
         uint256 toProtocol
     );
@@ -118,8 +124,6 @@ interface IE3RefundManager {
         address interfold,
         WorkValueAllocation allocation
     );
-    /// @notice Emitted when orphaned slashed funds are withdrawn to treasury
-    event OrphanedSlashedFundsWithdrawn(uint256 indexed e3Id, uint256 amount);
     /// @notice Emitted when the Interfold address is set
     event InterfoldSet(address indexed interfold);
     /// @notice Emitted when the treasury address is set
@@ -145,6 +149,8 @@ interface IE3RefundManager {
     error Unauthorized();
     /// @notice Caller has no pending balance to claim
     error NothingToClaim();
+    /// @notice Recorded liabilities exceed the manager's balance of a token.
+    error InsolventToken(IERC20 token, uint256 liability, uint256 balance);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -183,8 +189,38 @@ interface IE3RefundManager {
 
     /// @notice Escrow slashed funds — destination decided at terminal state
     /// @param e3Id The E3 ID
+    /// @param token The actual ticket-underlying token transferred into escrow
     /// @param amount The slashed amount
-    function escrowSlashedFunds(uint256 e3Id, uint256 amount) external;
+    function escrowSlashedFunds(
+        uint256 e3Id,
+        IERC20 token,
+        uint256 amount
+    ) external;
+
+    /// @notice Settle one recorded token after the E3 reaches a terminal state.
+    function settleSlashedFunds(uint256 e3Id, IERC20 token) external;
+
+    /// @notice Pull a token-specific slashed-fund entitlement.
+    function claimSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
+    ) external returns (uint256 amount);
+
+    /// @notice Pending, unsettled slash escrow for an E3 and token.
+    function pendingSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
+    ) external view returns (uint256 amount);
+
+    /// @notice Token-specific slash entitlement for an account.
+    function pendingSlashedClaim(
+        uint256 e3Id,
+        IERC20 token,
+        address account
+    ) external view returns (uint256 amount);
+
+    /// @notice Total protected liabilities recorded for a token.
+    function tokenLiability(IERC20 token) external view returns (uint256);
 
     /// @notice Distribute escrowed slashed funds on success
     /// @param e3Id The E3 ID
@@ -240,31 +276,6 @@ interface IE3RefundManager {
     function getE3PolicySnapshot(
         uint256 e3Id
     ) external view returns (E3PolicySnapshot memory snapshot);
-
-    ////////////////////////////////////////////////////////////
-    //                                                        //
-    //          Success-Path Slashed-Funds Pull Payments      //
-    //                                                        //
-    ////////////////////////////////////////////////////////////
-
-    /// @notice Honest node pulls credited success-path slashed funds.
-    /// @param e3Id The successful E3 ID.
-    /// @return amount Amount transferred.
-    function claimSlashedFundsOnSuccess(
-        uint256 e3Id
-    ) external returns (uint256 amount);
-
-    /// @notice Batch pull credited success-path slashed funds across multiple E3s.
-    /// @dev Each e3Id may use a different reward token (recorded at request time);
-    ///      events carry the per-E3 token address. A mixed-token sum return would be
-    ///      meaningless, so the function is intentionally void.
-    function claimSlashedFundsOnSuccessBatch(uint256[] calldata e3Ids) external;
-
-    /// @notice Get pending success-path slashed-funds credit for (e3Id, account).
-    function pendingSlashedFundsOnSuccess(
-        uint256 e3Id,
-        address account
-    ) external view returns (uint256);
 
     /// @notice Treasury pulls accrued credits (protocol slashed-fund share + dust).
     /// @dev Caller must be the treasury that was credited.

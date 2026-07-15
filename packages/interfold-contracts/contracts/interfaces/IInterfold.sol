@@ -258,7 +258,11 @@ interface IInterfold {
     /// @notice Emitted when slashed funds are escrowed for an E3
     /// @param e3Id The E3 ID.
     /// @param amount The amount of slashed funds escrowed.
-    event SlashedFundsEscrowed(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowed(
+        uint256 indexed e3Id,
+        IERC20 indexed token,
+        uint256 amount
+    );
 
     /// @notice Emitted when a failed E3 is processed for refunds.
     /// @param e3Id The ID of the failed E3.
@@ -693,8 +697,13 @@ interface IInterfold {
     /// @notice Escrow slashed funds for deferred distribution
     /// @dev Called by SlashingManager. Proxies to E3RefundManager.
     /// @param e3Id The E3 ID.
+    /// @param token Actual ticket-underlying token transferred into escrow.
     /// @param amount Amount of slashed funds to escrow.
-    function escrowSlashedFunds(uint256 e3Id, uint256 amount) external;
+    function escrowSlashedFunds(
+        uint256 e3Id,
+        IERC20 token,
+        uint256 amount
+    ) external;
 
     ////////////////////////////////////////////////////////////
     //                                                        //

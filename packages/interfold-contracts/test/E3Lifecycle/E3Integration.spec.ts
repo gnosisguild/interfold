@@ -8,7 +8,10 @@ import type { Signer } from "ethers";
 
 import InterfoldModule from "../../ignition/modules/interfold";
 import type { MockBlacklistUSDC } from "../../types";
-import { Interfold__factory as InterfoldFactory } from "../../types";
+import {
+  Interfold__factory as InterfoldFactory,
+  MockUSDC__factory as MockUSDCFactory,
+} from "../../types";
 import {
   deployInterfoldSystem,
   ethers,
@@ -117,6 +120,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     const makeRequest = async (
       signer: Signer = requester,
       committeeSize: number = 0,
+      requestToken = usdcToken,
     ): Promise<{ e3Id: number }> => {
       const startTime = (await time.latest()) + 100;
 
@@ -139,7 +143,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       };
 
       const fee = await interfold.getE3Quote(requestParams);
-      await usdcToken.connect(signer).approve(interfoldAddress, fee);
+      await requestToken.connect(signer).approve(interfoldAddress, fee);
       await interfold
         .connect(signer)
         .request({ ...requestParams, maxFee: fee });
@@ -803,23 +807,39 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         slashedBalanceBefore, // slash added then redirect removed the same amount
       );
 
-      // 6. Verify distribution was updated with requester-first priority
+      // 6. Base refunds stay denominated in the E3 fee token; the slash is a
+      //    separate claim in its actual underlying token.
       const distributionAfter = await e3RefundManager.getRefundDistribution(0);
-      expect(distributionAfter.totalSlashed).to.equal(actualSlashedAmount);
-      expect(distributionAfter.requesterAmount).to.be.gte(
+      expect(distributionAfter.requesterAmount).to.equal(
         distributionBefore.requesterAmount,
       );
+      expect(distributionAfter.honestNodeAmount).to.equal(
+        distributionBefore.honestNodeAmount,
+      );
+      const usdcAddress = await usdcToken.getAddress();
+      const requesterSlashClaim = await e3RefundManager.pendingSlashedClaim(
+        0,
+        usdcAddress,
+        await requester.getAddress(),
+      );
+      expect(requesterSlashClaim).to.be.gt(0);
 
-      // 7. Verify requester can actually claim and receives the correct USDC
+      // 7. The requester pulls the base refund and slash entitlement separately.
       const requesterBalanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
       await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      expect(
+        await usdcToken.balanceOf(await e3RefundManager.getAddress()),
+      ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
+      await e3RefundManager
+        .connect(requester)
+        .claimSlashedFunds(0, usdcAddress);
       const requesterBalanceAfter = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
       expect(requesterBalanceAfter - requesterBalanceBefore).to.equal(
-        distributionAfter.requesterAmount,
+        distributionAfter.requesterAmount + requesterSlashClaim,
       );
     });
 
@@ -917,6 +937,133 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ).to.equal(false);
     });
 
+    it("AUD-H01: preserves a slash token distinct from the E3 fee token", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        slashingManager,
+        usdcToken: ticketUnderlying,
+        makeRequest,
+        owner,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+
+      const feeToken = await new MockUSDCFactory(owner).deploy(0);
+      await feeToken.waitForDeployment();
+      await feeToken.mint(
+        await requester.getAddress(),
+        ethers.parseUnits("10000", 6),
+      );
+      await interfold.connect(owner).setFeeToken(await feeToken.getAddress());
+
+      await makeRequest(requester, 0, feeToken);
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      await registry.publishCommittee(
+        0,
+        publicKey,
+        ethers.keccak256(publicKey),
+        "0x",
+        "0x",
+      );
+
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        0,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        0,
+        await operator1.getAddress(),
+        proof,
+      );
+
+      const underlyingAddress = await ticketUnderlying.getAddress();
+      const feeTokenAddress = await feeToken.getAddress();
+      const actualSlash = ethers.parseUnits("50", 6);
+      expect(
+        await e3RefundManager.pendingSlashedFunds(0, underlyingAddress),
+      ).to.equal(actualSlash);
+
+      const e3 = await interfold.getE3(0);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      // The fee-token settlement cannot consume or relabel the distinct
+      // ticket underlying. Anyone can settle that recorded token explicitly.
+      expect(
+        await e3RefundManager.pendingSlashedFunds(0, underlyingAddress),
+      ).to.equal(actualSlash);
+      await e3RefundManager
+        .connect(operator3)
+        .settleSlashedFunds(0, underlyingAddress);
+
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      expect(distribution.feeToken).to.equal(feeTokenAddress);
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          0,
+          feeTokenAddress,
+          await requester.getAddress(),
+        ),
+      ).to.equal(0);
+
+      const recipients = [requester, operator1, operator2, operator3];
+      let totalSlashCredits = 0n;
+      for (const recipient of recipients) {
+        totalSlashCredits += await e3RefundManager.pendingSlashedClaim(
+          0,
+          underlyingAddress,
+          await recipient.getAddress(),
+        );
+      }
+      expect(totalSlashCredits).to.equal(actualSlash);
+      expect(await e3RefundManager.tokenLiability(underlyingAddress)).to.equal(
+        totalSlashCredits,
+      );
+
+      const requesterAddress = await requester.getAddress();
+      const feeBefore = await feeToken.balanceOf(requesterAddress);
+      const underlyingBefore =
+        await ticketUnderlying.balanceOf(requesterAddress);
+      const slashClaim = await e3RefundManager.pendingSlashedClaim(
+        0,
+        underlyingAddress,
+        requesterAddress,
+      );
+      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager
+        .connect(requester)
+        .claimSlashedFunds(0, underlyingAddress);
+
+      expect((await feeToken.balanceOf(requesterAddress)) - feeBefore).to.equal(
+        distribution.requesterAmount,
+      );
+      expect(
+        (await ticketUnderlying.balanceOf(requesterAddress)) - underlyingBefore,
+      ).to.equal(slashClaim);
+      expect(await e3RefundManager.tokenLiability(underlyingAddress)).to.equal(
+        totalSlashCredits - slashClaim,
+      );
+    });
+
     it("E2E: honest nodes can claim their share after slashed funds are escrowed", async function () {
       const {
         interfold,
@@ -955,7 +1102,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.markE3Failed(0);
       await interfold.processE3Failure(0);
 
-      // 3. Record distribution BEFORE slash to verify it actually changes
+      // 3. Record the base distribution before slash.
       const distributionBefore = await e3RefundManager.getRefundDistribution(0);
       const honestNodeAmountBefore = distributionBefore.honestNodeAmount;
 
@@ -974,29 +1121,41 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const distribution = await e3RefundManager.getRefundDistribution(0);
       expect(distribution.honestNodeCount).to.be.gt(0);
-      // Verify that honestNodeAmount INCREASED due to slashed funds escrow
-      expect(distribution.honestNodeAmount).to.be.gt(honestNodeAmountBefore);
-      expect(distribution.totalSlashed).to.be.gt(0);
+      expect(distribution.honestNodeAmount).to.equal(honestNodeAmountBefore);
+      const usdcAddress = await usdcToken.getAddress();
+      const op2SlashClaim = await e3RefundManager.pendingSlashedClaim(
+        0,
+        usdcAddress,
+        await operator2.getAddress(),
+      );
+      expect(op2SlashClaim).to.be.gt(0);
 
       // 5. operator2 (honest node) claims their share
       const op2BalanceBefore = await usdcToken.balanceOf(
         await operator2.getAddress(),
       );
       await e3RefundManager.connect(operator2).claimHonestNodeReward(0);
+      await e3RefundManager
+        .connect(operator2)
+        .claimSlashedFunds(0, usdcAddress);
       const op2BalanceAfter = await usdcToken.balanceOf(
         await operator2.getAddress(),
       );
 
       const perNodeAmount =
         distribution.honestNodeAmount / BigInt(distribution.honestNodeCount);
-      expect(op2BalanceAfter - op2BalanceBefore).to.equal(perNodeAmount);
+      expect(op2BalanceAfter - op2BalanceBefore).to.equal(
+        perNodeAmount + op2SlashClaim,
+      );
     });
 
     it("requester-first priority: requester gets filled before honest nodes", async function () {
       const {
         interfold,
         e3RefundManager,
+        usdcToken,
         makeRequest,
+        requester,
         operator1,
         operator2,
         operator3,
@@ -1017,10 +1176,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const distributionBefore = await e3RefundManager.getRefundDistribution(0);
       const slashedAmount = ethers.parseUnits("100", 6);
 
-      // requesterGap = originalPayment - requesterAmount (how much more needed to be whole)
-      const requesterGap =
-        distributionBefore.originalPayment - distributionBefore.requesterAmount;
-
       // Call from the Interfold frozen in the E3 policy snapshot. Rotating the
       // manager's live pointer must not grant settlement authority for old E3s.
       const originalInterfold = await e3RefundManager.interfold();
@@ -1033,32 +1188,38 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ]);
       await e3RefundManager
         .connect(await ethers.getSigner(originalInterfold))
-        .escrowSlashedFunds(0, slashedAmount);
+        .escrowSlashedFunds(0, await usdcToken.getAddress(), slashedAmount);
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [
         originalInterfold,
       ]);
 
       const distributionAfter = await e3RefundManager.getRefundDistribution(0);
 
-      // H-08: with no honest nodes (failure at committee formation), the\n      // node share is routed to the treasury pull-pool instead of being\n      // stranded in `dist.honestNodeAmount`. Requester is still capped at\n      // `originalPayment` via the requesterGap.
-      const expectedToRequester =
-        slashedAmount >= requesterGap ? requesterGap : slashedAmount;
-      const expectedToHonestNodes = 0n;
-
       expect(distributionAfter.requesterAmount).to.equal(
-        distributionBefore.requesterAmount + expectedToRequester,
+        distributionBefore.requesterAmount,
       );
       expect(distributionAfter.honestNodeAmount).to.equal(
-        distributionBefore.honestNodeAmount + expectedToHonestNodes,
+        distributionBefore.honestNodeAmount,
       );
-      expect(distributionAfter.totalSlashed).to.equal(slashedAmount);
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          0,
+          await usdcToken.getAddress(),
+          await requester.getAddress(),
+        ),
+      ).to.equal(slashedAmount);
+      expect(
+        await e3RefundManager.tokenLiability(await usdcToken.getAddress()),
+      ).to.equal(slashedAmount);
     });
 
     it("queues slashed funds arriving before processE3Failure and applies on calculate", async function () {
       const {
         interfold,
         e3RefundManager,
+        usdcToken,
         makeRequest,
+        requester,
         operator1,
         operator2,
         operator3,
@@ -1088,7 +1249,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ]);
       await e3RefundManager
         .connect(await ethers.getSigner(originalInterfold))
-        .escrowSlashedFunds(0, slashedAmount);
+        .escrowSlashedFunds(0, await usdcToken.getAddress(), slashedAmount);
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [
         originalInterfold,
       ]);
@@ -1102,9 +1263,17 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const distAfter = await e3RefundManager.getRefundDistribution(0);
       expect(distAfter.calculated).to.be.true;
-      expect(distAfter.totalSlashed).to.equal(slashedAmount);
-
-      // `totalSlashed` was already asserted above; the per-bucket split is\n      // exercised by the dedicated requester-priority test — the residual\n      // is routed to the treasury pull-pool, not to a single dist bucket.
+      const usdcAddress = await usdcToken.getAddress();
+      expect(
+        await e3RefundManager.pendingSlashedFunds(0, usdcAddress),
+      ).to.equal(0);
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          0,
+          usdcAddress,
+          await requester.getAddress(),
+        ),
+      ).to.equal(slashedAmount);
     });
   });
 
@@ -1703,7 +1872,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       let slashedClaimedTotal = 0n;
       for (const op of ops) {
         const before = await usdcToken.balanceOf(await op.getAddress());
-        await e3RefundManager.connect(op).claimSlashedFundsOnSuccess(0);
+        await e3RefundManager.connect(op).claimSlashedFunds(0, usdcAddress);
         const after = await usdcToken.balanceOf(await op.getAddress());
         slashedClaimedTotal += after - before;
       }
