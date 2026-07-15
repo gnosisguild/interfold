@@ -848,7 +848,9 @@ distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
 ├─ _pendingSlashedFunds[e3Id] = 0
 ├─ _slashedSuccessToken[e3Id] = paymentToken   // snapshot for later claims
 │
-├─ Split using WorkValueAllocation.successSlashedNodeBps (default 5000):
+├─ Load the immutable E3PolicySnapshot captured by Interfold.request
+│   (allocation, treasury, policy version)
+├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
 │   toNodes = escrowed * successSlashedNodeBps / 10000
 │   toTreasury = escrowed - toNodes
 │
@@ -859,8 +861,8 @@ distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
 │       Emit SlashedFundsCredited(e3Id, node, paymentToken, perNode)
 │
 ├─ Credit treasury for protocol share:
-│   _pendingTreasury[treasury][paymentToken] += toTreasury
-│   Emit TreasurySlashedCredited(treasury, paymentToken, toTreasury)
+│   _pendingTreasury[snapshot.treasury][paymentToken] += toTreasury
+│   Emit TreasurySlashedCredited(snapshot.treasury, paymentToken, toTreasury)
 │
 └─ Emit SlashedFundsDistributedOnSuccess(e3Id, toNodes, toTreasury)
 
@@ -877,6 +879,8 @@ Design rationale:
   a slashed peer) and the protocol treasury. Both shares use a per-recipient
   pull ledger so a single failing recipient (e.g. blacklisted ERC-20 address)
   cannot brick the success-path or strand other claimants' funds.
+  Governance changes to the live allocation or treasury increment policyVersion
+  and apply only to later E3 requests; existing snapshots never migrate implicitly.
 ```
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution

@@ -56,6 +56,8 @@ Requester calls: Interfold.request({
 │
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
+│   ├─ e3RefundManager.snapshotE3Policy(e3Id)
+│   │   → freezes refund/slash allocation, treasury, and policy version
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → On chains without `prevrandao`, the value is still deterministic
 │   │     per-block; downstream sortition relies on the per-E3 snapshot of

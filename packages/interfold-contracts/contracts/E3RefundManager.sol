@@ -24,6 +24,9 @@ import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
  * @dev Implements fault-attribution based refund system
  *
  */
+// Per-E3 token, claim, routing, and immutable policy ledgers are intentionally
+// isolated rather than packed into an opaque monolithic mapping.
+// solhint-disable-next-line max-states-count
 contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
     ////////////////////////////////////////////////////////////
@@ -68,6 +71,11 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @notice Tracks honest-node reward claims independently from requester claims
     mapping(uint256 e3Id => mapping(address claimer => bool hasClaimed))
         internal _honestNodeClaimed;
+    /// @notice Per-E3 settlement economics frozen at request time.
+    mapping(uint256 e3Id => E3PolicySnapshot snapshot)
+        internal _e3PolicySnapshots;
+    /// @notice Monotonic version for allocation or treasury changes.
+    uint64 public policyVersion;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -115,6 +123,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             protocolBps: 500,
             successSlashedNodeBps: 5000
         });
+        policyVersion = 1;
 
         if (_owner != owner()) _transferOwnership(_owner);
     }
@@ -155,11 +164,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(originalPayment > 0, "No payment");
         require(address(paymentToken) != address(0), "Invalid fee token");
 
-        // Calculate work value based on stage
+        E3PolicySnapshot memory policy = _policyFor(e3Id);
+
+        // Calculate work value based on stage and the request-time policy.
         IInterfold.E3Stage failedAt = _getFailedAtStage(e3Id);
-        (uint16 workCompletedBps, uint16 workRemainingBps) = calculateWorkValue(
-            failedAt
-        );
+        (
+            uint16 workCompletedBps,
+            uint16 workRemainingBps
+        ) = _calculateWorkValue(failedAt, policy.allocation);
 
         // Calculate base distribution
         uint256 honestNodeAmount = (originalPayment * workCompletedBps) /
@@ -201,9 +213,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         // Credit protocol fee via pull-payment so a malicious/reverting/blacklisted
         // treasury cannot brick failed-E3 processing.
         if (protocolAmount > 0) {
-            _pendingTreasury[treasury][paymentToken] += protocolAmount;
+            _pendingTreasury[policy.treasury][paymentToken] += protocolAmount;
             emit TreasurySlashedCredited(
-                treasury,
+                policy.treasury,
                 paymentToken,
                 protocolAmount
             );
@@ -280,8 +292,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function calculateWorkValue(
         IInterfold.E3Stage stage
     ) public view returns (uint16 workCompletedBps, uint16 workRemainingBps) {
-        WorkValueAllocation memory alloc = _workAllocation;
+        return _calculateWorkValue(stage, _workAllocation);
+    }
 
+    function _calculateWorkValue(
+        IInterfold.E3Stage stage,
+        WorkValueAllocation memory alloc
+    ) internal pure returns (uint16 workCompletedBps, uint16 workRemainingBps) {
         if (
             stage == IInterfold.E3Stage.Requested ||
             stage == IInterfold.E3Stage.None
@@ -384,8 +401,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
                 ? dist.honestNodeAmount - paidIncludingThis
                 : 0;
             if (dust > 0) {
-                _pendingTreasury[treasury][dist.feeToken] += dust;
-                emit TreasurySlashedCredited(treasury, dist.feeToken, dust);
+                address policyTreasury = _treasuryFor(e3Id);
+                _pendingTreasury[policyTreasury][dist.feeToken] += dust;
+                emit TreasurySlashedCredited(
+                    policyTreasury,
+                    dist.feeToken,
+                    dust
+                );
             }
         }
         _totalHonestNodePaid[e3Id] += amount;
@@ -465,14 +487,19 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(address(paymentToken) != address(0), "Invalid fee token");
         _slashedSuccessToken[e3Id] = paymentToken;
 
-        uint256 toNodes = (escrowed * _workAllocation.successSlashedNodeBps) /
+        E3PolicySnapshot memory policy = _policyFor(e3Id);
+        uint256 toNodes = (escrowed * policy.allocation.successSlashedNodeBps) /
             BPS_BASE;
         uint256 toProtocol = escrowed - toNodes;
 
         // Credit treasury share — pull only.
         if (toProtocol > 0) {
-            _pendingTreasury[treasury][paymentToken] += toProtocol;
-            emit TreasurySlashedCredited(treasury, paymentToken, toProtocol);
+            _pendingTreasury[policy.treasury][paymentToken] += toProtocol;
+            emit TreasurySlashedCredited(
+                policy.treasury,
+                paymentToken,
+                toProtocol
+            );
         }
 
         if (toNodes > 0 && honestNodes.length > 0) {
@@ -498,8 +525,12 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             }
         } else if (toNodes > 0) {
             // No honest nodes — funnel the node share to treasury for governance triage.
-            _pendingTreasury[treasury][paymentToken] += toNodes;
-            emit TreasurySlashedCredited(treasury, paymentToken, toNodes);
+            _pendingTreasury[policy.treasury][paymentToken] += toNodes;
+            emit TreasurySlashedCredited(
+                policy.treasury,
+                paymentToken,
+                toNodes
+            );
         }
 
         emit SlashedFundsDistributedOnSuccess(e3Id, toNodes, toProtocol);
@@ -529,8 +560,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         if (dist.honestNodeCount == 0 && toHonestNodes > 0) {
             IERC20 token = dist.feeToken;
             if (address(token) != address(0)) {
-                _pendingTreasury[treasury][token] += toHonestNodes;
-                emit TreasurySlashedCredited(treasury, token, toHonestNodes);
+                address policyTreasury = _treasuryFor(e3Id);
+                _pendingTreasury[policyTreasury][token] += toHonestNodes;
+                emit TreasurySlashedCredited(
+                    policyTreasury,
+                    token,
+                    toHonestNodes
+                );
             }
             toHonestNodes = 0;
         }
@@ -587,6 +623,46 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         return _workAllocation;
     }
 
+    /// @inheritdoc IE3RefundManager
+    function getE3PolicySnapshot(
+        uint256 e3Id
+    ) external view returns (E3PolicySnapshot memory snapshot) {
+        return _e3PolicySnapshots[e3Id];
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function snapshotE3Policy(uint256 e3Id) external onlyInterfold {
+        E3PolicySnapshot storage snapshot = _e3PolicySnapshots[e3Id];
+        require(!snapshot.initialized, "Policy already snapshotted");
+        if (policyVersion == 0) policyVersion = 1;
+        snapshot.allocation = _workAllocation;
+        snapshot.treasury = treasury;
+        snapshot.version = policyVersion;
+        snapshot.initialized = true;
+        emit E3PolicySnapshotted(
+            e3Id,
+            policyVersion,
+            treasury,
+            _workAllocation
+        );
+    }
+
+    function _policyFor(
+        uint256 e3Id
+    ) internal view returns (E3PolicySnapshot memory policy) {
+        policy = _e3PolicySnapshots[e3Id];
+        if (!policy.initialized) {
+            policy.allocation = _workAllocation;
+            policy.treasury = treasury;
+            policy.version = policyVersion;
+        }
+    }
+
+    function _treasuryFor(uint256 e3Id) internal view returns (address) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        return policy.treasury;
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                   Admin Functions                      //
@@ -610,6 +686,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(allocation.successSlashedNodeBps <= BPS_BASE, "Invalid BPS");
 
         _workAllocation = allocation;
+        policyVersion = policyVersion == 0 ? 1 : policyVersion + 1;
 
         emit WorkAllocationUpdated(allocation);
     }
@@ -629,6 +706,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(_treasury != address(0), "Invalid treasury");
         address oldValue = treasury;
         treasury = _treasury;
+        policyVersion = policyVersion == 0 ? 1 : policyVersion + 1;
         emit TreasuryUpdated(oldValue, _treasury);
     }
 
@@ -673,7 +751,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
         _pendingSlashedFunds[e3Id] = 0;
         require(address(paymentToken) != address(0), "Invalid fee token");
-        paymentToken.safeTransfer(treasury, amount);
+        paymentToken.safeTransfer(_treasuryFor(e3Id), amount);
 
         emit OrphanedSlashedFundsWithdrawn(e3Id, amount);
     }

@@ -293,6 +293,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         e3Id = nexte3Id;
         nexte3Id++;
+        e3RefundManager.snapshotE3Policy(e3Id);
         // Seed uses block.prevrandao combined with e3Id as additional entropy.
         // While prevrandao is not cryptographically unpredictable (validator-controlled),
         // the combination with the unique, incrementing e3Id mitigates manipulation.

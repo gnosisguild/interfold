@@ -26,6 +26,13 @@ interface IE3RefundManager {
         uint16 protocolBps;
         uint16 successSlashedNodeBps;
     }
+    /// @notice Immutable settlement policy selected when an E3 is requested.
+    struct E3PolicySnapshot {
+        WorkValueAllocation allocation;
+        address treasury;
+        uint64 version;
+        bool initialized;
+    }
     /// @notice Refund distribution for a failed E3
     struct RefundDistribution {
         uint256 requesterAmount; // Amount for requester
@@ -102,6 +109,13 @@ interface IE3RefundManager {
     );
     /// @notice Emitted when work allocation is updated
     event WorkAllocationUpdated(WorkValueAllocation allocation);
+    /// @notice Emitted when an E3 freezes its settlement policy.
+    event E3PolicySnapshotted(
+        uint256 indexed e3Id,
+        uint64 indexed version,
+        address indexed treasury,
+        WorkValueAllocation allocation
+    );
     /// @notice Emitted when orphaned slashed funds are withdrawn to treasury
     event OrphanedSlashedFundsWithdrawn(uint256 indexed e3Id, uint256 amount);
     /// @notice Emitted when the Interfold address is set
@@ -146,6 +160,10 @@ interface IE3RefundManager {
         address[] calldata honestNodes,
         IERC20 paymentToken
     ) external;
+
+    /// @notice Freeze the current allocation and treasury for an E3.
+    /// @dev Only Interfold may call this, exactly once, during request creation.
+    function snapshotE3Policy(uint256 e3Id) external;
 
     /// @notice Requester claims their refund
     /// @param e3Id The failed E3 ID
@@ -215,6 +233,11 @@ interface IE3RefundManager {
         external
         view
         returns (WorkValueAllocation memory allocation);
+
+    /// @notice Return the settlement policy frozen for an E3.
+    function getE3PolicySnapshot(
+        uint256 e3Id
+    ) external view returns (E3PolicySnapshot memory snapshot);
 
     ////////////////////////////////////////////////////////////
     //                                                        //

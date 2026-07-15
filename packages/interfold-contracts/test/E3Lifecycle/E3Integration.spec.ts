@@ -220,6 +220,77 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const storedRequester = await interfold.getRequester(0);
       expect(storedRequester).to.equal(await requester.getAddress());
     });
+
+    it("AUD-M07: snapshots failure allocation and treasury at request time", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        usdcToken,
+        makeRequest,
+        owner,
+        treasury,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+      await makeRequest();
+
+      const originalTreasury = await treasury.getAddress();
+      const rotatedTreasury = await computeProvider.getAddress();
+      const snapshot = await e3RefundManager.getE3PolicySnapshot(0);
+      expect(snapshot.initialized).to.equal(true);
+      expect(snapshot.version).to.equal(1);
+      expect(snapshot.treasury).to.equal(originalTreasury);
+      expect(snapshot.allocation.committeeFormationBps).to.equal(1000);
+
+      await e3RefundManager.connect(owner).setWorkAllocation({
+        committeeFormationBps: 2000,
+        dkgBps: 2000,
+        decryptionBps: 5500,
+        protocolBps: 500,
+        successSlashedNodeBps: 1000,
+      });
+      await e3RefundManager.connect(owner).setTreasury(rotatedTreasury);
+
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+      const deadlines = await interfold.getDeadlines(0);
+      await time.increaseTo(deadlines.dkgDeadline + 1n);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      expect(distribution.honestNodeAmount).to.equal(
+        (distribution.originalPayment * 1000n) / 10000n,
+      );
+      expect(
+        await e3RefundManager.pendingTreasuryClaim(
+          originalTreasury,
+          await usdcToken.getAddress(),
+        ),
+      ).to.equal(distribution.protocolAmount);
+      expect(
+        await e3RefundManager.pendingTreasuryClaim(
+          rotatedTreasury,
+          await usdcToken.getAddress(),
+        ),
+      ).to.equal(0);
+
+      const unchanged = await e3RefundManager.getE3PolicySnapshot(0);
+      expect(unchanged.version).to.equal(1);
+      expect(unchanged.treasury).to.equal(originalTreasury);
+      expect(unchanged.allocation.committeeFormationBps).to.equal(1000);
+    });
   });
 
   describe("Committee Formed Integration", function () {
@@ -1256,6 +1327,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         treasury,
+        computeProvider,
+        owner,
         setupOperator,
       } = await loadFixture(setup);
 
@@ -1265,6 +1338,18 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Request E3, form committee, publish key
       await makeRequest(undefined, 0);
+      // Governance changes after request must not alter this E3's success
+      // allocation or redirect its treasury share.
+      await e3RefundManager.connect(owner).setWorkAllocation({
+        committeeFormationBps: 1000,
+        dkgBps: 3000,
+        decryptionBps: 5500,
+        protocolBps: 500,
+        successSlashedNodeBps: 1000,
+      });
+      await e3RefundManager
+        .connect(owner)
+        .setTreasury(await computeProvider.getAddress());
       await registry.connect(operator1).submitTicket(0, 1);
       await registry.connect(operator2).submitTicket(0, 1);
       await registry.connect(operator3).submitTicket(0, 1);
