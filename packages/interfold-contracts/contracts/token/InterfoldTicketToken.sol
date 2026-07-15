@@ -19,9 +19,7 @@ import {
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { Nonces } from "@openzeppelin/contracts/utils/Nonces.sol";
-import {
-    EIP712
-} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";

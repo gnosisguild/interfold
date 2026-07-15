@@ -169,10 +169,10 @@ Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copie
 of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
 Interfold v0.2.3 image. Any failed command aborts startup. The wallet command atomically derives and
 stores both the Ethereum and libp2p identities. Both keys are encrypted in `/data`; v0.2.3 stores
-its password key there as a mode-`0400` file. After successful persistence,
-the entrypoint removes the combined plaintext upload. Provisioning sends the secrets through the
-CLI's hidden TTY prompts over stdin; plaintext credentials are never placed in process arguments or
-container environment variables.
+its password key there as a mode-`0400` file. After successful persistence, the entrypoint removes
+the combined plaintext upload. Provisioning sends the secrets through the CLI's hidden TTY prompts
+over stdin; plaintext credentials are never placed in process arguments or container environment
+variables.
 
 Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
 but v0.2.3 ignores that obsolete field on a fresh setup. When encrypted identity state already
@@ -229,13 +229,13 @@ access-controlled even though the wallet and network keys inside the volume are 
 
 ### Required v0.1.8 upgrade bridge
 
-DAppNode package v0.2.3 is the required bridge from the shipped v0.1.8 package to later binaries.
-On its first start it atomically renames the custom-config state root from `/data/.enclave` to
+DAppNode package v0.2.3 is the required bridge from the shipped v0.1.8 package to later binaries. On
+its first start it atomically renames the custom-config state root from `/data/.enclave` to
 `/data/.interfold`, refusing to proceed if both roots exist. The v0.2.3 binary then stamps schema
 version 1 using its release-era compatibility behavior. Later fail-closed binaries can therefore
 verify the marker instead of rejecting the old unversioned datastore. Do not skip this package when
-upgrading an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has started
-successfully.
+upgrading an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has
+started successfully.
 
 ## Health semantics
 

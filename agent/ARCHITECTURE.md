@@ -14,10 +14,10 @@ The repository-wide thin-actor findings and deliberate residuals are recorded in
 
 ## Why Interfold Uses Actors
 
-Interfold is an asynchronous, multi-party cryptographic workflow. A node concurrently receives
-chain logs, peer messages, timers, proof results, storage acknowledgements, and operator signals.
-Work is partitioned by E3 and must remain responsive while cryptographic jobs run for seconds or
-minutes. Actors are a good fit for those concurrency boundaries.
+Interfold is an asynchronous, multi-party cryptographic workflow. A node concurrently receives chain
+logs, peer messages, timers, proof results, storage acknowledgements, and operator signals. Work is
+partitioned by E3 and must remain responsive while cryptographic jobs run for seconds or minutes.
+Actors are a good fit for those concurrency boundaries.
 
 Actors are not the domain model. Putting every rule, state transition, and external effect in an
 Actix handler creates large stateful objects that are hard to test and impossible to replay with
@@ -53,9 +53,9 @@ The filesystem is organized by capability first and role second:
 > Folders answer “what protocol capability am I changing?” Files answer “what role does this code
 > play in that capability?”
 
-This keeps all code needed to understand one protocol slice together. It also avoids top-level
-layer directories whose contents grow into unrelated lists of actor names, workflow names, and
-domain names.
+This keeps all code needed to understand one protocol slice together. It also avoids top-level layer
+directories whose contents grow into unrelated lists of actor names, workflow names, and domain
+names.
 
 ```text
 crates/<crate>/src/
@@ -75,27 +75,26 @@ crates/<crate>/src/
   repo.rs
 ```
 
-Only create the files a capability needs. A pure capability that fits in one file stays at the
-crate root, for example `network_status.rs`. Once it needs multiple roles, create one capability
-directory and move the implementation into it. Do not create an empty directory hierarchy in
-advance.
+Only create the files a capability needs. A pure capability that fits in one file stays at the crate
+root, for example `network_status.rs`. Once it needs multiple roles, create one capability directory
+and move the implementation into it. Do not create an empty directory hierarchy in advance.
 
 The standard role names are:
 
-| File | Owns |
-| --- | --- |
-| `actor.rs` | actor identity, construction, owned runtime state, lifecycle, and public surface |
-| `handlers.rs` | mailbox entry points and outer-envelope validation |
-| `state.rs` | durable or derivable capability state and accepted input values |
-| `workflow.rs` | deterministic decisions, transitions, and intent production |
-| `transitions.rs` | reducer implementation when separating it makes `workflow.rs` a clearer surface |
-| `intents.rs` | typed effect intents when they would obscure the workflow |
-| `effects.rs` | persistence, crypto workers, bus publication, timers, network, chain, and process I/O |
-| `validation.rs` | reusable pure protocol validation |
-| `tests.rs` | focused capability tests when only one suite is needed |
+| File             | Owns                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| `actor.rs`       | actor identity, construction, owned runtime state, lifecycle, and public surface      |
+| `handlers.rs`    | mailbox entry points and outer-envelope validation                                    |
+| `state.rs`       | durable or derivable capability state and accepted input values                       |
+| `workflow.rs`    | deterministic decisions, transitions, and intent production                           |
+| `transitions.rs` | reducer implementation when separating it makes `workflow.rs` a clearer surface       |
+| `intents.rs`     | typed effect intents when they would obscure the workflow                             |
+| `effects.rs`     | persistence, crypto workers, bus publication, timers, network, chain, and process I/O |
+| `validation.rs`  | reusable pure protocol validation                                                     |
+| `tests.rs`       | focused capability tests when only one suite is needed                                |
 
-Use `handlers/`, `effects/`, `transitions/`, or `tests/` only after the corresponding single file has several
-independent concerns. Files below those directories use semantic operation names such as
+Use `handlers/`, `effects/`, `transitions/`, or `tests/` only after the corresponding single file
+has several independent concerns. Files below those directories use semantic operation names such as
 `publish_result.rs`, `verify_key_proofs.rs`, or `fetch_history.rs`. Stage labels such as `c1.rs`,
 `c5.rs`, and generic names such as `runtime.rs`, `helpers.rs`, `logic.rs`, or `utils.rs` are not
 acceptable substitutes for a responsibility.
@@ -129,8 +128,8 @@ Use this decision order:
 Concrete cross-capability adapters or startup composition may also remain at the crate root, but a
 one-capability adapter belongs with its capability.
 
-Root files named `actors.rs`, `domain.rs`, `workflow.rs`, `adapters.rs`, or `runtime.rs` may exist as
-temporary compatibility views. They use `#[path = "..."]` declarations to preserve established
+Root files named `actors.rs`, `domain.rs`, `workflow.rs`, `adapters.rs`, or `runtime.rs` may exist
+as temporary compatibility views. They use `#[path = "..."]` declarations to preserve established
 Rust module paths while implementation files live in capability directories. They must not acquire
 new business logic and must not grow back into layer directories.
 
@@ -146,8 +145,8 @@ intents. Actors apply those decisions and effects execute the resulting I/O.
                  └──────────────────────────► effects.rs ──► external systems
 ```
 
-- `state`, `validation`, workflows, and pure algorithm files must not depend on Actix,
-  repositories, network clients, wall-clock calls, or process execution.
+- `state`, `validation`, workflows, and pure algorithm files must not depend on Actix, repositories,
+  network clients, wall-clock calls, or process execution.
 - A workflow must not call concrete I/O. It returns explicit intents or typed decisions.
 - Actors and handlers own serialization, scheduling, supervision, and dispatch; they do not own
   threshold rules, canonical ordering, proof validity, or state-machine legality.
@@ -320,18 +319,18 @@ For every correctness-relevant step:
 7. Retry according to policy until success, terminal failure, cancellation, or persisted deadline.
 
 If the current storage abstraction cannot atomically commit a snapshot and outbox entry, record the
-intent itself as the durable source of truth and make replay re-derive the state. Never mutate memory
-and then rely on a fire-and-forget persistence message as proof of durability.
+intent itself as the durable source of truth and make replay re-derive the state. Never mutate
+memory and then rely on a fire-and-forget persistence message as proof of durability.
 
 ## State Classification
 
 Every state field is classified during review:
 
-| Class | Meaning | Requirement |
-| --- | --- | --- |
-| Durable | Losing it can change outcome or stall progress | Persist with a versioned schema before acknowledgement |
-| Derivable | Reconstructible from authoritative durable facts | Document the source and test reconstruction |
-| Ephemeral | Cache/telemetry only; safe to lose | Bound it and make loss behavior explicit |
+| Class     | Meaning                                          | Requirement                                            |
+| --------- | ------------------------------------------------ | ------------------------------------------------------ |
+| Durable   | Losing it can change outcome or stall progress   | Persist with a versioned schema before acknowledgement |
+| Derivable | Reconstructible from authoritative durable facts | Document the source and test reconstruction            |
+| Ephemeral | Cache/telemetry only; safe to lose               | Bound it and make loss behavior explicit               |
 
 Pending proof bundles, decrypted-share progress, accusation votes/timeouts, retry state, active
 aggregator designation, deadlines, and undispatched external effects are durable unless a stronger
@@ -346,13 +345,13 @@ and pending intents.
 Names must reflect semantics. Persisting all messages under one `Event` label hides important
 reliability differences.
 
-| Kind | Meaning | Examples | Default durability |
-| --- | --- | --- | --- |
-| Fact | Something already happened | `CommitteeFinalized`, `ProofVerified`, `CiphertextPublished` | Durable |
-| Intent | Work that must be attempted | `GenerateC5`, `PublishCommittee`, `ScheduleDeadline` | Durable outbox |
-| Result | Outcome of an intent | `C5Generated`, `PublishConfirmed`, `ComputeFailed` | Durable |
-| Query | Request for current information | health/status/repository lookup | Ephemeral |
-| Infrastructure signal | Runtime lifecycle | `EffectsEnabled`, readiness, shutdown | Durable only when needed for recovery/audit |
+| Kind                  | Meaning                         | Examples                                                     | Default durability                          |
+| --------------------- | ------------------------------- | ------------------------------------------------------------ | ------------------------------------------- |
+| Fact                  | Something already happened      | `CommitteeFinalized`, `ProofVerified`, `CiphertextPublished` | Durable                                     |
+| Intent                | Work that must be attempted     | `GenerateC5`, `PublishCommittee`, `ScheduleDeadline`         | Durable outbox                              |
+| Result                | Outcome of an intent            | `C5Generated`, `PublishConfirmed`, `ComputeFailed`           | Durable                                     |
+| Query                 | Request for current information | health/status/repository lookup                              | Ephemeral                                   |
+| Infrastructure signal | Runtime lifecycle               | `EffectsEnabled`, readiness, shutdown                        | Durable only when needed for recovery/audit |
 
 Legacy names may be retained for wire/schema compatibility, but their semantic kind must be
 documented. For example, `ComputeRequest` is an intent even if its historical Rust type is stored in
@@ -373,7 +372,8 @@ event on every replay.
   escalated; it is never only logged.
 - Buffers are bounded by both item count and bytes. Overflow has an explicit policy and metric.
 - Replay uses bounded paging/merge and the same acknowledgement semantics as live delivery.
-- Queries and telemetry may use lossy delivery only when callers can distinguish loss/unavailability.
+- Queries and telemetry may use lossy delivery only when callers can distinguish
+  loss/unavailability.
 
 `do_send` is allowed for best-effort telemetry. It is not allowed for state persistence, workflow
 progression, timers, proof/results, cleanup, network publication, or external transaction intents.

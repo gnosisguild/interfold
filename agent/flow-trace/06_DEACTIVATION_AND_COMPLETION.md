@@ -259,8 +259,8 @@ On restart:
 └─ Node resumes from where it left off
 ```
 
-The shutdown barrier proves that the persisted `Shutdown` event reached its current subscribers,
-the event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
+The shutdown barrier proves that the persisted `Shutdown` event reached its current subscribers, the
+event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
 deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
 operators must continue to follow the production shutdown precautions.
 
@@ -281,14 +281,14 @@ accept within the timeout fails recovery instead of being silently skipped. Snap
 contains asynchronous edges, so this does not claim that every downstream actor is synchronously
 durable at each replay step.
 
-`interfold node validate` detects a recoverable uncommitted event-log tail without changing it.
-With the node stopped, `interfold node validate --repair` applies the same boundary-checked tail
-recovery as startup and refuses to remove indexed records. Runtime EventStore query failures are
-returned to the correlated caller rather than panicking the actor; committed corruption remains a
+`interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
+the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
+as startup and refuses to remove indexed records. Runtime EventStore query failures are returned to
+the correlated caller rather than panicking the actor; committed corruption remains a
 startup/integrity failure.
 
-For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state.
-It atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
+For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
+atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
 operator/libp2p identity, and lets the v0.2.3 binary stamp schema version 1 before later binaries
 enforce the marker. An ambiguous volume containing both roots fails closed.
 

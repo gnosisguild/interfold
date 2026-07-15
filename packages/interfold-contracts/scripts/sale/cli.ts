@@ -35,4 +35,3 @@ export async function connect() {
     process.env.HARDHAT_NETWORK;
   return requested ? hre.network.connect(requested) : hre.network.connect();
 }
-

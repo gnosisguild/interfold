@@ -256,8 +256,8 @@ Same scenario as above, then 2 nodes are slashed for 300,000 each:
 
 ### Off-Chain Fault Attribution: AccusationManager
 
-**Actor:** `AccusationManager` (`crates/slashing/src/accusation_voting/actor.rs`; the
-`zk-prover` path is a compatibility re-export)
+**Actor:** `AccusationManager` (`crates/slashing/src/accusation_voting/actor.rs`; the `zk-prover`
+path is a compatibility re-export)
 
 **Deterministic workflow:** `crates/slashing/src/accusation_voting/workflow.rs` owns deadlines,
 EIP-712 digests, admission, vote/quorum decisions, and re-verification state. The actor owns timers
