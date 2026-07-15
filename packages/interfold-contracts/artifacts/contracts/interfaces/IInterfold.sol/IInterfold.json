@@ -114,6 +114,17 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "proofNullifier",
+          "type": "bytes32"
+        }
+      ],
+      "name": "DecryptionProofAlreadyConsumed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -2453,5 +2464,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-21aba0cf843b2f04de4551ed3d28e7d82f2fe707"
+  "buildInfoId": "solc-0_8_28-f1477aba8252a554659a14e8a3473dc480e60550"
 }

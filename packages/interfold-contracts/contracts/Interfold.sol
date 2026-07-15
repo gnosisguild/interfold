@@ -430,6 +430,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         if (e3.proofAggregationEnabled) {
             require(proof.length > 0, ProofRequired());
+
+            // Canonicalize the verifier ABI payload before deriving its nullifier.
+            // `abi.decode` accepts some trailing-byte variants; hashing the decoded
+            // tuple makes every equivalent encoding consume the same one-shot key.
             _verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);
             success = true;
         } else {
@@ -446,7 +450,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         bytes32 plaintextHash,
         bytes calldata proof
-    ) internal view {
+    ) internal {
         E3 storage e3 = e3s[e3Id];
         InterfoldPricing.verifyPlaintext(
             address(e3.decryptionVerifier),
@@ -1199,10 +1203,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             interfaceId == 0x01ffc9a7; // IERC165.supportsInterface selector
     }
 
+    /// @dev Canonical decryption-proof nullifiers consumed by successful E3s.
+    mapping(bytes32 proofNullifier => bool consumed)
+        private _consumedDecryptionProofs;
+
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 }

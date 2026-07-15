@@ -199,7 +199,11 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       );
       await time.increase(inputWindowDuration + 200);
       await interfold.publishCiphertextOutput(e3Id2, data, proof);
-      await interfold.publishPlaintextOutput(e3Id2, data, proof);
+      await interfold.publishPlaintextOutput(
+        e3Id2,
+        data,
+        ethers.concat([proof, ethers.toBeHex(e3Id2, 32)]),
+      );
 
       const op1Addr = await operator1.getAddress();
       const expected =

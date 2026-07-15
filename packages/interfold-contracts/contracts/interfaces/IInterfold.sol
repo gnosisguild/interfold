@@ -483,6 +483,9 @@ interface IInterfold {
     /// @notice The bounded request was mined after its requester-authorized deadline.
     error RequestExpired(uint256 requestDeadline, uint256 currentTimestamp);
 
+    /// @notice This canonical decryption proof payload already completed another E3.
+    error DecryptionProofAlreadyConsumed(bytes32 proofNullifier);
+
     /// @notice Caller has no balance to claim for the given E3 / treasury / token.
     error NothingToClaim();
 

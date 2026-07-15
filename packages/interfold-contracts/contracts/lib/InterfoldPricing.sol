@@ -28,6 +28,9 @@ library InterfoldPricing {
     uint16 internal constant MAX_PROTOCOL_SHARE_BPS = 5_000;
     uint16 internal constant MAX_MARGIN_BPS = 5_000;
     uint32 internal constant MAX_COMMITTEE_SIZE = 256;
+    /// @dev Interfold `_consumedDecryptionProofs` mapping slot. Pinned by the
+    ///      storage-layout validator alongside this external library.
+    uint256 internal constant CONSUMED_DECRYPTION_PROOFS_SLOT = 38;
 
     event ParamSetRegistered(uint8 paramSet, bytes encodedParams);
     event ParamSetUpdated(
@@ -81,7 +84,8 @@ library InterfoldPricing {
         bytes32 committeePublicKey,
         bytes32 plaintextHash,
         bytes calldata proof
-    ) external view {
+    ) external {
+        _consumeDecryptionProof(proof);
         IDecryptionVerifier(verifierAddress).verify(
             e3Id,
             ICiphernodeRegistry(registryAddress).rootAt(e3Id),
@@ -92,6 +96,41 @@ library InterfoldPricing {
             ICiphernodeRegistry(registryAddress).getCommitteeHash(e3Id),
             proof
         );
+    }
+
+    /// @notice Canonical single-use identifier for a decryption proof payload.
+    /// @dev Decoding and re-encoding maps ABI payloads with equivalent trailing
+    ///      bytes to one nullifier, preventing representation-based replay.
+    function _consumeDecryptionProof(bytes calldata proof) private {
+        // Preserve compatibility with compact proof formats used by other
+        // encryption schemes; BFV's ABI tuple is always at least two words.
+        bytes32 proofNullifier;
+        if (proof.length < 64) {
+            proofNullifier = keccak256(proof);
+        } else {
+            (bytes memory rawProof, bytes32[] memory publicInputs) = abi.decode(
+                proof,
+                (bytes, bytes32[])
+            );
+            proofNullifier = keccak256(abi.encode(rawProof, publicInputs));
+        }
+
+        bytes32 storageKey = keccak256(
+            abi.encode(proofNullifier, CONSUMED_DECRYPTION_PROOFS_SLOT)
+        );
+        bool consumed;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            consumed := sload(storageKey)
+        }
+        require(
+            !consumed,
+            IInterfold.DecryptionProofAlreadyConsumed(proofNullifier)
+        );
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            sstore(storageKey, 1)
+        }
     }
 
     function honestNodes(

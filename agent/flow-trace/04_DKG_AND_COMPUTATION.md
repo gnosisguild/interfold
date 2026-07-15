@@ -909,8 +909,12 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
         │  │    3. When proofAggregationEnabled:                 │
-        │  │       require(proof.length > 0), then call          │
-        │  │       decryptionVerifier.verify(                    │
+        │  │       require(proof.length > 0), then canonically   │
+        │  │       decode (rawProof, publicInputs),              │
+        │  │       derive a proof nullifier, require it unused,  │
+        │  │       and consume it (equivalent ABI encodings map  │
+        │  │       to the same nullifier)                        │
+        │  │       and call decryptionVerifier.verify(           │
         │  │         e3Id, committeeRoot,                        │
         │  │         committeeNodes, ciphertextOutput,           │
         │  │         committeePublicKey,                         │

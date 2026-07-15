@@ -149,7 +149,8 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       );
       await time.increase(inputWindowDuration + 200);
       await interfold.publishCiphertextOutput(e3Id, data, proof);
-      await interfold.publishPlaintextOutput(e3Id, data, proof);
+      const e3Proof = ethers.concat([proof, ethers.toBeHex(e3Id, 32)]);
+      await interfold.publishPlaintextOutput(e3Id, data, e3Proof);
       return nodes;
     };
 
