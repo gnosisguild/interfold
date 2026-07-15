@@ -95,6 +95,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
         ["0x1234567890123456789012345678901234567890"],
       ),
       proofAggregationEnabled: false,
+      maxFee: ethers.MaxUint256,
+      requestDeadline: now + 10,
     };
 
     return {
@@ -127,7 +129,10 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       request,
     } = ctx;
     await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-    await interfold.request(request);
+    await interfold.request({
+      ...request,
+      maxFee: await interfold.getE3Quote(request),
+    });
     const e3Id = 0;
     const nodes = [
       await operator1.getAddress(),
@@ -179,8 +184,12 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       const req2 = {
         ...request,
         inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
+        requestDeadline: now + 10,
       };
-      await interfold.request(req2);
+      await interfold.request({
+        ...req2,
+        maxFee: await interfold.getE3Quote(req2),
+      });
       const e3Id2 = 1;
       await setupAndPublishCommittee(
         ctx.ciphernodeRegistryContract,
@@ -270,15 +279,18 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       const fresh = {
         ...request,
         inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
+        requestDeadline: now + 10,
       };
-      await expect(interfold.request(fresh)).to.be.revertedWithCustomError(
-        interfold,
-        "FeeTokenNotAllowed",
-      );
+      await expect(
+        interfold.request({ ...fresh, maxFee: ethers.MaxUint256 }),
+      ).to.be.revertedWithCustomError(interfold, "FeeTokenNotAllowed");
 
       // Re-allow restores request().
       await interfold.setFeeTokenAllowed(await feeToken.getAddress(), true);
-      await interfold.request(fresh); // should not revert
+      await interfold.request({
+        ...fresh,
+        maxFee: await interfold.getE3Quote(fresh),
+      }); // should not revert
     });
   });
 });

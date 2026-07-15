@@ -473,6 +473,12 @@ interface IInterfold {
     /// @param token The disallowed token.
     error FeeTokenNotAllowed(IERC20 token);
 
+    /// @notice The live quote exceeds the maximum fee authorized by the requester.
+    error FeeExceedsMax(uint256 quotedFee, uint256 maxFee);
+
+    /// @notice The bounded request was mined after its requester-authorized deadline.
+    error RequestExpired(uint256 requestDeadline, uint256 currentTimestamp);
+
     /// @notice Caller has no balance to claim for the given E3 / treasury / token.
     error NothingToClaim();
 
@@ -502,6 +508,10 @@ interface IInterfold {
         ///         C5 and C7 proofs are always generated and verified on-chain
         ///         regardless of this flag.
         bool proofAggregationEnabled;
+        /// @notice Maximum fee-token amount authorized for this request.
+        uint256 maxFee;
+        /// @notice Last timestamp at which this request may execute.
+        uint256 requestDeadline;
     }
 
     ////////////////////////////////////////////////////////////

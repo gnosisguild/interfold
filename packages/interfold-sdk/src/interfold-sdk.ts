@@ -141,6 +141,8 @@ export class InterfoldSDK {
     computeProviderParams: `0x${string}`
     customParams?: `0x${string}`
     proofAggregationEnabled?: boolean
+    maxFee?: bigint
+    requestDeadline?: bigint
     gasLimit?: bigint
   }): Promise<Hash> {
     return this.contractClient.requestE3(params)

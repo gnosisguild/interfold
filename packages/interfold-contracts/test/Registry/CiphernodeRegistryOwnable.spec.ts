@@ -78,6 +78,8 @@ describe("CiphernodeRegistryOwnable", function () {
         ["0x1234567890123456789012345678901234567890"],
       ),
       proofAggregationEnabled: false,
+      maxFee: ethers.MaxUint256,
+      requestDeadline: currentTime + 100,
     };
 
     const fee = await interfold.getE3Quote(requestParams);
@@ -85,7 +87,7 @@ describe("CiphernodeRegistryOwnable", function () {
     const interfoldContract = signer ? interfold.connect(signer) : interfold;
 
     await tokenContract.approve(await interfold.getAddress(), fee);
-    return interfoldContract.request(requestParams);
+    return interfoldContract.request({ ...requestParams, maxFee: fee });
   }
 
   describe("constructor / initialize()", function () {

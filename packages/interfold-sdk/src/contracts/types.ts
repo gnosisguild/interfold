@@ -63,6 +63,10 @@ export interface E3RequestParams extends RequestParams {
   /** When true, ciphernodes generate wrapper/fold proofs for DKG proof aggregation.
    *  When false, proof aggregation is skipped for faster computation. Defaults to true. */
   proofAggregationEnabled?: boolean
+  /** Maximum fee-token amount authorized for this request. Defaults to a fresh quote. */
+  maxFee?: bigint
+  /** Last timestamp at which the request may execute. Defaults to inputWindow[0]. */
+  requestDeadline?: bigint
 }
 
 export enum E3Stage {

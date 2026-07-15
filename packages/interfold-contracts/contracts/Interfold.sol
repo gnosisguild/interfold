@@ -51,10 +51,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ///         operator margin cannot be configured to make requests unaffordable.
     uint16 public constant MAX_MARGIN_BPS = 5_000;
 
-    /// @notice Thrown when the quoted fee exceeds the requester-supplied bound.
-    ///         Declared in {IInterfold} so {InterfoldPricing} can revert with the
-    ///         same selector when validating a quote via DELEGATECALL.
-
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                 Storage Variables                      //
@@ -290,7 +286,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _timeoutConfig.computeWindow,
             _timeoutConfig.decryptionWindow,
             maxDuration,
-            e3Fee
+            e3Fee,
+            requestParams.maxFee,
+            requestParams.requestDeadline
         );
 
         e3Id = nexte3Id;

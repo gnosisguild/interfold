@@ -30,7 +30,9 @@ Requester calls: Interfold.request({
   e3Program: <address>,      // computation program contract
   e3ProgramParams: <bytes>,  // ABI-encoded program parameters
   computeProviderParams: <bytes>,
-  customParams: <bytes>
+  customParams: <bytes>,
+  maxFee: <uint256>,         // maximum live quote the requester accepts
+  requestDeadline: <uint256> // last timestamp at which the request may execute
 })
 │
 ├─ VALIDATION:
@@ -39,12 +41,15 @@ Requester calls: Interfold.request({
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
 │   ├─ total duration < maxDuration
-│   └─ e3Programs[e3Program] == true (program whitelisted)
+│   ├─ e3Programs[e3Program] == true (program whitelisted)
+│   ├─ block.timestamp <= requestDeadline
+│   └─ live fee quote <= maxFee
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
 │   │   → InterfoldPricing quote from committee threshold, time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
+│   ├─ InterfoldPricing enforces the requester's maxFee and deadline
 │   ├─ feeToken.transferFrom(requester, address(this), fee)
 │   └─ e3Payments[e3Id] = fee  (stored per-E3)
 │       _e3FeeTokens[e3Id] = feeToken  (survives global token rotation)

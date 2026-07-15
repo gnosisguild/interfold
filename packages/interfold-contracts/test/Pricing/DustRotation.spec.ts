@@ -106,6 +106,8 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           ["0x1234567890123456789012345678901234567890"],
         ),
         proofAggregationEnabled: false,
+        maxFee: ethers.MaxUint256,
+        requestDeadline: now0 + 10,
       } as any;
     };
 
@@ -125,9 +127,14 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           ["0x1234567890123456789012345678901234567890"],
         ),
         proofAggregationEnabled: false,
+        maxFee: ethers.MaxUint256,
+        requestDeadline: now + 10,
       };
       await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      await interfold.request(req);
+      await interfold.request({
+        ...req,
+        maxFee: await interfold.getE3Quote(req),
+      });
       // topNodes are sorted by ascending address; operator3 < operator1 < operator2
       const nodes = [
         await operator3.getAddress(),
