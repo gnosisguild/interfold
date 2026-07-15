@@ -38,6 +38,9 @@ interface IBondingRegistry {
 
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
+
+    /// @notice Eligibility policy becomes immutable when the first operator registers.
+    error EligibilityConfigurationLocked();
     error InvalidConfiguration();
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
@@ -267,6 +270,9 @@ interface IBondingRegistry {
      * @return Number of active operators
      */
     function numActiveOperators() external view returns (uint256);
+
+    /// @notice Whether eligibility-affecting configuration is permanently locked.
+    function eligibilityConfigurationLocked() external view returns (bool);
 
     /**
      * @notice Check if operator has deregistration in progress

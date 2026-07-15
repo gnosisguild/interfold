@@ -80,7 +80,7 @@ contract CiphernodeRegistryOwnable is
     IBondingRegistry public bondingRegistry;
 
     /// @notice Current number of registered ciphernodes
-    uint256 public numCiphernodes;
+    uint256 public override numCiphernodes;
 
     /// @notice Submission Window for an E3 Sortition.
     /// @dev The submission window is the time period during which the ciphernodes can submit

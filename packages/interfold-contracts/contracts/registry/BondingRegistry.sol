@@ -150,6 +150,9 @@ contract BondingRegistry is
     /// @dev Internal state for managing exit queue of tickets and licenses
     ExitQueueLib.ExitQueueState private _exits;
 
+    /// @notice One-way lock for every parameter that affects operator eligibility.
+    bool public eligibilityConfigurationLocked;
+
     // ======================
     // Modifiers
     // ======================
@@ -339,6 +342,7 @@ contract BondingRegistry is
         );
 
         operators[msg.sender].registered = true;
+        eligibilityConfigurationLocked = true;
 
         // CiphernodeRegistry already emits an event when a ciphernode is added
         registry.addCiphernode(msg.sender);
@@ -651,6 +655,7 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setTicketPrice(uint256 newTicketPrice) public onlyOwner {
+        _requireEligibilityConfigurationMutable();
         require(newTicketPrice != 0, InvalidConfiguration());
 
         uint256 oldValue = ticketPrice;
@@ -663,6 +668,7 @@ contract BondingRegistry is
     function setLicenseRequiredBond(
         uint256 newLicenseRequiredBond
     ) public onlyOwner {
+        _requireEligibilityConfigurationMutable();
         require(newLicenseRequiredBond != 0, InvalidConfiguration());
 
         uint256 oldValue = licenseRequiredBond;
@@ -677,6 +683,7 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setLicenseActiveBps(uint256 newBps) public onlyOwner {
+        _requireEligibilityConfigurationMutable();
         require(newBps > 0 && newBps <= BPS_BASE, InvalidConfiguration());
 
         uint256 oldValue = licenseActiveBps;
@@ -687,6 +694,8 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setMinTicketBalance(uint256 newMinTicketBalance) public onlyOwner {
+        _requireEligibilityConfigurationMutable();
+        require(newMinTicketBalance != 0, InvalidConfiguration());
         uint256 oldValue = minTicketBalance;
         minTicketBalance = newMinTicketBalance;
 
@@ -902,6 +911,11 @@ contract BondingRegistry is
     /// @return Minimum license bond (licenseRequiredBond * licenseActiveBps / 10000)
     function _minLicenseBond() internal view returns (uint256) {
         return (licenseRequiredBond * licenseActiveBps) / BPS_BASE;
+    }
+
+    function _requireEligibilityConfigurationMutable() internal view {
+        if (eligibilityConfigurationLocked)
+            revert EligibilityConfigurationLocked();
     }
 
     /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta

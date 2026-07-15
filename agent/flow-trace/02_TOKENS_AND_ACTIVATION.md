@@ -173,6 +173,13 @@ _updateOperatorStatus(operator):
     emit OperatorActivationChanged(operator, true)
 ```
 
+The eligibility policy (`ticketPrice`, `licenseRequiredBond`,
+`licenseActiveBps`, and `minTicketBalance`) is deployment-time configuration.
+The first successful operator registration permanently locks all four values;
+`minTicketBalance` must be nonzero. Consequently cached `active` state,
+`numActiveOperators`, and the ticket units used for later sortition cannot be
+invalidated by a governance update.
+
 ---
 
 ## Step 2: Buy Tickets (`interfold ciphernode tickets buy`)

@@ -15,6 +15,9 @@ import { IBondingRegistry } from "./IBondingRegistry.sol";
  * and coordinates committee selection for E3 computations
  */
 interface ICiphernodeRegistry {
+    /// @notice Current number of registered ciphernodes.
+    function numCiphernodes() external view returns (uint256);
+
     /// @notice Tracks a committee member's lifecycle state for a given E3.
     enum MemberStatus {
         None,

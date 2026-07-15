@@ -915,6 +915,45 @@ describe("BondingRegistry", function () {
       });
     });
 
+    it("AUD-M03: locks every eligibility parameter at first registration", async function () {
+      const { bondingRegistry, licenseToken, operator1 } =
+        await loadFixture(setup);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicense(LICENSE_REQUIRED_BOND);
+      await bondingRegistry.connect(operator1).registerOperator();
+
+      expect(await bondingRegistry.eligibilityConfigurationLocked()).to.equal(
+        true,
+      );
+      for (const call of [
+        () => bondingRegistry.setTicketPrice(TICKET_PRICE + 1n),
+        () =>
+          bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND + 1n),
+        () => bondingRegistry.setLicenseActiveBps(9000n),
+        () => bondingRegistry.setMinTicketBalance(MIN_TICKET_BALANCE + 1),
+      ]) {
+        await expect(call()).to.be.revertedWithCustomError(
+          bondingRegistry,
+          "EligibilityConfigurationLocked",
+        );
+      }
+    });
+
+    it("AUD-M03: rejects a zero minimum ticket requirement", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      await expect(
+        bondingRegistry.setMinTicketBalance(0),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "InvalidConfiguration",
+      );
+    });
+
     describe("withdrawSlashedFunds()", function () {
       it("allows owner to withdraw slashed funds", async function () {
         const { bondingRegistry, treasury } = await loadFixture(setup);
