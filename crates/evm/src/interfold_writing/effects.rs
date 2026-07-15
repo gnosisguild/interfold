@@ -15,7 +15,7 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = e3_id.try_into()?;
 
-    // `None` => proof aggregation disabled; contract accepts empty bytes in that case.
+    // `None` means proof aggregation is disabled for this predeployment E3.
     let proof: Bytes = match decryption_aggregator_proof {
         Some(p) => encode_zk_proof(p)?,
         None => Bytes::new(),

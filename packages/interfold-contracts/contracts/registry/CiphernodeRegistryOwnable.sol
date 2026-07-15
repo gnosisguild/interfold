@@ -1160,5 +1160,5 @@ contract CiphernodeRegistryOwnable is
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 }

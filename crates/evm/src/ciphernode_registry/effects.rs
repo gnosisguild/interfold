@@ -150,7 +150,7 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     let pk_commitment_b256 = B256::from(pk_commitment);
 
     // `proof` is empty when `proofAggregationEnabled = false`; the contract
-    // trusts `pk_commitment` directly in that case.
+    // trusts `pk_commitment` directly in that temporary predeployment mode.
     let proof: Bytes = match dkg_aggregator_proof {
         Some(p) => encode_zk_proof(p)?,
         None => Bytes::new(),

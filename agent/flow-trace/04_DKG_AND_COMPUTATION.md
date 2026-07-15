@@ -637,6 +637,8 @@ ThresholdKeyshare receives AllThresholdSharesCollected
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm committee public key is still unset
+  ├─ Encodes the DkgAggregator proof when aggregation is enabled,
+  │  otherwise passes empty proof bytes in development mode
   └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
@@ -647,6 +649,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
         │  │    4. When proofAggregationEnabled:                 │
+        │  │       require(proof.length > 0)                    │
         │  │       e3.pkVerifier.verify(                         │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
@@ -658,6 +661,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │           [2+H] & [3+H]) vs committeeHash           │
         │  │         • last PI == pkCommitment                   │
         │  │         • M-35: revert on failure (no `bool false`) │
+        │  │       and verify/store per-node fold attestations   │
         │  │    5. c.publicKey = pkCommitment                    │
         │  │       publicKeyHashes[e3Id] = pkCommitment          │
         │  │    6. interfold.onCommitteePublished(e3Id, pkCommitment) │
@@ -888,6 +892,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm plaintextOutput is still empty
+  ├─ Encodes the final decryption proof when aggregation is enabled,
+  │  otherwise passes empty proof bytes in development mode
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
@@ -895,8 +901,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
-        │  │    3. e3.plaintextOutput = output                   │
-        │  │    4. decryptionVerifier.verify(                    │
+        │  │    3. When proofAggregationEnabled:                 │
+        │  │       require(proof.length > 0), then call          │
+        │  │       decryptionVerifier.verify(                    │
         │  │         e3Id, committeeRoot,                        │
         │  │         committeeNodes, ciphertextOutput,           │
         │  │         committeePublicKey,                         │
@@ -904,8 +911,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       )                                             │
         │  │       → M-34: c6Fold / C7 VK hashes are immutable.  │
         │  │       → M-35: revert path only (no `bool false`).   │
-        │  │    5. stage = Complete                              │
-        │  │    6. _distributeRewards(e3Id)                      │
+        │  │    4. stage = Complete                              │
+        │  │    5. _distributeRewards(e3Id)                      │
         │  │       │                                             │
         │  │       │  ┌─ Reward Distribution (pull, H-01/M-02) ┐  │
         │  │       │  │  1. Get active committee nodes:        │  │
