@@ -133,52 +133,47 @@ const RequestComputation: React.FC = () => {
     <CardContent>
       <div className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <CalculatorIcon size={48} className='text-interfold-400' />
+          <CalculatorIcon size={48} className='text-accent-deep' />
         </div>
-        <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 2: Request Computation</p>
+        <p className='eyebrow justify-center'>Step 2 · Request Computation</p>
         <div className='space-y-4'>
-          <h3 className='text-lg font-semibold text-slate-700'>Request Encrypted Execution Environment</h3>
-          <p className='leading-relaxed text-slate-600'>
+          <h3 className='text-2xl'>Request Encrypted Execution Environment</h3>
+          <p className='leading-relaxed text-ink-3'>
             Request an E3 computation from Interfold's decentralized network. This initiates the selection of a Ciphernode Committee through
             cryptographic sortition, who will generate shared keys for securing your computation without any single point of trust.
           </p>
-          <div className='rounded-lg border border-blue-200 bg-blue-50 p-4'>
-            <p className='text-sm text-slate-600'>
-              <strong>Process:</strong> Request E3 → Committee Selection via Sortition → Key Generation → Ready for Input
-            </p>
+          <div className='note-accent text-left'>
+            <strong className='font-semibold'>Process:</strong> Request E3 → Committee Selection via Sortition → Key Generation → Ready for
+            Input
           </div>
 
           {/* E3 State Progress */}
           {e3State.id !== null && (
             <div className='space-y-3'>
-              <div className='rounded-lg border border-green-200 bg-green-50 p-4'>
-                <p className='text-sm text-slate-600'>
-                  <strong>✅ E3 ID:</strong> {String(e3State.id)}
-                  <br />
-                  <strong>Status:</strong> Computation requested
-                </p>
+              <div className='note-accent text-left'>
+                <strong className='font-semibold'>✅ E3 ID:</strong> {String(e3State.id)}
+                <br />
+                <strong className='font-semibold'>Status:</strong> Computation requested
               </div>
 
               {e3State.isCommitteePublished && e3State.publicKey ? (
-                <div className='rounded-lg border border-interfold-200 bg-interfold-50 p-4'>
-                  <p className='text-sm text-slate-600'>
-                    <strong>🔑 Committee Published Public Key!</strong>
-                    <br />
-                    <strong>Public Key:</strong> {e3State.publicKey.slice(0, 20)}...{e3State.publicKey.slice(-10)}
-                    <br />
-                    Ready for encrypted input.
-                  </p>
+                <div className='note-accent text-left'>
+                  <strong className='font-semibold'>🔑 Committee Published Public Key!</strong>
+                  <br />
+                  <strong className='font-semibold'>Public Key:</strong>{' '}
+                  <span className='font-mono'>
+                    {e3State.publicKey.slice(0, 20)}...{e3State.publicKey.slice(-10)}
+                  </span>
+                  <br />
+                  Ready for encrypted input.
                 </div>
               ) : (
-                <div className='rounded-lg border border-yellow-200 bg-yellow-50 p-4'>
-                  <div className='flex flex-col items-center space-x-2'>
-                    <Spinner size={20} />
-                    <p className='text-sm text-slate-600'>
-                      <strong>⏳ Waiting for committee to publish public key...</strong>
-                      <br />
-                      The computation committee is being selected and will provide the public key shortly.
-                    </p>
-                  </div>
+                <div className='note-muted flex items-center gap-3 text-left'>
+                  <Spinner size={20} />
+                  <span>
+                    <strong className='font-semibold text-ink-2'>Waiting for committee to publish public key…</strong> The computation
+                    committee is being selected and will provide the public key shortly.
+                  </span>
                 </div>
               )}
             </div>
@@ -193,12 +188,13 @@ const RequestComputation: React.FC = () => {
           )}
 
           {requestSuccess && lastTransactionHash && (
-            <div className='rounded-lg border border-green-200 bg-green-50 p-4'>
-              <p className='text-sm text-green-600'>
-                <strong>✅ Transaction Successful!</strong>
-                <br />
-                Hash: {lastTransactionHash.slice(0, 10)}...{lastTransactionHash.slice(-8)}
-              </p>
+            <div className='note-accent text-left'>
+              <strong className='font-semibold'>✅ Transaction Successful!</strong>
+              <br />
+              Hash:{' '}
+              <span className='font-mono'>
+                {lastTransactionHash.slice(0, 10)}...{lastTransactionHash.slice(-8)}
+              </span>
             </div>
           )}
         </div>
@@ -209,11 +205,7 @@ const RequestComputation: React.FC = () => {
           </div>
         )}
 
-        <button
-          onClick={handleRequestComputation}
-          disabled={isRequesting || e3State.isRequested}
-          className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500'
-        >
+        <button onClick={handleRequestComputation} disabled={isRequesting || e3State.isRequested} className='btn-primary w-full'>
           {isRequesting
             ? 'Submitting to Blockchain...'
             : e3State.isRequested

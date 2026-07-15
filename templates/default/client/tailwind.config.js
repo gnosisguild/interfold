@@ -4,6 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+// Design tokens mirror the Interfold / CRISP dashboard system
+// (packages/interfold-dashboard): warm paper surfaces, deep warm ink text, a
+// mint accent, Geist (sans) + Georgia (serif) + Geist Mono type.
 const config = {
   content: ['./src/**/*.{js,jsx,ts,tsx,mdx}'],
   variant: {
@@ -18,34 +21,47 @@ const config = {
   theme: {
     extend: {
       fontFamily: {
-        jakarta: ['Plus Jakarta Sans', 'sans-serif'],
-        sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+        sans: ['Geist', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Helvetica', 'Arial', 'sans-serif'],
+        serif: ['Georgia', 'Times New Roman', 'serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
-        slate: {
-          200: '#E3E9F5',
+        ink: {
+          DEFAULT: '#14201b',
+          2: '#2c3833',
+          3: '#5b6864',
+          4: '#8b9893',
         },
-        interfold: {
-          50: '#eff9ff',
-          100: '#def2ff',
-          200: '#b6e8ff',
-          300: '#75d8ff',
-          400: '#2cc4ff',
-          500: '#60c2ff',
-          600: '#0ea5e9',
-          700: '#0284c7',
-          800: '#0369a1',
-          900: '#0c4a6e',
-          950: '#082f49',
+        paper: {
+          DEFAULT: '#f7f5ee',
+          2: '#ffffff',
+          3: '#f0ede4',
+        },
+        rule: {
+          DEFAULT: '#e3e7e2',
+          soft: '#eef1ec',
+        },
+        accent: {
+          bg: '#e8faf0',
+          soft: '#cdeede',
+          deep: '#1f6b4a',
+          ink: '#163d2c',
+        },
+        danger: {
+          bg: '#fcebea',
+          soft: '#f4c7c4',
+          ink: '#b23a36',
         },
       },
-      letterSpacing: {
-        custom: '0.03em',
+      borderRadius: {
+        field: '10px',
+        card: '22px',
       },
       boxShadow: {
-        button: '0 2px 0 0 #5F9715, 0 8px 16px rgba(0,0,0,0.1)',
-        'button-outlined': '0 2px 0 0 #A6E05A, 0 8px 16px rgba(0,0,0,0.1)',
-        danger: '0 2px 0 0 #EF4444, 0 8px 16px rgba(0,0,0,0.1)',
+        card: '0 1px 0 rgba(20,32,27,0.02), 0 12px 32px -20px rgba(20,32,27,0.18)',
+      },
+      letterSpacing: {
+        eyebrow: '0.08em',
       },
     },
   },

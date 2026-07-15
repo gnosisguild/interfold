@@ -12,7 +12,7 @@ interface CardContentProps {
 
 const CardContent: React.FC<CardContentProps> = ({ children }) => {
   return (
-    <div className='z-50 w-full max-w-screen-md space-y-10 rounded-2xl border border-slate-300 bg-white p-8 shadow-[0_0_20px_rgba(0,0,0,0.1)] md:p-12'>
+    <div className='z-50 w-full max-w-screen-md space-y-10 rounded-card border border-rule bg-paper-2 p-8 shadow-card md:p-12'>
       {children}
     </div>
   )

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useState, useEffect } from 'react'
-import { LockIcon, CheckCircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
+import { LockIcon, CheckCircleIcon, WarningCircleIcon, CircleDashedIcon } from '@phosphor-icons/react'
 import CardContent from '../components/CardContent'
 import Spinner from '../components/Spinner'
 import ErrorDisplay from '../components/ErrorDisplay'
@@ -89,40 +89,41 @@ const EncryptSubmit: React.FC = () => {
     }
   }, [e3State.hasPlaintextOutput, setCurrentStep])
 
-  // Progress steps for the computing phase
+  // Progress steps for the computing phase. These happen sequentially, so only
+  // the first not-yet-done step is "active" (shows a spinner); later steps are
+  // still pending and must not appear to be running at the same time.
   const progressSteps = [
     { label: 'Inputs submitted', done: inputPublishSuccess },
-    { label: 'FHE computation complete', done: e3State.isCiphertextPublished },
+    { label: 'FHE computation', done: e3State.isCiphertextPublished },
     { label: 'Committee decryption', done: e3State.hasPlaintextOutput },
   ]
+  const activeStepIndex = progressSteps.findIndex((step) => !step.done)
 
   return (
     <CardContent>
       <div className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <LockIcon size={48} className='text-interfold-400' />
+          <LockIcon size={48} className='text-accent-deep' />
         </div>
-        <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 4: Encrypting & Submitting</p>
+        <p className='eyebrow justify-center'>Step 4 · Encrypting & Submitting</p>
         <div className='space-y-4'>
-          <h3 className='text-lg font-semibold text-slate-700'>Secure Process Execution</h3>
+          <h3 className='text-2xl'>Secure Process Execution</h3>
 
-          {isExpired && !e3State.hasPlaintextOutput && (
+          {/* Only a genuine failure when the input window closed BEFORE inputs were
+              submitted. After a successful submit the window closing is expected —
+              FHE computation and decryption run afterwards — so we keep showing
+              progress instead of flashing an "expired" warning. */}
+          {isExpired && !inputPublishSuccess && !e3State.hasPlaintextOutput && (
             <div className='space-y-4'>
               <div className='flex justify-center'>
                 <WarningCircleIcon size={48} className='text-amber-500' />
               </div>
-              <div role='alert' className='rounded-lg border border-amber-200 bg-amber-50 p-4'>
-                <p className='text-sm text-amber-700'>
-                  <strong>E3 Input Window Expired</strong>
-                  <br />
-                  The input deadline for this computation has passed. The computation may not have received enough inputs to produce a
-                  result.
-                </p>
+              <div role='alert' className='rounded-field border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-800'>
+                <strong className='font-semibold'>E3 Input Window Expired</strong>
+                <br />
+                The input deadline for this computation has passed. The computation may not have received enough inputs to produce a result.
               </div>
-              <button
-                onClick={handleReset}
-                className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md'
-              >
+              <button onClick={handleReset} className='btn-primary w-full'>
                 Start New Computation
               </button>
             </div>
@@ -133,14 +134,12 @@ const EncryptSubmit: React.FC = () => {
               <div className='flex justify-center'>
                 <Spinner size={40} />
               </div>
-              <p className='text-slate-600'>
+              <p className='text-ink-3'>
                 Your inputs are being encrypted to the committee's public key and submitted to the E3. The Compute Provider will execute the
-                FHE computation over your encrypted data...
+                FHE computation over your encrypted data…
               </p>
-              <div className='rounded-lg border border-blue-200 bg-blue-50 p-4'>
-                <p className='text-sm text-slate-600'>
-                  <strong>Process:</strong> Encrypt to Key → Submit to E3 → FHE Computation → Ciphertext Output
-                </p>
+              <div className='note-accent text-left'>
+                <strong className='font-semibold'>Process:</strong> Encrypt to Key → Submit to E3 → FHE Computation → Ciphertext Output
               </div>
             </div>
           )}
@@ -152,46 +151,50 @@ const EncryptSubmit: React.FC = () => {
                 showDetails={showErrorDetails}
                 onToggleDetails={() => setShowErrorDetails(!showErrorDetails)}
               />
-              <button
-                onClick={handleTryAgain}
-                className='w-full rounded-lg bg-red-500 px-6 py-3 font-semibold text-white transition-all duration-200 hover:bg-red-600'
-              >
+              <button onClick={handleTryAgain} className='btn-danger w-full'>
                 Try Again
               </button>
             </div>
           )}
 
-          {!isExpired && inputPublishSuccess && (
+          {inputPublishSuccess && (
             <div className='space-y-4'>
               <div className='flex justify-center'>
-                <CheckCircleIcon size={48} className='text-green-500' />
+                <CheckCircleIcon size={48} className='text-accent-deep' />
               </div>
 
               {/* Progress tracker */}
-              <div className='rounded-lg border border-slate-200 bg-slate-50 p-4'>
+              <div className='rounded-field border border-rule bg-paper p-4'>
                 <ul className='space-y-2 text-left'>
-                  {progressSteps.map((step, i) => (
-                    <li key={i} className='flex items-center gap-2 text-sm'>
-                      {step.done ? <CheckCircleIcon size={18} className='flex-shrink-0 text-green-500' /> : <Spinner size={18} />}
-                      <span className={step.done ? 'text-green-700' : 'text-slate-600'}>{step.label}</span>
-                    </li>
-                  ))}
+                  {progressSteps.map((step, i) => {
+                    const isActive = i === activeStepIndex
+                    return (
+                      <li key={i} className='flex items-center gap-2 text-sm'>
+                        {step.done ? (
+                          <CheckCircleIcon size={18} className='flex-shrink-0 text-accent-deep' />
+                        ) : isActive ? (
+                          <Spinner size={18} />
+                        ) : (
+                          <CircleDashedIcon size={18} className='flex-shrink-0 text-ink-4' />
+                        )}
+                        <span className={step.done ? 'font-medium text-accent-ink' : isActive ? 'text-ink-2' : 'text-ink-4'}>
+                          {step.label}
+                        </span>
+                      </li>
+                    )
+                  })}
                 </ul>
               </div>
 
               {!e3State.isCiphertextPublished && (
-                <div className='rounded-lg border border-yellow-200 bg-yellow-50 p-4'>
-                  <p className='text-sm text-slate-600'>
-                    The Compute Provider is executing the FHE computation over your encrypted inputs...
-                  </p>
+                <div className='note-muted text-left'>
+                  The Compute Provider is executing the FHE computation over your encrypted inputs…
                 </div>
               )}
 
               {e3State.isCiphertextPublished && !e3State.hasPlaintextOutput && (
-                <div className='rounded-lg border border-yellow-200 bg-yellow-50 p-4'>
-                  <p className='text-sm text-slate-600'>
-                    Ciphertext output published. Waiting for the Ciphernode Committee to collectively decrypt the result...
-                  </p>
+                <div className='note-muted text-left'>
+                  Ciphertext output published. Waiting for the Ciphernode Committee to collectively decrypt the result…
                 </div>
               )}
             </div>

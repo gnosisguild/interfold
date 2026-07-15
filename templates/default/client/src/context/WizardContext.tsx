@@ -8,6 +8,7 @@ import React, { createContext, useContext, useEffect, useMemo, useCallback, useS
 import { useAccount } from 'wagmi'
 import { useInterfoldSDK, UseInterfoldSDKReturn } from '@interfold/react'
 import { getInterfoldSDKConfig } from '@/utils/sdk-config'
+import { loadWizardState, saveWizardState, clearWizardState } from '@/utils/persistence'
 
 // ============================================================================
 // TYPES & ENUMS
@@ -92,19 +93,23 @@ interface WizardProviderProps {
  * which is used to manage the wizard state and logic.
  */
 export const WizardProvider: React.FC<WizardProviderProps> = ({ children }) => {
-  const { isConnected } = useAccount()
+  const { isConnected, status } = useAccount()
 
   // Memoize the SDK config to prevent unnecessary re-initializations.
   const sdkConfig = useMemo(() => getInterfoldSDKConfig(), [])
   const sdk = useInterfoldSDK(sdkConfig)
 
-  const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.CONNECT_WALLET)
-  const [submittedInputs, setSubmittedInputs] = useState<{ input1: string; input2: string } | null>(null)
-  const [lastTransactionHash, setLastTransactionHash] = useState<string | undefined>(undefined)
-  const [inputPublishError, setInputPublishError] = useState<string | null>(null)
-  const [inputPublishSuccess, setInputPublishSuccess] = useState<boolean>(false)
-  const [result, setResult] = useState<number | null>(null)
-  const [e3State, setE3State] = useState<E3State>(INITIAL_E3_STATE)
+  // Hydrate from any state persisted before a refresh so the user resumes from
+  // the same step instead of starting over. Read once on mount.
+  const persisted = useMemo(() => loadWizardState(), [])
+
+  const [currentStep, setCurrentStep] = useState<WizardStep>(persisted?.currentStep ?? WizardStep.CONNECT_WALLET)
+  const [submittedInputs, setSubmittedInputs] = useState<{ input1: string; input2: string } | null>(persisted?.submittedInputs ?? null)
+  const [lastTransactionHash, setLastTransactionHash] = useState<string | undefined>(persisted?.lastTransactionHash ?? undefined)
+  const [inputPublishError, setInputPublishError] = useState<string | null>(persisted?.inputPublishError ?? null)
+  const [inputPublishSuccess, setInputPublishSuccess] = useState<boolean>(persisted?.inputPublishSuccess ?? false)
+  const [result, setResult] = useState<number | null>(persisted?.result ?? null)
+  const [e3State, setE3State] = useState<E3State>(persisted?.e3State ?? INITIAL_E3_STATE)
 
   const resetWizardState = useCallback((step: WizardStep) => {
     setCurrentStep(step)
@@ -114,17 +119,35 @@ export const WizardProvider: React.FC<WizardProviderProps> = ({ children }) => {
     setInputPublishSuccess(false)
     setResult(null)
     setE3State(INITIAL_E3_STATE)
+    clearWizardState()
   }, [])
 
+  // Persist the wizard state on every change so a refresh can resume from here.
+  useEffect(() => {
+    saveWizardState({
+      currentStep,
+      submittedInputs,
+      lastTransactionHash,
+      inputPublishError,
+      inputPublishSuccess,
+      result,
+      e3State,
+    })
+  }, [currentStep, submittedInputs, lastTransactionHash, inputPublishError, inputPublishSuccess, result, e3State])
+
   // Auto-advance steps based on connection & SDK state.
+  //
+  // Only reset when the wallet is genuinely disconnected — NOT while wagmi is
+  // still `connecting`/`reconnecting` on a fresh page load, otherwise a refresh
+  // would wipe the persisted state before the wallet finishes reconnecting.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (!isConnected) {
+    if (status === 'disconnected') {
       resetWizardState(WizardStep.CONNECT_WALLET)
-    } else if (sdk.isInitialized && currentStep === WizardStep.CONNECT_WALLET) {
+    } else if (isConnected && sdk.isInitialized && currentStep === WizardStep.CONNECT_WALLET) {
       setCurrentStep(WizardStep.REQUEST_COMPUTATION)
     }
-  }, [isConnected, sdk.isInitialized, currentStep, resetWizardState])
+  }, [status, isConnected, sdk.isInitialized, currentStep, resetWizardState])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleReset = useCallback(() => {

@@ -32,10 +32,10 @@ const Results: React.FC = () => {
   const renderCopyButton = (text: string, field: string) => (
     <button
       onClick={() => copyToClipboard(text, field)}
-      className='ml-2 inline-flex items-center text-slate-400 transition-colors hover:text-slate-600'
+      className='ml-2 inline-flex items-center text-ink-4 transition-colors hover:text-ink'
       aria-label={`Copy ${field}`}
     >
-      {copiedField === field ? <CheckIcon size={14} className='text-green-500' /> : <CopyIcon size={14} />}
+      {copiedField === field ? <CheckIcon size={14} className='text-accent-deep' /> : <CopyIcon size={14} />}
     </button>
   )
 
@@ -43,66 +43,61 @@ const Results: React.FC = () => {
     <CardContent>
       <div className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <CheckCircleIcon size={48} className='text-green-500' />
+          <CheckCircleIcon size={48} className='text-accent-deep' />
         </div>
-        <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 5: Results</p>
+        <p className='eyebrow justify-center'>Step 5 · Results</p>
         <div className='space-y-4'>
-          <h3 className='text-lg font-semibold text-slate-700'>Computation Complete!</h3>
+          <h3 className='text-2xl'>Computation Complete</h3>
 
-          <div className='rounded-lg border border-green-200 bg-green-50 p-6'>
+          <div className='rounded-field border border-accent-soft bg-accent-bg p-6'>
             <div className='space-y-3'>
-              <p className='text-lg font-semibold text-slate-700'>
-                <strong>Your Encrypted Computation:</strong>
+              <p className='eyebrow justify-center text-accent-ink/70'>Your Encrypted Computation</p>
+              <p className='font-serif text-3xl text-accent-ink'>
+                {submittedInputs ? `${submittedInputs.input1} + ${submittedInputs.input2} = ${result !== null ? result : '…'}` : '…'}
               </p>
-              <p className='text-2xl font-bold text-green-700'>
-                {submittedInputs ? `${submittedInputs.input1} + ${submittedInputs.input2} = ${result !== null ? result : '...'}` : '...'}
-              </p>
-              {result !== null && <p className='text-sm text-slate-600'>Computed securely using FHE with distributed key decryption.</p>}
+              {result !== null && (
+                <p className='text-sm text-accent-ink/70'>Computed securely using FHE with distributed key decryption.</p>
+              )}
             </div>
           </div>
 
           <div className='grid grid-cols-1 gap-3 text-left'>
-            <div className='rounded-lg border border-slate-200 bg-slate-50 p-4'>
-              <p className='flex items-center text-sm text-slate-600'>
-                <strong className='mr-1'>E3 ID:</strong> {String(e3State.id)}
+            <div className='note-muted'>
+              <span className='flex items-center'>
+                <strong className='mr-1 font-semibold text-ink-2'>E3 ID:</strong> {String(e3State.id)}
                 {e3State.id !== null && renderCopyButton(String(e3State.id), 'e3id')}
-              </p>
+              </span>
             </div>
             {lastTransactionHash && (
-              <div className='rounded-lg border border-slate-200 bg-slate-50 p-4'>
-                <p className='flex items-center text-sm text-slate-600'>
-                  <strong className='mr-1'>Transaction:</strong>
+              <div className='note-muted'>
+                <span className='flex items-center'>
+                  <strong className='mr-1 font-semibold text-ink-2'>Transaction:</strong>
                   <span className='font-mono'>
                     {lastTransactionHash.slice(0, 10)}...{lastTransactionHash.slice(-8)}
                   </span>
                   {renderCopyButton(lastTransactionHash, 'txhash')}
-                </p>
+                </span>
               </div>
             )}
             {e3State.plaintextOutput && (
-              <div className='rounded-lg border border-slate-200 bg-slate-50 p-4'>
-                <p className='flex items-center text-sm text-slate-600'>
-                  <strong className='mr-1'>Raw Output:</strong>
+              <div className='note-muted'>
+                <span className='flex items-center'>
+                  <strong className='mr-1 font-semibold text-ink-2'>Raw Output:</strong>
                   <span className='font-mono'>{e3State.plaintextOutput.slice(0, 20)}...</span>
                   {renderCopyButton(e3State.plaintextOutput, 'output')}
-                </p>
+                </span>
               </div>
             )}
           </div>
 
-          <div className='rounded-lg border border-blue-200 bg-blue-50 p-4'>
-            <p className='text-sm text-slate-600'>
-              <strong>Cryptographic Guarantees:</strong> Your inputs remained encrypted throughout the entire process. The Ciphernode
-              Committee used distributed key cryptography to decrypt only the verified output, ensuring data privacy, data integrity, and
-              correct execution.
-            </p>
+          <div className='note-accent text-left'>
+            <strong className='font-semibold'>Cryptographic Guarantees:</strong> Your inputs remained encrypted throughout the entire
+            process. The Ciphernode Committee used distributed key cryptography to decrypt only the verified output, ensuring data privacy,
+            data integrity, and correct execution.
           </div>
         </div>
 
-        <button
-          onClick={handleReset}
-          className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md'
-        >
+        <button onClick={handleReset} className='btn-primary w-full'>
           Start New Computation
         </button>
       </div>

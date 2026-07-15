@@ -11,15 +11,11 @@ interface SDKErrorDisplayProps {
 }
 
 const SDKErrorDisplay: React.FC<SDKErrorDisplayProps> = ({ error }) => (
-  <div className='min-h-screen bg-gray-100 px-4 py-12 sm:px-6 lg:px-8'>
+  <div className='min-h-screen bg-paper px-4 py-12 sm:px-6 lg:px-8'>
     <div className='mx-auto max-w-md'>
-      <div className='rounded-md border border-red-200 bg-red-50 p-4'>
-        <div className='flex'>
-          <div className='ml-3'>
-            <h3 className='text-sm font-medium text-red-800'>SDK Error</h3>
-            <div className='mt-2 text-sm text-red-700'>{error}</div>
-          </div>
-        </div>
+      <div className='note-danger'>
+        <h3 className='text-sm font-semibold text-danger-ink'>SDK Error</h3>
+        <div className='mt-2 text-sm'>{error}</div>
       </div>
     </div>
   </div>
