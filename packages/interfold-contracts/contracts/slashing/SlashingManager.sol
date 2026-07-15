@@ -45,6 +45,10 @@ contract SlashingManager is
     ///         period during which governance can delay slash execution.
     uint64 public constant MAX_APPEAL_WINDOW = 30 days;
 
+    /// @notice Maximum time governance has after the appeal window closes to
+    ///         resolve a filed appeal. Expiry is fail-safe in the operator's favour.
+    uint64 public constant APPEAL_RESOLUTION_GRACE = 7 days;
+
     /// @notice Emitted when {bondingRegistry} is updated.
     event BondingRegistryUpdated(
         address indexed previous,
@@ -100,12 +104,10 @@ contract SlashingManager is
     ///      Lane B key is keccak256(abi.encode(e3Id, operator, keccak256(evidence))) — exact evidence bytes.
     mapping(bytes32 evidenceKey => bool consumed) public evidenceConsumed;
 
-    /// @notice Number of unexecuted Lane B proposals per operator.
-    /// @dev Incremented in `proposeSlashEvidence`, decremented in `executeSlash` and on
-    ///      `resolveAppeal(upheld=true)`. `BondingRegistry.deregisterOperator` blocks while
-    ///      this is > 0 so an operator cannot evade an inbound Lane B slash by exiting
-    ///      during the appeal window.
-    mapping(address operator => uint256 openCount) internal _openLaneBCount;
+    /// @notice Number of unresolved financial proposals per operator, across both lanes.
+    /// @dev Incremented for every proposal and decremented only at successful execution or terminal
+    ///      appeal resolution, so collateral cannot leave during a deferred slash.
+    mapping(address operator => uint256 openCount) internal _openProposalCount;
 
     /// @notice Pending two-step manual ban proposals.
     /// @dev `unbanNode` is single-step because it is strictly less dangerous than ban.
@@ -236,10 +238,10 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
-    function hasOpenLaneBProposal(
+    function hasOpenSlashProposal(
         address operator
     ) external view returns (bool) {
-        return _openLaneBCount[operator] > 0;
+        return _openProposalCount[operator] > 0;
     }
 
     /// @inheritdoc ISlashingManager
@@ -418,6 +420,8 @@ contract SlashingManager is
         p.affectsCommittee = policy.affectsCommittee;
         p.failureReason = policy.failureReason;
 
+        _openProposalCount[operator] += 1;
+
         emit SlashProposed(
             proposalId,
             e3Id,
@@ -433,6 +437,7 @@ contract SlashingManager is
         // Legacy atomic path: when no challenge window is configured, execute now.
         // Otherwise defer to `executeSlash` after `executableAt`.
         if (policy.appealWindow == 0) {
+            _openProposalCount[operator] -= 1;
             _executeSlash(proposalId, Lane.LaneA);
         }
     }
@@ -482,9 +487,9 @@ contract SlashingManager is
         proposalId = totalProposals;
         totalProposals = proposalId + 1;
 
-        // Track unresolved Lane B proposals per operator so BondingRegistry blocks
-        // `deregisterOperator` until they execute, expire, or are upheld on appeal.
-        _openLaneBCount[operator] += 1;
+        // Track the unresolved proposal so collateral remains slashable until
+        // successful execution or terminal appeal resolution.
+        _openProposalCount[operator] += 1;
 
         uint256 executableAt = block.timestamp + policy.appealWindow;
         SlashProposal storage p = _proposals[proposalId];
@@ -531,12 +536,10 @@ contract SlashingManager is
         }
 
         Lane lane = p.proofVerified ? Lane.LaneA : Lane.LaneB;
-        if (lane == Lane.LaneB) {
-            // Decrement BEFORE `_executeSlash` so a reentrant deregister triggered by
-            // slash side-effects (e.g. `expelCommitteeMember`) is not gated on this
-            // proposal. Other open Lane B proposals keep the gate raised.
-            _openLaneBCount[p.operator] -= 1;
-        }
+        // Decrement BEFORE `_executeSlash` so a reentrant operator action triggered
+        // by slash side-effects is not gated on this proposal. Other open proposals
+        // keep the gate raised. A downstream revert restores the count atomically.
+        _openProposalCount[p.operator] -= 1;
 
         _executeSlash(proposalId, lane);
     }
@@ -781,10 +784,9 @@ contract SlashingManager is
         p.resolved = true;
         p.appealUpheld = appealUpheld;
 
-        // an upheld appeal terminates the proposal — it can never `executeSlash`,
-        // so the open Lane B gate must drop here. Lane A proposals are not counted.
-        if (appealUpheld && !p.proofVerified) {
-            _openLaneBCount[p.operator] -= 1;
+        // An upheld appeal terminates the proposal, so its collateral gate ends.
+        if (appealUpheld) {
+            _openProposalCount[p.operator] -= 1;
         }
 
         emit AppealResolved(
@@ -793,6 +795,31 @@ contract SlashingManager is
             appealUpheld,
             msg.sender,
             resolution
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function expireAppeal(uint256 proposalId) external {
+        require(proposalId < totalProposals, InvalidProposal());
+        SlashProposal storage p = _proposals[proposalId];
+        require(p.appealed, InvalidProposal());
+        require(!p.resolved, AlreadyResolved());
+        require(!p.executed, AlreadyExecuted());
+        require(
+            block.timestamp >= p.executableAt + APPEAL_RESOLUTION_GRACE,
+            AppealResolutionWindowActive()
+        );
+
+        p.resolved = true;
+        p.appealUpheld = true;
+        _openProposalCount[p.operator] -= 1;
+
+        emit AppealResolved(
+            proposalId,
+            p.operator,
+            true,
+            msg.sender,
+            "governance resolution window expired"
         );
     }
 

@@ -179,6 +179,19 @@ contract BondingRegistry is
         _;
     }
 
+    /// @dev Keeps active and already-queued collateral available while any
+    ///      financial slash proposal against the operator is unresolved.
+    modifier noOpenSlashProposal(address operator) {
+        address sm = slashingManager;
+        if (
+            sm != address(0) &&
+            ISlashingManager(sm).hasOpenSlashProposal(operator)
+        ) {
+            revert OperatorUnderSlash();
+        }
+        _;
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                   Initialization                       //
@@ -351,20 +364,13 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function deregisterOperator() external noExitInProgress(msg.sender) {
+    function deregisterOperator()
+        external
+        noExitInProgress(msg.sender)
+        noOpenSlashProposal(msg.sender)
+    {
         Operator storage op = operators[msg.sender];
         require(op.registered, NotRegistered());
-
-        // block deregistration while an unresolved Lane B slash proposal exists.
-        // An operator could otherwise drain ticket / license collateral during the appeal
-        // window and leave the slasher with nothing to slash.
-        address sm = slashingManager;
-        if (sm != address(0)) {
-            require(
-                !ISlashingManager(sm).hasOpenLaneBProposal(msg.sender),
-                OperatorUnderSlash()
-            );
-        }
 
         op.registered = false;
         op.exitRequested = true;
@@ -429,7 +435,7 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function removeTicketBalance(
         uint256 amount
-    ) external noExitInProgress(msg.sender) {
+    ) external noExitInProgress(msg.sender) noOpenSlashProposal(msg.sender) {
         require(amount != 0, ZeroAmount());
         require(operators[msg.sender].registered, NotRegistered());
         require(
@@ -460,7 +466,12 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function unbondLicense(
         uint256 amount
-    ) external nonReentrant noExitInProgress(msg.sender) {
+    )
+        external
+        nonReentrant
+        noExitInProgress(msg.sender)
+        noOpenSlashProposal(msg.sender)
+    {
         require(amount != 0, ZeroAmount());
         require(
             operators[msg.sender].licenseBond >= amount,
@@ -488,7 +499,7 @@ contract BondingRegistry is
     function claimExits(
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
-    ) external nonReentrant {
+    ) external nonReentrant noOpenSlashProposal(msg.sender) {
         (uint256 ticketClaim, uint256 licenseClaim) = _exits.claimAssets(
             msg.sender,
             maxTicketAmount,

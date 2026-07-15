@@ -25,6 +25,11 @@
     },
     {
       "inputs": [],
+      "name": "AppealResolutionWindowActive",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "AppealUpheld",
       "type": "error"
     },
@@ -713,6 +718,19 @@
           "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
+        }
+      ],
+      "name": "expireAppeal",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
         },
         {
           "internalType": "string",
@@ -906,6 +924,25 @@
         }
       ],
       "name": "hasOpenLaneBProposal",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "hasOpenSlashProposal",
       "outputs": [
         {
           "internalType": "bool",
@@ -1233,5 +1270,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-6d77a1fac0033f87a36ca50619587087010b9b66"
+  "buildInfoId": "solc-0_8_28-b6d88351d9521822c693319be886d5618e91683c"
 }

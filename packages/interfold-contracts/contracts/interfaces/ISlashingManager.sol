@@ -156,6 +156,9 @@ interface ISlashingManager {
     /// @notice Thrown when attempting to execute a slash before the appeal window has closed
     error AppealWindowActive();
 
+    /// @notice Thrown when an unresolved appeal has not reached its terminal expiry.
+    error AppealResolutionWindowActive();
+
     /// @notice Thrown when attempting to file a second appeal for the same proposal
     error AlreadyAppealed();
 
@@ -204,7 +207,7 @@ interface ISlashingManager {
     /// @notice Thrown when the attestation `deadline` has passed at the time of submission
     error SignatureExpired();
 
-    /// @notice Thrown when an operator action is gated by an unresolved Lane B slash proposal
+    /// @notice Thrown when an operator action is gated by any unresolved slash proposal
     error OperatorUnderSlash();
 
     /// @notice Thrown when a ban operation requires a distinct governance confirmer
@@ -406,11 +409,11 @@ interface ISlashingManager {
     function isBanned(address node) external view returns (bool isBanned);
 
     /**
-     * @notice Returns true if the operator has at least one unresolved Lane B slash proposal
-     * @dev Used by BondingRegistry to block `deregisterOperator` while a slash is pending.
+     * @notice Returns true if the operator has at least one unresolved financial slash proposal.
+     * @dev Used by BondingRegistry to block collateral withdrawals and exit claims.
      * @param operator Operator address to check
      */
-    function hasOpenLaneBProposal(
+    function hasOpenSlashProposal(
         address operator
     ) external view returns (bool);
 
@@ -597,6 +600,13 @@ interface ISlashingManager {
         bool appealUpheld,
         string calldata resolution
     ) external;
+
+    /**
+     * @notice Conclusively upholds an appeal if governance misses its resolution grace period.
+     * @dev Permissionless terminal path that releases the operator's collateral gate.
+     * @param proposalId ID of the unresolved appealed proposal
+     */
+    function expireAppeal(uint256 proposalId) external;
 
     // ======================
     // Ban Management

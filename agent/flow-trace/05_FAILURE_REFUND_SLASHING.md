@@ -549,16 +549,17 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │       ticketAmount: policy.ticketPenalty,
 │       licenseAmount: policy.licensePenalty,
 │       proofVerified: true,          // Lane A marker
-│       executableAt: block.timestamp, // immediate
+│       executableAt: block.timestamp + policy.appealWindow,
 │       banNode: policy.banNode,
 │       affectsCommittee: policy.affectsCommittee,
 │       failureReason: policy.failureReason
 │     }
 │     → Policy values snapshotted at proposal time
 │     → Prevents execution drift if policy changes later
+│     → Increment unresolved financial proposal count for operator
 │
-└─ 8. IMMEDIATELY execute:
-      _executeSlash(proposalId)
+└─ 8. If appealWindow == 0, immediately execute; otherwise leave
+      the proposal deferred and appealable until executableAt
       │
       │  (see "Slash Execution" below)
 ```
@@ -592,6 +593,7 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 │       failureReason: policy.failureReason
 │     }
 │     → NOT executed immediately
+│     → Increment the same unresolved financial proposal count
 │
 └─ 4. Emit SlashProposed(proposalId, e3Id, operator, reason)
 
@@ -602,8 +604,6 @@ Operator (accused) calls: SlashingManager.fileAppeal(proposalId, evidence)
 ├─ require(msg.sender == proposal.operator)
 ├─ require(block.timestamp < proposal.executableAt)
 │   → Must appeal before window closes
-├─ require(!proposal.proofVerified)
-│   → Cannot appeal proof-based slashes
 ├─ require(!proposal.appealed)
 │   → Only one appeal per proposal
 ├─ proposal.appealed = true
@@ -617,20 +617,26 @@ GOVERNANCE_ROLE resolves: SlashingManager.resolveAppeal(
 ├─ require(proposal.appealed && !proposal.resolved)
 ├─ proposal.resolved = true
 ├─ proposal.appealUpheld = upheld
+├─ If upheld: decrement unresolved proposal count
 └─ Emit AppealResolved(proposalId, upheld, resolution)
+
+If governance does not resolve a filed appeal by
+`executableAt + APPEAL_RESOLUTION_GRACE`, anyone may call `expireAppeal`.
+Expiry conclusively upholds the appeal and releases the collateral gate.
 
 ─── AFTER APPEAL WINDOW ──────────────────────────────────────
 
 Anyone calls: SlashingManager.executeSlash(proposalId)
 │
-├─ require(!proposal.executed && !proposal.proofVerified)
+├─ require(!proposal.executed)
 ├─ require(block.timestamp >= proposal.executableAt)
 ├─ If appealed:
 │   require(proposal.resolved)
 │   require(!proposal.appealUpheld)
 │   → If appeal was upheld, slash is cancelled
 │
-└─ _executeSlash(proposalId, policy)
+├─ Decrement unresolved proposal count (reverts atomically on failure)
+└─ _executeSlash(proposalId, lane)
 ```
 
 ### Slash Execution (Both Lanes)
@@ -1140,14 +1146,17 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
   is emitted. The operator can call `fileAppeal` during that window; otherwise anyone may call
   `executeSlash` once it elapses.
 
-### Lane B open-proposal gate (H-05)
+### Unified open-proposal collateral gate (H-05, AUD H-03)
 
-- `SlashingManager` tracks `_openLaneBCount[operator]`: `proposeSlashEvidence` increments,
-  `executeSlash` decrements before `_executeSlash`, and `resolveAppeal(upheld)` unwinds the counter.
-- `hasOpenLaneBProposal(operator)` is exposed as a public view.
-- `BondingRegistry.deregisterOperator()` reverts `OperatorUnderSlash()` while this gate is true,
-  preventing escape during an active Lane B proceeding. Lane A is intentionally not gated because it
-  is atomic (or short-windowed via H-06) and self-clears.
+- `SlashingManager` tracks `_openProposalCount[operator]` for both Lane A and Lane B. Proposal
+  creation increments it; successful execution, an upheld appeal, or terminal appeal expiry
+  decrements it. `hasOpenSlashProposal` exposes the unified semantics.
+- `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
+  `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
+  already queued for exit therefore remain slashable.
+- A filed appeal cannot freeze collateral indefinitely: after the policy appeal window plus the
+  seven-day governance resolution grace, `expireAppeal` permissionlessly upholds it and clears its
+  gate.
 
 ### Pull-payment slashed funds (H-07, H-09)
 

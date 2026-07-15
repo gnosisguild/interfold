@@ -267,12 +267,12 @@ describe("BondingRegistry", function () {
       const unbondAmount = ethers.parseEther("300");
       const slashAmount = ethers.parseEther("800");
 
-      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
       await bondingRegistry.connect(operator1).bondLicense(bondAmount);
       await bondingRegistry.connect(operator1).unbondLicense(unbondAmount);
+      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
 
       await expect(
         bondingRegistry
@@ -948,10 +948,7 @@ describe("BondingRegistry", function () {
       const { bondingRegistry } = await loadFixture(setup);
       await expect(
         bondingRegistry.setMinTicketBalance(0),
-      ).to.be.revertedWithCustomError(
-        bondingRegistry,
-        "InvalidConfiguration",
-      );
+      ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
     });
 
     describe("withdrawSlashedFunds()", function () {
@@ -1365,7 +1362,9 @@ describe("BondingRegistry", function () {
       await expect(bondingRegistry.setTicketToken(ethers.ZeroAddress))
         .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
         .withArgs(ethers.ZeroAddress);
-      await expect(bondingRegistry.setTicketToken(await replacement.getAddress()))
+      await expect(
+        bondingRegistry.setTicketToken(await replacement.getAddress()),
+      )
         .to.be.revertedWithCustomError(
           bondingRegistry,
           "OutstandingAssetLiabilities",

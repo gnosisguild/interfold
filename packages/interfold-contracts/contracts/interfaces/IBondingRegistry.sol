@@ -45,8 +45,8 @@ interface IBondingRegistry {
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
     error ArrayLengthMismatch();
-    /// @notice Thrown when an operator attempts to deregister while at least one Lane B
-    ///         slash proposal against them is still pending execution.
+    /// @notice Thrown when an operator attempts to withdraw collateral while any
+    ///         financial slash proposal against them remains unresolved.
     error OperatorUnderSlash();
 
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
