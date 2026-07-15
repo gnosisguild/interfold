@@ -2,20 +2,15 @@
 import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 
+import { syncProtocolDeploymentRecords } from "../deploymentRecords";
 import { connect, hasFlag, networkName } from "./cli";
 import { proxyAdminInterface } from "./constants";
 import { deployProtocolContracts } from "./deployContracts";
-import {
-  deploymentPath,
-  readJson,
-  safeBatchPath,
-  writeJson,
-} from "./files";
+import { deploymentPath, readJson, safeBatchPath, writeJson } from "./files";
 import { proposeSafeBatch, safeBatch } from "./safe";
 import { buildSafeTransactions } from "./transactions";
 import type { ProtocolDeployment, SafeTransaction } from "./types";
 import { address, loadConfig, requireContract } from "./values";
-import { syncProtocolDeploymentRecords } from "../deploymentRecords";
 
 async function assertPreconditions(
   ethers: any,

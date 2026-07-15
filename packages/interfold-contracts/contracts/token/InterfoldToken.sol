@@ -539,10 +539,7 @@ contract InterfoldToken is
         if (activeAmount < amount) {
             revert RelinkAmountExceeded();
         }
-        _validateRelinkSourceHasNoVestedPrincipal(
-            fromPolicyId,
-            activeAmount
-        );
+        _validateRelinkSourceHasNoVestedPrincipal(fromPolicyId, activeAmount);
 
         (uint256 consumed, ) = _consumeLock(
             account,
@@ -965,10 +962,7 @@ contract InterfoldToken is
         for (uint256 i = 0; i < len; i++) {
             bytes32 existingPolicyId = entries[i].policyId;
             if (existingPolicyId != policyId) {
-                revert ConflictingQueuedClaimPolicy(
-                    existingPolicyId,
-                    policyId
-                );
+                revert ConflictingQueuedClaimPolicy(existingPolicyId, policyId);
             }
         }
     }
@@ -1157,8 +1151,7 @@ contract InterfoldToken is
         address callerConfirmation
     ) public override {
         if (
-            callerConfirmation == _msgSender() &&
-            callerConfirmation == owner()
+            callerConfirmation == _msgSender() && callerConfirmation == owner()
         ) {
             revert RenounceRoleDisabledForOwner();
         }

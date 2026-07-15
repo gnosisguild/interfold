@@ -2,8 +2,8 @@
 import path from "path";
 
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
-import { proxyAdminInterface } from "../protocol/constants";
 import { connect, hasFlag } from "../protocol/cli";
+import { proxyAdminInterface } from "../protocol/constants";
 import {
   deploymentPath,
   protocolDir,
@@ -17,7 +17,11 @@ import type {
   SafeProposal,
   SafeTransaction,
 } from "../protocol/types";
-import { deployedAddress, loadConfig, requireContract } from "../protocol/values";
+import {
+  deployedAddress,
+  loadConfig,
+  requireContract,
+} from "../protocol/values";
 
 export type UpgradeTarget =
   | "bondingRegistry"
@@ -51,7 +55,12 @@ export async function proposeProxyUpgrade(
 
   const [operator] = await ethers.getSigners();
   const operatorAddress = await operator.getAddress();
-  const deployed = await deployImplementation(ethers, operator, target, deployment);
+  const deployed = await deployImplementation(
+    ethers,
+    operator,
+    target,
+    deployment,
+  );
   const proxy = proxyFor(target, config, deployment);
   const proxyAdmin = proxyAdminFor(target, config, deployment);
 

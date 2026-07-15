@@ -711,9 +711,7 @@ describe("InterfoldToken", function () {
 
       await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
 
-      await expect(
-        token.connect(admin).setClaimLockExempt(aliceAddress, true),
-      )
+      await expect(token.connect(admin).setClaimLockExempt(aliceAddress, true))
         .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
         .withArgs(aliceAddress);
     });
@@ -1809,9 +1807,7 @@ describe("InterfoldToken", function () {
 
       await token.connect(admin).linkClaim(aliceAddress, 100n, policyA);
 
-      await expect(
-        token.connect(admin).linkClaim(aliceAddress, 100n, policyB),
-      )
+      await expect(token.connect(admin).linkClaim(aliceAddress, 100n, policyB))
         .to.be.revertedWithCustomError(token, "ConflictingQueuedClaimPolicy")
         .withArgs(policyA, policyB);
     });
@@ -1841,9 +1837,7 @@ describe("InterfoldToken", function () {
 
       await token.connect(admin).setClaimLockExempt(aliceAddress, true);
 
-      await expect(
-        token.connect(admin).linkClaim(aliceAddress, 100n, policyId),
-      )
+      await expect(token.connect(admin).linkClaim(aliceAddress, 100n, policyId))
         .to.be.revertedWithCustomError(token, "ClaimLockExemptQueuedLocks")
         .withArgs(aliceAddress);
     });
@@ -2243,12 +2237,14 @@ describe("InterfoldToken", function () {
       ]);
 
       await expect(
-        token.connect(admin).relinkActiveLock(
-          aliceAddress,
-          fromPolicy,
-          toPolicy,
-          ethers.parseEther("100"),
-        ),
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            fromPolicy,
+            toPolicy,
+            ethers.parseEther("100"),
+          ),
       ).to.emit(token, "ActiveLockRelinked");
     });
 
@@ -2278,12 +2274,14 @@ describe("InterfoldToken", function () {
       await time.increaseTo(start + 5n * DAY);
 
       await expect(
-        token.connect(admin).relinkActiveLock(
-          aliceAddress,
-          fromPolicy,
-          toPolicy,
-          ethers.parseEther("100"),
-        ),
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            fromPolicy,
+            toPolicy,
+            ethers.parseEther("100"),
+          ),
       )
         .to.be.revertedWithCustomError(token, "RelinkSourceAlreadyVested")
         .withArgs(fromPolicy);
@@ -2945,10 +2943,7 @@ describe("InterfoldToken", function () {
         token
           .connect(admin)
           .renounceRole(await token.DEFAULT_ADMIN_ROLE(), adminAddress),
-      ).to.be.revertedWithCustomError(
-        token,
-        "RenounceRoleDisabledForOwner",
-      );
+      ).to.be.revertedWithCustomError(token, "RenounceRoleDisabledForOwner");
     });
 
     it("non-owner role holders can still renounce roles", async function () {
