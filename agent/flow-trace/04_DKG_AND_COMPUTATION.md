@@ -680,6 +680,13 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  └─────────────────────────────────────────────────────┘
 ```
 
+The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
+`e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the circuit's
+public-key commitment using the request's parameter set, and requires equality with the event's
+on-chain `pkCommitment`. Malformed bytes or bytes for a different key fail closed and never reach
+encryption clients. The commitment is C5-proven when proof aggregation is enabled; the explicitly
+unsafe development mode trusts it from the aggregator.
+
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
 > `committeeHash` (computed on-chain as `keccak256(abi.encodePacked(c.topNodes))`) is split into

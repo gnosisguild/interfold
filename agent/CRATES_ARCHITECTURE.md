@@ -101,7 +101,9 @@ flowchart TD
     SDK --> Indexer
     SDK --> EvmHelpers
     SDK --> FheParams
+    Indexer --> BfvClient
     Indexer --> EvmHelpers
+    Indexer --> FheParams
     EvmHelpers --> Utils
     Wasm --> BfvClient
     Wasm --> FheParams

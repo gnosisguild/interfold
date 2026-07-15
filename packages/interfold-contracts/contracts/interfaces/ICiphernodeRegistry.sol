@@ -114,7 +114,10 @@ interface ICiphernodeRegistry {
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
-    /// @param publicKey Public key of the committee.
+    /// @param publicKey Serialized public-key transport hint. Consumers MUST
+    ///        deserialize it and recompute `pkCommitment` before using it for
+    ///        encryption. The commitment is C5-proven when proof aggregation is
+    ///        enabled and trusted by the development aggregator otherwise.
     /// @param pkCommitment Hash-based aggregated PK commitment for the committee.
     /// @param proof DkgAggregator (EVM) proof bytes verified prior to publication,
     ///              or empty bytes when proof aggregation is disabled for the E3.
