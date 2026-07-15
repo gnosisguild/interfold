@@ -39,6 +39,9 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      `sortedNodes` are preserved in the interface for forward compatibility.
  */
 contract BfvPkVerifier is IPkVerifier {
+    error InvalidCircuitVerifier(address verifier);
+    error InvalidVerificationKeyHash();
+
     /// @dev `dkg_aggregator` return field count.
     uint256 internal constant DKG_RETURN_TAIL_LEN = 2;
 
@@ -78,6 +81,13 @@ contract BfvPkVerifier is IPkVerifier {
         uint256 _h
     ) {
         require(_h > 0, "BfvPkVerifier: h=0");
+        if (_circuitVerifier.code.length == 0) {
+            revert InvalidCircuitVerifier(_circuitVerifier);
+        }
+        if (
+            _expectedNodesFoldKeyHash == bytes32(0) ||
+            _expectedC5KeyHash == bytes32(0)
+        ) revert InvalidVerificationKeyHash();
         h = _h;
         committeeHashHiIdx = 2 + _h;
         committeeHashLoIdx = 3 + _h;

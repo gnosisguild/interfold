@@ -684,6 +684,10 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 > params `(e3Id, committeeRoot, sortedNodes)` are forwarded for interface compatibility and future
 > circuit-level binding.
 
+> **Verifier deployment anchors:** `BfvPkVerifier` and `BfvDecryptionVerifier` constructors reject
+> zero/EOA circuit-verifier addresses and zero recursive VK hashes. Production deployment tooling
+> additionally compares the immutable VK hashes with the version-controlled circuit artifacts.
+
 ---
 
 ## Phase 3: Encrypted Computation

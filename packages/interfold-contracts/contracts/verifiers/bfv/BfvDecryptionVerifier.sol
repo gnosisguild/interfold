@@ -39,6 +39,9 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      interface for forward compatibility.
  */
 contract BfvDecryptionVerifier is IDecryptionVerifier {
+    error InvalidCircuitVerifier(address verifier);
+    error InvalidVerificationKeyHash();
+
     /// @dev Message is always the last 100 public inputs (100 uint64 coeffs = 800 bytes plaintext).
     uint256 internal constant MESSAGE_COEFFS_COUNT = 100;
 
@@ -80,6 +83,13 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         uint256 _threshold
     ) {
         require(_threshold > 0, "BfvDecryptionVerifier: threshold=0");
+        if (_circuitVerifier.code.length == 0) {
+            revert InvalidCircuitVerifier(_circuitVerifier);
+        }
+        if (
+            _expectedC6FoldKeyHash == bytes32(0) ||
+            _expectedC7KeyHash == bytes32(0)
+        ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
         expectedPublicInputsLen =
             4 +

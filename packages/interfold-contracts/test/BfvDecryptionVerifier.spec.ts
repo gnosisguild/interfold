@@ -133,6 +133,49 @@ describe("BfvDecryptionVerifier", function () {
   };
 
   describe("reverts", function () {
+    it("rejects zero, EOA, and zero-hash trust anchors at deployment", async function () {
+      const factory = await ethers.getContractFactory("BfvDecryptionVerifier");
+
+      await expect(
+        factory.deploy(
+          ethers.ZeroAddress,
+          EXPECTED_C6_FOLD_KEY_HASH,
+          EXPECTED_C7_KEY_HASH,
+          THRESHOLD,
+        ),
+      )
+        .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
+        .withArgs(ethers.ZeroAddress);
+      await expect(
+        factory.deploy(
+          testSigner.address,
+          EXPECTED_C6_FOLD_KEY_HASH,
+          EXPECTED_C7_KEY_HASH,
+          THRESHOLD,
+        ),
+      )
+        .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
+        .withArgs(testSigner.address);
+
+      const { mockCircuit } = await loadFixture(deployWithMockCircuit);
+      await expect(
+        factory.deploy(
+          await mockCircuit.getAddress(),
+          ethers.ZeroHash,
+          EXPECTED_C7_KEY_HASH,
+          THRESHOLD,
+        ),
+      ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
+      await expect(
+        factory.deploy(
+          await mockCircuit.getAddress(),
+          EXPECTED_C6_FOLD_KEY_HASH,
+          ethers.ZeroHash,
+          THRESHOLD,
+        ),
+      ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
+    });
+
     it("reverts on invalid proof encoding", async function () {
       const { bfvDecryptionVerifier } = await loadFixture(
         deployWithMockCircuit,
