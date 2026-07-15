@@ -31,6 +31,13 @@ interface IBondingRegistry {
     error ExitInProgress();
     error ExitNotReady();
     error InvalidAmount();
+
+    /// @notice A bonding asset must be a deployed contract (except the one-time
+    ///         zero license-token placeholder used during circular deployment).
+    error InvalidBondingAsset(address asset);
+
+    /// @notice A bonding asset cannot rotate while balances remain denominated in it.
+    error OutstandingAssetLiabilities(address asset, uint256 amount);
     error InvalidConfiguration();
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
@@ -171,8 +178,8 @@ interface IBondingRegistry {
      *         in the registry as an unaccounted-for surplus. Operators and
      *         monitoring infrastructure should treat any emission of this
      *         event as evidence that the configured `licenseToken` is not a
-     *         well-behaved ERC-20 and should be replaced via
-     *         `setLicenseToken`.
+     *         well-behaved ERC-20. Rotation is permitted only after every
+     *         balance denominated in the old token has been drained.
      * @param recipient The address that received the (short) transfer
      * @param expectedAmount The amount the registry intended to send
      * @param actualAmount The actual delta in registry-held balance
@@ -455,14 +462,16 @@ interface IBondingRegistry {
     /**
      * @notice Set ticket price
      * @param newTicketPrice New price per ticket
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner; rotation requires zero outstanding
+     *      ticket supply and zero payable balance in the old wrapper.
      */
     function setTicketPrice(uint256 newTicketPrice) external;
 
     /**
      * @notice Set license bond price required
      * @param newLicenseRequiredBond New license bond price
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner; rotation requires a zero registry
+     *      balance in the old license token.
      */
     function setLicenseRequiredBond(uint256 newLicenseRequiredBond) external;
 

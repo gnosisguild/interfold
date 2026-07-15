@@ -50,6 +50,17 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "asset",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidBondingAsset",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "InvalidConfiguration",
       "type": "error"
@@ -82,6 +93,22 @@
     {
       "inputs": [],
       "name": "OperatorUnderSlash",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "asset",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "OutstandingAssetLiabilities",
       "type": "error"
     },
     {
@@ -1081,5 +1108,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-6d77a1fac0033f87a36ca50619587087010b9b66"
+  "buildInfoId": "solc-0_8_28-15fb9b9f505f75cabf5ea42fcda4c0eb24a8d7e8"
 }

@@ -341,7 +341,7 @@ export async function deployInterfoldSystem(
         BondingRegistry: {
           owner: ownerAddress,
           ticketToken: await ticketToken.getAddress(),
-          licenseToken: ADDRESS_ONE, // placeholder — fixed below
+          licenseToken: ethers.ZeroAddress, // one-time placeholder — fixed below
           registry: effectiveRegistryAddress,
           slashedFundsTreasury: slashedFundsTreasuryAddress,
           ticketPrice: TICKET_PRICE,

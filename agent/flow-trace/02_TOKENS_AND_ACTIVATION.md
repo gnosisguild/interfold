@@ -92,6 +92,13 @@ Before a node can register, it must stake two types of collateral:
 └───────────────────────────────────────────────────────────┘
 ```
 
+Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot
+be configured while the old wrapper has issued tickets or a payable balance,
+and the FOLD license token cannot change while the bonding registry holds any
+of the old token. Replacement assets must be deployed contracts; the only zero
+exception is the one-time license-token placeholder used to resolve the circular
+FOLD/BondingRegistry deployment.
+
 ---
 
 ## Step 1: Bond License (`interfold ciphernode license bond`)

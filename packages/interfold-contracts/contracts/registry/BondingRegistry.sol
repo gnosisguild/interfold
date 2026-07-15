@@ -725,14 +725,50 @@ contract BondingRegistry is
     function setTicketToken(
         InterfoldTicketToken newTicketToken
     ) public onlyOwner {
+        address next = address(newTicketToken);
+        if (next.code.length == 0) revert InvalidBondingAsset(next);
+
+        InterfoldTicketToken current = ticketToken;
+        if (address(current) != address(0) && current != newTicketToken) {
+            uint256 liabilities = current.totalSupply() +
+                current.payableBalance();
+            if (liabilities != 0) {
+                revert OutstandingAssetLiabilities(
+                    address(current),
+                    liabilities
+                );
+            }
+        }
         ticketToken = newTicketToken;
-        emit TicketTokenSet(address(newTicketToken));
+        emit TicketTokenSet(next);
     }
 
     /// @inheritdoc IBondingRegistry
     function setLicenseToken(IERC20 newLicenseToken) public onlyOwner {
+        address next = address(newLicenseToken);
+        IERC20 current = licenseToken;
+
+        // BondingRegistry is deployed before FOLD because FOLD stores the
+        // registry address immutably. Permit only that initial zero placeholder.
+        if (next == address(0)) {
+            if (address(current) != address(0)) {
+                revert InvalidBondingAsset(next);
+            }
+        } else if (next.code.length == 0) {
+            revert InvalidBondingAsset(next);
+        }
+
+        if (address(current) != address(0) && current != newLicenseToken) {
+            uint256 liabilities = current.balanceOf(address(this));
+            if (liabilities != 0) {
+                revert OutstandingAssetLiabilities(
+                    address(current),
+                    liabilities
+                );
+            }
+        }
         licenseToken = newLicenseToken;
-        emit LicenseTokenSet(address(newLicenseToken));
+        emit LicenseTokenSet(next);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -873,7 +909,8 @@ contract BondingRegistry is
     ///      fees that burn or reroute). Internal accounting is already decremented at
     ///      the call site, so a shortfall emits {LicenseTransferShortfall} rather than
     ///      reverting (a revert would brick claims if the token starts taking fees);
-    ///      the owner can swap the token via {setLicenseToken}.
+    ///      governance must pause new bonding and drain every liability before
+    ///      rotating the token via {setLicenseToken}.
     function _safeTransferLicenseWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
