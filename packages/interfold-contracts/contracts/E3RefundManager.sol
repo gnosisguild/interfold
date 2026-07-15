@@ -42,9 +42,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @notice Maps E3 ID to refund distribution
     mapping(uint256 e3Id => RefundDistribution distribution)
         internal _distributions;
-    /// @notice Tracks claims per E3 per address
+    /// @notice Tracks requester-refund claims per E3 per address
     mapping(uint256 e3Id => mapping(address claimer => bool hasClaimed))
-        internal _claimed;
+        internal _requesterClaimed;
     /// @notice Tracks number of claims made per E3
     mapping(uint256 e3Id => uint256 count) internal _claimCount;
     /// @notice Tracks number of honest node claims made per E3
@@ -65,6 +65,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @dev Per-treasury so historical treasuries can drain even after rotation.
     mapping(address treasury => mapping(IERC20 token => uint256 amount))
         internal _pendingTreasury;
+    /// @notice Tracks honest-node reward claims independently from requester claims
+    mapping(uint256 e3Id => mapping(address claimer => bool hasClaimed))
+        internal _honestNodeClaimed;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -320,12 +323,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address requester = interfold.getRequester(e3Id);
         if (msg.sender != requester) revert NotRequester(e3Id, msg.sender);
 
-        if (_claimed[e3Id][msg.sender]) revert AlreadyClaimed(e3Id, msg.sender);
+        if (_requesterClaimed[e3Id][msg.sender]) {
+            revert AlreadyClaimed(e3Id, msg.sender);
+        }
 
         amount = dist.requesterAmount;
         if (amount == 0) revert NoRefundAvailable(e3Id);
 
-        _claimed[e3Id][msg.sender] = true;
+        _requesterClaimed[e3Id][msg.sender] = true;
         _claimCount[e3Id]++;
 
         // Use the per-E3 fee token (not the global one, which may have been rotated)
@@ -347,7 +352,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             "feeToken not initialized"
         );
 
-        require(!_claimed[e3Id][msg.sender], AlreadyClaimed(e3Id, msg.sender));
+        require(
+            !_honestNodeClaimed[e3Id][msg.sender],
+            AlreadyClaimed(e3Id, msg.sender)
+        );
 
         // Check if caller is honest node
         address[] memory nodes = _honestNodes[e3Id];
@@ -382,7 +390,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
         _totalHonestNodePaid[e3Id] += amount;
 
-        _claimed[e3Id][msg.sender] = true;
+        _honestNodeClaimed[e3Id][msg.sender] = true;
         _claimCount[e3Id]++;
 
         // Direct transfer to the honest node (refund path; bypasses BondingRegistry
@@ -555,11 +563,19 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IE3RefundManager
-    function hasClaimed(
+    function hasRequesterClaimed(
         uint256 e3Id,
         address claimant
     ) external view returns (bool) {
-        return _claimed[e3Id][claimant];
+        return _requesterClaimed[e3Id][claimant];
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function hasHonestNodeClaimed(
+        uint256 e3Id,
+        address claimant
+    ) external view returns (bool) {
+        return _honestNodeClaimed[e3Id][claimant];
     }
 
     /// @inheritdoc IE3RefundManager

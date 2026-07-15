@@ -183,11 +183,14 @@ interface IE3RefundManager {
         uint256 e3Id
     ) external view returns (RefundDistribution memory distribution);
 
-    /// @notice Check if address has claimed refund
-    /// @param e3Id The E3 ID
-    /// @param claimant The address to check
-    /// @return claimed Whether the address has claimed
-    function hasClaimed(
+    /// @notice Check whether an address claimed the requester-refund role
+    function hasRequesterClaimed(
+        uint256 e3Id,
+        address claimant
+    ) external view returns (bool claimed);
+
+    /// @notice Check whether an address claimed the honest-node reward role
+    function hasHonestNodeClaimed(
         uint256 e3Id,
         address claimant
     ) external view returns (bool claimed);

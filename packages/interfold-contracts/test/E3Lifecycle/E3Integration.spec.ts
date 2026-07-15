@@ -801,6 +801,55 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   });
 
   describe("Full Failure Flow - DKG Timeout", function () {
+    it("AUD-M02: a requester who is also an honest node can claim both roles", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        makeRequest,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+      await makeRequest(operator1);
+
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      await e3RefundManager.connect(operator1).claimRequesterRefund(0);
+      expect(
+        await e3RefundManager.hasRequesterClaimed(
+          0,
+          await operator1.getAddress(),
+        ),
+      ).to.equal(true);
+      expect(
+        await e3RefundManager.hasHonestNodeClaimed(
+          0,
+          await operator1.getAddress(),
+        ),
+      ).to.equal(false);
+
+      await e3RefundManager.connect(operator1).claimHonestNodeReward(0);
+      expect(
+        await e3RefundManager.hasHonestNodeClaimed(
+          0,
+          await operator1.getAddress(),
+        ),
+      ).to.equal(true);
+    });
+
     it("complete flow: request -> committee formed -> DKG timeout -> fail -> process -> claim", async function () {
       const {
         interfold,

@@ -176,7 +176,7 @@ REQUESTER claims:
 │
 ├─ require(distribution calculated)
 ├─ require(msg.sender == requester from Interfold)
-├─ require(!already claimed)
+├─ require(!requester refund already claimed)
 ├─ requesterAmount includes BOTH:
 │   • Base refund (from work-value BPS allocation)
 │   • Slashed funds (requester filled first, up to originalPayment)
@@ -188,7 +188,9 @@ HONEST NODE claims:
 │
 ├─ require(distribution calculated)
 ├─ require(msg.sender is in honestNodes[e3Id])
-├─ require(!already claimed by this node)
+├─ require(!honest-node reward already claimed by this node)
+│  → This ledger is independent from the requester-refund claim ledger, so a
+│    requester who is also an honest node can receive both entitlements
 ├─ honestNodeAmount includes BOTH:
 │   • Base compensation (from work-value BPS allocation)
 │   • Slashed funds surplus (after requester is made whole)
