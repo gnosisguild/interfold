@@ -376,6 +376,9 @@ jobs:
           echo "## Lint results" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
 
+      - name: 'Enforce production contract size budget'
+        run: 'pnpm --filter @interfold/contracts size:check'
+
       - name: 'Test the contracts and generate the coverage report'
         run: 'pnpm coverage'
 
