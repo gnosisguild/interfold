@@ -293,6 +293,28 @@ describe("InterfoldTokenSaleDeployer", function () {
   it("captures the Safe as protocolAdmin (no hardcoded address)", async function () {
     const ctx = await setup();
     expect(await ctx.saleDeployer.protocolAdmin()).to.equal(ctx.safeAddress);
+    expect(await ctx.saleDeployer.deploymentOperator()).to.equal(
+      await ctx.operator.getAddress(),
+    );
+  });
+
+  it("rejects a copied sale deployment from a non-operator", async function () {
+    const ctx = await setup();
+    const plan = await buildLbpSaleConfig(ctx);
+
+    await expect(
+      ctx.saleDeployer
+        .connect(ctx.stranger)
+        .deploySaleWithLiquidityLauncher(plan.lbpSaleConfig, plan.foldInitCode),
+    )
+      .to.be.revertedWithCustomError(ctx.saleDeployer, "UnauthorizedOperator")
+      .withArgs(ctx.stranger.address);
+
+    expect(
+      await ctx.saleDeployer.usedConfigHashes(
+        await ctx.saleDeployer.hashLbpConfig(plan.lbpSaleConfig),
+      ),
+    ).to.equal(false);
   });
 
   it("deploys FOLD + CCA through LiquidityLauncher/LBPStrategy without a predicted auction", async function () {
