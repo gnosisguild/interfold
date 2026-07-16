@@ -791,6 +791,11 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   │   → Circuit: ThresholdShareDecryption (C6)
     │   │   → Proves decryption share was correctly computed from
     │   │     sk_poly_sum, es_poly_sum, and ciphertext
+    │   │   → Publicly commits to the E3 decryption-domain limbs:
+    │   │     keccak256(abi.encode(
+    │   │       chainId, Interfold address, e3Id, committeeHash,
+    │   │       ciphertextOutputHash, committeePublicKey
+    │   │     ))
     │   │   → Fiat-Shamir transcript absorbs full `d` (all coefficients per CRT limb)
     │   ├─ ZkActor generates proof via bb binary
     │   ├─ Signs proof
@@ -883,8 +888,11 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   ├─ Dispatches ComputeRequest::zk(ZkRequest::DecryptionAggregation {
 │   │   │     c6_total_slots, jobs, params_preset
 │   │   │   })
-│   │   ├─ Each job folds the selected C6 proofs for one ciphertext index and checks them
-│   │   │   against the matching C7 proof inside `DecryptionAggregator`
+│   │   ├─ Each job folds the selected C6 proofs for one ciphertext index, requires every
+│   │   │   C6 leaf to carry the same E3 domain, and checks them against the matching C7 proof
+│   │   │   inside `DecryptionAggregator`
+│   │   ├─ `DecryptionAggregator` exposes that C6-authenticated domain as two public
+│   │   │   128-bit limbs in the final EVM proof
 │   │   ├─ Tracks the in-flight correlation id
 │   │   ├─ ComputeRequestError, missing C6 inner proofs, or C7/decryption-aggregator proof-count
 │   │   │   mismatches now emit
@@ -909,17 +917,17 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
-        │  │    3. require(proof.length > 0), then canonically   │
-        │  │       decode (rawProof, publicInputs),              │
-        │  │       derive a proof nullifier, require it unused,  │
-        │  │       and consume it (equivalent ABI encodings map  │
-        │  │       to the same nullifier)                        │
-        │  │       and call decryptionVerifier.verify(           │
-        │  │         e3Id, committeeRoot,                        │
-        │  │         committeeNodes, ciphertextOutput,           │
-        │  │         committeePublicKey,                         │
-        │  │         keccak256(output), proof                    │
+        │  │    3. require(proof.length > 0), recompute          │
+        │  │       decryptionDomain = keccak256(abi.encode(      │
+        │  │         chainId, address(this), e3Id,               │
+        │  │         committeeHash, ciphertextOutput,            │
+        │  │         committeePublicKey                          │
+        │  │       )), then call decryptionVerifier.verify(      │
+        │  │         decryptionDomain, keccak256(output),        │
+        │  │         committeeHash, proof                        │
         │  │       )                                             │
+        │  │       → C-03: final proof domain must match the      │
+        │  │         domain already committed by every C6 leaf.  │
         │  │       → M-34: c6Fold / C7 VK hashes are immutable.  │
         │  │       → M-35: revert path only (no `bool false`).   │
         │  │    4. stage = Complete                              │

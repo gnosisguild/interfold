@@ -132,6 +132,8 @@ pub struct Inputs {
     pub expected_sk_commitment: BigInt,
     pub expected_e_sm_commitment: BigInt,
     pub ct_commitment: BigInt,
+    pub domain_hi: BigInt,
+    pub domain_lo: BigInt,
 }
 
 impl Computation for Configs {
@@ -369,6 +371,8 @@ impl Computation for Inputs {
             expected_sk_commitment,
             expected_e_sm_commitment,
             ct_commitment,
+            domain_hi: BigInt::from(data.domain_hi),
+            domain_lo: BigInt::from(data.domain_lo),
         })
     }
 
@@ -384,6 +388,8 @@ impl Computation for Inputs {
         let expected_sk_commitment = self.expected_sk_commitment.to_string();
         let expected_e_sm_commitment = self.expected_e_sm_commitment.to_string();
         let ct_commitment = self.ct_commitment.to_string();
+        let domain_hi = self.domain_hi.to_string();
+        let domain_lo = self.domain_lo.to_string();
 
         let json = serde_json::json!({
             "ct0": ct0,
@@ -397,6 +403,8 @@ impl Computation for Inputs {
             "expected_sk_commitment": expected_sk_commitment,
             "expected_e_sm_commitment": expected_e_sm_commitment,
             "ct_commitment": ct_commitment,
+            "domain_hi": domain_hi,
+            "domain_lo": domain_lo,
         });
 
         Ok(json)

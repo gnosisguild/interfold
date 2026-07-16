@@ -96,7 +96,8 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
     (len - 4) / 3
 }
 
-/// Reads slot count from the compiled `c6_fold` ABI (`acc_public_inputs` length is `4 + 4 * slots`).
+/// Reads slot count from the compiled `c6_fold` ABI
+/// (`acc_public_inputs` length is `6 + 4 * slots`: four fold params plus two domain limbs).
 fn c6_fold_total_slots_from_compiled_json() -> usize {
     let path = c6_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -119,11 +120,11 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c6_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 4 && (len - 4).is_multiple_of(4),
-        "unexpected acc_public_inputs length {} (expected 4 + 4 * slots)",
+        len >= 6 && (len - 6).is_multiple_of(4),
+        "unexpected acc_public_inputs length {} (expected 6 + 4 * slots)",
         len
     );
-    (len - 4) / 4
+    (len - 6) / 4
 }
 
 #[test]

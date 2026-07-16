@@ -23,20 +23,19 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [1]                = expectedC7KeyHash      (VK anchor)
  *        [2]                = committee_hash_hi
  *        [3]                = committee_hash_lo
- *        [4 .. 4+1+(3*(T+1))) = circuit-internal (sk, esm, ct columns)
+ *        [4]                = decryption_domain_hi
+ *        [5]                = decryption_domain_lo
+ *        [6 .. 6+1+(3*(T+1))) = circuit-internal (sk, esm, ct columns)
  *        [last 100]         = plaintext message coefficients (100 u64 LE)
- *        Total: expectedPublicInputsLen = 4 + 1 + 3*(T+1) + 100.
+ *        Total: expectedPublicInputsLen = 6 + 1 + 3*(T+1) + 100.
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
  *      prevents a malicious aggregator from substituting a forged sub-VK.
  *
- *      NOTE -- domain binding relaxation: wrapper-level chainId/deployment/e3Id
- *      binding requires a dedicated circuit public input. The current circuits
- *      do not expose such a slot. Full cryptographic enforcement tracked as
- *      future work. The caller-supplied `e3Id`, `committeeRoot`, `sortedNodes`,
- *      `ciphertextOutputHash`, and `committeePublicKey` are preserved in the
- *      interface for forward compatibility.
+ *      Each secret-bearing C6 proof commits to the same domain limbs. C6Fold
+ *      preserves them, and DecryptionAggregator exposes them here, so an
+ *      aggregator cannot re-label an existing proof for another E3.
  */
 contract BfvDecryptionVerifier is IDecryptionVerifier {
     error InvalidCircuitVerifier(address verifier);
@@ -57,10 +56,14 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev `publicInputs` index for `committee_hash_lo`.
     uint256 internal constant COMMITTEE_HASH_LO_IDX = 3;
 
+    /// @dev Public input indices for the E3 decryption-domain limbs.
+    uint256 internal constant DECRYPTION_DOMAIN_HI_IDX = 4;
+    uint256 internal constant DECRYPTION_DOMAIN_LO_IDX = 5;
+
     /// @notice BFV threshold `T`; must match the compiled DecryptionAggregator circuit.
     uint256 public immutable threshold;
 
-    /// @dev `4 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
+    /// @dev `6 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
     uint256 internal immutable expectedPublicInputsLen;
 
     /// @notice Underlying Honk verifier for the DecryptionAggregator circuit.
@@ -92,7 +95,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
         expectedPublicInputsLen =
-            4 +
+            6 +
             DEC_RETURN_PREFIX_LEN +
             (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
             MESSAGE_COEFFS_COUNT;
@@ -104,11 +107,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
 
     /// @inheritdoc IDecryptionVerifier
     function verify(
-        uint256 e3Id,
-        uint256 committeeRoot,
-        address[] calldata sortedNodes,
-        bytes32 ciphertextOutputHash,
-        bytes32 committeePublicKey,
+        bytes32 decryptionDomain,
         bytes32 plaintextOutputHash,
         bytes32 committeeHash,
         bytes calldata proof
@@ -143,19 +142,23 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         ) {
             revert DomainBindingMismatch();
         }
+        if (
+            publicInputs[DECRYPTION_DOMAIN_HI_IDX] !=
+            CommitteeHashLib.hi(decryptionDomain)
+        ) {
+            revert DomainBindingMismatch();
+        }
+        if (
+            publicInputs[DECRYPTION_DOMAIN_LO_IDX] !=
+            CommitteeHashLib.lo(decryptionDomain)
+        ) {
+            revert DomainBindingMismatch();
+        }
 
         // Plaintext hash check: 100-coefficient plaintext must hash to the claimed value.
         if (!_verifyPlaintextHash(publicInputs, plaintextOutputHash)) {
             revert PlaintextHashMismatch();
         }
-
-        // Suppress unused-variable warnings for forward-compatibility params.
-        // These will be used for circuit-level domain binding in a future circuit update.
-        e3Id;
-        committeeRoot;
-        sortedNodes;
-        ciphertextOutputHash;
-        committeePublicKey;
 
         // Bubble up as a revert instead of a silent `false`.
         if (!circuitVerifier.verify(rawProof, publicInputs)) {

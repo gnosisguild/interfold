@@ -8,9 +8,11 @@ repository.workspace = true
 
 [dependencies]
 actix = { workspace = true }
+alloy = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
 e3-bfv-client = { workspace = true }
+e3-committee-hash = { workspace = true }
 e3-data = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-trbfv = { workspace = true }

@@ -397,17 +397,5 @@ export function assertInterfoldPricingSlots(layout: StorageLayout): string[] {
       "Interfold: _feeTokenAllowed must remain adjacent at slot 33+0.",
     );
   }
-  const consumedProofs = layout.storage.find(
-    (entry) => entry.label === "_consumedDecryptionProofs",
-  );
-  if (
-    !consumedProofs ||
-    consumedProofs.slot !== "38" ||
-    consumedProofs.offset !== 0
-  ) {
-    errors.push(
-      "Interfold: _consumedDecryptionProofs must remain at slot 38+0 for InterfoldPricing.",
-    );
-  }
   return errors;
 }

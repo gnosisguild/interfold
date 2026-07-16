@@ -812,9 +812,26 @@ impl CiphernodeBuilder {
             backend.ensure_installed().await?;
             let _signer = provider_cache.ensure_signer().await?;
 
+            let mut interfold_addresses = HashMap::new();
+            for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
+                let provider = provider_cache.ensure_read_provider(chain).await?;
+                let chain_id = provider.chain_id();
+                validate_chain_id(chain, chain_id)?;
+                interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
+            }
+            for chain in self.chains.iter().filter(|c| !c.enabled.unwrap_or(true)) {
+                if let Some(chain_id) = chain.chain_id {
+                    interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
+                }
+            }
+
             info!("Setting up ThresholdKeyshareExtension");
-            e3_builder =
-                e3_builder.with(ThresholdKeyshareExtension::create(bus, &self.cipher, addr));
+            e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
+                bus,
+                &self.cipher,
+                addr,
+                interfold_addresses,
+            ));
 
             info!("Setting up ZK actors");
             setup_zk_actors(

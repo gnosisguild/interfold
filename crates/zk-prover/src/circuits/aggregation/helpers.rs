@@ -26,6 +26,8 @@ pub mod field_keys {
     pub const EXPECTED_SK_COMMITMENT: &str = "expected_sk_commitment";
     pub const EXPECTED_E_SM_COMMITMENT: &str = "expected_e_sm_commitment";
     pub const CT_COMMITMENT: &str = "ct_commitment";
+    pub const DOMAIN_HI: &str = "domain_hi";
+    pub const DOMAIN_LO: &str = "domain_lo";
     pub const D_COMMITMENT: &str = "d_commitment";
 }
 

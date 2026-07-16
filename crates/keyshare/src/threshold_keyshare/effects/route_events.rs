@@ -16,9 +16,16 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
+                let committee_hash =
+                    e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
                 let pk = ArcBytes::from_bytes(&data.pubkey);
                 let _ = self.state.try_mutate(&ec, |mut s| {
                     s.aggregated_pk = Some(pk);
+                    s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
+                        interfold_address: self.interfold_address,
+                        committee_hash,
+                        committee_public_key: data.pk_commitment.into(),
+                    });
                     Ok(s)
                 });
             }

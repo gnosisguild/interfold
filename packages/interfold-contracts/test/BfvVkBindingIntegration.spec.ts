@@ -15,6 +15,7 @@ import {
   assertBfvDecryptionVerifierSubCircuitVkHashes,
   assertBfvPkVerifierSubCircuitVkHashes,
   bfvDecCommitteeHashIndices,
+  bfvDecDomainIndices,
   bfvDecExpectedPublicInputsLen,
   bfvDkgCommitteeHashIndices,
   bfvPkExpectedPublicInputsLen,
@@ -115,6 +116,7 @@ function hexToBytes32Array(hex: string): string[] {
 const DKG_COMMITTEE_HASH_IDX = bfvDkgCommitteeHashIndices(BFV_DKG_H);
 const DKG_EXPECTED_PUBLIC_INPUT_LEN = bfvPkExpectedPublicInputsLen(BFV_DKG_H);
 const DEC_COMMITTEE_HASH_IDX = bfvDecCommitteeHashIndices();
+const DEC_DOMAIN_IDX = bfvDecDomainIndices();
 const DEC_EXPECTED_PUBLIC_INPUT_LEN =
   bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
 
@@ -317,6 +319,10 @@ describe("BfvVkBindingIntegration", function () {
         decPublicInputs[DEC_COMMITTEE_HASH_IDX.hi],
         decPublicInputs[DEC_COMMITTEE_HASH_IDX.lo],
       );
+      const decDomain = committeeHashFromLimbs(
+        decPublicInputs[DEC_DOMAIN_IDX.hi],
+        decPublicInputs[DEC_DOMAIN_IDX.lo],
+      );
 
       if (isCoverageRun) {
         // Instrumented Honk verifiers can exceed any practical eth_call budget;
@@ -357,11 +363,7 @@ describe("BfvVkBindingIntegration", function () {
       const plaintextHash = plaintextHashFromPublicInputs(decPublicInputs);
       expect(
         await bfvDec.verify.staticCall(
-          testE3Id,
-          testRoot,
-          [testSigner.address],
-          ethers.id("test-ciphertext"),
-          ethers.id("test-pubkey"),
+          decDomain,
           plaintextHash,
           decCommitteeHash,
           decEncoded,

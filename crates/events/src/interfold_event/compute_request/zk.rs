@@ -7,6 +7,7 @@
 use crate::{Proof, SignedProofPayload};
 use alloy::primitives::Address;
 use derivative::Derivative;
+use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
@@ -368,6 +369,8 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub es_poly_sum: Vec<SensitiveBytes>,
     /// Computed decryption share polynomials, one per output index.
     pub d_share_bytes: Vec<ArcBytes>,
+    /// Stable E3 context cryptographically bound into every C6 proof.
+    pub decryption_domain: DecryptionDomainContext,
     /// BFV preset for parameter resolution.
     pub params_preset: BfvPreset,
     /// Committee size for per-committee circuit artifact resolution.

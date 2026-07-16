@@ -110,12 +110,17 @@ export function bfvDkgCommitteeHashIndices(h: number): {
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 108 + 3 * threshold;
+  return 110 + 3 * threshold;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
 export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
   return { hi: 2, lo: 3 };
+}
+
+/** `publicInputs` indices for decryption-aggregator E3 domain limbs. */
+export function bfvDecDomainIndices(): { hi: number; lo: number } {
+  return { hi: 4, lo: 5 };
 }
 
 /** Recursive VK hashes for `BfvPkVerifier` sub-circuits (from `pnpm compile:circuits`). */

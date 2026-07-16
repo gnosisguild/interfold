@@ -21,8 +21,9 @@ use lib::configs::default::T;
 use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
 
-/// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params + flattened `(out_sk, out_esm, out_ct, out_d)`.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 4 + (4 * (T + 1));
+/// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
+/// and flattened `(out_sk, out_esm, out_ct, out_d)`.
+pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (4 * (T + 1));
 
 pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
 
@@ -53,6 +54,8 @@ fn main(
     committee_members: [Field; N_PARTIES],
     committee_hash_hi: pub Field,
     committee_hash_lo: pub Field,
+    domain_hi: pub Field,
+    domain_lo: pub Field,
 ) -> pub (Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; MAX_MSG_NON_ZERO_COEFFS]) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
@@ -60,6 +63,11 @@ fn main(
 
     verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_key_hash);
     verify_honk_proof_non_zk(c7_vk, c7_proof, c7_public, c7_key_hash);
+
+    // The C6 fold only accepts secret-bearing leaf proofs carrying one common
+    // domain. Expose that domain in the final EVM proof for on-chain checking.
+    assert(c6_fold_public[4] == domain_hi);
+    assert(c6_fold_public[5] == domain_lo);
 
     // Cross-circuit C6 to C7: each folded `d_commitment` column entry must match `c7_public[i]`
     // (leading `T + 1` words of `c7_public`).

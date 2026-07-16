@@ -241,6 +241,8 @@ impl ShareDecryptionCircuitData {
             s: CrtPolynomial::from_fhe_polynomial(&sk_poly_sum),
             e: CrtPolynomial::from_fhe_polynomial(&es_poly_sum),
             d_share: CrtPolynomial::from_fhe_polynomial(&d_share_rns),
+            domain_hi: 1,
+            domain_lo: 2,
         })
     }
 }
