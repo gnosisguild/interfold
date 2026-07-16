@@ -3,32 +3,32 @@
   "contract": "CiphernodeRegistryOwnable",
   "source": "contracts/registry/CiphernodeRegistryOwnable.sol",
   "baseline": {
-    "buildInfoId": "solc-0_8_28-846b01f057eb6489ff758d75eecbd293c04a77af",
+    "buildInfoId": "solc-0_8_28-b6081d4a087889d124a71337ceb3c3c46650c56f",
     "compiler": "0.8.28+commit.7893614a",
     "evmVersion": "paris",
     "optimizerRuns": 1,
-    "sourceCommit": "53eb54e092b64f37f1a8efc0053f5521dd1d2131",
+    "sourceCommit": "c6cb4d17e63b99ca159e88feb750a28c977eb043",
     "sourceSha256": "033ae30ce7a728081ca6cf34e050c970a5ed23fbab21ca81b66f4c8bd759af5e"
   },
   "storage": [
     {
-      "astId": 29194,
+      "astId": 29102,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "interfold",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(IInterfold)23293"
+      "type": "t_contract(IInterfold)23274"
     },
     {
-      "astId": 29198,
+      "astId": 29106,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "bondingRegistry",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IBondingRegistry)21073"
+      "type": "t_contract(IBondingRegistry)21068"
     },
     {
-      "astId": 29202,
+      "astId": 29110,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "numCiphernodes",
       "offset": 0,
@@ -36,7 +36,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29205,
+      "astId": 29113,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "sortitionSubmissionWindow",
       "offset": 0,
@@ -44,7 +44,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29225,
+      "astId": 29133,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "ciphernodes",
       "offset": 0,
@@ -52,7 +52,7 @@
       "type": "t_struct(LazyIMTData)14046_storage"
     },
     {
-      "astId": 29230,
+      "astId": 29138,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "ciphernodeEnabled",
       "offset": 0,
@@ -60,7 +60,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 29235,
+      "astId": 29143,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "ciphernodeTreeIndex",
       "offset": 0,
@@ -68,7 +68,7 @@
       "type": "t_mapping(t_address,t_uint40)"
     },
     {
-      "astId": 29240,
+      "astId": 29148,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "roots",
       "offset": 0,
@@ -76,7 +76,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 29245,
+      "astId": 29153,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "publicKeyHashes",
       "offset": 0,
@@ -84,31 +84,31 @@
       "type": "t_mapping(t_uint256,t_bytes32)"
     },
     {
-      "astId": 29251,
+      "astId": 29159,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "committees",
       "offset": 0,
       "slot": "10",
-      "type": "t_mapping(t_uint256,t_struct(Committee)21134_storage)"
+      "type": "t_mapping(t_uint256,t_struct(Committee)21129_storage)"
     },
     {
-      "astId": 29255,
+      "astId": 29163,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "slashingManager",
       "offset": 0,
       "slot": "11",
-      "type": "t_contract(ISlashingManager)23940"
+      "type": "t_contract(ISlashingManager)23921"
     },
     {
-      "astId": 29259,
+      "astId": 29167,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "dkgFoldAttestationVerifier",
       "offset": 0,
       "slot": "12",
-      "type": "t_contract(IDkgFoldAttestationVerifier)21825"
+      "type": "t_contract(IDkgFoldAttestationVerifier)21811"
     },
     {
-      "astId": 29266,
+      "astId": 29174,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "pendingDkgFoldAttestationVerifier",
       "offset": 0,
@@ -116,7 +116,7 @@
       "type": "t_address"
     },
     {
-      "astId": 29268,
+      "astId": 29176,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "pendingDkgFoldAttestationVerifierAt",
       "offset": 0,
@@ -124,7 +124,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29271,
+      "astId": 29179,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "accusationVoteValidity",
       "offset": 0,
@@ -132,7 +132,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29282,
+      "astId": 29190,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "pendingAccusationVoteValidity",
       "offset": 0,
@@ -140,7 +140,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29284,
+      "astId": 29192,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "pendingAccusationVoteValidityAt",
       "offset": 0,
@@ -148,7 +148,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 29290,
+      "astId": 29198,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "dkgPartyIds",
       "offset": 0,
@@ -156,7 +156,7 @@
       "type": "t_mapping(t_uint256,t_array(t_uint256)dyn_storage)"
     },
     {
-      "astId": 29295,
+      "astId": 29203,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "dkgSkAggCommits",
       "offset": 0,
@@ -164,7 +164,7 @@
       "type": "t_mapping(t_uint256,t_array(t_bytes32)dyn_storage)"
     },
     {
-      "astId": 29300,
+      "astId": 29208,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "dkgEsmAggCommits",
       "offset": 0,
@@ -172,15 +172,15 @@
       "type": "t_mapping(t_uint256,t_array(t_bytes32)dyn_storage)"
     },
     {
-      "astId": 29316,
+      "astId": 29224,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "_committeeDependencies",
       "offset": 0,
       "slot": "21",
-      "type": "t_mapping(t_uint256,t_struct(CommitteeDependencies)29310_storage)"
+      "type": "t_mapping(t_uint256,t_struct(CommitteeDependencies)29218_storage)"
     },
     {
-      "astId": 31840,
+      "astId": 31748,
       "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
       "label": "__gap",
       "offset": 0,
@@ -234,32 +234,32 @@
       "label": "bytes32",
       "numberOfBytes": "32"
     },
-    "t_contract(IBondingRegistry)21073": {
+    "t_contract(IBondingRegistry)21068": {
       "encoding": "inplace",
       "label": "contract IBondingRegistry",
       "numberOfBytes": "20"
     },
-    "t_contract(IDkgFoldAttestationVerifier)21825": {
+    "t_contract(IDkgFoldAttestationVerifier)21811": {
       "encoding": "inplace",
       "label": "contract IDkgFoldAttestationVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(IInterfold)23293": {
+    "t_contract(IInterfold)23274": {
       "encoding": "inplace",
       "label": "contract IInterfold",
       "numberOfBytes": "20"
     },
-    "t_contract(ISlashingManager)23940": {
+    "t_contract(ISlashingManager)23921": {
       "encoding": "inplace",
       "label": "contract ISlashingManager",
       "numberOfBytes": "20"
     },
-    "t_enum(CommitteeStage)21097": {
+    "t_enum(CommitteeStage)21092": {
       "encoding": "inplace",
       "label": "enum ICiphernodeRegistry.CommitteeStage",
       "numberOfBytes": "1"
     },
-    "t_enum(MemberStatus)21091": {
+    "t_enum(MemberStatus)21086": {
       "encoding": "inplace",
       "label": "enum ICiphernodeRegistry.MemberStatus",
       "numberOfBytes": "1"
@@ -271,12 +271,12 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_enum(MemberStatus)21091)": {
+    "t_mapping(t_address,t_enum(MemberStatus)21086)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => enum ICiphernodeRegistry.MemberStatus)",
       "numberOfBytes": "32",
-      "value": "t_enum(MemberStatus)21091"
+      "value": "t_enum(MemberStatus)21086"
     },
     "t_mapping(t_address,t_uint256)": {
       "encoding": "mapping",
@@ -313,19 +313,19 @@
       "numberOfBytes": "32",
       "value": "t_bytes32"
     },
-    "t_mapping(t_uint256,t_struct(Committee)21134_storage)": {
+    "t_mapping(t_uint256,t_struct(Committee)21129_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct ICiphernodeRegistry.Committee)",
       "numberOfBytes": "32",
-      "value": "t_struct(Committee)21134_storage"
+      "value": "t_struct(Committee)21129_storage"
     },
-    "t_mapping(t_uint256,t_struct(CommitteeDependencies)29310_storage)": {
+    "t_mapping(t_uint256,t_struct(CommitteeDependencies)29218_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct CiphernodeRegistryOwnable.CommitteeDependencies)",
       "numberOfBytes": "32",
-      "value": "t_struct(CommitteeDependencies)29310_storage"
+      "value": "t_struct(CommitteeDependencies)29218_storage"
     },
     "t_mapping(t_uint256,t_uint256)": {
       "encoding": "mapping",
@@ -334,20 +334,20 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_struct(Committee)21134_storage": {
+    "t_struct(Committee)21129_storage": {
       "encoding": "inplace",
       "label": "struct ICiphernodeRegistry.Committee",
       "members": [
         {
-          "astId": 21101,
+          "astId": 21096,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "stage",
           "offset": 0,
           "slot": "0",
-          "type": "t_enum(CommitteeStage)21097"
+          "type": "t_enum(CommitteeStage)21092"
         },
         {
-          "astId": 21103,
+          "astId": 21098,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "seed",
           "offset": 0,
@@ -355,7 +355,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21105,
+          "astId": 21100,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "requestBlock",
           "offset": 0,
@@ -363,7 +363,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21107,
+          "astId": 21102,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "committeeDeadline",
           "offset": 0,
@@ -371,7 +371,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21109,
+          "astId": 21104,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "publicKey",
           "offset": 0,
@@ -379,7 +379,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 21113,
+          "astId": 21108,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "threshold",
           "offset": 0,
@@ -387,7 +387,7 @@
           "type": "t_array(t_uint32)2_storage"
         },
         {
-          "astId": 21116,
+          "astId": 21111,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "topNodes",
           "offset": 0,
@@ -395,7 +395,7 @@
           "type": "t_array(t_address)dyn_storage"
         },
         {
-          "astId": 21118,
+          "astId": 21113,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "committeeHash",
           "offset": 0,
@@ -403,7 +403,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 21122,
+          "astId": 21117,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "submitted",
           "offset": 0,
@@ -411,7 +411,7 @@
           "type": "t_mapping(t_address,t_bool)"
         },
         {
-          "astId": 21126,
+          "astId": 21121,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "scoreOf",
           "offset": 0,
@@ -419,15 +419,15 @@
           "type": "t_mapping(t_address,t_uint256)"
         },
         {
-          "astId": 21131,
+          "astId": 21126,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "memberStatus",
           "offset": 0,
           "slot": "10",
-          "type": "t_mapping(t_address,t_enum(MemberStatus)21091)"
+          "type": "t_mapping(t_address,t_enum(MemberStatus)21086)"
         },
         {
-          "astId": 21133,
+          "astId": 21128,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "activeCount",
           "offset": 0,
@@ -437,33 +437,33 @@
       ],
       "numberOfBytes": "384"
     },
-    "t_struct(CommitteeDependencies)29310_storage": {
+    "t_struct(CommitteeDependencies)29218_storage": {
       "encoding": "inplace",
       "label": "struct CiphernodeRegistryOwnable.CommitteeDependencies",
       "members": [
         {
-          "astId": 29303,
+          "astId": 29211,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "interfoldContract",
           "offset": 0,
           "slot": "0",
-          "type": "t_contract(IInterfold)23293"
+          "type": "t_contract(IInterfold)23274"
         },
         {
-          "astId": 29306,
+          "astId": 29214,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "bonding",
           "offset": 0,
           "slot": "1",
-          "type": "t_contract(IBondingRegistry)21073"
+          "type": "t_contract(IBondingRegistry)21068"
         },
         {
-          "astId": 29309,
+          "astId": 29217,
           "contract": "project/contracts/registry/CiphernodeRegistryOwnable.sol:CiphernodeRegistryOwnable",
           "label": "slashManager",
           "offset": 0,
           "slot": "2",
-          "type": "t_contract(ISlashingManager)23940"
+          "type": "t_contract(ISlashingManager)23921"
         }
       ],
       "numberOfBytes": "96"
