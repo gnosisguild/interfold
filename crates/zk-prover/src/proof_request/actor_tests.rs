@@ -27,7 +27,7 @@ async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<
 #[actix::test]
 async fn c0_compute_error_emits_e3_failed() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("44", 1);
     let correlation_id = CorrelationId::new();
 
@@ -75,7 +75,7 @@ async fn c0_compute_error_emits_e3_failed() -> Result<()> {
 #[actix::test]
 async fn decryption_failure_helper_emits_e3_failed() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-    let actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
+    let actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("45", 1);
 
     actor.fail_decryption_round(

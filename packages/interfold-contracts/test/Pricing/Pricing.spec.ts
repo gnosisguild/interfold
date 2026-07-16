@@ -358,7 +358,6 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
         maxFee: ethers.MaxUint256,
         requestDeadline: now + 100,
       };
@@ -450,7 +449,6 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
         maxFee: ethers.MaxUint256,
         requestDeadline: now + 100,
       };

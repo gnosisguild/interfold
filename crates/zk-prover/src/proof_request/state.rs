@@ -35,8 +35,6 @@ pub(crate) struct NodeAggregationMeta {
     pub(crate) total_expected: usize,
     /// Buffered C0 proof, if it arrived before meta was stored.
     pub(crate) pending_c0: Option<Proof>,
-    /// When false, skip emitting DKGInnerProofReady (no recursive DKG aggregation).
-    pub(crate) proof_aggregation_enabled: bool,
 }
 
 impl NodeAggregationMeta {

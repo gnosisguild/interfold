@@ -94,7 +94,7 @@ impl ProofRequestActor {
         }
 
         if let Some(meta) = self.node_agg_meta.get(&e3_id) {
-            if meta.proof_aggregation_enabled {
+            if self.proof_aggregation_enabled {
                 if let Err(err) = self.bus.publish(
                     DKGInnerProofReady {
                         e3_id: e3_id.clone(),

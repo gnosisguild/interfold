@@ -11,7 +11,9 @@ const { loadFixture, time } = networkHelpers;
 
 describe("CiphernodeRegistryOwnable verifier lifecycle", function () {
   const setup = async () => {
-    const sys = await deployInterfoldSystem();
+    const sys = await deployInterfoldSystem({
+      wireMockDkgFoldAttestationVerifier: false,
+    });
     const verifier1 = await ethers.deployContract("DkgFoldAttestationVerifier");
     const verifier2 = await ethers.deployContract("DkgFoldAttestationVerifier");
     const verifier3 = await ethers.deployContract("DkgFoldAttestationVerifier");

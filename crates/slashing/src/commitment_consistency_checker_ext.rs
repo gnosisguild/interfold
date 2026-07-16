@@ -140,7 +140,6 @@ mod tests {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::from_bytes(&[]),
             error_size: ArcBytes::from_bytes(&[]),
-            proof_aggregation_enabled: false,
         }
     }
 

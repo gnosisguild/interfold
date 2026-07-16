@@ -191,7 +191,6 @@ fn node_agg_meta_seq_helpers() {
         party_id: 0,
         total_expected: NodeAggregationMeta::total_expected_for(2, 1),
         pending_c0: None,
-        proof_aggregation_enabled: true,
     };
     // c4_base_seq sits just after C0..C3 = total_expected - 2.
     assert_eq!(meta.c4_base_seq(), 4 + 2 + 1);

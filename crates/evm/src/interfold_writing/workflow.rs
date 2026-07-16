@@ -18,8 +18,8 @@ use e3_events::CircuitName;
 
 /// Validate a decrypted result before it is written on-chain.
 ///
-/// Returns `Ok(())` when exactly one decrypted output is present and (when
-/// proof aggregation is enabled) the proof count matches the output count.
+/// Returns `Ok(())` when exactly one decrypted output is present and the non-empty proof list
+/// matches the output count.
 /// Returns a human-readable error message otherwise.
 pub(crate) fn validate_plaintext_output(
     e3_id: &E3id,
@@ -38,11 +38,13 @@ pub(crate) fn validate_plaintext_output(
             decrypted_output.len()
         ));
     }
-    // `decryption_aggregator_proofs` is empty when proof aggregation is disabled.
-    // When enabled, its length must match `decrypted_output`.
-    if !decryption_aggregator_proofs.is_empty()
-        && decrypted_output.len() != decryption_aggregator_proofs.len()
-    {
+    if decryption_aggregator_proofs.is_empty() {
+        return Err(format!(
+            "E3 {} has no decryption aggregator proof payload",
+            e3_id
+        ));
+    }
+    if decrypted_output.len() != decryption_aggregator_proofs.len() {
         return Err(format!(
             "E3 {} decrypted_output len ({}) != decryption_aggregator_proofs len ({})",
             e3_id,
@@ -86,8 +88,9 @@ mod tests {
     }
 
     #[test]
-    fn accepts_single_output_no_proofs() {
-        assert!(validate_plaintext_output(&e3(), &bytes(1), &[]).is_ok());
+    fn rejects_single_output_without_proof() {
+        let err = validate_plaintext_output(&e3(), &bytes(1), &[]).unwrap_err();
+        assert!(err.contains("no decryption aggregator proof"));
     }
 
     #[test]

@@ -29,6 +29,7 @@ use crate::node_fold_public::extract_node_fold_agg_commits;
 pub struct NodeProofAggregator {
     bus: BusHandle,
     signer: PrivateKeySigner,
+    proof_aggregation_enabled: bool,
     /// Per-chain `DkgFoldAttestationVerifier` address (EIP-712 `verifyingContract`).
     /// Looked up by `e3_id.chain_id()` when signing fold attestations.
     dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
@@ -42,10 +43,12 @@ impl NodeProofAggregator {
         bus: &BusHandle,
         signer: PrivateKeySigner,
         dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+        proof_aggregation_enabled: bool,
     ) -> Self {
         Self {
             bus: bus.clone(),
             signer,
+            proof_aggregation_enabled,
             dkg_fold_attestation_verifiers_by_chain,
             states: HashMap::new(),
             fold_correlation: HashMap::new(),
@@ -57,8 +60,15 @@ impl NodeProofAggregator {
         bus: &BusHandle,
         signer: PrivateKeySigner,
         dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+        proof_aggregation_enabled: bool,
     ) -> Addr<Self> {
-        let addr = Self::new(bus, signer, dkg_fold_attestation_verifiers_by_chain).start();
+        let addr = Self::new(
+            bus,
+            signer,
+            dkg_fold_attestation_verifiers_by_chain,
+            proof_aggregation_enabled,
+        )
+        .start();
         bus.subscribe(EventType::ThresholdSharePending, addr.clone().into());
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
@@ -112,7 +122,7 @@ mod tests {
     #[actix::test]
     async fn node_dkg_fold_compute_error_emits_e3_failed() -> Result<()> {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new());
+        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), true);
         let e3_id = E3id::new("42", 1);
         let correlation_id = CorrelationId::new();
 
@@ -197,7 +207,7 @@ mod tests {
     #[actix::test]
     async fn early_inner_proof_is_prebuffered_until_collection_starts() -> Result<()> {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new());
+        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), true);
         let e3_id = E3id::new("43", 1);
         let early_proof = dummy_proof(10);
 

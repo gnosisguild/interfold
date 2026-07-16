@@ -5,7 +5,7 @@
 #        [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]
 #
 # Integration test env (also set by run_benchmarks.sh):
-#   BENCHMARK_PROOF_AGGREGATION=true        — always enabled in the benchmark harness
+#   CIPHERNODE_SKIP_PROOF_AGGREGATION=false — aggregation stays enabled in the benchmark harness
 #   BENCHMARK_MULTITHREAD_JOBS=N            — Rayon concurrent ZK jobs (default: 1)
 #   BENCHMARK_DKG_FOLD_ATTESTATION_VERIFIER — EIP-712 verifying contract for fold attestations
 
@@ -165,12 +165,12 @@ echo "  [gas] Running CRISP verifier test for Pi_user gas..."
 CRISP_TEST_EXIT_CODE=${PIPESTATUS[0]}
 echo "  [gas] CRISP test completed (exit=${CRISP_TEST_EXIT_CODE})."
 require_preset_artifacts
-BENCHMARK_PROOF_AGGREGATION=true
+CIPHERNODE_SKIP_PROOF_AGGREGATION=false
 echo "  [gas] Running integration test (test_trbfv_actor); proof_aggregation=true, multithread_jobs=${BENCHMARK_MULTITHREAD_JOBS:-1}, profile=release..."
 (
   cd "$REPO_ROOT" && \
   BENCHMARK_MODE="$MODE" \
-  BENCHMARK_PROOF_AGGREGATION=true \
+  CIPHERNODE_SKIP_PROOF_AGGREGATION=false \
   BENCHMARK_FOLDED_OUTPUT="$TMP_JSON_FOLDED" \
   BENCHMARK_SUMMARY_OUTPUT="$TMP_JSON_SUMMARY" \
   cargo test --release -p e3-tests test_trbfv_actor -- --nocapture

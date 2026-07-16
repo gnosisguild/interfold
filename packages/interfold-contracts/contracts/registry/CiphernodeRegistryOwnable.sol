@@ -320,21 +320,19 @@ contract CiphernodeRegistryOwnable is
         publicKeyHashes[e3Id] = pkCommitment;
 
         E3 memory e3 = _interfoldFor(e3Id).getE3(e3Id);
-        if (e3.proofAggregationEnabled) {
-            // Bind to the on-chain committee (c.topNodes), not caller-supplied
-            // nodes, so a wrong `nodes` input cannot pre-commit the prover to
-            // an attacker's set (C-08).
-            _verifyAndStoreDkgAnchors(
-                e3Id,
-                e3,
-                roots[e3Id],
-                c.topNodes,
-                pkCommitment,
-                committeeHash,
-                proof,
-                dkgAttestationBundle
-            );
-        }
+        // Bind to the on-chain committee (c.topNodes), not caller-supplied
+        // nodes, so a wrong `nodes` input cannot pre-commit the prover to
+        // an attacker's set (C-08).
+        _verifyAndStoreDkgAnchors(
+            e3Id,
+            e3,
+            roots[e3Id],
+            c.topNodes,
+            pkCommitment,
+            committeeHash,
+            proof,
+            dkgAttestationBundle
+        );
 
         _interfoldFor(e3Id).onCommitteePublished(e3Id, pkCommitment);
 

@@ -97,6 +97,12 @@ export interface DeployInterfoldSystemOptions {
   maxDuration?: number;
   /** Override the timeout config. Defaults to {@link DEFAULT_TIMEOUT_CONFIG}. */
   timeoutConfig?: TimeoutConfig;
+  /**
+   * Install the permissive DKG fold-attestation verifier used by ordinary tests.
+   * Defaults to `true`. Set to `false` for verifier lifecycle tests that need an
+   * initially unset registry.
+   */
+  wireMockDkgFoldAttestationVerifier?: boolean;
   /** Treasury for `E3RefundManager`. Defaults to `"owner"`. */
   treasury?: "owner" | Signer;
   /** `slashedFundsTreasury` passed to `BondingRegistry`. Defaults to `"owner"`. */
@@ -499,6 +505,18 @@ export async function deployInterfoldSystem(
     ENCRYPTION_SCHEME_ID,
     await pkVerifier.getAddress(),
   );
+  if (
+    !mockCiphernodeRegistry &&
+    (opts.wireMockDkgFoldAttestationVerifier ?? true)
+  ) {
+    const mockDkgFoldAttestationVerifier = await ethers.deployContract(
+      "MockDkgFoldAttestationVerifier",
+    );
+    await mockDkgFoldAttestationVerifier.waitForDeployment();
+    await ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
+      await mockDkgFoldAttestationVerifier.getAddress(),
+    );
+  }
 
   // ── Committee thresholds ([M, N] per CommitteeSize) ─────────────────────
   for (const [size, [m, n]] of committeeThresholds) {
@@ -546,7 +564,6 @@ export async function deployInterfoldSystem(
       ["address"],
       ["0x1234567890123456789012345678901234567890"],
     ),
-    proofAggregationEnabled: false,
     maxFee: ethers.MaxUint256,
     requestDeadline: now + 10,
   };

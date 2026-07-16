@@ -51,7 +51,7 @@ The simplest way to run CRISP is:
 ```bash
 # Optional: choose local profile (copied to crisp.dev.env on first setup)
 cp crisp.dev.env.example crisp.dev.env
-# Edit CRISP_PROOF_AGGREGATION_ENABLED and CRISP_BFV_PRESET (see docs/PROOF_AGGREGATION_AND_ZK.md)
+# Edit CRISP_SKIP_PROOF_AGGREGATION and CRISP_BFV_PRESET (see docs/PROOF_AGGREGATION_AND_ZK.md)
 
 # Install dependencies and build everything (applies crisp.dev.env → server/.env)
 pnpm dev:setup
@@ -184,13 +184,13 @@ After `pnpm dev:up`, contract addresses are written automatically to `interfold.
 
 Edit **`crisp.dev.env`** (created from `crisp.dev.env.example` on first `pnpm dev:setup`):
 
-| Variable                          | Default        | Effect                                                                                                          |
-| --------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
-| `CRISP_BFV_PRESET`                | `insecure-512` | DKG circuit build preset when aggregation is on                                                                 |
-| `CRISP_PROOF_AGGREGATION_ENABLED` | `false`        | Synced to `server/.env`; controls DKG circuit build, deploy (`ENABLE_ZK_VERIFICATION`), and runtime aggregation |
+| Variable                       | Default        | Effect                                                                |
+| ------------------------------ | -------------- | --------------------------------------------------------------------- |
+| `CRISP_BFV_PRESET`             | `insecure-512` | DKG circuit build preset for full aggregation                         |
+| `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | Ciphernode-only local-dev skip; also selects mock verifier deployment |
 
-`pnpm dev:setup` applies this profile (build DKG circuits when needed, sync `server/.env`).
-`pnpm dev:up` deploys contracts using the same flags.
+`pnpm dev:setup` applies this profile and builds recursive circuits only when needed. `pnpm dev:up`
+deploys contracts using the same flags.
 
 See **[docs/PROOF_AGGREGATION_AND_ZK.md](./docs/PROOF_AGGREGATION_AND_ZK.md)** for modes, address
 sync, and troubleshooting (`VkHashMismatch`, etc.).

@@ -80,6 +80,7 @@ pub struct CiphernodeBuilder {
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
     multithread_report: Option<Addr<MultithreadReport>>,
+    proof_aggregation_enabled: bool,
     pubkey_agg: bool,
     rng: SharedRng,
     sortition_backend: SortitionBackend,
@@ -148,6 +149,7 @@ impl CiphernodeBuilder {
             multithread_cache: None,
             multithread_concurrent_jobs: None,
             multithread_report: None,
+            proof_aggregation_enabled: true,
             pubkey_agg: false,
             rng,
             sortition_backend: SortitionBackend::score(),
@@ -322,6 +324,16 @@ impl CiphernodeBuilder {
     /// Do public key aggregation
     pub fn with_pubkey_aggregation(mut self) -> Self {
         self.pubkey_agg = true;
+        self
+    }
+
+    /// Skip recursive proof aggregation for tests and CI.
+    ///
+    /// This only changes local ciphernode work. Contracts still verify the final DKG and
+    /// decryption proof payloads, so this setting is only useful with test deployments whose
+    /// configured mock verifiers accept the non-empty C5/C7 placeholder payloads.
+    pub fn with_proof_aggregation_disabled_for_testing(mut self) -> Self {
+        self.proof_aggregation_enabled = false;
         self
     }
 
@@ -811,6 +823,7 @@ impl CiphernodeBuilder {
                 _signer,
                 dkg_fold_verifier_by_chain.clone(),
                 zk_recovery.clone(),
+                self.proof_aggregation_enabled,
             );
         }
 
@@ -836,6 +849,7 @@ impl CiphernodeBuilder {
                     signer,
                     dkg_fold_verifier_by_chain.clone(),
                     zk_recovery,
+                    self.proof_aggregation_enabled,
                 );
             }
         }
@@ -845,7 +859,9 @@ impl CiphernodeBuilder {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
             let _ = self.ensure_multithread(bus);
             e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
-                bus, sortition,
+                bus,
+                sortition,
+                self.proof_aggregation_enabled,
             ));
         }
 

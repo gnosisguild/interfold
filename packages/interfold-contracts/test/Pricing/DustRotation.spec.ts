@@ -14,6 +14,7 @@ import {
   SORTITION_SUBMISSION_WINDOW,
   DATA as data,
   deployInterfoldSystem,
+  encodeMockDkgProof,
   ethers,
   networkHelpers,
   PROOF as proof,
@@ -37,7 +38,13 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
     await registry.finalizeCommittee(e3Id);
     const pkCommitment = ethers.keccak256(publicKey);
-    await registry.publishCommittee(e3Id, publicKey, pkCommitment, "0x", "0x");
+    await registry.publishCommittee(
+      e3Id,
+      publicKey,
+      pkCommitment,
+      encodeMockDkgProof(pkCommitment),
+      "0x01",
+    );
   };
 
   const setup = async () => {
@@ -105,7 +112,6 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
         maxFee: ethers.MaxUint256,
         requestDeadline: now0 + 10,
       } as any;
@@ -126,7 +132,6 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
         maxFee: ethers.MaxUint256,
         requestDeadline: now + 10,
       };

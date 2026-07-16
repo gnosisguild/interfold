@@ -637,8 +637,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm committee public key is still unset
-  ├─ Encodes the DkgAggregator proof when aggregation is enabled,
-  │  otherwise passes empty proof bytes in development mode
+  ├─ Encodes the DkgAggregator proof in production
+  ├─ Test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
+  │  mock-verifier placeholder; this does not bypass contract verification
   └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
@@ -648,8 +649,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │    2. require(c.publicKey == 0) — publish once      │
         │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
-        │  │    4. When proofAggregationEnabled:                 │
-        │  │       require(proof.length > 0)                    │
+        │  │    4. require(proof.length > 0)                    │
         │  │       e3.pkVerifier.verify(                         │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
@@ -681,11 +681,11 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 ```
 
 The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
-`e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the circuit's
-public-key commitment using the request's parameter set, and requires equality with the event's
-on-chain `pkCommitment`. Malformed bytes or bytes for a different key fail closed and never reach
-encryption clients. The commitment is C5-proven when proof aggregation is enabled; the explicitly
-unsafe development mode trusts it from the aggregator.
+`e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
+circuit's public-key commitment using the request's parameter set, and requires equality with the
+event's on-chain `pkCommitment`. Malformed bytes or bytes for a different key fail closed and never
+reach encryption clients. The commitment is C5-proven when proof aggregation is enabled; the
+explicitly unsafe development mode trusts it from the aggregator.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
@@ -899,8 +899,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm plaintextOutput is still empty
-  ├─ Encodes the final decryption proof when aggregation is enabled,
-  │  otherwise passes empty proof bytes in development mode
+  ├─ Encodes the final DecryptionAggregator proof in production
+  ├─ Test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
+  │  mock-verifier placeholder; this does not bypass contract verification
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
@@ -908,8 +909,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
-        │  │    3. When proofAggregationEnabled:                 │
-        │  │       require(proof.length > 0), then canonically   │
+        │  │    3. require(proof.length > 0), then canonically   │
         │  │       decode (rawProof, publicInputs),              │
         │  │       derive a proof nullifier, require it unused,  │
         │  │       and consume it (equivalent ABI encodings map  │

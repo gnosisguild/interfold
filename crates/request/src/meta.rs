@@ -22,7 +22,6 @@ pub struct E3Meta {
     pub params_preset: BfvPreset,
     pub params: ArcBytes,
     pub error_size: ArcBytes,
-    pub proof_aggregation_enabled: bool,
 }
 
 pub struct E3MetaExtension;
@@ -47,7 +46,6 @@ impl E3Extension for E3MetaExtension {
             params_preset,
             params,
             error_size,
-            proof_aggregation_enabled,
             ..
         } = data.clone();
 
@@ -59,7 +57,6 @@ impl E3Extension for E3MetaExtension {
             params_preset,
             params,
             error_size,
-            proof_aggregation_enabled,
         };
         ctx.repositories().meta(&e3_id).write(&meta);
         ctx.set_dependency(META_KEY, meta);

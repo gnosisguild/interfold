@@ -109,7 +109,6 @@ const RequestComputation: React.FC = () => {
         e3Program: contracts.e3Program,
         paramSet: 0, // ParamSet.Insecure512
         computeProviderParams,
-        proofAggregationEnabled: false,
       }
 
       const fee = await sdk.sdk.getE3Quote(requestParams)

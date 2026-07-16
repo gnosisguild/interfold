@@ -60,9 +60,6 @@ export interface E3RequestParams extends RequestParams {
   paramSet: number
   computeProviderParams: `0x${string}`
   customParams?: `0x${string}`
-  /** When true, ciphernodes generate wrapper/fold proofs for DKG proof aggregation.
-   *  When false, proof aggregation is skipped for faster computation. Defaults to true. */
-  proofAggregationEnabled?: boolean
   /** Maximum fee-token amount authorized for this request. Defaults to a fresh quote. */
   maxFee?: bigint
   /** Last timestamp at which the request may execute. Defaults to inputWindow[0]. */

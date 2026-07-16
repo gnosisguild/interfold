@@ -43,10 +43,11 @@ async fn missing_c6_inner_proofs_emit_e3_failed() -> Result<()> {
 }
 
 #[actix::test]
-async fn proof_aggregation_disabled_marks_decryption_aggregator_ready() -> Result<()> {
+async fn test_skip_reuses_c7_as_mock_verifier_placeholder() -> Result<()> {
     let (mut aggregator, _history, _e3_id) =
         build_plaintext_aggregator(generating_c7_state(), false).await?;
-    aggregator.pending.c7_proofs_pending = Some(vec![dummy_proof(CircuitName::PkAggregation)]);
+    let c7_proof = dummy_proof(CircuitName::PkAggregation);
+    aggregator.pending.c7_proofs_pending = Some(vec![c7_proof.clone()]);
     let ec = test_ctx(E3Failed {
         e3_id: aggregator.e3_id.clone(),
         failed_at_stage: E3Stage::None,
@@ -58,7 +59,7 @@ async fn proof_aggregation_disabled_marks_decryption_aggregator_ready() -> Resul
         .pending
         .decryption_aggregator_proofs
         .as_ref()
-        .is_some_and(|p| p.is_empty()));
+        .is_some_and(|proofs| proofs == &[c7_proof]));
     assert!(aggregator
         .pending
         .decryption_aggregation_correlation

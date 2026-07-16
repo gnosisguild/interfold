@@ -31,10 +31,6 @@ pub struct E3Requested {
     /// ABI-encoded BFV parameters (derived from `params_preset`).
     /// Kept for downstream code that needs the raw bytes (e.g. `TrBFVConfig`).
     pub params: ArcBytes,
-    /// When true, ciphernodes generate wrapper/fold proofs for DKG proof
-    /// aggregation (public verifiability). When false, wrapper/fold proofs
-    /// are skipped to reduce latency. C5 and C7 proofs are always generated.
-    pub proof_aggregation_enabled: bool,
 }
 
 impl Default for E3Requested {
@@ -47,7 +43,6 @@ impl Default for E3Requested {
             seed: Seed([0u8; 32]),
             threshold_m: 0,
             threshold_n: 0,
-            proof_aggregation_enabled: false,
         }
     }
 }

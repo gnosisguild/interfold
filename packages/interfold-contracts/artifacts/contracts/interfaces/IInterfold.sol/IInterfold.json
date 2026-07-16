@@ -740,11 +740,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "indexed": false,
@@ -1532,11 +1527,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct E3",
@@ -1580,11 +1570,6 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             },
             {
               "internalType": "uint256",
@@ -2063,11 +2048,6 @@
               "type": "bytes"
             },
             {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
-            },
-            {
               "internalType": "uint256",
               "name": "maxFee",
               "type": "uint256"
@@ -2161,11 +2141,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct E3",
@@ -2464,5 +2439,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-60a110ad1306dba588e2305638dcf9f89d966d5a"
+  "buildInfoId": "solc-0_8_28-873e74c1b5b14b995c4e623d1b2305d86bdf9b7a"
 }

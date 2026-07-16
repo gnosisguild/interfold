@@ -315,7 +315,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         e3.e3Program = requestParams.e3Program;
         e3.paramSet = requestParams.paramSet;
         e3.customParams = requestParams.customParams;
-        e3.proofAggregationEnabled = requestParams.proofAggregationEnabled;
         e3.requester = msg.sender;
 
         bytes memory e3ProgramParams = paramSetRegistry[requestParams.paramSet];
@@ -407,7 +406,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes calldata plaintextOutput,
         bytes calldata proof
     ) external returns (bool success) {
-        E3 memory e3 = getE3(e3Id);
+        require(
+            e3s[e3Id].e3Program != IE3Program(address(0)),
+            E3DoesNotExist(e3Id)
+        );
 
         // Check we are in the right stage
         // no need to check if there's a ciphertext as we would not
@@ -428,17 +430,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         e3s[e3Id].plaintextOutput = plaintextOutput;
         _e3Stages[e3Id] = E3Stage.Complete;
 
-        if (e3.proofAggregationEnabled) {
-            require(proof.length > 0, ProofRequired());
+        require(proof.length > 0, ProofRequired());
 
-            // Canonicalize the verifier ABI payload before deriving its nullifier.
-            // `abi.decode` accepts some trailing-byte variants; hashing the decoded
-            // tuple makes every equivalent encoding consume the same one-shot key.
-            _verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);
-            success = true;
-        } else {
-            success = true;
-        }
+        // Canonicalize the verifier ABI payload before deriving its nullifier.
+        // `abi.decode` accepts some trailing-byte variants; hashing the decoded
+        // tuple makes every equivalent encoding consume the same one-shot key.
+        _verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);
+        success = true;
 
         _distributeRewards(e3Id);
 

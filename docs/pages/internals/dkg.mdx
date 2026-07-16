@@ -330,10 +330,14 @@ aggregator.
 
 ## Proof Aggregation and On-Chain Anchoring
 
-E3 programs can opt into **proof aggregation** by setting `proofAggregationEnabled = true` at
-request time. In that mode the network does not post per-node, per-circuit proofs on-chain. Instead
-the aggregator submits two recursive proofs — one for DKG, one for decryption — together with
-per-node attestations that bind each surfaced commitment to a specific registered operator.
+**Proof aggregation is mandatory at the contract boundary.** The network does not post per-node,
+per-circuit proofs on-chain. Instead the aggregator submits two recursive proofs — one for DKG, one
+for decryption — together with per-node attestations that bind each surfaced commitment to a
+specific registered operator.
+
+Ciphernodes expose a test/CI-only `skip_proof_aggregation` node setting. It skips the recursive
+workers and reuses the already-generated C5/C7 proofs as non-empty placeholders for mock verifiers.
+Contracts still execute their verifier calls, so this flag cannot weaken a production deployment.
 
 ### Canonical party_id assignment
 
@@ -494,10 +498,10 @@ Production deploys on a non-canonical preset must regenerate locally for that de
 The repo enforces sync with two modes of `pnpm generate:verifiers`:
 
 - **`--check`** — used by `tests/integration/lib/prebuild.sh` (when
-  `PROOF_AGGREGATION_ENABLED=true`) and by the benchmark gas-extraction scripts. Regenerates each
-  verifier in memory, runs the same `prettier-plugin-solidity` formatting the committed files use,
-  and diffs against the committed `.sol`. Any drift fails the run with a clear fix recipe instead of
-  silently rewriting committed contracts mid-test.
+  `CIPHERNODE_SKIP_PROOF_AGGREGATION=false`) and by the benchmark gas-extraction scripts.
+  Regenerates each verifier in memory, runs the same `prettier-plugin-solidity` formatting the
+  committed files use, and diffs against the committed `.sol`. Any drift fails the run with a clear
+  fix recipe instead of silently rewriting committed contracts mid-test.
 - **`--write`** (the default for manual invocation) — overwrites the committed files. Run this when
   you intentionally bump the canonical-preset circuits or the Noir/bb toolchain, then commit the
   diff.

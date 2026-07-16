@@ -140,7 +140,6 @@ export class InterfoldSDK {
     paramSet: number
     computeProviderParams: `0x${string}`
     customParams?: `0x${string}`
-    proofAggregationEnabled?: boolean
     maxFee?: bigint
     requestDeadline?: bigint
     gasLimit?: bigint

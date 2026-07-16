@@ -74,6 +74,9 @@ pub struct NodeDefinition {
     /// Maximum estimated bytes retained by the network startup buffer.
     #[serde(default = "default_max_buffered_net_bytes")]
     pub max_buffered_net_bytes: usize,
+    /// Test/CI-only escape hatch that skips recursive DKG and decryption proof aggregation.
+    /// On-chain verification remains mandatory, so this requires mock verifiers.
+    pub skip_proof_aggregation: bool,
 }
 
 fn default_multithread_reserve_threads() -> usize {
@@ -118,6 +121,7 @@ impl Default for NodeDefinition {
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
             max_buffered_net_bytes: default_max_buffered_net_bytes(),
+            skip_proof_aggregation: false,
         }
     }
 }
@@ -417,6 +421,11 @@ impl AppConfig {
     /// Maximum estimated bytes retained by the network startup buffer.
     pub fn max_buffered_net_bytes(&self) -> usize {
         self.node_def().max_buffered_net_bytes
+    }
+
+    /// Whether this node skips recursive proof aggregation for test/CI runs.
+    pub fn skip_proof_aggregation(&self) -> bool {
+        self.node_def().skip_proof_aggregation
     }
 }
 
@@ -808,6 +817,32 @@ node:
         )?;
         assert_eq!(config.multithread_reserve_threads(), 2);
         assert_eq!(config.multithread_concurrent_jobs(), Some(4));
+        Ok(())
+    }
+
+    #[test]
+    fn test_skip_proof_aggregation_defaults_off_and_can_be_enabled() -> Result<()> {
+        let configured: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  skip_proof_aggregation: true
+"#,
+        )?;
+        let configured = configured.into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert!(configured.skip_proof_aggregation());
+
+        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert!(!default.skip_proof_aggregation());
         Ok(())
     }
 

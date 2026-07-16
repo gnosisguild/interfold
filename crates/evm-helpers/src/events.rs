@@ -50,7 +50,6 @@ sol! {
         bytes32 ciphertextOutput;
         bytes plaintextOutput;
         address requester;
-        bool proofAggregationEnabled;
     }
 
     #[derive(Debug)]

@@ -25,6 +25,7 @@ import {
   ONE_DAY,
   SORTITION_SUBMISSION_WINDOW,
   deployInterfoldSystem,
+  encodeMockDkgProof,
   ethers,
   networkHelpers,
   signAndEncodeAttestation,
@@ -144,7 +145,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
         maxFee: ethers.MaxUint256,
         requestDeadline: startTime + 100,
       };
@@ -172,8 +172,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         e3Id,
         publicKey,
         pkCommitment,
-        "0x",
-        "0x",
+        encodeMockDkgProof(pkCommitment),
+        "0x01",
       );
     }
 

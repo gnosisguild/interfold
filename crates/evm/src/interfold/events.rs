@@ -93,7 +93,6 @@ impl E3RequestedWithChainId {
             seed: self.0.e3.seed.into(),
             error_size,
             e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
-            proof_aggregation_enabled: self.0.e3.proofAggregationEnabled,
         })
     }
 }
@@ -571,7 +570,6 @@ mod tests {
                 ciphertextOutput: B256::ZERO,
                 plaintextOutput: Bytes::new(),
                 requester: Address::ZERO,
-                proofAggregationEnabled: false,
             },
             e3Program: Address::ZERO,
         };

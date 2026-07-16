@@ -17,10 +17,10 @@ use std::fmt::{self, Display};
 pub struct PlaintextAggregated {
     pub e3_id: E3id,
     pub decrypted_output: Vec<ArcBytes>,
-    /// Final DecryptionAggregator (EVM) proof(s): one per ciphertext index. Empty when
-    /// proof aggregation is disabled. On-chain publication currently only supports a
-    /// single-output plaintext, in which case the first proof is forwarded to
-    /// `publishPlaintextOutput`.
+    /// Final DecryptionAggregator (EVM) proof(s): one per ciphertext index. Test/CI nodes that
+    /// skip recursive aggregation carry the existing C7 proofs here as mock-verifier
+    /// placeholders. On-chain publication currently only supports a single-output plaintext, in
+    /// which case the first proof is forwarded to `publishPlaintextOutput`.
     pub decryption_aggregator_proofs: Vec<Proof>,
 }
 

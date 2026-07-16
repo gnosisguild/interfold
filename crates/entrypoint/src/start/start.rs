@@ -14,7 +14,7 @@ use rand_chacha::ChaCha20Rng;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 async fn await_startup<F, T>(future: F, timeout: Duration) -> Result<T>
 where
@@ -48,7 +48,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         "Ciphernode startup deadline configured"
     );
 
-    let build = CiphernodeBuilder::new(rng.clone(), cipher.clone())
+    let mut builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
         .with_name(&config.name())
         .with_logging()
         .with_persistence(&config.log_file(), &config.db_file())
@@ -70,8 +70,15 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         .with_threshold_plaintext_aggregation()
         .with_net(config.peers(), config.quic_port())
         .with_shared_store()
-        .with_shared_eventstore()
-        .build();
+        .with_shared_eventstore();
+    if config.skip_proof_aggregation() {
+        warn!(
+            "Skipping recursive proof aggregation for this test/CI node; \
+             on-chain final proof verification remains mandatory"
+        );
+        builder = builder.with_proof_aggregation_disabled_for_testing();
+    }
+    let build = builder.build();
     let node = await_startup(build, startup_timeout).await?;
 
     Ok(node)

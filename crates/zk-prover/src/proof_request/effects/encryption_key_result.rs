@@ -89,7 +89,7 @@ impl ProofRequestActor {
 
         // Emit DKGInnerProofReady for C0, or buffer if meta not yet available
         if let Some(meta) = self.node_agg_meta.get(&e3_id) {
-            if meta.proof_aggregation_enabled {
+            if self.proof_aggregation_enabled {
                 if let Err(err) = self.bus.publish(
                     DKGInnerProofReady {
                         e3_id: e3_id.clone(),
@@ -110,7 +110,6 @@ impl ProofRequestActor {
                     party_id: 0,
                     total_expected: 0,
                     pending_c0: Some(proof),
-                    proof_aggregation_enabled: true, // will be overwritten by ThresholdSharePending
                 },
             );
         }

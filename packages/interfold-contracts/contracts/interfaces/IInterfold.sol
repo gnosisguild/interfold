@@ -509,10 +509,6 @@ interface IInterfold {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
-        /// @notice When true, ciphernodes generate and fold wrapper proofs
-        ///         for DKG proof aggregation (public verifiability). When
-        ///         false, wrapper/fold proofs are skipped to reduce latency.
-        bool proofAggregationEnabled;
         /// @notice Maximum fee-token amount authorized for this request.
         uint256 maxFee;
         /// @notice Last timestamp at which this request may execute.

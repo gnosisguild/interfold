@@ -604,6 +604,21 @@ export const deployInterfold = async (
         "Successfully set DkgFoldAttestationVerifier on CiphernodeRegistry",
       );
     }
+  } else if (shouldDeployMocks) {
+    console.log("Deploying MockDkgFoldAttestationVerifier for test/CI...");
+    const mockDkgFoldAttestationVerifier = await ethers.deployContract(
+      "MockDkgFoldAttestationVerifier",
+    );
+    await mockDkgFoldAttestationVerifier.waitForDeployment();
+    dkgFoldAttestationVerifierAddress =
+      await mockDkgFoldAttestationVerifier.getAddress();
+    const tx = await ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
+      dkgFoldAttestationVerifierAddress,
+    );
+    await tx.wait();
+    console.log(
+      "Successfully set MockDkgFoldAttestationVerifier on CiphernodeRegistry",
+    );
   }
 
   const verifierLines =

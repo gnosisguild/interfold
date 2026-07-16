@@ -134,7 +134,6 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
             params_preset: preset,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
-            proof_aggregation_enabled: false,
         },
     )]);
     let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();

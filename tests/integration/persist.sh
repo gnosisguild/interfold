@@ -19,7 +19,7 @@ done
 
 pnpm evm:clean
 
-if [[ "${PROOF_AGGREGATION_ENABLED:-false}" == "true" ]]; then
+if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   ENABLE_ZK_VERIFICATION=true pnpm evm:deploy
 else
   pnpm evm:deploy
@@ -73,8 +73,7 @@ pnpm committee:new \
   --input-window-start "$INPUT_WINDOW_START" \
   --input-window-end "$INPUT_WINDOW_END" \
   --e3-params "$ENCODED_PARAMS" \
-  --committee-size 0 \
-  --proof-aggregation-enabled "${PROOF_AGGREGATION_ENABLED:-false}"
+  --committee-size 0
 
 wait_for_committee_pubkey 0 "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
 

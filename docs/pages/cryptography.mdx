@@ -208,8 +208,8 @@ expected commitments match
 outputs) is only checked off-chain, end-to-end correctness still depends on trusting the committee
 network rather than on verifiable mathematics.
 
-The aggregation design addresses both problems. When an E3 is requested with
-`proofAggregationEnabled = true`, only **two recursive proofs** are posted on-chain per E3 session:
+The aggregation design addresses both problems. Only **two recursive proofs** are posted on-chain
+per E3 session:
 
 1. **DKG recursive proof**: the aggregator recursively verifies every node's C0–C4 fold chain
    together with **C5**, which aggregates the public key. Verified on-chain by

@@ -15,7 +15,7 @@ echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""
 
-if [[ "${PROOF_AGGREGATION_ENABLED:-false}" == "true" ]]; then
+if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   echo ""
   echo "BUILDING ZK CIRCUITS + ON-CHAIN VERIFIERS (proof aggregation enabled)..."
   echo ""
