@@ -3,40 +3,40 @@
   "contract": "BondingRegistry",
   "source": "contracts/registry/BondingRegistry.sol",
   "baseline": {
-    "buildInfoId": "solc-0_8_28-7e1c3095a523de6d38d9acb51d82270ee976d136",
+    "buildInfoId": "solc-0_8_28-846b01f057eb6489ff758d75eecbd293c04a77af",
     "compiler": "0.8.28+commit.7893614a",
     "evmVersion": "paris",
     "optimizerRuns": 1,
-    "sourceCommit": "367667d4585586c53416b43d8c49371f04ef2d79",
+    "sourceCommit": "53eb54e092b64f37f1a8efc0053f5521dd1d2131",
     "sourceSha256": "63dce01cce37e34a48bee91ebcf5d01f62cc85472418e4ac8e08cbce415e6097"
   },
   "storage": [
     {
-      "astId": 25215,
+      "astId": 26811,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "ticketToken",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(InterfoldTicketToken)35413"
+      "type": "t_contract(InterfoldTicketToken)38747"
     },
     {
-      "astId": 25219,
+      "astId": 26815,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "licenseToken",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IERC20)3710"
+      "type": "t_contract(IERC20)4293"
     },
     {
-      "astId": 25223,
+      "astId": 26819,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "registry",
       "offset": 0,
       "slot": "2",
-      "type": "t_contract(ICiphernodeRegistry)20485"
+      "type": "t_contract(ICiphernodeRegistry)21722"
     },
     {
-      "astId": 25226,
+      "astId": 26822,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "slashingManager",
       "offset": 0,
@@ -44,7 +44,7 @@
       "type": "t_address"
     },
     {
-      "astId": 25231,
+      "astId": 26827,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "authorizedDistributors",
       "offset": 0,
@@ -52,7 +52,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 25234,
+      "astId": 26830,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "authorizedDistributorCount",
       "offset": 0,
@@ -60,7 +60,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25253,
+      "astId": 26849,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "slashedFundsTreasury",
       "offset": 0,
@@ -68,7 +68,7 @@
       "type": "t_address"
     },
     {
-      "astId": 25256,
+      "astId": 26852,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "ticketPrice",
       "offset": 0,
@@ -76,7 +76,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25259,
+      "astId": 26855,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "licenseRequiredBond",
       "offset": 0,
@@ -84,7 +84,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25262,
+      "astId": 26858,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "minTicketBalance",
       "offset": 0,
@@ -92,7 +92,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25265,
+      "astId": 26861,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "exitDelay",
       "offset": 0,
@@ -100,7 +100,7 @@
       "type": "t_uint64"
     },
     {
-      "astId": 25268,
+      "astId": 26864,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "licenseActiveBps",
       "offset": 0,
@@ -108,7 +108,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25271,
+      "astId": 26867,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "numActiveOperators",
       "offset": 0,
@@ -116,15 +116,15 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25289,
+      "astId": 26885,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "operators",
       "offset": 0,
       "slot": "13",
-      "type": "t_mapping(t_address,t_struct(Operator)25283_storage)"
+      "type": "t_mapping(t_address,t_struct(Operator)26879_storage)"
     },
     {
-      "astId": 25292,
+      "astId": 26888,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "slashedTicketBalance",
       "offset": 0,
@@ -132,7 +132,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25295,
+      "astId": 26891,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "slashedLicenseBond",
       "offset": 0,
@@ -140,15 +140,15 @@
       "type": "t_uint256"
     },
     {
-      "astId": 25299,
+      "astId": 26895,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "_exits",
       "offset": 0,
       "slot": "16",
-      "type": "t_struct(ExitQueueState)22998_storage"
+      "type": "t_struct(ExitQueueState)24594_storage"
     },
     {
-      "astId": 25302,
+      "astId": 26898,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "eligibilityConfigurationLocked",
       "offset": 0,
@@ -156,7 +156,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 25305,
+      "astId": 26901,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "reservedSlashedTicketBalance",
       "offset": 0,
@@ -164,7 +164,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 27530,
+      "astId": 29126,
       "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
       "label": "__gap",
       "offset": 0,
@@ -178,8 +178,8 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_struct(ExitTranche)22967_storage)dyn_storage": {
-      "base": "t_struct(ExitTranche)22967_storage",
+    "t_array(t_struct(ExitTranche)24563_storage)dyn_storage": {
+      "base": "t_struct(ExitTranche)24563_storage",
       "encoding": "dynamic_array",
       "label": "struct ExitQueueLib.ExitTranche[]",
       "numberOfBytes": "32"
@@ -195,27 +195,27 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(ICiphernodeRegistry)20485": {
+    "t_contract(ICiphernodeRegistry)21722": {
       "encoding": "inplace",
       "label": "contract ICiphernodeRegistry",
       "numberOfBytes": "20"
     },
-    "t_contract(IERC20)3710": {
+    "t_contract(IERC20)4293": {
       "encoding": "inplace",
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(InterfoldTicketToken)35413": {
+    "t_contract(InterfoldTicketToken)38747": {
       "encoding": "inplace",
       "label": "contract InterfoldTicketToken",
       "numberOfBytes": "20"
     },
-    "t_mapping(t_address,t_array(t_struct(ExitTranche)22967_storage)dyn_storage)": {
+    "t_mapping(t_address,t_array(t_struct(ExitTranche)24563_storage)dyn_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct ExitQueueLib.ExitTranche[])",
       "numberOfBytes": "32",
-      "value": "t_array(t_struct(ExitTranche)22967_storage)dyn_storage"
+      "value": "t_array(t_struct(ExitTranche)24563_storage)dyn_storage"
     },
     "t_mapping(t_address,t_bool)": {
       "encoding": "mapping",
@@ -224,19 +224,19 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(Operator)25283_storage)": {
+    "t_mapping(t_address,t_struct(Operator)26879_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct BondingRegistry.Operator)",
       "numberOfBytes": "32",
-      "value": "t_struct(Operator)25283_storage"
+      "value": "t_struct(Operator)26879_storage"
     },
-    "t_mapping(t_address,t_struct(PendingAmounts)22973_storage)": {
+    "t_mapping(t_address,t_struct(PendingAmounts)24569_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct ExitQueueLib.PendingAmounts)",
       "numberOfBytes": "32",
-      "value": "t_struct(PendingAmounts)22973_storage"
+      "value": "t_struct(PendingAmounts)24569_storage"
     },
     "t_mapping(t_address,t_uint256)": {
       "encoding": "mapping",
@@ -245,20 +245,20 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_struct(ExitQueueState)22998_storage": {
+    "t_struct(ExitQueueState)24594_storage": {
       "encoding": "inplace",
       "label": "struct ExitQueueLib.ExitQueueState",
       "members": [
         {
-          "astId": 22980,
+          "astId": 24576,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "operatorQueues",
           "offset": 0,
           "slot": "0",
-          "type": "t_mapping(t_address,t_array(t_struct(ExitTranche)22967_storage)dyn_storage)"
+          "type": "t_mapping(t_address,t_array(t_struct(ExitTranche)24563_storage)dyn_storage)"
         },
         {
-          "astId": 22984,
+          "astId": 24580,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "queueHeadIndexTicket",
           "offset": 0,
@@ -266,7 +266,7 @@
           "type": "t_mapping(t_address,t_uint256)"
         },
         {
-          "astId": 22988,
+          "astId": 24584,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "queueHeadIndexLicense",
           "offset": 0,
@@ -274,15 +274,15 @@
           "type": "t_mapping(t_address,t_uint256)"
         },
         {
-          "astId": 22993,
+          "astId": 24589,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "pendingTotals",
           "offset": 0,
           "slot": "3",
-          "type": "t_mapping(t_address,t_struct(PendingAmounts)22973_storage)"
+          "type": "t_mapping(t_address,t_struct(PendingAmounts)24569_storage)"
         },
         {
-          "astId": 22997,
+          "astId": 24593,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "liveTrancheCount",
           "offset": 0,
@@ -292,12 +292,12 @@
       ],
       "numberOfBytes": "160"
     },
-    "t_struct(ExitTranche)22967_storage": {
+    "t_struct(ExitTranche)24563_storage": {
       "encoding": "inplace",
       "label": "struct ExitQueueLib.ExitTranche",
       "members": [
         {
-          "astId": 22962,
+          "astId": 24558,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "unlockTimestamp",
           "offset": 0,
@@ -305,7 +305,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 22964,
+          "astId": 24560,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "ticketAmount",
           "offset": 0,
@@ -313,7 +313,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22966,
+          "astId": 24562,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "licenseAmount",
           "offset": 0,
@@ -323,12 +323,12 @@
       ],
       "numberOfBytes": "96"
     },
-    "t_struct(Operator)25283_storage": {
+    "t_struct(Operator)26879_storage": {
       "encoding": "inplace",
       "label": "struct BondingRegistry.Operator",
       "members": [
         {
-          "astId": 25274,
+          "astId": 26870,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "licenseBond",
           "offset": 0,
@@ -336,7 +336,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 25276,
+          "astId": 26872,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "exitUnlocksAt",
           "offset": 0,
@@ -344,7 +344,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 25278,
+          "astId": 26874,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "registered",
           "offset": 8,
@@ -352,7 +352,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 25280,
+          "astId": 26876,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "exitRequested",
           "offset": 9,
@@ -360,7 +360,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 25282,
+          "astId": 26878,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "active",
           "offset": 10,
@@ -370,12 +370,12 @@
       ],
       "numberOfBytes": "64"
     },
-    "t_struct(PendingAmounts)22973_storage": {
+    "t_struct(PendingAmounts)24569_storage": {
       "encoding": "inplace",
       "label": "struct ExitQueueLib.PendingAmounts",
       "members": [
         {
-          "astId": 22970,
+          "astId": 24566,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "ticketAmount",
           "offset": 0,
@@ -383,7 +383,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22972,
+          "astId": 24568,
           "contract": "project/contracts/registry/BondingRegistry.sol:BondingRegistry",
           "label": "licenseAmount",
           "offset": 0,
