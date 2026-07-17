@@ -9,7 +9,6 @@ import {
   SNAPSHOT_DIR,
   type StorageSnapshot,
   UPGRADEABLE_CONTRACTS,
-  assertInterfoldPricingSlots,
   diffLayouts,
   findCurrentLayout,
 } from "./storageLayouts";
@@ -51,10 +50,6 @@ async function main(): Promise<void> {
         `${contract}: candidate compiler settings differ from the production baseline.`,
       );
     }
-    if (contract === "Interfold") {
-      errors.push(...assertInterfoldPricingSlots(candidate.layout));
-    }
-
     if (errors.length === 0) {
       console.log(
         `  ✓ ${contract}: compatible with ${snapshot.baseline.sourceCommit} ` +

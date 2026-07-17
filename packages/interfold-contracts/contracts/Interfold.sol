@@ -211,7 +211,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IE3RefundManager _e3RefundManager,
         IERC20 _feeToken,
         uint256 _maxDuration,
-        E3TimeoutConfig calldata config
+        E3TimeoutConfig calldata config,
+        PricingConfig calldata pricingConfig
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
         __Ownable_init(msg.sender);
@@ -222,11 +223,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         setFeeToken(_feeToken);
         _setTimeoutConfig(config);
 
-        // Default pricing parameters applied via the linked InterfoldPricing
-        // library (assembly SSTOREs against the caller's _pricingConfig
-        // slots) so the 15-field literal stays out of Interfold's runtime
-        // bytecode (EIP-170 24,576-byte cap).
-        InterfoldPricing.applyDefaultPricingConfig();
+        _setPricingConfig(pricingConfig);
 
         if (_owner != owner()) _transferOwnership(_owner);
     }
@@ -1014,6 +1011,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     function setPricingConfig(
         PricingConfig calldata config
     ) external onlyOwner {
+        _setPricingConfig(config);
+    }
+
+    function _setPricingConfig(PricingConfig calldata config) internal {
         // Validation is delegated to {InterfoldPricing.validatePricingConfig}
         // (external library link) to keep the deployed Interfold runtime
         // bytecode under the EIP-170 24,576-byte cap. Revert selectors are
