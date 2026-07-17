@@ -3,48 +3,48 @@
   "contract": "Interfold",
   "source": "contracts/Interfold.sol",
   "baseline": {
-    "buildInfoId": "solc-0_8_28-55dd7663dd02dbcbbaae0bd720ef7dedb80392a8",
+    "buildInfoId": "solc-0_8_28-2f1d99bb64f0a03101b91d207f24a5e189e744e5",
     "compiler": "0.8.28+commit.7893614a",
     "evmVersion": "paris",
     "optimizerRuns": 1,
-    "sourceCommit": "e9b5fa84d4bbe43df694b489ab50220de508c84a",
-    "sourceSha256": "1fad6efd22f9160e2e91c83201a256ed3bd9aef71cb7c0dadeca34c84d964d27"
+    "sourceCommit": "191ff1ffafc829672f26e7aa1c7f8bf2ec7c0f46",
+    "sourceSha256": "c47078c161d1661c35246109c4d67e43c9b23bba2df96a81f0bb126afa76ec1a"
   },
   "storage": [
     {
-      "astId": 17668,
+      "astId": 17719,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "ciphernodeRegistry",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(ICiphernodeRegistry)21727"
+      "type": "t_contract(ICiphernodeRegistry)21820"
     },
     {
-      "astId": 17672,
+      "astId": 17723,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "bondingRegistry",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IBondingRegistry)21078"
+      "type": "t_contract(IBondingRegistry)21171"
     },
     {
-      "astId": 17676,
+      "astId": 17727,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "e3RefundManager",
       "offset": 0,
       "slot": "2",
-      "type": "t_contract(IE3RefundManager)22340"
+      "type": "t_contract(IE3RefundManager)22436"
     },
     {
-      "astId": 17680,
+      "astId": 17731,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "slashingManager",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(ISlashingManager)23911"
+      "type": "t_contract(ISlashingManager)23999"
     },
     {
-      "astId": 17684,
+      "astId": 17735,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "feeToken",
       "offset": 0,
@@ -52,7 +52,7 @@
       "type": "t_contract(IERC20)4293"
     },
     {
-      "astId": 17687,
+      "astId": 17738,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "maxDuration",
       "offset": 0,
@@ -60,7 +60,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 17690,
+      "astId": 17741,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "nexte3Id",
       "offset": 0,
@@ -68,39 +68,39 @@
       "type": "t_uint256"
     },
     {
-      "astId": 17696,
+      "astId": 17747,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "e3Programs",
       "offset": 0,
       "slot": "7",
-      "type": "t_mapping(t_contract(IE3Program)21907,t_bool)"
+      "type": "t_mapping(t_contract(IE3Program)22000,t_bool)"
     },
     {
-      "astId": 17702,
+      "astId": 17753,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "e3s",
       "offset": 0,
       "slot": "8",
-      "type": "t_mapping(t_uint256,t_struct(E3)21867_storage)"
+      "type": "t_mapping(t_uint256,t_struct(E3)21960_storage)"
     },
     {
-      "astId": 17708,
+      "astId": 17759,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "decryptionVerifiers",
       "offset": 0,
       "slot": "9",
-      "type": "t_mapping(t_bytes32,t_contract(IDecryptionVerifier)21794)"
+      "type": "t_mapping(t_bytes32,t_contract(IDecryptionVerifier)21887)"
     },
     {
-      "astId": 17714,
+      "astId": 17765,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "pkVerifiers",
       "offset": 0,
       "slot": "10",
-      "type": "t_mapping(t_bytes32,t_contract(IPkVerifier)23302)"
+      "type": "t_mapping(t_bytes32,t_contract(IPkVerifier)23398)"
     },
     {
-      "astId": 17719,
+      "astId": 17770,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "paramSetRegistry",
       "offset": 0,
@@ -108,7 +108,7 @@
       "type": "t_mapping(t_uint8,t_bytes_storage)"
     },
     {
-      "astId": 17724,
+      "astId": 17775,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "e3Payments",
       "offset": 0,
@@ -116,31 +116,31 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 17730,
+      "astId": 17781,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3Stages",
       "offset": 0,
       "slot": "13",
-      "type": "t_mapping(t_uint256,t_enum(E3Stage)22369)"
+      "type": "t_mapping(t_uint256,t_enum(E3Stage)22465)"
     },
     {
-      "astId": 17736,
+      "astId": 17787,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3Deadlines",
       "offset": 0,
       "slot": "14",
-      "type": "t_mapping(t_uint256,t_struct(E3Deadlines)22401_storage)"
+      "type": "t_mapping(t_uint256,t_struct(E3Deadlines)22497_storage)"
     },
     {
-      "astId": 17742,
+      "astId": 17793,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3FailureReasons",
       "offset": 0,
       "slot": "15",
-      "type": "t_mapping(t_uint256,t_enum(FailureReason)22385)"
+      "type": "t_mapping(t_uint256,t_enum(FailureReason)22481)"
     },
     {
-      "astId": 17747,
+      "astId": 17798,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3Requesters",
       "offset": 0,
@@ -148,7 +148,7 @@
       "type": "t_mapping(t_uint256,t_address)"
     },
     {
-      "astId": 17753,
+      "astId": 17804,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3FeeTokens",
       "offset": 0,
@@ -156,15 +156,15 @@
       "type": "t_mapping(t_uint256,t_contract(IERC20)4293)"
     },
     {
-      "astId": 17761,
+      "astId": 17812,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "committeeThresholds",
       "offset": 0,
       "slot": "18",
-      "type": "t_mapping(t_enum(CommitteeSize)22360,t_array(t_uint32)2_storage)"
+      "type": "t_mapping(t_enum(CommitteeSize)22456,t_array(t_uint32)2_storage)"
     },
     {
-      "astId": 17766,
+      "astId": 17817,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3ProtocolShareBps",
       "offset": 0,
@@ -172,7 +172,7 @@
       "type": "t_mapping(t_uint256,t_uint16)"
     },
     {
-      "astId": 17771,
+      "astId": 17822,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3ProtocolTreasury",
       "offset": 0,
@@ -180,23 +180,23 @@
       "type": "t_mapping(t_uint256,t_address)"
     },
     {
-      "astId": 17775,
+      "astId": 17826,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_timeoutConfig",
       "offset": 0,
       "slot": "21",
-      "type": "t_struct(E3TimeoutConfig)22393_storage"
+      "type": "t_struct(E3TimeoutConfig)22489_storage"
     },
     {
-      "astId": 17779,
+      "astId": 17830,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_pricingConfig",
       "offset": 0,
       "slot": "24",
-      "type": "t_struct(PricingConfig)22433_storage"
+      "type": "t_struct(PricingConfig)22529_storage"
     },
     {
-      "astId": 17789,
+      "astId": 17840,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_feeTokenAllowed",
       "offset": 0,
@@ -204,7 +204,7 @@
       "type": "t_mapping(t_contract(IERC20)4293,t_bool)"
     },
     {
-      "astId": 17796,
+      "astId": 17847,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_pendingRewards",
       "offset": 0,
@@ -212,7 +212,7 @@
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_uint256))"
     },
     {
-      "astId": 17804,
+      "astId": 17855,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_pendingTreasury",
       "offset": 0,
@@ -220,7 +220,7 @@
       "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)4293,t_uint256))"
     },
     {
-      "astId": 17817,
+      "astId": 17868,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "markFailedGracePeriod",
       "offset": 0,
@@ -228,15 +228,15 @@
       "type": "t_uint256"
     },
     {
-      "astId": 17823,
+      "astId": 17874,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "_e3Dependencies",
       "offset": 0,
       "slot": "37",
-      "type": "t_mapping(t_uint256,t_struct(E3Dependencies)17814_storage)"
+      "type": "t_mapping(t_uint256,t_struct(E3Dependencies)17865_storage)"
     },
     {
-      "astId": 20540,
+      "astId": 20606,
       "contract": "project/contracts/Interfold.sol:Interfold",
       "label": "__gap",
       "offset": 0,
@@ -283,27 +283,27 @@
       "label": "bytes",
       "numberOfBytes": "32"
     },
-    "t_contract(IBondingRegistry)21078": {
+    "t_contract(IBondingRegistry)21171": {
       "encoding": "inplace",
       "label": "contract IBondingRegistry",
       "numberOfBytes": "20"
     },
-    "t_contract(ICiphernodeRegistry)21727": {
+    "t_contract(ICiphernodeRegistry)21820": {
       "encoding": "inplace",
       "label": "contract ICiphernodeRegistry",
       "numberOfBytes": "20"
     },
-    "t_contract(IDecryptionVerifier)21794": {
+    "t_contract(IDecryptionVerifier)21887": {
       "encoding": "inplace",
       "label": "contract IDecryptionVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(IE3Program)21907": {
+    "t_contract(IE3Program)22000": {
       "encoding": "inplace",
       "label": "contract IE3Program",
       "numberOfBytes": "20"
     },
-    "t_contract(IE3RefundManager)22340": {
+    "t_contract(IE3RefundManager)22436": {
       "encoding": "inplace",
       "label": "contract IE3RefundManager",
       "numberOfBytes": "20"
@@ -313,27 +313,27 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IPkVerifier)23302": {
+    "t_contract(IPkVerifier)23398": {
       "encoding": "inplace",
       "label": "contract IPkVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(ISlashingManager)23911": {
+    "t_contract(ISlashingManager)23999": {
       "encoding": "inplace",
       "label": "contract ISlashingManager",
       "numberOfBytes": "20"
     },
-    "t_enum(CommitteeSize)22360": {
+    "t_enum(CommitteeSize)22456": {
       "encoding": "inplace",
       "label": "enum IInterfold.CommitteeSize",
       "numberOfBytes": "1"
     },
-    "t_enum(E3Stage)22369": {
+    "t_enum(E3Stage)22465": {
       "encoding": "inplace",
       "label": "enum IInterfold.E3Stage",
       "numberOfBytes": "1"
     },
-    "t_enum(FailureReason)22385": {
+    "t_enum(FailureReason)22481": {
       "encoding": "inplace",
       "label": "enum IInterfold.FailureReason",
       "numberOfBytes": "1"
@@ -352,23 +352,23 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_mapping(t_bytes32,t_contract(IDecryptionVerifier)21794)": {
+    "t_mapping(t_bytes32,t_contract(IDecryptionVerifier)21887)": {
       "encoding": "mapping",
       "key": "t_bytes32",
       "label": "mapping(bytes32 => contract IDecryptionVerifier)",
       "numberOfBytes": "32",
-      "value": "t_contract(IDecryptionVerifier)21794"
+      "value": "t_contract(IDecryptionVerifier)21887"
     },
-    "t_mapping(t_bytes32,t_contract(IPkVerifier)23302)": {
+    "t_mapping(t_bytes32,t_contract(IPkVerifier)23398)": {
       "encoding": "mapping",
       "key": "t_bytes32",
       "label": "mapping(bytes32 => contract IPkVerifier)",
       "numberOfBytes": "32",
-      "value": "t_contract(IPkVerifier)23302"
+      "value": "t_contract(IPkVerifier)23398"
     },
-    "t_mapping(t_contract(IE3Program)21907,t_bool)": {
+    "t_mapping(t_contract(IE3Program)22000,t_bool)": {
       "encoding": "mapping",
-      "key": "t_contract(IE3Program)21907",
+      "key": "t_contract(IE3Program)22000",
       "label": "mapping(contract IE3Program => bool)",
       "numberOfBytes": "32",
       "value": "t_bool"
@@ -387,9 +387,9 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_mapping(t_enum(CommitteeSize)22360,t_array(t_uint32)2_storage)": {
+    "t_mapping(t_enum(CommitteeSize)22456,t_array(t_uint32)2_storage)": {
       "encoding": "mapping",
-      "key": "t_enum(CommitteeSize)22360",
+      "key": "t_enum(CommitteeSize)22456",
       "label": "mapping(enum IInterfold.CommitteeSize => uint32[2])",
       "numberOfBytes": "32",
       "value": "t_array(t_uint32)2_storage"
@@ -408,19 +408,19 @@
       "numberOfBytes": "32",
       "value": "t_contract(IERC20)4293"
     },
-    "t_mapping(t_uint256,t_enum(E3Stage)22369)": {
+    "t_mapping(t_uint256,t_enum(E3Stage)22465)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => enum IInterfold.E3Stage)",
       "numberOfBytes": "32",
-      "value": "t_enum(E3Stage)22369"
+      "value": "t_enum(E3Stage)22465"
     },
-    "t_mapping(t_uint256,t_enum(FailureReason)22385)": {
+    "t_mapping(t_uint256,t_enum(FailureReason)22481)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => enum IInterfold.FailureReason)",
       "numberOfBytes": "32",
-      "value": "t_enum(FailureReason)22385"
+      "value": "t_enum(FailureReason)22481"
     },
     "t_mapping(t_uint256,t_mapping(t_address,t_uint256))": {
       "encoding": "mapping",
@@ -429,26 +429,26 @@
       "numberOfBytes": "32",
       "value": "t_mapping(t_address,t_uint256)"
     },
-    "t_mapping(t_uint256,t_struct(E3)21867_storage)": {
+    "t_mapping(t_uint256,t_struct(E3)21960_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct E3)",
       "numberOfBytes": "32",
-      "value": "t_struct(E3)21867_storage"
+      "value": "t_struct(E3)21960_storage"
     },
-    "t_mapping(t_uint256,t_struct(E3Deadlines)22401_storage)": {
+    "t_mapping(t_uint256,t_struct(E3Deadlines)22497_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct IInterfold.E3Deadlines)",
       "numberOfBytes": "32",
-      "value": "t_struct(E3Deadlines)22401_storage"
+      "value": "t_struct(E3Deadlines)22497_storage"
     },
-    "t_mapping(t_uint256,t_struct(E3Dependencies)17814_storage)": {
+    "t_mapping(t_uint256,t_struct(E3Dependencies)17865_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct Interfold.E3Dependencies)",
       "numberOfBytes": "32",
-      "value": "t_struct(E3Dependencies)17814_storage"
+      "value": "t_struct(E3Dependencies)17865_storage"
     },
     "t_mapping(t_uint256,t_uint16)": {
       "encoding": "mapping",
@@ -471,12 +471,12 @@
       "numberOfBytes": "32",
       "value": "t_bytes_storage"
     },
-    "t_struct(E3)21867_storage": {
+    "t_struct(E3)21960_storage": {
       "encoding": "inplace",
       "label": "struct E3",
       "members": [
         {
-          "astId": 21834,
+          "astId": 21927,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "seed",
           "offset": 0,
@@ -484,15 +484,15 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21837,
+          "astId": 21930,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "committeeSize",
           "offset": 0,
           "slot": "1",
-          "type": "t_enum(CommitteeSize)22360"
+          "type": "t_enum(CommitteeSize)22456"
         },
         {
-          "astId": 21839,
+          "astId": 21932,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "requestBlock",
           "offset": 0,
@@ -500,7 +500,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21843,
+          "astId": 21936,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "inputWindow",
           "offset": 0,
@@ -508,7 +508,7 @@
           "type": "t_array(t_uint256)2_storage"
         },
         {
-          "astId": 21845,
+          "astId": 21938,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "encryptionSchemeId",
           "offset": 0,
@@ -516,15 +516,15 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 21848,
+          "astId": 21941,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "e3Program",
           "offset": 0,
           "slot": "6",
-          "type": "t_contract(IE3Program)21907"
+          "type": "t_contract(IE3Program)22000"
         },
         {
-          "astId": 21850,
+          "astId": 21943,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "paramSet",
           "offset": 20,
@@ -532,7 +532,7 @@
           "type": "t_uint8"
         },
         {
-          "astId": 21852,
+          "astId": 21945,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "customParams",
           "offset": 0,
@@ -540,23 +540,23 @@
           "type": "t_bytes_storage"
         },
         {
-          "astId": 21855,
+          "astId": 21948,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "decryptionVerifier",
           "offset": 0,
           "slot": "8",
-          "type": "t_contract(IDecryptionVerifier)21794"
+          "type": "t_contract(IDecryptionVerifier)21887"
         },
         {
-          "astId": 21858,
+          "astId": 21951,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "pkVerifier",
           "offset": 0,
           "slot": "9",
-          "type": "t_contract(IPkVerifier)23302"
+          "type": "t_contract(IPkVerifier)23398"
         },
         {
-          "astId": 21860,
+          "astId": 21953,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "committeePublicKey",
           "offset": 0,
@@ -564,7 +564,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 21862,
+          "astId": 21955,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "ciphertextOutput",
           "offset": 0,
@@ -572,7 +572,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 21864,
+          "astId": 21957,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "plaintextOutput",
           "offset": 0,
@@ -580,7 +580,7 @@
           "type": "t_bytes_storage"
         },
         {
-          "astId": 21866,
+          "astId": 21959,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "requester",
           "offset": 0,
@@ -590,12 +590,12 @@
       ],
       "numberOfBytes": "448"
     },
-    "t_struct(E3Deadlines)22401_storage": {
+    "t_struct(E3Deadlines)22497_storage": {
       "encoding": "inplace",
       "label": "struct IInterfold.E3Deadlines",
       "members": [
         {
-          "astId": 22396,
+          "astId": 22492,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "dkgDeadline",
           "offset": 0,
@@ -603,7 +603,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22398,
+          "astId": 22494,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "computeDeadline",
           "offset": 0,
@@ -611,7 +611,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22400,
+          "astId": 22496,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "decryptionDeadline",
           "offset": 0,
@@ -621,43 +621,43 @@
       ],
       "numberOfBytes": "96"
     },
-    "t_struct(E3Dependencies)17814_storage": {
+    "t_struct(E3Dependencies)17865_storage": {
       "encoding": "inplace",
       "label": "struct Interfold.E3Dependencies",
       "members": [
         {
-          "astId": 17807,
+          "astId": 17858,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "registry",
           "offset": 0,
           "slot": "0",
-          "type": "t_contract(ICiphernodeRegistry)21727"
+          "type": "t_contract(ICiphernodeRegistry)21820"
         },
         {
-          "astId": 17810,
+          "astId": 17861,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "refundManager",
           "offset": 0,
           "slot": "1",
-          "type": "t_contract(IE3RefundManager)22340"
+          "type": "t_contract(IE3RefundManager)22436"
         },
         {
-          "astId": 17813,
+          "astId": 17864,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "slashManager",
           "offset": 0,
           "slot": "2",
-          "type": "t_contract(ISlashingManager)23911"
+          "type": "t_contract(ISlashingManager)23999"
         }
       ],
       "numberOfBytes": "96"
     },
-    "t_struct(E3TimeoutConfig)22393_storage": {
+    "t_struct(E3TimeoutConfig)22489_storage": {
       "encoding": "inplace",
       "label": "struct IInterfold.E3TimeoutConfig",
       "members": [
         {
-          "astId": 22388,
+          "astId": 22484,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "dkgWindow",
           "offset": 0,
@@ -665,7 +665,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22390,
+          "astId": 22486,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "computeWindow",
           "offset": 0,
@@ -673,7 +673,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22392,
+          "astId": 22488,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "decryptionWindow",
           "offset": 0,
@@ -683,12 +683,12 @@
       ],
       "numberOfBytes": "96"
     },
-    "t_struct(PricingConfig)22433_storage": {
+    "t_struct(PricingConfig)22529_storage": {
       "encoding": "inplace",
       "label": "struct IInterfold.PricingConfig",
       "members": [
         {
-          "astId": 22404,
+          "astId": 22500,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "keyGenFixedPerNode",
           "offset": 0,
@@ -696,7 +696,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22406,
+          "astId": 22502,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "keyGenPerEncryptionProof",
           "offset": 0,
@@ -704,7 +704,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22408,
+          "astId": 22504,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "coordinationPerPair",
           "offset": 0,
@@ -712,7 +712,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22410,
+          "astId": 22506,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "availabilityPerNodePerSec",
           "offset": 0,
@@ -720,7 +720,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22412,
+          "astId": 22508,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "decryptionPerNode",
           "offset": 0,
@@ -728,7 +728,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22414,
+          "astId": 22510,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "publicationBase",
           "offset": 0,
@@ -736,7 +736,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22416,
+          "astId": 22512,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "verificationPerProof",
           "offset": 0,
@@ -744,7 +744,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 22418,
+          "astId": 22514,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "protocolTreasury",
           "offset": 0,
@@ -752,7 +752,7 @@
           "type": "t_address"
         },
         {
-          "astId": 22420,
+          "astId": 22516,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "marginBps",
           "offset": 20,
@@ -760,7 +760,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 22422,
+          "astId": 22518,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "protocolShareBps",
           "offset": 22,
@@ -768,7 +768,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 22424,
+          "astId": 22520,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "dkgUtilizationBps",
           "offset": 24,
@@ -776,7 +776,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 22426,
+          "astId": 22522,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "computeUtilizationBps",
           "offset": 26,
@@ -784,7 +784,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 22428,
+          "astId": 22524,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "decryptUtilizationBps",
           "offset": 28,
@@ -792,7 +792,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 22430,
+          "astId": 22526,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "minCommitteeSize",
           "offset": 0,
@@ -800,7 +800,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 22432,
+          "astId": 22528,
           "contract": "project/contracts/Interfold.sol:Interfold",
           "label": "minThreshold",
           "offset": 4,
