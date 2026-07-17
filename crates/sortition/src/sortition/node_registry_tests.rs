@@ -28,7 +28,7 @@ fn available_tickets_accounts_for_price_and_jobs() {
     let mut store = HashMap::new();
     NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10));
     NodeRegistry::set_ticket_balance(&mut store, 1, "0xabc".into(), U256::from(55));
-    NodeRegistry::set_operator_active(&mut store, "0xabc".into(), true);
+    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true);
 
     // floor(55 / 10) = 5 tickets, no active jobs yet.
     assert_eq!(store[&1].available_tickets("0xabc"), 5);
@@ -47,12 +47,26 @@ fn zero_price_yields_no_tickets() {
 }
 
 #[test]
-fn operator_active_applies_across_chains() {
+fn operator_active_applies_only_to_the_event_chain() {
     let mut store = HashMap::new();
     NodeRegistry::add_node(&mut store, 1, "0xabc".into());
     NodeRegistry::add_node(&mut store, 2, "0xabc".into());
-    NodeRegistry::set_operator_active(&mut store, "0xabc".into(), true);
+    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true);
     assert!(store[&1].nodes["0xabc"].active);
+    assert!(!store[&2].nodes["0xabc"].active);
+}
+
+#[test]
+fn eligibility_update_invalidates_only_the_target_chain() {
+    let mut store = HashMap::new();
+    NodeRegistry::add_node(&mut store, 1, "0xabc".into());
+    NodeRegistry::add_node(&mut store, 2, "0xabc".into());
+    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true);
+    NodeRegistry::set_operator_active(&mut store, 2, "0xabc".into(), true);
+
+    NodeRegistry::invalidate_operator_activity(&mut store, 1);
+
+    assert!(!store[&1].nodes["0xabc"].active);
     assert!(store[&2].nodes["0xabc"].active);
 }
 
@@ -79,7 +93,7 @@ fn get_nodes_with_tickets_filters_inactive_and_empty() {
     let mut store = HashMap::new();
     NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10));
     NodeRegistry::set_ticket_balance(&mut store, 1, "active".into(), U256::from(30));
-    NodeRegistry::set_operator_active(&mut store, "active".into(), true);
+    NodeRegistry::set_operator_active(&mut store, 1, "active".into(), true);
     // Inactive node with balance is excluded.
     NodeRegistry::set_ticket_balance(&mut store, 1, "inactive".into(), U256::from(30));
 

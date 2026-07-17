@@ -39,8 +39,6 @@ interface IBondingRegistry {
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
 
-    /// @notice Eligibility policy becomes immutable when the first operator registers.
-    error EligibilityConfigurationLocked();
     error InvalidConfiguration();
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
@@ -123,6 +121,12 @@ interface IBondingRegistry {
         uint256 oldValue,
         uint256 newValue
     );
+
+    /**
+     * @notice Emitted when an eligibility setting invalidates cached operator status.
+     * @param version New eligibility-policy version.
+     */
+    event EligibilityConfigurationVersionUpdated(uint256 indexed version);
 
     /**
      * @notice Emitted when a reward distributor is authorized or revoked
@@ -275,8 +279,21 @@ interface IBondingRegistry {
      */
     function numActiveOperators() external view returns (uint256);
 
-    /// @notice Whether eligibility-affecting configuration is permanently locked.
-    function eligibilityConfigurationLocked() external view returns (bool);
+    /// @notice Current eligibility-policy version.
+    function eligibilityConfigurationVersion() external view returns (uint256);
+
+    /**
+     * @notice Re-evaluate one registered operator under the current eligibility policy.
+     * @dev Permissionless so operators or governance can restore current status after
+     *      an eligibility configuration update.
+     */
+    function refreshOperatorStatus(address operator) external;
+
+    /**
+     * @notice Re-evaluate a batch of registered operators under the current policy.
+     * @dev Intended for governance/operator automation after a policy update.
+     */
+    function refreshOperatorStatuses(address[] calldata operators) external;
 
     /**
      * @notice Check if operator has deregistration in progress
@@ -489,30 +506,28 @@ interface IBondingRegistry {
     /**
      * @notice Set ticket price
      * @param newTicketPrice New price per ticket
-     * @dev Only callable by contract owner; rotation requires zero outstanding
-     *      ticket supply and zero payable balance in the old wrapper.
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setTicketPrice(uint256 newTicketPrice) external;
 
     /**
      * @notice Set license bond price required
      * @param newLicenseRequiredBond New license bond price
-     * @dev Only callable by contract owner; rotation requires a zero registry
-     *      balance in the old license token.
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setLicenseRequiredBond(uint256 newLicenseRequiredBond) external;
 
     /**
      * @notice Set license active BPS
      * @param newBps New license active BPS
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setLicenseActiveBps(uint256 newBps) external;
 
     /**
      * @notice Set minimum ticket balance required for activation
      * @param newMinTicketBalance New minimum ticket balance
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setMinTicketBalance(uint256 newMinTicketBalance) external;
 

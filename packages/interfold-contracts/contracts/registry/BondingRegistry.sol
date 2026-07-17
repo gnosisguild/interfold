@@ -132,6 +132,7 @@ contract BondingRegistry is
         bool registered;
         bool exitRequested;
         bool active;
+        uint256 eligibilityVersion;
     }
 
     /// @notice Maps operator address to their state data
@@ -150,8 +151,10 @@ contract BondingRegistry is
     /// @dev Internal state for managing exit queue of tickets and licenses
     ExitQueueLib.ExitQueueState private _exits;
 
-    /// @notice One-way lock for every parameter that affects operator eligibility.
-    bool public eligibilityConfigurationLocked;
+    /// @notice Version of the current operator-eligibility policy.
+    /// @dev Every eligibility update advances the version and resets
+    ///      {numActiveOperators}. Operators fail closed until refreshed.
+    uint256 public eligibilityConfigurationVersion;
 
     /// @notice Slashed tickets committed to retryable E3 refund routes.
     uint256 public reservedSlashedTicketBalance;
@@ -326,7 +329,24 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function isActive(address operator) external view returns (bool) {
-        return operators[operator].active;
+        Operator storage op = operators[operator];
+        return
+            op.eligibilityVersion == eligibilityConfigurationVersion &&
+            op.active;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function refreshOperatorStatus(address operator) public {
+        require(operators[operator].registered, NotRegistered());
+        _updateOperatorStatus(operator);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function refreshOperatorStatuses(address[] calldata operatorList) external {
+        uint256 len = operatorList.length;
+        for (uint256 i = 0; i < len; i++) {
+            refreshOperatorStatus(operatorList[i]);
+        }
     }
 
     /// @inheritdoc IBondingRegistry
@@ -358,7 +378,6 @@ contract BondingRegistry is
         );
 
         operators[msg.sender].registered = true;
-        eligibilityConfigurationLocked = true;
 
         // CiphernodeRegistry already emits an event when a ciphernode is added
         registry.addCiphernode(msg.sender);
@@ -698,11 +717,12 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setTicketPrice(uint256 newTicketPrice) public onlyOwner {
-        _requireEligibilityConfigurationMutable();
         require(newTicketPrice != 0, InvalidConfiguration());
 
         uint256 oldValue = ticketPrice;
+        if (oldValue == newTicketPrice) return;
         ticketPrice = newTicketPrice;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated("ticketPrice", oldValue, newTicketPrice);
     }
@@ -711,11 +731,12 @@ contract BondingRegistry is
     function setLicenseRequiredBond(
         uint256 newLicenseRequiredBond
     ) public onlyOwner {
-        _requireEligibilityConfigurationMutable();
         require(newLicenseRequiredBond != 0, InvalidConfiguration());
 
         uint256 oldValue = licenseRequiredBond;
+        if (oldValue == newLicenseRequiredBond) return;
         licenseRequiredBond = newLicenseRequiredBond;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated(
             "licenseRequiredBond",
@@ -726,21 +747,23 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setLicenseActiveBps(uint256 newBps) public onlyOwner {
-        _requireEligibilityConfigurationMutable();
         require(newBps > 0 && newBps <= BPS_BASE, InvalidConfiguration());
 
         uint256 oldValue = licenseActiveBps;
+        if (oldValue == newBps) return;
         licenseActiveBps = newBps;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated("licenseActiveBps", oldValue, newBps);
     }
 
     /// @inheritdoc IBondingRegistry
     function setMinTicketBalance(uint256 newMinTicketBalance) public onlyOwner {
-        _requireEligibilityConfigurationMutable();
         require(newMinTicketBalance != 0, InvalidConfiguration());
         uint256 oldValue = minTicketBalance;
+        if (oldValue == newMinTicketBalance) return;
         minTicketBalance = newMinTicketBalance;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated(
             "minTicketBalance",
@@ -937,12 +960,17 @@ contract BondingRegistry is
     /// @param operator Address of the operator to update
     function _updateOperatorStatus(address operator) internal {
         Operator storage op = operators[operator];
+        uint256 currentVersion = eligibilityConfigurationVersion;
+        bool oldActiveStatus = op.eligibilityVersion == currentVersion &&
+            op.active;
         bool newActiveStatus = op.registered &&
             op.licenseBond >= _minLicenseBond() &&
             (ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance);
 
-        if (op.active != newActiveStatus) {
-            op.active = newActiveStatus;
+        op.eligibilityVersion = currentVersion;
+        op.active = newActiveStatus;
+
+        if (oldActiveStatus != newActiveStatus) {
             if (newActiveStatus) {
                 numActiveOperators++;
             } else {
@@ -959,9 +987,14 @@ contract BondingRegistry is
         return (licenseRequiredBond * licenseActiveBps) / BPS_BASE;
     }
 
-    function _requireEligibilityConfigurationMutable() internal view {
-        if (eligibilityConfigurationLocked)
-            revert EligibilityConfigurationLocked();
+    /// @dev Invalidates every cached active status in O(1). Operators are
+    ///      considered inactive until they refresh under the new version.
+    function _invalidateEligibilityStatuses() internal {
+        eligibilityConfigurationVersion++;
+        numActiveOperators = 0;
+        emit EligibilityConfigurationVersionUpdated(
+            eligibilityConfigurationVersion
+        );
     }
 
     /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta

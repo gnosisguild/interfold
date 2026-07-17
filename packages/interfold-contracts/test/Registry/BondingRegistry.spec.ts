@@ -915,9 +915,16 @@ describe("BondingRegistry", function () {
       });
     });
 
-    it("AUD-M03: locks every eligibility parameter at first registration", async function () {
-      const { bondingRegistry, licenseToken, operator1 } =
-        await loadFixture(setup);
+    it("AUD-M03: governs eligibility parameters and refreshes cached status by policy version", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        operator1,
+        operator2,
+      } = await loadFixture(setup);
+      const operator = await operator1.getAddress();
 
       await licenseToken
         .connect(operator1)
@@ -927,21 +934,48 @@ describe("BondingRegistry", function () {
         .bondLicense(LICENSE_REQUIRED_BOND);
       await bondingRegistry.connect(operator1).registerOperator();
 
-      expect(await bondingRegistry.eligibilityConfigurationLocked()).to.equal(
-        true,
+      const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(1);
+
+      const initialVersion =
+        await bondingRegistry.eligibilityConfigurationVersion();
+      await bondingRegistry.setTicketPrice(TICKET_PRICE * 2n);
+
+      expect(await bondingRegistry.eligibilityConfigurationVersion()).to.equal(
+        initialVersion + 1n,
       );
-      for (const call of [
-        () => bondingRegistry.setTicketPrice(TICKET_PRICE + 1n),
-        () =>
-          bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND + 1n),
-        () => bondingRegistry.setLicenseActiveBps(9000n),
-        () => bondingRegistry.setMinTicketBalance(MIN_TICKET_BALANCE + 1),
-      ]) {
-        await expect(call()).to.be.revertedWithCustomError(
-          bondingRegistry,
-          "EligibilityConfigurationLocked",
-        );
-      }
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      // Refresh is permissionless and evaluates the new policy. The doubled
+      // ticket price leaves this operator below the five-ticket threshold.
+      await bondingRegistry.connect(operator2).refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      await bondingRegistry.setTicketPrice(TICKET_PRICE);
+      await bondingRegistry.refreshOperatorStatuses([operator]);
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(1);
+
+      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND * 2n);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+
+      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND);
+      await bondingRegistry.setLicenseActiveBps(9_000);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+
+      await bondingRegistry.setMinTicketBalance(MIN_TICKET_BALANCE + 1);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
     });
 
     it("AUD-M03: rejects a zero minimum ticket requirement", async function () {

@@ -207,6 +207,49 @@ describe("CiphernodeRegistryOwnable", function () {
       );
       expect(await registry.rootAt(0)).to.not.equal(0);
     });
+
+    it("AUD-M03: fails closed after governance updates until operators refresh", async function () {
+      const {
+        registry,
+        interfold,
+        bondingRegistry,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+
+      await bondingRegistry.setLicenseActiveBps(9_000);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      await expect(
+        makeRequest(
+          interfold,
+          usdcToken,
+          mockE3Program,
+          mockDecryptionVerifier,
+        ),
+      )
+        .to.be.revertedWithCustomError(registry, "InsufficientCiphernodes")
+        .withArgs(3, 0);
+
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(3);
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      expect(await registry.rootAt(0)).to.equal(await registry.root());
+    });
   });
 
   describe("publishCommittee()", function () {

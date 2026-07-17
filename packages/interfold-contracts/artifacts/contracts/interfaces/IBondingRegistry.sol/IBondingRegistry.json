@@ -19,11 +19,6 @@
       "type": "error"
     },
     {
-      "inputs": [],
-      "name": "EligibilityConfigurationLocked",
-      "type": "error"
-    },
-    {
       "inputs": [
         {
           "internalType": "uint64",
@@ -183,6 +178,19 @@
         }
       ],
       "name": "ConfigurationUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "version",
+          "type": "uint256"
+        }
+      ],
+      "name": "EligibilityConfigurationVersionUpdated",
       "type": "event"
     },
     {
@@ -501,12 +509,12 @@
     },
     {
       "inputs": [],
-      "name": "eligibilityConfigurationLocked",
+      "name": "eligibilityConfigurationVersion",
       "outputs": [
         {
-          "internalType": "bool",
+          "internalType": "uint256",
           "name": "",
-          "type": "bool"
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -808,6 +816,32 @@
         }
       ],
       "name": "redirectSlashedTicketFunds",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "refreshOperatorStatus",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address[]",
+          "name": "operators",
+          "type": "address[]"
+        }
+      ],
+      "name": "refreshOperatorStatuses",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1188,5 +1222,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-b6081d4a087889d124a71337ceb3c3c46650c56f"
+  "buildInfoId": "solc-0_8_28-b5ad2db57b6cd55bb4869e59d4f06b85621bf463"
 }

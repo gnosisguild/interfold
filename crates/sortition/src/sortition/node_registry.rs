@@ -136,21 +136,22 @@ impl NodeRegistry {
         );
     }
 
-    /// Update an operator's active status across every chain it appears on.
+    /// Update an operator's active status on the chain that emitted the event.
     pub fn set_operator_active(
         store: &mut HashMap<u64, NodeStateStore>,
+        chain_id: u64,
         operator: String,
         active: bool,
     ) {
-        for chain_state in store.values_mut() {
-            let node = chain_state.nodes.entry(operator.clone()).or_default();
-            node.active = active;
-            info!(
-                operator = %operator,
-                active = active,
-                "Updated operator active status"
-            );
-        }
+        let chain_state = store.entry(chain_id).or_default();
+        let node = chain_state.nodes.entry(operator.clone()).or_default();
+        node.active = active;
+        info!(
+            operator = %operator,
+            chain_id = chain_id,
+            active = active,
+            "Updated operator active status"
+        );
     }
 
     /// Set the ticket price for a chain.
@@ -165,6 +166,20 @@ impl NodeRegistry {
             chain_id = chain_id,
             new_ticket_price = ?new_price,
             "ConfigurationUpdated - ticket price updated"
+        );
+    }
+
+    /// Mark every operator on one chain inactive after an eligibility-policy
+    /// update. On-chain status also fails closed until each operator refreshes
+    /// against the new policy version.
+    pub fn invalidate_operator_activity(store: &mut HashMap<u64, NodeStateStore>, chain_id: u64) {
+        let chain_state = store.entry(chain_id).or_default();
+        for node in chain_state.nodes.values_mut() {
+            node.active = false;
+        }
+        info!(
+            chain_id = chain_id,
+            "Invalidated operator activity after eligibility-policy update"
         );
     }
 

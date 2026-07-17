@@ -92,12 +92,11 @@ Before a node can register, it must stake two types of collateral:
 └───────────────────────────────────────────────────────────┘
 ```
 
-Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot
-be configured while the old wrapper has issued tickets or a payable balance,
-and the FOLD license token cannot change while the bonding registry holds any
-of the old token. Replacement assets must be deployed contracts; the only zero
-exception is the one-time license-token placeholder used to resolve the circular
-FOLD/BondingRegistry deployment.
+Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot be configured while
+the old wrapper has issued tickets or a payable balance, and the FOLD license token cannot change
+while the bonding registry holds any of the old token. Replacement assets must be deployed
+contracts; the only zero exception is the one-time license-token placeholder used to resolve the
+circular FOLD/BondingRegistry deployment.
 
 ---
 
@@ -173,12 +172,14 @@ _updateOperatorStatus(operator):
     emit OperatorActivationChanged(operator, true)
 ```
 
-The eligibility policy (`ticketPrice`, `licenseRequiredBond`,
-`licenseActiveBps`, and `minTicketBalance`) is deployment-time configuration.
-The first successful operator registration permanently locks all four values;
-`minTicketBalance` must be nonzero. Consequently cached `active` state,
-`numActiveOperators`, and the ticket units used for later sortition cannot be
-invalidated by a governance update.
+Governance may update `ticketPrice`, `licenseRequiredBond`, `licenseActiveBps`, and
+`minTicketBalance`; `minTicketBalance` must remain nonzero. Every effective update advances
+`eligibilityConfigurationVersion`, resets `numActiveOperators`, and makes all previously cached
+operator statuses fail closed. Operators or governance then call `refreshOperatorStatus` (or its
+batch form) to re-evaluate registered operators under the new policy. Only operators refreshed into
+the current version count as active, so committee requests cannot rely on status cached under an
+older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
+chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
 
 ---
 
