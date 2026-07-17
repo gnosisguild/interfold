@@ -135,6 +135,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/test/MockCiphernodeRegistry.sol',
       '@interfold/contracts/contracts/test/MockComputeProvider.sol',
       '@interfold/contracts/contracts/test/MockDecryptionVerifier.sol',
+      '@interfold/contracts/contracts/test/MockDkgFoldAttestationVerifier.sol',
       '@interfold/contracts/contracts/test/MockPkVerifier.sol',
       '@interfold/contracts/contracts/test/MockE3Program.sol',
       '@interfold/contracts/contracts/test/MockSlashingVerifier.sol',
