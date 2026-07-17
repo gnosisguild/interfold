@@ -357,6 +357,25 @@
         {
           "indexed": true,
           "internalType": "address",
+          "name": "slashingManager",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "authorized",
+          "type": "bool"
+        }
+      ],
+      "name": "SlashingManagerAuthorizationUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
           "name": "previous",
           "type": "address"
         },
@@ -425,6 +444,38 @@
       "name": "addTicketBalance",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "authorizedSlashingManagerAt",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "authorizedSlashingManagerCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -663,6 +714,25 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        }
+      ],
+      "name": "isAuthorizedSlashingManager",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "operator",
           "type": "address"
         }
@@ -806,24 +876,6 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "to",
-          "type": "address"
-        },
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "redirectSlashedTicketFunds",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "address",
           "name": "operator",
           "type": "address"
         }
@@ -901,6 +953,19 @@
         }
       ],
       "name": "revokeRewardDistributor",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "oldSlashingManager",
+          "type": "address"
+        }
+      ],
+      "name": "revokeSlashingManager",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1222,5 +1287,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-55dd7663dd02dbcbbaae0bd720ef7dedb80392a8"
+  "buildInfoId": "solc-0_8_28-71239178664546533acc7c8081aa35389f2d5fe4"
 }

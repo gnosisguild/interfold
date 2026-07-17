@@ -758,24 +758,6 @@
       "inputs": [
         {
           "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "escrowSlashedFundsToRefund",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
         }
@@ -1450,5 +1432,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-55dd7663dd02dbcbbaae0bd720ef7dedb80392a8"
+  "buildInfoId": "solc-0_8_28-71239178664546533acc7c8081aa35389f2d5fe4"
 }
