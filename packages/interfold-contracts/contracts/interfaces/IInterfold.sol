@@ -534,9 +534,8 @@ interface IInterfold {
     /// @dev This function MUST emit the PlaintextOutputPublished event.
     /// @param e3Id ID of the E3.
     /// @param plaintextOutput ABI encoded plaintext output.
-    /// @param proof DecryptionAggregator (EVM) proof ABI-encoded
-    ///        `(bytes rawProof, bytes32[] publicInputs)`, or empty bytes when proof
-    ///        aggregation is disabled for the E3.
+    /// @param proof Required DecryptionAggregator (EVM) proof ABI-encoded
+    ///        `(bytes rawProof, bytes32[] publicInputs)`.
     function publishPlaintextOutput(
         uint256 e3Id,
         bytes calldata plaintextOutput,
