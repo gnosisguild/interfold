@@ -763,6 +763,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             address(_slashingManagerFor(e3Id))
         );
         _refundManagerFor(e3Id).escrowSlashedFunds(e3Id, token, amount);
+        emit SlashedFundsEscrowed(e3Id, token, amount);
     }
 
     /// @inheritdoc IInterfold

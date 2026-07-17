@@ -71,7 +71,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
     EvmEventDefinition::new(
         "E3Requested",
-        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address,bool),address)",
+        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address),address)",
         None,
     ),
     EvmEventDefinition::new("E3StageChanged", "E3StageChanged(uint256,uint8,uint8)", Some(1)),
@@ -139,7 +139,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new(
         "SlashedFundsEscrowed",
-        "SlashedFundsEscrowed(uint256,uint256)",
+        "SlashedFundsEscrowed(uint256,address,uint256)",
         Some(1),
     ),
     EvmEventDefinition::new("SlashingManagerSet", "SlashingManagerSet(address)", None),
@@ -181,6 +181,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "ConfigurationUpdated(bytes32,uint256,uint256)",
         None,
     ),
+    EvmEventDefinition::new(
+        "EligibilityConfigurationVersionUpdated",
+        "EligibilityConfigurationVersionUpdated(uint256)",
+        None,
+    ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
         "LicenseBondUpdated",
@@ -188,6 +193,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("LicenseTokenSet", "LicenseTokenSet(address)", None),
+    EvmEventDefinition::new(
+        "LicenseSurplusSwept",
+        "LicenseSurplusSwept(address,address,uint256)",
+        None,
+    ),
     EvmEventDefinition::new(
         "LicenseTransferShortfall",
         "LicenseTransferShortfall(address,uint256,uint256)",
@@ -227,6 +237,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "SlashedFundsWithdrawn",
         "SlashedFundsWithdrawn(address,uint256,uint256)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "SlashingManagerAuthorizationUpdated",
+        "SlashingManagerAuthorizationUpdated(address,bool)",
         None,
     ),
     EvmEventDefinition::new(
@@ -440,8 +455,18 @@ const SLASHING_MANAGER: &[EvmEventDefinition] = &[
         Some(2),
     ),
     EvmEventDefinition::new(
+        "SlashRouteCompleted",
+        "SlashRouteCompleted(uint256,uint256,address,uint256)",
+        Some(2),
+    ),
+    EvmEventDefinition::new(
+        "SlashRoutePending",
+        "SlashRoutePending(uint256,uint256,address,uint256)",
+        Some(2),
+    ),
+    EvmEventDefinition::new(
         "SlashedFundsEscrowedToRefund",
-        "SlashedFundsEscrowedToRefund(uint256,uint256)",
+        "SlashedFundsEscrowedToRefund(uint256,address,uint256)",
         Some(1),
     ),
 ];
@@ -449,7 +474,85 @@ const SLASHING_MANAGER: &[EvmEventDefinition] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use serde_json::Value;
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use std::path::PathBuf;
+
+    const CONTRACT_ARTIFACTS: &[(&str, &str)] = &[
+        (
+            "Interfold",
+            "artifacts/contracts/Interfold.sol/Interfold.json",
+        ),
+        (
+            "BondingRegistry",
+            "artifacts/contracts/registry/BondingRegistry.sol/BondingRegistry.json",
+        ),
+        (
+            "CiphernodeRegistry",
+            "artifacts/contracts/registry/CiphernodeRegistryOwnable.sol/CiphernodeRegistryOwnable.json",
+        ),
+        (
+            "SlashingManager",
+            "artifacts/contracts/slashing/SlashingManager.sol/SlashingManager.json",
+        ),
+    ];
+
+    fn artifact_path(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/interfold-contracts")
+            .join(relative)
+    }
+
+    fn canonical_type(input: &Value) -> String {
+        let abi_type = input["type"].as_str().expect("ABI input type");
+        let Some(tuple_suffix) = abi_type.strip_prefix("tuple") else {
+            return abi_type.to_owned();
+        };
+        let components = input["components"]
+            .as_array()
+            .expect("tuple ABI components")
+            .iter()
+            .map(canonical_type)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({components}){tuple_suffix}")
+    }
+
+    fn artifact_events(relative: &str) -> HashMap<String, Option<usize>> {
+        let artifact: Value =
+            serde_json::from_str(&fs::read_to_string(artifact_path(relative)).unwrap()).unwrap();
+        artifact["abi"]
+            .as_array()
+            .expect("artifact ABI")
+            .iter()
+            .filter(|item| item["type"] == "event")
+            .map(|event| {
+                let inputs = event["inputs"].as_array().expect("event inputs");
+                let signature = format!(
+                    "{}({})",
+                    event["name"].as_str().expect("event name"),
+                    inputs
+                        .iter()
+                        .map(canonical_type)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                let mut topic_position = 1;
+                let mut e3_id_topic = None;
+                for input in inputs {
+                    if !input["indexed"].as_bool().unwrap_or(false) {
+                        continue;
+                    }
+                    if input["name"].as_str() == Some("e3Id") {
+                        e3_id_topic = Some(topic_position);
+                    }
+                    topic_position += 1;
+                }
+                (signature, e3_id_topic)
+            })
+            .collect()
+    }
 
     #[test]
     fn every_contract_catalog_has_unique_topics() {
@@ -482,5 +585,20 @@ mod tests {
         let definition = find("Interfold", treasury).unwrap();
         assert_eq!(definition.name, "TreasuryCredited");
         assert_eq!(definition.e3_id_topic, Some(1));
+    }
+
+    #[test]
+    fn every_watched_contract_catalog_matches_its_current_abi() {
+        for (contract, artifact) in CONTRACT_ARTIFACTS {
+            let expected = artifact_events(artifact);
+            let actual = catalog(contract)
+                .iter()
+                .map(|event| (event.signature.to_owned(), event.e3_id_topic))
+                .collect::<HashMap<_, _>>();
+            assert_eq!(
+                actual, expected,
+                "{contract} event catalog drifted from {artifact}"
+            );
+        }
     }
 }

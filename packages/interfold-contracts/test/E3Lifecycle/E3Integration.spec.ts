@@ -985,7 +985,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await usdcToken.balanceOf(refundManagerAddress);
       await expect(slashingManager.connect(requester).retrySlashRoute(0))
         .to.emit(slashingManager, "SlashRouteCompleted")
-        .withArgs(0, 0, await usdcToken.getAddress(), pending.amount);
+        .withArgs(0, 0, await usdcToken.getAddress(), pending.amount)
+        .and.to.emit(interfold, "SlashedFundsEscrowed")
+        .withArgs(0, await usdcToken.getAddress(), pending.amount);
 
       expect(
         (await usdcToken.balanceOf(refundManagerAddress)) - refundBalanceBefore,
