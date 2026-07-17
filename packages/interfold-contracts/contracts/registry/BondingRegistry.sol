@@ -686,22 +686,6 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function redirectSlashedTicketFunds(
-        address to,
-        uint256 amount
-    ) external onlyAuthorizedSlashingManager {
-        require(to != address(0), ZeroAddress());
-        require(amount > 0, ZeroAmount());
-        require(
-            amount <= slashedTicketBalance - reservedSlashedTicketBalance,
-            ReservedSlashedFunds()
-        );
-
-        slashedTicketBalance -= amount;
-        ticketToken.payout(to, amount);
-    }
-
-    /// @inheritdoc IBondingRegistry
     function reserveSlashedTicketFunds(
         uint256 amount
     ) external onlyAuthorizedSlashingManager {

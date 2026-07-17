@@ -801,9 +801,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       // Record BondingRegistry's slashedTicketBalance before slash
       const slashedBalanceBefore = await bondingRegistry.slashedTicketBalance();
 
-      // 4. Slash operator1 via proposeSlash (Lane A) — real on-chain flow
-      //    This triggers: _executeSlash → slashTicketBalance → redirectSlashedTicketFunds
-      //    → ticketToken.payout(refundManager, amount) → interfold.escrowSlashedFunds → e3RefundManager.escrowSlashedFunds
+      // 4. Slash operator1 via proposeSlash (Lane A) — real on-chain flow.
+      //    The manager reserves the slash, then atomically routes the reserved
+      //    underlying through Interfold into E3RefundManager escrow.
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
         0,

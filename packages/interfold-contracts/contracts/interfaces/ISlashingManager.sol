@@ -628,16 +628,6 @@ interface ISlashingManager {
     function executeSlash(uint256 proposalId) external;
 
     /**
-     * @notice Atomically redirects slashed ticket funds to E3RefundManager escrow
-     * @dev Only callable by this contract (self-call pattern for try/catch atomicity).
-     *      Transfers underlying stablecoin from BondingRegistry to E3RefundManager
-     *      and calls Interfold.escrowSlashedFunds to update the escrow balance.
-     * @param e3Id ID of the E3 computation
-     * @param amount Amount of slashed ticket balance to escrow
-     */
-    function escrowSlashedFundsToRefund(uint256 e3Id, uint256 amount) external;
-
-    /**
      * @notice Returns the EIP-712 domain separator used to authenticate attestation votes
      */
     function attestationDomainSeparator() external view returns (bytes32);

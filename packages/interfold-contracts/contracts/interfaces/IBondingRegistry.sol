@@ -471,15 +471,6 @@ interface IBondingRegistry {
         bytes32 reason
     ) external;
 
-    /**
-     * @notice Redirect slashed ticket funds to a specified address
-     * @param to Address to receive the slashed funds (underlying stablecoin)
-     * @param amount Amount of slashed ticket balance to redirect
-     * @dev Only callable by authorized slashing manager. Pays out underlying stablecoin
-     *      from burned ticket tokens. Assumes underlying stablecoin matches the E3 fee token.
-     */
-    function redirectSlashedTicketFunds(address to, uint256 amount) external;
-
     /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
     /// @dev Only callable by the configured slashing manager.
     function reserveSlashedTicketFunds(uint256 amount) external;

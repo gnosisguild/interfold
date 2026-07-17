@@ -847,26 +847,6 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
-    /// @dev Atomically redirects slashed funds to E3RefundManager escrow.
-    ///      External with self-only access for try/catch atomicity.
-    function escrowSlashedFundsToRefund(uint256 e3Id, uint256 amount) external {
-        require(msg.sender == address(this), Unauthorized());
-        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
-        address refundManager = address(dependencies.refundManager);
-        require(refundManager != address(0), ZeroAddress());
-        address token = address(
-            dependencies.bonding.ticketToken().underlying()
-        );
-        dependencies.bonding.redirectSlashedTicketFunds(refundManager, amount);
-        dependencies.interfoldContract.escrowSlashedFunds(
-            e3Id,
-            IERC20(token),
-            amount
-        );
-        emit SlashedFundsEscrowedToRefund(e3Id, token, amount);
-    }
-
-    /// @inheritdoc ISlashingManager
     function routePendingSlashFunds(
         uint256 proposalId
     ) external returns (bool routed) {
