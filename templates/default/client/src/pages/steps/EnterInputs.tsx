@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { NumberSquareOneIcon } from '@phosphor-icons/react'
 import { hexToBytes } from 'viem'
 import { useAccount, useWalletClient } from 'wagmi'
@@ -23,15 +23,40 @@ import { getContractAddresses } from '../../utils/env-config'
 const EnterInputs: React.FC = () => {
   const [input1, setInput1] = useState('')
   const [input2, setInput2] = useState('')
-  const { e3State, setCurrentStep, setLastTransactionHash, setInputPublishError, setInputPublishSuccess, setSubmittedInputs, sdk } =
-    useWizard()
+  const {
+    e3State,
+    setCurrentStep,
+    setLastTransactionHash,
+    setInputPublishError,
+    setInputPublishSuccess,
+    setSubmittedInputs,
+    handleReset,
+    sdk,
+  } = useWizard()
   const { address } = useAccount()
   const { data: walletClient } = useWalletClient()
   const contracts = getContractAddresses()
 
+  // Track the input window countdown so we can block submissions once it closes —
+  // publishing after the deadline would revert on-chain. Tick every second.
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const interval = setInterval(() => setNowSeconds(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const expiresAt = e3State.expiresAt !== null ? Number(e3State.expiresAt) : null
+  const secondsLeft = expiresAt !== null ? Math.max(0, expiresAt - nowSeconds) : null
+  const isWindowClosed = expiresAt !== null && nowSeconds >= expiresAt
+
   const handleInputSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input1 || !input2 || e3State.publicKey === null || e3State.id === null || !walletClient || !address) {
+      return
+    }
+
+    // Guard against a race: the window may have closed between render and click.
+    if (isWindowClosed) {
       return
     }
 
@@ -78,25 +103,23 @@ const EnterInputs: React.FC = () => {
     <CardContent>
       <form onSubmit={handleInputSubmit} className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <NumberSquareOneIcon size={48} className='text-interfold-400' />
+          <NumberSquareOneIcon size={48} className='text-accent-deep' />
         </div>
-        <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 3: Enter Your Numbers</p>
+        <p className='eyebrow justify-center'>Step 3 · Enter Your Numbers</p>
         <div className='space-y-4'>
-          <h3 className='text-lg font-semibold text-slate-700'>Homomorphic Encrypted Computation</h3>
-          <p className='leading-relaxed text-slate-600'>
+          <h3 className='text-2xl'>Homomorphic Encrypted Computation</h3>
+          <p className='leading-relaxed text-ink-3'>
             Enter two numbers for a privacy-preserving addition using fully homomorphic encryption (FHE). Your inputs will be encrypted
             locally and remain encrypted throughout the entire computation process, with only the final result being decrypted.
           </p>
-          <div className='rounded-lg border border-blue-200 bg-blue-50 p-4'>
-            <p className='text-sm text-slate-600'>
-              <strong>Privacy Guarantee:</strong> FHE allows computation on encrypted data. Your numbers remain private throughout the
-              process - inputs, intermediate states, and execution are all encrypted.
-            </p>
+          <div className='note-accent text-left'>
+            <strong className='font-semibold'>Privacy Guarantee:</strong> FHE allows computation on encrypted data. Your numbers remain
+            private throughout the process — inputs, intermediate states, and execution are all encrypted.
           </div>
 
-          <div className='space-y-4'>
+          <div className='space-y-4 text-left'>
             <div>
-              <label htmlFor='input1' className='mb-2 block text-sm font-medium text-slate-700'>
+              <label htmlFor='input1' className='mb-2 block text-sm font-medium text-ink-2'>
                 First Number
               </label>
               <input
@@ -104,13 +127,13 @@ const EnterInputs: React.FC = () => {
                 type='number'
                 value={input1}
                 onChange={(e) => setInput1(e.target.value)}
-                className='w-full rounded-md border border-slate-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-interfold-500'
+                className='field'
                 placeholder='Enter first number'
                 required
               />
             </div>
             <div>
-              <label htmlFor='input2' className='mb-2 block text-sm font-medium text-slate-700'>
+              <label htmlFor='input2' className='mb-2 block text-sm font-medium text-ink-2'>
                 Second Number
               </label>
               <input
@@ -118,33 +141,52 @@ const EnterInputs: React.FC = () => {
                 type='number'
                 value={input2}
                 onChange={(e) => setInput2(e.target.value)}
-                className='w-full rounded-md border border-slate-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-interfold-500'
+                className='field'
                 placeholder='Enter second number'
                 required
               />
             </div>
           </div>
 
-          {input1 && input2 && (
-            <div className='rounded-lg border border-interfold-200 bg-interfold-50 p-4'>
-              <p className='text-sm text-slate-600'>
-                <strong>Ready to compute:</strong> {input1} + {input2} = ?
-              </p>
+          {isWindowClosed ? (
+            <div className='note-danger text-left' role='alert'>
+              <strong className='font-semibold'>Input window closed.</strong> The deadline to submit inputs for this E3 has passed. Start a
+              new computation to try again.
+            </div>
+          ) : (
+            secondsLeft !== null &&
+            e3State.isCommitteePublished && (
+              <div className='note-muted flex items-center justify-center gap-2 text-center'>
+                <span className='dot-live' />
+                Input window closes in <span className='font-mono font-semibold text-ink-2'>{secondsLeft}s</span>
+              </div>
+            )
+          )}
+
+          {input1 && input2 && !isWindowClosed && (
+            <div className='note-accent text-left'>
+              <strong className='font-semibold'>Ready to compute:</strong> {input1} + {input2} = ?
             </div>
           )}
         </div>
 
-        <button
-          type='submit'
-          disabled={!input1 || !input2 || !e3State.isCommitteePublished || !e3State.publicKey || !walletClient || !address}
-          className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500'
-        >
-          {!e3State.isCommitteePublished || !e3State.publicKey
-            ? 'Waiting for Committee Key...'
-            : !input1 || !input2
-              ? 'Enter Both Numbers'
-              : 'Proceed to Encryption'}
-        </button>
+        {isWindowClosed ? (
+          <button type='button' onClick={handleReset} className='btn-primary w-full'>
+            Start New Computation
+          </button>
+        ) : (
+          <button
+            type='submit'
+            disabled={!input1 || !input2 || !e3State.isCommitteePublished || !e3State.publicKey || !walletClient || !address}
+            className='btn-primary w-full'
+          >
+            {!e3State.isCommitteePublished || !e3State.publicKey
+              ? 'Waiting for Committee Key...'
+              : !input1 || !input2
+                ? 'Enter Both Numbers'
+                : 'Proceed to Encryption'}
+          </button>
+        )}
       </form>
     </CardContent>
   )

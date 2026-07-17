@@ -180,3 +180,15 @@ export const proofToFields = (proof: Uint8Array): string[] => {
   }
   return fields
 }
+
+/**
+ * Scale down the raw balance to 1 decimal precision
+ * @param balance - The raw balance (with all tokens decimals)
+ * @param decimals - The decimals of the token
+ * @returns The balance as a .1 precision scaled value
+ */
+export const getScaledBalance = (balance: bigint, decimals: bigint): bigint => {
+  const precision = decimals > 1n ? decimals - 1n : 0n
+
+  return balance / 10n ** precision
+}

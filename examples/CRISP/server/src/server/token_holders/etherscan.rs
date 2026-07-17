@@ -322,10 +322,14 @@ impl EtherscanClient {
 
         let decimals = Self::get_decimals(token_address, rpc_url).await?;
 
-        // we want to keep some precision.
-        let half_decimals = decimals / 2;
+        // we want to keep some precision but want to deal with as small as numbers as possible
+        let precision = if decimals > 1 {
+            decimals - 1
+        } else {
+            0
+        };
 
-        let scale_factor = U256::from(10u128.pow(half_decimals as u32));
+        let scale_factor = U256::from(10u128.pow(precision as u32));
 
         for voter in potential_voters {
             match Self::get_past_votes(token_address, voter.address, block_number, rpc_url).await {

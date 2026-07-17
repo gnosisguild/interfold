@@ -69,7 +69,7 @@ const WizardRoutes: React.FC = () => {
   }
 
   return (
-    <div className='min-h-screen bg-white/80 text-slate-900 backdrop-blur-sm'>
+    <div className='min-h-screen bg-paper text-ink'>
       <Navbar />
 
       <div className='container mx-auto px-4 py-8'>
