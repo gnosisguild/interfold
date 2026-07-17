@@ -381,16 +381,6 @@ interface IInterfold {
     /// @param bondingRegistry The invalid bonding registry address.
     error InvalidBondingRegistry(IBondingRegistry bondingRegistry);
 
-    /// @notice A required lifecycle dependency is not deployed contract code.
-    error DependencyNotContract(bytes32 dependency, address target);
-
-    /// @notice Cross-contract lifecycle pointers do not describe one coherent deployment.
-    error DependencyGraphMismatch(
-        bytes32 relation,
-        address expected,
-        address actual
-    );
-
     /// @notice Thrown when attempting to set an invalid fee token address.
     /// @param feeToken The invalid fee token address.
     error InvalidFeeToken(IERC20 feeToken);

@@ -9,34 +9,6 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 
-interface ICiphernodeRegistryDependencyView {
-    function interfold() external view returns (address);
-
-    function bondingRegistry() external view returns (address);
-
-    function slashingManager() external view returns (address);
-}
-
-interface IBondingRegistryDependencyView {
-    function registry() external view returns (address);
-
-    function slashingManager() external view returns (address);
-}
-
-interface IRefundManagerDependencyView {
-    function interfold() external view returns (address);
-}
-
-interface ISlashingManagerDependencyView {
-    function bondingRegistry() external view returns (address);
-
-    function ciphernodeRegistry() external view returns (address);
-
-    function interfold() external view returns (address);
-
-    function e3RefundManager() external view returns (address);
-}
-
 /**
  * @title InterfoldPricing
  * @notice External library extracted from {Interfold} to keep its deployed
@@ -99,96 +71,6 @@ library InterfoldPricing {
             caller == registry || caller == slashManager,
             IInterfold.OnlyCiphernodeRegistryOrSlashingManager()
         );
-    }
-
-    /// @notice Reject E3 creation while a multi-contract dependency rotation is
-    ///         only partially applied.
-    /// @dev Requests are permissionless, while governance updates the dependency
-    ///      graph across several transactions. Freezing a mixed graph would make
-    ///      the resulting E3 impossible to complete or slash.
-    function validateDependencyGraph(
-        address registry,
-        address bonding,
-        address refundManager,
-        address slashManager
-    ) external view {
-        address interfold = address(this);
-
-        _requireContract(bytes32("registry"), registry);
-        _requireContract(bytes32("bonding"), bonding);
-        _requireContract(bytes32("refundManager"), refundManager);
-        _requireContract(bytes32("slashManager"), slashManager);
-
-        _requireRelation(
-            bytes32("registry.interfold"),
-            interfold,
-            ICiphernodeRegistryDependencyView(registry).interfold()
-        );
-        _requireRelation(
-            bytes32("registry.bonding"),
-            bonding,
-            ICiphernodeRegistryDependencyView(registry).bondingRegistry()
-        );
-        _requireRelation(
-            bytes32("registry.slashing"),
-            slashManager,
-            ICiphernodeRegistryDependencyView(registry).slashingManager()
-        );
-        _requireRelation(
-            bytes32("bonding.registry"),
-            registry,
-            IBondingRegistryDependencyView(bonding).registry()
-        );
-        _requireRelation(
-            bytes32("bonding.slashing"),
-            slashManager,
-            IBondingRegistryDependencyView(bonding).slashingManager()
-        );
-        _requireRelation(
-            bytes32("refund.interfold"),
-            interfold,
-            IRefundManagerDependencyView(refundManager).interfold()
-        );
-        _requireRelation(
-            bytes32("slashing.bonding"),
-            bonding,
-            ISlashingManagerDependencyView(slashManager).bondingRegistry()
-        );
-        _requireRelation(
-            bytes32("slashing.registry"),
-            registry,
-            ISlashingManagerDependencyView(slashManager).ciphernodeRegistry()
-        );
-        _requireRelation(
-            bytes32("slashing.interfold"),
-            interfold,
-            ISlashingManagerDependencyView(slashManager).interfold()
-        );
-        _requireRelation(
-            bytes32("slashing.refund"),
-            refundManager,
-            ISlashingManagerDependencyView(slashManager).e3RefundManager()
-        );
-    }
-
-    function _requireContract(bytes32 dependency, address target) private view {
-        if (target.code.length == 0) {
-            revert IInterfold.DependencyNotContract(dependency, target);
-        }
-    }
-
-    function _requireRelation(
-        bytes32 relation,
-        address expected,
-        address actual
-    ) private pure {
-        if (actual != expected) {
-            revert IInterfold.DependencyGraphMismatch(
-                relation,
-                expected,
-                actual
-            );
-        }
     }
 
     function verifyPlaintext(

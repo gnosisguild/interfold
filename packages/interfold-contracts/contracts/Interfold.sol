@@ -269,12 +269,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _timeoutConfig.decryptionWindow,
             maxDuration
         );
-        InterfoldPricing.validateDependencyGraph(
-            address(ciphernodeRegistry),
-            address(bondingRegistry),
-            address(e3RefundManager),
-            address(slashingManager)
-        );
 
         e3Id = nexte3Id;
         nexte3Id++;

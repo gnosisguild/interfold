@@ -39,10 +39,7 @@ Requester calls: Interfold.request({
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
 │   ├─ total duration < maxDuration
-│   ├─ e3Programs[e3Program] == true (program whitelisted)
-│   └─ registry / bonding / refund / slashing pointers form one
-│       mutually consistent deployed-contract graph
-│       → partial multi-transaction admin rotations fail closed
+│   └─ e3Programs[e3Program] == true (program whitelisted)
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
