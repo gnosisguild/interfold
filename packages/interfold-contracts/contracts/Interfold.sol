@@ -279,7 +279,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         dependencies.registry = ciphernodeRegistry;
         dependencies.refundManager = e3RefundManager;
         dependencies.slashManager = slashingManager;
-        dependencies.refundManager.snapshotE3Policy(e3Id);
+        dependencies.refundManager.snapshotE3Policy(
+            e3Id,
+            address(dependencies.registry)
+        );
         // Seed uses block.prevrandao combined with e3Id as additional entropy.
         // While prevrandao is not cryptographically unpredictable (validator-controlled),
         // the combination with the unique, incrementing e3Id mitigates manipulation.
@@ -479,11 +482,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 paymentToken = _e3FeeTokens[e3Id];
 
         if (totalAmount == 0) {
-            refundManager.distributeSlashedFundsOnSuccess(
-                e3Id,
-                activeNodes,
-                paymentToken
-            );
+            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
             return;
         }
 
@@ -495,11 +494,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             if (requester != address(0)) {
                 paymentToken.safeTransfer(requester, totalAmount);
             }
-            refundManager.distributeSlashedFundsOnSuccess(
-                e3Id,
-                activeNodes,
-                paymentToken
-            );
+            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
             return;
         }
 
@@ -537,11 +532,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         emit RewardsDistributed(e3Id, activeNodes, amounts);
 
-        refundManager.distributeSlashedFundsOnSuccess(
-            e3Id,
-            activeNodes,
-            paymentToken
-        );
+        refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
     }
 
     /// @notice Credits per-node reward balances and emits `RewardCredited`.

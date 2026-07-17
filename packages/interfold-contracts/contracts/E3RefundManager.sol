@@ -17,6 +17,7 @@ import {
 import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IInterfold } from "./interfaces/IInterfold.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
+import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
 
 /**
  * @title E3RefundManager
@@ -79,7 +80,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         internal _pendingTrackedTreasury;
     /// @notice Protected slashed-fund liabilities for each token.
     mapping(IERC20 token => uint256 amount) internal _tokenLiability;
-    /// @notice Whether completion recorded the honest-node set for slash settlement.
+    /// @notice Whether successful completion enabled slash settlement for this E3.
     mapping(uint256 e3Id => bool ready) internal _successSettlementReady;
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -478,14 +479,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @inheritdoc IE3RefundManager
     function distributeSlashedFundsOnSuccess(
         uint256 e3Id,
-        address[] calldata honestNodes,
         IERC20 paymentToken
     ) external onlyE3Interfold(e3Id) {
         require(address(paymentToken) != address(0), "Invalid fee token");
         require(!_successSettlementReady[e3Id], "Already initialized");
-        for (uint256 i = 0; i < honestNodes.length; i++) {
-            _honestNodes[e3Id].push(honestNodes[i]);
-        }
         _successSettlementReady[e3Id] = true;
 
         if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
@@ -496,48 +493,69 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function _settleSlashedFunds(uint256 e3Id, IERC20 token) internal {
         uint256 amount = _pendingSlashedByToken[e3Id][token];
         _pendingSlashedByToken[e3Id][token] = 0;
+        (address[] memory nodes, ) = ICiphernodeRegistry(
+            _e3PolicySnapshots[e3Id].registry
+        ).getActiveCommitteeNodes(e3Id);
 
         if (_distributions[e3Id].calculated) {
-            _settleFailedE3Slash(e3Id, token, amount);
+            _settleFailedE3Slash(e3Id, token, amount, nodes);
         } else {
-            _settleSuccessfulE3Slash(e3Id, token, amount);
+            _settleSuccessfulE3Slash(e3Id, token, amount, nodes);
         }
     }
 
     function _settleFailedE3Slash(
         uint256 e3Id,
         IERC20 token,
-        uint256 amount
+        uint256 amount,
+        address[] memory nodes
     ) internal {
-        address[] storage nodes = _honestNodes[e3Id];
+        RefundDistribution storage dist = _distributions[e3Id];
         uint256 toRequester;
         uint256 toHonestNodes;
-        if (nodes.length == 0) {
+        uint256 toProtocol;
+        bool sameFeeToken = token == dist.feeToken;
+
+        if (!sameFeeToken) {
+            // No oracle-free comparison can establish an exact fee-token
+            // shortfall, so the requester gets priority compensation in the
+            // actual slash asset without relabeling it as exact repayment.
             toRequester = amount;
         } else {
-            (uint16 completedBps, uint16 remainingBps) = _calculateWorkValue(
-                _getFailedAtStage(e3Id),
-                _allocationFor(e3Id)
-            );
-            uint256 compensationBps = uint256(completedBps) + remainingBps;
-            toRequester = compensationBps == 0
-                ? amount
-                : (amount * remainingBps) / compensationBps;
+            // Same-token slashes first fill the requester's exact fee-token
+            // shortfall. `totalSlashed` records cumulative same-token slash
+            // settlement so later slashes cannot refill the same gap.
+            uint256 originalGap = dist.originalPayment > dist.requesterAmount
+                ? dist.originalPayment - dist.requesterAmount
+                : 0;
+            uint256 alreadyFilled = dist.totalSlashed < originalGap
+                ? dist.totalSlashed
+                : originalGap;
+            uint256 remainingGap = originalGap - alreadyFilled;
+            toRequester = amount < remainingGap ? amount : remainingGap;
             toHonestNodes = amount - toRequester;
+            if (nodes.length == 0) {
+                // Preserve the requester cap when no honest-node recipient
+                // exists; the residual remains protocol-owned, not a windfall.
+                toProtocol = toHonestNodes;
+                toHonestNodes = 0;
+            }
         }
+        if (sameFeeToken) dist.totalSlashed += amount;
 
         address requester = _interfoldFor(e3Id).getRequester(e3Id);
         _creditSlashedClaim(e3Id, token, requester, toRequester);
         _creditNodeSlashedClaims(e3Id, token, nodes, toHonestNodes);
+        _creditTrackedTreasury(_treasuryFor(e3Id), token, toProtocol);
         emit SlashedFundsApplied(e3Id, token, toRequester, toHonestNodes);
     }
 
     function _settleSuccessfulE3Slash(
         uint256 e3Id,
         IERC20 token,
-        uint256 amount
+        uint256 amount,
+        address[] memory nodes
     ) internal {
-        address[] storage nodes = _honestNodes[e3Id];
         uint256 toNodes = (amount * _successSlashedNodeBpsFor(e3Id)) / BPS_BASE;
         uint256 toProtocol = amount - toNodes;
         if (nodes.length == 0) {
@@ -553,7 +571,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function _creditNodeSlashedClaims(
         uint256 e3Id,
         IERC20 token,
-        address[] storage nodes,
+        address[] memory nodes,
         uint256 amount
     ) internal {
         if (amount == 0) return;
@@ -657,13 +675,18 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IE3RefundManager
-    function snapshotE3Policy(uint256 e3Id) external onlyInterfold {
+    function snapshotE3Policy(
+        uint256 e3Id,
+        address registry
+    ) external onlyInterfold {
         E3PolicySnapshot storage snapshot = _e3PolicySnapshots[e3Id];
         require(!snapshot.initialized, "Policy already snapshotted");
+        require(registry != address(0), "Invalid registry");
         if (policyVersion == 0) policyVersion = 1;
         snapshot.allocation = _workAllocation;
         snapshot.treasury = treasury;
         snapshot.interfold = msg.sender;
+        snapshot.registry = registry;
         snapshot.version = policyVersion;
         snapshot.initialized = true;
         emit E3PolicySnapshotted(
@@ -671,6 +694,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             policyVersion,
             treasury,
             msg.sender,
+            registry,
             _workAllocation
         );
     }

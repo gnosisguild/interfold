@@ -31,6 +31,7 @@ interface IE3RefundManager {
         WorkValueAllocation allocation;
         address treasury;
         address interfold;
+        address registry;
         uint64 version;
         bool initialized;
     }
@@ -39,7 +40,7 @@ interface IE3RefundManager {
         uint256 requesterAmount; // Amount for requester
         uint256 honestNodeAmount; // Total amount for honest nodes
         uint256 protocolAmount; // Amount for protocol treasury
-        uint256 totalSlashed; // Legacy same-token aggregate; new token-aware escrows do not mutate it
+        uint256 totalSlashed; // Cumulative fee-token slash settlement used for requester-first compensation
         uint256 honestNodeCount; // Number of honest nodes
         bool calculated; // Whether distribution is calculated
         IERC20 feeToken; // The fee token used for this E3's payment (stored per-E3 to survive token rotations)
@@ -122,6 +123,7 @@ interface IE3RefundManager {
         uint64 indexed version,
         address indexed treasury,
         address interfold,
+        address registry,
         WorkValueAllocation allocation
     );
     /// @notice Emitted when the Interfold address is set
@@ -169,9 +171,9 @@ interface IE3RefundManager {
         IERC20 paymentToken
     ) external;
 
-    /// @notice Freeze the current allocation and treasury for an E3.
+    /// @notice Freeze the current allocation, treasury, and committee registry for an E3.
     /// @dev Only Interfold may call this, exactly once, during request creation.
-    function snapshotE3Policy(uint256 e3Id) external;
+    function snapshotE3Policy(uint256 e3Id, address registry) external;
 
     /// @notice Requester claims their refund
     /// @param e3Id The failed E3 ID
@@ -224,11 +226,9 @@ interface IE3RefundManager {
 
     /// @notice Distribute escrowed slashed funds on success
     /// @param e3Id The E3 ID
-    /// @param honestNodes Honest node addresses
     /// @param paymentToken The fee token for this E3
     function distributeSlashedFundsOnSuccess(
         uint256 e3Id,
-        address[] calldata honestNodes,
         IERC20 paymentToken
     ) external;
 
