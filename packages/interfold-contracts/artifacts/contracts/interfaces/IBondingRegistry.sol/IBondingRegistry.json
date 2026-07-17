@@ -230,6 +230,31 @@
         {
           "indexed": true,
           "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "LicenseSurplusSwept",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
           "name": "licenseToken",
           "type": "address"
         }
@@ -1206,6 +1231,19 @@
     },
     {
       "inputs": [],
+      "name": "sweepLicenseSurplus",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "ticketPrice",
       "outputs": [
         {
@@ -1239,6 +1277,19 @@
         }
       ],
       "name": "totalBonded",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "totalLicenseLiability",
       "outputs": [
         {
           "internalType": "uint256",
@@ -1287,5 +1338,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-2f1d99bb64f0a03101b91d207f24a5e189e744e5"
+  "buildInfoId": "solc-0_8_28-cbb48f089c866ef144e6f8c2927a419cbfdb1af2"
 }
