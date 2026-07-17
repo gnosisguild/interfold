@@ -180,22 +180,6 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "quotedFee",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "maxFee",
-          "type": "uint256"
-        }
-      ],
-      "name": "FeeExceedsMax",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "contract IERC20",
           "name": "token",
           "type": "address"
@@ -438,22 +422,6 @@
     {
       "inputs": [],
       "name": "ProofRequired",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "requestDeadline",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "currentTimestamp",
-          "type": "uint256"
-        }
-      ],
-      "name": "RequestExpired",
       "type": "error"
     },
     {
@@ -1559,16 +1527,6 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
-            },
-            {
-              "internalType": "uint256",
-              "name": "maxFee",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "requestDeadline",
-              "type": "uint256"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -2035,16 +1993,6 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
-            },
-            {
-              "internalType": "uint256",
-              "name": "maxFee",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "requestDeadline",
-              "type": "uint256"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -2428,5 +2376,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-b6081d4a087889d124a71337ceb3c3c46650c56f"
+  "buildInfoId": "solc-0_8_28-04326bbd3714d0d7d56214e0d6ea5dc646f6c4ab"
 }

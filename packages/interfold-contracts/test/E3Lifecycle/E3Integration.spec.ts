@@ -138,15 +138,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        maxFee: ethers.MaxUint256,
-        requestDeadline: startTime + 100,
       };
 
       const fee = await interfold.getE3Quote(requestParams);
       await requestToken.connect(signer).approve(interfoldAddress, fee);
-      await interfold
-        .connect(signer)
-        .request({ ...requestParams, maxFee: fee });
+      await interfold.connect(signer).request(requestParams);
 
       return { e3Id: 0 };
     };
@@ -1621,14 +1617,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             ["address"],
             ["0x1234567890123456789012345678901234567890"],
           ),
-          maxFee: ethers.MaxUint256,
-          requestDeadline: startTime,
         };
         const fee = await interfold.getE3Quote(requestParams);
         await usdcToken.connect(requester).approve(interfoldAddress, fee);
-        await interfold
-          .connect(requester)
-          .request({ ...requestParams, maxFee: fee });
+        await interfold.connect(requester).request(requestParams);
         return n;
       };
 
@@ -1707,14 +1699,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             ["address"],
             ["0x1234567890123456789012345678901234567890"],
           ),
-          maxFee: ethers.MaxUint256,
-          requestDeadline: startTime,
         };
         const fee = await interfold.getE3Quote(requestParams);
         await usdcToken.connect(requester).approve(interfoldAddress, fee);
-        await interfold
-          .connect(requester)
-          .request({ ...requestParams, maxFee: fee });
+        await interfold.connect(requester).request(requestParams);
       }
 
       // Fail both

@@ -145,15 +145,11 @@ describe("Committee Expulsion & Fault Tolerance", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        maxFee: ethers.MaxUint256,
-        requestDeadline: startTime + 100,
       };
 
       const fee = await interfold.getE3Quote(requestParams);
       await usdcToken.connect(requester).approve(interfoldAddress, fee);
-      await interfold
-        .connect(requester)
-        .request({ ...requestParams, maxFee: fee });
+      await interfold.connect(requester).request(requestParams);
     }
 
     async function finalizeCommitteeWithOperators(

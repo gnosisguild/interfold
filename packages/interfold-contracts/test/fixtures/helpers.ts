@@ -91,30 +91,15 @@ export const setupAndPublishCommittee = async (
 export const makeRequest = async (
   interfold: Interfold,
   usdcToken: MockUSDC,
-  requestParams: Omit<
-    IInterfold.E3RequestParamsStruct,
-    "maxFee" | "requestDeadline"
-  > &
-    Partial<
-      Pick<IInterfold.E3RequestParamsStruct, "maxFee" | "requestDeadline">
-    >,
+  requestParams: IInterfold.E3RequestParamsStruct,
   signer?: Signer,
 ): Promise<ContractTransactionResponse> => {
-  const normalizedParams: IInterfold.E3RequestParamsStruct = {
-    ...requestParams,
-    maxFee: requestParams.maxFee ?? ethers.MaxUint256,
-    requestDeadline:
-      requestParams.requestDeadline ?? requestParams.inputWindow[0],
-  };
-  const fee = await interfold.getE3Quote(normalizedParams);
+  const fee = await interfold.getE3Quote(requestParams);
   const tokenContract = signer ? usdcToken.connect(signer) : usdcToken;
   const interfoldContract = signer ? interfold.connect(signer) : interfold;
 
   await tokenContract.approve(await interfold.getAddress(), fee);
-  return interfoldContract.request({
-    ...normalizedParams,
-    maxFee: fee,
-  });
+  return interfoldContract.request(requestParams);
 };
 
 /** Options for {@link buildRequestParams}. */
@@ -164,7 +149,5 @@ export const buildRequestParams = async (
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-    maxFee: ethers.MaxUint256,
-    requestDeadline: now + startOffset,
   };
 };

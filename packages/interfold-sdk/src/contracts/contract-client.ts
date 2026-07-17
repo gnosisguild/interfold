@@ -145,8 +145,6 @@ export class ContractClient {
       }
 
       const committeeSize = validateCommitteeSize(params.committeeSize)
-      const maxFee = params.maxFee ?? (await this.getE3Quote(params))
-      const requestDeadline = params.requestDeadline ?? params.inputWindow[0]
 
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
@@ -160,8 +158,6 @@ export class ContractClient {
             paramSet: params.paramSet,
             computeProviderParams: params.computeProviderParams,
             customParams: params.customParams || '0x',
-            maxFee,
-            requestDeadline,
           },
         ],
         account,
@@ -236,8 +232,6 @@ export class ContractClient {
             paramSet: requestParams.paramSet,
             computeProviderParams: requestParams.computeProviderParams,
             customParams: requestParams.customParams || '0x',
-            maxFee: requestParams.maxFee ?? 0n,
-            requestDeadline: requestParams.requestDeadline ?? requestParams.inputWindow[0],
           },
         ],
       })

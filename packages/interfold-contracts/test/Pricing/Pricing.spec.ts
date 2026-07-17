@@ -358,16 +358,11 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        maxFee: ethers.MaxUint256,
-        requestDeadline: now + 100,
       };
 
       // Make request with large approval to avoid fee mismatch
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      await interfold.request({
-        ...freshRequest,
-        maxFee: await interfold.getE3Quote(freshRequest),
-      });
+      await interfold.request(freshRequest);
       const e3Id = 0;
       const fee = await interfold.e3Payments(e3Id);
 
@@ -449,16 +444,11 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        maxFee: ethers.MaxUint256,
-        requestDeadline: now + 100,
       };
 
       // Make request with large approval
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      await interfold.request({
-        ...freshRequest,
-        maxFee: await interfold.getE3Quote(freshRequest),
-      });
+      await interfold.request(freshRequest);
       const e3Id = 0;
       const fee = await interfold.e3Payments(e3Id);
 
@@ -548,7 +538,7 @@ describe("E3 Pricing", function () {
       const balanceBefore = await usdcToken.balanceOf(ownerAddr);
 
       await usdcToken.approve(await interfold.getAddress(), fee);
-      await interfold.request({ ...request, maxFee: fee });
+      await interfold.request(request);
 
       const balanceAfter = await usdcToken.balanceOf(ownerAddr);
       expect(balanceBefore - balanceAfter).to.equal(fee);
@@ -560,12 +550,10 @@ describe("E3 Pricing", function () {
       // Approve only 1 unit
       await usdcToken.approve(await interfold.getAddress(), 1);
 
-      await expect(
-        interfold.request({
-          ...request,
-          maxFee: await interfold.getE3Quote(request),
-        }),
-      ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
+      await expect(interfold.request(request)).to.be.revertedWithCustomError(
+        usdcToken,
+        "ERC20InsufficientAllowance",
+      );
     });
   });
 

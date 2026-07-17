@@ -231,8 +231,6 @@ export const requestCommittee = task(
         paramSet,
         computeProviderParams,
         customParams,
-        maxFee: ethers.MaxUint256,
-        requestDeadline: inputWindowStart,
       };
 
       console.log("Request parameters:", requestParams);
@@ -259,10 +257,7 @@ export const requestCommittee = task(
       await approveTx.wait();
       console.log("USDC approved");
 
-      const tx = await interfoldContract.request({
-        ...requestParams,
-        maxFee: fee,
-      });
+      const tx = await interfoldContract.request(requestParams);
 
       console.log("Requesting committee... ", tx.hash);
       await tx.wait();

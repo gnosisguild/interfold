@@ -375,34 +375,8 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
-          maxFee: ethers.MaxUint256,
-          requestDeadline: request.inputWindow[0],
         }),
       ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
-    });
-    it("AUD-H02: reverts when the live quote exceeds maxFee", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
-      const fee = await interfold.getE3Quote(request);
-      await usdcToken.approve(await interfold.getAddress(), fee);
-
-      await expect(interfold.request({ ...request, maxFee: fee - 1n }))
-        .to.be.revertedWithCustomError(interfold, "FeeExceedsMax")
-        .withArgs(fee, fee - 1n);
-    });
-    it("AUD-H02: reverts after the requester-authorized deadline", async function () {
-      const { interfold, request } = await loadFixture(setup);
-      const deadline = BigInt(request.inputWindow[0].toString());
-      await time.increaseTo(deadline + 1n);
-
-      await expect(
-        interfold.request.staticCall({
-          ...request,
-          maxFee: ethers.MaxUint256,
-          requestDeadline: deadline,
-        }),
-      )
-        .to.be.revertedWithCustomError(interfold, "RequestExpired")
-        .withArgs(deadline, deadline + 1n);
     });
     it("reverts if committee size is not configured", async function () {
       const { interfold, request } = await loadFixture(setup);
@@ -418,8 +392,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        maxFee: ethers.MaxUint256,
-        requestDeadline: request.inputWindow[0],
       };
       // `CommitteeSizeNotConfigured(3)` reverts correctly on-chain; ethers cannot
       // decode the custom error when the enum arg is not a named variant (0..2).

@@ -564,8 +564,6 @@ export async function deployInterfoldSystem(
       ["address"],
       ["0x1234567890123456789012345678901234567890"],
     ),
-    maxFee: ethers.MaxUint256,
-    requestDeadline: now + 10,
   };
 
   return {

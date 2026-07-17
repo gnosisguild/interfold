@@ -304,7 +304,7 @@ library InterfoldPricing {
             revert IInterfold.BelowMinThreshold(threshold[0], minThreshold);
     }
 
-    /// @notice Mirrors the request-consent, input-window, and duration gates
+    /// @notice Mirrors the input-window and duration gates
     ///         of {Interfold.request}. Reverts with the same selectors so off-
     ///         chain `revertedWithCustomError(interfold, ...)` lookups keep
     ///         working.
@@ -313,23 +313,13 @@ library InterfoldPricing {
     /// @param computeWindow    `_timeoutConfig.computeWindow`.
     /// @param decryptionWindow `_timeoutConfig.decryptionWindow`.
     /// @param maxDuration      The Interfold-wide upper bound.
-    /// @param quotedFee        Fee returned by {InterfoldPricing.quote}.
-    /// @param maxFee           Maximum fee authorized by the requester.
-    /// @param requestDeadline  Last timestamp at which this quote is valid.
     function validateRequest(
         uint256[2] calldata inputWindow,
         uint256 nowTs,
         uint256 computeWindow,
         uint256 decryptionWindow,
-        uint256 maxDuration,
-        uint256 quotedFee,
-        uint256 maxFee,
-        uint256 requestDeadline
+        uint256 maxDuration
     ) external pure {
-        if (nowTs > requestDeadline)
-            revert IInterfold.RequestExpired(requestDeadline, nowTs);
-        if (quotedFee > maxFee)
-            revert IInterfold.FeeExceedsMax(quotedFee, maxFee);
         if (inputWindow[0] < nowTs)
             revert IInterfold.InvalidInputDeadlineStart(inputWindow[0]);
         if (inputWindow[1] < inputWindow[0])

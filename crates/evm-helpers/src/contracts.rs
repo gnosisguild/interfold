@@ -72,8 +72,6 @@ sol! {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
-        uint256 maxFee;
-        uint256 requestDeadline;
     }
 
     #[derive(Debug, PartialEq)]
@@ -383,8 +381,6 @@ where
             paramSet: param_set,
             computeProviderParams: compute_provider_params,
             customParams: Bytes::new(),
-            maxFee: U256::MAX,
-            requestDeadline: input_window[0],
         };
 
         let contract = Interfold::new(self.contract_address, &self.provider);
@@ -457,15 +453,8 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             paramSet: param_set,
             computeProviderParams: compute_provider_params.clone(),
             customParams: custom_params.clone(),
-            maxFee: U256::MAX,
-            requestDeadline: input_window[0],
         };
 
-        let max_fee = contract.getE3Quote(e3_request.clone()).call().await?;
-        let e3_request = E3RequestParams {
-            maxFee: max_fee,
-            ..e3_request
-        };
         let builder = contract.request(e3_request).nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
         e3_utils::require_successful_receipt("request E3", &receipt)?;

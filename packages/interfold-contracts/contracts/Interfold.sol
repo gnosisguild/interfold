@@ -270,10 +270,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             block.timestamp,
             _timeoutConfig.computeWindow,
             _timeoutConfig.decryptionWindow,
-            maxDuration,
-            e3Fee,
-            requestParams.maxFee,
-            requestParams.requestDeadline
+            maxDuration
         );
 
         e3Id = nexte3Id;

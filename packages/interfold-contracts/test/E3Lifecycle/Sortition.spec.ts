@@ -114,13 +114,8 @@ async function deployStack() {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-      maxFee: ethers.MaxUint256,
-      requestDeadline: now + 10,
     } as any;
-    return interfold.connect(requester).request({
-      ...req,
-      maxFee: await interfold.getE3Quote(req),
-    });
+    return interfold.connect(requester).request(req);
   };
 
   return {
