@@ -352,6 +352,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await registry.connect(owner).setInterfold(rotatedRegistry);
       await registry.connect(owner).setBondingRegistry(rotatedBonding);
       await registry.connect(owner).setSlashingManager(rotatedSlashingManager);
+      await bondingRegistry
+        .connect(owner)
+        .setSlashingManager(rotatedSlashingManager);
       await e3RefundManager.connect(owner).setInterfold(rotatedRegistry);
       await slashingManager.connect(owner).setBondingRegistry(rotatedBonding);
       await slashingManager
@@ -394,6 +397,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await operator1.getAddress(),
         proof,
       );
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      ).to.equal(true);
       expect(await usdcToken.balanceOf(refundManagerAddress)).to.be.gt(
         refundBalanceBefore,
       );

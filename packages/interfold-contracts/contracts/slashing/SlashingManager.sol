@@ -732,14 +732,13 @@ contract SlashingManager is
     }
 
     /// @dev Executes a slash: applies financial penalties, optional ban, and committee expulsion.
-    ///      Lane B: if the operator deregistered or exited during the appeal window, penalties
-    ///      gracefully become 0 (BondingRegistry uses min(requested, available)). Accepted tradeoff.
+    ///      BondingRegistry keeps active and queued collateral locked while any
+    ///      proposal from a retained slashing manager remains unresolved.
     /// @dev `p.executed = true` is deferred until AFTER the two `bondingRegistry.slash*`
     ///      calls succeed but BEFORE any other external interaction. This protects the
     ///      proposal from being permanently marked as executed when the financial leg
     ///      reverts (e.g. an attacker griefs the operator's exit queue with enough
-    ///      tranches to OOG `_takeAssetsFromQueue` — a Lane B operator could otherwise
-    ///      lose all retry attempts). The `MAX_ACTIVE_TRANCHES` cap in ExitQueueLib is
+    ///      tranches to OOG `_takeAssetsFromQueue`). The `MAX_ACTIVE_TRANCHES` cap is
     ///      the primary defence; this ordering provides defence-in-depth.
     function _executeSlash(uint256 proposalId, Lane lane) internal {
         SlashProposal storage p = _proposals[proposalId];
@@ -767,8 +766,8 @@ contract SlashingManager is
         // Financial penalties succeeded — commit `executed` before any further
         // external interaction (committee expulsion, refund escrow self-call,
         // interfold routing) so that reentrancy via those paths cannot re-enter
-        // _executeSlash for the same proposal, while still allowing Lane B
-        // to retry if either bondingRegistry.slash* leg above reverts.
+        // _executeSlash for the same proposal, while still allowing a deferred
+        // proposal to retry if either bondingRegistry.slash* leg above reverts.
         p.executed = true;
 
         // Ban node if snapshotted policy requires it

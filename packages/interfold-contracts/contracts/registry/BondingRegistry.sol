@@ -159,13 +159,26 @@ contract BondingRegistry is
     /// @notice Slashed tickets committed to retryable E3 refund routes.
     uint256 public reservedSlashedTicketBalance;
 
+    /// @notice Slashing managers that may finish snapshotted E3 lifecycles.
+    /// @dev Rotating the current manager does not revoke its predecessor.
+    address[] internal _authorizedSlashingManagers;
+
+    /// @dev One-based index into {_authorizedSlashingManagers}; zero means unauthorized.
+    mapping(address manager => uint256 indexPlusOne)
+        internal _authorizedSlashingManagerIndex;
+
+    /// @notice Maximum number of concurrently authorized slashing managers.
+    uint256 public constant MAX_AUTHORIZED_SLASHING_MANAGERS = 32;
+
     // ======================
     // Modifiers
     // ======================
 
-    /// @dev Restricts function access to only the slashing manager
-    modifier onlySlashingManager() {
-        if (msg.sender != slashingManager) revert Unauthorized();
+    /// @dev Restricts function access to current or retained historical managers.
+    modifier onlyAuthorizedSlashingManager() {
+        if (_authorizedSlashingManagerIndex[msg.sender] == 0) {
+            revert Unauthorized();
+        }
         _;
     }
 
@@ -188,12 +201,14 @@ contract BondingRegistry is
     /// @dev Keeps active and already-queued collateral available while any
     ///      financial slash proposal against the operator is unresolved.
     modifier noOpenSlashProposal(address operator) {
-        address sm = slashingManager;
-        if (
-            sm != address(0) &&
-            ISlashingManager(sm).hasOpenSlashProposal(operator)
-        ) {
-            revert OperatorUnderSlash();
+        uint256 len = _authorizedSlashingManagers.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (
+                ISlashingManager(_authorizedSlashingManagers[i])
+                    .hasOpenSlashProposal(operator)
+            ) {
+                revert OperatorUnderSlash();
+            }
         }
         _;
     }
@@ -355,6 +370,25 @@ contract BondingRegistry is
         return op.exitRequested && block.timestamp < op.exitUnlocksAt;
     }
 
+    /// @inheritdoc IBondingRegistry
+    function isAuthorizedSlashingManager(
+        address candidate
+    ) external view returns (bool) {
+        return _authorizedSlashingManagerIndex[candidate] != 0;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function authorizedSlashingManagerCount() external view returns (uint256) {
+        return _authorizedSlashingManagers.length;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function authorizedSlashingManagerAt(
+        uint256 index
+    ) external view returns (address) {
+        return _authorizedSlashingManagers[index];
+    }
+
     // ======================
     // Operator Functions
     // ======================
@@ -367,10 +401,16 @@ contract BondingRegistry is
             operators[msg.sender].exitUnlocksAt = 0;
         }
 
-        require(
-            !ISlashingManager(slashingManager).isBanned(msg.sender),
-            CiphernodeBanned()
-        );
+        require(slashingManager != address(0), ZeroAddress());
+        uint256 managerCount = _authorizedSlashingManagers.length;
+        for (uint256 i = 0; i < managerCount; i++) {
+            require(
+                !ISlashingManager(_authorizedSlashingManagers[i]).isBanned(
+                    msg.sender
+                ),
+                CiphernodeBanned()
+            );
+        }
         require(!operators[msg.sender].registered, AlreadyRegistered());
         require(
             operators[msg.sender].licenseBond >= licenseRequiredBond,
@@ -544,7 +584,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlySlashingManager returns (uint256) {
+    ) external onlyAuthorizedSlashingManager returns (uint256) {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         (uint256 pendingTicketBalance, ) = _exits.getPendingAmounts(operator);
@@ -598,7 +638,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlySlashingManager nonReentrant {
+    ) external onlyAuthorizedSlashingManager nonReentrant {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
@@ -649,7 +689,7 @@ contract BondingRegistry is
     function redirectSlashedTicketFunds(
         address to,
         uint256 amount
-    ) external onlySlashingManager {
+    ) external onlyAuthorizedSlashingManager {
         require(to != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
         require(
@@ -664,7 +704,7 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function reserveSlashedTicketFunds(
         uint256 amount
-    ) external onlySlashingManager {
+    ) external onlyAuthorizedSlashingManager {
         require(amount > 0, ZeroAmount());
         require(
             amount <= slashedTicketBalance - reservedSlashedTicketBalance,
@@ -677,7 +717,7 @@ contract BondingRegistry is
     function redirectReservedSlashedTicketFunds(
         address to,
         uint256 amount
-    ) external onlySlashingManager {
+    ) external onlyAuthorizedSlashingManager {
         require(to != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
         require(amount <= reservedSlashedTicketBalance, InsufficientBalance());
@@ -854,12 +894,44 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setSlashingManager(address newSlashingManager) public onlyOwner {
-        // zero-address protection and explicit event so a missed setter
-        // call is observable off-chain.
         require(newSlashingManager != address(0), ZeroAddress());
+        if (_authorizedSlashingManagerIndex[newSlashingManager] == 0) {
+            require(
+                _authorizedSlashingManagers.length <
+                    MAX_AUTHORIZED_SLASHING_MANAGERS,
+                InvalidConfiguration()
+            );
+            _authorizedSlashingManagers.push(newSlashingManager);
+            _authorizedSlashingManagerIndex[
+                newSlashingManager
+            ] = _authorizedSlashingManagers.length;
+            emit SlashingManagerAuthorizationUpdated(newSlashingManager, true);
+        }
         address oldValue = slashingManager;
         slashingManager = newSlashingManager;
         emit SlashingManagerUpdated(oldValue, newSlashingManager);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function revokeSlashingManager(
+        address oldSlashingManager
+    ) external onlyOwner {
+        require(oldSlashingManager != slashingManager, InvalidConfiguration());
+        uint256 indexPlusOne = _authorizedSlashingManagerIndex[
+            oldSlashingManager
+        ];
+        if (indexPlusOne == 0) revert Unauthorized();
+
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = _authorizedSlashingManagers.length - 1;
+        if (index != lastIndex) {
+            address moved = _authorizedSlashingManagers[lastIndex];
+            _authorizedSlashingManagers[index] = moved;
+            _authorizedSlashingManagerIndex[moved] = index + 1;
+        }
+        _authorizedSlashingManagers.pop();
+        delete _authorizedSlashingManagerIndex[oldSlashingManager];
+        emit SlashingManagerAuthorizationUpdated(oldSlashingManager, false);
     }
 
     /// @notice Disabled. Reverts unconditionally.
@@ -1039,5 +1111,5 @@ contract BondingRegistry is
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[50] private __gap;
+    uint256[48] private __gap;
 }

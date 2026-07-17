@@ -180,6 +180,14 @@ interface IBondingRegistry {
         address indexed next
     );
 
+    /// @notice Emitted whenever a slashing manager gains or loses authority.
+    /// @dev Replaced managers remain authorized until governance explicitly
+    ///      revokes them so snapshotted E3s and open proposals can finish.
+    event SlashingManagerAuthorizationUpdated(
+        address indexed slashingManager,
+        bool authorized
+    );
+
     /**
      * @notice Emitted whenever a `licenseToken.safeTransfer` performed by the
      *         registry sends FEWER tokens than requested (typical of
@@ -572,6 +580,32 @@ interface IBondingRegistry {
      * @dev Only callable by contract owner
      */
     function setSlashingManager(address newSlashingManager) external;
+
+    /**
+     * @notice Revoke a non-current slashing manager after every E3 and proposal
+     *         that depends on it has reached a terminal state.
+     * @param oldSlashingManager Manager whose authority should be removed
+     */
+    function revokeSlashingManager(address oldSlashingManager) external;
+
+    /**
+     * @notice Whether a manager may slash collateral or route reserved slash funds.
+     */
+    function isAuthorizedSlashingManager(
+        address candidate
+    ) external view returns (bool);
+
+    /**
+     * @notice Number of currently authorized slashing managers.
+     */
+    function authorizedSlashingManagerCount() external view returns (uint256);
+
+    /**
+     * @notice Authorized slashing manager at `index`.
+     */
+    function authorizedSlashingManagerAt(
+        uint256 index
+    ) external view returns (address);
 
     /**
      * @notice Set reward distributor address

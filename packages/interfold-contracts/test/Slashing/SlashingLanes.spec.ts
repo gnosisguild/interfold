@@ -236,6 +236,73 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         .false;
     });
 
+    it("retains an old manager's collateral authority and exit gate across rotation", async function () {
+      const ctx = await loadFixture(setup);
+      const {
+        owner,
+        slashingManager,
+        bondingRegistry,
+        slasher,
+        operator,
+        operatorAddress,
+      } = ctx;
+      await registerOperatorForExit(ctx);
+      await setupLaneBPolicy(slashingManager);
+
+      await slashingManager
+        .connect(slasher)
+        .proposeSlashEvidence(
+          0,
+          operatorAddress,
+          REASON_INACTIVITY,
+          ethers.toUtf8Bytes("rotation"),
+        );
+
+      const replacement = await ethers.deployContract("SlashingManager", [
+        DEFAULT_ADMIN_DELAY,
+        await owner.getAddress(),
+      ]);
+      await bondingRegistry.setSlashingManager(await replacement.getAddress());
+
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      ).to.equal(true);
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await replacement.getAddress(),
+        ),
+      ).to.equal(true);
+      expect(await bondingRegistry.authorizedSlashingManagerCount()).to.equal(
+        2,
+      );
+
+      await expect(
+        bondingRegistry.connect(operator).unbondLicense(1),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+
+      await time.increase(APPEAL_WINDOW + 1);
+      await slashingManager.executeSlash(0);
+
+      expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
+        ethers.parseEther("950"),
+      );
+      await bondingRegistry.connect(operator).unbondLicense(1);
+
+      await bondingRegistry.revokeSlashingManager(
+        await slashingManager.getAddress(),
+      );
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      ).to.equal(false);
+      expect(await bondingRegistry.authorizedSlashingManagerCount()).to.equal(
+        1,
+      );
+    });
+
     it("deregisterOperator reverts OperatorUnderSlash while Lane B proposal open", async function () {
       const ctx = await loadFixture(setup);
       const {
