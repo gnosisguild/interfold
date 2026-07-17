@@ -163,10 +163,9 @@ publishPlaintextOutput() succeeds
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
 │   │   │   → Credits pull-payment rewards to each registered operator
-│   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(
-│   │   │     e3Id, activeNodes, paymentToken
-│   │   │   )
+│   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
+│   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
 │   │   │     nodes portion distributed evenly to activeNodes
 │   │   │     remainder sent to protocol treasury
@@ -505,12 +504,12 @@ GOVERNANCE lifts ban:
 
 ## Cluster 6 Audit Addendum (deregistration & bans)
 
-- **Deregistration is blocked while a Lane B slash is open** (H-05).
-  `BondingRegistry.deregisterOperator()` calls
-  `ISlashingManager(sm).hasOpenLaneBProposal(msg.sender)` and reverts `OperatorUnderSlash()` until
-  `executeSlash` or `resolveAppeal(upheld)` unwinds the open-proposal counter. Lane A is permitted
-  to proceed through the normal exit queue because Lane A is either atomic or closes within the H-06
-  challenge window.
+- **Collateral exit is blocked while a slash is open** (H-05, AUD H-03).
+  `BondingRegistry` checks `hasOpenSlashProposal(operator)` on every authorized current or retained
+  historical manager and reverts `OperatorUnderSlash()` from ticket withdrawal, license unbonding,
+  deregistration, and exit claims. Execution, an upheld appeal, or permissionless appeal expiry
+  unwinds the counter. After manager rotation, governance must retain the old manager until every
+  E3 and proposal that depends on it is terminal, then explicitly revoke it.
 
 - **Two-step ban** (M-14, M-15): bans now require `proposeBan` → `confirmBan` from a **distinct**
   signer holding `GOVERNANCE_ROLE`. `cancelBan` rescinds an unconfirmed proposal. Legacy direct-set

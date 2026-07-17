@@ -146,8 +146,6 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │     → A pending entry matching paymentToken may settle │
 │     │  │       now; other tokens remain permissionlessly       │
 │     │  │       settleable without being relabeled              │
-│     │  │     → Legacy untyped pending state is migrated only   │
-│     │  │       to the E3's historically recorded fee token     │
 │     │  │                                                       │
 │     │  │  M-09: snapshot the base fee-token per-node payout:   │
 │     │  │     if honestNodeCount > 0:                           │
@@ -218,36 +216,40 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
   Protocol fee:     5% → protocolAmount   =  50,000
 
   Each honest node claims: 400,000 / 3 = 133,333
-  Last honest node claims: 133,333 + 1 (dust) = 133,334
+  The 1-unit division dust is credited to the treasury pull ledger
 
   Requester claims: 550,000
-  Treasury receives: 50,000 (immediately)
+  Treasury claims: 50,001
 ```
 
 ### Refund Example (With Slashed Funds)
 
 ```
 Same scenario as above, then 2 nodes are slashed for 300,000 units of
-TICKET-USD each (which may be a different token/decimal scheme from USDC):
+USDC each:
 
   Before slash:
     requesterAmount  = 550,000
     honestNodeAmount = 400,000
     originalPayment  = 1,000,000
 
-  Each slash is recorded as (e3Id, TICKET-USD, 300,000).
-  Failure compensation excludes the 5% protocol weight:
-    requester weight = 55 / (55 + 40)
-    honest-node weight = 40 / (55 + 40)
+  Requester fee-token shortfall: 1,000,000 - 550,000 = 450,000.
+  The first 300,000 slash is credited entirely to the requester.
+  From the second 300,000 slash:
+    requester receives the remaining 150,000 shortfall
+    honest nodes receive the 150,000 surplus
 
   Final:
-    Base USDC claims remain: requester 550,000; nodes 400,000 total
-    Separate TICKET-USD claims:
-      requester:   347,368
-      honest nodes: 252,632 total (dust assigned deterministically)
+    Base USDC claims remain: requester 550,000; nodes 400,000 total.
+    Separate slashed-USDC claims:
+      requester:   450,000
+      honest nodes: 150,000 total (dust assigned deterministically)
     Treasury base USDC credit: 50,000
 
-  No TICKET-USD amount is compared to or relabeled as USDC.
+  If the slash asset were TICKET-USD instead, the whole TICKET-USD amount
+  would be credited to the requester as priority compensation. It would not
+  be described as filling the numerical USDC shortfall because no trusted
+  conversion price exists.
 ```
 
 ---
@@ -809,12 +811,19 @@ settleSlashedFunds(e3Id, actualToken):
 │
 ├─ Read and clear _pendingSlashedByToken[e3Id][actualToken]
 │
-├─ If there are no honest nodes: credit the whole amount to requester
+├─ If actualToken differs from the E3 fee token:
+│   credit the whole amount to the requester as priority compensation
+│   → Do not claim that unrelated token units fill an exact fee-token gap
 │
-├─ Otherwise split with dimensionless failure-stage work weights:
-│   toRequester = amount * workRemainingBps /
-│                 (workRemainingBps + workCompletedBps)
+├─ Otherwise, for a matching fee token:
+│   originalGap = originalPayment - requesterAmount
+│   remainingGap = originalGap - requester compensation already credited
+│   toRequester = min(amount, remainingGap)
 │   toHonestNodes = amount - toRequester
+│   → Cumulative same-token settlement prevents later slashes from
+│     refilling the same requester shortfall
+│   → If no active honest node exists, credit the post-cap residual to
+│     the snapshotted treasury rather than creating a requester windfall
 │
 ├─ Credit _pendingSlashedClaims[e3Id][actualToken][recipient]
 │   → Base fee-token RefundDistribution fields never change
@@ -825,25 +834,27 @@ settleSlashedFunds(e3Id, actualToken):
 
 Design rationale:
   The protocol cannot compare or cap amounts across unrelated token units
-  without a trusted conversion price. A dimensionless stage-weight split
-  preserves the intended requester/honest-node priorities while every
-  recipient claims the exact asset that was slashed.
+  without a trusted conversion price. Matching fee-token slashes can fill the
+  requester's exact shortfall before rewarding honest nodes. Different-token
+  slashes preserve their denomination and go to the requester first without
+  asserting cross-token economic equivalence.
 ```
 
 ### Slashed Funds Distribution (Success Path): distributeSlashedFundsOnSuccess()
 
 ```
-distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
+distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 │
 ├─ Called by Interfold._distributeRewards() when E3 completes successfully
 │
-├─ Store the activeNodes set and mark success settlement ready
-├─ Legacy untyped escrow may migrate only to the recorded paymentToken
+├─ Mark success settlement ready
 ├─ Every explicitly recorded token settles independently via
 │   settleSlashedFunds(e3Id, actualToken)
 │
 ├─ Load the immutable E3PolicySnapshot captured by Interfold.request
-│   (allocation, treasury, policy version)
+│   (allocation, treasury, Interfold, registry, policy version)
+├─ Read activeNodes from the request-time registry at settlement time
+│   → Expelled nodes cannot receive a later slash-funded bonus
 ├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
 │   toNodes = escrowed * successSlashedNodeBps / 10000
 │   toTreasury = escrowed - toNodes
@@ -888,9 +899,14 @@ Every slash and settlement route resolves the dependency graph frozen when the E
 - `SlashingManager` uses the per-E3 bonding registry, ciphernode registry, Interfold, and refund
   manager for attestations, penalties, expulsion, failure callbacks, and fund routing.
 - `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
+- `E3RefundManager` reads slash recipients from the committee registry recorded in that snapshot.
+- `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
+  revokes them, so an old manager can finish snapshotted penalties and remains part of the exit gate.
 
 Admin setters update the live defaults for future requests only. Each E3 must have a complete
-request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied.
+request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance
+must revoke a replaced slashing manager only after all E3s, proposals, and pending slash routes that
+depend on it are terminal.
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 
@@ -921,7 +937,8 @@ Case 3: Multiple slashes on same E3 (failure)
 
 Case 4: E3 completes successfully with escrowed slashed funds
   → _distributeRewards calls distributeSlashedFundsOnSuccess
-  → Stores active nodes and enables per-token permissionless settlement
+  → Enables per-token permissionless settlement
+  → Reads active nodes from the request-time registry when each token settles
   → Nodes receive successSlashedNodeBps portion (default 50%)
   → Treasury receives the remainder
 ```
@@ -935,14 +952,14 @@ SlashPolicy {
   requiresProof:   bool      // Lane A (true) or Lane B (false)
   proofVerifier:    address   // verifier address (Lane A: used in policy lookup)
   banNode:          bool      // permanently ban operator
-  appealWindow:     uint256   // seconds for appeal (Lane B only, 0 for Lane A)
+  appealWindow:     uint256   // seconds; required for Lane B, optional for Lane A
   enabled:          bool      // policy active
   affectsCommittee: bool      // expel from E3 committee
   failureReason:    uint8     // FailureReason enum (0 = no E3 failure)
 }
 
 Constraints:
-- If requiresProof: appealWindow must be 0 (atomic execution, no appeal)
+- If requiresProof: appealWindow may be 0 (atomic) or > 0 (deferred challenge)
 - If !requiresProof: appealWindow must be > 0 (delayed execution, with appeal)
 - At least one penalty must be non-zero
 
@@ -1043,7 +1060,10 @@ STEP 1: ESCROWING (always, at slash time)
 STEP 2a: E3 FAILS → Token-specific compensation
   Triggered by: terminal escrow or permissionless settleSlashedFunds
   Flow: settleSlashedFunds(e3Id, actualToken)
-    → Requester/honest-node weights come from failure-stage work BPS
+    → Matching fee-token slashes fill the requester shortfall first;
+      any surplus is divided among honest nodes
+    → Different-token slashes go to the requester as priority compensation
+      without an oracle-dependent cross-token comparison
     → Credits stay in actualToken; fee-token refund buckets are unchanged
   Claims: claimSlashedFunds(e3Id, actualToken)
 
@@ -1166,6 +1186,9 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 - `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
+- That check covers every authorized current or retained historical slashing manager. Rotation
+  therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes
+  an old manager only after its E3s, proposals, and pending routes are terminal.
 - A filed appeal cannot freeze collateral indefinitely: after the policy appeal window plus the
   seven-day governance resolution grace, `expireAppeal` permissionlessly upholds it and clears its
   gate.

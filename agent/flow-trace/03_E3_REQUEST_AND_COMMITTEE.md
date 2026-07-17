@@ -54,9 +54,9 @@ Requester calls: Interfold.request({
 │   ├─ Snapshot Interfold dependencies for this E3:
 │   │   registry, refund manager, and slashing manager
 │   │   → later global rotations apply only to new requests
-│   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id)
+│   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
 │   │   → freezes refund/slash allocation, treasury, policy version,
-│   │     and the request-time Interfold authorized to settle this E3
+│   │     request-time Interfold, and request-time committee registry
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → On chains without `prevrandao`, the value is still deterministic
 │   │     per-block; downstream sortition relies on the per-E3 snapshot of
