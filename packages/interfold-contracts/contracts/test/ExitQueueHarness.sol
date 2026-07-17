@@ -55,6 +55,16 @@ contract ExitQueueHarness {
         _state.queueTicketsForExit(operator, delay, secondTicketAmount);
     }
 
+    function queueTicketThenLicense(
+        address operator,
+        uint64 delay,
+        uint256 ticketAmount,
+        uint256 licenseAmount
+    ) external {
+        _state.queueTicketsForExit(operator, delay, ticketAmount);
+        _state.queueLicensesForExit(operator, delay, licenseAmount);
+    }
+
     function liveTrancheCount(
         address operator
     ) external view returns (uint256) {
