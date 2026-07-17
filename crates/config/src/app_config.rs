@@ -58,7 +58,9 @@ pub struct NodeDefinition {
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
     /// Max concurrent CPU-bound jobs (ZK proofs + TrBFV). When unset, defaults to all CPUs minus
-    /// `multithread_reserve_threads`. Override with env `E3_NODE__MULTITHREAD_CONCURRENT_JOBS`.
+    /// `multithread_reserve_threads`. Override the default profile with env
+    /// `E3_NODE__MULTITHREAD_CONCURRENT_JOBS`, or a named profile with
+    /// `E3_NODES__<NAME>__MULTITHREAD_CONCURRENT_JOBS`.
     pub multithread_concurrent_jobs: Option<usize>,
     /// Hard deadline for construction and initial synchronization. A node that cannot reach live
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
@@ -509,7 +511,7 @@ pub fn load_config(
     let config: UnscopedAppConfig =
         Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
             .merge(Yaml::string(&loaded_yaml))
-            .merge(Env::prefixed("E3_"))
+            .merge(Env::prefixed("E3_").split("__"))
             .merge(Serialized::defaults(&CliOverrides {
                 otel,
                 found_config_file: Some(resolved_config_path),
@@ -844,6 +846,30 @@ node:
         )?;
         assert!(!default.skip_proof_aggregation());
         Ok(())
+    }
+
+    #[test]
+    fn test_skip_proof_aggregation_can_be_enabled_for_named_node_via_env() {
+        Jail::expect_with(|jail| {
+            jail.set_env("E3_NODES__CN1__SKIP_PROOF_AGGREGATION", "true");
+
+            let config: UnscopedAppConfig =
+                Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
+                    .merge(Env::prefixed("E3_").split("__"))
+                    .extract()
+                    .map_err(|err| err.to_string())?;
+            let config = config
+                .into_scoped_with_defaults(
+                    "cn1",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .map_err(|err| err.to_string())?;
+
+            assert!(config.skip_proof_aggregation());
+            Ok(())
+        });
     }
 
     #[test]

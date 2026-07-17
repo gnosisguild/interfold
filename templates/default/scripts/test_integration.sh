@@ -4,6 +4,14 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# The template integration deploys mock proof verifiers. Keep recursive proof
+# aggregation enabled by default for users, but skip it in this bounded CI test.
+export E3_NODES__CN1__SKIP_PROOF_AGGREGATION=true
+export E3_NODES__CN2__SKIP_PROOF_AGGREGATION=true
+export E3_NODES__CN3__SKIP_PROOF_AGGREGATION=true
+export E3_NODES__CN4__SKIP_PROOF_AGGREGATION=true
+export E3_NODES__CN5__SKIP_PROOF_AGGREGATION=true
+
 passed_message() {
   echo ""
   echo "------------------------"
