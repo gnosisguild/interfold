@@ -162,6 +162,9 @@ jobs:
       - name: Checking code format rust
         run: pnpm rust:lint
 
+      - name: Compile contracts for ABI catalog tests
+        run: pnpm evm:build
+
       - name: Run Unit Tests
         run: 'cargo test --lib && cargo test --doc'
 
