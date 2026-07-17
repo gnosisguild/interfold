@@ -123,6 +123,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       committeeSize: number = 0,
       requestToken = usdcToken,
     ): Promise<{ e3Id: number }> => {
+      // Ticket voting power is snapshotted at request timestamp - 1. EDR may
+      // mine consecutive setup transactions with the same timestamp, so move
+      // the request clock forward before taking that conservative snapshot.
+      await time.increase(1);
       const startTime = (await time.latest()) + 100;
 
       const requestParams = {

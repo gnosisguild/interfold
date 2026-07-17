@@ -131,6 +131,10 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     }
 
     async function makeRequest(committeeSize: number = COMMITTEE_SIZE_MINIMUM) {
+      // Ticket voting power is snapshotted at request timestamp - 1. EDR may
+      // mine consecutive setup transactions with the same timestamp, so move
+      // the request clock forward before taking that conservative snapshot.
+      await time.increase(1);
       const startTime = (await time.latest()) + 100;
       const requestParams = {
         committeeSize,
