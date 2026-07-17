@@ -375,7 +375,7 @@ pub struct DkgAggregationInput<'a> {
     pub c5_proof: &'a Proof,
     /// Honest party ids in the same order as `node_fold_proofs` (e.g. sorted ascending).
     pub party_ids: &'a [u64],
-    /// Ordered committee addresses (`topNodes` / sortition order) for `committee_hash_*` public inputs.
+    /// Address-ordered committee (`topNodes` / party order) for `committee_hash_*` public inputs.
     pub committee_addresses: &'a [Address],
 }
 

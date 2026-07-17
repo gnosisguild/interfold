@@ -136,7 +136,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
             &self.bus.with_ec(msg.get_ctx()),
             move || {
                 let (mut msg, ec) = msg.into_components();
-                msg.sort_by_score();
+                msg.sort_by_address();
                 info!("CiphernodeSelector received CommitteeFinalized.");
                 let bus = self.bus.clone();
                 info!("Getting selector state...");

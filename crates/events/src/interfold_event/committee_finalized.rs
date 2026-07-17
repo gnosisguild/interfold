@@ -24,7 +24,7 @@ impl CommitteeFinalized {
     /// `topNodes` layout (see `_sortTopNodesByAscendingAddress` in `CiphernodeRegistryOwnable`).
     /// The node with the numerically lowest address ends up at index 0 (= party 0).
     /// Address comparison is done in lowercase to be independent of EIP-55 checksumming.
-    pub fn sort_by_score(&mut self) {
+    pub fn sort_by_address(&mut self) {
         let mut indices: Vec<usize> = (0..self.committee.len()).collect();
         indices.sort_by_key(|&i| self.committee[i].to_lowercase());
 

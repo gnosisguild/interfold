@@ -25,7 +25,7 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
             InterfoldEventData::CommitteeFinalized(mut data) => {
                 // The EVM decoder already emits canonical address order, but sorting again keeps
                 // this trust boundary correct for replayed/test-produced events as well.
-                data.sort_by_score();
+                data.sort_by_address();
                 self.store_committee(data.e3_id, &data.committee);
             }
             InterfoldEventData::EncryptionKeyReceived(data) => {

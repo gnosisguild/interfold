@@ -20,7 +20,7 @@ pub struct PublicKeyAggregated {
     pub pubkey: ArcBytes, // TODO: ArcBytes ?
     pub e3_id: E3id,
     pub nodes: OrderedSet<String>,
-    /// Full registered committee (`topNodes`) addresses in ascending `party_id` (score) order.
+    /// Full registered committee (`topNodes`) addresses in ascending `party_id` (address) order.
     /// Length `N`. Used by `DecryptionAggregator` for `committee_hash_*` public-input binding.
     pub committee_addresses: Vec<Address>,
     /// Honest subset of the committee (size `H ≤ N`) in ascending `party_id` order.

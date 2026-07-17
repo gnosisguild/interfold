@@ -339,7 +339,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
 ├─ Sortition actor:
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
-│       → `CommitteeFinalized` is normalized into ascending ticket-score order before storage
+│       → `CommitteeFinalized` is normalized into ascending address order before storage
 │
 ├─ CiphernodeSelector:
 │   ├─ Checks if this node's address is in the committee list
@@ -352,7 +352,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
 │   │   Publishes AggregatorChanged {
 │   │     e3_id,
 │   │     is_aggregator = (my node has the lowest non-expelled party_id in the
-│   │                      score-sorted finalized committee)
+│   │                      address-sorted finalized committee)
 │   │   }
 │   └─ If NO: does nothing for this E3
 │
@@ -394,14 +394,13 @@ If any deadline is missed → anyone can call markE3Failed()
 2. **Snapshot-based eligibility**: Ticket balances are checked at `requestBlock - 1`, preventing
    front-running manipulation.
 
-3. **Runtime committee order**: the Rust runtime normalizes `CommitteeFinalized` into ascending
-   ticket-score order before `Sortition` and `CiphernodeSelector` derive `party_id`. That makes
-   `party_id` in the runtime equivalent to score order, even though the raw on-chain `topNodes`
-   array is not itself score-sorted.
+3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
+   committee into ascending address order before deriving `party_id`. This keeps party IDs,
+   aggregator failover, proof inputs, and `CommitteeHashLib.hash(topNodes)` aligned.
 
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee plus enriched `CommitteeMemberExpelled` events. The active aggregator is the
-   lowest non-expelled `party_id` in the score-sorted runtime committee.
+   lowest non-expelled `party_id` in the address-sorted runtime committee.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the deadline — no
    single point of failure.

@@ -877,7 +877,8 @@ fn determine_committee(
     Ok((committee, committee_scores, buffer_nodes))
 }
 
-/// Lowest-address committee member after `CommitteeFinalized::sort_by_score` (party 0 / active aggregator).
+/// Lowest-address committee member after `CommitteeFinalized::sort_by_address`
+/// (party 0 / active aggregator).
 fn active_aggregator_address(
     committee: &[String],
     scores: &[String],
@@ -890,7 +891,7 @@ fn active_aggregator_address(
         scores: scores.to_vec(),
         chain_id,
     };
-    finalized.sort_by_score();
+    finalized.sort_by_address();
     finalized
         .committee
         .first()
