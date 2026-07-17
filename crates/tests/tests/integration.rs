@@ -800,7 +800,7 @@ fn compute_committee_scores(committee: &[String], e3_id: &E3id, seed: Seed) -> V
 ///
 /// # Arguments
 /// * `e3_id` - The E3 computation ID
-/// * `seed` - The random seed for sortition
+/// * `seed` - The shared seed for deterministic sortition
 /// * `threshold_m` - Minimum nodes required for decryption
 /// * `threshold_n` - Committee size
 /// * `registered_addrs` - List of node addresses eligible for selection

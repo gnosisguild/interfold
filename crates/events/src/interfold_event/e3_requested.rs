@@ -20,7 +20,7 @@ pub struct E3Requested {
     pub threshold_m: usize,
     /// The total committee size for the round
     pub threshold_n: usize,
-    /// A seed to provide randomness for the round
+    /// Shared per-E3 seed for deterministic ticket scoring.
     pub seed: Seed,
     /// The error size for the FHE computation. This can be calculated for the E3 program based on
     /// the size of the ciphertext and the depth of the program [tbd add link]

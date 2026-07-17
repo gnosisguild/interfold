@@ -186,7 +186,7 @@ pub fn compute_pk_commitment(
 }
 
 /// Validate client-consumed BFV public-key bytes against the on-chain
-/// commitment (C5-proven when proof aggregation is enabled).
+/// commitment (C5-proven by the mandatory final DKG proof).
 ///
 /// Validation is semantic rather than byte-for-byte: `fhe.rs` normalizes an
 /// internal variable-time flag while decoding threshold-aggregated keys, so a

@@ -155,8 +155,8 @@ function getTimeoutConfig() external view returns (E3TimeoutConfig memory config
    ) external returns (uint256 e3Id);
    ```
 
-2. Contract validates the parameters, estimates the fee, and stores an `E3` record seeded with a
-   random value derived from block entropy.
+2. Contract validates the parameters, estimates the fee, and stores an `E3` record with the shared
+   seed used for deterministic ticket scoring.
 3. The E3 program's `validate` hook returns the encryption scheme ID, which is persisted on the `E3`
    struct.
 4. Committee selection is delegated to the `ciphernodeRegistry` via `requestCommittee`.

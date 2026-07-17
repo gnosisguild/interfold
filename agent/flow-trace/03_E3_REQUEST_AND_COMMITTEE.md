@@ -61,9 +61,8 @@ Requester calls: Interfold.request({
 │   │   → freezes refund/slash allocation, treasury, policy version,
 │   │     request-time Interfold, and request-time committee registry
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
-│   │   → On chains without `prevrandao`, the value is still deterministic
-│   │     per-block; downstream sortition relies on the per-E3 snapshot of
-│   │     ticket balances at `requestBlock - 1` for manipulation resistance.
+│   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
+│   │     not relied upon for cryptographic unpredictability.
 │   │
 │   ├─ encryptionSchemeId = e3Program.validate(
 │   │     e3Id, seed, e3ProgramParams, computeProviderParams, customParams

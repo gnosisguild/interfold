@@ -354,7 +354,7 @@ interface IInterfold {
     /// @param output The invalid output data.
     error InvalidOutput(bytes output);
 
-    /// @notice Thrown when proof aggregation is enabled but no proof was supplied.
+    /// @notice Thrown when a mandatory final proof was not supplied.
     error ProofRequired();
 
     /// @notice Thrown when the committee size has not been configured with thresholds.

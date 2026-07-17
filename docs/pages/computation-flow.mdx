@@ -36,8 +36,8 @@ server, Compute Providers, or other network participants.
    ```
 
    The contract validates the parameters, transfers the required fee from the requester, creates an
-   `E3` record with a random seed derived from `block.prevrandao`, and delegates committee selection
-   to the `CiphernodeRegistry`.
+   `E3` record with a per-E3 ticket-scoring seed derived from `block.prevrandao`, and delegates
+   committee selection to the `CiphernodeRegistry`.
 
    You can estimate the fee before submitting by calling `getE3Quote`:
 

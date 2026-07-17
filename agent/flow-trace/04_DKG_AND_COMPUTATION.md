@@ -687,8 +687,8 @@ circuit's public-key commitment using the request's parameter set, and requires 
 event's on-chain `pkCommitment`. TypeScript event consumers receive the same `pkCommitment` and use
 `InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes; the default application
 does this before advancing to encryption. Malformed bytes or bytes for a different key fail closed
-and never reach first-party encryption clients. The commitment is C5-proven when proof aggregation
-is enabled; the explicitly unsafe development mode trusts it from the aggregator.
+and never reach first-party encryption clients. Production verifies the C5-backed final DKG proof
+on-chain; the explicit test/CI skip mode works only with mock verifiers that trust its placeholder.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.

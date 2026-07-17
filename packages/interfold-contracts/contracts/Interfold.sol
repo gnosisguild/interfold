@@ -286,10 +286,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             e3Id,
             address(dependencies.registry)
         );
-        // Seed uses block.prevrandao combined with e3Id as additional entropy.
-        // While prevrandao is not cryptographically unpredictable (validator-controlled),
-        // the combination with the unique, incrementing e3Id mitigates manipulation.
-        // The seed is used solely for weighted sortition, not for cryptographic key generation.
+        // The seed is only a shared per-E3 input to deterministic ticket
+        // scoring; it is not BFV key material and the protocol does not rely
+        // on it for cryptographic unpredictability.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
         e3Payments[e3Id] = e3Fee;

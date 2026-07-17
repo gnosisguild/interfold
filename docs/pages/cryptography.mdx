@@ -37,11 +37,11 @@ rather than on blind trust in operators.
 
 Each confidential workload is an FHE program running inside an **E3**. After someone requests such a
 computation, a committee of **N** [ciphernodes](https://blog.theinterfold.com/ciphernodes/) is drawn
-using **sortition**, so membership is tied to verifiable randomness rather than to a central picker.
-There is **no trusted dealer** handing out key material: every ciphernode contributes its own share
-of the work and takes part in **PVDKG** (publicly verifiable DKG), producing proofs alongside
-messages so that deviating parties can be identified and excluded without exposing other nodes’
-secrets.
+using **sortition**, so membership follows publicly checkable ticket scoring rather than a central
+picker. There is **no trusted dealer** handing out key material: every ciphernode contributes its
+own share of the work and takes part in **PVDKG** (publicly verifiable DKG), producing proofs
+alongside messages so that deviating parties can be identified and excluded without exposing other
+nodes’ secrets.
 
 Write **A** for the **authorised** committee for that E3—initially all **N** members, then shrinking
 as proofs fail and bad actors drop out of the active path. When DKG finishes, the network publishes
