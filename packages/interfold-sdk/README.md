@@ -351,6 +351,24 @@ await sdk.startEventPolling();
 sdk.stopEventPolling();
 ```
 
+`CommitteePublished.publicKey` is an untrusted transport value. Validate it against the event's
+on-chain commitment before using it for encryption:
+
+```typescript
+import { hexToBytes } from 'viem'
+
+await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, async (event) => {
+  const publicKey = hexToBytes(event.data.publicKey)
+  const expectedCommitment = hexToBytes(event.data.pkCommitment)
+
+  if (!(await sdk.validatePublicKeyCommitment(publicKey, expectedCommitment))) {
+    throw new Error('Committee public-key commitment mismatch')
+  }
+
+  // The key is now safe to pass to the encryption methods.
+})
+```
+
 #### Encryption
 
 ```typescript
@@ -360,6 +378,7 @@ const params = await sdk.getThresholdBfvParamsSet();
 // Key generation
 const publicKey = await sdk.generatePublicKey();
 const commitment = await sdk.computePublicKeyCommitment(publicKey);
+const isValid = await sdk.validatePublicKeyCommitment(publicKey, commitment);
 
 // Encrypt data
 const encrypted = await sdk.encryptNumber(data: bigint, publicKey: Uint8Array);

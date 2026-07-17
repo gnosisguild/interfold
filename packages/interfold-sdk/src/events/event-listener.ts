@@ -218,7 +218,12 @@ export class EventListener implements SDKEventEmitter {
     if (callbacks) {
       callbacks.forEach((callback) => {
         try {
-          void (callback as EventCallback<T>)(event)
+          const result = (callback as EventCallback<T>)(event)
+          if (result) {
+            void result.catch((error) => {
+              console.error(`Error in event callback for ${event.type}:`, error)
+            })
+          }
         } catch (error) {
           console.error(`Error in event callback for ${event.type}:`, error)
         }
