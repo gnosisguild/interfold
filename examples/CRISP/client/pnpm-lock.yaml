@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.10.0
-        version: 0.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        specifier: 0.11.0
+        version: 0.11.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -724,11 +724,11 @@ packages:
   '@coinbase/wallet-sdk@4.3.6':
     resolution: {integrity: sha512-4q8BNG1ViL4mSAAvPAtpwlOs1gpC+67eQtgIwNvT3xyeyFFd+guwkc8bcX5rTmQhXpqnhzC4f0obACbP9CqMSA==}
 
-  '@crisp-e3/sdk@0.10.0':
-    resolution: {integrity: sha512-sZGUE8N3OQ5PzeJoWCvBroBcYXZPahFx3BBq7b4nw92TS1qIBLGq23VM6ctXCY8zmLWjRgKsuhjex3LOcXTAIw==}
+  '@crisp-e3/sdk@0.11.0':
+    resolution: {integrity: sha512-4lz7AuGTb0bgNnztNxkvymumuzo4lB+LHMGBbeNQY9h5oiIpd2Lfkn+p7SIUJpAVHEyOsgtn25Ifx6OSot3ksQ==}
 
-  '@crisp-e3/zk-inputs@0.10.0':
-    resolution: {integrity: sha512-buWHqtNaE+I0rNshF2mVKZ91Rv92eEMaE8AnkwsuHNrWnwiJWeYKzV8Wq2qVUG42ueLEak0Ri+iI6yqHZ8mrJA==}
+  '@crisp-e3/zk-inputs@0.11.0':
+    resolution: {integrity: sha512-lIRNBxXODs1zR4TO1pmtVaKgDM2tCZ+6mqdTnmyxHkKERtqKG5/iQYQ9CW66VRYisZQdmoJG7gAQgPorL+QBQQ==}
 
   '@ecies/ciphers@0.2.6':
     resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -1177,7 +1177,7 @@ packages:
 
   '@paulmillr/qr@0.2.1':
     resolution: {integrity: sha512-IHnV6A+zxU7XwmKFinmYjUcwlyK9+xkG3/s9KcQhI9BjQKycrJ1JRO+FbNYPwZiPKW3je/DR0k7w8/gLa5eaxQ==}
-    deprecated: 'The package is now available as "qr": npm install qr'
+    deprecated: 'Switch to "qr" (new package name) for security updates: npm install qr'
 
   '@phosphor-icons/react@2.1.10':
     resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
@@ -4369,6 +4369,7 @@ packages:
   tsconfck@3.1.6:
     resolution: {integrity: sha512-ks6Vjr/jEw0P1gmOVwutM3B7fWxoWBL2KRDb1JfqGVawBmO5UsvmWOQFGHBPl5yxYz4eERr19E6L7NMv+Fej4w==}
     engines: {node: ^18 || >=20}
+    deprecated: unmaintained
     hasBin: true
     peerDependencies:
       typescript: ^5.0.0
@@ -4544,6 +4545,7 @@ packages:
 
   uuid@10.0.0:
     resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   uuid@8.3.2:
@@ -4663,8 +4665,8 @@ packages:
     peerDependencies:
       '@tanstack/react-query': '>=5.0.0'
       react: '>=18'
-      typescript: '>=5.0.4'
-      viem: 2.x
+      typescript: 5.8.3
+      viem: 2.38.6
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -5725,10 +5727,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/sdk@0.10.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
+  '@crisp-e3/sdk@0.11.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
     dependencies:
       '@aztec/bb.js': 3.0.0-nightly.20260102
-      '@crisp-e3/zk-inputs': 0.10.0
+      '@crisp-e3/zk-inputs': 0.11.0
       '@noir-lang/noir_js': 1.0.0-beta.16
       '@zk-kit/lean-imt': 2.2.4(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       poseidon-lite: 0.3.0
@@ -5739,7 +5741,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/zk-inputs@0.10.0': {}
+  '@crisp-e3/zk-inputs@0.11.0': {}
 
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:
