@@ -163,7 +163,12 @@ library ExitQueueLib {
         bool merged;
         if (len != 0) {
             ExitTranche storage lastTranche = operatorQueue[len - 1];
-            if (lastTranche.unlockTimestamp == unlockTimestamp) {
+            bool lastTrancheIsLive = lastTranche.ticketAmount != 0 ||
+                lastTranche.licenseAmount != 0;
+            if (
+                lastTrancheIsLive &&
+                lastTranche.unlockTimestamp == unlockTimestamp
+            ) {
                 if (ticketAmount != 0) lastTranche.ticketAmount += ticketAmount;
                 if (licenseAmount != 0) {
                     lastTranche.licenseAmount += licenseAmount;
@@ -519,6 +524,32 @@ library ExitQueueLib {
             state.queueHeadIndexTicket[operator] = head;
         } else {
             state.queueHeadIndexLicense[operator] = head;
+        }
+        _pruneEmptyTail(state, operator);
+    }
+
+    /// @dev Remove fully drained tail entries so repeated queue/claim cycles
+    ///      cannot grow the scanned history behind an earlier locked tranche.
+    ///      Both per-asset heads are clamped because either may have advanced
+    ///      past an entry that is now removed.
+    function _pruneEmptyTail(
+        ExitQueueState storage state,
+        address operator
+    ) private {
+        ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
+        uint256 len = operatorQueue.length;
+        while (len != 0) {
+            ExitTranche storage tail = operatorQueue[len - 1];
+            if (tail.ticketAmount != 0 || tail.licenseAmount != 0) break;
+            operatorQueue.pop();
+            len--;
+        }
+
+        if (state.queueHeadIndexTicket[operator] > len) {
+            state.queueHeadIndexTicket[operator] = len;
+        }
+        if (state.queueHeadIndexLicense[operator] > len) {
+            state.queueHeadIndexLicense[operator] = len;
         }
     }
 }
