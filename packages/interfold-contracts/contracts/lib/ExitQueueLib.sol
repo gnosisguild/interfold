@@ -166,33 +166,13 @@ library ExitQueueLib {
         _pruneEmptyTail(state, operator);
 
         uint256 len = operatorQueue.length;
-        bool merged;
-        if (len != 0) {
-            ExitTranche storage lastTranche = operatorQueue[len - 1];
-            bool lastTrancheIsLive = lastTranche.ticketAmount != 0 ||
-                lastTranche.licenseAmount != 0;
-            if (
-                lastTrancheIsLive &&
-                lastTranche.unlockTimestamp == unlockTimestamp
-            ) {
-                uint256 lastIndex = len - 1;
-                if (ticketAmount != 0) {
-                    // This asset head may already have advanced past a
-                    // ticket-empty tranche that is still live for licences.
-                    if (state.queueHeadIndexTicket[operator] > lastIndex) {
-                        state.queueHeadIndexTicket[operator] = lastIndex;
-                    }
-                    lastTranche.ticketAmount += ticketAmount;
-                }
-                if (licenseAmount != 0) {
-                    if (state.queueHeadIndexLicense[operator] > lastIndex) {
-                        state.queueHeadIndexLicense[operator] = lastIndex;
-                    }
-                    lastTranche.licenseAmount += licenseAmount;
-                }
-                merged = true;
-            }
-        }
+        bool merged = _mergeIntoTail(
+            state,
+            operator,
+            unlockTimestamp,
+            ticketAmount,
+            licenseAmount
+        );
 
         if (!merged) {
             uint256 ticketHead = state.queueHeadIndexTicket[operator];
@@ -227,6 +207,45 @@ library ExitQueueLib {
             licenseAmount,
             unlockTimestamp
         );
+    }
+
+    /**
+     * @dev Merges assets into the live tail when its timestamp matches.
+     *      Revives an asset-specific head if that asset had previously been
+     *      drained from a tranche still kept alive by the other asset.
+     */
+    function _mergeIntoTail(
+        ExitQueueState storage state,
+        address operator,
+        uint64 unlockTimestamp,
+        uint256 ticketAmount,
+        uint256 licenseAmount
+    ) private returns (bool merged) {
+        ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
+        uint256 len = operatorQueue.length;
+        if (len == 0) return false;
+
+        uint256 lastIndex = len - 1;
+        ExitTranche storage lastTranche = operatorQueue[lastIndex];
+        bool lastTrancheIsLive = lastTranche.ticketAmount != 0 ||
+            lastTranche.licenseAmount != 0;
+        if (
+            !lastTrancheIsLive || lastTranche.unlockTimestamp != unlockTimestamp
+        ) return false;
+
+        if (ticketAmount != 0) {
+            if (state.queueHeadIndexTicket[operator] > lastIndex) {
+                state.queueHeadIndexTicket[operator] = lastIndex;
+            }
+            lastTranche.ticketAmount += ticketAmount;
+        }
+        if (licenseAmount != 0) {
+            if (state.queueHeadIndexLicense[operator] > lastIndex) {
+                state.queueHeadIndexLicense[operator] = lastIndex;
+            }
+            lastTranche.licenseAmount += licenseAmount;
+        }
+        return true;
     }
 
     /**
