@@ -129,6 +129,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       .connect(await ethers.getSigner(addressOne))
       .snapshotE3Dependencies(0);
     await networkHelpers.stopImpersonatingAccount(addressOne);
+    await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
 
     return {
       owner,

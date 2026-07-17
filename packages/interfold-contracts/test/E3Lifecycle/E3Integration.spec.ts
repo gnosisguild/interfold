@@ -425,6 +425,24 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
     });
+
+    it("AUD-M04: rejects requests during a partial dependency rotation", async function () {
+      const { interfold, registry, slashingManager, makeRequest, owner } =
+        await loadFixture(setup);
+
+      const configuredSlashingManager = await slashingManager.getAddress();
+      const partialRotationTarget = await owner.getAddress();
+      await registry.connect(owner).setSlashingManager(partialRotationTarget);
+
+      await expect(makeRequest())
+        .to.be.revertedWithCustomError(interfold, "DependencyGraphMismatch")
+        .withArgs(
+          ethers.encodeBytes32String("registry.slashing"),
+          configuredSlashingManager,
+          partialRotationTarget,
+        );
+      expect(await interfold.nexte3Id()).to.equal(0);
+    });
   });
 
   describe("Committee Formed Integration", function () {
@@ -1315,9 +1333,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           tokenAddress,
         ),
       ).to.equal(distributionBefore.protocolAmount + expectedProtocol);
-      expect(
-        await e3RefundManager.tokenLiability(tokenAddress),
-      ).to.equal(slashedAmount);
+      expect(await e3RefundManager.tokenLiability(tokenAddress)).to.equal(
+        slashedAmount,
+      );
     });
 
     it("caps cumulative same-token requester compensation before crediting honest nodes", async function () {

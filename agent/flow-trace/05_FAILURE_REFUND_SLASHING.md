@@ -576,12 +576,16 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 │     require(!policy.requiresProof) → evidence-based only
 │     → reason is an explicit bytes32, not derived from proof
 │
-├─ 2. Replay protection:
+├─ 2. Require the snapshotted E3 dependency graph exists and
+│     registry.isCommitteeMember(e3Id, operator)
+│     → Evidence cannot slash an unrelated operator into another E3's escrow
+│
+├─ 3. Replay protection:
 │     evidenceHash = keccak256(abi.encode(e3Id, operator, keccak256(evidence)))
 │     require(!evidenceConsumed[evidenceHash])
 │     evidenceConsumed[evidenceHash] = true
 │
-├─ 3. Create proposal with SNAPSHOTTED policy values:
+├─ 4. Create proposal with SNAPSHOTTED policy values:
 │     proposal = SlashProposal {
 │       e3Id, operator, reason,
 │       ticketAmount: policy.ticketPenalty,
@@ -595,7 +599,7 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 │     → NOT executed immediately
 │     → Increment the same unresolved financial proposal count
 │
-└─ 4. Emit SlashProposed(proposalId, e3Id, operator, reason)
+└─ 5. Emit SlashProposed(proposalId, e3Id, operator, reason)
 
 ─── APPEAL WINDOW OPENS ─────────────────────────────────────
 
@@ -901,7 +905,8 @@ Every slash and settlement route resolves the dependency graph frozen when the E
 - `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
 - `E3RefundManager` reads slash recipients from the committee registry recorded in that snapshot.
 - `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
-  revokes them, so an old manager can finish snapshotted penalties and remains part of the exit gate.
+  revokes them, so an old manager can finish snapshotted penalties and remains part of the exit
+  gate.
 
 Admin setters update the live defaults for future requests only. Each E3 must have a complete
 request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance
@@ -1187,8 +1192,8 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
 - That check covers every authorized current or retained historical slashing manager. Rotation
-  therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes
-  an old manager only after its E3s, proposals, and pending routes are terminal.
+  therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes an
+  old manager only after its E3s, proposals, and pending routes are terminal.
 - A filed appeal cannot freeze collateral indefinitely: after the policy appeal window plus the
   seven-day governance resolution grace, `expireAppeal` permissionlessly upholds it and clears its
   gate.

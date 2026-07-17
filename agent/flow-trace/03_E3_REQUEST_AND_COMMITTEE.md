@@ -39,7 +39,10 @@ Requester calls: Interfold.request({
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
 │   ├─ total duration < maxDuration
-│   └─ e3Programs[e3Program] == true (program whitelisted)
+│   ├─ e3Programs[e3Program] == true (program whitelisted)
+│   └─ registry / bonding / refund / slashing pointers form one
+│       mutually consistent deployed-contract graph
+│       → partial multi-transaction admin rotations fail closed
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
@@ -410,7 +413,9 @@ If any deadline is missed → anyone can call markE3Failed()
    slashing, refund, and Interfold relationships. Admin rotation changes defaults for later E3s but
    cannot redirect or brick committee callbacks, proof checks, failure settlement, rewards, or
    slashed-fund routing for an in-flight E3. A request atomically records the complete graph before
-   committee formation begins.
+   committee formation begins. Because applying a new graph requires several governance
+   transactions, request-time validation rejects every intermediate state; a requester can only
+   freeze the fully old or fully new graph.
 
 ---
 

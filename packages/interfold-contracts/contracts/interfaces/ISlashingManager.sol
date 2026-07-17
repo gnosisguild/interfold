@@ -66,7 +66,7 @@ interface ISlashingManager {
     /**
      * @notice Slash proposal details tracking the full lifecycle of a slash
      * @dev Stores all state needed for proposal, appeal, and execution workflows
-     * @param e3Id ID of the E3 computation this slash relates to (0 for non-E3 slashes)
+     * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator being slashed
      * @param reason Hash of the slash reason (maps to SlashPolicy configuration)
      * @param ticketAmount Amount of ticket collateral to slash (copied from policy at proposal time)

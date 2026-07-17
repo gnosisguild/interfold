@@ -157,6 +157,8 @@ describe("SlashingManager", function () {
       .connect(await ethers.getSigner(addressOne))
       .snapshotE3Dependencies(1);
     await networkHelpers.stopImpersonatingAccount(addressOne);
+    await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
+    await mockCiphernodeRegistry.setCommitteeNodes(1, [operatorAddress]);
 
     return {
       owner,
@@ -1102,6 +1104,27 @@ describe("SlashingManager", function () {
             ethers.toUtf8Bytes(""),
           ),
       ).to.be.revertedWithCustomError(slashingManager, "ZeroAddress");
+    });
+
+    it("should reject evidence for an operator outside the E3 committee", async function () {
+      const { slashingManager, slasher, notTheOwner } =
+        await loadFixture(setup);
+
+      await setupPolicies(slashingManager);
+
+      await expect(
+        slashingManager
+          .connect(slasher)
+          .proposeSlashEvidence(
+            0,
+            await notTheOwner.getAddress(),
+            REASON_INACTIVITY,
+            ethers.toUtf8Bytes("unrelated operator"),
+          ),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "OperatorNotInCommittee",
+      );
     });
   });
 

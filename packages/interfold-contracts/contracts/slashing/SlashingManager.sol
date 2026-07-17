@@ -548,6 +548,10 @@ contract SlashingManager is
         SlashPolicy memory policy = slashPolicies[reason];
         require(policy.enabled, SlashReasonDisabled());
         require(!policy.requiresProof, InvalidPolicy());
+        require(
+            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            OperatorNotInCommittee()
+        );
 
         // Evidence replay protection — reason-independent to prevent cross-reason replay
         bytes32 evidenceKey = keccak256(
