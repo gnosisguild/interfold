@@ -132,6 +132,9 @@ describe("BondingRegistry", function () {
       expect(
         await bondingRegistry.totalBonded(await operator1.getAddress()),
       ).to.equal(bondAmount);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(
+        bondAmount,
+      );
     });
 
     it("reverts if amount is zero", async function () {
@@ -289,6 +292,9 @@ describe("BondingRegistry", function () {
         bondAmount - slashAmount,
       );
       expect(await bondingRegistry.slashedLicenseBond()).to.equal(slashAmount);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(
+        bondAmount,
+      );
     });
   });
 
@@ -1358,6 +1364,49 @@ describe("BondingRegistry", function () {
           "OutstandingAssetLiabilities",
         )
         .withArgs(await licenseToken.getAddress(), bondAmount);
+    });
+
+    it("AUD-M08: sweeps donated license-token dust without touching liabilities", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        operator1,
+        treasury,
+        treasuryAddress,
+      } = await loadFixture(setup);
+
+      const registryAddress = await bondingRegistry.getAddress();
+      const dust = ethers.parseEther("1");
+      await licenseToken.connect(operator1).transfer(registryAddress, dust);
+
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(0);
+
+      const replacement = await (
+        await ethers.getContractFactory("MockFeeOnTransferToken")
+      ).deploy(0);
+      await expect(
+        bondingRegistry.setLicenseToken(await replacement.getAddress()),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "OutstandingAssetLiabilities",
+        )
+        .withArgs(await licenseToken.getAddress(), dust);
+
+      const treasuryBefore = await licenseToken.balanceOf(treasuryAddress);
+      await expect(bondingRegistry.sweepLicenseSurplus())
+        .to.emit(bondingRegistry, "LicenseSurplusSwept")
+        .withArgs(await licenseToken.getAddress(), treasuryAddress, dust);
+      expect(await licenseToken.balanceOf(treasury)).to.equal(
+        treasuryBefore + dust,
+      );
+      expect(await licenseToken.balanceOf(registryAddress)).to.equal(0);
+
+      await expect(
+        bondingRegistry.setLicenseToken(await replacement.getAddress()),
+      )
+        .to.emit(bondingRegistry, "LicenseTokenSet")
+        .withArgs(await replacement.getAddress());
     });
 
     it("AUD-M08: blocks ticket-token rotation until supply and payouts are drained", async function () {

@@ -169,6 +169,19 @@ interface IBondingRegistry {
     event LicenseTokenSet(address indexed licenseToken);
 
     /**
+     * @notice Emitted when governance removes license tokens that are not
+     *         backing any active bond, pending exit, or slashed-fund claim.
+     * @param token License token whose surplus was swept
+     * @param to Slashed-funds treasury that received the surplus
+     * @param amount Amount requested for transfer
+     */
+    event LicenseSurplusSwept(
+        address indexed token,
+        address indexed to,
+        uint256 amount
+    );
+
+    /**
      * @notice Emitted when the registry is set
      * @param registry Address of the registry
      */
@@ -218,6 +231,13 @@ interface IBondingRegistry {
      * @return License token address
      */
     function getLicenseToken() external view returns (address);
+
+    /**
+     * @notice Total license-token obligations held by the registry.
+     * @dev Covers active bonds, queued exits, and slashed funds awaiting
+     *      treasury withdrawal.
+     */
+    function totalLicenseLiability() external view returns (uint256);
 
     /**
      * @notice Get ticket token address
@@ -550,6 +570,14 @@ interface IBondingRegistry {
      * @dev Only callable by contract owner
      */
     function setLicenseToken(IERC20 newLicenseToken) external;
+
+    /**
+     * @notice Send unaccounted license-token surplus to the slashed-funds treasury.
+     * @dev Never transfers active bonds, queued exits, or slashed-fund liabilities.
+     *      This is the governance path for clearing donated dust before rotation.
+     * @return amount Amount requested for transfer
+     */
+    function sweepLicenseSurplus() external returns (uint256 amount);
 
     /**
      * @notice Set slashed funds treasury address

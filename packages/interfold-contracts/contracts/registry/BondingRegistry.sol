@@ -170,6 +170,9 @@ contract BondingRegistry is
     /// @notice Maximum number of concurrently authorized slashing managers.
     uint256 public constant MAX_AUTHORIZED_SLASHING_MANAGERS = 32;
 
+    /// @inheritdoc IBondingRegistry
+    uint256 public totalLicenseLiability;
+
     // ======================
     // Modifiers
     // ======================
@@ -571,6 +574,7 @@ contract BondingRegistry is
 
         if (ticketClaim > 0) ticketToken.payout(msg.sender, ticketClaim);
         if (licenseClaim > 0) {
+            totalLicenseLiability -= licenseClaim;
             _safeTransferLicenseWithDeltaCheck(msg.sender, licenseClaim);
         }
     }
@@ -871,6 +875,19 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
+    function sweepLicenseSurplus() external onlyOwner returns (uint256 amount) {
+        IERC20 current = licenseToken;
+        uint256 balance = current.balanceOf(address(this));
+        uint256 liabilities = totalLicenseLiability;
+        if (balance <= liabilities) return 0;
+
+        amount = balance - liabilities;
+        address treasury = slashedFundsTreasury;
+        _safeTransferLicenseWithDeltaCheck(treasury, amount);
+        emit LicenseSurplusSwept(address(current), treasury, amount);
+    }
+
+    /// @inheritdoc IBondingRegistry
     function setRegistry(ICiphernodeRegistry newRegistry) public onlyOwner {
         registry = newRegistry;
         emit RegistrySet(address(newRegistry));
@@ -972,6 +989,7 @@ contract BondingRegistry is
 
         if (licenseAmount > 0) {
             slashedLicenseBond -= licenseAmount;
+            totalLicenseLiability -= licenseAmount;
             _safeTransferLicenseWithDeltaCheck(
                 slashedFundsTreasury,
                 licenseAmount
@@ -1000,6 +1018,7 @@ contract BondingRegistry is
         uint256 actualReceived = licenseToken.balanceOf(address(this)) -
             balanceBefore;
         require(actualReceived == amount, InvalidAmount());
+        totalLicenseLiability += amount;
 
         emit LicenseBondUpdated(
             operator,
@@ -1095,5 +1114,5 @@ contract BondingRegistry is
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[48] private __gap;
+    uint256[47] private __gap;
 }
