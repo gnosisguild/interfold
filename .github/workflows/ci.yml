@@ -590,6 +590,7 @@ jobs:
           chmod +x target/debug/fake_encrypt
           chmod +x target/debug/pack_e3_params
           chmod +x ~/.cargo/bin/interfold
+          chmod +x tests/integration/.interfold/noir/bin/bb
       - name: 'Run ${{ matrix.test-suite }} tests'
         run: 'pnpm test:integration ${{ matrix.test-suite }} --no-prebuild'
       - name: 'Add test summary'
