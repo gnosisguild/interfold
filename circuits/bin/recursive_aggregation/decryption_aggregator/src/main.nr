@@ -96,8 +96,7 @@ fn main(
     // canonical commitment as a final public input for the EVM wrapper.
     for i in 0..(T + 1) {
         assert(
-            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i]
-                == ciphertext_commitment,
+            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i] == ciphertext_commitment,
         );
     }
 
