@@ -20,6 +20,9 @@ pub enum WebhookPayload {
         ciphertext: Vec<u8>,
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
+        ciphertext_commitment: Vec<u8>,
+        #[serde(deserialize_with = "deserialize_hex_string")]
+        #[derivative(Debug = "ignore")]
         proof: Vec<u8>,
     },
     Failed {

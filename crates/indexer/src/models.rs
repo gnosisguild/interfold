@@ -14,6 +14,8 @@ pub struct E3 {
     pub chain_id: u64,
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     pub ciphertext_output: Vec<u8>,
+    #[serde(default)]
+    pub ciphertext_commitment: Vec<u8>,
     pub committee_public_key: Vec<u8>,
     pub e3_params: Vec<u8>,
     pub custom_params: Vec<u8>,

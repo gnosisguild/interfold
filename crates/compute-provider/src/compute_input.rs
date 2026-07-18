@@ -6,6 +6,8 @@
 
 use crate::ciphertext_output::ComputeResult;
 use crate::merkle_tree_builder::MerkleTreeBuilder;
+use e3_bfv_client::client::compute_ct_commitment;
+use e3_fhe_params::decode_bfv_params;
 use sha3::{Digest, Keccak256};
 
 pub type FHEProcessor = fn(&FHEInputs) -> Vec<u8>;
@@ -27,6 +29,16 @@ impl ComputeInput {
     pub fn process(&self, fhe_processor: FHEProcessor) -> ComputeResult {
         let processed_ciphertext = (fhe_processor)(&self.fhe_inputs);
         let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
+        let params =
+            decode_bfv_params(&self.fhe_inputs.params).expect("Failed to decode BFV params");
+        let ciphertext_commitment = compute_ct_commitment(
+            processed_ciphertext.clone(),
+            params.degree(),
+            params.plaintext(),
+            params.moduli().to_vec(),
+        )
+        .expect("Failed to compute ciphertext commitment")
+        .to_vec();
         let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
 
         assert_eq!(
@@ -42,6 +54,7 @@ impl ComputeInput {
 
         ComputeResult {
             ciphertext_hash: processed_hash,
+            ciphertext_commitment,
             params_hash,
             merkle_root: hex::decode(merkle_root).unwrap(),
         }

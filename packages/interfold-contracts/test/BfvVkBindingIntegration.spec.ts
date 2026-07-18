@@ -15,6 +15,7 @@ import {
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
   assertBfvPkVerifierSubCircuitVkHashes,
+  bfvDecCiphertextCommitmentIndex,
   bfvDecCommitteeHashIndices,
   bfvDecDomainIndices,
   bfvDecExpectedPublicInputsLen,
@@ -338,6 +339,8 @@ describe("BfvVkBindingIntegration", function () {
         decPublicInputs[DEC_DOMAIN_IDX.hi],
         decPublicInputs[DEC_DOMAIN_IDX.lo],
       );
+      const decCiphertextCommitment =
+        decPublicInputs[bfvDecCiphertextCommitmentIndex()];
 
       if (isCoverageRun) {
         // Instrumented Honk verifiers can exceed any practical eth_call budget;
@@ -406,6 +409,7 @@ describe("BfvVkBindingIntegration", function () {
           decDomain,
           plaintextHash,
           decCommitteeHash,
+          decCiphertextCommitment,
           decEncoded,
           verifyOverrides,
         ),
@@ -417,6 +421,7 @@ describe("BfvVkBindingIntegration", function () {
           ethers.id("different-e3-domain"),
           plaintextHash,
           decCommitteeHash,
+          decCiphertextCommitment,
           decEncoded,
           verifyOverrides,
         ),

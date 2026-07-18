@@ -195,7 +195,7 @@ The program server:
 The callback server (e.g., CRISP) receives the webhook and calls:
 
 ```solidity
-interfold.publishCiphertextOutput(e3Id, ciphertextOutput, proof);
+interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof);
 ```
 
 This transitions the E3 stage to `CiphertextReady`.

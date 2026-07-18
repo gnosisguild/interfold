@@ -15,6 +15,7 @@ pub trait ComputeProvider {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ComputeResult {
     pub ciphertext_hash: Vec<u8>,
+    pub ciphertext_commitment: Vec<u8>,
     pub params_hash: Vec<u8>,
     pub merkle_root: Vec<u8>,
 }

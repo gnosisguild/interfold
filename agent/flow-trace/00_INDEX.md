@@ -189,11 +189,12 @@ _Found during source-code cross-referencing of these trace documents._
 
 ### Circuit Audit Remediations
 
-| Finding                                               | Status | Implemented behavior                                                                                                                                                                          |
-| ----------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **IF-001 — unconstrained U64 modular division**       | Fixed  | `ModU64::div_mod` verifies the hinted quotient satisfies `result * divisor == dividend (mod modulus)`; the Noir suite includes a non-invertible-divisor regression test.                      |
-| **IF-002 — conditional C7 decoding equality**         | Fixed  | C7 compares every decoded coefficient with the claimed message, including zero coefficients; a focused regression test rejects a nonzero decoded value claimed as zero.                       |
-| **IF-003 — decryption proof phase and party binding** | Fixed  | `decryption_aggregator` requires 1-indexed, strictly increasing party IDs, while `BfvDecryptionVerifier` checks the surfaced SK/ESM commitments against the E3's registry-backed DKG anchors. |
+| Finding                                               | Status | Implemented behavior                                                                                                                                                                                              |
+| ----------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **IF-001 — unconstrained U64 modular division**       | Fixed  | `ModU64::div_mod` verifies the hinted quotient satisfies `result * divisor == dividend (mod modulus)`; the Noir suite includes a non-invertible-divisor regression test.                                          |
+| **IF-002 — conditional C7 decoding equality**         | Fixed  | C7 compares every decoded coefficient with the claimed message, including zero coefficients; a focused regression test rejects a nonzero decoded value claimed as zero.                                           |
+| **IF-003 — decryption proof phase and party binding** | Fixed  | `decryption_aggregator` requires 1-indexed, strictly increasing party IDs, while `BfvDecryptionVerifier` checks the surfaced SK/ESM commitments against the E3's registry-backed DKG anchors.                     |
+| **IF-004 — ciphertext commitment binding**            | Fixed  | The off-chain SAFE commitment is stored at ciphertext publication, propagated as a final decryption-proof public input, and compared on-chain without attempting BFV decoding or Poseidon2 execution in Solidity. |
 
 ### Protocol Design Concerns
 

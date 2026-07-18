@@ -110,7 +110,7 @@ export function bfvDkgCommitteeHashIndices(h: number): {
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 110 + 3 * threshold;
+  return 111 + 3 * threshold;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
@@ -128,7 +128,7 @@ export function bfvDecPartyColOffsets(threshold: number): {
   sk: number;
   esm: number;
 } {
-  const partyId = 7; // 6 domain/VK/committee inputs + DEC_RETURN_PREFIX_LEN
+  const partyId = 8; // 7 domain/VK/committee/commitment inputs + DEC_RETURN_PREFIX_LEN
   const sk = partyId + (threshold + 1);
   const esm = sk + (threshold + 1);
   return { partyId, sk, esm };
@@ -137,6 +137,11 @@ export function bfvDecPartyColOffsets(threshold: number): {
 /** `publicInputs` indices for decryption-aggregator E3 domain limbs. */
 export function bfvDecDomainIndices(): { hi: number; lo: number } {
   return { hi: 4, lo: 5 };
+}
+
+/** `publicInputs` index for the final circuit-compatible ciphertext commitment. */
+export function bfvDecCiphertextCommitmentIndex(): number {
+  return 6;
 }
 
 /** Recursive VK hashes for `BfvPkVerifier` sub-circuits (from `pnpm compile:circuits`). */

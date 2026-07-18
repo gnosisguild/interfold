@@ -40,6 +40,7 @@ describe("Interfold", function () {
 
   const data = "0xda7a";
   const proof = "0x1337";
+  const ciphertextCommitment = ethers.keccak256(data);
 
   const inputWindowDuration = 300;
 
@@ -501,7 +502,9 @@ describe("Interfold", function () {
     it("reverts if E3 does not exist", async function () {
       const { interfold } = await loadFixture(setup);
 
-      await expect(interfold.publishCiphertextOutput(0, "0x", "0x"))
+      await expect(
+        interfold.publishCiphertextOutput(0, "0x", ethers.ZeroHash, "0x"),
+      )
         .to.be.revertedWithCustomError(interfold, "E3DoesNotExist")
         .withArgs(0);
     });
@@ -534,8 +537,20 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
 
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
-      await expect(interfold.publishCiphertextOutput(e3Id, data, proof))
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      )
         .to.be.revertedWithCustomError(interfold, "InvalidStage")
         .withArgs(e3Id, 3, 4);
     });
@@ -565,7 +580,12 @@ describe("Interfold", function () {
         interval: inputWindowDuration + timeoutConfig.computeWindow,
       });
       await expect(
-        interfold.publishCiphertextOutput(e3Id, data, proof),
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
       ).to.be.revertedWithCustomError(interfold, "CommitteeDutiesCompleted");
     });
     it("reverts if output is not valid", async function () {
@@ -596,7 +616,7 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
       await expect(
-        interfold.publishCiphertextOutput(e3Id, "0x", "0x"),
+        interfold.publishCiphertextOutput(e3Id, "0x", ethers.ZeroHash, "0x"),
       ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
     });
     it("sets ciphertextOutput correctly", async function () {
@@ -622,9 +642,17 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      expect(await interfold.publishCiphertextOutput(e3Id, data, proof));
+      expect(
+        await interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      );
       const e3 = await interfold.getE3(e3Id);
       expect(e3.ciphertextOutput).to.equal(ethers.keccak256(data));
+      expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
     it("returns true if output is published successfully", async function () {
       const {
@@ -650,7 +678,12 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
       expect(
-        await interfold.publishCiphertextOutput.staticCall(e3Id, data, proof),
+        await interfold.publishCiphertextOutput.staticCall(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
       ).to.equal(true);
     });
     it("emits CiphertextOutputPublished event", async function () {
@@ -676,9 +709,16 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await expect(interfold.publishCiphertextOutput(e3Id, data, proof))
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      )
         .to.emit(interfold, "CiphertextOutputPublished")
-        .withArgs(e3Id, data);
+        .withArgs(e3Id, data, ciphertextCommitment);
     });
   });
 
@@ -741,7 +781,12 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
       await interfold.publishPlaintextOutput(e3Id, data, proof);
       await expect(
         interfold.publishPlaintextOutput(e3Id, data, proof),
@@ -769,7 +814,12 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
 
       await expect(
         interfold.publishPlaintextOutput(e3Id, data, "0x"),
@@ -808,7 +858,12 @@ describe("Interfold", function () {
         bundle,
       );
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
       // M-35: decryption verifier now reverts with a typed error instead of
       // returning false, so the call reverts before Interfold's own InvalidOutput
       // wrapping (which now only guards ciphertext output).
@@ -839,7 +894,12 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
       expect(await interfold.publishPlaintextOutput(e3Id, data, proof));
 
       const e3 = await interfold.getE3(e3Id);
@@ -868,7 +928,12 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
       expect(
         await interfold.publishPlaintextOutput.staticCall(e3Id, data, proof),
       ).to.equal(true);
@@ -896,7 +961,12 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
       await expect(await interfold.publishPlaintextOutput(e3Id, data, proof))
         .to.emit(interfold, "PlaintextOutputPublished")
         .withArgs(e3Id, data, proof);

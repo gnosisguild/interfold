@@ -330,6 +330,12 @@ export const publishCommittee = task(
     type: ArgumentType.STRING,
   })
   .addOption({
+    name: "ciphertextCommitment",
+    description: "circuit-compatible SAFE commitment to the decoded ciphertext",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
     name: "dkgAttestationBundle",
     description:
       "Required ABI-encoded DKG fold attestation bundle (Attestation[], PartySlotBinding[])",
@@ -524,7 +530,10 @@ export const publishCiphertext = task(
     type: ArgumentType.STRING,
   })
   .setAction(async () => ({
-    default: async ({ e3Id, data, dataFile, proof, proofFile }, hre) => {
+    default: async (
+      { e3Id, data, dataFile, proof, proofFile, ciphertextCommitment },
+      hre,
+    ) => {
       const { deployAndSaveInterfold } = await import(
         "../scripts/deployAndSave/interfold"
       );
@@ -550,6 +559,7 @@ export const publishCiphertext = task(
       const tx = await interfold.publishCiphertextOutput(
         e3Id,
         dataToSend,
+        ciphertextCommitment,
         proofToSend,
       );
 

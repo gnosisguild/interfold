@@ -6,7 +6,7 @@
 
 mod helpers;
 use alloy::{
-    primitives::{Bytes, Uint},
+    primitives::{Bytes, Uint, B256},
     sol,
 };
 use e3_bfv_client::compute_pk_commitment;
@@ -188,6 +188,7 @@ async fn test_indexer() -> Result<()> {
         .emitCiphertextOutputPublished(
             Uint::from(E3_ID),
             Bytes::from(ciphertext_output_data.clone()),
+            B256::ZERO,
         )
         .send()
         .await?
@@ -202,6 +203,7 @@ async fn test_indexer() -> Result<()> {
         e3_state_after_output.ciphertext_output,
         ciphertext_output_data
     );
+    assert_eq!(e3_state_after_output.ciphertext_commitment, vec![0u8; 32]);
 
     let store = indexer.get_store();
     let total_inputs_processed = store.get::<u64>("input_count").await?.unwrap();

@@ -15,6 +15,7 @@ use std::fmt::{self, Display};
 pub struct CiphertextOutputPublished {
     pub e3_id: E3id,
     pub ciphertext_output: Vec<ArcBytes>,
+    pub ciphertext_commitment: [u8; 32],
 }
 
 impl Display for CiphertextOutputPublished {

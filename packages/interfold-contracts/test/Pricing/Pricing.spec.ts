@@ -381,7 +381,12 @@ describe("E3 Pricing", function () {
 
       // Publish ciphertext
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ethers.keccak256(data),
+        proof,
+      );
 
       // Record operator balances before distribution
       const op1Before = await usdcToken.balanceOf(nodes[0]);
@@ -467,7 +472,12 @@ describe("E3 Pricing", function () {
 
       // Publish outputs
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(e3Id, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ethers.keccak256(data),
+        proof,
+      );
 
       const treasuryBefore = await usdcToken.balanceOf(treasuryAddr);
       const op1Before = await usdcToken.balanceOf(nodes[0]);

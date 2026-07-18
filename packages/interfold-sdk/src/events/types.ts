@@ -44,6 +44,7 @@ export interface E3RequestedData {
     decryptionVerifier: string
     committeePublicKey: string
     ciphertextOutput: string
+    ciphertextCommitment: string
     plaintextOutput: string
   }
   filter: string
@@ -59,6 +60,7 @@ export interface E3ActivatedData {
 export interface CiphertextOutputPublishedData {
   e3Id: bigint
   ciphertextOutput: string
+  ciphertextCommitment: string
 }
 
 export interface PlaintextOutputPublishedData {

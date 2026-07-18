@@ -174,23 +174,23 @@ async function handleWebhookRequest(req: Request, res: Response) {
   try {
     console.log('📨 Webhook received:')
 
-    const { e3_id, ciphertext, proof } = req.body
-    if (e3_id === undefined || !ciphertext || !proof) {
-      console.error('Missing required fields: e3_id, ciphertext, proof')
-      res.status(400).json({ error: 'Missing required fields: e3_id, ciphertext, proof' })
+    const { e3_id, ciphertext, ciphertext_commitment, proof } = req.body
+    if (e3_id === undefined || !ciphertext || !ciphertext_commitment || !proof) {
+      console.error('Missing required fields: e3_id, ciphertext, ciphertext_commitment, proof')
+      res.status(400).json({ error: 'Missing required fields: e3_id, ciphertext, ciphertext_commitment, proof' })
       return
     }
 
-    if (!isValidHexString(ciphertext) || !isValidHexString(proof)) {
-      console.error('ciphertext and proof must be valid hex strings')
-      res.status(400).json({ error: 'ciphertext and proof must be valid hex strings' })
+    if (!isValidHexString(ciphertext) || !isValidHexString(ciphertext_commitment) || !isValidHexString(proof)) {
+      console.error('ciphertext, ciphertext_commitment, and proof must be valid hex strings')
+      res.status(400).json({ error: 'ciphertext, ciphertext_commitment, and proof must be valid hex strings' })
       return
     }
 
     console.log(`🔄 Publishing output for E3 ${e3_id}...`)
 
     const sdk = await createPrivateSDK()
-    await sdk.publishCiphertextOutput(BigInt(e3_id), ciphertext, proof)
+    await sdk.publishCiphertextOutput(BigInt(e3_id), ciphertext, ciphertext_commitment, proof)
 
     inFlight.delete(e3_id.toString())
     console.log(`✅ Successfully completed E3 ${e3_id}`)

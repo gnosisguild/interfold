@@ -379,6 +379,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 chain_id: ctx.chain_id(),
                 ciphertext_inputs: vec![],
                 ciphertext_output: vec![],
+                ciphertext_commitment: vec![],
                 committee_public_key: e.publicKey.to_vec(),
                 custom_params: e3.customParams.to_vec(),
                 e3_params: e3_params.to_vec(),
@@ -416,6 +417,8 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
             let mut repo = E3Repository::new(store, e3_id);
             repo.set_ciphertext_output(e.ciphertextOutput.to_vec())
+                .await?;
+            repo.set_ciphertext_commitment(e.ciphertextCommitment.to_vec())
                 .await?;
 
             Ok(())

@@ -491,6 +491,12 @@
           "internalType": "bytes",
           "name": "ciphertextOutput",
           "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "ciphertextCommitment",
+          "type": "bytes32"
         }
       ],
       "name": "CiphertextOutputPublished",
@@ -697,6 +703,11 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextCommitment",
+              "type": "bytes32"
             }
           ],
           "indexed": false,
@@ -1484,6 +1495,11 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextCommitment",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct E3",
@@ -1902,6 +1918,11 @@
           "type": "bytes"
         },
         {
+          "internalType": "bytes32",
+          "name": "ciphertextCommitment",
+          "type": "bytes32"
+        },
+        {
           "internalType": "bytes",
           "name": "proof",
           "type": "bytes"
@@ -2078,6 +2099,11 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextCommitment",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct E3",
@@ -2376,5 +2402,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-2d3d2b6b440530e2d0cda7f925e842c7cd652fec"
+  "buildInfoId": "solc-0_8_28-6e471e557b86aca04671115e397cf68c39af7a00"
 }

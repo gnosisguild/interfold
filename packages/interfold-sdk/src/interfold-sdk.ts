@@ -170,10 +170,11 @@ export class InterfoldSDK {
   public async publishCiphertextOutput(
     e3Id: bigint,
     ciphertextOutput: `0x${string}`,
+    ciphertextCommitment: `0x${string}`,
     proof: `0x${string}`,
     gasLimit?: bigint,
   ): Promise<Hash> {
-    return this.contractClient.publishCiphertextOutput(e3Id, ciphertextOutput, proof, gasLimit)
+    return this.contractClient.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof, gasLimit)
   }
 
   public async getE3(e3Id: bigint): Promise<E3> {

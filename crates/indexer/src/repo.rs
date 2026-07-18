@@ -78,6 +78,20 @@ impl<S: DataStore> E3Repository<S> {
         Ok(())
     }
 
+    pub async fn set_ciphertext_commitment(&mut self, data: Vec<u8>) -> Result<()> {
+        let key = self.e3_key();
+        self.store
+            .modify(&key, |e3_obj: Option<E3>| {
+                e3_obj.map(|mut e| {
+                    e.ciphertext_commitment = data.clone();
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not set ciphertext_commitment for '{key}'"))?;
+        Ok(())
+    }
+
     fn e3_key(&self) -> String {
         let e3_id = self.e3_id;
         format!("_e3:{e3_id}")

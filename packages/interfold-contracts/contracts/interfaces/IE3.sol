@@ -25,7 +25,8 @@ import { IInterfold } from "./IInterfold.sol";
  * @param customParams Arbitrary ABI-encoded application-defined parameters.
  * @param decryptionVerifier Address of the output verifier contract for decryption verification
  * @param committeePublicKey Hash of the public key of the selected committee for this computation
- * @param ciphertextOutput Hash of the encrypted output data produced by the computation
+ * @param ciphertextOutput Keccak hash of the serialized encrypted output data produced by the computation
+ * @param ciphertextCommitment SAFE commitment to the decoded BFV ciphertext used by the decryption proof
  * @param plaintextOutput Decrypted output data after committee decryption
  * @param requester Address of the entity that requested the E3 computation
  */
@@ -44,4 +45,5 @@ struct E3 {
     bytes32 ciphertextOutput;
     bytes plaintextOutput;
     address requester;
+    bytes32 ciphertextCommitment;
 }

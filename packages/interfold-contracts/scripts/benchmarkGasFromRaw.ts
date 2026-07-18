@@ -11,6 +11,7 @@ import path from "node:path";
 import {
   BFV_DKG_H,
   BFV_THRESHOLD_T,
+  bfvDecCiphertextCommitmentIndex,
   bfvDecCommitteeHashIndices,
   bfvDecDomainIndices,
   bfvDecPartyColOffsets,
@@ -445,11 +446,14 @@ async function main() {
     decPublicInputs[DEC_DOMAIN_IDX.hi],
     decPublicInputs[DEC_DOMAIN_IDX.lo],
   );
+  const decCiphertextCommitment =
+    decPublicInputs[bfvDecCiphertextCommitmentIndex()];
   const decOk = await bfvDec.verify.staticCall(
     benchmarkE3Id,
     decDomain,
     plaintextHash,
     decCommitteeHash,
+    decCiphertextCommitment,
     decEncodedProof,
   );
   if (!decOk) {
@@ -462,6 +466,7 @@ async function main() {
     decDomain,
     plaintextHash,
     decCommitteeHash,
+    decCiphertextCommitment,
     decEncodedProof,
   );
 

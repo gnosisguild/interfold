@@ -679,6 +679,7 @@ mod tests {
                 CiphertextOutputPublished {
                     e3_id: e3_id.clone(),
                     ciphertext_output: vec![empty.clone()],
+                    ciphertext_commitment: [0u8; 32],
                 }
                 .into(),
             ),

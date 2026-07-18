@@ -8,7 +8,7 @@ pragma solidity >=0.4.24;
 
 contract FakeInterfold {
   event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
-  event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput);
+  event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
   event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
   event CommitteePublished(uint256 indexed e3Id, address[] nodes, bytes publicKey, bytes32 pkCommitment, bytes proof);
 
@@ -20,8 +20,8 @@ contract FakeInterfold {
   }
 
   // Emit CiphertextOutputPublished event with passed test data
-  function emitCiphertextOutputPublished(uint256 e3Id, bytes memory ciphertextOutput) public {
-    emit CiphertextOutputPublished(e3Id, ciphertextOutput);
+  function emitCiphertextOutputPublished(uint256 e3Id, bytes memory ciphertextOutput, bytes32 ciphertextCommitment) public {
+    emit CiphertextOutputPublished(e3Id, ciphertextOutput, ciphertextCommitment);
   }
 
   // Emit PlaintextOutputPublished event with passed test data
@@ -48,7 +48,8 @@ contract FakeInterfold {
       customParams: abi.encode("custom_params"),
       committeePublicKey: bytes32(keccak256("committee_public_key")),
       ciphertextOutput: bytes32(keccak256("encrypted_data")),
-      plaintextOutput: abi.encode("decrypted_result")
+      plaintextOutput: abi.encode("decrypted_result"),
+      ciphertextCommitment: bytes32(keccak256("ciphertext_commitment"))
     });
   }
 }
@@ -66,4 +67,5 @@ struct E3 {
   bytes32 committeePublicKey;
   bytes32 ciphertextOutput;
   bytes plaintextOutput;
+  bytes32 ciphertextCommitment;
 }

@@ -359,6 +359,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     function publishCiphertextOutput(
         uint256 e3Id,
         bytes calldata ciphertextOutput,
+        bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external returns (bool success) {
         E3 memory e3 = getE3(e3Id);
@@ -380,6 +381,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
         e3s[e3Id].ciphertextOutput = ciphertextOutputHash;
+        e3s[e3Id].ciphertextCommitment = ciphertextCommitment;
         _e3Stages[e3Id] = E3Stage.CiphertextReady;
         _e3Deadlines[e3Id].decryptionDeadline =
             block.timestamp +
@@ -388,7 +390,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         (success) = e3.e3Program.verify(e3Id, ciphertextOutputHash, proof);
         require(success, InvalidOutput(ciphertextOutput));
 
-        emit CiphertextOutputPublished(e3Id, ciphertextOutput);
+        emit CiphertextOutputPublished(
+            e3Id,
+            ciphertextOutput,
+            ciphertextCommitment
+        );
         emit E3StageChanged(
             e3Id,
             E3Stage.KeyPublished,
@@ -450,6 +456,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             e3.ciphertextOutput,
             e3.committeePublicKey,
             plaintextHash,
+            e3.ciphertextCommitment,
             proof
         );
     }

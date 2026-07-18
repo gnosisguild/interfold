@@ -56,7 +56,12 @@ contract MockE3Program is IE3Program {
             // proxy. Do not copy this pattern into a production E3 program.
             // Pass `data` as the proof too so `MockE3Program.verify` (which
             // requires `proof.length > 0`) returns true.
-            interfold.publishCiphertextOutput(e3Id, data, data);
+            interfold.publishCiphertextOutput(
+                e3Id,
+                data,
+                keccak256(data),
+                data
+            );
         }
     }
 

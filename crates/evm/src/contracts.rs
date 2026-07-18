@@ -36,6 +36,7 @@ sol! {
             bytes32 ciphertextOutput;
             bytes plaintextOutput;
             address requester;
+            bytes32 ciphertextCommitment;
         }
 
         // ── Write functions ─────────────────────────────────────────────────
@@ -53,7 +54,7 @@ sol! {
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, address indexed e3Program);
         event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
-        event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput);
+        event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
         event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
         event RewardsDistributed(uint256 indexed e3Id, address[] nodes, uint256[] amounts);
         event RewardCredited(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);

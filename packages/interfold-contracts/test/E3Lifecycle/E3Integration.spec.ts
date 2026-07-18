@@ -442,6 +442,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.publishCiphertextOutput(
         0,
         "0x" + "ab".repeat(100),
+        ethers.keccak256("0x" + "ab".repeat(100)),
         "0x1337",
       );
       await interfold.publishPlaintextOutput(
@@ -1835,7 +1836,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(0, ciphertextOutput, proof);
+      await interfold.publishCiphertextOutput(
+        0,
+        ciphertextOutput,
+        ethers.keccak256(ciphertextOutput),
+        proof,
+      );
       stage = await interfold.getE3Stage(0);
       expect(stage).to.equal(4); // CiphertextReady
 
@@ -2118,7 +2124,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proofBytes = "0x1337";
-      await interfold.publishCiphertextOutput(0, ciphertextOutput, proofBytes);
+      await interfold.publishCiphertextOutput(
+        0,
+        ciphertextOutput,
+        ethers.keccak256(ciphertextOutput),
+        proofBytes,
+      );
       expect(await interfold.getE3Stage(0)).to.equal(4); // CiphertextReady
 
       // Record the E3 payment (normal rewards) before completion zeroes it
@@ -2254,7 +2265,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(0, ciphertextOutput, proof);
+      await interfold.publishCiphertextOutput(
+        0,
+        ciphertextOutput,
+        ethers.keccak256(ciphertextOutput),
+        proof,
+      );
       expect(await interfold.getE3Stage(0)).to.equal(4); // CiphertextReady
 
       // 4. Publish plaintext output
@@ -2312,7 +2328,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(0, ciphertextOutput, proof);
+      await interfold.publishCiphertextOutput(
+        0,
+        ciphertextOutput,
+        ethers.keccak256(ciphertextOutput),
+        proof,
+      );
 
       const plaintextOutput = "0x" + "cd".repeat(100);
       await interfold.publishPlaintextOutput(0, plaintextOutput, proof);

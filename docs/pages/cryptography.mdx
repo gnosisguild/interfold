@@ -479,8 +479,10 @@ decodes modulo **t**; it runs once at the aggregator after enough valid **C6** p
 **C6** proves a partial decryption share **d** built from the output ciphertext, the node’s Shamir
 shares of the threshold secret and smudging noise (from **C4**), and reduction quotients. Each C6
 proof also carries the common E3 decryption-domain limbs that are preserved through folding and
-checked by the on-chain wrapper—schematically per CRT limb (see
-`verify_decryption_share_computation` in `share_decryption.nr`):
+checked by the on-chain wrapper. C6 also recomputes the circuit-compatible SAFE commitment from the
+decoded `ct0`/`ct1` CRT polynomials; the final decryption proof exposes that commitment for
+comparison with the off-chain commitment stored at ciphertext publication—schematically per CRT limb
+(see `verify_decryption_share_computation` in `share_decryption.nr`):
 
 ```math
 d^{[\ell]}(\gamma) = \mathrm{ct}_0^{[\ell]}(\gamma) + \mathrm{ct}_1^{[\ell]}(\gamma)\,\mathrm{sk}^{[\ell]}(\gamma) + e_{\mathrm{sm}}^{[\ell]}(\gamma) + r_2^{[\ell]}(\gamma)(\gamma^N+1) + r_1^{[\ell]}(\gamma)\,q_\ell

@@ -80,6 +80,7 @@ library InterfoldPricing {
         bytes32 ciphertextHash,
         bytes32 committeePublicKey,
         bytes32 plaintextHash,
+        bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external view {
         bytes32 committeeHash = ICiphernodeRegistry(registryAddress)
@@ -99,6 +100,7 @@ library InterfoldPricing {
             decryptionDomain,
             plaintextHash,
             committeeHash,
+            ciphertextCommitment,
             proof
         );
     }

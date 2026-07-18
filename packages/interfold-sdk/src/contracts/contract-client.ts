@@ -173,6 +173,7 @@ export class ContractClient {
   public async publishCiphertextOutput(
     e3Id: bigint,
     ciphertextOutput: `0x${string}`,
+    ciphertextCommitment: `0x${string}`,
     proof: `0x${string}`,
     gasLimit?: bigint,
   ): Promise<Hash> {
@@ -190,7 +191,7 @@ export class ContractClient {
         address: this.contracts.interfold,
         abi: Interfold__factory.abi,
         functionName: 'publishCiphertextOutput',
-        args: [e3Id, ciphertextOutput, proof],
+        args: [e3Id, ciphertextOutput, ciphertextCommitment, proof],
         account,
         gas: gasLimit,
       })

@@ -78,6 +78,7 @@ fn main(
     committee_hash_lo: pub Field,
     domain_hi: pub Field,
     domain_lo: pub Field,
+    ciphertext_commitment: pub Field,
 ) -> pub (Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; MAX_MSG_NON_ZERO_COEFFS]) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
@@ -90,6 +91,15 @@ fn main(
     // domain. Expose that domain in the final EVM proof for on-chain checking.
     assert(c6_fold_public[4] == domain_hi);
     assert(c6_fold_public[5] == domain_lo);
+
+    // Every C6 leaf commits to the same decoded BFV ciphertext. Expose that
+    // canonical commitment as a final public input for the EVM wrapper.
+    for i in 0..(T + 1) {
+        assert(
+            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i]
+                == ciphertext_commitment,
+        );
+    }
 
     // Cross-circuit C6 to C7: each folded `d_commitment` column entry must match `c7_public[i]`
     // (leading `T + 1` words of `c7_public`).

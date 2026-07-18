@@ -555,6 +555,7 @@ struct DecryptionAggregatorWitness {
     committee_hash_lo: String,
     domain_hi: String,
     domain_lo: String,
+    ciphertext_commitment: String,
 }
 
 /// Prove [`CircuitName::DecryptionAggregator`] for each job (C6 fold + C7), with
@@ -617,6 +618,14 @@ pub fn prove_decryption_aggregation_jobs(
         let domain_lo = c6_fold_public.get(5).cloned().ok_or_else(|| {
             ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 5".into())
         })?;
+        let ciphertext_commitment = c6_fold_public
+            .get(6 + (2 * c6_total_slots))
+            .cloned()
+            .ok_or_else(|| {
+                ZkError::InvalidInput(
+                    "C6 fold proof is missing the ciphertext commitment column".into(),
+                )
+            })?;
 
         let witness = DecryptionAggregatorWitness {
             c6_fold_vk: c6_fold_vk.verification_key.clone(),
@@ -632,6 +641,7 @@ pub fn prove_decryption_aggregation_jobs(
             committee_hash_lo: committee_hash_lo.clone(),
             domain_hi,
             domain_lo,
+            ciphertext_commitment,
         };
 
         let json = serde_json::to_value(&witness)

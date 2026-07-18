@@ -29,6 +29,7 @@ const MESSAGE_COEFFS_COUNT = 100;
 const EXPECTED_C6_FOLD_KEY_HASH = ethers.id("c6_fold");
 const EXPECTED_C7_KEY_HASH = ethers.id("c7");
 const DECRYPTION_DOMAIN = ethers.id("e3-decryption-domain");
+const CIPHERTEXT_COMMITMENT = ethers.id("ciphertext-commitment");
 
 /** Must match `BfvDecryptionVerifier.threshold` / default circuit `T`. */
 const THRESHOLD = BFV_THRESHOLD_T;
@@ -102,6 +103,7 @@ function buildPublicInputsWithMessage(
   }
   arr[COMMITTEE_HASH_HI_IDX] = committeeHashHi(committeeHash);
   arr[COMMITTEE_HASH_LO_IDX] = committeeHashLo(committeeHash);
+  arr[6] = CIPHERTEXT_COMMITMENT;
   for (let i = 0; i < partyIds.length; i++) {
     arr[PARTY_ID_COL_OFFSET + i] =
       "0x" + partyIds[i].toString(16).padStart(64, "0");
@@ -261,6 +263,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           "0xdeadbeef",
         ),
       ).to.be.revert(ethers);
@@ -287,6 +290,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -316,6 +320,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -346,6 +351,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "VkHashMismatch");
@@ -373,6 +379,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "VkHashMismatch");
@@ -405,6 +412,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           wrongCommitteeHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -430,11 +438,39 @@ describe("BfvDecryptionVerifier", function () {
           ethers.id("different-e3-domain"),
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
         bfvDecryptionVerifier,
         "DomainBindingMismatch",
+      );
+    });
+
+    it("reverts when the stored SAFE ciphertext commitment differs from the proof", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { decryptionDomain } = ctx();
+
+      const messageCoeffs = [1n, 2n, 3n];
+      const publicInputs = buildPublicInputsWithMessage(messageCoeffs);
+      const plaintextHash = plaintextToHash(messageCoeffs);
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          E3_ID,
+          decryptionDomain,
+          plaintextHash,
+          ethers.ZeroHash,
+          ethers.id("wrong-ciphertext-commitment"),
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(
+        bfvDecryptionVerifier,
+        "CiphertextCommitmentMismatch",
       );
     });
 
@@ -456,6 +492,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           wrongHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -482,6 +519,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "InvalidProof");
@@ -518,6 +556,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "VkHashMismatch");
@@ -550,6 +589,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -588,6 +628,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -628,6 +669,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -653,6 +695,7 @@ describe("BfvDecryptionVerifier", function () {
           DECRYPTION_DOMAIN,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revertedWithCustomError(
@@ -691,6 +734,7 @@ describe("BfvDecryptionVerifier", function () {
           decryptionDomain,
           plaintextHash,
           ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
           proof,
         ),
       ).to.be.revert(ethers);
@@ -715,6 +759,7 @@ describe("BfvDecryptionVerifier", function () {
         decryptionDomain,
         plaintextHash,
         ethers.ZeroHash,
+        CIPHERTEXT_COMMITMENT,
         proof,
       );
       expect(result).to.equal(true);
@@ -740,6 +785,7 @@ describe("BfvDecryptionVerifier", function () {
         decryptionDomain,
         plaintextHash,
         ethers.ZeroHash,
+        CIPHERTEXT_COMMITMENT,
         proof,
       );
       expect(result).to.equal(true);
@@ -768,6 +814,7 @@ describe("BfvDecryptionVerifier", function () {
         decryptionDomain,
         plaintextHash,
         committeeHash,
+        CIPHERTEXT_COMMITMENT,
         proof,
       );
       expect(result).to.equal(true);
@@ -790,6 +837,7 @@ describe("BfvDecryptionVerifier", function () {
         decryptionDomain,
         plaintextHash,
         ethers.ZeroHash,
+        CIPHERTEXT_COMMITMENT,
         proof,
       );
       expect(result).to.equal(true);
@@ -815,6 +863,7 @@ describe("BfvDecryptionVerifier", function () {
         decryptionDomain,
         plaintextHash,
         ethers.ZeroHash,
+        CIPHERTEXT_COMMITMENT,
         proof,
       );
       expect(result).to.equal(true);

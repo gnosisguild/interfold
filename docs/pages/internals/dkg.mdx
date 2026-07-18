@@ -520,11 +520,12 @@ for the full contract.
 The decryption recursive proof (`BfvDecryptionVerifier`) follows the same shape: a recursive Honk
 proof aggregates **C6** from at least **T+1** parties plus **C7**, carries a domain over the chain,
 deployment, E3, committee, ciphertext, and committee-key context, and surfaces the party IDs plus
-`expected_sk_commits[]` and `expected_esm_commits[]` per party. The wrapper receives `e3Id`
-separately so it can compare those surfaced commitments against the anchors stored at
-`publishCommittee`; if any anchor differs, or if the E3 domain differs, the proof is rejected. The
-plaintext is decoded from the proof's last 100 public inputs (one `uint64` coefficient each, packed
-into bytes).
+`ciphertextCommitment`, `expected_sk_commits[]`, and `expected_esm_commits[]` per party. The wrapper
+receives `e3Id` separately so it can compare those surfaced commitments against the anchors stored
+at `publishCommittee`; it also compares `ciphertextCommitment` with the SAFE commitment stored at
+ciphertext publication. If any anchor differs, the commitment differs, or the E3 domain differs, the
+proof is rejected. The plaintext is decoded from the proof's last 100 public inputs (one `uint64`
+coefficient each, packed into bytes).
 
 ### Slashing-evidence binding
 

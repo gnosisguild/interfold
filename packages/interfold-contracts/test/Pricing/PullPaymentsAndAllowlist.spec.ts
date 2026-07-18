@@ -146,7 +146,12 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       operator3,
     ]);
     await time.increase(inputWindowDuration + 200);
-    await interfold.publishCiphertextOutput(e3Id, data, proof);
+    await interfold.publishCiphertextOutput(
+      e3Id,
+      data,
+      ethers.keccak256(data),
+      proof,
+    );
     await interfold.publishPlaintextOutput(e3Id, data, proof);
     return { e3Id, nodes };
   };
@@ -195,7 +200,12 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
         [ctx.operator1, ctx.operator2, ctx.operator3],
       );
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(e3Id2, data, proof);
+      await interfold.publishCiphertextOutput(
+        e3Id2,
+        data,
+        ethers.keccak256(data),
+        proof,
+      );
       await interfold.publishPlaintextOutput(
         e3Id2,
         data,

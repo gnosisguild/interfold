@@ -46,6 +46,7 @@ export interface E3 {
   decryptionVerifier: string
   committeePublicKey: string
   ciphertextOutput: string
+  ciphertextCommitment: string
   plaintextOutput: string
 }
 

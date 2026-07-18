@@ -16,6 +16,7 @@ pragma solidity 0.8.28;
  *        - a domain-binding slot supplied by Interfold and derived from
  *          (chainId, Interfold address, e3Id, committeeHash,
  *           ciphertextOutputHash, committeePublicKey)
+ *        - the final proof's SAFE ciphertext commitment matches the commitment stored for the E3
  *      and reverts on any mismatch.
  */
 interface IDecryptionVerifier {
@@ -23,8 +24,8 @@ interface IDecryptionVerifier {
     ///         verifier rejected it. Used in place of a `bool false` return.
     error InvalidProof();
     /// @notice `publicInputs` is shorter than the layout the wrapper expects
-    ///         (must hold the two VK-hash slots, the domain-binding slot and the
-    ///         100 message-coefficient slots).
+    ///         (must hold the two VK-hash slots, domain and ciphertext-binding
+    ///         slots, and the 100 message-coefficient slots).
     error InvalidPublicInputsLength();
     /// @notice One of the recursive-aggregation sub-circuit VK hashes embedded
     ///         in the proof does not match the immutable value committed at
@@ -36,6 +37,8 @@ interface IDecryptionVerifier {
     /// @notice The domain-binding public-input slot does not equal the value
     ///         recomputed on-chain from the call context.
     error DomainBindingMismatch();
+    /// @notice The proof's SAFE ciphertext commitment does not match the E3 commitment.
+    error CiphertextCommitmentMismatch();
     /// @notice A `party_id` returned by the proof is not present in the
     ///         registry's stored DKG anchors for this E3.
     error DkgAnchorNotFound();
@@ -51,6 +54,7 @@ interface IDecryptionVerifier {
     ///        committeeHash, ciphertextOutputHash, committeePublicKey))`.
     /// @param plaintextOutputHash `keccak256(plaintextOutput)` expected by the Interfold.
     /// @param committeeHash `keccak256(abi.encodePacked(topNodes))` for the on-chain committee.
+    /// @param ciphertextCommitment Circuit-compatible SAFE commitment to the decoded BFV ciphertext.
     /// @param proof ABI-encoded `(bytes rawProof, bytes32[] publicInputs)`.
     /// @return success Always `true` on success; the wrapper reverts on any failure.
     function verify(
@@ -58,6 +62,7 @@ interface IDecryptionVerifier {
         bytes32 decryptionDomain,
         bytes32 plaintextOutputHash,
         bytes32 committeeHash,
+        bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external view returns (bool success);
 }

@@ -321,7 +321,7 @@ await sdk.requestE3({
 });
 
 // Publish ciphertext output
-await sdk.publishCiphertextOutput(e3Id: bigint, ciphertextOutput: `0x${string}`, proof: `0x${string}`, gasLimit?: bigint);
+await sdk.publishCiphertextOutput(e3Id: bigint, ciphertextOutput: `0x${string}`, ciphertextCommitment: `0x${string}`, proof: `0x${string}`, gasLimit?: bigint);
 
 // Read operations
 const e3Data = await sdk.getE3(e3Id: bigint);

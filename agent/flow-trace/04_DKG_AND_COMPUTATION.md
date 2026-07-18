@@ -414,8 +414,9 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │     C4a→C6  (SameParty):                C4a's commitment == C6's expected_sk_commitment
 │   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment
-│   │   │     (on-chain / E3 state)              C3/C6 ciphertext commitments are checked against their ciphertext witnesses off-chain;
-│   │   │                                      the final EVM proof does not yet expose a ciphertext commitment for comparison with `keccak256(e3.ciphertextOutput)`
+│   │   │     (on-chain / E3 state)              C3/C6 ciphertext commitments are checked against their ciphertext witnesses;
+│   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
+│   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)
@@ -704,13 +705,14 @@ on-chain; the explicit test/CI skip mode works only with mock verifiers that tru
 > additionally compares the immutable VK hashes with the version-controlled circuit artifacts.
 
 The decryption wrapper exposes
-`verify(e3Id, decryptionDomain, plaintextOutputHash, committeeHash, proof)`. `Interfold` recomputes
-`decryptionDomain` over
+`verify(e3Id, decryptionDomain, plaintextOutputHash, committeeHash, ciphertextCommitment, proof)`.
+`Interfold` recomputes `decryptionDomain` over
 `(chainId, Interfold address, e3Id, committeeHash, ciphertextOutputHash, committeePublicKey)`. The
-wrapper checks the domain limbs in the final proof, then uses the separate `e3Id` to resolve the
-registry's stored DKG anchors and compares every surfaced party ID, secret-key commitment, and
-smudging-noise commitment. The party IDs are circuit-side 1-indexed Shamir coordinates and are
-translated to the registry's 0-indexed committee slots for this comparison.
+wrapper checks the domain limbs and SAFE ciphertext commitment in the final proof, then uses the
+separate `e3Id` to resolve the registry's stored DKG anchors and compares every surfaced party ID,
+secret-key commitment, and smudging-noise commitment. The party IDs are circuit-side 1-indexed
+Shamir coordinates and are translated to the registry's 0-indexed committee slots for this
+comparison.
 
 ---
 
@@ -732,24 +734,25 @@ Data providers submit encrypted inputs:
 ```
 Compute provider runs computation on encrypted data:
 │
-└─ Interfold.publishCiphertextOutput(e3Id, ciphertextOutput, proof)
+└─ Interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof)
     │
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
-    │  │  publishCiphertextOutput(e3Id, output, proof) {         │
+│  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
     │  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
     │  │       → Input window must have closed                   │
     │  │    4. require(e3.ciphertextOutput == 0)                │
     │  │       → Can only publish once                           │
-    │  │    5. e3.ciphertextOutput = keccak256(output)           │
-    │  │    6. e3Program.verify(e3Id, hash, proof)               │
+│  │    5. e3.ciphertextOutput = keccak256(output)           │
+│  │       e3.ciphertextCommitment = commitment               │
+│  │    6. e3Program.verify(e3Id, hash, proof)               │
     │  │       → Program verifies computation correctness        │
     │  │       → Must return true                                │
     │  │    7. stage = CiphertextReady                           │
     │  │    8. decryptionDeadline = now + decryptionWindow       │
-    │  │    9. Emit CiphertextOutputPublished(e3Id, output)      │
+│  │    9. Emit CiphertextOutputPublished(e3Id, output, commitment) │
     │  │   10. Emit E3StageChanged(CiphertextReady)              │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘

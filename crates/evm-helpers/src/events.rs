@@ -50,10 +50,11 @@ sol! {
         bytes32 ciphertextOutput;
         bytes plaintextOutput;
         address requester;
+        bytes32 ciphertextCommitment;
     }
 
     #[derive(Debug)]
-    event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput);
+    event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
 
     #[derive(Debug)]
     event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);

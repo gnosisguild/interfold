@@ -15,7 +15,7 @@ use crate::server::{
     CONFIG,
 };
 use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use e3_sdk::evm_helpers::contracts::{
     InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };
@@ -129,6 +129,7 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
         WebhookPayload::Completed {
             e3_id,
             ciphertext,
+            ciphertext_commitment,
             proof,
         } => {
             info!(
@@ -146,6 +147,11 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
                 );
                 return HttpResponse::Ok()
                     .json(format!("Computation completed for E3 ID: {}", e3_id));
+            }
+
+            if ciphertext_commitment.len() != 32 {
+                return HttpResponse::BadRequest()
+                    .body("ciphertext_commitment must be exactly 32 bytes");
             }
 
             // Create the contract
@@ -170,6 +176,7 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
                 .publish_ciphertext_output(
                     U256::from(e3_id),
                     Bytes::from(ciphertext.clone()),
+                    B256::from_slice(&ciphertext_commitment),
                     Bytes::from(proof.clone()),
                 )
                 .await;

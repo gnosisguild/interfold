@@ -137,9 +137,11 @@ interface IInterfold {
     /// is successfully published.
     /// @param e3Id ID of the E3.
     /// @param ciphertextOutput ABI encoded ciphertext output.
+    /// @param ciphertextCommitment Circuit-compatible SAFE commitment to the decoded BFV ciphertext.
     event CiphertextOutputPublished(
         uint256 indexed e3Id,
-        bytes ciphertextOutput
+        bytes ciphertextOutput,
+        bytes32 ciphertextCommitment
     );
 
     /// @notice This event MUST be emitted any time the `maxDuration` is set.
@@ -521,11 +523,13 @@ interface IInterfold {
     /// @dev This function MUST emit the CiphertextOutputPublished event.
     /// @param e3Id ID of the E3.
     /// @param ciphertextOutput ABI encoded output data to verify.
+    /// @param ciphertextCommitment Circuit-compatible SAFE commitment to the decoded BFV ciphertext.
     /// @param proof ABI encoded data to verify the ciphertextOutput.
     /// @return success True if the output was successfully published.
     function publishCiphertextOutput(
         uint256 e3Id,
         bytes calldata ciphertextOutput,
+        bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external returns (bool success);
 

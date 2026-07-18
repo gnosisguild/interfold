@@ -1835,6 +1835,7 @@ async fn test_trbfv_actor() -> Result<()> {
     let ciphertext_published_event = CiphertextOutputPublished {
         ciphertext_output: ciphertexts,
         e3_id: e3_id.clone(),
+        ciphertext_commitment: [0u8; 32],
     };
 
     bus.publish_without_context(ciphertext_published_event.clone())?;
@@ -2616,6 +2617,7 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
             .map(|ct| ArcBytes::from_bytes(&ct.to_bytes()))
             .collect(),
         e3_id: e3_id.clone(),
+        ciphertext_commitment: [0u8; 32],
     })?;
 
     let history = history_collector

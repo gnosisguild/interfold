@@ -106,6 +106,7 @@ impl From<CiphertextOutputPublishedWithChainId> for e3_events::CiphertextOutputP
             // XXX: Ciphertext is an array of bytes this needs to be coordinated with interfold
             // contract
             ciphertext_output: vec![ArcBytes::from_bytes(value.0.ciphertextOutput.as_ref())],
+            ciphertext_commitment: value.0.ciphertextCommitment.into(),
         }
     }
 }

@@ -7,7 +7,7 @@
 use alloy::providers::fillers::BlobGasFiller;
 use alloy::{
     network::{Ethereum, EthereumWallet},
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes, B256, U256},
     providers::fillers::{
         ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
     },
@@ -62,6 +62,7 @@ sol! {
         bytes32 ciphertextOutput;
         bytes plaintextOutput;
         address requester;
+        bytes32 ciphertextCommitment;
     }
 
     #[derive(Debug)]
@@ -123,7 +124,7 @@ sol! {
         mapping(address e3Program => bool allowed) public e3Programs;
         function request(E3RequestParams calldata requestParams) external returns (uint256 e3Id, E3 memory e3);
         function registerE3Program(address e3Program) public;
-        function publishCiphertextOutput(uint256 e3Id, bytes calldata ciphertextOutput, bytes calldata proof) external returns (bool success);
+        function publishCiphertextOutput(uint256 e3Id, bytes calldata ciphertextOutput, bytes32 ciphertextCommitment, bytes calldata proof) external returns (bool success);
         function publishPlaintextOutput(uint256 e3Id, bytes calldata data, bytes calldata proof) external returns (bool success);
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
         function paramSetRegistry(uint8 paramSet) external view returns (bytes memory encodedParams);
@@ -198,6 +199,7 @@ pub trait InterfoldWrite {
         &self,
         e3_id: U256,
         data: Bytes,
+        ciphertext_commitment: B256,
         proof: Bytes,
     ) -> Result<TransactionReceipt>;
 
@@ -481,6 +483,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         &self,
         e3_id: U256,
         data: Bytes,
+        ciphertext_commitment: B256,
         proof: Bytes,
     ) -> Result<TransactionReceipt> {
         let _guard = NONCE_LOCK.lock().await;
@@ -491,7 +494,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
 
         let contract = Interfold::new(self.contract_address, &self.provider);
         let builder = contract
-            .publishCiphertextOutput(e3_id, data, proof)
+            .publishCiphertextOutput(e3_id, data, ciphertext_commitment, proof)
             .nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
         e3_utils::require_successful_receipt("publish ciphertext output", &receipt)?;
