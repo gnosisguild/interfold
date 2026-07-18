@@ -18,7 +18,7 @@ clap = { workspace = true }
 e3-aggregator = { workspace = true }
 e3-config = { workspace = true }
 e3-crypto = { workspace = true }
-e3-ciphernode-builder = { workspace = true }
+e3-ciphernode-builder = { workspace = true, features = ["test-only-skip-proof-aggregation"] }
 e3-data = { workspace = true }
 e3-events = { workspace = true }
 e3-evm = { workspace = true }
@@ -54,4 +54,3 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 e3-events = { workspace = true, features = ["test-helpers"] }
-

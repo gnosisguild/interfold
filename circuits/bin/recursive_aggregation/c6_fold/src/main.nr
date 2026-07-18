@@ -14,11 +14,13 @@ use bb_proof_verification::{
 };
 use lib::configs::default::T;
 
-/// One C6 public row: `expected_sk`, `expected_e_sm`, `ct_commitment`, `d_commitment` (see C6 leaf).
-pub global C6_PUBLIC_LEN: u32 = 4;
+/// One C6 public row: `expected_sk`, `expected_e_sm`, `ct_commitment`,
+/// `domain_hi`, `domain_lo`, `d_commitment` (see C6 leaf).
+pub global C6_PUBLIC_LEN: u32 = 6;
 
-/// Same shape as `c3_fold`: 4 pub parameters + 4 columns of `T + 1` party slots each.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 4 + (4 * (T + 1));
+/// Four pub parameters + the common domain limbs + four columns of
+/// `T + 1` party slots each.
+pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (4 * (T + 1));
 
 pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
 
@@ -33,7 +35,7 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
-) -> pub ([Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; T + 1]) {
+) -> pub (Field, Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; T + 1]) {
     assert(slot_index < T + 1);
 
     verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);
@@ -43,7 +45,14 @@ fn main(
     let sk_new = c6_public_inputs[0];
     let esm_new = c6_public_inputs[1];
     let ct_new = c6_public_inputs[2];
-    let d_new = c6_public_inputs[3];
+    let domain_hi = c6_public_inputs[3];
+    let domain_lo = c6_public_inputs[4];
+    let d_new = c6_public_inputs[5];
+
+    if !is_first_step {
+        assert(acc_public_inputs[4] == domain_hi);
+        assert(acc_public_inputs[5] == domain_lo);
+    }
 
     let mut out_sk: [Field; T + 1] = [0; T + 1];
     let mut out_esm: [Field; T + 1] = [0; T + 1];
@@ -88,5 +97,5 @@ fn main(
         }
     }
 
-    (out_sk, out_esm, out_ct, out_d)
+    (domain_hi, domain_lo, out_sk, out_esm, out_ct, out_d)
 }

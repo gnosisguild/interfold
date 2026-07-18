@@ -46,12 +46,14 @@ library ExitQueueLib {
      * @param queueHeadIndexTicket Maps operator addresses to the head index for tickets
      * @param queueHeadIndexLicense Maps operator addresses to the head index for licenses
      * @param pendingTotals Maps operator addresses to their total pending amounts
+     * @param liveTrancheCount Maps operators to the number of non-empty tranches.
      */
     struct ExitQueueState {
         mapping(address operator => ExitTranche[] operatorQueues) operatorQueues;
         mapping(address operator => uint256 queueHeadIndexTicket) queueHeadIndexTicket;
         mapping(address operator => uint256 queueHeadIndexLicense) queueHeadIndexLicense;
         mapping(address operator => PendingAmounts operatorPendings) pendingTotals;
+        mapping(address operator => uint256 count) liveTrancheCount;
     }
 
     /**
@@ -157,29 +159,30 @@ library ExitQueueLib {
 
         ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
 
+        // Keep both asset heads canonical before enforcing the scan-span cap.
+        // An asset-specific head may otherwise lag behind ticket-only or
+        // license-only tranches that the other asset's operation drained.
+        _advanceEmptyHeads(state, operator);
+        _pruneEmptyTail(state, operator);
+
         uint256 len = operatorQueue.length;
-        bool merged;
-        if (len != 0) {
-            ExitTranche storage lastTranche = operatorQueue[len - 1];
-            if (lastTranche.unlockTimestamp == unlockTimestamp) {
-                if (ticketAmount != 0) lastTranche.ticketAmount += ticketAmount;
-                if (licenseAmount != 0) {
-                    lastTranche.licenseAmount += licenseAmount;
-                }
-                merged = true;
-            }
-        }
+        bool merged = _mergeIntoTail(
+            state,
+            operator,
+            unlockTimestamp,
+            ticketAmount,
+            licenseAmount
+        );
 
         if (!merged) {
-            // Enforce a hard cap on the number of LIVE tranches an operator
-            // can hold simultaneously. "Live" = tranches at or after the
-            // earliest per-asset head (the lower of the two head indices).
-            // See `MAX_ACTIVE_TRANCHES`.
-            uint256 headT = state.queueHeadIndexTicket[operator];
-            uint256 headL = state.queueHeadIndexLicense[operator];
-            uint256 earliestHead = headT < headL ? headT : headL;
+            uint256 ticketHead = state.queueHeadIndexTicket[operator];
+            uint256 licenseHead = state.queueHeadIndexLicense[operator];
+            uint256 earliestHead = ticketHead < licenseHead
+                ? ticketHead
+                : licenseHead;
             require(
-                len - earliestHead < MAX_ACTIVE_TRANCHES,
+                state.liveTrancheCount[operator] < MAX_ACTIVE_TRANCHES &&
+                    len - earliestHead < MAX_ACTIVE_TRANCHES,
                 TooManyTranches()
             );
 
@@ -187,6 +190,7 @@ library ExitQueueLib {
             t.unlockTimestamp = unlockTimestamp;
             t.ticketAmount = ticketAmount;
             t.licenseAmount = licenseAmount;
+            state.liveTrancheCount[operator]++;
         }
 
         _updatePendingTotals(
@@ -203,6 +207,45 @@ library ExitQueueLib {
             licenseAmount,
             unlockTimestamp
         );
+    }
+
+    /**
+     * @dev Merges assets into the live tail when its timestamp matches.
+     *      Revives an asset-specific head if that asset had previously been
+     *      drained from a tranche still kept alive by the other asset.
+     */
+    function _mergeIntoTail(
+        ExitQueueState storage state,
+        address operator,
+        uint64 unlockTimestamp,
+        uint256 ticketAmount,
+        uint256 licenseAmount
+    ) private returns (bool merged) {
+        ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
+        uint256 len = operatorQueue.length;
+        if (len == 0) return false;
+
+        uint256 lastIndex = len - 1;
+        ExitTranche storage lastTranche = operatorQueue[lastIndex];
+        bool lastTrancheIsLive = lastTranche.ticketAmount != 0 ||
+            lastTranche.licenseAmount != 0;
+        if (
+            !lastTrancheIsLive || lastTranche.unlockTimestamp != unlockTimestamp
+        ) return false;
+
+        if (ticketAmount != 0) {
+            if (state.queueHeadIndexTicket[operator] > lastIndex) {
+                state.queueHeadIndexTicket[operator] = lastIndex;
+            }
+            lastTranche.ticketAmount += ticketAmount;
+        }
+        if (licenseAmount != 0) {
+            if (state.queueHeadIndexLicense[operator] > lastIndex) {
+                state.queueHeadIndexLicense[operator] = lastIndex;
+            }
+            lastTranche.licenseAmount += licenseAmount;
+        }
+        return true;
     }
 
     /**
@@ -504,6 +547,10 @@ library ExitQueueLib {
                 tranche.licenseAmount -= amountToTake;
             }
 
+            if (tranche.ticketAmount == 0 && tranche.licenseAmount == 0) {
+                state.liveTrancheCount[operator]--;
+            }
+
             remainingWanted -= amountToTake;
             takenAmount += amountToTake;
 
@@ -519,6 +566,59 @@ library ExitQueueLib {
             state.queueHeadIndexTicket[operator] = head;
         } else {
             state.queueHeadIndexLicense[operator] = head;
+        }
+        _advanceEmptyHeads(state, operator);
+        _pruneEmptyTail(state, operator);
+    }
+
+    /// @dev Advance both asset heads across tranches that are empty for that
+    ///      asset. This keeps the physical scan span aligned with live work,
+    ///      including when only one asset class is claimed or slashed.
+    function _advanceEmptyHeads(
+        ExitQueueState storage state,
+        address operator
+    ) private {
+        ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
+        uint256 len = operatorQueue.length;
+        uint256 ticketHead = state.queueHeadIndexTicket[operator];
+        while (
+            ticketHead < len && operatorQueue[ticketHead].ticketAmount == 0
+        ) {
+            ticketHead++;
+        }
+        state.queueHeadIndexTicket[operator] = ticketHead;
+
+        uint256 licenseHead = state.queueHeadIndexLicense[operator];
+        while (
+            licenseHead < len && operatorQueue[licenseHead].licenseAmount == 0
+        ) {
+            licenseHead++;
+        }
+        state.queueHeadIndexLicense[operator] = licenseHead;
+    }
+
+    /// @dev Remove fully drained tail entries so repeated queue/claim cycles
+    ///      cannot grow the scanned history behind an earlier locked tranche.
+    ///      Both per-asset heads are clamped because either may have advanced
+    ///      past an entry that is now removed.
+    function _pruneEmptyTail(
+        ExitQueueState storage state,
+        address operator
+    ) private {
+        ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
+        uint256 len = operatorQueue.length;
+        while (len != 0) {
+            ExitTranche storage tail = operatorQueue[len - 1];
+            if (tail.ticketAmount != 0 || tail.licenseAmount != 0) break;
+            operatorQueue.pop();
+            len--;
+        }
+
+        if (state.queueHeadIndexTicket[operator] > len) {
+            state.queueHeadIndexTicket[operator] = len;
+        }
+        if (state.queueHeadIndexLicense[operator] > len) {
+            state.queueHeadIndexLicense[operator] = len;
         }
     }
 }

@@ -57,12 +57,11 @@ impl ProofRequestActor {
                 party_id: msg.full_share.party_id,
                 total_expected,
                 pending_c0: None,
-                proof_aggregation_enabled: msg.proof_aggregation_enabled,
             },
         );
         // If C0 proof arrived before meta, emit DKGInnerProofReady now
-        if let Some(c0_proof) = pending_c0 {
-            if msg.proof_aggregation_enabled {
+        if self.proof_aggregation_enabled {
+            if let Some(c0_proof) = pending_c0 {
                 if let Err(err) = self.bus.publish(
                     DKGInnerProofReady {
                         e3_id: e3_id.clone(),

@@ -25,8 +25,7 @@ pnpm test
 Local deploy is driven by **`../../crisp.dev.env`** (see
 **[../../docs/PROOF_AGGREGATION_AND_ZK.md](../../docs/PROOF_AGGREGATION_AND_ZK.md)**):
 
-- `pnpm dev:setup` — applies profile, builds DKG circuits when
-  `CRISP_PROOF_AGGREGATION_ENABLED=true`
+- `pnpm dev:setup` — applies profile, builds DKG circuits when `CRISP_SKIP_PROOF_AGGREGATION=false`
 - `pnpm dev:up` → `scripts/crisp_deploy.sh` — sets `ENABLE_ZK_VERIFICATION` from the same file
 
 ### CRISP-only deploy (Interfold already deployed)

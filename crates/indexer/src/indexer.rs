@@ -9,10 +9,11 @@ use crate::callback_queue::CallbackQueue;
 use crate::E3Repository;
 use alloy::consensus::BlockHeader;
 use alloy::hex;
-use alloy::primitives::Uint;
+use alloy::primitives::{keccak256, Uint};
 use alloy::providers::Provider;
 use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
+use e3_bfv_client::validate_pk_commitment;
 use e3_evm_helpers::{
     block_listener::BlockListener,
     contracts::{
@@ -22,6 +23,7 @@ use e3_evm_helpers::{
     event_listener::EventListener,
     events::{CiphertextOutputPublished, CommitteePublished, PlaintextOutputPublished},
 };
+use e3_fhe_params::decode_bfv_params;
 use eyre::eyre;
 use eyre::Result;
 use serde::{de::DeserializeOwned, Serialize};
@@ -352,6 +354,20 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
             let e3 = contract.get_e3(e.e3Id).await?;
             let e3_params = contract.get_param_set_registry(e3.paramSet).await?;
+            if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
+                let decoded_params = decode_bfv_params(&e3_params)
+                    .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
+                validate_pk_commitment(
+                    &e.publicKey,
+                    e.pkCommitment.0,
+                    decoded_params.degree(),
+                    decoded_params.plaintext(),
+                    decoded_params.moduli().to_vec(),
+                )
+                .map_err(|error| {
+                    eyre!("rejecting unbound CommitteePublished public key for E3 {e3_id}: {error}")
+                })?;
+            }
             let seed = e3.seed.to_be_bytes();
             let request_block = u64_try_from(e3.requestBlock)?;
             let input_window = [

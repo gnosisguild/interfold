@@ -6,6 +6,8 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 
 /**
  * @title InterfoldPricing
@@ -27,77 +29,101 @@ library InterfoldPricing {
     uint16 internal constant MAX_MARGIN_BPS = 5_000;
     uint32 internal constant MAX_COMMITTEE_SIZE = 256;
 
-    /// @notice Writes the default {IInterfold.PricingConfig} directly to
-    ///         the linked {Interfold} storage starting at slot 24. Called
-    ///         via DELEGATECALL from {Interfold.initialize}, so SSTORE
-    ///         targets the caller's storage. Hosted in the library so
-    ///         the 15-field literal stays out of Interfold runtime bytecode
-    ///         (EIP-170 24,576-byte cap).
-    /// @dev    Slot map for `_pricingConfig` (struct field order in
-    ///         {IInterfold.PricingConfig}):
-    ///           24: keyGenFixedPerNode
-    ///           25: keyGenPerEncryptionProof
-    ///           26: coordinationPerPair
-    ///           27: availabilityPerNodePerSec
-    ///           28: decryptionPerNode
-    ///           29: publicationBase
-    ///           30: verificationPerProof
-    ///           31: packed { protocolTreasury(20) | marginBps(2) |
-    ///               protocolShareBps(2) | dkgUtilizationBps(2) |
-    ///               computeUtilizationBps(2) | decryptUtilizationBps(2) }
-    ///           32: packed { minCommitteeSize(4) | minThreshold(4) }
-    ///         The contract storage layout snapshot in
-    ///         `audits/storage-layouts/Interfold-v1.json` MUST keep these
-    ///         slots stable; any storage reordering requires updating the
-    ///         constants below.
-    function applyDefaultPricingConfig() external {
-        // Packed slot 31:
-        //   marginBps           = 1000  << 160
-        //   protocolShareBps    =    0  << 176
-        //   dkgUtilizationBps   = 2500  << 192
-        //   computeUtilizationBps = 5000 << 208
-        //   decryptUtilizationBps = 2500 << 224
-        // protocolTreasury (low 160 bits) and trailing padding are zero.
-        uint256 slot31 = (uint256(1000) << 160) |
-            (uint256(2500) << 192) |
-            (uint256(5000) << 208) |
-            (uint256(2500) << 224);
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            sstore(24, 100000) // keyGenFixedPerNode      = 0.10 USDC
-            sstore(25, 50000) // keyGenPerEncryptionProof = 0.05 USDC
-            sstore(26, 10000) // coordinationPerPair      = 0.01 USDC
-            sstore(27, 50) // availabilityPerNodePerSec   = 0.00005 USDC
-            sstore(28, 300000) // decryptionPerNode       = 0.30 USDC
-            sstore(29, 1000000) // publicationBase        = 1.00 USDC
-            sstore(30, 5000) // verificationPerProof      = 0.005 USDC
-            sstore(31, slot31)
-            // slot 32 (minCommitteeSize | minThreshold) stays zero.
+    event ParamSetRegistered(uint8 paramSet, bytes encodedParams);
+    event ParamSetUpdated(
+        uint8 paramSet,
+        bytes previousParams,
+        bytes newParams
+    );
+
+    function emitParamSetChange(
+        uint8 paramSet,
+        bytes calldata previous,
+        bytes calldata current
+    ) external {
+        if (previous.length == 0) {
+            emit ParamSetRegistered(paramSet, current);
+        } else {
+            emit ParamSetUpdated(paramSet, previous, current);
         }
     }
 
-    /// @notice Returns the default {IInterfold.PricingConfig} applied by
-    ///         {Interfold.initialize}. Hosted in the external library so the
-    ///         15-field literal stays out of the Interfold runtime bytecode
-    ///         (EIP-170 24,576-byte cap).
-    function defaultPricingConfig()
-        external
-        pure
-        returns (IInterfold.PricingConfig memory cfg)
-    {
-        cfg.keyGenFixedPerNode = 100000; // 0.10 USDC
-        cfg.keyGenPerEncryptionProof = 50000; // 0.05 USDC
-        cfg.coordinationPerPair = 10000; // 0.01 USDC
-        cfg.availabilityPerNodePerSec = 50; // 0.00005 USDC
-        cfg.decryptionPerNode = 300000; // 0.30 USDC
-        cfg.publicationBase = 1000000; // 1.00 USDC
-        cfg.verificationPerProof = 5000; // 0.005 USDC
-        cfg.marginBps = 1000; // 10%
-        cfg.dkgUtilizationBps = 2500; // 25%
-        cfg.computeUtilizationBps = 5000; // 50%
-        cfg.decryptUtilizationBps = 2500; // 25%
-        // protocolTreasury, protocolShareBps, minCommitteeSize, minThreshold
-        // remain zero by default and use the struct zero-initialization.
+    function validateRegistryCaller(
+        address caller,
+        address registry
+    ) external pure {
+        require(caller == registry, IInterfold.OnlyCiphernodeRegistry());
+    }
+
+    function validateSlashCaller(
+        address caller,
+        address slashManager
+    ) external pure {
+        require(caller == slashManager, IInterfold.OnlySlashingManager());
+    }
+
+    function validateRegistryOrSlashCaller(
+        address caller,
+        address registry,
+        address slashManager
+    ) external pure {
+        require(
+            caller == registry || caller == slashManager,
+            IInterfold.OnlyCiphernodeRegistryOrSlashingManager()
+        );
+    }
+
+    function verifyPlaintext(
+        address verifierAddress,
+        address registryAddress,
+        uint256 e3Id,
+        bytes32 ciphertextHash,
+        bytes32 committeePublicKey,
+        bytes32 plaintextHash,
+        bytes calldata proof
+    ) external view {
+        bytes32 committeeHash = ICiphernodeRegistry(registryAddress)
+            .getCommitteeHash(e3Id);
+        bytes32 decryptionDomain = keccak256(
+            abi.encode(
+                block.chainid,
+                address(this),
+                e3Id,
+                committeeHash,
+                ciphertextHash,
+                committeePublicKey
+            )
+        );
+        IDecryptionVerifier(verifierAddress).verify(
+            e3Id,
+            decryptionDomain,
+            plaintextHash,
+            committeeHash,
+            proof
+        );
+    }
+
+    function honestNodes(
+        address registryAddress,
+        uint256 e3Id,
+        uint8 reason
+    ) external view returns (address[] memory) {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+        if (
+            reason ==
+            uint8(IInterfold.FailureReason.CommitteeFormationTimeout) ||
+            reason ==
+            uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+        ) return new address[](0);
+
+        try registry.getActiveCommitteeNodes(e3Id) returns (
+            address[] memory nodes,
+            uint256[] memory
+        ) {
+            return nodes;
+        } catch {
+            return new address[](0);
+        }
     }
 
     /// @notice Mirrors the four validation gates at the top of
@@ -206,7 +232,7 @@ library InterfoldPricing {
             revert IInterfold.BelowMinThreshold(threshold[0], minThreshold);
     }
 
-    /// @notice Mirrors the input-window / duration gates at the top
+    /// @notice Mirrors the input-window and duration gates
     ///         of {Interfold.request}. Reverts with the same selectors so off-
     ///         chain `revertedWithCustomError(interfold, ...)` lookups keep
     ///         working.
@@ -215,14 +241,12 @@ library InterfoldPricing {
     /// @param computeWindow    `_timeoutConfig.computeWindow`.
     /// @param decryptionWindow `_timeoutConfig.decryptionWindow`.
     /// @param maxDuration      The Interfold-wide upper bound.
-    /// @param quotedFee        Fee returned by {InterfoldPricing.quote}.
     function validateRequest(
         uint256[2] calldata inputWindow,
         uint256 nowTs,
         uint256 computeWindow,
         uint256 decryptionWindow,
-        uint256 maxDuration,
-        uint256 quotedFee // solhint-disable-line no-unused-vars
+        uint256 maxDuration
     ) external pure {
         if (inputWindow[0] < nowTs)
             revert IInterfold.InvalidInputDeadlineStart(inputWindow[0]);

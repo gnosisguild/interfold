@@ -66,7 +66,7 @@ interface ISlashingManager {
     /**
      * @notice Slash proposal details tracking the full lifecycle of a slash
      * @dev Stores all state needed for proposal, appeal, and execution workflows
-     * @param e3Id ID of the E3 computation this slash relates to (0 for non-E3 slashes)
+     * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator being slashed
      * @param reason Hash of the slash reason (maps to SlashPolicy configuration)
      * @param ticketAmount Amount of ticket collateral to slash (copied from policy at proposal time)
@@ -102,6 +102,14 @@ interface ISlashingManager {
         bool affectsCommittee;
         /// @dev Snapshotted from SlashPolicy at proposal time to prevent execution drift
         uint8 failureReason;
+    }
+
+    /// @notice Durable routing record for slashed ticket funds awaiting escrow.
+    struct PendingSlashRoute {
+        uint256 e3Id;
+        address token;
+        uint256 amount;
+        bool pending;
     }
 
     // ======================
@@ -156,6 +164,9 @@ interface ISlashingManager {
     /// @notice Thrown when attempting to execute a slash before the appeal window has closed
     error AppealWindowActive();
 
+    /// @notice Thrown when an unresolved appeal has not reached its terminal expiry.
+    error AppealResolutionWindowActive();
+
     /// @notice Thrown when attempting to file a second appeal for the same proposal
     error AlreadyAppealed();
 
@@ -204,7 +215,7 @@ interface ISlashingManager {
     /// @notice Thrown when the attestation `deadline` has passed at the time of submission
     error SignatureExpired();
 
-    /// @notice Thrown when an operator action is gated by an unresolved Lane B slash proposal
+    /// @notice Thrown when an operator action is gated by any unresolved slash proposal
     error OperatorUnderSlash();
 
     /// @notice Thrown when a ban operation requires a distinct governance confirmer
@@ -212,6 +223,10 @@ interface ISlashingManager {
 
     /// @notice Thrown when no pending ban proposal exists for the target node
     error NoPendingBan();
+
+    /// @notice The slash transaction did not leave enough gas for its bounded
+    ///         initial routing attempt.
+    error InsufficientRoutingGas();
 
     // ======================
     // Events
@@ -336,7 +351,11 @@ interface ISlashingManager {
      * @param e3Id ID of the E3 computation
      * @param amount Amount of slashed funds escrowed (underlying stablecoin)
      */
-    event SlashedFundsEscrowedToRefund(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowedToRefund(
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
 
     /**
      * @notice Emitted when routing slashed funds fails (funds remain in BondingRegistry)
@@ -344,6 +363,22 @@ interface ISlashingManager {
      * @param amount Amount that failed to route
      */
     event RoutingFailed(uint256 indexed e3Id, uint256 amount);
+
+    /// @notice Emitted before a slash route is attempted and durably reserved.
+    event SlashRoutePending(
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
+
+    /// @notice Emitted after a pending slash route reaches E3 escrow.
+    event SlashRouteCompleted(
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address indexed token,
+        uint256 amount
+    );
 
     /**
      * @notice Emitted when the bonding registry is set
@@ -406,13 +441,47 @@ interface ISlashingManager {
     function isBanned(address node) external view returns (bool isBanned);
 
     /**
-     * @notice Returns true if the operator has at least one unresolved Lane B slash proposal
-     * @dev Used by BondingRegistry to block `deregisterOperator` while a slash is pending.
+     * @notice Returns true if the operator has at least one unresolved financial slash proposal.
+     * @dev Used by BondingRegistry to block collateral withdrawals and exit claims.
      * @param operator Operator address to check
      */
-    function hasOpenLaneBProposal(
+    function hasOpenSlashProposal(
         address operator
     ) external view returns (bool);
+
+    /// @notice Freeze all contracts used to validate and execute slashes for an E3.
+    /// @dev Called exactly once by the configured Interfold during E3 creation.
+    function snapshotE3Dependencies(uint256 e3Id) external;
+
+    /// @notice Return the contracts frozen for an E3's slashing lifecycle.
+    function getE3Dependencies(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            address bonding,
+            address registry,
+            address interfoldContract,
+            address refundManager
+        );
+
+    /// @notice Return a slash route that remains pending after an initial failure.
+    function getPendingSlashRoute(
+        uint256 proposalId
+    ) external view returns (PendingSlashRoute memory);
+
+    /// @notice Permissionlessly retry a pending slash route.
+    /// @return routed True when this call completed the route; false when the
+    ///         proposal had already been routed or never created a ticket route.
+    function retrySlashRoute(uint256 proposalId) external returns (bool routed);
+
+    /// @notice Atomically consume a proposal's reserved funds and account them
+    ///         in the snapshotted E3 refund manager.
+    /// @dev Self-call only; exposed for try/catch transaction atomicity.
+    function routePendingSlashFunds(
+        uint256 proposalId
+    ) external returns (bool routed);
 
     /**
      * @notice Returns the bonding registry contract used for executing slashes
@@ -559,16 +628,6 @@ interface ISlashingManager {
     function executeSlash(uint256 proposalId) external;
 
     /**
-     * @notice Atomically redirects slashed ticket funds to E3RefundManager escrow
-     * @dev Only callable by this contract (self-call pattern for try/catch atomicity).
-     *      Transfers underlying stablecoin from BondingRegistry to E3RefundManager
-     *      and calls Interfold.escrowSlashedFunds to update the escrow balance.
-     * @param e3Id ID of the E3 computation
-     * @param amount Amount of slashed ticket balance to escrow
-     */
-    function escrowSlashedFundsToRefund(uint256 e3Id, uint256 amount) external;
-
-    /**
      * @notice Returns the EIP-712 domain separator used to authenticate attestation votes
      */
     function attestationDomainSeparator() external view returns (bytes32);
@@ -597,6 +656,13 @@ interface ISlashingManager {
         bool appealUpheld,
         string calldata resolution
     ) external;
+
+    /**
+     * @notice Conclusively upholds an appeal if governance misses its resolution grace period.
+     * @dev Permissionless terminal path that releases the operator's collateral gate.
+     * @param proposalId ID of the unresolved appealed proposal
+     */
+    function expireAppeal(uint256 proposalId) external;
 
     // ======================
     // Ban Management

@@ -93,6 +93,7 @@ export interface CommitteePublishedData {
   e3Id: bigint
   nodes: string[]
   publicKey: string
+  pkCommitment: string
   proof: string
 }
 

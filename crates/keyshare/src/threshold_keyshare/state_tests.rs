@@ -20,7 +20,6 @@ fn base_state(state: KeyshareState) -> ThresholdKeyshareState {
         3,
         arc(b"params"),
         "0xabc".to_string(),
-        true,
     )
 }
 
@@ -32,7 +31,6 @@ fn new_initialises_defaults_and_records_dkg_start() {
     assert!(s.expelled_parties.is_empty());
     assert!(s.honest_parties.is_none());
     assert!(s.dkg_started_at_unix_secs.is_some());
-    assert!(s.proof_aggregation_enabled);
     assert_eq!(s.get_threshold_m(), 1);
     assert_eq!(s.get_threshold_n(), 3);
     assert_eq!(s.get_party_id(), 0);

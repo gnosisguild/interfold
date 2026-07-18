@@ -17,7 +17,7 @@ impl Handler<InterfoldEvent> for ShareVerificationActor {
             InterfoldEventData::CommitteeFinalized(mut data) => {
                 // Mirror the C0 verifier's canonical ordering at this trust boundary. Replayed and
                 // test-produced events are not assumed to have passed through the EVM decoder.
-                data.sort_by_score();
+                data.sort_by_address();
                 self.store_committee(data.e3_id, &data.committee);
             }
             InterfoldEventData::ShareVerificationDispatched(data) => {

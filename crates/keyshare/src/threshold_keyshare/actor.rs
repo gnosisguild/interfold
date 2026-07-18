@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
+use alloy::primitives::Address;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
@@ -111,6 +112,7 @@ pub struct ThresholdKeyshareParams {
     pub cipher: Arc<Cipher>,
     pub state: Persistable<ThresholdKeyshareState>,
     pub share_enc_preset: BfvPreset,
+    pub interfold_address: Address,
 }
 
 /// Ephemeral bridge data for operations already represented by the persisted keyshare phase.
@@ -143,6 +145,7 @@ pub struct ThresholdKeyshare {
     decryption_key_shared_collector: Option<Addr<DecryptionKeySharedCollector>>,
     state: Persistable<ThresholdKeyshareState>,
     share_enc_preset: BfvPreset,
+    interfold_address: Address,
     pending: PendingKeyshareWork,
 }
 
@@ -156,6 +159,7 @@ impl ThresholdKeyshare {
             decryption_key_shared_collector: None,
             state: params.state,
             share_enc_preset: params.share_enc_preset,
+            interfold_address: params.interfold_address,
             pending: PendingKeyshareWork::default(),
         }
     }

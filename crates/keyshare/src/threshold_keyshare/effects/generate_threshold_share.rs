@@ -140,12 +140,6 @@ impl ThresholdKeyshare {
         // Cache own plaintext share rows for the AggregatingDecryptionKey transition.
         self.pending.own_dkg_shares = Some((plan.own_sk_share_raw, plan.own_esi_shares_raw));
 
-        let proof_aggregation_enabled = self
-            .state
-            .try_get()
-            .map(|s| s.proof_aggregation_enabled)
-            .unwrap_or(true);
-
         info!("Publishing ThresholdSharePending for E3 {}", e3_id);
 
         // Publish ThresholdSharePending - ProofRequestActor will generate proof, sign, and publish ThresholdShareCreated
@@ -159,7 +153,6 @@ impl ThresholdKeyshare {
                 sk_share_encryption_requests: plan.sk_share_encryption_requests,
                 e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
                 recipient_party_ids: plan.recipient_party_ids,
-                proof_aggregation_enabled,
             },
             ec,
         )?;

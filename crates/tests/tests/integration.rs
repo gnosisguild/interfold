@@ -130,15 +130,17 @@ fn benchmark_participant_node_count(threshold_m: usize, threshold_n: usize) -> u
 
 /// Whether `test_trbfv_actor` runs the full recursive fold + aggregator path (default: on).
 ///
-/// Benchmark harness always enables proof aggregation (`run_benchmarks.sh` exports `true`).
+/// CI may set the ciphernode test flag to skip recursive aggregation; benchmark scripts explicitly
+/// leave it enabled.
 fn benchmark_proof_aggregation_enabled() -> bool {
-    !matches!(
-        std::env::var("BENCHMARK_PROOF_AGGREGATION")
-            .unwrap_or_else(|_| "true".into())
-            .to_ascii_lowercase()
-            .as_str(),
-        "0" | "false" | "no" | "off"
-    )
+    let value = std::env::var("CIPHERNODE_SKIP_PROOF_AGGREGATION")
+        .unwrap_or_else(|_| "false".into())
+        .to_ascii_lowercase();
+    match value.as_str() {
+        "1" | "true" | "yes" | "on" => false,
+        "0" | "false" | "no" | "off" => true,
+        _ => panic!("CIPHERNODE_SKIP_PROOF_AGGREGATION must be a boolean, got {value:?}"),
+    }
 }
 
 /// Rayon multithread pool concurrency for benchmark runs (`BENCHMARK_MULTITHREAD_JOBS`, default 1).
@@ -798,7 +800,7 @@ fn compute_committee_scores(committee: &[String], e3_id: &E3id, seed: Seed) -> V
 ///
 /// # Arguments
 /// * `e3_id` - The E3 computation ID
-/// * `seed` - The random seed for sortition
+/// * `seed` - The shared seed for deterministic sortition
 /// * `threshold_m` - Minimum nodes required for decryption
 /// * `threshold_n` - Committee size
 /// * `registered_addrs` - List of node addresses eligible for selection
@@ -875,7 +877,8 @@ fn determine_committee(
     Ok((committee, committee_scores, buffer_nodes))
 }
 
-/// Lowest-address committee member after `CommitteeFinalized::sort_by_score` (party 0 / active aggregator).
+/// Lowest-address committee member after `CommitteeFinalized::sort_by_address`
+/// (party 0 / active aggregator).
 fn active_aggregator_address(
     committee: &[String],
     scores: &[String],
@@ -888,7 +891,7 @@ fn active_aggregator_address(
         scores: scores.to_vec(),
         chain_id,
     };
-    finalized.sort_by_score();
+    finalized.sort_by_address();
     finalized
         .committee
         .first()
@@ -1424,6 +1427,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // Setup ZK backend for proof generation/verification
     let (zk_backend, _zk_temp) = setup_test_zk_backend(benchmark_params.preset_subdir).await?;
+    let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
 
     let nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
@@ -1434,7 +1438,7 @@ async fn test_trbfv_actor() -> Result<()> {
             let addr = rand_eth_addr(&node_rng);
             println!("Building collector {}!", addr);
             {
-                let b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                let mut b = CiphernodeBuilder::new(node_rng, cipher.clone())
                     .with_history_collector()
                     .with_shared_taskpool(&task_pool)
                     .with_multithread_concurrent_jobs(concurrent_jobs)
@@ -1448,6 +1452,9 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_forked_bus(bus.event_bus())
                     .with_chains(std::slice::from_ref(&bench_chain_config))
                     .with_logging();
+                if !proof_aggregation_enabled {
+                    b = b.with_proof_aggregation_disabled_for_testing();
+                }
                 b.build().await
             }
         })
@@ -1458,7 +1465,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 let addr = rand_eth_addr(&node_rng);
                 println!("Building normal {}", &addr);
                 {
-                    let b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                    let mut b = CiphernodeBuilder::new(node_rng, cipher.clone())
                         .with_history_collector()
                         .with_shared_taskpool(&task_pool)
                         .with_multithread_concurrent_jobs(concurrent_jobs)
@@ -1472,6 +1479,9 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_forked_bus(bus.event_bus())
                         .with_chains(std::slice::from_ref(&bench_chain_config))
                         .with_logging();
+                    if !proof_aggregation_enabled {
+                        b = b.with_proof_aggregation_disabled_for_testing();
+                    }
                     b.build().await
                 }
             },
@@ -1530,7 +1540,6 @@ async fn test_trbfv_actor() -> Result<()> {
     // Trigger actor DKG
     let e3_id = E3id::new("0", 1);
 
-    let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
     println!(
         "Benchmark trbfv: proof_aggregation={proof_aggregation_enabled}, preset={}, pool_threads={pool_threads}, max_concurrent_jobs={concurrent_jobs}",
         benchmark_params.preset_subdir
@@ -1544,7 +1553,6 @@ async fn test_trbfv_actor() -> Result<()> {
         error_size,
         params_preset: benchmark_params.bfv_preset,
         params,
-        proof_aggregation_enabled,
     };
 
     bus.publish_without_context(e3_requested)?;
@@ -1783,6 +1791,17 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let pubkey_bytes = pubkey_event.pubkey.clone();
     let dkg_aggregator_proof = pubkey_event.dkg_aggregator_proof.clone();
+    assert!(
+        dkg_aggregator_proof.is_some(),
+        "PublicKeyAggregated must always carry a final DKG proof payload"
+    );
+    assert!(
+        pubkey_event
+            .dkg_attestation_bundle
+            .as_ref()
+            .is_some_and(|bundle| !bundle.is_empty()),
+        "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
+    );
 
     let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;
 
@@ -2051,12 +2070,10 @@ async fn test_trbfv_actor() -> Result<()> {
             )
         })?;
 
-    if proof_aggregation_enabled {
-        assert!(
-            !decryption_aggregator_proofs.is_empty(),
-            "DecryptionAggregator proofs should be present in PlaintextAggregated when proof_aggregation_enabled"
-        );
-    }
+    assert!(
+        !decryption_aggregator_proofs.is_empty(),
+        "PlaintextAggregated must always carry a final decryption proof payload"
+    );
 
     if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
         if let (Some(dkg_proof), Some(dec_proof)) = (

@@ -70,15 +70,16 @@ switch; manual edits to those files will trip the check.
 
 ### Proof aggregation and folding (integration)
 
-The gas / integration stage always runs `cargo test -p e3-tests test_trbfv_actor` with proof
-aggregation enabled (`E3Requested.proof_aggregation_enabled = true`): per-node `ZkNodeDkgFold`, fold
-attestations (EIP-712 against `DkgFoldAttestationVerifier`), and exported folded `dkg_aggregator` /
-`decryption_aggregator` proofs for Π_DKG / Π_dec on-chain gas.
+The gas / integration stage always runs `cargo test -p e3-tests test_trbfv_actor` with the
+ciphernode test/CI skip flag off: per-node `ZkNodeDkgFold`, fold attestations (EIP-712 against
+`DkgFoldAttestationVerifier`), and exported folded `dkg_aggregator` / `decryption_aggregator` proofs
+for Π_DKG / Π_dec on-chain gas.
 
-| Flag / env                                              | Effect                                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `BENCHMARK_MULTITHREAD_JOBS=N` / `--multithread-jobs N` | Rayon concurrent ZK jobs (default `1`)                                               |
-| `BENCHMARK_DKG_FOLD_ATTESTATION_VERIFIER=0x…`           | EIP-712 verifying contract for fold attestations (default: localhost deploy address) |
+| Flag / env                                              | Effect                                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `CIPHERNODE_SKIP_PROOF_AGGREGATION=true`                | Test/CI-only: skip recursive aggregation; benchmark scripts explicitly set it to `false` |
+| `BENCHMARK_MULTITHREAD_JOBS=N` / `--multithread-jobs N` | Rayon concurrent ZK jobs (default `1`)                                                   |
+| `BENCHMARK_DKG_FOLD_ATTESTATION_VERIFIER=0x…`           | EIP-712 verifying contract for fold attestations (default: localhost deploy address)     |
 
 **Output directories** (under `circuits/benchmarks/`):
 

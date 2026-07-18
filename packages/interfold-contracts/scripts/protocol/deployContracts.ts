@@ -4,7 +4,7 @@ import { ADDRESS_ONE } from "./constants";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
-import { deployedAddress, timeoutConfig } from "./values";
+import { deployedAddress, pricingConfig, timeoutConfig } from "./values";
 
 export async function deployProtocolContracts(
   ethers: any,
@@ -73,6 +73,7 @@ export async function deployProtocolContracts(
       config.feeToken,
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
+      pricingConfig(config.interfold.pricing),
     ]),
   );
 

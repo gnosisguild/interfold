@@ -12,6 +12,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
 e3-config = { workspace = true }
+e3-committee-hash = { workspace = true }
 e3-data = { workspace = true }
 e3-crypto = { workspace = true }
 e3-events = { workspace = true }
@@ -22,6 +23,7 @@ e3-request = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-helpers = { workspace = true }
+alloy = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
 rand = { workspace = true }

@@ -15,11 +15,10 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = e3_id.try_into()?;
 
-    // `None` => proof aggregation disabled; contract accepts empty bytes in that case.
-    let proof: Bytes = match decryption_aggregator_proof {
-        Some(p) => encode_zk_proof(p)?,
-        None => Bytes::new(),
-    };
+    // Skip mode creates a non-empty mock-only C7 placeholder before this boundary.
+    let proof = encode_zk_proof(decryption_aggregator_proof.ok_or_else(|| {
+        anyhow::anyhow!("mandatory decryption aggregator proof payload missing")
+    })?)?;
 
     send_tx_with_retry(
         "publishPlaintextOutput",

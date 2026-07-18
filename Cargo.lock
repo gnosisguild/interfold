@@ -3201,6 +3201,7 @@ version = "0.3.0"
 dependencies = [
  "alloy",
  "hex",
+ "serde",
 ]
 
 [[package]]
@@ -3387,6 +3388,7 @@ dependencies = [
  "chrono",
  "derivative",
  "e3-ciphernode-builder",
+ "e3-committee-hash",
  "e3-crypto",
  "e3-data",
  "e3-events",
@@ -3437,6 +3439,7 @@ dependencies = [
  "hex",
  "num-bigint",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3567,9 +3570,11 @@ name = "e3-keyshare"
 version = "0.3.0"
 dependencies = [
  "actix",
+ "alloy",
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
+ "e3-committee-hash",
  "e3-config",
  "e3-crypto",
  "e3-data",
@@ -3610,9 +3615,11 @@ name = "e3-multithread"
 version = "0.3.0"
 dependencies = [
  "actix",
+ "alloy",
  "anyhow",
  "bincode 1.3.3",
  "e3-bfv-client",
+ "e3-committee-hash",
  "e3-crypto",
  "e3-data",
  "e3-events",

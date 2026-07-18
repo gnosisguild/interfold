@@ -51,10 +51,15 @@ Requester calls: Interfold.request({
 │
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
+│   ├─ Snapshot Interfold dependencies for this E3:
+│   │   registry, refund manager, and slashing manager
+│   │   → later global rotations apply only to new requests
+│   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
+│   │   → freezes refund/slash allocation, treasury, policy version,
+│   │     request-time Interfold, and request-time committee registry
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
-│   │   → On chains without `prevrandao`, the value is still deterministic
-│   │     per-block; downstream sortition relies on the per-E3 snapshot of
-│   │     ticket balances at `requestBlock - 1` for manipulation resistance.
+│   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
+│   │     not relied upon for cryptographic unpredictability.
 │   │
 │   ├─ encryptionSchemeId = e3Program.validate(
 │   │     e3Id, seed, e3ProgramParams, computeProviderParams, customParams
@@ -82,10 +87,14 @@ Requester calls: Interfold.request({
 │   │   │  │                                                     │
 │   │   │  │  requestCommittee(e3Id, seed, threshold) {          │
 │   │   │  │    1. require(!committees[e3Id].initialized)        │
-│   │   │  │    2. require(threshold[1] <=                       │
+│   │   │  │    2. Snapshot request-time Interfold, bonding,     │
+│   │   │  │       and slashing manager for this committee       │
+│   │   │  │       → ask SlashingManager to snapshot its         │
+│   │   │  │         bonding, registry, Interfold, refund routes │
+│   │   │  │    3. require(threshold[1] <=                       │
 │   │   │  │         bondingRegistry.numActiveOperators())       │
 │   │   │  │       → Enough active nodes must exist              │
-│   │   │  │    3. committees[e3Id] = Committee {                │
+│   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: seed,                                 │
 │   │   │  │         requestBlock: block.timestamp, // H-26      │
@@ -93,10 +102,10 @@ Requester calls: Interfold.request({
 │   │   │  │           block.timestamp + sortitionWindow,        │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
-│   │   │  │    4. roots[e3Id] = ciphernodes._root()             │
+│   │   │  │    5. roots[e3Id] = ciphernodes._root()             │
 │   │   │  │       → SNAPSHOT the IMT root at this moment        │
 │   │   │  │       → Only nodes in tree at request time eligible │
-│   │   │  │    5. Emit CommitteeRequested(e3Id, seed, threshold,│
+│   │   │  │    6. Emit CommitteeRequested(e3Id, seed, threshold,│
 │   │   │  │              requestBlock, committeeDeadline)       │
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
@@ -326,7 +335,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
 ├─ Sortition actor:
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
-│       → `CommitteeFinalized` is normalized into ascending ticket-score order before storage
+│       → `CommitteeFinalized` is normalized into ascending address order before storage
 │
 ├─ CiphernodeSelector:
 │   ├─ Checks if this node's address is in the committee list
@@ -339,7 +348,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
 │   │   Publishes AggregatorChanged {
 │   │     e3_id,
 │   │     is_aggregator = (my node has the lowest non-expelled party_id in the
-│   │                      score-sorted finalized committee)
+│   │                      address-sorted finalized committee)
 │   │   }
 │   └─ If NO: does nothing for this E3
 │
@@ -381,20 +390,27 @@ If any deadline is missed → anyone can call markE3Failed()
 2. **Snapshot-based eligibility**: Ticket balances are checked at `requestBlock - 1`, preventing
    front-running manipulation.
 
-3. **Runtime committee order**: the Rust runtime normalizes `CommitteeFinalized` into ascending
-   ticket-score order before `Sortition` and `CiphernodeSelector` derive `party_id`. That makes
-   `party_id` in the runtime equivalent to score order, even though the raw on-chain `topNodes`
-   array is not itself score-sorted.
+3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
+   committee into ascending address order before deriving `party_id`. This keeps party IDs,
+   aggregator failover, proof inputs, and `CommitteeHashLib.hash(topNodes)` aligned.
 
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee plus enriched `CommitteeMemberExpelled` events. The active aggregator is the
-   lowest non-expelled `party_id` in the score-sorted runtime committee.
+   lowest non-expelled `party_id` in the address-sorted runtime committee.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the deadline — no
    single point of failure.
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee.
+
+7. **Dependency graph snapshot**: Each E3 drains through its request-time registry, bonding,
+   slashing, refund, and Interfold relationships. Admin rotation changes defaults for later E3s but
+   cannot redirect or brick committee callbacks, proof checks, failure settlement, rewards, or
+   slashed-fund routing for an in-flight E3. A request atomically records the complete graph before
+   committee formation begins. Because applying a new graph requires several governance
+   transactions, request-time validation rejects every intermediate state; a requester can only
+   freeze the fully old or fully new graph.
 
 ---
 

@@ -51,6 +51,7 @@ pub fn setup_zk_actors(
     signer: PrivateKeySigner,
     dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
     recovery: ZkActorRecovery,
+    proof_aggregation_enabled: bool,
 ) -> ZkActors {
     let ZkActorRecovery {
         finalized_committees,
@@ -59,12 +60,16 @@ pub fn setup_zk_actors(
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
 
-    let proof_request = ProofRequestActor::setup(bus, signer.clone());
+    let proof_request = ProofRequestActor::setup(bus, signer.clone(), proof_aggregation_enabled);
     let proof_verification =
         ProofVerificationActor::setup(bus, verifier, finalized_committees.clone(), e3_metadata);
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
-    let node_proof_aggregator =
-        NodeProofAggregator::setup(bus, signer, dkg_fold_attestation_verifiers_by_chain);
+    let node_proof_aggregator = NodeProofAggregator::setup(
+        bus,
+        signer,
+        dkg_fold_attestation_verifiers_by_chain,
+        proof_aggregation_enabled,
+    );
 
     ZkActors {
         zk_actor,

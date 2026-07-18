@@ -10,7 +10,9 @@ repository = "https://github.com/theinterfold/interfold/crates/indexer"
 alloy.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
+e3-bfv-client.workspace = true
 e3-evm-helpers.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 eyre.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -18,8 +20,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-e3-bfv-client.workspace = true
-e3-fhe-params.workspace = true
 fhe.workspace = true
 fhe-traits.workspace = true
 rand.workspace = true

@@ -64,7 +64,7 @@ describe("E3 Pricing", function () {
     const treasurySigner = signers[5];
     const sys = await deployInterfoldSystem({
       treasury: treasurySigner,
-      wireSlashingManager: false,
+      wireSlashingManager: true,
     });
     await mine(1);
     return {
@@ -358,7 +358,6 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
       };
 
       // Make request with large approval to avoid fee mismatch
@@ -445,7 +444,6 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
-        proofAggregationEnabled: false,
       };
 
       // Make request with large approval

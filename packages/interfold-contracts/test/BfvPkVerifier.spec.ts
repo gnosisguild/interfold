@@ -84,6 +84,49 @@ describe("BfvPkVerifier", function () {
   });
 
   describe("reverts", function () {
+    it("rejects zero, EOA, and zero-hash trust anchors at deployment", async function () {
+      const factory = await ethers.getContractFactory("BfvPkVerifier");
+
+      await expect(
+        factory.deploy(
+          ethers.ZeroAddress,
+          EXPECTED_NODES_FOLD_KEY_HASH,
+          EXPECTED_C5_KEY_HASH,
+          H,
+        ),
+      )
+        .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
+        .withArgs(ethers.ZeroAddress);
+      await expect(
+        factory.deploy(
+          testSigner.address,
+          EXPECTED_NODES_FOLD_KEY_HASH,
+          EXPECTED_C5_KEY_HASH,
+          H,
+        ),
+      )
+        .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
+        .withArgs(testSigner.address);
+
+      const { mockCircuit } = await loadFixture(deployWithMockCircuit);
+      await expect(
+        factory.deploy(
+          await mockCircuit.getAddress(),
+          ethers.ZeroHash,
+          EXPECTED_C5_KEY_HASH,
+          H,
+        ),
+      ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
+      await expect(
+        factory.deploy(
+          await mockCircuit.getAddress(),
+          EXPECTED_NODES_FOLD_KEY_HASH,
+          ethers.ZeroHash,
+          H,
+        ),
+      ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
+    });
+
     it("reverts on invalid proof encoding", async function () {
       const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
       const { e3Id, root, nodes } = ctx();

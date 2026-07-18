@@ -316,12 +316,14 @@ mod tests {
 
     #[test]
     fn extract_c6_d_commitment_after_pub_inputs() {
-        // C6: 3 public inputs + 1 output (`d_commitment` at tail).
-        let mut signals = vec![0u8; 128];
+        // C6: 5 public inputs + 1 output (`d_commitment` at tail).
+        let mut signals = vec![0u8; 192];
         signals[0..32].copy_from_slice(&[0x11; 32]); // expected_sk_commitment
         signals[32..64].copy_from_slice(&[0x22; 32]); // expected_e_sm_commitment
         signals[64..96].copy_from_slice(&[0x33; 32]); // ct_commitment
-        signals[96..128].copy_from_slice(&[0x77; 32]); // d_commitment
+        signals[96..128].copy_from_slice(&[0x44; 32]); // domain_hi
+        signals[128..160].copy_from_slice(&[0x55; 32]); // domain_lo
+        signals[160..192].copy_from_slice(&[0x77; 32]); // d_commitment
 
         let proof = make_proof(CircuitName::ThresholdShareDecryption, &signals);
         assert_eq!(&*proof.extract_output("d_commitment").unwrap(), &[0x77; 32]);
@@ -329,11 +331,13 @@ mod tests {
 
     #[test]
     fn extract_c6_public_inputs() {
-        let mut signals = vec![0u8; 128];
+        let mut signals = vec![0u8; 192];
         signals[0..32].copy_from_slice(&[0x11; 32]);
         signals[32..64].copy_from_slice(&[0x22; 32]);
         signals[64..96].copy_from_slice(&[0x33; 32]);
-        signals[96..128].copy_from_slice(&[0x77; 32]);
+        signals[96..128].copy_from_slice(&[0x44; 32]);
+        signals[128..160].copy_from_slice(&[0x55; 32]);
+        signals[160..192].copy_from_slice(&[0x77; 32]);
 
         let proof = make_proof(CircuitName::ThresholdShareDecryption, &signals);
         assert_eq!(
@@ -345,6 +349,8 @@ mod tests {
             &[0x22; 32]
         );
         assert_eq!(&*proof.extract_input("ct_commitment").unwrap(), &[0x33; 32]);
+        assert_eq!(&*proof.extract_input("domain_hi").unwrap(), &[0x44; 32]);
+        assert_eq!(&*proof.extract_input("domain_lo").unwrap(), &[0x55; 32]);
     }
 
     #[test]

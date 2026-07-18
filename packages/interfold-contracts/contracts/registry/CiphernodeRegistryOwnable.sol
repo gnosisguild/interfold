@@ -80,7 +80,7 @@ contract CiphernodeRegistryOwnable is
     IBondingRegistry public bondingRegistry;
 
     /// @notice Current number of registered ciphernodes
-    uint256 public numCiphernodes;
+    uint256 public override numCiphernodes;
 
     /// @notice Submission Window for an E3 Sortition.
     /// @dev The submission window is the time period during which the ciphernodes can submit
@@ -168,6 +168,16 @@ contract CiphernodeRegistryOwnable is
     mapping(uint256 e3Id => bytes32[] skAggCommits) internal dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) internal dkgEsmAggCommits;
 
+    struct CommitteeDependencies {
+        IInterfold interfoldContract;
+        IBondingRegistry bonding;
+        ISlashingManager slashManager;
+    }
+
+    /// @notice External contracts frozen for each committee lifecycle.
+    mapping(uint256 e3Id => CommitteeDependencies dependencies)
+        internal _committeeDependencies;
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                     Modifiers                          //
@@ -192,12 +202,6 @@ contract CiphernodeRegistryOwnable is
             msg.sender == owner() || msg.sender == address(bondingRegistry),
             NotOwnerOrBondingRegistry()
         );
-        _;
-    }
-
-    /// @dev Restricts function access to only the slashing manager
-    modifier onlySlashingManager() {
-        require(msg.sender == address(slashingManager), NotSlashingManager());
         _;
     }
 
@@ -258,6 +262,14 @@ contract CiphernodeRegistryOwnable is
             CommitteeAlreadyRequested()
         );
 
+        CommitteeDependencies storage dependencies = _committeeDependencies[
+            e3Id
+        ];
+        dependencies.interfoldContract = IInterfold(msg.sender);
+        dependencies.bonding = bondingRegistry;
+        dependencies.slashManager = slashingManager;
+        dependencies.slashManager.snapshotE3Dependencies(e3Id);
+
         uint256 activeCount = bondingRegistry.numActiveOperators();
         require(
             threshold[1] <= activeCount,
@@ -307,24 +319,22 @@ contract CiphernodeRegistryOwnable is
         c.publicKey = pkCommitment;
         publicKeyHashes[e3Id] = pkCommitment;
 
-        E3 memory e3 = interfold.getE3(e3Id);
-        if (e3.proofAggregationEnabled) {
-            // Bind to the on-chain committee (c.topNodes), not caller-supplied
-            // nodes, so a wrong `nodes` input cannot pre-commit the prover to
-            // an attacker's set (C-08).
-            _verifyAndStoreDkgAnchors(
-                e3Id,
-                e3,
-                roots[e3Id],
-                c.topNodes,
-                pkCommitment,
-                committeeHash,
-                proof,
-                dkgAttestationBundle
-            );
-        }
+        E3 memory e3 = _interfoldFor(e3Id).getE3(e3Id);
+        // Bind to the on-chain committee (c.topNodes), not caller-supplied
+        // nodes, so a wrong `nodes` input cannot pre-commit the prover to
+        // an attacker's set (C-08).
+        _verifyAndStoreDkgAnchors(
+            e3Id,
+            e3,
+            roots[e3Id],
+            c.topNodes,
+            pkCommitment,
+            committeeHash,
+            proof,
+            dkgAttestationBundle
+        );
 
-        interfold.onCommitteePublished(e3Id, pkCommitment);
+        _interfoldFor(e3Id).onCommitteePublished(e3Id, pkCommitment);
 
         emit CommitteePublished(
             e3Id,
@@ -545,7 +555,10 @@ contract CiphernodeRegistryOwnable is
             CommitteeDeadlineReached()
         );
         require(!c.submitted[msg.sender], NodeAlreadySubmitted());
-        require(isCiphernodeEligible(msg.sender), NodeNotEligible());
+        require(
+            isEnabled(msg.sender) && _bondingFor(e3Id).isActive(msg.sender),
+            NodeNotEligible()
+        );
 
         // Validate node eligibility and ticket number
         _validateNodeEligibility(msg.sender, ticketNumber, e3Id);
@@ -596,7 +609,7 @@ contract CiphernodeRegistryOwnable is
                 c.topNodes.length,
                 c.threshold[1]
             );
-            interfold.onE3Failed(
+            _interfoldFor(e3Id).onE3Failed(
                 e3Id,
                 uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
             );
@@ -614,7 +627,7 @@ contract CiphernodeRegistryOwnable is
             scores[i] = c.scoreOf[c.topNodes[i]];
         }
 
-        interfold.onCommitteeFinalized(e3Id);
+        _interfoldFor(e3Id).onCommitteeFinalized(e3Id);
         emit SortitionCommitteeFinalized(e3Id, c.topNodes, scores);
         return true;
     }
@@ -867,11 +880,11 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id,
         address node,
         bytes32 reason
-    )
-        external
-        onlySlashingManager
-        returns (uint256 activeCount, uint32 thresholdM)
-    {
+    ) external returns (uint256 activeCount, uint32 thresholdM) {
+        require(
+            msg.sender == address(_slashingManagerFor(e3Id)),
+            NotSlashingManager()
+        );
         Committee storage c = committees[e3Id];
         require(
             c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
@@ -1018,10 +1031,8 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) internal view {
         require(ticketNumber > 0, InvalidTicketNumber());
-        require(
-            address(bondingRegistry) != address(0),
-            BondingRegistryNotSet()
-        );
+        IBondingRegistry e3Bonding = _bondingFor(e3Id);
+        require(address(e3Bonding) != address(0), BondingRegistryNotSet());
 
         Committee storage c = committees[e3Id];
 
@@ -1032,17 +1043,35 @@ contract CiphernodeRegistryOwnable is
         // and selection weight below derive purely from the historical
         // ticket balance at `c.requestBlock - 1`, so churn between request
         // time and the ticket submission window cannot inflate weights.
-        uint256 ticketBalance = bondingRegistry.getTicketBalanceAtBlock(
+        uint256 ticketBalance = e3Bonding.getTicketBalanceAtBlock(
             node,
             c.requestBlock - 1
         );
-        uint256 ticketPrice = bondingRegistry.ticketPrice();
+        uint256 ticketPrice = e3Bonding.ticketPrice();
 
         require(ticketPrice > 0, InvalidTicketNumber());
         uint256 availableTickets = ticketBalance / ticketPrice;
 
         require(availableTickets > 0, NodeNotEligible());
         require(ticketNumber <= availableTickets, InvalidTicketNumber());
+    }
+
+    function _bondingFor(
+        uint256 e3Id
+    ) internal view returns (IBondingRegistry e3Bonding) {
+        return _committeeDependencies[e3Id].bonding;
+    }
+
+    function _interfoldFor(
+        uint256 e3Id
+    ) internal view returns (IInterfold e3Interfold) {
+        return _committeeDependencies[e3Id].interfoldContract;
+    }
+
+    function _slashingManagerFor(
+        uint256 e3Id
+    ) internal view returns (ISlashingManager e3SlashingManager) {
+        return _committeeDependencies[e3Id].slashManager;
     }
 
     /// @notice Sort `topNodes` by ascending address before committee finalization.

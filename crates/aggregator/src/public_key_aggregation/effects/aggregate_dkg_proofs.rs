@@ -44,9 +44,10 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
-        // `proof_aggregation_enabled` is an E3-level flag shared by all nodes, so honest-party
-        // proofs should be uniformly Some (aggregation on) or uniformly None (aggregation off).
-        // A mixed bag would silently truncate the dispatched request below; reject it explicitly.
+        // Proof aggregation is a node-level test/CI setting and must be configured consistently
+        // across a test swarm. Honest-party proofs should therefore be uniformly Some
+        // (aggregation on) or uniformly None (aggregation skipped). A mixed bag would silently
+        // truncate the dispatched request below; reject it explicitly.
         let some_count = honest_party_ids
             .iter()
             .filter(|id| {
@@ -140,10 +141,11 @@ impl PublicKeyAggregator {
         );
 
         if node_fold_proofs.is_empty() {
-            // Proof aggregation disabled. Do NOT call `try_publish_complete` here — it
+            // Proof aggregation was skipped by the node's test/CI setting. Do NOT call
+            // `try_publish_complete` here — it
             // is the most common entry into this method, so re-entering it would create
             // unbounded mutual recursion (stack overflow in deployed nodes).
-            info!("PublicKeyAggregator: proof aggregation disabled — skipping DkgAggregation");
+            info!("PublicKeyAggregator: test/CI skip flag active — skipping DkgAggregation");
             return Ok(());
         }
 

@@ -37,11 +37,11 @@ rather than on blind trust in operators.
 
 Each confidential workload is an FHE program running inside an **E3**. After someone requests such a
 computation, a committee of **N** [ciphernodes](https://blog.theinterfold.com/ciphernodes/) is drawn
-using **sortition**, so membership is tied to verifiable randomness rather than to a central picker.
-There is **no trusted dealer** handing out key material: every ciphernode contributes its own share
-of the work and takes part in **PVDKG** (publicly verifiable DKG), producing proofs alongside
-messages so that deviating parties can be identified and excluded without exposing other nodes’
-secrets.
+using **sortition**, so membership follows publicly checkable ticket scoring rather than a central
+picker. There is **no trusted dealer** handing out key material: every ciphernode contributes its
+own share of the work and takes part in **PVDKG** (publicly verifiable DKG), producing proofs
+alongside messages so that deviating parties can be identified and excluded without exposing other
+nodes’ secrets.
 
 Write **A** for the **authorised** committee for that E3—initially all **N** members, then shrinking
 as proofs fail and bad actors drop out of the active path. When DKG finishes, the network publishes
@@ -208,8 +208,8 @@ expected commitments match
 outputs) is only checked off-chain, end-to-end correctness still depends on trusting the committee
 network rather than on verifiable mathematics.
 
-The aggregation design addresses both problems. When an E3 is requested with
-`proofAggregationEnabled = true`, only **two recursive proofs** are posted on-chain per E3 session:
+The aggregation design addresses both problems. Only **two recursive proofs** are posted on-chain
+per E3 session:
 
 1. **DKG recursive proof**: the aggregator recursively verifies every node's C0–C4 fold chain
    together with **C5**, which aggregates the public key. Verified on-chain by
@@ -477,16 +477,18 @@ collects at least **T+1** such shares, applies Lagrange weights, reconstructs ac
 decodes modulo **t**; it runs once at the aggregator after enough valid **C6** proofs are available.
 
 **C6** proves a partial decryption share **d** built from the output ciphertext, the node’s Shamir
-shares of the threshold secret and smudging noise (from **C4**), and reduction
-quotients—schematically per CRT limb (see `verify_decryption_share_computation` in
-`share_decryption.nr`):
+shares of the threshold secret and smudging noise (from **C4**), and reduction quotients. Each C6
+proof also carries the common E3 decryption-domain limbs that are preserved through folding and
+checked by the on-chain wrapper—schematically per CRT limb (see
+`verify_decryption_share_computation` in `share_decryption.nr`):
 
 ```math
 d^{[\ell]}(\gamma) = \mathrm{ct}_0^{[\ell]}(\gamma) + \mathrm{ct}_1^{[\ell]}(\gamma)\,\mathrm{sk}^{[\ell]}(\gamma) + e_{\mathrm{sm}}^{[\ell]}(\gamma) + r_2^{[\ell]}(\gamma)(\gamma^N+1) + r_1^{[\ell]}(\gamma)\,q_\ell
 ```
 
 **C7** first recombines partials with Lagrange coefficients at zero for the participating party
-indices **x_i**, then stitches limbs and decodes to the plaintext ring. In short:
+indices **x_i**. The decryption aggregator requires these Shamir coordinates to be 1-indexed,
+strictly increasing, and unique. It then stitches limbs and decodes to the plaintext ring. In short:
 
 ```math
 \begin{aligned}
@@ -501,7 +503,8 @@ product–quotient form and explicit sign handling; **u**[\ell] is then formed c
 
 CRT reconstruction checks **u**[\ell] + **r**[\ell] **q_ℓ** = `u_global` coefficient-wise, then
 decoding uses the map in `verify_decoding` (BigNum mod **Q**, plaintext modulus **t**, and
-`q_inverse_mod_t` as in `Configs`).
+`q_inverse_mod_t` as in `Configs`). Every decoded coefficient is compared with the claimed plaintext
+coefficient, including zero.
 
 ## Footnotes
 

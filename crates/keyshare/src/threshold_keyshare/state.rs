@@ -12,6 +12,7 @@
 //! synchronous data and transition logic, which makes it directly unit-testable.
 
 use anyhow::{anyhow, Result};
+use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
 use e3_events::{CiphernodeSelected, E3id, EncryptionKey, PartyId, SignedProofPayload};
 use e3_trbfv::{
@@ -190,12 +191,14 @@ pub struct ThresholdKeyshareState {
     pub params: ArcBytes,
     /// Aggregated public key bytes, captured from PublicKeyAggregated event for C6 proof.
     pub aggregated_pk: Option<ArcBytes>,
+    /// Public E3 context captured with the aggregated key and bound into every
+    /// C6 proof so the final decryption proof cannot be replayed elsewhere.
+    pub decryption_domain: Option<DecryptionDomainContext>,
     pub expelled_parties: HashSet<u64>,
     /// Honest party IDs in deterministic ascending order (`BTreeSet` guarantees this).
     /// Downstream proof circuits index parties by position in this sorted set.
     pub honest_parties: Option<BTreeSet<u64>>,
     pub dkg_started_at_unix_secs: Option<u64>,
-    pub proof_aggregation_enabled: bool,
     /// Set once `KeyshareCreated` has actually been published from an authorized
     /// path (after C4 honest-set verification, the no-C4-proofs path, or the
     /// sole-honest fast path). `ReadyForDecryption` is entered *before* that
@@ -214,7 +217,6 @@ impl ThresholdKeyshareState {
         threshold_n: u64,
         params: ArcBytes,
         address: String,
-        proof_aggregation_enabled: bool,
     ) -> Self {
         Self {
             e3_id,
@@ -225,10 +227,10 @@ impl ThresholdKeyshareState {
             threshold_n,
             params,
             aggregated_pk: None,
+            decryption_domain: None,
             expelled_parties: HashSet::new(),
             honest_parties: None,
             dkg_started_at_unix_secs: Some(now_unix_secs()),
-            proof_aggregation_enabled,
             keyshare_published: false,
         }
     }

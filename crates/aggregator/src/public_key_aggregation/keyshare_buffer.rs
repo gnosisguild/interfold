@@ -124,7 +124,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
             },
             InterfoldEventData::CommitteeFinalized(data) => {
                 let mut data = data.clone();
-                data.sort_by_score();
+                data.sort_by_address();
                 self.committee = Some(data.committee);
                 self.process_buffered_events();
             }

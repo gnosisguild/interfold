@@ -9,8 +9,8 @@
 // `CommitteeExpulsion.spec.ts`:
 //
 //   * SLASHER_ROLE admin is GOVERNANCE_ROLE (not DEFAULT_ADMIN_ROLE).
-//   * `BondingRegistry.deregisterOperator` blocked while a Lane B slash
-//     proposal is open; unblocks after execution or upheld appeal.
+//   * Bonding collateral withdrawals and exit claims are blocked while any
+//     financial slash proposal is open; they unblock after terminal resolution.
 //   * Lane A `proposeSlash` with a non-zero `appealWindow` defers
 //     execution (no auto-execute) and respects the challenge window.
 //   * EIP-712 attestation signatures are bound to the SlashingManager's
@@ -45,6 +45,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
   const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
 
   const APPEAL_WINDOW = 7 * 24 * 60 * 60;
+  const APPEAL_RESOLUTION_GRACE = 7 * 24 * 60 * 60;
   // Constructor uses 2 days as the AccessControlDefaultAdminRules delay.
   const DEFAULT_ADMIN_DELAY = 2 * 24 * 60 * 60;
 
@@ -122,6 +123,13 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     );
     await slashingManager.setInterfold(addressOne);
     await slashingManager.setE3RefundManager(addressOne);
+    await networkHelpers.setBalance(addressOne, ethers.parseEther("1"));
+    await networkHelpers.impersonateAccount(addressOne);
+    await slashingManager
+      .connect(await ethers.getSigner(addressOne))
+      .snapshotE3Dependencies(0);
+    await networkHelpers.stopImpersonatingAccount(addressOne);
+    await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
 
     return {
       owner,
@@ -186,9 +194,9 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
   });
 
   // --------------------------------------------------------------------------
-  // deregisterOperator blocked while Lane B proposal open
+  // collateral exit blocked while financial proposal is open
   // --------------------------------------------------------------------------
-  describe("deregisterOperator gated by open Lane B proposals", function () {
+  describe("operator exits gated by open slash proposals", function () {
     async function registerOperatorForExit(
       ctx: Awaited<ReturnType<typeof setup>>,
     ) {
@@ -202,12 +210,12 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await bondingRegistry.connect(operator).registerOperator();
     }
 
-    it("hasOpenLaneBProposal flips true after proposeSlashEvidence and false after executeSlash", async function () {
+    it("hasOpenSlashProposal flips true after proposeSlashEvidence and false after executeSlash", async function () {
       const ctx = await loadFixture(setup);
       const { slashingManager, slasher, operatorAddress } = ctx;
       await setupLaneBPolicy(slashingManager);
 
-      expect(await slashingManager.hasOpenLaneBProposal(operatorAddress)).to.be
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
         .false;
 
       await slashingManager
@@ -219,14 +227,81 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
           ethers.toUtf8Bytes("ev"),
         );
 
-      expect(await slashingManager.hasOpenLaneBProposal(operatorAddress)).to.be
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
         .true;
 
       await time.increase(APPEAL_WINDOW + 1);
       await slashingManager.executeSlash(0);
 
-      expect(await slashingManager.hasOpenLaneBProposal(operatorAddress)).to.be
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
         .false;
+    });
+
+    it("retains an old manager's collateral authority and exit gate across rotation", async function () {
+      const ctx = await loadFixture(setup);
+      const {
+        owner,
+        slashingManager,
+        bondingRegistry,
+        slasher,
+        operator,
+        operatorAddress,
+      } = ctx;
+      await registerOperatorForExit(ctx);
+      await setupLaneBPolicy(slashingManager);
+
+      await slashingManager
+        .connect(slasher)
+        .proposeSlashEvidence(
+          0,
+          operatorAddress,
+          REASON_INACTIVITY,
+          ethers.toUtf8Bytes("rotation"),
+        );
+
+      const replacement = await ethers.deployContract("SlashingManager", [
+        DEFAULT_ADMIN_DELAY,
+        await owner.getAddress(),
+      ]);
+      await bondingRegistry.setSlashingManager(await replacement.getAddress());
+
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      ).to.equal(true);
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await replacement.getAddress(),
+        ),
+      ).to.equal(true);
+      expect(await bondingRegistry.authorizedSlashingManagerCount()).to.equal(
+        2,
+      );
+
+      await expect(
+        bondingRegistry.connect(operator).unbondLicense(1),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+
+      await time.increase(APPEAL_WINDOW + 1);
+      await slashingManager.executeSlash(0);
+
+      expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
+        ethers.parseEther("950"),
+      );
+      await bondingRegistry.connect(operator).unbondLicense(1);
+
+      await bondingRegistry.revokeSlashingManager(
+        await slashingManager.getAddress(),
+      );
+      expect(
+        await bondingRegistry.isAuthorizedSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      ).to.equal(false);
+      expect(await bondingRegistry.authorizedSlashingManagerCount()).to.equal(
+        1,
+      );
     });
 
     it("deregisterOperator reverts OperatorUnderSlash while Lane B proposal open", async function () {
@@ -312,7 +387,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       // Owner has GOVERNANCE_ROLE and can resolve appeals.
       await slashingManager.connect(owner).resolveAppeal(0, true, "upheld");
 
-      expect(await slashingManager.hasOpenLaneBProposal(operatorAddress)).to.be
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
         .false;
       await bondingRegistry.connect(operator).deregisterOperator();
       expect(await bondingRegistry.isRegistered(operatorAddress)).to.be.false;
@@ -340,6 +415,21 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await mockCiphernodeRegistry.setThreshold(0, 2);
     }
 
+    async function registerOperatorWithQueuedExit(
+      ctx: Awaited<ReturnType<typeof setup>>,
+    ) {
+      const { bondingRegistry, interfoldToken, operator } = ctx;
+      const licenseAmount = ethers.parseEther("1000");
+      const queuedAmount = ethers.parseEther("100");
+      await interfoldToken
+        .connect(operator)
+        .approve(await bondingRegistry.getAddress(), licenseAmount);
+      await bondingRegistry.connect(operator).bondLicense(licenseAmount);
+      await bondingRegistry.connect(operator).registerOperator();
+      await bondingRegistry.connect(operator).unbondLicense(queuedAmount);
+      return queuedAmount;
+    }
+
     it("proposeSlash with appealWindow>0 does NOT auto-execute and remains executable later", async function () {
       const ctx = await loadFixture(setup);
       const { slashingManager, proposer, operatorAddress, voter1, voter2 } =
@@ -363,6 +453,8 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       const p = await slashingManager.getSlashProposal(0);
       expect(p.executed).to.be.false;
       expect(p.executableAt).to.be.gt(p.proposedAt);
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
+        .true;
 
       // Cannot execute before window elapses
       await expect(
@@ -373,6 +465,55 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await expect(slashingManager.executeSlash(0)).to.emit(
         slashingManager,
         "SlashExecuted",
+      );
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
+        .false;
+    });
+
+    it("AUD-H03: a deferred Lane A proposal freezes active and queued collateral", async function () {
+      const ctx = await loadFixture(setup);
+      const {
+        slashingManager,
+        bondingRegistry,
+        proposer,
+        operator,
+        operatorAddress,
+        voter1,
+        voter2,
+      } = ctx;
+      const queuedAmount = await registerOperatorWithQueuedExit(ctx);
+      await setupLaneAPolicy(slashingManager, APPEAL_WINDOW);
+      await setupCommittee(ctx);
+
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+      );
+      await slashingManager
+        .connect(proposer)
+        .proposeSlash(0, operatorAddress, proof);
+
+      await expect(
+        bondingRegistry.connect(operator).deregisterOperator(),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+      await expect(
+        bondingRegistry.connect(operator).removeTicketBalance(1),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+      await expect(
+        bondingRegistry.connect(operator).unbondLicense(1),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+
+      await time.increase(APPEAL_WINDOW + 1);
+      await expect(
+        bondingRegistry.connect(operator).claimExits(0, queuedAmount),
+      ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
+
+      await slashingManager.executeSlash(0);
+      await bondingRegistry.connect(operator).claimExits(0, queuedAmount);
+      expect((await bondingRegistry.pendingExits(operatorAddress))[1]).to.equal(
+        0n,
       );
     });
 
@@ -402,6 +543,53 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await expect(
         slashingManager.connect(operator).fileAppeal(0, "not me"),
       ).to.emit(slashingManager, "AppealFiled");
+    });
+
+    it("expires an unresolved appeal after the governance grace period", async function () {
+      const ctx = await loadFixture(setup);
+      const {
+        slashingManager,
+        proposer,
+        operator,
+        operatorAddress,
+        voter1,
+        voter2,
+      } = ctx;
+      await setupLaneAPolicy(slashingManager, APPEAL_WINDOW);
+      await setupCommittee(ctx);
+
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+      );
+      await slashingManager
+        .connect(proposer)
+        .proposeSlash(0, operatorAddress, proof);
+      await slashingManager.connect(operator).fileAppeal(0, "not me");
+
+      await expect(
+        slashingManager.expireAppeal(0),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "AppealResolutionWindowActive",
+      );
+
+      const proposal = await slashingManager.getSlashProposal(0);
+      await time.increaseTo(
+        proposal.executableAt + BigInt(APPEAL_RESOLUTION_GRACE),
+      );
+      await expect(slashingManager.expireAppeal(0)).to.emit(
+        slashingManager,
+        "AppealResolved",
+      );
+
+      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
+        .false;
+      await expect(
+        slashingManager.executeSlash(0),
+      ).to.be.revertedWithCustomError(slashingManager, "AppealUpheld");
     });
   });
 

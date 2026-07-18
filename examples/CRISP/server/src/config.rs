@@ -28,8 +28,6 @@ pub struct Config {
     pub chain_id: u64,
     pub cron_api_key: String,
     // E3 parameters
-    #[serde(default)]
-    pub e3_proof_aggregation_enabled: bool,
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     pub e3_compute_provider_name: String,

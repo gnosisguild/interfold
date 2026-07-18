@@ -31,13 +31,25 @@ interface IBondingRegistry {
     error ExitInProgress();
     error ExitNotReady();
     error InvalidAmount();
+
+    /// @notice A bonding asset must be a deployed contract (except the one-time
+    ///         zero license-token placeholder used during circular deployment).
+    error InvalidBondingAsset(address asset);
+
+    /// @notice A bonding asset cannot rotate while balances remain denominated in it.
+    error OutstandingAssetLiabilities(address asset, uint256 amount);
+
     error InvalidConfiguration();
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
     error ArrayLengthMismatch();
-    /// @notice Thrown when an operator attempts to deregister while at least one Lane B
-    ///         slash proposal against them is still pending execution.
+    /// @notice Thrown when an operator attempts to withdraw collateral while any
+    ///         financial slash proposal against them remains unresolved.
     error OperatorUnderSlash();
+
+    /// @notice Treasury withdrawal or generic routing attempted to consume funds
+    ///         reserved for a pending E3 slash route.
+    error ReservedSlashedFunds();
 
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
@@ -111,6 +123,12 @@ interface IBondingRegistry {
     );
 
     /**
+     * @notice Emitted when an eligibility setting invalidates cached operator status.
+     * @param version New eligibility-policy version.
+     */
+    event EligibilityConfigurationVersionUpdated(uint256 indexed version);
+
+    /**
      * @notice Emitted when a reward distributor is authorized or revoked
      * @param distributor Address of the distributor
      * @param authorized True if authorized, false if revoked
@@ -151,6 +169,19 @@ interface IBondingRegistry {
     event LicenseTokenSet(address indexed licenseToken);
 
     /**
+     * @notice Emitted when governance removes license tokens that are not
+     *         backing any active bond, pending exit, or slashed-fund claim.
+     * @param token License token whose surplus was swept
+     * @param to Slashed-funds treasury that received the surplus
+     * @param amount Amount requested for transfer
+     */
+    event LicenseSurplusSwept(
+        address indexed token,
+        address indexed to,
+        uint256 amount
+    );
+
+    /**
      * @notice Emitted when the registry is set
      * @param registry Address of the registry
      */
@@ -162,6 +193,14 @@ interface IBondingRegistry {
         address indexed next
     );
 
+    /// @notice Emitted whenever a slashing manager gains or loses authority.
+    /// @dev Replaced managers remain authorized until governance explicitly
+    ///      revokes them so snapshotted E3s and open proposals can finish.
+    event SlashingManagerAuthorizationUpdated(
+        address indexed slashingManager,
+        bool authorized
+    );
+
     /**
      * @notice Emitted whenever a `licenseToken.safeTransfer` performed by the
      *         registry sends FEWER tokens than requested (typical of
@@ -171,8 +210,8 @@ interface IBondingRegistry {
      *         in the registry as an unaccounted-for surplus. Operators and
      *         monitoring infrastructure should treat any emission of this
      *         event as evidence that the configured `licenseToken` is not a
-     *         well-behaved ERC-20 and should be replaced via
-     *         `setLicenseToken`.
+     *         well-behaved ERC-20. Rotation is permitted only after every
+     *         balance denominated in the old token has been drained.
      * @param recipient The address that received the (short) transfer
      * @param expectedAmount The amount the registry intended to send
      * @param actualAmount The actual delta in registry-held balance
@@ -192,6 +231,13 @@ interface IBondingRegistry {
      * @return License token address
      */
     function getLicenseToken() external view returns (address);
+
+    /**
+     * @notice Total license-token obligations held by the registry.
+     * @dev Covers active bonds, queued exits, and slashed funds awaiting
+     *      treasury withdrawal.
+     */
+    function totalLicenseLiability() external view returns (uint256);
 
     /**
      * @notice Get ticket token address
@@ -261,6 +307,22 @@ interface IBondingRegistry {
      */
     function numActiveOperators() external view returns (uint256);
 
+    /// @notice Current eligibility-policy version.
+    function eligibilityConfigurationVersion() external view returns (uint256);
+
+    /**
+     * @notice Re-evaluate one registered operator under the current eligibility policy.
+     * @dev Permissionless so operators or governance can restore current status after
+     *      an eligibility configuration update.
+     */
+    function refreshOperatorStatus(address operator) external;
+
+    /**
+     * @notice Re-evaluate a batch of registered operators under the current policy.
+     * @dev Intended for governance/operator automation after a policy update.
+     */
+    function refreshOperatorStatuses(address[] calldata operators) external;
+
     /**
      * @notice Check if operator has deregistration in progress
      * @param operator Address of the operator
@@ -329,6 +391,12 @@ interface IBondingRegistry {
      * @return Amount of ticket balance slashed and available for treasury withdrawal
      */
     function slashedTicketBalance() external view returns (uint256);
+
+    /// @notice Get slashed ticket funds reserved for retryable E3 routing.
+    function reservedSlashedTicketBalance() external view returns (uint256);
+
+    /// @notice Get the ticket wrapper whose underlying asset backs ticket slashes.
+    function ticketToken() external view returns (InterfoldTicketToken);
 
     /**
      * @notice Get total slashed license bond
@@ -423,14 +491,16 @@ interface IBondingRegistry {
         bytes32 reason
     ) external;
 
-    /**
-     * @notice Redirect slashed ticket funds to a specified address
-     * @param to Address to receive the slashed funds (underlying stablecoin)
-     * @param amount Amount of slashed ticket balance to redirect
-     * @dev Only callable by authorized slashing manager. Pays out underlying stablecoin
-     *      from burned ticket tokens. Assumes underlying stablecoin matches the E3 fee token.
-     */
-    function redirectSlashedTicketFunds(address to, uint256 amount) external;
+    /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
+    /// @dev Only callable by the configured slashing manager.
+    function reserveSlashedTicketFunds(uint256 amount) external;
+
+    /// @notice Route and consume previously reserved slashed ticket funds.
+    /// @dev Only callable by the configured slashing manager.
+    function redirectReservedSlashedTicketFunds(
+        address to,
+        uint256 amount
+    ) external;
 
     // ======================
     // Reward Distribution Functions
@@ -455,28 +525,28 @@ interface IBondingRegistry {
     /**
      * @notice Set ticket price
      * @param newTicketPrice New price per ticket
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setTicketPrice(uint256 newTicketPrice) external;
 
     /**
      * @notice Set license bond price required
      * @param newLicenseRequiredBond New license bond price
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setLicenseRequiredBond(uint256 newLicenseRequiredBond) external;
 
     /**
      * @notice Set license active BPS
      * @param newBps New license active BPS
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setLicenseActiveBps(uint256 newBps) external;
 
     /**
      * @notice Set minimum ticket balance required for activation
      * @param newMinTicketBalance New minimum ticket balance
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. Invalidates cached operator status.
      */
     function setMinTicketBalance(uint256 newMinTicketBalance) external;
 
@@ -502,6 +572,14 @@ interface IBondingRegistry {
     function setLicenseToken(IERC20 newLicenseToken) external;
 
     /**
+     * @notice Send unaccounted license-token surplus to the slashed-funds treasury.
+     * @dev Never transfers active bonds, queued exits, or slashed-fund liabilities.
+     *      This is the governance path for clearing donated dust before rotation.
+     * @return amount Amount requested for transfer
+     */
+    function sweepLicenseSurplus() external returns (uint256 amount);
+
+    /**
      * @notice Set slashed funds treasury address
      * @param newSlashedFundsTreasury New slashed funds treasury address
      * @dev Only callable by contract owner
@@ -521,6 +599,32 @@ interface IBondingRegistry {
      * @dev Only callable by contract owner
      */
     function setSlashingManager(address newSlashingManager) external;
+
+    /**
+     * @notice Revoke a non-current slashing manager after every E3 and proposal
+     *         that depends on it has reached a terminal state.
+     * @param oldSlashingManager Manager whose authority should be removed
+     */
+    function revokeSlashingManager(address oldSlashingManager) external;
+
+    /**
+     * @notice Whether a manager may slash collateral or route reserved slash funds.
+     */
+    function isAuthorizedSlashingManager(
+        address candidate
+    ) external view returns (bool);
+
+    /**
+     * @notice Number of currently authorized slashing managers.
+     */
+    function authorizedSlashingManagerCount() external view returns (uint256);
+
+    /**
+     * @notice Authorized slashing manager at `index`.
+     */
+    function authorizedSlashingManagerAt(
+        uint256 index
+    ) external view returns (address);
 
     /**
      * @notice Set reward distributor address

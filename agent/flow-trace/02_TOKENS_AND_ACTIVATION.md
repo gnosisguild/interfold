@@ -92,6 +92,15 @@ Before a node can register, it must stake two types of collateral:
 └───────────────────────────────────────────────────────────┘
 ```
 
+Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot be configured while
+the old wrapper has issued tickets or a payable balance. The registry tracks `totalLicenseLiability`
+across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
+treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
+distinguishable from operator liabilities and can be sent to `slashedFundsTreasury` with
+`sweepLicenseSurplus()` before rotation. The FOLD license token still cannot change until its raw
+registry balance is zero. Replacement assets must be deployed contracts; the only zero exception is
+the one-time license-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
+
 ---
 
 ## Step 1: Bond License (`interfold ciphernode license bond`)
@@ -124,9 +133,10 @@ User runs: interfold ciphernode license bond --amount 50000
 │     │  │       → FOLD _update can see the pre-recorded bond   │
 │     │  │         and enforce locked-floor accounting          │
 │     │  │       → FOLD tokens move from operator → contract    │
-│     │  │    4. _updateOperatorStatus(msg.sender)              │
+│     │  │    4. totalLicenseLiability += amount                │
+│     │  │    5. _updateOperatorStatus(msg.sender)              │
 │     │  │       → May activate if all conditions now met       │
-│     │  │    5. Emit LicenseBondUpdated(msg.sender, newBond)   │
+│     │  │    6. Emit LicenseBondUpdated(msg.sender, newBond)   │
 │     │  │  }                                                   │
 │     │  └──────────────────────────────────────────────────────┘
 │     │
@@ -165,6 +175,15 @@ _updateOperatorStatus(operator):
     numActiveOperators++
     emit OperatorActivationChanged(operator, true)
 ```
+
+Governance may update `ticketPrice`, `licenseRequiredBond`, `licenseActiveBps`, and
+`minTicketBalance`; `minTicketBalance` must remain nonzero. Every effective update advances
+`eligibilityConfigurationVersion`, resets `numActiveOperators`, and makes all previously cached
+operator statuses fail closed. Operators or governance then call `refreshOperatorStatus` (or its
+batch form) to re-evaluate registered operators under the new policy. Only operators refreshed into
+the current version count as active, so committee requests cannot rely on status cached under an
+older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
+chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
 
 ---
 
@@ -345,12 +364,9 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 │     │  │       │  │  underlying.safeTransfer(to, amount)    │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    3. licenseAmount = _claimLicenseExits(             │
-│     │  │         msg.sender, maxLicense                        │
-│     │  │       )                                               │
-│     │  │       → Each FOLD source pays its withdrawalAddress   │
-│     │  │       → Receiver callback gets (operator, amount,     │
-│     │  │         sourceId) when supported                      │
+│     │  │    3. if licenseAmount > 0:                           │
+│     │  │       totalLicenseLiability -= licenseAmount          │
+│     │  │       licenseToken.safeTransfer(msg.sender, amount)   │
 │     │  │       → Pending FOLD is removed from totalBonded()    │
 │     │  │         as returned FOLD reaches the wallet           │
 │     │  │  }                                                    │

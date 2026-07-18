@@ -62,7 +62,6 @@ sol! {
         bytes32 ciphertextOutput;
         bytes plaintextOutput;
         address requester;
-        bool proofAggregationEnabled;
     }
 
     #[derive(Debug)]
@@ -73,7 +72,6 @@ sol! {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
-        bool proofAggregationEnabled;
     }
 
     #[derive(Debug, PartialEq)]
@@ -161,7 +159,6 @@ pub trait InterfoldRead {
         e3_program: Address,
         param_set: u8,
         compute_provider_params: Bytes,
-        proof_aggregation_enabled: bool,
     ) -> Result<U256>;
 
     async fn get_e3_stage(&self, e3_id: U256) -> Result<E3Stage>;
@@ -191,7 +188,6 @@ pub trait InterfoldWrite {
         param_set: u8,
         compute_provider_params: Bytes,
         custom_params: Bytes,
-        proof_aggregation_enabled: bool,
     ) -> Result<(TransactionReceipt, U256)>;
 
     /// Enable an E3 program
@@ -377,7 +373,6 @@ where
         e3_program: Address,
         param_set: u8,
         compute_provider_params: Bytes,
-        proof_aggregation_enabled: bool,
     ) -> Result<U256> {
         let e3_request = E3RequestParams {
             committeeSize: committee_size,
@@ -386,7 +381,6 @@ where
             paramSet: param_set,
             computeProviderParams: compute_provider_params,
             customParams: Bytes::new(),
-            proofAggregationEnabled: proof_aggregation_enabled,
         };
 
         let contract = Interfold::new(self.contract_address, &self.provider);
@@ -442,7 +436,6 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         param_set: u8,
         compute_provider_params: Bytes,
         custom_params: Bytes,
-        proof_aggregation_enabled: bool,
     ) -> Result<(TransactionReceipt, U256)> {
         let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
@@ -460,7 +453,6 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             paramSet: param_set,
             computeProviderParams: compute_provider_params.clone(),
             customParams: custom_params.clone(),
-            proofAggregationEnabled: proof_aggregation_enabled,
         };
 
         let builder = contract.request(e3_request).nonce(nonce);

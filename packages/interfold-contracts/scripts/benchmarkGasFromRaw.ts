@@ -12,6 +12,8 @@ import {
   BFV_DKG_H,
   BFV_THRESHOLD_T,
   bfvDecCommitteeHashIndices,
+  bfvDecDomainIndices,
+  bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
@@ -159,6 +161,7 @@ function findRawJson(rawDir: string, fragment: string): any {
 const MIN_VK_HASH_PUBLIC_INPUTS = 2;
 const DKG_COMMITTEE_HASH_IDX = bfvDkgCommitteeHashIndices(BFV_DKG_H);
 const DEC_COMMITTEE_HASH_IDX = bfvDecCommitteeHashIndices();
+const DEC_DOMAIN_IDX = bfvDecDomainIndices();
 
 function requirePublicInputLen(
   label: string,
@@ -216,16 +219,14 @@ async function main() {
 
   const { ethers } = await network.connect();
   const [benchmarkSigner] = await ethers.getSigners();
-  // e3Id / committeeRoot / sortedNodes are forward-compat params; wrappers do not
-  // bind them yet (see BfvPkVerifier / BfvDecryptionVerifier). Any fixed values
-  // yield representative verify gas for the Honk + wrapper path.
+  // The DKG verifier still receives the committee context directly. The
+  // decryption verifier receives the E3 ID for DKG-anchor lookup plus the
+  // domain limbs carried by the folded proof.
   const benchmarkE3Id = 1n;
   const benchmarkCommitteeRoot = BigInt(
     ethers.id("benchmark-gas-committee-root"),
   );
   const benchmarkSortedNodes = [benchmarkSigner.address];
-  const benchmarkCiphertextHash = ethers.ZeroHash;
-  const benchmarkCommitteePublicKey = ethers.ZeroHash;
 
   let dkgProofHex: string | undefined;
   let dkgPublicHex: string | undefined;
@@ -392,15 +393,39 @@ async function main() {
     dkgEncodedProof,
   );
 
+  const registry = await (
+    await ethers.getContractFactory("MockCiphernodeRegistry")
+  ).deploy();
+  await registry.waitForDeployment();
+
   const bfvDec = await (
     await ethers.getContractFactory("BfvDecryptionVerifier")
   ).deploy(
     decAggAddress,
+    await registry.getAddress(),
     expectedC6FoldKeyHash,
     expectedC7KeyHash,
     BFV_THRESHOLD_T,
   );
   await bfvDec.waitForDeployment();
+
+  const partyOffsets = bfvDecPartyColOffsets(BFV_THRESHOLD_T);
+  const registryPartyIds: bigint[] = [];
+  const skCommits: string[] = [];
+  const esmCommits: string[] = [];
+  for (let i = 0; i < BFV_THRESHOLD_T + 1; i++) {
+    registryPartyIds.push(
+      BigInt(decPublicInputs[partyOffsets.partyId + i]) - 1n,
+    );
+    skCommits.push(decPublicInputs[partyOffsets.sk + i]);
+    esmCommits.push(decPublicInputs[partyOffsets.esm + i]);
+  }
+  await registry.setDkgAnchors(
+    benchmarkE3Id,
+    registryPartyIds,
+    skCommits,
+    esmCommits,
+  );
 
   const decEncodedProof = abiCoder.encode(
     ["bytes", "bytes32[]"],
@@ -416,12 +441,13 @@ async function main() {
     decPublicInputs[DEC_COMMITTEE_HASH_IDX.hi],
     decPublicInputs[DEC_COMMITTEE_HASH_IDX.lo],
   );
+  const decDomain = committeeHashFromLimbs(
+    decPublicInputs[DEC_DOMAIN_IDX.hi],
+    decPublicInputs[DEC_DOMAIN_IDX.lo],
+  );
   const decOk = await bfvDec.verify.staticCall(
     benchmarkE3Id,
-    benchmarkCommitteeRoot,
-    benchmarkSortedNodes,
-    benchmarkCiphertextHash,
-    benchmarkCommitteePublicKey,
+    decDomain,
     plaintextHash,
     decCommitteeHash,
     decEncodedProof,
@@ -433,10 +459,7 @@ async function main() {
   }
   const decGas = await bfvDec.verify.estimateGas(
     benchmarkE3Id,
-    benchmarkCommitteeRoot,
-    benchmarkSortedNodes,
-    benchmarkCiphertextHash,
-    benchmarkCommitteePublicKey,
+    decDomain,
     plaintextHash,
     decCommitteeHash,
     decEncodedProof,

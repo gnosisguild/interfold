@@ -16,25 +16,6 @@ const __dirname = path.dirname(__filename)
 /** examples/CRISP */
 const CRISP_ROOT = path.join(__dirname, '..', '..', '..')
 
-function parseSimpleEnvFile(filePath: string): Record<string, string> {
-  if (!fs.existsSync(filePath)) {
-    return {}
-  }
-  const out: Record<string, string> = {}
-  for (const line of fs.readFileSync(filePath, 'utf8').split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue
-    }
-    const eq = trimmed.indexOf('=')
-    if (eq === -1) {
-      continue
-    }
-    out[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
-  }
-  return out
-}
-
 function ensureEnvFile(envPath: string, examplePath: string): void {
   if (!fs.existsSync(envPath)) {
     if (!fs.existsSync(examplePath)) {
@@ -66,10 +47,7 @@ function deploymentAddress(contractName: string, chain: string): string | undefi
   return readDeploymentArgs(contractName, chain)?.address
 }
 
-/**
- * Writes localhost deployment addresses into server/.env and client/.env, and
- * syncs E3_PROOF_AGGREGATION_ENABLED from crisp.dev.env.
- */
+/** Writes localhost deployment addresses into server/.env and client/.env. */
 export function syncCrispEnvFromDeployments(chain: string): void {
   const interfoldAddress = deploymentAddress('Interfold', chain)
   const feeTokenAddress = deploymentAddress('MockUSDC', chain)
@@ -88,12 +66,6 @@ export function syncCrispEnvFromDeployments(chain: string): void {
     throw new Error(`Cannot sync CRISP .env files: missing deployments for ${missing.join(', ')} on chain "${chain}"`)
   }
 
-  const crispDev = parseSimpleEnvFile(path.join(CRISP_ROOT, 'crisp.dev.env'))
-  const proofAggregation =
-    crispDev.CRISP_PROOF_AGGREGATION_ENABLED ??
-    parseSimpleEnvFile(path.join(CRISP_ROOT, 'crisp.dev.env.example')).CRISP_PROOF_AGGREGATION_ENABLED ??
-    'false'
-
   const serverEnv = path.join(CRISP_ROOT, 'server', '.env')
   const clientEnv = path.join(CRISP_ROOT, 'client', '.env')
 
@@ -106,7 +78,6 @@ export function syncCrispEnvFromDeployments(chain: string): void {
     E3_PROGRAM_ADDRESS: programAddress!,
     CIPHERNODE_REGISTRY_ADDRESS: registryAddress!,
     CRISP_VOTING_TOKEN: votingTokenAddress!,
-    E3_PROOF_AGGREGATION_ENABLED: proofAggregation,
   }
 
   const mockMappings: Array<[string, string]> = [
@@ -129,5 +100,4 @@ export function syncCrispEnvFromDeployments(chain: string): void {
 
   console.log(`Synced deployment addresses → ${path.relative(CRISP_ROOT, serverEnv)}`)
   console.log(`Synced VITE_CRISP_TOKEN → ${path.relative(CRISP_ROOT, clientEnv)}`)
-  console.log(`  E3_PROOF_AGGREGATION_ENABLED=${proofAggregation} (from crisp.dev.env)`)
 }

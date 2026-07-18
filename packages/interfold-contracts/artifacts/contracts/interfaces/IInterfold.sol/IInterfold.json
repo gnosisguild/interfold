@@ -697,11 +697,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "indexed": false,
@@ -1121,6 +1116,12 @@
           "type": "uint256"
         },
         {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
           "indexed": false,
           "internalType": "uint256",
           "name": "amount",
@@ -1319,6 +1320,11 @@
           "type": "uint256"
         },
         {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
@@ -1478,11 +1484,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct E3",
@@ -1526,11 +1527,6 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -1997,11 +1993,6 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -2087,11 +2078,6 @@
               "internalType": "address",
               "name": "requester",
               "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "proofAggregationEnabled",
-              "type": "bool"
             }
           ],
           "internalType": "struct E3",
@@ -2390,5 +2376,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-6d77a1fac0033f87a36ca50619587087010b9b66"
+  "buildInfoId": "solc-0_8_28-2d3d2b6b440530e2d0cda7f925e842c7cd652fec"
 }

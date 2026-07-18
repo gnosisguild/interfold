@@ -10,6 +10,8 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 
 contract MockCiphernodeRegistry is ICiphernodeRegistry {
+    uint256 public override numCiphernodes;
+
     /// @notice Configurable committee members per E3 for testing
     mapping(uint256 e3Id => address[] nodes) private _committeeNodes;
 
@@ -85,11 +87,13 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         return false;
     }
 
-    // solhint-disable-next-line no-empty-blocks
-    function addCiphernode(address) external pure {}
+    function addCiphernode(address) external {
+        numCiphernodes++;
+    }
 
-    // solhint-disable-next-line no-empty-blocks
-    function removeCiphernode(address) external pure {}
+    function removeCiphernode(address) external {
+        numCiphernodes--;
+    }
 
     function publishCommittee(
         uint256,
@@ -253,6 +257,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 }
 
 contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
+    function numCiphernodes() external pure returns (uint256) {
+        return 0;
+    }
+
     function requestCommittee(
         uint256,
         uint256,

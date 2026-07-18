@@ -132,6 +132,7 @@ contract BondingRegistry is
         bool registered;
         bool exitRequested;
         bool active;
+        uint256 eligibilityVersion;
     }
 
     /// @notice Maps operator address to their state data
@@ -150,13 +151,37 @@ contract BondingRegistry is
     /// @dev Internal state for managing exit queue of tickets and licenses
     ExitQueueLib.ExitQueueState private _exits;
 
+    /// @notice Version of the current operator-eligibility policy.
+    /// @dev Every eligibility update advances the version and resets
+    ///      {numActiveOperators}. Operators fail closed until refreshed.
+    uint256 public eligibilityConfigurationVersion;
+
+    /// @notice Slashed tickets committed to retryable E3 refund routes.
+    uint256 public reservedSlashedTicketBalance;
+
+    /// @notice Slashing managers that may finish snapshotted E3 lifecycles.
+    /// @dev Rotating the current manager does not revoke its predecessor.
+    address[] internal _authorizedSlashingManagers;
+
+    /// @dev One-based index into {_authorizedSlashingManagers}; zero means unauthorized.
+    mapping(address manager => uint256 indexPlusOne)
+        internal _authorizedSlashingManagerIndex;
+
+    /// @notice Maximum number of concurrently authorized slashing managers.
+    uint256 public constant MAX_AUTHORIZED_SLASHING_MANAGERS = 32;
+
+    /// @inheritdoc IBondingRegistry
+    uint256 public totalLicenseLiability;
+
     // ======================
     // Modifiers
     // ======================
 
-    /// @dev Restricts function access to only the slashing manager
-    modifier onlySlashingManager() {
-        if (msg.sender != slashingManager) revert Unauthorized();
+    /// @dev Restricts function access to current or retained historical managers.
+    modifier onlyAuthorizedSlashingManager() {
+        if (_authorizedSlashingManagerIndex[msg.sender] == 0) {
+            revert Unauthorized();
+        }
         _;
     }
 
@@ -172,6 +197,21 @@ contract BondingRegistry is
         Operator memory op = operators[operator];
         if (op.exitRequested && block.timestamp < op.exitUnlocksAt) {
             revert ExitInProgress();
+        }
+        _;
+    }
+
+    /// @dev Keeps active and already-queued collateral available while any
+    ///      financial slash proposal against the operator is unresolved.
+    modifier noOpenSlashProposal(address operator) {
+        uint256 len = _authorizedSlashingManagers.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (
+                ISlashingManager(_authorizedSlashingManagers[i])
+                    .hasOpenSlashProposal(operator)
+            ) {
+                revert OperatorUnderSlash();
+            }
         }
         _;
     }
@@ -307,13 +347,49 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function isActive(address operator) external view returns (bool) {
-        return operators[operator].active;
+        Operator storage op = operators[operator];
+        return
+            op.eligibilityVersion == eligibilityConfigurationVersion &&
+            op.active;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function refreshOperatorStatus(address operator) public {
+        require(operators[operator].registered, NotRegistered());
+        _updateOperatorStatus(operator);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function refreshOperatorStatuses(address[] calldata operatorList) external {
+        uint256 len = operatorList.length;
+        for (uint256 i = 0; i < len; i++) {
+            refreshOperatorStatus(operatorList[i]);
+        }
     }
 
     /// @inheritdoc IBondingRegistry
     function hasExitInProgress(address operator) external view returns (bool) {
         Operator memory op = operators[operator];
         return op.exitRequested && block.timestamp < op.exitUnlocksAt;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function isAuthorizedSlashingManager(
+        address candidate
+    ) external view returns (bool) {
+        return _authorizedSlashingManagerIndex[candidate] != 0;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function authorizedSlashingManagerCount() external view returns (uint256) {
+        return _authorizedSlashingManagers.length;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function authorizedSlashingManagerAt(
+        uint256 index
+    ) external view returns (address) {
+        return _authorizedSlashingManagers[index];
     }
 
     // ======================
@@ -328,10 +404,16 @@ contract BondingRegistry is
             operators[msg.sender].exitUnlocksAt = 0;
         }
 
-        require(
-            !ISlashingManager(slashingManager).isBanned(msg.sender),
-            CiphernodeBanned()
-        );
+        require(slashingManager != address(0), ZeroAddress());
+        uint256 managerCount = _authorizedSlashingManagers.length;
+        for (uint256 i = 0; i < managerCount; i++) {
+            require(
+                !ISlashingManager(_authorizedSlashingManagers[i]).isBanned(
+                    msg.sender
+                ),
+                CiphernodeBanned()
+            );
+        }
         require(!operators[msg.sender].registered, AlreadyRegistered());
         require(
             operators[msg.sender].licenseBond >= licenseRequiredBond,
@@ -347,20 +429,13 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function deregisterOperator() external noExitInProgress(msg.sender) {
+    function deregisterOperator()
+        external
+        noExitInProgress(msg.sender)
+        noOpenSlashProposal(msg.sender)
+    {
         Operator storage op = operators[msg.sender];
         require(op.registered, NotRegistered());
-
-        // block deregistration while an unresolved Lane B slash proposal exists.
-        // An operator could otherwise drain ticket / license collateral during the appeal
-        // window and leave the slasher with nothing to slash.
-        address sm = slashingManager;
-        if (sm != address(0)) {
-            require(
-                !ISlashingManager(sm).hasOpenLaneBProposal(msg.sender),
-                OperatorUnderSlash()
-            );
-        }
 
         op.registered = false;
         op.exitRequested = true;
@@ -425,7 +500,7 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function removeTicketBalance(
         uint256 amount
-    ) external noExitInProgress(msg.sender) {
+    ) external noExitInProgress(msg.sender) noOpenSlashProposal(msg.sender) {
         require(amount != 0, ZeroAmount());
         require(operators[msg.sender].registered, NotRegistered());
         require(
@@ -456,7 +531,12 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function unbondLicense(
         uint256 amount
-    ) external nonReentrant noExitInProgress(msg.sender) {
+    )
+        external
+        nonReentrant
+        noExitInProgress(msg.sender)
+        noOpenSlashProposal(msg.sender)
+    {
         require(amount != 0, ZeroAmount());
         require(
             operators[msg.sender].licenseBond >= amount,
@@ -484,7 +564,7 @@ contract BondingRegistry is
     function claimExits(
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
-    ) external nonReentrant {
+    ) external nonReentrant noOpenSlashProposal(msg.sender) {
         (uint256 ticketClaim, uint256 licenseClaim) = _exits.claimAssets(
             msg.sender,
             maxTicketAmount,
@@ -494,6 +574,7 @@ contract BondingRegistry is
 
         if (ticketClaim > 0) ticketToken.payout(msg.sender, ticketClaim);
         if (licenseClaim > 0) {
+            totalLicenseLiability -= licenseClaim;
             _safeTransferLicenseWithDeltaCheck(msg.sender, licenseClaim);
         }
     }
@@ -507,7 +588,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlySlashingManager returns (uint256) {
+    ) external onlyAuthorizedSlashingManager returns (uint256) {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         (uint256 pendingTicketBalance, ) = _exits.getPendingAmounts(operator);
@@ -561,7 +642,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlySlashingManager nonReentrant {
+    ) external onlyAuthorizedSlashingManager nonReentrant {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
@@ -609,14 +690,27 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function redirectSlashedTicketFunds(
+    function reserveSlashedTicketFunds(
+        uint256 amount
+    ) external onlyAuthorizedSlashingManager {
+        require(amount > 0, ZeroAmount());
+        require(
+            amount <= slashedTicketBalance - reservedSlashedTicketBalance,
+            InsufficientBalance()
+        );
+        reservedSlashedTicketBalance += amount;
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function redirectReservedSlashedTicketFunds(
         address to,
         uint256 amount
-    ) external onlySlashingManager {
+    ) external onlyAuthorizedSlashingManager {
         require(to != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
-        require(amount <= slashedTicketBalance, InsufficientBalance());
+        require(amount <= reservedSlashedTicketBalance, InsufficientBalance());
 
+        reservedSlashedTicketBalance -= amount;
         slashedTicketBalance -= amount;
         ticketToken.payout(to, amount);
     }
@@ -654,7 +748,9 @@ contract BondingRegistry is
         require(newTicketPrice != 0, InvalidConfiguration());
 
         uint256 oldValue = ticketPrice;
+        if (oldValue == newTicketPrice) return;
         ticketPrice = newTicketPrice;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated("ticketPrice", oldValue, newTicketPrice);
     }
@@ -666,7 +762,9 @@ contract BondingRegistry is
         require(newLicenseRequiredBond != 0, InvalidConfiguration());
 
         uint256 oldValue = licenseRequiredBond;
+        if (oldValue == newLicenseRequiredBond) return;
         licenseRequiredBond = newLicenseRequiredBond;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated(
             "licenseRequiredBond",
@@ -680,15 +778,20 @@ contract BondingRegistry is
         require(newBps > 0 && newBps <= BPS_BASE, InvalidConfiguration());
 
         uint256 oldValue = licenseActiveBps;
+        if (oldValue == newBps) return;
         licenseActiveBps = newBps;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated("licenseActiveBps", oldValue, newBps);
     }
 
     /// @inheritdoc IBondingRegistry
     function setMinTicketBalance(uint256 newMinTicketBalance) public onlyOwner {
+        require(newMinTicketBalance != 0, InvalidConfiguration());
         uint256 oldValue = minTicketBalance;
+        if (oldValue == newMinTicketBalance) return;
         minTicketBalance = newMinTicketBalance;
+        _invalidateEligibilityStatuses();
 
         emit ConfigurationUpdated(
             "minTicketBalance",
@@ -725,14 +828,63 @@ contract BondingRegistry is
     function setTicketToken(
         InterfoldTicketToken newTicketToken
     ) public onlyOwner {
+        address next = address(newTicketToken);
+        if (next.code.length == 0) revert InvalidBondingAsset(next);
+
+        InterfoldTicketToken current = ticketToken;
+        if (address(current) != address(0) && current != newTicketToken) {
+            uint256 liabilities = current.totalSupply() +
+                current.payableBalance();
+            if (liabilities != 0) {
+                revert OutstandingAssetLiabilities(
+                    address(current),
+                    liabilities
+                );
+            }
+        }
         ticketToken = newTicketToken;
-        emit TicketTokenSet(address(newTicketToken));
+        emit TicketTokenSet(next);
     }
 
     /// @inheritdoc IBondingRegistry
     function setLicenseToken(IERC20 newLicenseToken) public onlyOwner {
+        address next = address(newLicenseToken);
+        IERC20 current = licenseToken;
+
+        // BondingRegistry is deployed before FOLD because FOLD stores the
+        // registry address immutably. Permit only that initial zero placeholder.
+        if (next == address(0)) {
+            if (address(current) != address(0)) {
+                revert InvalidBondingAsset(next);
+            }
+        } else if (next.code.length == 0) {
+            revert InvalidBondingAsset(next);
+        }
+
+        if (address(current) != address(0) && current != newLicenseToken) {
+            uint256 liabilities = current.balanceOf(address(this));
+            if (liabilities != 0) {
+                revert OutstandingAssetLiabilities(
+                    address(current),
+                    liabilities
+                );
+            }
+        }
         licenseToken = newLicenseToken;
-        emit LicenseTokenSet(address(newLicenseToken));
+        emit LicenseTokenSet(next);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function sweepLicenseSurplus() external onlyOwner returns (uint256 amount) {
+        IERC20 current = licenseToken;
+        uint256 balance = current.balanceOf(address(this));
+        uint256 liabilities = totalLicenseLiability;
+        if (balance <= liabilities) return 0;
+
+        amount = balance - liabilities;
+        address treasury = slashedFundsTreasury;
+        _safeTransferLicenseWithDeltaCheck(treasury, amount);
+        emit LicenseSurplusSwept(address(current), treasury, amount);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -743,12 +895,44 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setSlashingManager(address newSlashingManager) public onlyOwner {
-        // zero-address protection and explicit event so a missed setter
-        // call is observable off-chain.
         require(newSlashingManager != address(0), ZeroAddress());
+        if (_authorizedSlashingManagerIndex[newSlashingManager] == 0) {
+            require(
+                _authorizedSlashingManagers.length <
+                    MAX_AUTHORIZED_SLASHING_MANAGERS,
+                InvalidConfiguration()
+            );
+            _authorizedSlashingManagers.push(newSlashingManager);
+            _authorizedSlashingManagerIndex[
+                newSlashingManager
+            ] = _authorizedSlashingManagers.length;
+            emit SlashingManagerAuthorizationUpdated(newSlashingManager, true);
+        }
         address oldValue = slashingManager;
         slashingManager = newSlashingManager;
         emit SlashingManagerUpdated(oldValue, newSlashingManager);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function revokeSlashingManager(
+        address oldSlashingManager
+    ) external onlyOwner {
+        require(oldSlashingManager != slashingManager, InvalidConfiguration());
+        uint256 indexPlusOne = _authorizedSlashingManagerIndex[
+            oldSlashingManager
+        ];
+        if (indexPlusOne == 0) revert Unauthorized();
+
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = _authorizedSlashingManagers.length - 1;
+        if (index != lastIndex) {
+            address moved = _authorizedSlashingManagers[lastIndex];
+            _authorizedSlashingManagers[index] = moved;
+            _authorizedSlashingManagerIndex[moved] = index + 1;
+        }
+        _authorizedSlashingManagers.pop();
+        delete _authorizedSlashingManagerIndex[oldSlashingManager];
+        emit SlashingManagerAuthorizationUpdated(oldSlashingManager, false);
     }
 
     /// @notice Disabled. Reverts unconditionally.
@@ -792,7 +976,10 @@ contract BondingRegistry is
         uint256 ticketAmount,
         uint256 licenseAmount
     ) public onlyOwner {
-        require(ticketAmount <= slashedTicketBalance, InsufficientBalance());
+        require(
+            ticketAmount <= slashedTicketBalance - reservedSlashedTicketBalance,
+            ReservedSlashedFunds()
+        );
         require(licenseAmount <= slashedLicenseBond, InsufficientBalance());
 
         if (ticketAmount > 0) {
@@ -802,6 +989,7 @@ contract BondingRegistry is
 
         if (licenseAmount > 0) {
             slashedLicenseBond -= licenseAmount;
+            totalLicenseLiability -= licenseAmount;
             _safeTransferLicenseWithDeltaCheck(
                 slashedFundsTreasury,
                 licenseAmount
@@ -830,6 +1018,7 @@ contract BondingRegistry is
         uint256 actualReceived = licenseToken.balanceOf(address(this)) -
             balanceBefore;
         require(actualReceived == amount, InvalidAmount());
+        totalLicenseLiability += amount;
 
         emit LicenseBondUpdated(
             operator,
@@ -846,12 +1035,17 @@ contract BondingRegistry is
     /// @param operator Address of the operator to update
     function _updateOperatorStatus(address operator) internal {
         Operator storage op = operators[operator];
+        uint256 currentVersion = eligibilityConfigurationVersion;
+        bool oldActiveStatus = op.eligibilityVersion == currentVersion &&
+            op.active;
         bool newActiveStatus = op.registered &&
             op.licenseBond >= _minLicenseBond() &&
             (ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance);
 
-        if (op.active != newActiveStatus) {
-            op.active = newActiveStatus;
+        op.eligibilityVersion = currentVersion;
+        op.active = newActiveStatus;
+
+        if (oldActiveStatus != newActiveStatus) {
             if (newActiveStatus) {
                 numActiveOperators++;
             } else {
@@ -868,12 +1062,23 @@ contract BondingRegistry is
         return (licenseRequiredBond * licenseActiveBps) / BPS_BASE;
     }
 
+    /// @dev Invalidates every cached active status in O(1). Operators are
+    ///      considered inactive until they refresh under the new version.
+    function _invalidateEligibilityStatuses() internal {
+        eligibilityConfigurationVersion++;
+        numActiveOperators = 0;
+        emit EligibilityConfigurationVersionUpdated(
+            eligibilityConfigurationVersion
+        );
+    }
+
     /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta
     ///      to detect fee-on-transfer / rebasing behavior (sender-side delta misses
     ///      fees that burn or reroute). Internal accounting is already decremented at
     ///      the call site, so a shortfall emits {LicenseTransferShortfall} rather than
     ///      reverting (a revert would brick claims if the token starts taking fees);
-    ///      the owner can swap the token via {setLicenseToken}.
+    ///      governance must pause new bonding and drain every liability before
+    ///      rotating the token via {setLicenseToken}.
     function _safeTransferLicenseWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
@@ -909,5 +1114,5 @@ contract BondingRegistry is
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[50] private __gap;
+    uint256[47] private __gap;
 }

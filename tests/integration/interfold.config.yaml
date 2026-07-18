@@ -45,6 +45,9 @@ program:
   # node:
   #   multithread_reserve_threads: 1
   #   multithread_concurrent_jobs: 8
+  #   # Test/CI only. Requires mock on-chain proof verifiers and an Interfold binary built with
+  #   # the `test-only-skip-proof-aggregation` Cargo feature.
+  #   skip_proof_aggregation: false
 
 nodes:
   cn1:

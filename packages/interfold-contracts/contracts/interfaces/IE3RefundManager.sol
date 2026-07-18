@@ -13,6 +13,13 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev Handles refund calculation and claiming for failed E3s
  */
 interface IE3RefundManager {
+    /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
+    enum FailurePayer {
+        None,
+        Requester,
+        Ciphernodes
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                        Structs                         //
@@ -26,16 +33,25 @@ interface IE3RefundManager {
         uint16 protocolBps;
         uint16 successSlashedNodeBps;
     }
+    /// @notice Immutable settlement policy selected when an E3 is requested.
+    struct E3PolicySnapshot {
+        WorkValueAllocation allocation;
+        address treasury;
+        address interfold;
+        address registry;
+        uint64 version;
+        bool initialized;
+    }
     /// @notice Refund distribution for a failed E3
     struct RefundDistribution {
         uint256 requesterAmount; // Amount for requester
         uint256 honestNodeAmount; // Total amount for honest nodes
         uint256 protocolAmount; // Amount for protocol treasury
-        uint256 totalSlashed; // Slashed funds added
+        uint256 totalSlashed; // Cumulative settled slashes denominated in the E3 fee token
         uint256 honestNodeCount; // Number of honest nodes
         bool calculated; // Whether distribution is calculated
         IERC20 feeToken; // The fee token used for this E3's payment (stored per-E3 to survive token rotations)
-        uint256 originalPayment; // Original E3 payment amount (for making requester whole)
+        uint256 originalPayment; // Original E3 payment amount retained for settlement auditability
         uint256 perNodeAmount; // Snapshotted per-honest-node payout; 0 when honestNodeCount==0
     }
     ////////////////////////////////////////////////////////////
@@ -59,10 +75,15 @@ interface IE3RefundManager {
         bytes32 claimType
     );
     /// @notice Emitted when slashed funds are escrowed for an E3
-    event SlashedFundsEscrowed(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowed(
+        uint256 indexed e3Id,
+        IERC20 indexed token,
+        uint256 amount
+    );
     /// @notice Emitted when slashed funds are applied to a failed E3's refund distribution
     event SlashedFundsApplied(
         uint256 indexed e3Id,
+        IERC20 indexed token,
         uint256 toRequester,
         uint256 toHonestNodes
     );
@@ -71,6 +92,7 @@ interface IE3RefundManager {
     ///      `SlashedFundsCredited` / `TreasurySlashedCredited` for per-recipient detail.
     event SlashedFundsDistributedOnSuccess(
         uint256 indexed e3Id,
+        IERC20 indexed token,
         uint256 toNodes,
         uint256 toProtocol
     );
@@ -102,8 +124,15 @@ interface IE3RefundManager {
     );
     /// @notice Emitted when work allocation is updated
     event WorkAllocationUpdated(WorkValueAllocation allocation);
-    /// @notice Emitted when orphaned slashed funds are withdrawn to treasury
-    event OrphanedSlashedFundsWithdrawn(uint256 indexed e3Id, uint256 amount);
+    /// @notice Emitted when an E3 freezes its settlement policy.
+    event E3PolicySnapshotted(
+        uint256 indexed e3Id,
+        uint64 indexed version,
+        address indexed treasury,
+        address interfold,
+        address registry,
+        WorkValueAllocation allocation
+    );
     /// @notice Emitted when the Interfold address is set
     event InterfoldSet(address indexed interfold);
     /// @notice Emitted when the treasury address is set
@@ -129,6 +158,10 @@ interface IE3RefundManager {
     error Unauthorized();
     /// @notice Caller has no pending balance to claim
     error NothingToClaim();
+    /// @notice Recorded liabilities exceed the manager's balance of a token.
+    error InsolventToken(IERC20 token, uint256 liability, uint256 balance);
+    /// @notice Failure reason has no configured economic responsibility.
+    error InvalidFailureReason(IInterfold.FailureReason reason);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -147,6 +180,17 @@ interface IE3RefundManager {
         IERC20 paymentToken
     ) external;
 
+    /// @notice Return the party whose collateral pays completed work for a failure reason.
+    /// @dev Requester failures pay completed work from fee escrow. Ciphernode/supply
+    ///      failures return all fee escrow and use actual ticket slashes to pay honest nodes.
+    function getFailurePayer(
+        IInterfold.FailureReason reason
+    ) external pure returns (FailurePayer payer);
+
+    /// @notice Freeze the current allocation, treasury, and committee registry for an E3.
+    /// @dev Only Interfold may call this, exactly once, during request creation.
+    function snapshotE3Policy(uint256 e3Id, address registry) external;
+
     /// @notice Requester claims their refund
     /// @param e3Id The failed E3 ID
     /// @return amount The amount claimed
@@ -163,16 +207,44 @@ interface IE3RefundManager {
 
     /// @notice Escrow slashed funds — destination decided at terminal state
     /// @param e3Id The E3 ID
+    /// @param token The actual ticket-underlying token transferred into escrow
     /// @param amount The slashed amount
-    function escrowSlashedFunds(uint256 e3Id, uint256 amount) external;
+    function escrowSlashedFunds(
+        uint256 e3Id,
+        IERC20 token,
+        uint256 amount
+    ) external;
+
+    /// @notice Settle one recorded token after the E3 reaches a terminal state.
+    function settleSlashedFunds(uint256 e3Id, IERC20 token) external;
+
+    /// @notice Pull a token-specific slashed-fund entitlement.
+    function claimSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
+    ) external returns (uint256 amount);
+
+    /// @notice Pending, unsettled slash escrow for an E3 and token.
+    function pendingSlashedFunds(
+        uint256 e3Id,
+        IERC20 token
+    ) external view returns (uint256 amount);
+
+    /// @notice Token-specific slash entitlement for an account.
+    function pendingSlashedClaim(
+        uint256 e3Id,
+        IERC20 token,
+        address account
+    ) external view returns (uint256 amount);
+
+    /// @notice Total protected liabilities recorded for a token.
+    function tokenLiability(IERC20 token) external view returns (uint256);
 
     /// @notice Distribute escrowed slashed funds on success
     /// @param e3Id The E3 ID
-    /// @param honestNodes Honest node addresses
     /// @param paymentToken The fee token for this E3
     function distributeSlashedFundsOnSuccess(
         uint256 e3Id,
-        address[] calldata honestNodes,
         IERC20 paymentToken
     ) external;
 
@@ -183,11 +255,14 @@ interface IE3RefundManager {
         uint256 e3Id
     ) external view returns (RefundDistribution memory distribution);
 
-    /// @notice Check if address has claimed refund
-    /// @param e3Id The E3 ID
-    /// @param claimant The address to check
-    /// @return claimed Whether the address has claimed
-    function hasClaimed(
+    /// @notice Check whether an address claimed the requester-refund role
+    function hasRequesterClaimed(
+        uint256 e3Id,
+        address claimant
+    ) external view returns (bool claimed);
+
+    /// @notice Check whether an address claimed the honest-node reward role
+    function hasHonestNodeClaimed(
         uint256 e3Id,
         address claimant
     ) external view returns (bool claimed);
@@ -213,30 +288,10 @@ interface IE3RefundManager {
         view
         returns (WorkValueAllocation memory allocation);
 
-    ////////////////////////////////////////////////////////////
-    //                                                        //
-    //          Success-Path Slashed-Funds Pull Payments      //
-    //                                                        //
-    ////////////////////////////////////////////////////////////
-
-    /// @notice Honest node pulls credited success-path slashed funds.
-    /// @param e3Id The successful E3 ID.
-    /// @return amount Amount transferred.
-    function claimSlashedFundsOnSuccess(
+    /// @notice Return the settlement policy frozen for an E3.
+    function getE3PolicySnapshot(
         uint256 e3Id
-    ) external returns (uint256 amount);
-
-    /// @notice Batch pull credited success-path slashed funds across multiple E3s.
-    /// @dev Each e3Id may use a different reward token (recorded at request time);
-    ///      events carry the per-E3 token address. A mixed-token sum return would be
-    ///      meaningless, so the function is intentionally void.
-    function claimSlashedFundsOnSuccessBatch(uint256[] calldata e3Ids) external;
-
-    /// @notice Get pending success-path slashed-funds credit for (e3Id, account).
-    function pendingSlashedFundsOnSuccess(
-        uint256 e3Id,
-        address account
-    ) external view returns (uint256);
+    ) external view returns (E3PolicySnapshot memory snapshot);
 
     /// @notice Treasury pulls accrued credits (protocol slashed-fund share + dust).
     /// @dev Caller must be the treasury that was credited.

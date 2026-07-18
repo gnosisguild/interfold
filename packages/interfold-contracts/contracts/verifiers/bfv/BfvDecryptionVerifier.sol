@@ -24,9 +24,12 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [1]                = expectedC7KeyHash      (VK anchor)
  *        [2]                = committee_hash_hi
  *        [3]                = committee_hash_lo
- *        [4 .. 4+1+(3*(T+1))) = circuit-internal (sk, esm, ct columns)
+ *        [4]                = decryption_domain_hi
+ *        [5]                = decryption_domain_lo
+ *        [6]                = aggregate recursive VK key hash
+ *        [7 .. 7+3*(T+1))  = party_ids, expected_sk, expected_esm columns
  *        [last 100]         = plaintext message coefficients (100 u64 LE)
- *        Total: expectedPublicInputsLen = 4 + 1 + 3*(T+1) + 100.
+ *        Total: expectedPublicInputsLen = 6 + 1 + 3*(T+1) + 100.
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
@@ -38,15 +41,19 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      with some self-declared commitment, so this binds that commitment to
  *      the address-signed DKG output actually recorded for this E3.
  *
- *      NOTE -- binding relaxation still open: there is no ciphertext-binding
- *      check (the circuits do not expose a ciphertext commitment on this
- *      proof) and no wrapper-level chainId/deployment binding beyond the
- *      committee-hash and DKG-anchor checks above. The caller-supplied
- *      `committeeRoot`, `sortedNodes`, `ciphertextOutputHash`, and
- *      `committeePublicKey` are preserved in the interface for forward
- *      compatibility but not yet checked.
+ *      Each secret-bearing C6 proof commits to the same domain limbs. C6Fold
+ *      preserves them, and DecryptionAggregator exposes them here, so an
+ *      aggregator cannot re-label an existing proof for another E3.
+ *
+ *      The domain prevents cross-context replay, while the DKG anchors bind
+ *      the proof's secret-bearing commitments to the authenticated DKG output.
+ *      The circuit still does not expose a ciphertext commitment that can be
+ *      compared with the on-chain ciphertext hash.
  */
 contract BfvDecryptionVerifier is IDecryptionVerifier {
+    error InvalidCircuitVerifier(address verifier);
+    error InvalidVerificationKeyHash();
+
     /// @dev Message is always the last 100 public inputs (100 uint64 coeffs = 800 bytes plaintext).
     uint256 internal constant MESSAGE_COEFFS_COUNT = 100;
 
@@ -54,8 +61,8 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
 
     /// @dev `decryption_aggregator` return columns after the leading key hash
-    ///      (party_ids, expected_sk, expected_esm). NOTE: despite the name, there is
-    ///      no ciphertext column here -- `decryption_aggregator` does not expose one.
+    ///      (party_ids, expected_sk, expected_esm). There is no ciphertext
+    ///      column here because the circuit does not expose one in its return tuple.
     uint256 internal constant DEC_RETURN_COLUMN_COUNT = 3;
 
     /// @dev `publicInputs` index for `committee_hash_hi` (after sub-circuit key hashes).
@@ -64,10 +71,14 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev `publicInputs` index for `committee_hash_lo`.
     uint256 internal constant COMMITTEE_HASH_LO_IDX = 3;
 
+    /// @dev Public input indices for the E3 decryption-domain limbs.
+    uint256 internal constant DECRYPTION_DOMAIN_HI_IDX = 4;
+    uint256 internal constant DECRYPTION_DOMAIN_LO_IDX = 5;
+
     /// @notice BFV threshold `T`; must match the compiled DecryptionAggregator circuit.
     uint256 public immutable threshold;
 
-    /// @dev `4 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
+    /// @dev `6 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
     uint256 internal immutable expectedPublicInputsLen;
 
     /// @dev `publicInputs` start index of the `party_ids[T+1]` column.
@@ -108,14 +119,21 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         uint256 _threshold
     ) {
         require(_threshold > 0, "BfvDecryptionVerifier: threshold=0");
+        if (_circuitVerifier.code.length == 0) {
+            revert InvalidCircuitVerifier(_circuitVerifier);
+        }
+        if (
+            _expectedC6FoldKeyHash == bytes32(0) ||
+            _expectedC7KeyHash == bytes32(0)
+        ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
         expectedPublicInputsLen =
-            4 +
+            6 +
             DEC_RETURN_PREFIX_LEN +
             (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
             MESSAGE_COEFFS_COUNT;
 
-        partyIdColOffset = 4 + DEC_RETURN_PREFIX_LEN;
+        partyIdColOffset = 6 + DEC_RETURN_PREFIX_LEN;
         skColOffset = partyIdColOffset + (_threshold + 1);
         esmColOffset = skColOffset + (_threshold + 1);
 
@@ -128,10 +146,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @inheritdoc IDecryptionVerifier
     function verify(
         uint256 e3Id,
-        uint256 committeeRoot,
-        address[] calldata sortedNodes,
-        bytes32 ciphertextOutputHash,
-        bytes32 committeePublicKey,
+        bytes32 decryptionDomain,
         bytes32 plaintextOutputHash,
         bytes32 committeeHash,
         bytes calldata proof
@@ -166,6 +181,18 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         ) {
             revert DomainBindingMismatch();
         }
+        if (
+            publicInputs[DECRYPTION_DOMAIN_HI_IDX] !=
+            CommitteeHashLib.hi(decryptionDomain)
+        ) {
+            revert DomainBindingMismatch();
+        }
+        if (
+            publicInputs[DECRYPTION_DOMAIN_LO_IDX] !=
+            CommitteeHashLib.lo(decryptionDomain)
+        ) {
+            revert DomainBindingMismatch();
+        }
 
         // Plaintext hash check: 100-coefficient plaintext must hash to the claimed value.
         if (!_verifyPlaintextHash(publicInputs, plaintextOutputHash)) {
@@ -175,13 +202,6 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         // Cross-phase binding: the proof's per-party sk/esm commitments must match
         // the DKG anchors this registry recorded (address-signed) for this E3.
         _verifyDkgAnchors(e3Id, publicInputs);
-
-        // Suppress unused-variable warnings for forward-compatibility params.
-        // These will be used for circuit-level domain binding in a future circuit update.
-        committeeRoot;
-        sortedNodes;
-        ciphertextOutputHash;
-        committeePublicKey;
 
         // Bubble up as a revert instead of a silent `false`.
         if (!circuitVerifier.verify(rawProof, publicInputs)) {
@@ -225,7 +245,9 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         ) = ciphernodeRegistry.getDkgAnchors(e3Id);
 
         for (uint256 i = 0; i < threshold + 1; i++) {
-            uint256 circuitPartyId = uint256(publicInputs[partyIdColOffset + i]);
+            uint256 circuitPartyId = uint256(
+                publicInputs[partyIdColOffset + i]
+            );
             uint256 registryPartyId = circuitPartyId - 1;
 
             uint256 matchedIdx = type(uint256).max;

@@ -22,10 +22,10 @@ pub fn committee_addresses_from_nodes(nodes: &OrderedSet<String>) -> Result<Vec<
         .collect()
 }
 
-/// Build committee addresses in ascending `party_id` order (runtime score-sorted committee).
+/// Build committee addresses in ascending `party_id` order (runtime address-sorted committee).
 ///
 /// Must match `CommitteeHashLib.hash(c.topNodes)` after on-chain finalization sorts
-/// `topNodes` by ascending ticket score.
+/// `topNodes` by ascending address.
 pub fn committee_addresses_in_party_order(
     party_ids: &[u64],
     party_nodes: &HashMap<u64, String>,

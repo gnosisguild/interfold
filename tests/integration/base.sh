@@ -19,7 +19,7 @@ done
 
 pnpm evm:clean
 
-if [[ "$PROOF_AGGREGATION_ENABLED" == "true" ]]; then
+if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Deploy contracts (ZK verification + fold attestation verifier)"
   ENABLE_ZK_VERIFICATION=true pnpm evm:deploy
 else
@@ -63,7 +63,7 @@ pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_4 --network localho
 heading "Add ciphernode $CIPHERNODE_ADDRESS_5"
 pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_5 --network localhost
 
-heading "Request Committee (proof-aggregation-enabled=$PROOF_AGGREGATION_ENABLED)"
+heading "Request Committee"
 
 ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
   --moduli 0xffffee001 \
@@ -82,12 +82,11 @@ pnpm committee:new \
   --input-window-start "$INPUT_WINDOW_START" \
   --input-window-end "$INPUT_WINDOW_END" \
   --e3-params "$ENCODED_PARAMS" \
-  --committee-size 0 \
-  --proof-aggregation-enabled "$PROOF_AGGREGATION_ENABLED"
+  --committee-size 0
 
 wait_for_committee_pubkey 0 "$SCRIPT_DIR/output/pubkey.bin" "$INTEGRATION_DKG_TIMEOUT"
 
-if [[ "$PROOF_AGGREGATION_ENABLED" == "true" ]]; then
+if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Verify active aggregator (proof aggregation / DKG path)"
   ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address 0 "$INTEGRATION_DKG_TIMEOUT")
   echo "Active aggregator: $ACTIVE_AGG_ADDRESS"
@@ -98,7 +97,7 @@ daemon_query_events cn1 "$SCRIPT_DIR/output/events.txt"
 
 check_last_line "$SCRIPT_DIR/output/events.txt" '{"Next":10}'
 
-if [[ "$PROOF_AGGREGATION_ENABLED" == "true" ]]; then
+if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Wire MockE3Program → Interfold so publishInput triggers decryption"
   pnpm e3-program:setMockInterfold --network localhost
 

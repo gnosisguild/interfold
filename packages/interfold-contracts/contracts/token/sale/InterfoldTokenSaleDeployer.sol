@@ -22,8 +22,8 @@ interface IFoldToken {
 
 /**
  * @title InterfoldTokenSaleDeployer
- * @notice Operator-callable sale deployment factory. The Safe passed as
- *         `protocolAdmin` becomes the FOLD owner; the caller only pays gas.
+ * @notice Designated-operator sale deployment factory. The Safe passed as
+ *         `protocolAdmin` becomes the FOLD owner.
  * @dev The CCA auction address is discovered by the script from LBPStrategy
  *      logs after deployment. The Safe then accepts FOLD ownership and sets
  *      FOLD's claim source once.
@@ -77,10 +77,15 @@ contract InterfoldTokenSaleDeployer {
     error SaleAmountTooLarge();
     error FoldOwnershipNotRetained(address owner);
     error ArithmeticOverflow();
+    error UnauthorizedOperator(address caller);
 
     /// @notice The Safe that becomes FOLD owner/admin.
     // solhint-disable-next-line immutable-vars-naming
     address public immutable protocolAdmin;
+
+    /// @notice The deployment operator fixed when this factory is created.
+    // solhint-disable-next-line immutable-vars-naming
+    address public immutable deploymentOperator;
 
     /// @notice Replay guard: each config can be deployed exactly once.
     mapping(bytes32 configHash => bool used) public usedConfigHashes;
@@ -107,18 +112,23 @@ contract InterfoldTokenSaleDeployer {
     constructor(address protocolAdmin_) {
         if (protocolAdmin_ == address(0)) revert ZeroAddress();
         protocolAdmin = protocolAdmin_;
+        deploymentOperator = msg.sender;
     }
 
     /**
      * @notice Deploys FOLD and starts a Uniswap LiquidityLauncher/LBPStrategy
      *         distribution in one transaction.
-     * @dev Callable by the operator wallet. FOLD ownership is transferred to
+     * @dev Callable only by the operator wallet that deployed this factory.
+     *      FOLD ownership is transferred to
      *      the Safe at the end, but remains pending until the Safe accepts it.
      */
     function deploySaleWithLiquidityLauncher(
         LbpSaleConfig calldata config,
         bytes calldata foldInitCode
     ) external returns (address fold) {
+        if (msg.sender != deploymentOperator) {
+            revert UnauthorizedOperator(msg.sender);
+        }
         bytes32 configHash = _checkLbpConfig(config, foldInitCode);
 
         fold = _create(foldInitCode);

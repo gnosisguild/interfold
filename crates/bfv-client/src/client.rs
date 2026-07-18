@@ -185,6 +185,38 @@ pub fn compute_pk_commitment(
     Ok(commitment)
 }
 
+/// Validate client-consumed BFV public-key bytes against the on-chain
+/// commitment (C5-proven by the mandatory final DKG proof).
+///
+/// Validation is semantic rather than byte-for-byte: `fhe.rs` normalizes an
+/// internal variable-time flag while decoding threshold-aggregated keys, so a
+/// decode/re-encode cycle is not a stable serialization check. The decoded key
+/// is safe to consume only when its circuit commitment matches the expected
+/// on-chain commitment.
+pub fn validate_pk_commitment(
+    public_key: &[u8],
+    expected_commitment: [u8; 32],
+    degree: usize,
+    plaintext_modulus: u64,
+    moduli: Vec<u64>,
+) -> Result<()> {
+    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
+
+    let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
+    let decoded = PublicKey::from_bytes(public_key, &params)
+        .map_err(|e| anyhow!("Error deserializing public key: {e}"))?;
+
+    let actual_commitment = compute_public_key_commitment(&params, &decoded)
+        .map_err(|e| anyhow!("Error computing public key commitment: {e}"))?;
+    if actual_commitment != expected_commitment {
+        return Err(anyhow!(
+            "Public key commitment mismatch: event bytes are not the key proven by C5"
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn compute_ct_commitment(
     ct: Vec<u8>,
     degree: usize,
@@ -236,6 +268,69 @@ mod tests {
     fn public_key_generation_returns_error_for_invalid_parameters() {
         let error = generate_public_key(7, 17, vec![97]).unwrap_err();
         assert!(error.to_string().contains("Invalid BFV parameters"));
+    }
+
+    #[test]
+    fn validates_threshold_key_matching_the_proven_commitment() {
+        use fhe::mbfv::{Aggregate as _, CommonRandomPoly, PublicKeyShare};
+
+        let param_set: BfvParamSet = DEFAULT_BFV_PRESET.into();
+        let params = build_bfv_params_from_set_arc(param_set);
+        let mut rng = rng();
+        let crp = CommonRandomPoly::new(&params, &mut rng).unwrap();
+        let shares = (0..2)
+            .map(|_| {
+                let secret_key = SecretKey::random(&params, &mut rng);
+                PublicKeyShare::new(&secret_key, crp.clone(), &mut rng).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let expected_key = PublicKey::from_shares(shares).unwrap();
+        let substituted_key = PublicKey::new(&SecretKey::random(&params, &mut rng), &mut rng);
+        let expected_bytes = expected_key.to_bytes();
+        let normalized_bytes = PublicKey::from_bytes(&expected_bytes, &params)
+            .unwrap()
+            .to_bytes();
+        assert_ne!(
+            normalized_bytes, expected_bytes,
+            "threshold aggregation must exercise fhe.rs variable-time normalization"
+        );
+        let expected_commitment = compute_pk_commitment(
+            expected_bytes.clone(),
+            param_set.degree,
+            param_set.plaintext_modulus,
+            param_set.moduli.to_vec(),
+        )
+        .unwrap();
+
+        validate_pk_commitment(
+            &expected_bytes,
+            expected_commitment,
+            param_set.degree,
+            param_set.plaintext_modulus,
+            param_set.moduli.to_vec(),
+        )
+        .unwrap();
+
+        let error = validate_pk_commitment(
+            &substituted_key.to_bytes(),
+            expected_commitment,
+            param_set.degree,
+            param_set.plaintext_modulus,
+            param_set.moduli.to_vec(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("commitment mismatch"));
+
+        let mut equivalent_encoding = expected_bytes;
+        equivalent_encoding.extend_from_slice(&[0x78, 0x01]);
+        validate_pk_commitment(
+            &equivalent_encoding,
+            expected_commitment,
+            param_set.degree,
+            param_set.plaintext_modulus,
+            param_set.moduli.to_vec(),
+        )
+        .unwrap();
     }
 
     #[test]

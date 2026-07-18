@@ -88,7 +88,10 @@ impl ThresholdPlaintextAggregator {
         }
         if !self.proof_aggregation_enabled {
             if self.pending.decryption_aggregator_proofs.is_none() {
-                self.pending.decryption_aggregator_proofs = Some(Vec::new());
+                // Reuse the already-generated C7 proofs as non-empty test placeholders. Mock
+                // decryption verifiers accept them; production verifiers reject them because
+                // they are not DecryptionAggregator proofs.
+                self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
             }
             return Ok(());
         }
@@ -117,7 +120,7 @@ impl ThresholdPlaintextAggregator {
             return Ok(());
         }
         if !self.proof_aggregation_enabled {
-            self.pending.decryption_aggregator_proofs = Some(Vec::new());
+            self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
             return Ok(());
         }
         let Some(honest_c6) = self.pending.honest_c6_proofs_for_agg.as_ref() else {

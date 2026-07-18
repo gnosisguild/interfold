@@ -148,6 +148,17 @@ describe("SlashingManager", function () {
     await slashingManager.setCiphernodeRegistry(mockCiphernodeRegistryAddress);
     await slashingManager.setInterfold(addressOne);
     await slashingManager.setE3RefundManager(addressOne);
+    await networkHelpers.setBalance(addressOne, ethers.parseEther("1"));
+    await networkHelpers.impersonateAccount(addressOne);
+    await slashingManager
+      .connect(await ethers.getSigner(addressOne))
+      .snapshotE3Dependencies(0);
+    await slashingManager
+      .connect(await ethers.getSigner(addressOne))
+      .snapshotE3Dependencies(1);
+    await networkHelpers.stopImpersonatingAccount(addressOne);
+    await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
+    await mockCiphernodeRegistry.setCommitteeNodes(1, [operatorAddress]);
 
     return {
       owner,
@@ -345,6 +356,42 @@ describe("SlashingManager", function () {
 
       await expect(
         slashingManager.setSlashPolicy(REASON_PT_0, policy),
+      ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
+    });
+
+    it("rejects a failure policy that does not expel the faulty operator", async function () {
+      const { slashingManager } = await loadFixture(setup);
+
+      await expect(
+        slashingManager.setSlashPolicy(REASON_PT_0, {
+          ticketPenalty: ethers.parseUnits("50", 6),
+          licensePenalty: 0,
+          requiresProof: true,
+          proofVerifier: ethers.ZeroAddress,
+          banNode: false,
+          appealWindow: 0,
+          enabled: true,
+          affectsCommittee: false,
+          failureReason: 4,
+        }),
+      ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
+    });
+
+    it("rejects a failure policy with the sentinel failure reason", async function () {
+      const { slashingManager } = await loadFixture(setup);
+
+      await expect(
+        slashingManager.setSlashPolicy(REASON_PT_0, {
+          ticketPenalty: ethers.parseUnits("50", 6),
+          licensePenalty: 0,
+          requiresProof: true,
+          proofVerifier: ethers.ZeroAddress,
+          banNode: false,
+          appealWindow: 0,
+          enabled: true,
+          affectsCommittee: true,
+          failureReason: 13,
+        }),
       ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
     });
 
@@ -1093,6 +1140,27 @@ describe("SlashingManager", function () {
             ethers.toUtf8Bytes(""),
           ),
       ).to.be.revertedWithCustomError(slashingManager, "ZeroAddress");
+    });
+
+    it("should reject evidence for an operator outside the E3 committee", async function () {
+      const { slashingManager, slasher, notTheOwner } =
+        await loadFixture(setup);
+
+      await setupPolicies(slashingManager);
+
+      await expect(
+        slashingManager
+          .connect(slasher)
+          .proposeSlashEvidence(
+            0,
+            await notTheOwner.getAddress(),
+            REASON_INACTIVITY,
+            ethers.toUtf8Bytes("unrelated operator"),
+          ),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "OperatorNotInCommittee",
+      );
     });
   });
 

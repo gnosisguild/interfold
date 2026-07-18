@@ -175,7 +175,7 @@ error handling, read the clock, or mutate actor state.
 
 Protocol-specific invariants must be named and tested. Important examples include:
 
-- runtime `party_id` is derived from the finalized committee normalized by ascending ticket score;
+- runtime `party_id` is derived from the finalized committee normalized by ascending address;
 - the active aggregator is the lowest non-expelled `party_id`;
 - the DKG aggregation circuit receives exactly `H` canonical honest NodeFold proofs and exactly `N`
   ordered committee addresses;

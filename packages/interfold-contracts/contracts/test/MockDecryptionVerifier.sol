@@ -15,9 +15,6 @@ contract MockDecryptionVerifier is IDecryptionVerifier {
 
     function verify(
         uint256,
-        uint256,
-        address[] calldata,
-        bytes32,
         bytes32,
         bytes32,
         bytes32,

@@ -6,6 +6,11 @@ license.workspace = true
 description = "E3 - CLI Entrypoints"
 repository = "https://github.com/theinterfold/interfold/crates/entrypoint"
 
+[features]
+test-only-skip-proof-aggregation = [
+    "e3-ciphernode-builder/test-only-skip-proof-aggregation",
+]
+
 [dependencies]
 actix = { workspace = true }
 e3-aggregator = { workspace = true }

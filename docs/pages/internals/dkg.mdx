@@ -322,18 +322,25 @@ steps:
    and t is the plaintext modulus. The decoding handles centered representation so coefficients are
    correctly recovered within `[0, t)`
 
-C7 proves all three steps were done correctly. The output is the final plaintext — the result of the
-encrypted computation, publicly verifiable by anyone. This circuit runs once, executed by the
+C7 proves all three steps were done correctly. The equality check applies to every decoded
+coefficient, including coefficients claimed as zero. The output is the final plaintext — the result
+of the encrypted computation, publicly verifiable by anyone. This circuit runs once, executed by the
 aggregator.
 
 ---
 
 ## Proof Aggregation and On-Chain Anchoring
 
-E3 programs can opt into **proof aggregation** by setting `proofAggregationEnabled = true` at
-request time. In that mode the network does not post per-node, per-circuit proofs on-chain. Instead
-the aggregator submits two recursive proofs — one for DKG, one for decryption — together with
-per-node attestations that bind each surfaced commitment to a specific registered operator.
+**Proof aggregation is mandatory at the contract boundary.** The network does not post per-node,
+per-circuit proofs on-chain. Instead the aggregator submits two recursive proofs — one for DKG, one
+for decryption — together with per-node attestations that bind each surfaced commitment to a
+specific registered operator.
+
+Ciphernodes built with the `test-only-skip-proof-aggregation` Cargo feature expose a test/CI-only
+`skip_proof_aggregation` node setting. It skips the recursive workers and reuses the
+already-generated C5/C7 proofs as non-empty placeholders for mock verifiers. Production builds do
+not contain the disabling path and reject configurations that request it. Contracts still execute
+their verifier calls.
 
 ### Canonical party_id assignment
 
@@ -494,10 +501,10 @@ Production deploys on a non-canonical preset must regenerate locally for that de
 The repo enforces sync with two modes of `pnpm generate:verifiers`:
 
 - **`--check`** — used by `tests/integration/lib/prebuild.sh` (when
-  `PROOF_AGGREGATION_ENABLED=true`) and by the benchmark gas-extraction scripts. Regenerates each
-  verifier in memory, runs the same `prettier-plugin-solidity` formatting the committed files use,
-  and diffs against the committed `.sol`. Any drift fails the run with a clear fix recipe instead of
-  silently rewriting committed contracts mid-test.
+  `CIPHERNODE_SKIP_PROOF_AGGREGATION=false`) and by the benchmark gas-extraction scripts.
+  Regenerates each verifier in memory, runs the same `prettier-plugin-solidity` formatting the
+  committed files use, and diffs against the committed `.sol`. Any drift fails the run with a clear
+  fix recipe instead of silently rewriting committed contracts mid-test.
 - **`--write`** (the default for manual invocation) — overwrites the committed files. Run this when
   you intentionally bump the canonical-preset circuits or the Noir/bb toolchain, then commit the
   diff.
@@ -511,11 +518,13 @@ for the full contract.
 ### Decryption recursive proof
 
 The decryption recursive proof (`BfvDecryptionVerifier`) follows the same shape: a recursive Honk
-proof aggregates **C6** from at least **T+1** parties plus **C7**, surfaces `expected_sk_commits[]`
-and `expected_esm_commits[]` per party, and binds to the on-chain committee hash. The registry
-compares the surfaced commitments against the anchors stored at `publishCommittee` — if any anchor
-differs the proof is rejected — and the plaintext is decoded from the proof's last 100 public inputs
-(one `uint64` coefficient each, packed into bytes).
+proof aggregates **C6** from at least **T+1** parties plus **C7**, carries a domain over the chain,
+deployment, E3, committee, ciphertext, and committee-key context, and surfaces the party IDs plus
+`expected_sk_commits[]` and `expected_esm_commits[]` per party. The wrapper receives `e3Id`
+separately so it can compare those surfaced commitments against the anchors stored at
+`publishCommittee`; if any anchor differs, or if the E3 domain differs, the proof is rejected. The
+plaintext is decoded from the proof's last 100 public inputs (one `uint64` coefficient each, packed
+into bytes).
 
 ### Slashing-evidence binding
 

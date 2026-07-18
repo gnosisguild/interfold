@@ -11,6 +11,7 @@ import {
   ADDRESS_ONE as AddressOne,
   ADDRESS_TWO as AddressTwo,
   deployInterfoldSystem,
+  encodeMockDkgProof,
   ethers,
   networkHelpers,
 } from "../fixtures";
@@ -77,7 +78,6 @@ describe("CiphernodeRegistryOwnable", function () {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-      proofAggregationEnabled: false,
     };
 
     const fee = await interfold.getE3Quote(requestParams);
@@ -207,9 +207,87 @@ describe("CiphernodeRegistryOwnable", function () {
       );
       expect(await registry.rootAt(0)).to.not.equal(0);
     });
+
+    it("AUD-M03: fails closed after governance updates until operators refresh", async function () {
+      const {
+        registry,
+        interfold,
+        bondingRegistry,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+
+      await bondingRegistry.setLicenseActiveBps(9_000);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      await expect(
+        makeRequest(
+          interfold,
+          usdcToken,
+          mockE3Program,
+          mockDecryptionVerifier,
+        ),
+      )
+        .to.be.revertedWithCustomError(registry, "InsufficientCiphernodes")
+        .withArgs(3, 0);
+
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(3);
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      expect(await registry.rootAt(0)).to.equal(await registry.root());
+    });
   });
 
   describe("publishCommittee()", function () {
+    it("AUD-C02: requires a final DKG proof and attestation bundle", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await finalizeCommitteeAfterWindow(registry, 0);
+
+      await expect(
+        registry.publishCommittee(0, data, dataHash, "0x", "0x"),
+      ).to.be.revertedWithCustomError(registry, "DkgProofRequired");
+      await expect(
+        registry.publishCommittee(
+          0,
+          data,
+          dataHash,
+          encodeMockDkgProof(dataHash),
+          "0x",
+        ),
+      ).to.be.revertedWithCustomError(registry, "FoldAttestationsRequired");
+    });
     it("allows any caller to publish a finalized committee", async function () {
       const {
         registry,
@@ -237,7 +315,13 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(
         registry
           .connect(notTheOwner)
-          .publishCommittee(0, data, dataHash, "0x", "0x"),
+          .publishCommittee(
+            0,
+            data,
+            dataHash,
+            encodeMockDkgProof(dataHash),
+            "0x01",
+          ),
       )
         .to.emit(registry, "CommitteePublished")
         .withArgs(
@@ -249,7 +333,7 @@ describe("CiphernodeRegistryOwnable", function () {
           ],
           data,
           dataHash,
-          "0x",
+          encodeMockDkgProof(dataHash),
         );
     });
     it("stores the public key of the committee", async function () {
@@ -275,7 +359,13 @@ describe("CiphernodeRegistryOwnable", function () {
       await registry.connect(operator3).submitTicket(0, 1);
       await finalizeCommitteeAfterWindow(registry, 0);
 
-      await registry.publishCommittee(0, data, dataHash, "0x", "0x");
+      await registry.publishCommittee(
+        0,
+        data,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
       expect(await registry.committeePublicKey(0)).to.equal(dataHash);
     });
     it("emits a CommitteePublished event", async function () {
@@ -303,7 +393,13 @@ describe("CiphernodeRegistryOwnable", function () {
       await finalizeCommitteeAfterWindow(registry, 0);
 
       await expect(
-        await registry.publishCommittee(0, data, dataHash, "0x", "0x"),
+        await registry.publishCommittee(
+          0,
+          data,
+          dataHash,
+          encodeMockDkgProof(dataHash),
+          "0x01",
+        ),
       )
         .to.emit(registry, "CommitteePublished")
         .withArgs(
@@ -315,7 +411,7 @@ describe("CiphernodeRegistryOwnable", function () {
           ],
           data,
           dataHash,
-          "0x",
+          encodeMockDkgProof(dataHash),
         );
     });
   });
@@ -475,7 +571,13 @@ describe("CiphernodeRegistryOwnable", function () {
       await registry.connect(operator3).submitTicket(e3Id, 1);
       await finalizeCommitteeAfterWindow(registry, e3Id);
 
-      await registry.publishCommittee(e3Id, data, dataHash, "0x", "0x");
+      await registry.publishCommittee(
+        e3Id,
+        data,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
       expect(await registry.committeePublicKey(e3Id)).to.equal(dataHash);
     });
     it("reverts if the committee has not been published", async function () {

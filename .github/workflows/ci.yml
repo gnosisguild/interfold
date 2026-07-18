@@ -162,6 +162,9 @@ jobs:
       - name: Checking code format rust
         run: pnpm rust:lint
 
+      - name: Compile contracts for ABI catalog tests
+        run: pnpm evm:build
+
       - name: Run Unit Tests
         run: 'cargo test --lib && cargo test --doc'
 
@@ -172,7 +175,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   rust_integration_tests:
-    needs: [detect_changes]
+    needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.rust_integration_tests == 'true'
     timeout-minutes: 45
     runs-on:
@@ -211,9 +214,22 @@ jobs:
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
 
+      - name: Download source-aligned ZK fixtures
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: integration-noir-artifacts
+          path: .ci-noir/
+
+      - name: Stage source-aligned circuit fixtures
+        run: |
+          chmod +x .ci-noir/bin/bb
+          mkdir -p dist/circuits/insecure-512
+          cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
+
       - name: Run Integration Tests
         env:
-          BENCHMARK_PROOF_AGGREGATION: 'false'
+          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
+          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
         run: 'cargo test --test integration -- --nocapture'
 
   zk_prover_integration:
@@ -376,6 +392,12 @@ jobs:
           echo "## Lint results" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
 
+      - name: 'Enforce production contract size budget'
+        run: 'pnpm --filter @interfold/contracts size:check'
+
+      - name: 'Validate upgrade storage layouts'
+        run: 'pnpm --filter @interfold/contracts validate:upgrade'
+
       - name: 'Test the contracts and generate the coverage report'
         run: 'pnpm coverage'
 
@@ -438,6 +460,22 @@ jobs:
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
+      - name: Cache Barretenberg binary
+        id: cache-integration-bb
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /usr/local/bin/bb
+          key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
+
+      - name: Install Barretenberg (bb)
+        if: steps.cache-integration-bb.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
+          BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
+          sudo mv "$BB_BIN" /usr/local/bin/bb
+          chmod +x /usr/local/bin/bb
+
       - name: Install solc
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
@@ -463,6 +501,15 @@ jobs:
           path: |
             target/debug/fake_encrypt
             target/debug/pack_e3_params
+          if-no-files-found: error
+
+      - name: Upload source-aligned ZK fixtures
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integration-noir-artifacts
+          include-hidden-files: true
+          path: tests/integration/.interfold/noir/
+          retention-days: 1
           if-no-files-found: error
 
   check-nix-flake:
@@ -515,6 +562,11 @@ jobs:
         with:
           name: build-artifacts
           path: target/debug/
+      - name: 'Download source-aligned ZK fixtures'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: integration-noir-artifacts
+          path: tests/integration/.interfold/noir/
       - name: 'Download interfold binary'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -538,11 +590,11 @@ jobs:
           chmod +x target/debug/fake_encrypt
           chmod +x target/debug/pack_e3_params
           chmod +x ~/.cargo/bin/interfold
-      - name: 'Setup ZK prover'
-        run: |
-          interfold noir setup
+          chmod +x tests/integration/.interfold/noir/bin/bb
       - name: 'Run ${{ matrix.test-suite }} tests'
-        run: 'pnpm test:integration ${{ matrix.test-suite }} --no-prebuild'
+        run: |
+          INTERFOLD_BIN="$HOME/.cargo/bin/interfold" \
+            pnpm test:integration ${{ matrix.test-suite }} --no-prebuild
       - name: 'Add test summary'
         run: |
           echo "## Test results for ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
@@ -578,7 +630,7 @@ jobs:
           && sudo apt-get install -y solc protobuf-compiler
 
       - name: Build interfold CLI
-        run: cargo install --locked --path crates/cli --bin interfold
+        run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
 
       - name: Upload interfold binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

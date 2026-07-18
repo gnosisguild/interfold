@@ -375,7 +375,7 @@ pub struct DkgAggregationInput<'a> {
     pub c5_proof: &'a Proof,
     /// Honest party ids in the same order as `node_fold_proofs` (e.g. sorted ascending).
     pub party_ids: &'a [u64],
-    /// Ordered committee addresses (`topNodes` / sortition order) for `committee_hash_*` public inputs.
+    /// Address-ordered committee (`topNodes` / party order) for `committee_hash_*` public inputs.
     pub committee_addresses: &'a [Address],
 }
 
@@ -553,6 +553,8 @@ struct DecryptionAggregatorWitness {
     committee_members: Vec<String>,
     committee_hash_hi: String,
     committee_hash_lo: String,
+    domain_hi: String,
+    domain_lo: String,
 }
 
 /// Prove [`CircuitName::DecryptionAggregator`] for each job (C6 fold + C7), with
@@ -608,11 +610,18 @@ pub fn prove_decryption_aggregation_jobs(
             &format!("{e3_id}-c6fold-{i}"),
             artifacts_dir,
         )?;
+        let c6_fold_public = proof_public_field_strings(&c6_fold)?;
+        let domain_hi = c6_fold_public.get(4).cloned().ok_or_else(|| {
+            ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 4".into())
+        })?;
+        let domain_lo = c6_fold_public.get(5).cloned().ok_or_else(|| {
+            ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 5".into())
+        })?;
 
         let witness = DecryptionAggregatorWitness {
             c6_fold_vk: c6_fold_vk.verification_key.clone(),
             c6_fold_proof: proof_field_strings(&c6_fold)?,
-            c6_fold_public: proof_public_field_strings(&c6_fold)?,
+            c6_fold_public,
             c7_vk: c7_vk.verification_key.clone(),
             c7_proof: proof_field_strings(job.c7_proof)?,
             c7_public: proof_public_field_strings(job.c7_proof)?,
@@ -621,6 +630,8 @@ pub fn prove_decryption_aggregation_jobs(
             committee_members: committee_members.clone(),
             committee_hash_hi: committee_hash_hi.clone(),
             committee_hash_lo: committee_hash_lo.clone(),
+            domain_hi,
+            domain_lo,
         };
 
         let json = serde_json::to_value(&witness)

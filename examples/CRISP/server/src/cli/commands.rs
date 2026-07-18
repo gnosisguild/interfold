@@ -270,8 +270,6 @@ pub async fn initialize_crisp_round(
         U256::from(window_start + CONFIG.e3_duration),
     ];
 
-    let proof_aggregation_enabled = CONFIG.e3_proof_aggregation_enabled;
-
     let fee_amount = contract
         .get_e3_quote(
             committee_size,
@@ -279,7 +277,6 @@ pub async fn initialize_crisp_round(
             e3_program,
             param_set,
             compute_provider_params_bytes.clone(),
-            proof_aggregation_enabled,
         )
         .await?;
     info!("Fee required: {} tokens", fee_amount);
@@ -333,7 +330,6 @@ pub async fn initialize_crisp_round(
             param_set,
             compute_provider_params_bytes,
             custom_params_bytes,
-            proof_aggregation_enabled,
         )
         .await
         .map_err(format_request_e3_revert)?;

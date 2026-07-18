@@ -159,9 +159,16 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
                 }
             };
 
-            assert(computed_message == self.message.coefficients[coeff_idx]);
+            assert_decoded_coefficient(computed_message, self.message.coefficients[coeff_idx]);
         }
     }
+}
+
+/// Every decoded coefficient must match the claimed message, including zero.
+/// Keeping this assertion unconditional prevents a prover from using zero as
+/// a value that skips the C7 decoding check.
+fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
+    assert(computed_message == claimed_message, "decoded message mismatch");
 }
 
 /// Computes all Lagrange coefficients using optimized modular arithmetic
@@ -293,4 +300,15 @@ pub fn verify_crt_reconstruction<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32>(
             );
         }
     }
+}
+
+#[test]
+fn test_decoded_zero_coefficient_must_match() {
+    assert_decoded_coefficient(0, 0);
+}
+
+#[test(should_fail)]
+fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
+    // Regression test for IF-002: the old conditional check skipped this case.
+    assert_decoded_coefficient(1, 0);
 }

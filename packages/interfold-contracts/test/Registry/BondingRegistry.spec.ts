@@ -132,6 +132,9 @@ describe("BondingRegistry", function () {
       expect(
         await bondingRegistry.totalBonded(await operator1.getAddress()),
       ).to.equal(bondAmount);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(
+        bondAmount,
+      );
     });
 
     it("reverts if amount is zero", async function () {
@@ -267,12 +270,12 @@ describe("BondingRegistry", function () {
       const unbondAmount = ethers.parseEther("300");
       const slashAmount = ethers.parseEther("800");
 
-      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
       await bondingRegistry.connect(operator1).bondLicense(bondAmount);
       await bondingRegistry.connect(operator1).unbondLicense(unbondAmount);
+      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
 
       await expect(
         bondingRegistry
@@ -289,6 +292,9 @@ describe("BondingRegistry", function () {
         bondAmount - slashAmount,
       );
       expect(await bondingRegistry.slashedLicenseBond()).to.equal(slashAmount);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(
+        bondAmount,
+      );
     });
   });
 
@@ -915,6 +921,76 @@ describe("BondingRegistry", function () {
       });
     });
 
+    it("AUD-M03: governs eligibility parameters and refreshes cached status by policy version", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        operator1,
+        operator2,
+      } = await loadFixture(setup);
+      const operator = await operator1.getAddress();
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicense(LICENSE_REQUIRED_BOND);
+      await bondingRegistry.connect(operator1).registerOperator();
+
+      const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(1);
+
+      const initialVersion =
+        await bondingRegistry.eligibilityConfigurationVersion();
+      await bondingRegistry.setTicketPrice(TICKET_PRICE * 2n);
+
+      expect(await bondingRegistry.eligibilityConfigurationVersion()).to.equal(
+        initialVersion + 1n,
+      );
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      // Refresh is permissionless and evaluates the new policy. The doubled
+      // ticket price leaves this operator below the five-ticket threshold.
+      await bondingRegistry.connect(operator2).refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+
+      await bondingRegistry.setTicketPrice(TICKET_PRICE);
+      await bondingRegistry.refreshOperatorStatuses([operator]);
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(1);
+
+      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND * 2n);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+
+      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND);
+      await bondingRegistry.setLicenseActiveBps(9_000);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+
+      await bondingRegistry.setMinTicketBalance(MIN_TICKET_BALANCE + 1);
+      await bondingRegistry.refreshOperatorStatus(operator);
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+    });
+
+    it("AUD-M03: rejects a zero minimum ticket requirement", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      await expect(
+        bondingRegistry.setMinTicketBalance(0),
+      ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
+    });
+
     describe("withdrawSlashedFunds()", function () {
       it("allows owner to withdraw slashed funds", async function () {
         const { bondingRegistry, treasury } = await loadFixture(setup);
@@ -1254,55 +1330,129 @@ describe("BondingRegistry", function () {
       await expect(
         bondingRegistry.connect(operator1).removeTicketBalance(step),
       ).to.be.revertedWithCustomError(bondingRegistry, "TooManyTranches");
+
+      // Draining the 64 ticket-only tranches must release all 64 slots even
+      // though the independent license head never advanced through them.
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+      await bondingRegistry.connect(operator1).claimExits(step * 64n, 0);
+      await bondingRegistry.connect(operator1).removeTicketBalance(step);
     });
 
-    /**
-     * M-13 reproduction guard.
-     *
-     * `claimExits` / `withdrawSlashedFunds` previously called
-     * `licenseToken.safeTransfer` without measuring the registry's
-     * own balance delta. A fee-on-transfer / rebasing token configured
-     * via `setLicenseToken` would silently underpay the recipient while
-     * the registry's internal accounting was still decremented by the
-     * requested amount. The fix measures the delta and emits
-     * `LicenseTransferShortfall(recipient, expected, actual)`.
-     */
-    it("M-13: emits LicenseTransferShortfall when license token charges a transfer fee", async function () {
-      const { bondingRegistry, licenseToken, operator1, operator1Address } =
+    it("AUD-M08: blocks license-token rotation until old liabilities are drained", async function () {
+      const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
 
-      // Bond + queue a license exit with the well-behaved token.
       const bondAmount = LICENSE_REQUIRED_BOND;
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
       await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
-      await bondingRegistry.connect(operator1).unbondLicense(bondAmount);
-      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
-      // Swap the license token for a 1% fee-on-transfer token.
       const FoTFactory = await ethers.getContractFactory(
         "MockFeeOnTransferToken",
       );
       const fot = await FoTFactory.deploy(100n); // 100 bps = 1%
-      // Seed the registry with enough FoT tokens to honor the (gross) claim
-      // amount: tests need to verify the delta-detection emits, not that the
-      // registry magically conjures tokens. We mint `bondAmount` directly to
-      // the registry's address.
-      await fot.mint(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.setLicenseToken(await fot.getAddress());
+      await expect(bondingRegistry.setLicenseToken(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
+        .withArgs(ethers.ZeroAddress);
+      await expect(bondingRegistry.setLicenseToken(operator1.address))
+        .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
+        .withArgs(operator1.address);
+      await expect(bondingRegistry.setLicenseToken(await fot.getAddress()))
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "OutstandingAssetLiabilities",
+        )
+        .withArgs(await licenseToken.getAddress(), bondAmount);
+    });
 
-      // Claim — the safeTransfer will short by 1%.
-      const expectedFee = bondAmount / 100n;
-      const expectedActual = bondAmount - expectedFee;
+    it("AUD-M08: sweeps donated license-token dust without touching liabilities", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        operator1,
+        treasury,
+        treasuryAddress,
+      } = await loadFixture(setup);
 
-      await expect(bondingRegistry.connect(operator1).claimExits(0, bondAmount))
-        .to.emit(bondingRegistry, "LicenseTransferShortfall")
-        .withArgs(operator1Address, bondAmount, expectedActual);
+      const registryAddress = await bondingRegistry.getAddress();
+      const dust = ethers.parseEther("1");
+      await licenseToken.connect(operator1).transfer(registryAddress, dust);
 
-      // Operator received the net (post-fee) amount.
-      expect(await fot.balanceOf(operator1Address)).to.equal(expectedActual);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(0);
+
+      const replacement = await (
+        await ethers.getContractFactory("MockFeeOnTransferToken")
+      ).deploy(0);
+      await expect(
+        bondingRegistry.setLicenseToken(await replacement.getAddress()),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "OutstandingAssetLiabilities",
+        )
+        .withArgs(await licenseToken.getAddress(), dust);
+
+      const treasuryBefore = await licenseToken.balanceOf(treasuryAddress);
+      await expect(bondingRegistry.sweepLicenseSurplus())
+        .to.emit(bondingRegistry, "LicenseSurplusSwept")
+        .withArgs(await licenseToken.getAddress(), treasuryAddress, dust);
+      expect(await licenseToken.balanceOf(treasury)).to.equal(
+        treasuryBefore + dust,
+      );
+      expect(await licenseToken.balanceOf(registryAddress)).to.equal(0);
+
+      await expect(
+        bondingRegistry.setLicenseToken(await replacement.getAddress()),
+      )
+        .to.emit(bondingRegistry, "LicenseTokenSet")
+        .withArgs(await replacement.getAddress());
+    });
+
+    it("AUD-M08: blocks ticket-token rotation until supply and payouts are drained", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        ticketToken,
+        usdcToken,
+        operator1,
+        owner,
+      } = await loadFixture(setup);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicense(LICENSE_REQUIRED_BOND);
+      await bondingRegistry.connect(operator1).registerOperator();
+
+      const ticketAmount = ethers.parseUnits("10", 6);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+
+      const replacement = await (
+        await ethers.getContractFactory("InterfoldTicketToken")
+      ).deploy(
+        await usdcToken.getAddress(),
+        await bondingRegistry.getAddress(),
+        owner.address,
+      );
+      await replacement.waitForDeployment();
+
+      await expect(bondingRegistry.setTicketToken(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
+        .withArgs(ethers.ZeroAddress);
+      await expect(
+        bondingRegistry.setTicketToken(await replacement.getAddress()),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "OutstandingAssetLiabilities",
+        )
+        .withArgs(await ticketToken.getAddress(), ticketAmount);
     });
   });
 });

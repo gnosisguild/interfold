@@ -17,6 +17,7 @@ use crate::TaskPool;
 use crate::TaskTimeouts;
 use actix::prelude::*;
 use actix::{Actor, Handler};
+use alloy::primitives::keccak256;
 use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_events::trap_fut;
@@ -418,6 +419,12 @@ fn handle_threshold_share_decryption_proof(
     let bb_work_base = zk_bb_work_id(&request);
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let numeric_e3_id = request.e3_id.clone().try_into().map_err(|e| {
+        make_zk_error(
+            &request,
+            format!("invalid numeric E3 id for decryption domain: {e}"),
+        )
+    })?;
 
     for i in 0..num_indices {
         // Deserialize ciphertext
@@ -442,6 +449,12 @@ fn handle_threshold_share_decryption_proof(
         let d_share_poly = try_poly_pb_from_bytes(&req.d_share_bytes[i], &threshold_params)
             .map_err(|e| make_zk_error(&request, format!("d_share[{}] deserialize: {}", i, e)))?;
         let d_share = CrtPolynomial::from_fhe_polynomial(&d_share_poly);
+        let domain = e3_committee_hash::decryption_domain_limbs(
+            request.e3_id.chain_id(),
+            numeric_e3_id,
+            req.decryption_domain,
+            keccak256(&req.ciphertext_bytes[i][..]),
+        );
 
         // Build circuit data
         let circuit_data = e3_zk_helpers::threshold::share_decryption::ShareDecryptionCircuitData {
@@ -450,6 +463,8 @@ fn handle_threshold_share_decryption_proof(
             s: s.clone(),
             e,
             d_share,
+            domain_hi: domain.hi,
+            domain_lo: domain.lo,
         };
 
         // Generate proof

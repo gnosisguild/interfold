@@ -12,10 +12,10 @@ impl NodeProofAggregator {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
 
-        if !msg.proof_aggregation_enabled {
+        if !self.proof_aggregation_enabled {
             self.pending_inner_proofs.remove(&e3_id);
             info!(
-                "NodeProofAggregator: proof aggregation disabled for E3 {} — skipping",
+                "NodeProofAggregator: test/CI skip flag active for E3 {}",
                 e3_id
             );
             if let Err(err) = self.bus.publish(
@@ -28,7 +28,7 @@ impl NodeProofAggregator {
                 ec,
             ) {
                 error!(
-                    "NodeProofAggregator: failed to publish DKGRecursiveAggregationComplete (skipped) for E3 {}: {err}",
+                    "NodeProofAggregator: failed to publish skipped DKGRecursiveAggregationComplete for E3 {}: {err}",
                     e3_id
                 );
             }

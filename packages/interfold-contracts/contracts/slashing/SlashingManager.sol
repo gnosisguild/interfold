@@ -11,6 +11,7 @@ import {
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
@@ -44,6 +45,10 @@ contract SlashingManager is
     /// @notice Upper bound on {SlashPolicy.appealWindow}. Caps the
     ///         period during which governance can delay slash execution.
     uint64 public constant MAX_APPEAL_WINDOW = 30 days;
+
+    /// @notice Maximum time governance has after the appeal window closes to
+    ///         resolve a filed appeal. Expiry is fail-safe in the operator's favour.
+    uint64 public constant APPEAL_RESOLUTION_GRACE = 7 days;
 
     /// @notice Emitted when {bondingRegistry} is updated.
     event BondingRegistryUpdated(
@@ -82,6 +87,25 @@ contract SlashingManager is
     /// @notice Reference to the E3 Refund Manager for routing slashed funds
     IE3RefundManager public e3RefundManager;
 
+    struct E3Dependencies {
+        IBondingRegistry bonding;
+        ICiphernodeRegistry registry;
+        IInterfold interfoldContract;
+        IE3RefundManager refundManager;
+        bool initialized;
+    }
+
+    /// @notice Contracts frozen for each E3's complete slashing lifecycle.
+    mapping(uint256 e3Id => E3Dependencies dependencies)
+        internal _e3Dependencies;
+
+    /// @notice Slash routes retained until their reserved ticket funds reach E3 escrow.
+    mapping(uint256 proposalId => PendingSlashRoute route)
+        internal _pendingSlashRoutes;
+
+    uint256 internal constant INITIAL_ROUTE_GAS = 400_000;
+    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 450_000;
+
     /// @notice Mapping from slash reason hash to its configured policy
     mapping(bytes32 reason => SlashPolicy policy) public slashPolicies;
 
@@ -100,12 +124,10 @@ contract SlashingManager is
     ///      Lane B key is keccak256(abi.encode(e3Id, operator, keccak256(evidence))) — exact evidence bytes.
     mapping(bytes32 evidenceKey => bool consumed) public evidenceConsumed;
 
-    /// @notice Number of unexecuted Lane B proposals per operator.
-    /// @dev Incremented in `proposeSlashEvidence`, decremented in `executeSlash` and on
-    ///      `resolveAppeal(upheld=true)`. `BondingRegistry.deregisterOperator` blocks while
-    ///      this is > 0 so an operator cannot evade an inbound Lane B slash by exiting
-    ///      during the appeal window.
-    mapping(address operator => uint256 openCount) internal _openLaneBCount;
+    /// @notice Number of unresolved financial proposals per operator, across both lanes.
+    /// @dev Incremented for every proposal and decremented only at successful execution or terminal
+    ///      appeal resolution, so collateral cannot leave during a deferred slash.
+    mapping(address operator => uint256 openCount) internal _openProposalCount;
 
     /// @notice Pending two-step manual ban proposals.
     /// @dev `unbanNode` is single-step because it is strictly less dangerous than ban.
@@ -236,15 +258,68 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
-    function hasOpenLaneBProposal(
+    function hasOpenSlashProposal(
         address operator
     ) external view returns (bool) {
-        return _openLaneBCount[operator] > 0;
+        return _openProposalCount[operator] > 0;
     }
 
     /// @inheritdoc ISlashingManager
     function attestationDomainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
+    }
+
+    /// @inheritdoc ISlashingManager
+    function getE3Dependencies(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            address bonding,
+            address registry,
+            address interfoldContract,
+            address refundManager
+        )
+    {
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        return (
+            address(dependencies.bonding),
+            address(dependencies.registry),
+            address(dependencies.interfoldContract),
+            address(dependencies.refundManager)
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function getPendingSlashRoute(
+        uint256 proposalId
+    ) external view returns (PendingSlashRoute memory) {
+        return _pendingSlashRoutes[proposalId];
+    }
+
+    /// @inheritdoc ISlashingManager
+    function retrySlashRoute(
+        uint256 proposalId
+    ) external returns (bool routed) {
+        if (!_pendingSlashRoutes[proposalId].pending) return false;
+        return this.routePendingSlashFunds(proposalId);
+    }
+
+    /// @inheritdoc ISlashingManager
+    function snapshotE3Dependencies(uint256 e3Id) external {
+        require(
+            msg.sender == address(interfold) ||
+                msg.sender == address(ciphernodeRegistry),
+            Unauthorized()
+        );
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        require(!dependencies.initialized, InvalidProposal());
+        dependencies.bonding = bondingRegistry;
+        dependencies.registry = ciphernodeRegistry;
+        dependencies.interfoldContract = interfold;
+        dependencies.refundManager = e3RefundManager;
+        dependencies.initialized = true;
     }
 
     // ======================
@@ -271,6 +346,16 @@ contract SlashingManager is
         }
         // Cap the appeal window so governance cannot indefinitely delay slashing.
         require(policy.appealWindow <= MAX_APPEAL_WINDOW, InvalidPolicy());
+        if (policy.failureReason > 0) {
+            // A policy that can fail an E3 must also remove the proven-faulty
+            // operator before the refund manager snapshots honest recipients.
+            require(policy.affectsCommittee, InvalidPolicy());
+            require(
+                policy.failureReason <
+                    uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
+                InvalidPolicy()
+            );
+        }
 
         slashPolicies[reason] = policy;
         emit SlashPolicyUpdated(reason, policy);
@@ -384,7 +469,7 @@ contract SlashingManager is
         require(policy.requiresProof, InvalidPolicy());
 
         require(
-            ciphernodeRegistry.isCommitteeMember(e3Id, operator),
+            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -418,6 +503,8 @@ contract SlashingManager is
         p.affectsCommittee = policy.affectsCommittee;
         p.failureReason = policy.failureReason;
 
+        _openProposalCount[operator] += 1;
+
         emit SlashProposed(
             proposalId,
             e3Id,
@@ -433,6 +520,7 @@ contract SlashingManager is
         // Legacy atomic path: when no challenge window is configured, execute now.
         // Otherwise defer to `executeSlash` after `executableAt`.
         if (policy.appealWindow == 0) {
+            _openProposalCount[operator] -= 1;
             _executeSlash(proposalId, Lane.LaneA);
         }
     }
@@ -444,9 +532,8 @@ contract SlashingManager is
         uint256 e3Id,
         uint256 partyId
     ) internal view returns (address operator) {
-        (uint256[] memory partyIds, , ) = ciphernodeRegistry.getDkgAnchors(
-            e3Id
-        );
+        ICiphernodeRegistry registry = _dependenciesFor(e3Id).registry;
+        (uint256[] memory partyIds, , ) = registry.getDkgAnchors(e3Id);
         bool found = false;
         for (uint256 i = 0; i < partyIds.length; i++) {
             if (partyIds[i] == partyId) {
@@ -455,7 +542,7 @@ contract SlashingManager is
             }
         }
         require(found, PartyIdNotInDkgAnchors());
-        return ciphernodeRegistry.canonicalCommitteeNodeAt(e3Id, partyId);
+        return registry.canonicalCommitteeNodeAt(e3Id, partyId);
     }
 
     /// @inheritdoc ISlashingManager
@@ -471,6 +558,10 @@ contract SlashingManager is
         SlashPolicy memory policy = slashPolicies[reason];
         require(policy.enabled, SlashReasonDisabled());
         require(!policy.requiresProof, InvalidPolicy());
+        require(
+            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            OperatorNotInCommittee()
+        );
 
         // Evidence replay protection — reason-independent to prevent cross-reason replay
         bytes32 evidenceKey = keccak256(
@@ -482,9 +573,9 @@ contract SlashingManager is
         proposalId = totalProposals;
         totalProposals = proposalId + 1;
 
-        // Track unresolved Lane B proposals per operator so BondingRegistry blocks
-        // `deregisterOperator` until they execute, expire, or are upheld on appeal.
-        _openLaneBCount[operator] += 1;
+        // Track the unresolved proposal so collateral remains slashable until
+        // successful execution or terminal appeal resolution.
+        _openProposalCount[operator] += 1;
 
         uint256 executableAt = block.timestamp + policy.appealWindow;
         SlashProposal storage p = _proposals[proposalId];
@@ -531,12 +622,10 @@ contract SlashingManager is
         }
 
         Lane lane = p.proofVerified ? Lane.LaneA : Lane.LaneB;
-        if (lane == Lane.LaneB) {
-            // Decrement BEFORE `_executeSlash` so a reentrant deregister triggered by
-            // slash side-effects (e.g. `expelCommitteeMember`) is not gated on this
-            // proposal. Other open Lane B proposals keep the gate raised.
-            _openLaneBCount[p.operator] -= 1;
-        }
+        // Decrement BEFORE `_executeSlash` so a reentrant operator action triggered
+        // by slash side-effects is not gated on this proposal. Other open proposals
+        // keep the gate raised. A downstream revert restores the count atomically.
+        _openProposalCount[p.operator] -= 1;
 
         _executeSlash(proposalId, lane);
     }
@@ -581,8 +670,7 @@ contract SlashingManager is
 
         // Get committee threshold — need at least M agreeing votes
         {
-            (, uint32 thresholdM, , ) = ciphernodeRegistry
-                .getCommitteeViability(e3Id);
+            uint32 thresholdM = _committeeThresholdM(e3Id);
             require(thresholdM > 0, InvalidProposal());
             require(numVotes >= thresholdM, InsufficientAttestations());
         }
@@ -611,7 +699,7 @@ contract SlashingManager is
 
             // Verify voter is an active committee member for this E3
             require(
-                ciphernodeRegistry.isCommitteeMemberActive(e3Id, voter),
+                _isCommitteeMemberActive(e3Id, voter),
                 VoterNotInCommittee()
             );
 
@@ -638,24 +726,43 @@ contract SlashingManager is
         }
     }
 
+    function _committeeThresholdM(
+        uint256 e3Id
+    ) internal view returns (uint32 thresholdM) {
+        (, thresholdM, , ) = _dependenciesFor(e3Id)
+            .registry
+            .getCommitteeViability(e3Id);
+    }
+
+    function _isCommitteeMemberActive(
+        uint256 e3Id,
+        address voter
+    ) internal view returns (bool) {
+        return
+            _dependenciesFor(e3Id).registry.isCommitteeMemberActive(
+                e3Id,
+                voter
+            );
+    }
+
     /// @dev Executes a slash: applies financial penalties, optional ban, and committee expulsion.
-    ///      Lane B: if the operator deregistered or exited during the appeal window, penalties
-    ///      gracefully become 0 (BondingRegistry uses min(requested, available)). Accepted tradeoff.
+    ///      BondingRegistry keeps active and queued collateral locked while any
+    ///      proposal from a retained slashing manager remains unresolved.
     /// @dev `p.executed = true` is deferred until AFTER the two `bondingRegistry.slash*`
     ///      calls succeed but BEFORE any other external interaction. This protects the
     ///      proposal from being permanently marked as executed when the financial leg
     ///      reverts (e.g. an attacker griefs the operator's exit queue with enough
-    ///      tranches to OOG `_takeAssetsFromQueue` — a Lane B operator could otherwise
-    ///      lose all retry attempts). The `MAX_ACTIVE_TRANCHES` cap in ExitQueueLib is
+    ///      tranches to OOG `_takeAssetsFromQueue`). The `MAX_ACTIVE_TRANCHES` cap is
     ///      the primary defence; this ordering provides defence-in-depth.
     function _executeSlash(uint256 proposalId, Lane lane) internal {
         SlashProposal storage p = _proposals[proposalId];
+        E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
-            actualTicketSlashed = bondingRegistry.slashTicketBalance(
+            actualTicketSlashed = dependencies.bonding.slashTicketBalance(
                 p.operator,
                 p.ticketAmount,
                 p.reason
@@ -663,7 +770,7 @@ contract SlashingManager is
         }
 
         if (p.licenseAmount > 0) {
-            bondingRegistry.slashLicenseBond(
+            dependencies.bonding.slashLicenseBond(
                 p.operator,
                 p.licenseAmount,
                 p.reason
@@ -673,8 +780,8 @@ contract SlashingManager is
         // Financial penalties succeeded — commit `executed` before any further
         // external interaction (committee expulsion, refund escrow self-call,
         // interfold routing) so that reentrancy via those paths cannot re-enter
-        // _executeSlash for the same proposal, while still allowing Lane B
-        // to retry if either bondingRegistry.slash* leg above reverts.
+        // _executeSlash for the same proposal, while still allowing a deferred
+        // proposal to retry if either bondingRegistry.slash* leg above reverts.
         p.executed = true;
 
         // Ban node if snapshotted policy requires it
@@ -686,14 +793,20 @@ contract SlashingManager is
         // Committee expulsion for E3-scoped slashes (uses snapshotted behavioral flags)
         // expelCommitteeMember returns (activeCount, thresholdM) — one call instead of three
         if (p.affectsCommittee) {
-            (uint256 activeCount, uint32 thresholdM) = ciphernodeRegistry
+            (uint256 activeCount, uint32 thresholdM) = dependencies
+                .registry
                 .expelCommitteeMember(p.e3Id, p.operator, p.reason);
 
             // If active count drops below M, fail the E3
             if (activeCount < thresholdM && p.failureReason > 0) {
                 // NOTE: catch block must not be empty (solc optimizer bug, see below)
                 // solhint-disable-next-line no-empty-blocks
-                try interfold.onE3Failed(p.e3Id, p.failureReason) {
+                try
+                    dependencies.interfoldContract.onE3Failed(
+                        p.e3Id,
+                        p.failureReason
+                    )
+                {
                     // Side effects occur in the external call
                 } catch {
                     // E3 already failed or other error — slash still proceeds
@@ -702,15 +815,35 @@ contract SlashingManager is
             }
         }
 
-        // Escrow slashed ticket funds for deferred distribution.
-        // Self-call for try/catch atomicity — on failure, funds stay in BondingRegistry.
+        // Reserve and attempt escrow. Failure leaves both a durable proposal
+        // route and a matching BondingRegistry reservation for permissionless retry.
         if (actualTicketSlashed > 0) {
-            // NOTE: catch must not be empty — solc >=0.8.28 optimizer bug.
-            // solhint-disable no-empty-blocks
+            dependencies.bonding.reserveSlashedTicketFunds(actualTicketSlashed);
+            PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
+            route.e3Id = p.e3Id;
+            route.token = address(
+                dependencies.bonding.ticketToken().underlying()
+            );
+            route.amount = actualTicketSlashed;
+            route.pending = true;
+            emit SlashRoutePending(
+                proposalId,
+                p.e3Id,
+                route.token,
+                actualTicketSlashed
+            );
+
+            require(
+                gasleft() >= MIN_INITIAL_ROUTE_GAS,
+                InsufficientRoutingGas()
+            );
             try
-                this.escrowSlashedFundsToRefund(p.e3Id, actualTicketSlashed)
-            {} catch {
-                // solhint-enable no-empty-blocks
+                this.routePendingSlashFunds{ gas: INITIAL_ROUTE_GAS }(
+                    proposalId
+                )
+            returns (bool routed) {
+                require(routed, InvalidProposal());
+            } catch {
                 emit RoutingFailed(p.e3Id, actualTicketSlashed);
             }
         }
@@ -728,15 +861,46 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
-    /// @dev Atomically redirects slashed funds to E3RefundManager escrow.
-    ///      External with self-only access for try/catch atomicity.
-    function escrowSlashedFundsToRefund(uint256 e3Id, uint256 amount) external {
+    function routePendingSlashFunds(
+        uint256 proposalId
+    ) external returns (bool routed) {
         require(msg.sender == address(this), Unauthorized());
-        address refundManager = address(e3RefundManager);
-        require(refundManager != address(0), ZeroAddress());
-        bondingRegistry.redirectSlashedTicketFunds(refundManager, amount);
-        interfold.escrowSlashedFunds(e3Id, amount);
-        emit SlashedFundsEscrowedToRefund(e3Id, amount);
+        PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
+        require(route.pending, InvalidProposal());
+
+        E3Dependencies memory dependencies = _dependenciesFor(route.e3Id);
+        // Clear before interacting so a callback cannot route the same reserve
+        // twice. Any downstream failure reverts this write together with the
+        // transfer and accounting, leaving the route pending for another retry.
+        route.pending = false;
+        dependencies.bonding.redirectReservedSlashedTicketFunds(
+            address(dependencies.refundManager),
+            route.amount
+        );
+        dependencies.interfoldContract.escrowSlashedFunds(
+            route.e3Id,
+            IERC20(route.token),
+            route.amount
+        );
+        emit SlashedFundsEscrowedToRefund(
+            route.e3Id,
+            route.token,
+            route.amount
+        );
+        emit SlashRouteCompleted(
+            proposalId,
+            route.e3Id,
+            route.token,
+            route.amount
+        );
+        return true;
+    }
+
+    function _dependenciesFor(
+        uint256 e3Id
+    ) internal view returns (E3Dependencies memory dependencies) {
+        dependencies = _e3Dependencies[e3Id];
+        require(dependencies.initialized, InvalidProposal());
     }
 
     // ======================
@@ -781,10 +945,9 @@ contract SlashingManager is
         p.resolved = true;
         p.appealUpheld = appealUpheld;
 
-        // an upheld appeal terminates the proposal — it can never `executeSlash`,
-        // so the open Lane B gate must drop here. Lane A proposals are not counted.
-        if (appealUpheld && !p.proofVerified) {
-            _openLaneBCount[p.operator] -= 1;
+        // An upheld appeal terminates the proposal, so its collateral gate ends.
+        if (appealUpheld) {
+            _openProposalCount[p.operator] -= 1;
         }
 
         emit AppealResolved(
@@ -793,6 +956,31 @@ contract SlashingManager is
             appealUpheld,
             msg.sender,
             resolution
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function expireAppeal(uint256 proposalId) external {
+        require(proposalId < totalProposals, InvalidProposal());
+        SlashProposal storage p = _proposals[proposalId];
+        require(p.appealed, InvalidProposal());
+        require(!p.resolved, AlreadyResolved());
+        require(!p.executed, AlreadyExecuted());
+        require(
+            block.timestamp >= p.executableAt + APPEAL_RESOLUTION_GRACE,
+            AppealResolutionWindowActive()
+        );
+
+        p.resolved = true;
+        p.appealUpheld = true;
+        _openProposalCount[p.operator] -= 1;
+
+        emit AppealResolved(
+            proposalId,
+            p.operator,
+            true,
+            msg.sender,
+            "governance resolution window expired"
         );
     }
 

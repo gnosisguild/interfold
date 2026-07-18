@@ -60,9 +60,6 @@ export interface E3RequestParams extends RequestParams {
   paramSet: number
   computeProviderParams: `0x${string}`
   customParams?: `0x${string}`
-  /** When true, ciphernodes generate wrapper/fold proofs for DKG proof aggregation.
-   *  When false, proof aggregation is skipped for faster computation. Defaults to true. */
-  proofAggregationEnabled?: boolean
 }
 
 export enum E3Stage {

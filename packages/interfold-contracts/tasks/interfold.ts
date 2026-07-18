@@ -131,12 +131,6 @@ export const requestCommittee = task(
     defaultValue: ZeroAddress,
     type: ArgumentType.STRING,
   })
-  .addOption({
-    name: "proofAggregationEnabled",
-    description: "whether to enable proof aggregation (default: false)",
-    defaultValue: false,
-    type: ArgumentType.BOOLEAN,
-  })
   .setAction(async () => ({
     default: async (
       {
@@ -147,7 +141,6 @@ export const requestCommittee = task(
         e3Params: _e3Params,
         computeParams,
         customParams,
-        proofAggregationEnabled,
       },
       hre,
     ) => {
@@ -238,7 +231,6 @@ export const requestCommittee = task(
         paramSet,
         computeProviderParams,
         customParams,
-        proofAggregationEnabled,
       };
 
       console.log("Request parameters:", requestParams);
@@ -326,20 +318,29 @@ export const publishCommittee = task(
   })
   .addOption({
     name: "pkCommitment",
-    description:
-      "Hash-based aggregated PK commitment (bytes32 hex); required even when proof aggregation is disabled",
+    description: "Hash-based aggregated PK commitment (bytes32 hex); required",
     defaultValue: "",
     type: ArgumentType.STRING,
   })
   .addOption({
     name: "proof",
     description:
-      "ABI-encoded DkgAggregator (EVM) proof (bytes rawProof, bytes32[] publicInputs); pass 0x when proof aggregation is disabled",
+      "Required ABI-encoded DkgAggregator (EVM) proof (bytes rawProof, bytes32[] publicInputs)",
+    defaultValue: "0x",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
+    name: "dkgAttestationBundle",
+    description:
+      "Required ABI-encoded DKG fold attestation bundle (Attestation[], PartySlotBinding[])",
     defaultValue: "0x",
     type: ArgumentType.STRING,
   })
   .setAction(async () => ({
-    default: async ({ e3Id, nodes, publicKey, pkCommitment, proof }, hre) => {
+    default: async (
+      { e3Id, nodes, publicKey, pkCommitment, proof, dkgAttestationBundle },
+      hre,
+    ) => {
       const { deployAndSaveCiphernodeRegistryOwnable } = await import(
         "../scripts/deployAndSave/ciphernodeRegistryOwnable"
       );
@@ -383,13 +384,21 @@ export const publishCommittee = task(
           "publicKey is required and must be a non-empty hex string",
         );
       }
+      if (!isHexString(proof) || proof === "0x") {
+        throw new Error("proof is required and must be a non-empty hex string");
+      }
+      if (!isHexString(dkgAttestationBundle) || dkgAttestationBundle === "0x") {
+        throw new Error(
+          "dkgAttestationBundle is required and must be a non-empty hex string",
+        );
+      }
 
       const tx = await ciphernodeRegistry.publishCommittee(
         e3Id,
         publicKey,
         pkCommitment,
         proof,
-        "0x",
+        dkgAttestationBundle,
       );
 
       console.log("Publishing committee... ", tx.hash);

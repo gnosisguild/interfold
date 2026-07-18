@@ -27,6 +27,9 @@ pub struct ShareDecryptionCircuitData {
     pub s: CrtPolynomial,
     pub e: CrtPolynomial,
     pub d_share: CrtPolynomial,
+    /// High and low 128-bit limbs of the E3 decryption domain.
+    pub domain_hi: u128,
+    pub domain_lo: u128,
 }
 
 impl Circuit for ShareDecryptionCircuit {

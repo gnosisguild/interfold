@@ -114,7 +114,6 @@ async function deployStack() {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-      proofAggregationEnabled: false,
     } as any;
     return interfold.connect(requester).request(req);
   };

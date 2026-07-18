@@ -50,6 +50,18 @@ describe('encryptNumber', () => {
       expect(value.length).to.equal(9_242)
     })
 
+    it('should validate a committee public key against its on-chain commitment', async () => {
+      const publicKey = await sdk.generatePublicKey()
+      const commitment = await sdk.computePublicKeyCommitment(publicKey)
+
+      expect(await sdk.validatePublicKeyCommitment(publicKey, commitment)).to.equal(true)
+
+      const differentCommitment = commitment.slice()
+      differentCommitment[0] ^= 1
+      expect(await sdk.validatePublicKeyCommitment(publicKey, differentCommitment)).to.equal(false)
+      expect(await sdk.validatePublicKeyCommitment(publicKey, new Uint8Array(31))).to.equal(false)
+    })
+
     it('should encrypt a vector and generate a proof without crashing in a node environent', async () => {
       const publicKey = await sdk.generatePublicKey()
 

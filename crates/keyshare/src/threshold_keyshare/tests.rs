@@ -7,6 +7,7 @@
 use super::*;
 use crate::actors::decryption_key_shared_collector::DecryptionKeySharedCollectionFailed;
 use actix::{Actor, Addr, Handler};
+use alloy::primitives::Address;
 use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
@@ -64,6 +65,7 @@ async fn start_actor() -> Result<(
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: test_state(),
         share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
     })
     .start();
 

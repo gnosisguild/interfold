@@ -115,6 +115,8 @@ pub const THRESHOLD_SHARE_DECRYPTION_INPUTS: &[OutputField] = &[
     f("expected_sk_commitment"),
     f("expected_e_sm_commitment"),
     f("ct_commitment"),
+    f("domain_hi"),
+    f("domain_lo"),
 ];
 
 /// C3 — Share encryption public return (`-> pub Field`).
@@ -319,12 +321,14 @@ mod tests {
         let layout = CircuitOutputLayout::Fixed {
             fields: THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
         };
-        // C6: 3 public inputs + 1 output = 128 bytes
-        let mut signals = vec![0u8; 128];
+        // C6: 5 public inputs + 1 output = 192 bytes
+        let mut signals = vec![0u8; 192];
         signals[0..32].copy_from_slice(&[0x11; 32]);
         signals[32..64].copy_from_slice(&[0x22; 32]);
         signals[64..96].copy_from_slice(&[0x33; 32]);
-        signals[96..128].copy_from_slice(&[0x77; 32]);
+        signals[96..128].copy_from_slice(&[0x44; 32]);
+        signals[128..160].copy_from_slice(&[0x55; 32]);
+        signals[160..192].copy_from_slice(&[0x77; 32]);
 
         assert_eq!(
             layout.extract_field(&signals, "d_commitment").unwrap(),
@@ -362,10 +366,12 @@ mod tests {
         let layout = CircuitInputLayout::Fixed {
             fields: THRESHOLD_SHARE_DECRYPTION_INPUTS,
         };
-        let mut signals = vec![0u8; 96];
+        let mut signals = vec![0u8; 160];
         signals[0..32].copy_from_slice(&[0x11; 32]);
         signals[32..64].copy_from_slice(&[0x22; 32]);
         signals[64..96].copy_from_slice(&[0x33; 32]);
+        signals[96..128].copy_from_slice(&[0x44; 32]);
+        signals[128..160].copy_from_slice(&[0x55; 32]);
 
         assert_eq!(
             layout
@@ -382,6 +388,14 @@ mod tests {
         assert_eq!(
             layout.extract_field(&signals, "ct_commitment").unwrap(),
             &[0x33; 32]
+        );
+        assert_eq!(
+            layout.extract_field(&signals, "domain_hi").unwrap(),
+            &[0x44; 32]
+        );
+        assert_eq!(
+            layout.extract_field(&signals, "domain_lo").unwrap(),
+            &[0x55; 32]
         );
     }
 

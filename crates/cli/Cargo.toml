@@ -7,6 +7,11 @@ description = "E3 - Interfold CLI"
 repository = "https://github.com/theinterfold/interfold/crates/cli"
 build = "build.rs"
 
+[features]
+test-only-skip-proof-aggregation = [
+    "e3-entrypoint/test-only-skip-proof-aggregation",
+]
+
 [[bin]]
 name = "interfold"
 path = "src/main.rs"

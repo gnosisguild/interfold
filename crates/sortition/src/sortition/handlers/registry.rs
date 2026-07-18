@@ -96,7 +96,12 @@ impl Handler<TypedEvent<OperatorActivationChanged>> for Sortition {
         let (msg, ec) = msg.into_components();
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.node_state.try_mutate(&ec, |mut state_map| {
-                NodeRegistry::set_operator_active(&mut state_map, msg.operator.clone(), msg.active);
+                NodeRegistry::set_operator_active(
+                    &mut state_map,
+                    msg.chain_id,
+                    msg.operator.clone(),
+                    msg.active,
+                );
                 Ok(state_map)
             })
         })
@@ -113,12 +118,22 @@ impl Handler<TypedEvent<ConfigurationUpdated>> for Sortition {
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            if msg.parameter == "ticketPrice" {
-                self.node_state.try_mutate(&ec, |mut state_map| {
-                    NodeRegistry::set_ticket_price(&mut state_map, msg.chain_id, msg.new_value);
-                    Ok(state_map)
-                })?;
+            let eligibility_parameter = matches!(
+                msg.parameter.as_str(),
+                "ticketPrice" | "licenseRequiredBond" | "licenseActiveBps" | "minTicketBalance"
+            );
+
+            if !eligibility_parameter {
+                return Ok(());
             }
+
+            self.node_state.try_mutate(&ec, |mut state_map| {
+                if msg.parameter == "ticketPrice" {
+                    NodeRegistry::set_ticket_price(&mut state_map, msg.chain_id, msg.new_value);
+                }
+                NodeRegistry::invalidate_operator_activity(&mut state_map, msg.chain_id);
+                Ok(state_map)
+            })?;
             Ok(())
         })
     }

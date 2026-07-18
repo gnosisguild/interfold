@@ -258,7 +258,11 @@ interface IInterfold {
     /// @notice Emitted when slashed funds are escrowed for an E3
     /// @param e3Id The E3 ID.
     /// @param amount The amount of slashed funds escrowed.
-    event SlashedFundsEscrowed(uint256 indexed e3Id, uint256 amount);
+    event SlashedFundsEscrowed(
+        uint256 indexed e3Id,
+        IERC20 indexed token,
+        uint256 amount
+    );
 
     /// @notice Emitted when a failed E3 is processed for refunds.
     /// @param e3Id The ID of the failed E3.
@@ -350,7 +354,7 @@ interface IInterfold {
     /// @param output The invalid output data.
     error InvalidOutput(bytes output);
 
-    /// @notice Thrown when proof aggregation is enabled but no proof was supplied.
+    /// @notice Thrown when a mandatory final proof was not supplied.
     error ProofRequired();
 
     /// @notice Thrown when the committee size has not been configured with thresholds.
@@ -496,12 +500,6 @@ interface IInterfold {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
-        /// @notice When true, ciphernodes generate and fold wrapper proofs
-        ///         for DKG proof aggregation (public verifiability). When
-        ///         false, wrapper/fold proofs are skipped to reduce latency.
-        ///         C5 and C7 proofs are always generated and verified on-chain
-        ///         regardless of this flag.
-        bool proofAggregationEnabled;
     }
 
     ////////////////////////////////////////////////////////////
@@ -536,9 +534,8 @@ interface IInterfold {
     /// @dev This function MUST emit the PlaintextOutputPublished event.
     /// @param e3Id ID of the E3.
     /// @param plaintextOutput ABI encoded plaintext output.
-    /// @param proof DecryptionAggregator (EVM) proof ABI-encoded
-    ///        `(bytes rawProof, bytes32[] publicInputs)`, or empty bytes when proof
-    ///        aggregation is disabled for the E3.
+    /// @param proof Required DecryptionAggregator (EVM) proof ABI-encoded
+    ///        `(bytes rawProof, bytes32[] publicInputs)`.
     function publishPlaintextOutput(
         uint256 e3Id,
         bytes calldata plaintextOutput,
@@ -683,8 +680,13 @@ interface IInterfold {
     /// @notice Escrow slashed funds for deferred distribution
     /// @dev Called by SlashingManager. Proxies to E3RefundManager.
     /// @param e3Id The E3 ID.
+    /// @param token Actual ticket-underlying token transferred into escrow.
     /// @param amount Amount of slashed funds to escrow.
-    function escrowSlashedFunds(uint256 e3Id, uint256 amount) external;
+    function escrowSlashedFunds(
+        uint256 e3Id,
+        IERC20 token,
+        uint256 amount
+    ) external;
 
     ////////////////////////////////////////////////////////////
     //                                                        //

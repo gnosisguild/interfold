@@ -189,6 +189,9 @@ impl ThresholdKeyshare {
             .aggregated_pk
             .clone()
             .ok_or_else(|| anyhow!("Aggregated public key not available for C6 proof"))?;
+        let decryption_domain = state
+            .decryption_domain
+            .ok_or_else(|| anyhow!("E3 decryption domain not available for C6 proof"))?;
 
         let threshold_preset = self
             .share_enc_preset
@@ -222,6 +225,7 @@ impl ThresholdKeyshare {
                     sk_poly_sum: decrypting.sk_poly_sum,
                     es_poly_sum: decrypting.es_poly_sum,
                     d_share_bytes: d_share_poly.clone(),
+                    decryption_domain,
                     params_preset: threshold_preset,
                     committee_size,
                 },

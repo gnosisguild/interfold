@@ -13,6 +13,7 @@ import {
 import decryptionAggregatorVerifierModule from "./decryptionAggregatorVerifier";
 
 export default buildModule("BfvDecryptionVerifier", (m) => {
+  const registry = m.getParameter("registry");
   const { decryptionAggregatorVerifier } = m.useModule(
     decryptionAggregatorVerifierModule,
   );
@@ -26,6 +27,7 @@ export default buildModule("BfvDecryptionVerifier", (m) => {
 
   const bfvDecryptionVerifier = m.contract("BfvDecryptionVerifier", [
     decryptionAggregatorVerifier,
+    registry,
     c6FoldKeyHash,
     c7KeyHash,
     BFV_THRESHOLD_T,

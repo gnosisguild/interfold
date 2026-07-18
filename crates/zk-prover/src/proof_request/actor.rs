@@ -39,6 +39,7 @@ use crate::workflow::proof_request::{
 pub struct ProofRequestActor {
     bus: BusHandle,
     signer: PrivateKeySigner,
+    proof_aggregation_enabled: bool,
     pending: HashMap<CorrelationId, PendingProofRequest>,
     threshold_correlation: HashMap<CorrelationId, (E3id, ThresholdProofKind, usize)>,
     pending_threshold: HashMap<E3id, PendingThresholdProofs>,
@@ -63,10 +64,11 @@ pub struct ProofRequestActor {
 }
 
 impl ProofRequestActor {
-    pub fn new(bus: &BusHandle, signer: PrivateKeySigner) -> Self {
+    pub fn new(bus: &BusHandle, signer: PrivateKeySigner, proof_aggregation_enabled: bool) -> Self {
         Self {
             bus: bus.clone(),
             signer,
+            proof_aggregation_enabled,
             pending: HashMap::new(),
             pending_threshold: HashMap::new(),
             threshold_correlation: HashMap::new(),
@@ -82,8 +84,12 @@ impl ProofRequestActor {
         }
     }
 
-    pub fn setup(bus: &BusHandle, signer: PrivateKeySigner) -> Addr<Self> {
-        let addr = Self::new(bus, signer).start();
+    pub fn setup(
+        bus: &BusHandle,
+        signer: PrivateKeySigner,
+        proof_aggregation_enabled: bool,
+    ) -> Addr<Self> {
+        let addr = Self::new(bus, signer, proof_aggregation_enabled).start();
         bus.subscribe(EventType::EncryptionKeyPending, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());

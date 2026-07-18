@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn picks_lowest_non_expelled_party_in_sorted_committee_as_aggregator() {
-        // Committee order is already score-sorted before it is stored.
+        // Committee order is canonical address-ascending before it is stored.
         let committee = Committee::new(vec![
             "0xbbb".to_string(),
             "0xccc".to_string(),

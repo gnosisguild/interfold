@@ -6,6 +6,8 @@
 
 import React, { useState, useEffect } from 'react'
 import { CalculatorIcon } from '@phosphor-icons/react'
+import { hexToBytes } from 'viem'
+import type { CommitteePublishedData } from '@interfold/sdk'
 import CardContent from '../components/CardContent'
 import Spinner from '../components/Spinner'
 import ErrorDisplay from '../components/ErrorDisplay'
@@ -45,18 +47,33 @@ const RequestComputation: React.FC = () => {
       }))
     }
 
-    const handleCommitteePublished = (event: any) => {
-      const { e3Id, publicKey } = event.data
-      setE3State((prev) => {
-        if (prev.id !== null && e3Id === prev.id) {
-          return {
-            ...prev,
-            isCommitteePublished: true,
-            publicKey: publicKey as `0x${string}`,
-          }
+    const handleCommitteePublished = async (event: { data: CommitteePublishedData }) => {
+      const { e3Id, publicKey, pkCommitment } = event.data
+      if (e3State.id === null || e3Id !== e3State.id || !sdk.sdk) return
+
+      try {
+        const isBoundKey = await sdk.sdk.validatePublicKeyCommitment(
+          hexToBytes(publicKey as `0x${string}`),
+          hexToBytes(pkCommitment as `0x${string}`),
+        )
+        if (!isBoundKey) {
+          throw new Error(`Rejected committee public key for E3 ${e3Id}: commitment mismatch`)
         }
-        return prev
-      })
+
+        setE3State((prev) => {
+          if (prev.id !== null && e3Id === prev.id) {
+            return {
+              ...prev,
+              isCommitteePublished: true,
+              publicKey: publicKey as `0x${string}`,
+            }
+          }
+          return prev
+        })
+      } catch (error) {
+        setRequestError(error)
+        console.error(`Rejected committee public key for E3 ${e3Id}:`, error)
+      }
     }
 
     onInterfoldEvent(InterfoldEventType.E3_REQUESTED, handleE3Requested)
@@ -66,7 +83,7 @@ const RequestComputation: React.FC = () => {
       off(InterfoldEventType.E3_REQUESTED, handleE3Requested)
       off(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
     }
-  }, [isInitialized, onInterfoldEvent, off, InterfoldEventType, RegistryEventType, setE3State])
+  }, [isInitialized, onInterfoldEvent, off, InterfoldEventType, RegistryEventType, setE3State, e3State.id, sdk.sdk])
 
   // Auto-advance to next step when committee publishes
   useEffect(() => {
@@ -109,7 +126,6 @@ const RequestComputation: React.FC = () => {
         e3Program: contracts.e3Program,
         paramSet: 0, // ParamSet.Insecure512
         computeProviderParams,
-        proofAggregationEnabled: false,
       }
 
       const fee = await sdk.sdk.getE3Quote(requestParams)

@@ -13,7 +13,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         let (mut msg, ec) = msg.into_components();
-        msg.sort_by_score();
+        msg.sort_by_address();
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             info!(
                 e3_id = %msg.e3_id,

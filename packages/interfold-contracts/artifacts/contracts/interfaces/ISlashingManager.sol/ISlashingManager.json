@@ -25,6 +25,11 @@
     },
     {
       "inputs": [],
+      "name": "AppealResolutionWindowActive",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "AppealUpheld",
       "type": "error"
     },
@@ -71,6 +76,11 @@
     {
       "inputs": [],
       "name": "InsufficientAttestations",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InsufficientRoutingGas",
       "type": "error"
     },
     {
@@ -580,8 +590,76 @@
         {
           "indexed": true,
           "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "SlashRouteCompleted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "SlashRoutePending",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
         },
         {
           "indexed": false,
@@ -680,16 +758,11 @@
       "inputs": [
         {
           "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "amount",
+          "name": "proposalId",
           "type": "uint256"
         }
       ],
-      "name": "escrowSlashedFundsToRefund",
+      "name": "executeSlash",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -702,7 +775,7 @@
           "type": "uint256"
         }
       ],
-      "name": "executeSlash",
+      "name": "expireAppeal",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -723,6 +796,81 @@
       "name": "fileAppeal",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3Dependencies",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "bonding",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "interfoldContract",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "refundManager",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getPendingSlashRoute",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "e3Id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "token",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "pending",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct ISlashingManager.PendingSlashRoute",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -905,7 +1053,7 @@
           "type": "address"
         }
       ],
-      "name": "hasOpenLaneBProposal",
+      "name": "hasOpenSlashProposal",
       "outputs": [
         {
           "internalType": "bool",
@@ -1084,6 +1232,44 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "retrySlashRoute",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "routed",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "routePendingSlashFunds",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "routed",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "contract IBondingRegistry",
           "name": "newBondingRegistry",
           "type": "address"
@@ -1173,6 +1359,19 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "snapshotE3Dependencies",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "totalProposals",
       "outputs": [
@@ -1233,5 +1432,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-6d77a1fac0033f87a36ca50619587087010b9b66"
+  "buildInfoId": "solc-0_8_28-2d3d2b6b440530e2d0cda7f925e842c7cd652fec"
 }

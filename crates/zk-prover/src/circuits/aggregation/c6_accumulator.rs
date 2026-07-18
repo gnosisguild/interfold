@@ -22,11 +22,12 @@ use serde::Serialize;
 
 /// `total_slots` = `T + 1` (one slot per party index in the C6 leaf layout).
 fn c6_fold_public_input_field_count(total_slots: usize) -> usize {
-    4 + 4 * total_slots
+    6 + 4 * total_slots
 }
 
-/// Public-signal layout of `c6_fold`: 4-field prefix, then 4-field-wide per-slot tail.
-const C6_FOLD_PREFIX_LEN: usize = 4;
+/// Public-signal layout of `c6_fold`: four fold parameters, two common domain
+/// limbs, then a four-field-wide per-slot tail.
+const C6_FOLD_PREFIX_LEN: usize = 6;
 const C6_FOLD_SLOT_WIDTH: usize = 4;
 
 struct C6FoldVks {
@@ -110,7 +111,7 @@ fn generate_c6_fold_kernel_genesis_proof(
     Ok(proof)
 }
 
-fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<[String; 4], ZkError> {
+fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<[String; 6], ZkError> {
     if proof.circuit != CircuitName::ThresholdShareDecryption {
         return Err(ZkError::InvalidInput(format!(
             "expected ThresholdShareDecryption inner proof, got {}",
@@ -122,6 +123,8 @@ fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<[Stri
         extract_single_field(proof, "input", field_keys::EXPECTED_SK_COMMITMENT, ctx)?,
         extract_single_field(proof, "input", field_keys::EXPECTED_E_SM_COMMITMENT, ctx)?,
         extract_single_field(proof, "input", field_keys::CT_COMMITMENT, ctx)?,
+        extract_single_field(proof, "input", field_keys::DOMAIN_HI, ctx)?,
+        extract_single_field(proof, "input", field_keys::DOMAIN_LO, ctx)?,
         extract_single_field(proof, "output", field_keys::D_COMMITMENT, ctx)?,
     ])
 }
@@ -130,7 +133,7 @@ fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<[Stri
 struct C6FoldStepInput {
     inner_vk: Vec<String>,
     inner_proof: Vec<String>,
-    c6_public_inputs: [String; 4],
+    c6_public_inputs: [String; 6],
     acc_vk: Vec<String>,
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
@@ -193,7 +196,7 @@ fn generate_c6_fold_step_with_vks(
     } else {
         let p = prior_fold.expect("prior_fold required when is_first_step is false");
         let acc_pi = parse_c6_fold_public_field_strings(p)?;
-        let prior_slots = (acc_pi.len() - 4) / 4;
+        let prior_slots = (acc_pi.len() - C6_FOLD_PREFIX_LEN) / C6_FOLD_SLOT_WIDTH;
         if prior_slots == 0 {
             return Err(ZkError::InvalidInput(
                 "c6_fold proof implies zero slots".into(),

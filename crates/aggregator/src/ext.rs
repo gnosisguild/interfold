@@ -202,13 +202,19 @@ fn create_publickey_aggregator(
 pub struct ThresholdPlaintextAggregatorExtension {
     bus: BusHandle,
     sortition: Addr<Sortition>,
+    proof_aggregation_enabled: bool,
 }
 
 impl ThresholdPlaintextAggregatorExtension {
-    pub fn create(bus: &BusHandle, sortition: &Addr<Sortition>) -> Box<Self> {
+    pub fn create(
+        bus: &BusHandle,
+        sortition: &Addr<Sortition>,
+        proof_aggregation_enabled: bool,
+    ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             sortition: sortition.clone(),
+            proof_aggregation_enabled,
         })
     }
 
@@ -287,7 +293,7 @@ impl ThresholdPlaintextAggregatorExtension {
                                 return false;
                             }
                         },
-                        proof_aggregation_enabled: meta.proof_aggregation_enabled,
+                        proof_aggregation_enabled: self.proof_aggregation_enabled,
                         committee_addresses,
                         honest_committee_addresses,
                     },
@@ -626,7 +632,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                         meta.threshold_n
                     )
                 })?,
-                proof_aggregation_enabled: meta.proof_aggregation_enabled,
+                proof_aggregation_enabled: self.proof_aggregation_enabled,
                 committee_addresses,
                 honest_committee_addresses,
             },

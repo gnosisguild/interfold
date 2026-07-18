@@ -13,6 +13,7 @@ import {
   COMMITTEE_SIZE_MINIMUM,
   SORTITION_SUBMISSION_WINDOW,
 } from "./constants";
+import { buildMockDkgAttestationFixtureData } from "./dkgAttestation";
 
 const { time } = networkHelpers;
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
@@ -50,6 +51,25 @@ export const setupAndPublishCommittee = async (
   await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
   await registry.finalizeCommittee(e3Id);
   const pkCommitment = ethers.keccak256(publicKey);
+  if (committeeProof === "0x" && dkgAttestationBundle === "0x") {
+    let verifierAddress = await registry.dkgFoldAttestationVerifier();
+    if (verifierAddress === ethers.ZeroAddress) {
+      const verifier = await ethers.deployContract(
+        "DkgFoldAttestationVerifier",
+      );
+      await verifier.waitForDeployment();
+      verifierAddress = await verifier.getAddress();
+      await registry.setInitialDkgFoldAttestationVerifier(verifierAddress);
+    }
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators,
+      e3Id,
+      pkCommitment,
+      verifierAddress,
+    );
+    committeeProof = fixture.proof;
+    dkgAttestationBundle = fixture.bundle;
+  }
   await registry.publishCommittee(
     e3Id,
     publicKey,
@@ -90,8 +110,6 @@ export interface BuildRequestParamsOptions {
   startOffset?: number;
   /** `inputWindow[1] - time.latest()`. Defaults to `300` (5 minutes). */
   windowDuration?: number;
-  /** Defaults to `false`. */
-  proofAggregationEnabled?: boolean;
   /** Override custom params bytes. Defaults to an ABI-encoded throwaway address. */
   customParams?: string;
   /** Param-set id registered on the Interfold. Defaults to `0`. */
@@ -131,6 +149,5 @@ export const buildRequestParams = async (
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-    proofAggregationEnabled: opts.proofAggregationEnabled ?? false,
   };
 };

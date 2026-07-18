@@ -115,7 +115,7 @@ impl From<CommitteeFinalizedWithChainId> for CommitteeFinalized {
             scores: value.0.scores.iter().map(|s| s.to_string()).collect(),
             chain_id: value.1,
         };
-        result.sort_by_score();
+        result.sort_by_address();
         result
     }
 }

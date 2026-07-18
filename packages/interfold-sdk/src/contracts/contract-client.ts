@@ -158,7 +158,6 @@ export class ContractClient {
             paramSet: params.paramSet,
             computeProviderParams: params.computeProviderParams,
             customParams: params.customParams || '0x',
-            proofAggregationEnabled: params.proofAggregationEnabled ?? true,
           },
         ],
         account,
@@ -233,7 +232,6 @@ export class ContractClient {
             paramSet: requestParams.paramSet,
             computeProviderParams: requestParams.computeProviderParams,
             customParams: requestParams.customParams || '0x',
-            proofAggregationEnabled: requestParams.proofAggregationEnabled ?? true,
           },
         ],
       })

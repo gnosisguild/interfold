@@ -18,7 +18,7 @@ each E3 request. The design goals are:
 
 ---
 
-## Randomness Source
+## Sortition Seed
 
 The seed for every sortition round is derived from the EVM's `block.prevrandao` (EIP-4399) combined
 with the E3 identifier:
@@ -27,13 +27,10 @@ with the E3 identifier:
 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 ```
 
-`prevrandao` is the RANDAO reveal from the beacon chain. It is unpredictable before the block is
-proposed but publicly verifiable afterwards. Combining it with `e3Id` ensures different rounds
-produce independent seeds even within the same block.
-
-> **Limitation:** `prevrandao` is weak against a block proposer who can selectively withhold their
-> block. This is an accepted trade-off for now; future versions may use a commit-reveal scheme or an
-> external VRF.
+This is a convenient shared per-E3 value for deterministic ticket scoring. It is not fed into BFV
+key generation, and the protocol does not treat it as cryptographically unbiasable randomness.
+`prevrandao` can be influenced by block production; a future design can use a stronger randomness
+source if the sortition threat model comes to require one.
 
 The seed is emitted with `E3Requested` and used by all nodes to deterministically compute the same
 committee.
@@ -151,23 +148,24 @@ After the submission window closes, anyone can call `finalizeCommittee(e3Id)`:
   emitted
 - If fewer → `CommitteeFormationFailed` is emitted and the E3 fails with a refund
 
-`CommitteeFinalized` carries the committee as an ordered list of addresses. The Rust runtime then
-**normalizes** this list by **sorting it by ascending score** to produce a canonical party ordering:
+Before emitting `CommitteeFinalized`, the registry **normalizes** the selected committee by
+**sorting it by ascending address**. The Rust runtime repeats that normalization at its trust
+boundary:
 
 ```
-party_id = index in score-sorted committee (lowest score = 0)
+party_id = index in address-sorted committee (lowest address = 0)
 ```
 
-This normalization is done in `CommitteeFinalized::sort_by_score()` and ensures every node
-independently derives the same `party_id` for each member, regardless of the order the contract
-happened to emit them.
+The runtime normalization is done in `CommitteeFinalized::sort_by_address()` and ensures every node
+independently derives the same `party_id` for each member, including replayed or test-produced
+events that did not pass through the EVM decoder.
 
 ---
 
 ## Aggregator Assignment
 
-The **active aggregator** is the node with `party_id = 0` — the node that won the lowest overall
-score. It is responsible for:
+The **active aggregator** is the node with `party_id = 0` — the selected committee member with the
+lowest address. It is responsible for:
 
 - Collecting and verifying ZK proofs from all other committee members
 - Aggregating decryption shares
@@ -221,7 +219,7 @@ sequenceDiagram
     Chain->>NodeA: CommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
     Chain->>NodeB: CommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
 
-    Note over NodeA,NodeB: Both sort by score → same party_ids<br/>Lowest score = party_id 0 (aggregator)
+    Note over NodeA,NodeB: Both sort by address → same party_ids<br/>Lowest address = party_id 0 (aggregator)
 ```
 
 ---
@@ -230,7 +228,7 @@ sequenceDiagram
 
 | Property                | Mechanism                                                           |
 | ----------------------- | ------------------------------------------------------------------- |
-| **Unpredictability**    | `seed` derived from `prevrandao` — unknown until block proposal     |
+| **Shared seed**         | `prevrandao` and `e3Id` provide a common per-E3 scoring input       |
 | **Proportionality**     | Expected min-score over N tickets scales with N                     |
 | **Sybil-resistance**    | Splitting tickets across wallets doesn't improve expected min-score |
 | **Determinism**         | Hash function is identical on-chain (Solidity) and off-chain (Rust) |

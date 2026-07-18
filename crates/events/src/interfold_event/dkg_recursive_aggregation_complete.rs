@@ -14,7 +14,8 @@ use crate::{E3id, Proof, SignedDkgFoldAttestation};
 use serde::{Deserialize, Serialize};
 
 /// NodeProofAggregator -> PublicKeyAggregator: fully aggregated DKG node proof.
-/// When proof aggregation is disabled for the E3, `aggregated_proof` is `None`.
+/// The test/CI node-level skip path reports `None`; the public-key aggregator
+/// converts that internal state into a non-empty mock-verifier placeholder.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DKGRecursiveAggregationComplete {
     pub e3_id: E3id,

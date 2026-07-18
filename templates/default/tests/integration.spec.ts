@@ -209,7 +209,6 @@ describe('Integration', () => {
       e3Program: contracts.e3Program,
       paramSet: 0, // ParamSet.InsecureThreshold512
       computeProviderParams,
-      proofAggregationEnabled: false,
     }
     const quote = await sdk.getE3Quote(requestParams)
     console.log('E3 quote:', quote)

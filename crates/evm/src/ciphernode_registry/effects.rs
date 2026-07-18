@@ -149,16 +149,17 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     let public_key_bytes = Bytes::from(public_key.extract_bytes());
     let pk_commitment_b256 = B256::from(pk_commitment);
 
-    // `proof` is empty when `proofAggregationEnabled = false`; the contract
-    // trusts `pk_commitment` directly in that case.
-    let proof: Bytes = match dkg_aggregator_proof {
-        Some(p) => encode_zk_proof(p)?,
-        None => Bytes::new(),
-    };
-    let attestation_bundle: Bytes = match dkg_attestation_bundle {
-        Some(b) => Bytes::copy_from_slice(b),
-        None => Bytes::new(),
-    };
+    // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
+    // is therefore always an internal error, while production verifiers still reject placeholders.
+    let proof = encode_zk_proof(
+        dkg_aggregator_proof
+            .ok_or_else(|| anyhow::anyhow!("mandatory DKG aggregator proof payload missing"))?,
+    )?;
+    let attestation_bundle = Bytes::copy_from_slice(
+        dkg_attestation_bundle
+            .filter(|bundle| !bundle.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("mandatory DKG attestation bundle missing"))?,
+    );
 
     // RPC may not have synced finalization yet
     send_tx_with_retry("publishCommittee", &["CommitteeNotFinalized"], || {

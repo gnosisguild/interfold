@@ -103,6 +103,24 @@ export class InterfoldSDK {
     return computePublicKeyCommitment(publicKey, this.thresholdBfvParamsPresetName)
   }
 
+  /**
+   * Validate serialized BFV public-key bytes before using them for encryption.
+   *
+   * `CommitteePublished.publicKey` is an untrusted transport value. Consumers
+   * must compare its semantic BFV commitment with the event's on-chain
+   * `pkCommitment` before accepting it.
+   */
+  public async validatePublicKeyCommitment(publicKey: Uint8Array, expectedCommitment: Uint8Array): Promise<boolean> {
+    if (expectedCommitment.length !== 32) {
+      return false
+    }
+
+    const actualCommitment = await this.computePublicKeyCommitment(publicKey)
+    return (
+      actualCommitment.length === expectedCommitment.length && actualCommitment.every((byte, index) => byte === expectedCommitment[index])
+    )
+  }
+
   public async encryptNumber(data: bigint, publicKey: Uint8Array): Promise<Uint8Array> {
     return encryptNumber(data, publicKey, this.thresholdBfvParamsPresetName)
   }
@@ -140,7 +158,6 @@ export class InterfoldSDK {
     paramSet: number
     computeProviderParams: `0x${string}`
     customParams?: `0x${string}`
-    proofAggregationEnabled?: boolean
     gasLimit?: bigint
   }): Promise<Hash> {
     return this.contractClient.requestE3(params)

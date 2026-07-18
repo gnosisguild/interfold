@@ -19,7 +19,7 @@ cd "${CRISP_ROOT}/packages/crisp-contracts"
 
 pnpm clean:deployments --network localhost
 
-if [[ "$CRISP_PROOF_AGGREGATION_ENABLED" == "true" ]]; then
+if [[ "$CRISP_SKIP_PROOF_AGGREGATION" == "false" ]]; then
   export ENABLE_ZK_VERIFICATION=true
   echo "Deploy: ENABLE_ZK_VERIFICATION=true (BfvPkVerifier + fold attestation)"
 else

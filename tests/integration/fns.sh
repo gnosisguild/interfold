@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLAINTEXT="4,0"
 
 # Set by test.sh via export_integration_flags
-PROOF_AGGREGATION_ENABLED="${PROOF_AGGREGATION_ENABLED:-false}"
+FULL_PROOF_AGGREGATION="${FULL_PROOF_AGGREGATION:-false}"
 INTEGRATION_DKG_TIMEOUT="${INTEGRATION_DKG_TIMEOUT:-1300}"
 ID=$(date +%s)
 
@@ -34,7 +34,15 @@ CIPHERNODE_ADDRESS_4="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 CIPHERNODE_ADDRESS_5="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
 
 
-if command -v interfold >/dev/null 2>&1; then
+if [[ -n "${INTERFOLD_BIN:-}" ]]; then
+   if [[ ! -x "$INTERFOLD_BIN" ]]; then
+      echo "Configured INTERFOLD_BIN is not executable: $INTERFOLD_BIN" >&2
+      exit 1
+   fi
+elif [[ "${CIPHERNODE_SKIP_PROOF_AGGREGATION:-false}" == "true" ]]; then
+   cargo build --locked --bin interfold --features e3-cli/test-only-skip-proof-aggregation
+   INTERFOLD_BIN="$ROOT_DIR/target/debug/interfold"
+elif command -v interfold >/dev/null 2>&1; then
    INTERFOLD_BIN="interfold"
 elif [[ -f "$ROOT_DIR/target/debug/interfold" ]]; then
    INTERFOLD_BIN="$ROOT_DIR/target/debug/interfold"

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::{CiphernodeBuilder, CiphernodeHandle};
 use e3_config::AppConfig;
 use e3_crypto::Cipher;
@@ -14,6 +14,8 @@ use rand_chacha::ChaCha20Rng;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+#[cfg(feature = "test-only-skip-proof-aggregation")]
+use tracing::warn;
 use tracing::{info, instrument};
 
 async fn await_startup<F, T>(future: F, timeout: Duration) -> Result<T>
@@ -25,8 +27,20 @@ where
         .with_context(|| format!("ciphernode startup did not complete within {timeout:?}"))?
 }
 
+fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
+    if skip_proof_aggregation && !cfg!(feature = "test-only-skip-proof-aggregation") {
+        bail!(
+            "`skip_proof_aggregation` is test/CI-only and this binary was built without the \
+             `test-only-skip-proof-aggregation` Cargo feature"
+        );
+    }
+    Ok(())
+}
+
 #[instrument(name = "app", skip_all)]
 pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
+    validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
+
     let rng = Arc::new(Mutex::new(
         ChaCha20Rng::try_from_os_rng().context("failed to seed ChaCha20 RNG from OS")?,
     ));
@@ -48,7 +62,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         "Ciphernode startup deadline configured"
     );
 
-    let build = CiphernodeBuilder::new(rng.clone(), cipher.clone())
+    let builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
         .with_name(&config.name())
         .with_logging()
         .with_persistence(&config.log_file(), &config.db_file())
@@ -70,8 +84,20 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         .with_threshold_plaintext_aggregation()
         .with_net(config.peers(), config.quic_port())
         .with_shared_store()
-        .with_shared_eventstore()
-        .build();
+        .with_shared_eventstore();
+
+    #[cfg(feature = "test-only-skip-proof-aggregation")]
+    let builder = if config.skip_proof_aggregation() {
+        warn!(
+            "Skipping recursive proof aggregation for this feature-gated test/CI node; \
+             on-chain final proof verification remains mandatory"
+        );
+        builder.with_proof_aggregation_disabled_for_testing()
+    } else {
+        builder
+    };
+
+    let build = builder.build();
     let node = await_startup(build, startup_timeout).await?;
 
     Ok(node)
@@ -79,7 +105,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
 
 #[cfg(test)]
 mod tests {
-    use super::await_startup;
+    use super::{await_startup, validate_proof_aggregation_mode};
     use anyhow::{bail, Result};
     use std::time::Duration;
 
@@ -106,5 +132,23 @@ mod tests {
             bail!("unexpected timeout error: {error:#}");
         }
         Ok(())
+    }
+
+    #[cfg(not(feature = "test-only-skip-proof-aggregation"))]
+    #[test]
+    fn production_build_rejects_proof_aggregation_skip() {
+        let error = validate_proof_aggregation_mode(true)
+            .expect_err("production build must reject proof aggregation skipping");
+        assert!(error
+            .to_string()
+            .contains("test-only-skip-proof-aggregation"));
+        assert!(validate_proof_aggregation_mode(false).is_ok());
+    }
+
+    #[cfg(feature = "test-only-skip-proof-aggregation")]
+    #[test]
+    fn test_feature_allows_proof_aggregation_skip() {
+        assert!(validate_proof_aggregation_mode(true).is_ok());
+        assert!(validate_proof_aggregation_mode(false).is_ok());
     }
 }

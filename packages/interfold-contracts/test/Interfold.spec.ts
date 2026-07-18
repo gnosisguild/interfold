@@ -44,13 +44,7 @@ describe("Interfold", function () {
   const inputWindowDuration = 300;
 
   const setup = async () => {
-    const sys = await deployInterfoldSystem({ wireSlashingManager: false });
-    const dkgFoldAttestationVerifier = await ethers.deployContract(
-      "DkgFoldAttestationVerifier",
-    );
-    await sys.ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
-      await dkgFoldAttestationVerifier.getAddress(),
-    );
+    const sys = await deployInterfoldSystem({ wireSlashingManager: true });
     return {
       owner: sys.owner,
       notTheOwner: sys.notTheOwner,
@@ -64,7 +58,6 @@ describe("Interfold", function () {
       ticketToken: sys.ticketToken,
       usdcToken: sys.usdcToken,
       slashingManager: sys.slashingManager,
-      dkgFoldAttestationVerifier,
       request: sys.request,
       mocks: {
         decryptionVerifier: sys.mocks.decryptionVerifier,
@@ -221,7 +214,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       });
 
       const e3 = await interfold.getE3(0);
@@ -383,7 +375,6 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
-          proofAggregationEnabled: false,
         }),
       ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
     });
@@ -401,7 +392,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       };
       // `CommitteeSizeNotConfigured(3)` reverts correctly on-chain; ethers cannot
       // decode the custom error when the enum arg is not a named variant (0..2).
@@ -423,7 +413,6 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
-          proofAggregationEnabled: false,
         }),
       ).to.be.revertedWithCustomError(interfold, "InvalidDuration");
     });
@@ -438,7 +427,6 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
-          proofAggregationEnabled: false,
         }),
       )
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
@@ -455,7 +443,6 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
-          proofAggregationEnabled: false,
         }),
       )
         .to.be.revertedWithCustomError(interfold, "InvalidEncryptionScheme")
@@ -471,7 +458,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       });
 
       const e3 = await interfold.getE3(0);
@@ -502,7 +488,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       });
       const e3 = await interfold.getE3(0);
 
@@ -540,7 +525,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       });
 
       await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
@@ -603,7 +587,6 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
-        proofAggregationEnabled: false,
       });
 
       await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
@@ -764,6 +747,34 @@ describe("Interfold", function () {
         interfold.publishPlaintextOutput(e3Id, data, proof),
       ).to.be.revertedWithCustomError(interfold, "InvalidStage");
     });
+    it("AUD-C02: requires a final decryption proof", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await interfold.publishCiphertextOutput(e3Id, data, proof);
+
+      await expect(
+        interfold.publishPlaintextOutput(e3Id, data, "0x"),
+      ).to.be.revertedWithCustomError(interfold, "ProofRequired");
+    });
     it("reverts if output is not valid", async function () {
       const {
         interfold,
@@ -773,14 +784,12 @@ describe("Interfold", function () {
         operator1,
         operator2,
         operator3,
-        dkgFoldAttestationVerifier,
       } = await loadFixture(setup);
       const e3Id = 0;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
         inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
-        proofAggregationEnabled: true,
       });
 
       const operators = [operator1, operator2, operator3];
@@ -788,7 +797,7 @@ describe("Interfold", function () {
         operators,
         e3Id,
         data,
-        await dkgFoldAttestationVerifier.getAddress(),
+        await ciphernodeRegistryContract.dkgFoldAttestationVerifier(),
       );
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,

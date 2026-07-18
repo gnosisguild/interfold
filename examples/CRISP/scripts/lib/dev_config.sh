@@ -21,7 +21,7 @@ load_crisp_dev_config() {
   set +a
 
   CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure-512}"
-  CRISP_PROOF_AGGREGATION_ENABLED="${CRISP_PROOF_AGGREGATION_ENABLED:-false}"
+  CRISP_SKIP_PROOF_AGGREGATION="${CRISP_SKIP_PROOF_AGGREGATION:-true}"
 
   case "$CRISP_BFV_PRESET" in
     insecure-512 | secure-8192) ;;
@@ -31,33 +31,26 @@ load_crisp_dev_config() {
       ;;
   esac
 
-  case "$CRISP_PROOF_AGGREGATION_ENABLED" in
+  case "$CRISP_SKIP_PROOF_AGGREGATION" in
     true | false) ;;
     *)
-      echo "Invalid CRISP_PROOF_AGGREGATION_ENABLED='${CRISP_PROOF_AGGREGATION_ENABLED}' (use true or false)" >&2
+      echo "Invalid CRISP_SKIP_PROOF_AGGREGATION='${CRISP_SKIP_PROOF_AGGREGATION}' (use true or false)" >&2
       exit 1
       ;;
   esac
 
-  if [[ "$CRISP_PROOF_AGGREGATION_ENABLED" == "true" ]]; then
-    export ENABLE_ZK_VERIFICATION=true
-  else
+  if [[ "$CRISP_SKIP_PROOF_AGGREGATION" == "true" ]]; then
     unset ENABLE_ZK_VERIFICATION
-  fi
-
-  export CRISP_BFV_PRESET CRISP_PROOF_AGGREGATION_ENABLED CRISP_ROOT REPO_ROOT
-}
-
-_set_env_kv() {
-  local file=$1 key=$2 value=$3
-  if [[ -f "$file" ]] && grep -q "^${key}=" "$file"; then
-    local tmp
-    tmp="$(mktemp)"
-    sed "s|^${key}=.*|${key}=${value}|" "$file" >"$tmp"
-    mv "$tmp" "$file"
   else
-    echo "${key}=${value}" >>"$file"
+    export ENABLE_ZK_VERIFICATION=true
   fi
+  export E3_NODES__CN1__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
+  export E3_NODES__CN2__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
+  export E3_NODES__CN3__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
+  export E3_NODES__CN4__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
+  export E3_NODES__CN5__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
+
+  export CRISP_BFV_PRESET CRISP_SKIP_PROOF_AGGREGATION CRISP_ROOT REPO_ROOT
 }
 
 apply_crisp_dev_config_to_server_env() {
@@ -65,10 +58,13 @@ apply_crisp_dev_config_to_server_env() {
   if [[ ! -f "$server_env" ]]; then
     cp "${CRISP_ROOT}/server/.env.example" "$server_env"
   fi
-  _set_env_kv "$server_env" "E3_PROOF_AGGREGATION_ENABLED" "$CRISP_PROOF_AGGREGATION_ENABLED"
 }
 
 build_interfold_circuits_at_setup() {
+  if [[ "$CRISP_SKIP_PROOF_AGGREGATION" == "true" ]]; then
+    echo "Skipping recursive proof-aggregation circuit build for the CRISP dev profile."
+    return 0
+  fi
   local committee="${CRISP_COMMITTEE:-minimum}"
   echo "Building interfold circuits (preset=${CRISP_BFV_PRESET}, committee=${committee})..."
   (
@@ -101,9 +97,9 @@ print_crisp_dev_config_summary() {
 
 CRISP dev profile (${CRISP_ROOT}/crisp.dev.env):
   CRISP_BFV_PRESET=${CRISP_BFV_PRESET}
-  CRISP_PROOF_AGGREGATION_ENABLED=${CRISP_PROOF_AGGREGATION_ENABLED}
+  CRISP_SKIP_PROOF_AGGREGATION=${CRISP_SKIP_PROOF_AGGREGATION}
   ENABLE_ZK_VERIFICATION=${ENABLE_ZK_VERIFICATION:-false} (used at deploy via dev:up)
-  server/.env E3_PROOF_AGGREGATION_ENABLED synced by dev:setup
+  ciphernode skip flag=${CRISP_SKIP_PROOF_AGGREGATION}
   Contract addresses synced by dev:up (deploy → server/.env, client/.env, interfold.config.yaml)
 
 EOF
