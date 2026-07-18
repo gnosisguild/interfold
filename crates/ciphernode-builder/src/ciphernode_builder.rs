@@ -332,6 +332,7 @@ impl CiphernodeBuilder {
     /// This only changes local ciphernode work. Contracts still verify the final DKG and
     /// decryption proof payloads, so this setting is only useful with test deployments whose
     /// configured mock verifiers accept the non-empty C5/C7 placeholder payloads.
+    #[cfg(feature = "test-only-skip-proof-aggregation")]
     pub fn with_proof_aggregation_disabled_for_testing(mut self) -> Self {
         self.proof_aggregation_enabled = false;
         self

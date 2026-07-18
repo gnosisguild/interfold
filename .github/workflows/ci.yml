@@ -592,7 +592,9 @@ jobs:
           chmod +x ~/.cargo/bin/interfold
           chmod +x tests/integration/.interfold/noir/bin/bb
       - name: 'Run ${{ matrix.test-suite }} tests'
-        run: 'pnpm test:integration ${{ matrix.test-suite }} --no-prebuild'
+        run: |
+          INTERFOLD_BIN="$HOME/.cargo/bin/interfold" \
+            pnpm test:integration ${{ matrix.test-suite }} --no-prebuild
       - name: 'Add test summary'
         run: |
           echo "## Test results for ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
@@ -628,7 +630,7 @@ jobs:
           && sudo apt-get install -y solc protobuf-compiler
 
       - name: Build interfold CLI
-        run: cargo install --locked --path crates/cli --bin interfold
+        run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
 
       - name: Upload interfold binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

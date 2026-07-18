@@ -638,7 +638,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm committee public key is still unset
   ├─ Encodes the DkgAggregator proof in production
-  ├─ Test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
+  ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
   └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
@@ -911,7 +911,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
-  ├─ Test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
+  ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)

@@ -6,6 +6,9 @@ license.workspace = true
 description = "E3 - Ciphernode Builder"
 repository = "https://github.com/theinterfold/interfold/crates/ciphernode-builder"
 
+[features]
+test-only-skip-proof-aggregation = []
+
 [dependencies]
 actix.workspace = true
 alloy.workspace = true

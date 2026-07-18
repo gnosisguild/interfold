@@ -335,9 +335,11 @@ per-circuit proofs on-chain. Instead the aggregator submits two recursive proofs
 for decryption — together with per-node attestations that bind each surfaced commitment to a
 specific registered operator.
 
-Ciphernodes expose a test/CI-only `skip_proof_aggregation` node setting. It skips the recursive
-workers and reuses the already-generated C5/C7 proofs as non-empty placeholders for mock verifiers.
-Contracts still execute their verifier calls, so this flag cannot weaken a production deployment.
+Ciphernodes built with the `test-only-skip-proof-aggregation` Cargo feature expose a test/CI-only
+`skip_proof_aggregation` node setting. It skips the recursive workers and reuses the
+already-generated C5/C7 proofs as non-empty placeholders for mock verifiers. Production builds do
+not contain the disabling path and reject configurations that request it. Contracts still execute
+their verifier calls.
 
 ### Canonical party_id assignment
 

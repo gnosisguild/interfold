@@ -77,7 +77,8 @@ pub struct NodeDefinition {
     #[serde(default = "default_max_buffered_net_bytes")]
     pub max_buffered_net_bytes: usize,
     /// Test/CI-only escape hatch that skips recursive DKG and decryption proof aggregation.
-    /// On-chain verification remains mandatory, so this requires mock verifiers.
+    /// On-chain verification remains mandatory, so this requires mock verifiers and a binary
+    /// compiled with the `test-only-skip-proof-aggregation` Cargo feature.
     pub skip_proof_aggregation: bool,
 }
 
@@ -425,7 +426,7 @@ impl AppConfig {
         self.node_def().max_buffered_net_bytes
     }
 
-    /// Whether this node skips recursive proof aggregation for test/CI runs.
+    /// Whether this node requests the compile-time-gated proof aggregation skip for test/CI runs.
     pub fn skip_proof_aggregation(&self) -> bool {
         self.node_def().skip_proof_aggregation
     }
