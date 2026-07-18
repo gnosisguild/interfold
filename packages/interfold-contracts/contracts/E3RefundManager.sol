@@ -179,13 +179,17 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(originalPayment > 0, "No payment");
         require(address(paymentToken) != address(0), "Invalid fee token");
 
-        // Calculate work value based on stage and the request-time policy.
-        IInterfold.E3Stage failedAt = _getFailedAtStage(e3Id);
+        // Attribute the failure before touching requester escrow. Supplier-side
+        // failures return the entire fee payment; requester-side failures pay
+        // completed work according to the request-time policy.
+        IInterfold.FailureReason reason = _interfoldFor(e3Id).getFailureReason(
+            e3Id
+        );
         (
             uint256 honestNodeAmount,
             uint256 requesterAmount,
             uint256 protocolAmount
-        ) = _baseDistribution(e3Id, originalPayment, failedAt);
+        ) = _baseDistribution(e3Id, originalPayment, reason);
 
         // No honest nodes: fold work share into the requester refund (mirrors
         // {Interfold._distributeRewards} success-path).
@@ -250,7 +254,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function _baseDistribution(
         uint256 e3Id,
         uint256 originalPayment,
-        IInterfold.E3Stage failedAt
+        IInterfold.FailureReason reason
     )
         internal
         view
@@ -260,6 +264,11 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             uint256 protocolAmount
         )
     {
+        if (getFailurePayer(reason) == FailurePayer.Ciphernodes) {
+            return (0, originalPayment, 0);
+        }
+
+        IInterfold.E3Stage failedAt = _getFailedAtStage(reason);
         (
             uint16 workCompletedBps,
             uint16 workRemainingBps
@@ -269,14 +278,39 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         protocolAmount = originalPayment - honestNodeAmount - requesterAmount;
     }
 
-    /// @notice Get the stage at which E3 failed (for work calculation)
-    function _getFailedAtStage(
-        uint256 e3Id
-    ) internal view returns (IInterfold.E3Stage) {
-        IInterfold.FailureReason reason = _interfoldFor(e3Id).getFailureReason(
-            e3Id
-        );
+    /// @inheritdoc IE3RefundManager
+    function getFailurePayer(
+        IInterfold.FailureReason reason
+    ) public pure returns (FailurePayer payer) {
+        if (
+            reason == IInterfold.FailureReason.NoInputsReceived ||
+            reason == IInterfold.FailureReason.ComputeTimeout ||
+            reason == IInterfold.FailureReason.ComputeProviderExpired ||
+            reason == IInterfold.FailureReason.ComputeProviderFailed ||
+            reason == IInterfold.FailureReason.RequesterCancelled
+        ) {
+            return FailurePayer.Requester;
+        }
 
+        if (
+            reason == IInterfold.FailureReason.CommitteeFormationTimeout ||
+            reason == IInterfold.FailureReason.InsufficientCommitteeMembers ||
+            reason == IInterfold.FailureReason.DKGTimeout ||
+            reason == IInterfold.FailureReason.DKGInvalidShares ||
+            reason == IInterfold.FailureReason.DecryptionTimeout ||
+            reason == IInterfold.FailureReason.DecryptionInvalidShares ||
+            reason == IInterfold.FailureReason.VerificationFailed
+        ) {
+            return FailurePayer.Ciphernodes;
+        }
+
+        revert InvalidFailureReason(reason);
+    }
+
+    /// @notice Get the stage at which a requester-attributable E3 failed.
+    function _getFailedAtStage(
+        IInterfold.FailureReason reason
+    ) internal pure returns (IInterfold.E3Stage) {
         // Map failure reason to stage
         if (
             reason == IInterfold.FailureReason.CommitteeFormationTimeout ||
@@ -511,43 +545,19 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address[] memory nodes
     ) internal {
         RefundDistribution storage dist = _distributions[e3Id];
-        uint256 toRequester;
-        uint256 toHonestNodes;
+        uint256 toHonestNodes = amount;
         uint256 toProtocol;
-        bool sameFeeToken = token == dist.feeToken;
-
-        if (!sameFeeToken) {
-            // No oracle-free comparison can establish an exact fee-token
-            // shortfall, so the requester gets priority compensation in the
-            // actual slash asset without relabeling it as exact repayment.
-            toRequester = amount;
-        } else {
-            // Same-token slashes first fill the requester's exact fee-token
-            // shortfall. `totalSlashed` records cumulative same-token slash
-            // settlement so later slashes cannot refill the same gap.
-            uint256 originalGap = dist.originalPayment > dist.requesterAmount
-                ? dist.originalPayment - dist.requesterAmount
-                : 0;
-            uint256 alreadyFilled = dist.totalSlashed < originalGap
-                ? dist.totalSlashed
-                : originalGap;
-            uint256 remainingGap = originalGap - alreadyFilled;
-            toRequester = amount < remainingGap ? amount : remainingGap;
-            toHonestNodes = amount - toRequester;
-            if (nodes.length == 0) {
-                // Preserve the requester cap when no honest-node recipient
-                // exists; the residual remains protocol-owned, not a windfall.
-                toProtocol = toHonestNodes;
-                toHonestNodes = 0;
-            }
+        if (nodes.length == 0) {
+            // There is no honest service-provider recipient. Do not turn a
+            // punitive slash into requester over-compensation.
+            toProtocol = amount;
+            toHonestNodes = 0;
         }
-        if (sameFeeToken) dist.totalSlashed += amount;
+        if (token == dist.feeToken) dist.totalSlashed += amount;
 
-        address requester = _interfoldFor(e3Id).getRequester(e3Id);
-        _creditSlashedClaim(e3Id, token, requester, toRequester);
         _creditNodeSlashedClaims(e3Id, token, nodes, toHonestNodes);
         _creditTrackedTreasury(_treasuryFor(e3Id), token, toProtocol);
-        emit SlashedFundsApplied(e3Id, token, toRequester, toHonestNodes);
+        emit SlashedFundsApplied(e3Id, token, 0, toHonestNodes);
     }
 
     function _settleSuccessfulE3Slash(

@@ -13,6 +13,13 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev Handles refund calculation and claiming for failed E3s
  */
 interface IE3RefundManager {
+    /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
+    enum FailurePayer {
+        None,
+        Requester,
+        Ciphernodes
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                        Structs                         //
@@ -40,11 +47,11 @@ interface IE3RefundManager {
         uint256 requesterAmount; // Amount for requester
         uint256 honestNodeAmount; // Total amount for honest nodes
         uint256 protocolAmount; // Amount for protocol treasury
-        uint256 totalSlashed; // Cumulative fee-token slash settlement used for requester-first compensation
+        uint256 totalSlashed; // Cumulative settled slashes denominated in the E3 fee token
         uint256 honestNodeCount; // Number of honest nodes
         bool calculated; // Whether distribution is calculated
         IERC20 feeToken; // The fee token used for this E3's payment (stored per-E3 to survive token rotations)
-        uint256 originalPayment; // Original E3 payment amount (for making requester whole)
+        uint256 originalPayment; // Original E3 payment amount retained for settlement auditability
         uint256 perNodeAmount; // Snapshotted per-honest-node payout; 0 when honestNodeCount==0
     }
     ////////////////////////////////////////////////////////////
@@ -153,6 +160,8 @@ interface IE3RefundManager {
     error NothingToClaim();
     /// @notice Recorded liabilities exceed the manager's balance of a token.
     error InsolventToken(IERC20 token, uint256 liability, uint256 balance);
+    /// @notice Failure reason has no configured economic responsibility.
+    error InvalidFailureReason(IInterfold.FailureReason reason);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -170,6 +179,13 @@ interface IE3RefundManager {
         address[] calldata honestNodes,
         IERC20 paymentToken
     ) external;
+
+    /// @notice Return the party whose collateral pays completed work for a failure reason.
+    /// @dev Requester failures pay completed work from fee escrow. Ciphernode/supply
+    ///      failures return all fee escrow and use actual ticket slashes to pay honest nodes.
+    function getFailurePayer(
+        IInterfold.FailureReason reason
+    ) external pure returns (FailurePayer payer);
 
     /// @notice Freeze the current allocation, treasury, and committee registry for an E3.
     /// @dev Only Interfold may call this, exactly once, during request creation.

@@ -346,6 +346,16 @@ contract SlashingManager is
         }
         // Cap the appeal window so governance cannot indefinitely delay slashing.
         require(policy.appealWindow <= MAX_APPEAL_WINDOW, InvalidPolicy());
+        if (policy.failureReason > 0) {
+            // A policy that can fail an E3 must also remove the proven-faulty
+            // operator before the refund manager snapshots honest recipients.
+            require(policy.affectsCommittee, InvalidPolicy());
+            require(
+                policy.failureReason <
+                    uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
+                InvalidPolicy()
+            );
+        }
 
         slashPolicies[reason] = policy;
         emit SlashPolicyUpdated(reason, policy);

@@ -2,9 +2,16 @@
 
 ## Overview
 
-An E3 can fail at any stage due to timeouts, insufficient participants, or misbehavior. When failure
-is detected, the protocol refunds the requester (proportional to work not completed), compensates
-honest nodes, and slashes misbehaving operators.
+An E3 can fail at any stage due to timeouts, insufficient participants, or misbehavior. Settlement
+first attributes economic responsibility from `FailureReason`:
+
+- Requester, data-provider, or compute-provider failures pay completed work and the protocol share
+  from fee escrow; the requester receives the unspent remainder.
+- Supplier/ciphernode failures return 100% of fee escrow to the requester with no protocol cut.
+  Honest nodes are compensated from actual ticket collateral slashed from faulty nodes.
+
+Slashed assets remain token-specific pull claims. Compensation is therefore limited to collateral
+actually slashed and does not require an oracle or relabel one ERC-20 as another.
 
 ---
 
@@ -103,30 +110,38 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │
 │     │  ┌─── E3RefundManager.calculateRefund() ────────────────┐
 │     │  │                                                       │
-│     │  │  1. Determine work completed based on failure stage:  │
+│     │  │  1. Read FailureReason and call getFailurePayer():    │
 │     │  │                                                       │
-│     │  │  Stage at Failure     │ Work Done │ Work Left │Proto  │
-│     │  │  ─────────────────────┼───────────┼───────────┼────── │
-│     │  │  Requested / None     │    0 BPS  │  9500 BPS │ 500   │
-│     │  │  (no committee yet)   │    (0%)   │   (95%)   │ (5%)  │
-│     │  │  CommitteeFinalized   │ 1000 BPS  │  8500 BPS │ 500   │
-│     │  │  (DKG failed)         │   (10%)   │   (85%)   │ (5%)  │
-│     │  │  KeyPublished         │ 4000 BPS  │  5500 BPS │ 500   │
-│     │  │  (compute failed)     │   (40%)   │   (55%)   │ (5%)  │
-│     │  │  CiphertextReady      │ 4000 BPS  │  5500 BPS │ 500   │
-│     │  │  (decryption failed)  │   (40%)   │   (55%)   │ (5%)  │
+│     │  │  Requester liability:                                 │
+│     │  │    NoInputsReceived, ComputeTimeout,                  │
+│     │  │    ComputeProviderExpired/Failed, RequesterCancelled  │
 │     │  │                                                       │
-│     │  │  NOTE: KeyPublished and CiphertextReady have the SAME │
-│     │  │  work-completed value (4000 BPS). The decryptionBps    │
-│     │  │  (5500) is NOT added for CiphertextReady — decryption │
-│     │  │  work is not counted as completed until E3 is Complete.│
+│     │  │  Ciphernodes/supply liability:                        │
+│     │  │    CommitteeFormationTimeout,                         │
+│     │  │    InsufficientCommitteeMembers, DKGTimeout,          │
+│     │  │    DKGInvalidShares, DecryptionTimeout,               │
+│     │  │    DecryptionInvalidShares, VerificationFailed        │
 │     │  │                                                       │
-│     │  │  2. Calculate amounts:                                │
-│     │  │     honestNodeAmount = payment * workDoneBps / 10000  │
-│     │  │     requesterAmount = payment * workLeftBps / 10000   │
-│     │  │     protocolAmount = payment - honest - requester     │
+│     │  │  None, _MAX_FAILURE_REASON, and future unclassified   │
+│     │  │  reasons revert InvalidFailureReason (fail closed).   │
 │     │  │                                                       │
-│     │  │  3. Credit protocol amount to treasury pull ledger    │
+│     │  │  2a. Ciphernodes/supply liability:                    │
+│     │  │      requesterAmount = payment (100%)                 │
+│     │  │      honestNodeAmount = 0                             │
+│     │  │      protocolAmount = 0                               │
+│     │  │      → honest-node compensation can come only from    │
+│     │  │        actual slashed ticket collateral               │
+│     │  │                                                       │
+│     │  │  2b. Requester liability: use request-time work BPS:  │
+│     │  │      KeyPublished / CiphertextReady defaults:         │
+│     │  │      honestNodeAmount = payment * 4000 / 10000        │
+│     │  │      requesterAmount = payment * 5500 / 10000         │
+│     │  │      protocolAmount = remaining 500 / 10000           │
+│     │  │      → if no honest recipient exists, fold the work   │
+│     │  │        share back into requesterAmount                │
+│     │  │                                                       │
+│     │  │  3. Credit any requester-fault protocol amount to the │
+│     │  │     snapshotted treasury pull ledger                  │
 │     │  │                                                       │
 │     │  │  4. Store RefundDistribution {                        │
 │     │  │       honestNodeAmount, requesterAmount,              │
@@ -135,15 +150,9 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │       originalPayment, perNodeAmount: 0               │
 │     │  │     }                                                 │
 │     │  │                                                       │
-│     │  │  H-08: if honestNodes.length == 0 and                 │
-│     │  │  honestNodeAmount > 0, fold honestNodeAmount back     │
-│     │  │  into requesterAmount before storing — the work-      │
-│     │  │  completed share would otherwise have no eligible     │
-│     │  │  honest-node claimant.                                │
-│     │  │                                                       │
 │     │  │  5. Preserve slashed assets as separate claims:       │
 │     │  │     → New escrows are keyed by (e3Id, actual token)   │
-│     │  │     → A pending entry matching paymentToken may settle │
+│     │  │     → A pending entry matching paymentToken may settle│
 │     │  │       now; other tokens remain permissionlessly       │
 │     │  │       settleable without being relabeled              │
 │     │  │                                                       │
@@ -172,8 +181,9 @@ REQUESTER claims:
 ├─ require(distribution calculated)
 ├─ require(msg.sender == requester from Interfold)
 ├─ require(!requester refund already claimed)
-├─ requesterAmount includes BOTH:
-│   • Base refund (from work-value BPS allocation)
+├─ requesterAmount is either:
+│   • 100% of fee escrow for ciphernodes/supply liability, or
+│   • the unspent request-time work allocation for requester liability
 ├─ Transfer requesterAmount in the per-E3 fee token
 └─ Emit RefundClaimed(e3Id, requester, amount)
 
@@ -185,7 +195,9 @@ HONEST NODE claims:
 ├─ require(!honest-node reward already claimed by this node)
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements
-├─ honestNodeAmount is base fee-token compensation from the work-value allocation
+├─ honestNodeAmount exists only for requester-attributable failures
+│  → ciphernodes/supply failures set this base amount to zero
+│  → honest nodes claim later ticket slashes through claimSlashedFunds
 ├─ perNodeAmount = honestNodeAmount / honestNodeCount
 │   • SNAPSHOTTED at calculateRefund (M-09) and never changed by
 │     slashed assets, even when the slash token equals the fee token.
@@ -204,7 +216,7 @@ SLASH RECIPIENT claims a token-specific entitlement:
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
 ```
 
-### Refund Example (Base Only)
+### Refund Example: Requester/Compute-Provider Fault
 
 ```
 Scenario: E3 fails at KeyPublished stage (compute timeout)
@@ -222,34 +234,26 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
   Treasury claims: 50,001
 ```
 
-### Refund Example (With Slashed Funds)
+### Refund Example: Ciphernode Fault
 
 ```
-Same scenario as above, then 2 nodes are slashed for 300,000 units of
-USDC each:
+Scenario: E3 fails during DKG because one member supplied invalid shares
+  Fee escrow: 1,000,000 USDC
+  Honest nodes after expulsion: 2
+  Faulty node ticket slash: 300,000 TICKET-USD
 
-  Before slash:
-    requesterAmount  = 550,000
-    honestNodeAmount = 400,000
-    originalPayment  = 1,000,000
+  Base fee-token claims:
+    requester:    1,000,000 USDC (100%)
+    honest nodes:         0 USDC
+    protocol:             0 USDC
 
-  Requester fee-token shortfall: 1,000,000 - 550,000 = 450,000.
-  The first 300,000 slash is credited entirely to the requester.
-  From the second 300,000 slash:
-    requester receives the remaining 150,000 shortfall
-    honest nodes receive the 150,000 surplus
+  Separate slash-token claims:
+    honest node 1: 150,000 TICKET-USD
+    honest node 2: 150,000 TICKET-USD
+    requester:          0 TICKET-USD
 
-  Final:
-    Base USDC claims remain: requester 550,000; nodes 400,000 total.
-    Separate slashed-USDC claims:
-      requester:   450,000
-      honest nodes: 150,000 total (dust assigned deterministically)
-    Treasury base USDC credit: 50,000
-
-  If the slash asset were TICKET-USD instead, the whole TICKET-USD amount
-  would be credited to the requester as priority compensation. It would not
-  be described as filling the numerical USDC shortfall because no trusted
-  conversion price exists.
+  If no ticket collateral is actually slashed, honest-node compensation is
+  zero; the requester refund never waits for or depends on slash execution.
 ```
 
 ---
@@ -815,33 +819,29 @@ settleSlashedFunds(e3Id, actualToken):
 │
 ├─ Read and clear _pendingSlashedByToken[e3Id][actualToken]
 │
-├─ If actualToken differs from the E3 fee token:
-│   credit the whole amount to the requester as priority compensation
-│   → Do not claim that unrelated token units fill an exact fee-token gap
+├─ Read current active committee nodes from the request-time registry
+│   → Faulty operators expelled by failure-triggering policies are excluded
 │
-├─ Otherwise, for a matching fee token:
-│   originalGap = originalPayment - requesterAmount
-│   remainingGap = originalGap - requester compensation already credited
-│   toRequester = min(amount, remainingGap)
-│   toHonestNodes = amount - toRequester
-│   → Cumulative same-token settlement prevents later slashes from
-│     refilling the same requester shortfall
-│   → If no active honest node exists, credit the post-cap residual to
-│     the snapshotted treasury rather than creating a requester windfall
+├─ If active honest nodes exist:
+│   divide the whole actualToken amount among them
+│   → deterministic last-node dust assignment
+│
+├─ Otherwise:
+│   credit the whole actualToken amount to the snapshotted treasury
+│   → no requester windfall beyond return of their original fee escrow
 │
 ├─ Credit _pendingSlashedClaims[e3Id][actualToken][recipient]
 │   → Base fee-token RefundDistribution fields never change
 │   → Decimal/unit differences cannot corrupt the base refund
 │
 └─ Emit SlashedFundsApplied(e3Id, actualToken,
-       toRequester, toHonestNodes)
+       0, toHonestNodes)
 
 Design rationale:
-  The protocol cannot compare or cap amounts across unrelated token units
-  without a trusted conversion price. Matching fee-token slashes can fill the
-  requester's exact shortfall before rewarding honest nodes. Different-token
-  slashes preserve their denomination and go to the requester first without
-  asserting cross-token economic equivalence.
+  Supplier/ciphernode failures already return 100% of the requester's fee
+  escrow. Ticket slashes compensate honest service providers in the slash
+  asset itself. No trusted conversion price is needed, and requester-fault
+  failures do not gain a slash-funded rebate for costs they caused.
 ```
 
 ### Slashed Funds Distribution (Success Path): distributeSlashedFundsOnSuccess()
@@ -931,7 +931,7 @@ Case 1: Slash happens BEFORE processE3Failure
 
 Case 2: Slash happens AFTER processE3Failure
   → escrowSlashedFunds sees dist.calculated
-  → token-specific requester/node pull credits are created immediately
+  → token-specific honest-node/treasury pull credits are created immediately
   → Base refund claims may already have started; ledgers remain independent
 
 Case 3: Multiple slashes on same E3 (failure)
@@ -967,6 +967,9 @@ Constraints:
 - If requiresProof: appealWindow may be 0 (atomic) or > 0 (deferred challenge)
 - If !requiresProof: appealWindow must be > 0 (delayed execution, with appeal)
 - At least one penalty must be non-zero
+- A nonzero failureReason must be below `_MAX_FAILURE_REASON`
+- A policy with nonzero failureReason must set affectsCommittee=true
+  → The proven-faulty operator is expelled before honest slash recipients are resolved
 
 Slash Reasons (derived from ProofType for Lane A):
   reason = keccak256(abi.encodePacked(proofType))
@@ -1037,7 +1040,8 @@ Slash Reasons (derived from ProofType for Lane A):
 │     └─ Slashed USDC escrowed in E3RefundManager                │
 │                                                                 │
 │  10. FUND DISTRIBUTION (at E3 terminal state)                  │
-│      ├─ Failure: requester refunded first, surplus to honest   │
+│      ├─ Failure: fee refund is fault-attributed; slashes pay   │
+│      │           active honest nodes                           │
 │      └─ Success: nodes + treasury split                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1065,10 +1069,9 @@ STEP 1: ESCROWING (always, at slash time)
 STEP 2a: E3 FAILS → Token-specific compensation
   Triggered by: terminal escrow or permissionless settleSlashedFunds
   Flow: settleSlashedFunds(e3Id, actualToken)
-    → Matching fee-token slashes fill the requester shortfall first;
-      any surplus is divided among honest nodes
-    → Different-token slashes go to the requester as priority compensation
-      without an oracle-dependent cross-token comparison
+    → The entire actual-token slash is divided among active honest nodes
+    → If there are no honest recipients, the slash goes to the
+      snapshotted treasury
     → Credits stay in actualToken; fee-token refund buckets are unchanged
   Claims: claimSlashedFunds(e3Id, actualToken)
 
