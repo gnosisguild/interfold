@@ -50,7 +50,7 @@
       "name": "GenPkShareAndSkSss",
       "avg_seconds": 0.011035416,
       "runs": 3,
-      "total_seconds": 0.033106250
+      "total_seconds": 0.03310625
     },
     {
       "name": "NodeDkgFold/c2ab_fold",
@@ -72,9 +72,9 @@
     },
     {
       "name": "NodeDkgFold/c3b_fold",
-      "avg_seconds": 72.635186750,
+      "avg_seconds": 72.63518675,
       "runs": 3,
-      "total_seconds": 217.905560250
+      "total_seconds": 217.90556025
     },
     {
       "name": "NodeDkgFold/c4ab_fold",
@@ -84,7 +84,7 @@
     },
     {
       "name": "NodeDkgFold/node_fold",
-      "avg_seconds": 18.460723180,
+      "avg_seconds": 18.46072318,
       "runs": 3,
       "total_seconds": 55.382169542
     },
@@ -110,7 +110,7 @@
       "name": "ZkDkgShareDecryption",
       "avg_seconds": 0.766792666,
       "runs": 6,
-      "total_seconds": 4.600756000
+      "total_seconds": 4.600756
     },
     {
       "name": "ZkNodeDkgFold",
@@ -132,7 +132,7 @@
     },
     {
       "name": "ZkPkBfv",
-      "avg_seconds": 0.221726250,
+      "avg_seconds": 0.22172625,
       "runs": 3,
       "total_seconds": 0.665178752
     },
@@ -178,7 +178,7 @@
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -193,12 +193,12 @@
     },
     {
       "label": "Committee Finalization Complete",
-      "seconds": 0.005051750,
+      "seconds": 0.00505175,
       "metric": "wall_clock"
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
-      "seconds": 122.805809000,
+      "seconds": 122.805809,
       "metric": "wall_clock"
     },
     {
@@ -223,7 +223,7 @@
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 50.063420000,
+      "seconds": 50.06342,
       "metric": "wall_clock"
     },
     {
