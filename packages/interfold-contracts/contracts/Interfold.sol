@@ -432,8 +432,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         e3s[e3Id].plaintextOutput = plaintextOutput;
         _e3Stages[e3Id] = E3Stage.Complete;
 
-        require(proof.length > 0, ProofRequired());
-
         _verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);
         success = true;
 
@@ -857,19 +855,15 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         (canFail, reason, deadline) = _checkFailureCondition(e3Id, current);
         if (!canFail) revert FailureConditionNotMet(e3Id);
 
-        // enforce caller restriction inside the grace window.
-        uint256 grace = markFailedGracePeriod;
-        if (grace > 0) {
-            uint256 graceEnds = deadline + grace;
-            if (
-                block.timestamp < graceEnds &&
-                msg.sender != _e3Requesters[e3Id] &&
-                msg.sender != owner() &&
-                !_registryFor(e3Id).isCommitteeMember(e3Id, msg.sender)
-            ) {
-                revert MarkE3FailedInGracePeriod(e3Id, graceEnds);
-            }
-        }
+        InterfoldPricing.validateMarkFailedCaller(
+            e3Id,
+            deadline,
+            markFailedGracePeriod,
+            msg.sender,
+            _e3Requesters[e3Id],
+            owner(),
+            address(_registryFor(e3Id))
+        );
 
         _markE3FailedWithReason(e3Id, current, reason);
     }

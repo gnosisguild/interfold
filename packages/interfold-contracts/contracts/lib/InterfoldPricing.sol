@@ -83,6 +83,7 @@ library InterfoldPricing {
         bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external view {
+        if (proof.length == 0) revert IInterfold.ProofRequired();
         bytes32 committeeHash = ICiphernodeRegistry(registryAddress)
             .getCommitteeHash(e3Id);
         bytes32 decryptionDomain = keccak256(
@@ -174,6 +175,25 @@ library InterfoldPricing {
             revert IInterfold.E3AlreadyComplete(e3Id);
         if (stage == IInterfold.E3Stage.Failed)
             revert IInterfold.E3AlreadyFailed(e3Id);
+    }
+
+    function validateMarkFailedCaller(
+        uint256 e3Id,
+        uint256 deadline,
+        uint256 grace,
+        address caller,
+        address requester,
+        address contractOwner,
+        address registry
+    ) external view {
+        if (grace == 0) return;
+        uint256 graceEnds = deadline + grace;
+        if (
+            block.timestamp < graceEnds &&
+            caller != requester &&
+            caller != contractOwner &&
+            !ICiphernodeRegistry(registry).isCommitteeMember(e3Id, caller)
+        ) revert IInterfold.MarkE3FailedInGracePeriod(e3Id, graceEnds);
     }
 
     /// @notice Mirrors the threshold / min-size gates at the top of
