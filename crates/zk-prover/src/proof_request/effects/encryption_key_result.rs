@@ -12,8 +12,8 @@ impl ProofRequestActor {
         ec: &EventContext<Sequenced>,
     ) {
         let Some(pending) = self.pending.remove(correlation_id) else {
-            error!(
-                "Received PkBfv ComputeResponse with correlation_id {:?} but no matching pending request found.",
+            warn!(
+                "Ignoring orphaned or replayed PkBfv ComputeResponse with correlation_id {:?}",
                 correlation_id
             );
             return;

@@ -207,9 +207,9 @@
     "InterfoldToken": {
       "constructorArgs": {
         "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "ccaStart": "1784469399",
-        "ccaEnd": "1785074199",
-        "noMoreLocks": "1917266199",
+        "ccaStart": "1784471470",
+        "ccaEnd": "1785076270",
+        "noMoreLocks": "1917268270",
         "bondingRegistry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
       },
       "blockNumber": 14,

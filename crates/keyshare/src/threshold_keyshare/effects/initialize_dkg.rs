@@ -158,6 +158,33 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         let (res, ec) = res.into_components();
 
+        let state = self.state.try_get()?;
+        match &state.state {
+            KeyshareState::GeneratingThresholdShare(data)
+                if data.pk_share.is_none()
+                    && data.sk_sss.is_none()
+                    && data.e_sm_raw.is_none()
+                    && data.proof_request_data.is_none() => {}
+            KeyshareState::GeneratingThresholdShare(_) => {
+                info!("Ignoring duplicate GenPkShareAndSkSss response");
+                return Ok(());
+            }
+            KeyshareState::AggregatingDecryptionKey(_)
+            | KeyshareState::ReadyForDecryption(_)
+            | KeyshareState::Decrypting(_)
+            | KeyshareState::GeneratingDecryptionProof(_)
+            | KeyshareState::Completed => {
+                info!(
+                    state = state.variant_name(),
+                    "Ignoring replayed GenPkShareAndSkSss response after DKG advanced"
+                );
+                return Ok(());
+            }
+            KeyshareState::Init | KeyshareState::CollectingEncryptionKeys(_) => {
+                bail!("GenPkShareAndSkSss response received before GeneratingThresholdShare state");
+            }
+        }
+
         let output: GenPkShareAndSkSssResponse = res
             .try_into()
             .context("Error extracting data from compute process")?;
