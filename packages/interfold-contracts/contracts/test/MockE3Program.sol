@@ -46,6 +46,22 @@ contract MockE3Program is IE3Program {
     }
 
     function publishInput(uint256 e3Id, bytes memory data) external {
+        _publishInput(e3Id, data, keccak256(data));
+    }
+
+    function publishInputWithCommitment(
+        uint256 e3Id,
+        bytes memory data,
+        bytes32 ciphertextCommitment
+    ) external {
+        _publishInput(e3Id, data, ciphertextCommitment);
+    }
+
+    function _publishInput(
+        uint256 e3Id,
+        bytes memory data,
+        bytes32 ciphertextCommitment
+    ) internal {
         if (data.length == 3) {
             revert InvalidInput();
         }
@@ -59,7 +75,7 @@ contract MockE3Program is IE3Program {
             interfold.publishCiphertextOutput(
                 e3Id,
                 data,
-                keccak256(data),
+                ciphertextCommitment,
                 data
             );
         }

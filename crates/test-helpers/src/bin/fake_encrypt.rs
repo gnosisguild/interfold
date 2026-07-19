@@ -6,6 +6,7 @@
 
 // This is a test script designed to encrypt some fixed data to a fhe public key
 use clap::Parser;
+use e3_bfv_client::compute_ct_commitment;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{build_bfv_params_from_set_arc, decode_bfv_params_arc};
 use fhe::bfv::{Encoding, Plaintext, PublicKey};
@@ -38,6 +39,9 @@ struct Args {
     #[arg(short, long)]
     output: String,
 
+    #[arg(long)]
+    commitment_output: Option<String>,
+
     #[arg(short, long, value_delimiter = ',')]
     plaintext: Vec<u64>,
 
@@ -66,6 +70,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ciphertext_bytes = ciphertext.clone().to_bytes();
 
     fs::write(&args.output, &ciphertext_bytes)?;
+    if let Some(commitment_output) = args.commitment_output {
+        let commitment = compute_ct_commitment(
+            ciphertext_bytes.clone(),
+            params.degree(),
+            params.plaintext(),
+            params.moduli().to_vec(),
+        )?;
+        fs::write(&commitment_output, commitment)?;
+        println!("Created {}", commitment_output);
+    }
     println!("Created {}", args.output);
 
     Ok(())

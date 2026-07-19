@@ -99,7 +99,7 @@ interfold_nodes_start "$ACTIVE_AGG"
 sleep 5
 
 heading "Mock encrypted plaintext"
-$SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
+$SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
 
 heading "Mock publish input e3-id"
 pnpm e3-program:publishInput --network localhost  --e3-id 0 --data 0x12345678
@@ -109,7 +109,7 @@ sleep 6 # wait for input deadline to pass
 waiton "$SCRIPT_DIR/output/output.bin"
 
 heading "Publish ciphertext to EVM"
-pnpm e3:publishCiphertext --e3-id 0 --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --proof 0x12345678
+pnpm e3:publishCiphertext --e3-id 0 --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" --proof 0x12345678
 
 wait_for_plaintext_output 0 "$SCRIPT_DIR/output/plaintext.txt"
 

@@ -3,6 +3,7 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
+import { isHexString } from "ethers";
 import fs from "fs";
 import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
@@ -40,8 +41,17 @@ export const publishInput = task(
     defaultValue: "",
     type: ArgumentType.STRING,
   })
+  .addOption({
+    name: "ciphertextCommitmentFile",
+    description: "file containing the 32-byte ciphertext commitment",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
   .setAction(async () => ({
-    default: async ({ e3Id, data, dataFile, programAddress }, hre) => {
+    default: async (
+      { e3Id, data, dataFile, programAddress, ciphertextCommitmentFile },
+      hre,
+    ) => {
       const { deployAndSaveMockProgram } = await import(
         "../scripts/deployAndSave/mockProgram"
       );
@@ -78,7 +88,19 @@ export const publishInput = task(
         dataToSend = "0x" + file.toString("hex");
       }
 
-      await program.publishInput(e3Id, dataToSend);
+      if (ciphertextCommitmentFile) {
+        const commitment =
+          "0x" + fs.readFileSync(ciphertextCommitmentFile).toString("hex");
+        if (!isHexString(commitment, 32)) {
+          throw new Error("Ciphertext commitment file must contain 32 bytes");
+        }
+        const publishInputWithCommitment = program.getFunction(
+          "publishInputWithCommitment",
+        );
+        await publishInputWithCommitment(e3Id, dataToSend, commitment);
+      } else {
+        await program.publishInput(e3Id, dataToSend);
+      }
 
       console.log(`Input published to ${actualProgramAddress} (e3Id=${e3Id})`);
     },
