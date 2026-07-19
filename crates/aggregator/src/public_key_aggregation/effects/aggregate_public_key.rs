@@ -15,8 +15,16 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
+        let state = self.state.get();
+        if matches!(
+            state.as_ref(),
+            Some(PublicKeyAggregatorState::Complete { .. })
+        ) {
+            info!("Ignoring late C5 proof after public-key aggregation completed");
+            return Ok(());
+        }
         if !matches!(
-            self.state.get(),
+            state.as_ref(),
             Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
         ) {
             return Err(anyhow::anyhow!(

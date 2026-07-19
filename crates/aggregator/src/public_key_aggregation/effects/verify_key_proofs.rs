@@ -13,6 +13,13 @@ impl PublicKeyAggregator {
         c1_proof: Option<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        if matches!(
+            self.state.get().as_ref(),
+            Some(PublicKeyAggregatorState::Complete { .. })
+        ) {
+            info!("Ignoring replayed keyshare after public-key aggregation completed");
+            return Ok(());
+        }
         self.state.try_mutate(ec, |state| {
             PublicKeyAggregation::add_keyshare(
                 state,
@@ -87,6 +94,14 @@ impl PublicKeyAggregator {
         }
 
         if msg.e3_id != self.e3_id {
+            return Ok(());
+        }
+
+        if matches!(
+            self.state.get().as_ref(),
+            Some(PublicKeyAggregatorState::Complete { .. })
+        ) {
+            info!("Ignoring late C1 verification after public-key aggregation completed");
             return Ok(());
         }
 

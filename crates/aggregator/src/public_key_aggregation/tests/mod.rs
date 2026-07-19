@@ -54,6 +54,16 @@ fn generating_c5_state(correlation_id: CorrelationId) -> PublicKeyAggregatorStat
     }
 }
 
+fn complete_state() -> PublicKeyAggregatorState {
+    PublicKeyAggregatorState::Complete {
+        public_key: ArcBytes::from_bytes(&[1, 2, 3]),
+        keyshares: OrderedSet::new(),
+        nodes: OrderedSet::new(),
+        committee_addresses: Vec::new(),
+        honest_committee_addresses: Vec::new(),
+    }
+}
+
 async fn build_public_key_aggregator(
     initial_state: PublicKeyAggregatorState,
 ) -> Result<(
