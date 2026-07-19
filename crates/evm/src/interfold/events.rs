@@ -571,6 +571,7 @@ mod tests {
                 ciphertextOutput: B256::ZERO,
                 plaintextOutput: Bytes::new(),
                 requester: Address::ZERO,
+                ciphertextCommitment: B256::ZERO,
             },
             e3Program: Address::ZERO,
         };

@@ -51,7 +51,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("CiphernodeRegistrySet", "CiphernodeRegistrySet(address)", None),
     EvmEventDefinition::new(
         "CiphertextOutputPublished",
-        "CiphertextOutputPublished(uint256,bytes)",
+        "CiphertextOutputPublished(uint256,bytes,bytes32)",
         Some(1),
     ),
     EvmEventDefinition::new("CommitteeFinalized", "CommitteeFinalized(uint256)", Some(1)),
@@ -71,7 +71,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
     EvmEventDefinition::new(
         "E3Requested",
-        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address),address)",
+        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address,bytes32),address)",
         None,
     ),
     EvmEventDefinition::new("E3StageChanged", "E3StageChanged(uint256,uint8,uint8)", Some(1)),
