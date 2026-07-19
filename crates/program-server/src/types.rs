@@ -39,6 +39,12 @@ pub enum WebhookPayload {
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
         proof: Vec<u8>,
+        /// Circuit-compatible SAFE commitment to the decrypted ciphertext.
+        /// Required by `Interfold.publishCiphertextOutput` since the
+        /// ciphertext-binding remediation. Serialized as a 0x-prefixed
+        /// hex string for direct forwarding to the template server.
+        #[serde(serialize_with = "serialize_bytes32_as_hex")]
+        ciphertext_commitment: [u8; 32],
     },
     Failed {
         e3_id: u64,
@@ -47,6 +53,14 @@ pub enum WebhookPayload {
 }
 
 fn serialize_as_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let hex_string = format!("0x{}", hex::encode(bytes));
+    serializer.serialize_str(&hex_string)
+}
+
+fn serialize_bytes32_as_hex<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -151,14 +165,19 @@ mod tests {
 
     #[test]
     fn test_webhook_payload_serialization_completed() {
+        let commitment = [0x11u8; 32];
         let payload = WebhookPayload::Completed {
             e3_id: 12345,
             ciphertext: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
             proof: vec![0xde, 0xad, 0xbe, 0xef],
+            ciphertext_commitment: commitment,
         };
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
-        let expected = r#"{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","proof":"0xdeadbeef"}"#;
+        let expected = format!(
+            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","proof":"0xdeadbeef","ciphertext_commitment":"0x{}"}}"#,
+            hex::encode(commitment),
+        );
 
         assert_eq!(json, expected);
     }

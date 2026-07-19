@@ -8,7 +8,9 @@ mod types;
 
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::{Context, Result};
+use e3_bfv_client::compute_ct_commitment;
 use e3_compute_provider::FHEInputs;
+use e3_fhe_params::decode_bfv_params_arc;
 use serde::Serialize;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
@@ -258,14 +260,27 @@ async fn process_computation_background(
     callback_url: reqwest::Url,
     fhe_inputs: FHEInputs,
 ) -> Result<()> {
-    match runner(fhe_inputs).await {
+    match runner(fhe_inputs.clone()).await {
         Ok((proof, ciphertext)) => {
             println!("computation finished!");
+            // Compute the SAFE commitment for the produced ciphertext so the
+            // downstream template server can forward it to
+            // `Interfold.publishCiphertextOutput`.
+            let params = decode_bfv_params_arc(&fhe_inputs.params)
+                .context("failed to decode BFV params for commitment")?;
+            let ciphertext_commitment = compute_ct_commitment(
+                ciphertext.clone(),
+                params.degree(),
+                params.plaintext(),
+                params.moduli().to_vec(),
+            )
+            .context("failed to compute ciphertext commitment")?;
             println!("handling webhook delivery...");
             let payload = WebhookPayload::Completed {
                 e3_id,
                 ciphertext,
                 proof,
+                ciphertext_commitment,
             };
             handle_webhook_delivery(&webhook_client, &callback_url, payload).await?;
             println!("✓ Computation completed for E3 {}", e3_id);
