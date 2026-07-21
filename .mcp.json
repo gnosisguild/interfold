@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "interfold-docs": {
+      "command": "node",
+      "args": ["packages/interfold-mcp/dist/index.js"]
+    }
+  }
+}
