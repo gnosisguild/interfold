@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use e3_data::{InMemStore, RepositoriesFactory};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, EventBus, Sequencer, StoreEventRequested,
+    DkgFoldAttestationContextEstablished, EventBus, PersistEvent, Sequencer,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
@@ -28,10 +28,12 @@ impl Actor for StoreSink {
     type Context = Context<Self>;
 }
 
-impl Handler<StoreEventRequested> for StoreSink {
-    type Result = ();
+impl Handler<PersistEvent> for StoreSink {
+    type Result = anyhow::Result<Option<InterfoldEvent>>;
 
-    fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+    fn handle(&mut self, _: PersistEvent, _: &mut Self::Context) -> Self::Result {
+        Ok(None)
+    }
 }
 
 struct RecoveryExtension {
