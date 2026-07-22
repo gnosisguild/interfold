@@ -544,39 +544,42 @@ flowchart TD
     Decision --> Writer[SlashingManagerSolWriter]
     Writer --> Eligible{right chain, slashable outcome, and ranked submitter?}
     Eligible -->|no| Ignore[ignore locally]
-    Eligible -->|yes| Effects{EffectsEnabled?}
-    Effects -->|no| Deferred[in-memory deferred intents]
-    Deferred -->|startup reconciliation complete| Submit
-    Effects -->|yes| Gate{semantic intent already deferred, in flight, or complete?}
-    Gate -->|yes| Ignore[coalesce duplicate]
-    Gate -->|no| Submit[submit now or after rank delay]
-    Submit --> Outcome{transaction outcome}
+    Eligible -->|yes| Persist[persist semantic intent and full payload]
+    Persist --> Effects{EffectsEnabled?}
+    Effects -->|no| Deferred[durable pending intent]
+    Deferred -->|startup reconciliation complete| Reconcile
+    Effects -->|yes| Reconcile{persisted tx hash known?}
+    Reconcile -->|receipt succeeded| Complete
+    Reconcile -->|still pending| Deferred
+    Reconcile -->|missing or reverted| Submit[submit now or after rank delay]
+    Reconcile -->|no prior dispatch| Submit
+    Submit --> Sign[persist signed raw transaction, nonce, and hash]
+    Sign --> Dispatch[broadcast exact raw transaction]
+    Dispatch --> Outcome{transaction outcome}
     Outcome -->|success or classified benign result| Complete[retain completed key]
     Outcome -->|retryable failure| Retry[clear in-flight key]
-    Retry --> Gate
+    Retry --> Reconcile
     Complete --> Chain[on-chain slash / expulsion]
     Chain --> Registry[registry and committee observations]
     Registry --> Lifecycle[E3 lifecycle / cleanup]
     Timeout --> Lifecycle
 
-    classDef residual fill:#fff1f0,stroke:#cf222e,color:#82071e
-    class Deferred residual
+    classDef durable fill:#e6ffed,stroke:#238636,color:#116329
+    class Persist,Deferred,Dispatch,Complete durable
 ```
 
 Vote quorum uses the honest threshold rather than the total committee size. Each affirmative vote
 signs a shared issue time and deadline. The contract limits that window to the request-time policy
 and rejects submissions after the E3's objective reporting deadline. A live zero-second registry
 window pauses new attestation slashes. Cryptographic verification failures must be structurally
-attributable to a canonical party before they become slashing evidence. Replayed
-`AccusationQuorumReached` events are held until `EffectsEnabled`, then coalesced by the contract's
-semantic replay domain across deferred, in-flight, and completed submissions. Retryable submission
-failures release their key. Successful or known-benign terminal results retain it.
-
-The gate is deliberately described as in-memory: there is no durable external-effect outbox or
-persisted transaction intent. A crash after snapshot advancement but before receipt classification
-can therefore lose the local redrive state, and a crash after submission can require on-chain
-reconciliation to distinguish landed from missing work. Closing that gap requires a durable
-intent/result state machine and contract preflight, not another process-local set.
+attributable to a canonical party before they become slashing evidence. Registry, Interfold, and
+slashing writers synchronously persist each semantic effect under a chain, writer, contract, and
+signer scope with a canonical calldata digest. They then sign and persist the exact raw transaction,
+nonce, and hash before RPC dispatch. A receipt or an idempotent on-chain preflight records the
+terminal result. `EffectsEnabled` and the periodic drain replay pending work. Restart reconciliation
+checks whether the persisted hash succeeded, remains pending, reverted, or disappeared before it
+waits, closes, rebuilds after a consumed revert, or rebroadcasts the same signed bytes. Contract
+single-shot guards remain the final cross-node idempotency boundary.
 
 ## Program-server trust boundary
 
@@ -669,8 +672,8 @@ flowchart LR
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
-| Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay; not a durable outbox                                                                                   |
-| Pending transaction nonce allocation     | Per-chain writer mutex in memory                                                     | Provider pending nonce on restart                                                                                           |
+| EVM effect intents and outcomes          | Per-chain, writer, contract, and signer Sled outboxes                                | Canonical payload key plus full payload and intent/signed/dispatched/terminal state; reconciled against RPC and contract preflights on restart |
+| Pending transaction nonce allocation     | Per-chain/signer mutex plus signed raw-transaction outbox record                     | Serialized pending nonce selection; exact raw transaction, nonce, and precomputed hash survive RPC ambiguity and restart   |
 | In-flight accusation votes and timers    | Per-E3 accusation actor memory                                                       | No complete durable reconstruction; only events inside the replay window may be observed again                              |
 | libp2p identity                          | Encrypted keypair repository                                                         | Decrypt at startup                                                                                                          |
 | Program-server job permits/tasks         | Tokio semaphore and detached tasks                                                   | Not reconstructed after process exit                                                                                        |

@@ -4,50 +4,31 @@
 
 use super::*;
 
-/// Report whether a contract call error is a revert with the named custom error.
-fn reverts_with(error: &anyhow::Error, error_name: &str) -> bool {
-    decode_error_from_str(&format!("{error:?}"))
-        .as_deref()
-        .is_some_and(|message| message.contains(error_name))
-}
-
-pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 'static>(
+pub(in crate::actors::ciphernode_registry_sol) async fn submit_ticket_to_registry<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
     ticket_number: u64,
-) -> Result<TxOutcome> {
+    outbox: &EvmEffectOutbox<RegistryEffect>,
+    outbox_key: &str,
+) -> Result<TransactionReceipt> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let ticket_number_u256 = U256::from(ticket_number);
 
-    let settled_provider = provider.clone();
-    let settled = || async move {
-        ticket_submission_settled(
-            settled_provider,
-            contract_address,
-            e3_id_u256,
-            ticket_number_u256,
-        )
-        .await
-    };
-
-    send_tx_idempotent("submitTicket", &["CommitteeNotRequested"], settled, || {
+    send_tx_with_retry("submitTicket", &["CommitteeNotRequested"], || {
         let provider = provider.clone();
+        let outbox = outbox.clone();
+        let outbox_key = outbox_key.to_owned();
         async move {
             info!("Calling: contract.submitTicket(..)");
-            let _nonce_guard = transaction_nonce_guard(&provider).await;
-            let from_address = provider.provider().default_signer_address();
-            let current_nonce = provider
-                .provider()
-                .get_transaction_count(from_address)
-                .pending()
-                .await?;
             let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-            let builder = contract
+            let request = contract
                 .submitTicket(e3_id_u256, ticket_number_u256)
-                .nonce(current_nonce);
-            let pending = builder.send().await?;
-            drop(_nonce_guard);
+                .into_transaction_request();
+            let pending =
+                crate::send_prepared_transaction(&provider, request, &outbox, &outbox_key).await?;
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit ticket", &receipt)?;
             Ok(receipt)
@@ -56,94 +37,37 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
     .await
 }
 
-/// Report whether this node's ticket is already recorded on chain.
-///
-/// `submitTicket` reverts with `NodeAlreadySubmitted` for a sender that is
-/// already in the submission set, so a retry that duplicates a mined
-/// submission needs no further attempt.
-async fn ticket_submission_settled<P: Provider + WalletProvider + Clone + 'static>(
-    provider: EthProvider<P>,
-    contract_address: Address,
-    e3_id_u256: U256,
-    ticket_number_u256: U256,
-) -> Result<bool> {
-    let from_address = provider.provider().default_signer_address();
-    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-    match contract
-        .submitTicket(e3_id_u256, ticket_number_u256)
-        .from(from_address)
-        .call()
-        .await
-    {
-        Ok(_) => Ok(false),
-        Err(err) => Ok(reverts_with(
-            &anyhow::Error::from(err),
-            "NodeAlreadySubmitted",
-        )),
-    }
-}
-
-/// Report whether another sender finalized the committee.
-///
-/// `finalizeCommittee` reverts with `CommitteeAlreadyFinalized` for every
-/// committee stage that is not `Requested`. The `Failed` stage gives the same
-/// revert, so the revert alone does not show that a committee formed. The
-/// check therefore reads the committee: `getActiveCommitteeNodes` returns an
-/// empty list for each stage other than `Finalized`. A failed formation stays
-/// an error.
-async fn committee_finalization_settled<P: Provider + WalletProvider + Clone + 'static>(
-    provider: EthProvider<P>,
-    contract_address: Address,
-    e3_id_u256: U256,
-) -> Result<bool> {
-    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-    let Err(err) = contract.finalizeCommittee(e3_id_u256).call().await else {
-        return Ok(false);
-    };
-
-    if !reverts_with(&anyhow::Error::from(err), "CommitteeAlreadyFinalized") {
-        return Ok(false);
-    }
-
-    let committee = contract.getActiveCommitteeNodes(e3_id_u256).call().await?;
-    Ok(!committee.nodes.is_empty())
-}
-
-pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(
+pub(in crate::actors::ciphernode_registry_sol) async fn finalize_committee_on_registry<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-) -> Result<TxOutcome> {
+    outbox: &EvmEffectOutbox<RegistryEffect>,
+    outbox_key: &str,
+) -> Result<TransactionReceipt> {
     let e3_id_u256: U256 = e3_id.try_into()?;
 
-    let settled_provider = provider.clone();
-    let settled = || async move {
-        committee_finalization_settled(settled_provider, contract_address, e3_id_u256).await
-    };
-
-    send_tx_idempotent(
+    send_tx_with_retry(
         "finalizeCommittee",
         &[
             "SubmissionWindowNotClosed",
             "CommitteeNotRequested",
             "ThresholdNotMet",
         ],
-        settled,
         || {
             let provider = provider.clone();
+            let outbox = outbox.clone();
+            let outbox_key = outbox_key.to_owned();
             async move {
                 info!("Calling: contract.finalizeCommittee(..)");
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
                 let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-                let builder = contract.finalizeCommittee(e3_id_u256).nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
+                let request = contract
+                    .finalizeCommittee(e3_id_u256)
+                    .into_transaction_request();
+                let pending =
+                    crate::send_prepared_transaction(&provider, request, &outbox, &outbox_key)
+                        .await?;
                 let receipt = pending.get_receipt().await?;
                 require_successful_receipt("finalize committee", &receipt)?;
                 Ok(receipt)
@@ -153,34 +77,79 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
     .await
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::actors::ciphernode_registry_sol) enum FinalizeCommitteePreflight {
+    Submit,
+    Retry,
+    Terminal,
+}
+
 pub(in crate::actors::ciphernode_registry_sol) async fn should_finalize_committee<
     P: Provider + WalletProvider + Clone + 'static,
 >(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-) -> Result<bool> {
+) -> Result<FinalizeCommitteePreflight> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
     if contract.isOpen(e3_id_u256).call().await? {
-        return Ok(false);
+        return Ok(FinalizeCommitteePreflight::Retry);
     }
 
     match contract.finalizeCommittee(e3_id_u256).call().await {
-        Ok(_) => Ok(true),
+        Ok(_) => Ok(FinalizeCommitteePreflight::Submit),
         Err(err) => {
             let err = anyhow::Error::from(err);
             let decoded = decode_error_from_str(&format!("{err:?}"));
 
+            if decoded
+                .as_deref()
+                .is_some_and(|message| message.contains("CommitteeAlreadyFinalized"))
+            {
+                return Ok(FinalizeCommitteePreflight::Terminal);
+            }
             if decoded.as_deref().is_some_and(|message| {
-                message.contains("CommitteeAlreadyFinalized")
-                    || message.contains("CommitteeNotRequested")
+                message.contains("CommitteeNotRequested")
                     || message.contains("SubmissionWindowNotClosed")
                     || message.contains("ThresholdNotMet")
             }) {
-                return Ok(false);
+                return Ok(FinalizeCommitteePreflight::Retry);
             }
 
+            Err(err)
+        }
+    }
+}
+
+pub(in crate::actors::ciphernode_registry_sol) async fn should_submit_ticket<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    ticket_number: u64,
+) -> Result<bool> {
+    let e3_id_u256: U256 = e3_id.try_into()?;
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    match contract
+        .submitTicket(e3_id_u256, U256::from(ticket_number))
+        .call()
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let err = anyhow::Error::from(err);
+            let decoded = decode_error_from_str(&format!("{err:?}"));
+            if decoded.as_deref().is_some_and(|message| {
+                message.contains("NodeAlreadySubmitted")
+                    || message.contains("CommitteeAlreadyFinalized")
+                    || message.contains("CommitteeDeadlineReached")
+                    || message.contains("CommitteeNotRequested")
+                    || message.contains("NodeNotEligible")
+            }) {
+                return Ok(false);
+            }
             Err(err)
         }
     }
@@ -199,11 +168,10 @@ pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee
     match contract.committeePublicKey(e3_id_u256).call().await {
         Ok(commitment) => {
             let expected = B256::from(expected_commitment);
-            if commitment != expected {
-                anyhow::bail!(
-                    "on-chain committee commitment {commitment} does not match local commitment {expected}"
-                );
-            }
+            anyhow::ensure!(
+                commitment == expected,
+                "on-chain committee commitment {commitment} does not match local commitment {expected}"
+            );
             Ok(false)
         }
         Err(err) => {
@@ -222,81 +190,73 @@ pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee
     }
 }
 
-pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone + 'static>(
+pub(in crate::actors::ciphernode_registry_sol) async fn publish_committee_to_registry<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
     provider: EthProvider<P>,
     contract_address: Address,
-    e3_id: E3id,
-    pk_commitment: [u8; 32],
-    dkg_aggregator_proof: Option<&Proof>,
-    dkg_attestation_bundle: Option<&[u8]>,
-) -> Result<TxOutcome> {
-    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+    event: PublicKeyAggregated,
+    outbox: &EvmEffectOutbox<RegistryEffect>,
+    outbox_key: &str,
+) -> Result<TransactionReceipt> {
+    let PublicKeyAggregated {
+        e3_id,
+        pk_commitment,
+        dkg_aggregator_proof,
+        dkg_attestation_bundle,
+        ..
+    } = event;
+    let e3_id_u256: U256 = e3_id.try_into()?;
     let pk_commitment_b256 = B256::from(pk_commitment);
 
     // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
     // is therefore always an internal error, while production verifiers still reject placeholders.
     let proof = encode_zk_proof(
         dkg_aggregator_proof
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("mandatory DKG aggregator proof payload missing"))?,
     )?;
     let attestation_bundle = Bytes::copy_from_slice(
         dkg_attestation_bundle
+            .as_deref()
             .filter(|bundle| !bundle.is_empty())
             .ok_or_else(|| anyhow::anyhow!("mandatory DKG attestation bundle missing"))?,
     );
 
-    // The published commitment must equal ours, which `should_publish_committee`
-    // enforces. A different commitment stays an error.
-    let settled_provider = provider.clone();
-    let settled = || async move {
-        should_publish_committee(settled_provider, contract_address, e3_id, pk_commitment)
-            .await
-            .map(|should_publish| !should_publish)
-    };
-
     // RPC may not have synced finalization yet
-    send_tx_idempotent(
-        "publishCommittee",
-        &["CommitteeNotFinalized"],
-        settled,
-        || {
-            let provider = provider.clone();
-            let proof = proof.clone();
-            let attestation_bundle = attestation_bundle.clone();
-            async move {
-                info!("Calling: contract.publishCommittee(..)");
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
-                let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-                let builder = contract
-                    .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
-                    .nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
-                let receipt = pending.get_receipt().await?;
-                require_successful_receipt("publish committee", &receipt)?;
-                Ok(receipt)
-            }
-        },
-    )
+    send_tx_with_retry("publishCommittee", &["CommitteeNotFinalized"], || {
+        let provider = provider.clone();
+        let proof = proof.clone();
+        let attestation_bundle = attestation_bundle.clone();
+        let outbox = outbox.clone();
+        let outbox_key = outbox_key.to_owned();
+        async move {
+            info!("Calling: contract.publishCommittee(..)");
+            let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+            let request = contract
+                .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
+                .into_transaction_request();
+            let pending =
+                crate::send_prepared_transaction(&provider, request, &outbox, &outbox_key).await?;
+            let receipt = pending.get_receipt().await?;
+            require_successful_receipt("publish committee", &receipt)?;
+            Ok(receipt)
+        }
+    })
     .await
 }
 
-pub async fn publish_committee_public_key_to_registry<
+pub(in crate::actors::ciphernode_registry_sol) async fn publish_committee_public_key_to_registry<
     P: Provider + WalletProvider + Clone + 'static,
 >(
     provider: EthProvider<P>,
     contract_address: Address,
-    e3_id: E3id,
-    public_key: ArcBytes,
+    event: PublicKeyAggregated,
+    outbox: &EvmEffectOutbox<RegistryEffect>,
+    outbox_key: &str,
 ) -> Result<TransactionReceipt> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
-    let public_key_bytes = Bytes::from(public_key.extract_bytes());
+    let e3_id_u256: U256 = event.e3_id.try_into()?;
+    let public_key_bytes = Bytes::from(event.pubkey.extract_bytes());
 
     send_tx_with_retry(
         "publishCommitteePublicKey",
@@ -304,21 +264,17 @@ pub async fn publish_committee_public_key_to_registry<
         || {
             let provider = provider.clone();
             let public_key_bytes = public_key_bytes.clone();
+            let outbox = outbox.clone();
+            let outbox_key = outbox_key.to_owned();
             async move {
                 info!("Calling: contract.publishCommitteePublicKey(..)");
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
                 let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-                let builder = contract
+                let request = contract
                     .publishCommitteePublicKey(e3_id_u256, public_key_bytes)
-                    .nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
+                    .into_transaction_request();
+                let pending =
+                    crate::send_prepared_transaction(&provider, request, &outbox, &outbox_key)
+                        .await?;
                 let receipt = pending.get_receipt().await?;
                 require_successful_receipt("publish committee public key", &receipt)?;
                 Ok(receipt)

@@ -566,7 +566,12 @@ impl CiphernodeBuilder {
 
         // Setup EVM contract event listeners
         let (evm_config, evm_gateways) = self
-            .setup_evm_system(&mut provider_cache, &bus, &dkg_fold_contexts_by_e3)
+            .setup_evm_system(
+                &mut provider_cache,
+                &bus,
+                &repositories,
+                &dkg_fold_contexts_by_e3,
+            )
             .await?;
 
         // Fetch on-chain ZK/slashing configuration
@@ -727,6 +732,7 @@ impl CiphernodeBuilder {
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
+        repositories: &e3_data::Repositories,
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
     ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
@@ -736,6 +742,7 @@ impl CiphernodeBuilder {
             &self.contract_components,
             self.pubkey_agg,
             self.max_buffered_evm_events,
+            repositories,
             dkg_fold_contexts_by_e3,
         )
         .await
@@ -1082,6 +1089,7 @@ async fn setup_evm_system(
     contract_components: &ContractComponents,
     pubkey_agg: bool,
     max_buffered_evm_events: usize,
+    repositories: &e3_data::Repositories,
     dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
 ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let mut evm_config = EvmEventConfig::new();
@@ -1107,7 +1115,13 @@ async fn setup_evm_system(
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
             let contract = &chain.contracts.interfold;
-            InterfoldSolWriter::attach(bus, write_provider.clone(), contract.address()?);
+            InterfoldSolWriter::attach(
+                bus,
+                write_provider.clone(),
+                contract.address()?,
+                repositories,
+            )
+            .await?;
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
             });
@@ -1144,15 +1158,16 @@ async fn setup_evm_system(
                 .recipient()
             });
 
-            let write_provider = provider_cache
-                .ensure_write_provider(chain)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "CiphernodeRegistry writer is required for enabled chain '{}': {e}",
-                        chain.name
-                    )
-                })?;
+            let write_provider =
+                provider_cache
+                    .ensure_write_provider(chain)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "CiphernodeRegistry writer is required for enabled chain '{}': {e}",
+                            chain.name
+                        )
+                    })?;
             let request_registries = dkg_fold_contexts_by_e3
                 .iter()
                 .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
@@ -1163,7 +1178,9 @@ async fn setup_evm_system(
                 write_provider.clone(),
                 contract_address,
                 request_registries,
-            );
+                repositories,
+            )
+            .await?;
             info!("CiphernodeRegistrySolWriter attached for publishing committees");
 
             if pubkey_agg {
@@ -1198,14 +1215,19 @@ async fn setup_evm_system(
                             chain.name
                         )
                     })?;
-            SlashingManagerSolWriter::attach(bus, write_provider.clone(), contract_addr)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to attach required SlashingManager writer for chain '{}': {e}",
-                        chain.name
-                    )
-                })?;
+            SlashingManagerSolWriter::attach(
+                bus,
+                write_provider.clone(),
+                contract_addr,
+                repositories,
+            )
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to attach required SlashingManager writer for chain '{}': {e}",
+                    chain.name
+                )
+            })?;
             info!("SlashingManagerSolWriter attached for fault submission");
         }
 

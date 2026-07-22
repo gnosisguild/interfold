@@ -670,22 +670,24 @@ phase.
 │       }
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists separate proof and public-key-candidate intents before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  ├─ Calls contract.publishCommittee(
+  ├─ Locally signs contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
+  │  ├─ Persists signed raw bytes, nonce, and transaction hash before RPC dispatch
   │  └─ If that transaction is mined with a failed receipt, the writer reads the
   │     commitment again. An equal commitment from another aggregator completes
   │     the step; a different commitment stays an error
-  └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
-     commitment is available, including after restart
+  └─ Locally signs contract.publishCommitteePublicKey(e3_id, publicKey) after the
+     commitment is available, including after restart. The second transaction has its own durable
+     intent, signed bytes, nonce, and hash
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
@@ -1025,14 +1027,16 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │       }
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists the full publication intent before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
+  └─ Locally signs contract.publishPlaintextOutput(e3Id, output, proof)
+        ├─ Persists signed raw bytes, nonce, and transaction hash before RPC dispatch
+        └─ Receipt/preflight reconciliation closes the durable intent; missing work rebroadcasts the same bytes
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │

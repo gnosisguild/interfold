@@ -73,6 +73,10 @@ impl StoreKeys {
         format!("//evm_readers/bonding_registry/{chain_id}")
     }
 
+    pub fn evm_effect_outbox(writer: &str, chain_id: u64) -> String {
+        format!("//evm_effect_outbox/{writer}/{chain_id}")
+    }
+
     pub fn node_state() -> String {
         String::from("//node_state")
     }

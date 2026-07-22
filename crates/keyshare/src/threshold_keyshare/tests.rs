@@ -13,8 +13,8 @@ use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, E3Stage, E3id, EffectsEnabled, EventBus, EventBusConfig,
-    EventSource, FailureReason, HistoryCollector, InterfoldEvent, InterfoldEventData, Sequencer,
-    PersistEvent, TakeEvents, Unsequenced,
+    EventSource, FailureReason, HistoryCollector, InterfoldEvent, InterfoldEventData, PersistEvent,
+    Sequencer, TakeEvents, Unsequenced,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::sync::Arc;
