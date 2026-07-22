@@ -13,6 +13,14 @@ Delegated bonding does not alter cryptographic identity. Every ECDSA proof signa
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
+CPU-bound ZK and TrBFV requests enter a fair, semaphore-bounded Rayon pool. Admission has a
+configurable timeout, and every admitted closure has a configurable execution budget
+(`multithread_admission_timeout_secs` and `multithread_execution_timeout_secs`). Rayon cannot safely
+interrupt an already-running closure, so a production deadline breach or cancellation after
+dispatch is fail-stop: the process aborts and the OS reclaims every worker instead of leaving an
+orphan to monopolize protocol capacity. Panics are caught and returned as correlated
+`ComputeRequestError` events.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation
