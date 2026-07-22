@@ -884,6 +884,19 @@ prevents an indefinite drain. Detached tasks without a join handle or cancellati
 residual: process exit is their final cancellation boundary, so they cannot all prove completion or
 persist recovery intent.
 
+## Release construction and provenance
+
+Release construction fails closed on mutable or unverifiable inputs. Release container Dockerfiles
+pin base-image digests and Debian snapshot dates. Downloaded compiler, tool, and upstream binary
+artifacts carry explicit SHA-256 checks. JavaScript installation consumes the committed lockfile in
+frozen mode, and Rust uses the exact patch toolchain from `rust-toolchain.toml`.
+`.github/workflows/releases.yml` pins third-party actions to full commits and fixed runner images,
+emits SBOMs and build provenance for published artifacts, and compares two cache-isolated
+ciphernode OCI builds before publication. Binary archives normalize timestamps, ownership, tar
+format, and gzip headers to the tagged source commit. The read-only
+`scripts/check-release-reproducibility.sh` gate prevents a mutable input or missing provenance step
+from silently returning to the release path.
+
 ## Subsystem contracts
 
 | Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                   | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                         | Extension boundary / must not own                                                                                         |
