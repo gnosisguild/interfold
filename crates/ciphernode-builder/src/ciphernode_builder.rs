@@ -24,8 +24,9 @@ use e3_events::{
 };
 use e3_evm::{
     fetch_accusation_vote_validity, BondingRegistrySolReader, CiphernodeRegistrySol,
-    CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
+    CiphernodeRegistrySolReader, EvmChainGatewayHandle, EvmIngestionStatus, EvmWriterProbe,
+    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, SlashingManagerSolReader,
+    SlashingManagerSolWriter,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -567,7 +568,7 @@ impl CiphernodeBuilder {
         E3LifecycleCoordinator::attach(&bus, store.clone()).await?;
 
         // Setup EVM contract event listeners
-        let (evm_config, evm_gateways) = self
+        let (evm_config, evm_gateways, evm_ingestion, evm_writers) = self
             .setup_evm_system(
                 &mut provider_cache,
                 &bus,
@@ -667,6 +668,8 @@ impl CiphernodeBuilder {
             network_supervisor,
             eventstore,
             aggregate_ids: aggregate_config.indexed_ids(),
+            evm_ingestion,
+            evm_writers,
         })
     }
 
@@ -755,7 +758,12 @@ impl CiphernodeBuilder {
         bus: &BusHandle,
         repositories: &e3_data::Repositories,
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
-    ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
+    ) -> Result<(
+        EvmEventConfig,
+        Vec<EvmChainGatewayHandle>,
+        Vec<EvmIngestionStatus>,
+        Vec<EvmWriterProbe>,
+    )> {
         setup_evm_system(
             &self.chains,
             provider_cache,
@@ -1112,9 +1120,16 @@ async fn setup_evm_system(
     max_buffered_evm_events: usize,
     repositories: &e3_data::Repositories,
     dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
-) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
+) -> Result<(
+    EvmEventConfig,
+    Vec<EvmChainGatewayHandle>,
+    Vec<EvmIngestionStatus>,
+    Vec<EvmWriterProbe>,
+)> {
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
+    let mut ingestion_statuses = Vec::new();
+    let mut writer_probes = Vec::new();
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
@@ -1122,6 +1137,12 @@ async fn setup_evm_system(
         let reorg_confirmations = chain
             .reorg_confirmations
             .unwrap_or(DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS);
+        let expected_chain_id = chain.chain_id.ok_or_else(|| {
+            anyhow::anyhow!(
+                "enabled chain '{}' has no expected chain_id for readiness",
+                chain.name
+            )
+        })?;
         evm_config.insert(chain_id, chain.try_into()?);
 
         let rpc_url = chain.rpc_url()?;
@@ -1130,19 +1151,21 @@ async fn setup_evm_system(
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
+            .with_chain_identity(chain.name.clone(), expected_chain_id)
             .with_provider_factory(provider_factory.clone())
             .with_buffer_limit(max_buffered_evm_events);
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
             let contract = &chain.contracts.interfold;
-            InterfoldSolWriter::attach(
+            let writer = InterfoldSolWriter::attach(
                 bus,
                 write_provider.clone(),
                 contract.address()?,
                 repositories,
             )
             .await?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
             });
@@ -1194,7 +1217,7 @@ async fn setup_evm_system(
                 .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
                 .map(|(e3_id, context)| (e3_id.clone(), context.registry))
                 .collect();
-            CiphernodeRegistrySol::attach_writer(
+            let writer = CiphernodeRegistrySol::attach_writer(
                 bus,
                 write_provider.clone(),
                 contract_address,
@@ -1202,6 +1225,7 @@ async fn setup_evm_system(
                 repositories,
             )
             .await?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
             info!("CiphernodeRegistrySolWriter attached for publishing committees");
 
             if pubkey_agg {
@@ -1236,7 +1260,7 @@ async fn setup_evm_system(
                             chain.name
                         )
                     })?;
-            SlashingManagerSolWriter::attach(
+            let writer = SlashingManagerSolWriter::attach(
                 bus,
                 write_provider.clone(),
                 contract_addr,
@@ -1249,13 +1273,16 @@ async fn setup_evm_system(
                     chain.name
                 )
             })?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
             info!("SlashingManagerSolWriter attached for fault submission");
         }
 
-        gateways.push(system.build_with_readiness());
+        let (gateway, ingestion_status) = system.build_with_readiness();
+        gateways.push(gateway);
+        ingestion_statuses.push(ingestion_status);
     }
 
-    Ok((evm_config, gateways))
+    Ok((evm_config, gateways, ingestion_statuses, writer_probes))
 }
 
 async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<()> {
