@@ -495,9 +495,13 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │   }
 │   │   Publishes AggregatorChanged {
 │   │     e3_id,
-│   │     is_aggregator = (my node has the lowest non-expelled party_id in the
+│   │     is_aggregator = (my node has the lowest non-expelled/non-unresponsive party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
+│   │   InterfoldSolWriter durably queues a deadline refresh; after EffectsEnabled it reads
+│   │   getE3Stage/getDeadlines and publishes AggregatorLeaseUpdated(AwaitingPublicKey)
+│   │   CiphernodeSelector persists the lease and divides the remaining DKG window equally
+│   │   across the canonical active aggregator plus standbys
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -549,9 +553,11 @@ A ready committee must finalize at or before its absolute DKG deadline.
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
    aggregator failover, proof inputs, and `CommitteeHashLib.hash(topNodes)` aligned.
 
-4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
-   finalized committee plus enriched `CommitteeMemberExpelled` events. The active aggregator is the
-   lowest non-expelled `party_id` in the address-sorted runtime committee.
+4. **Active aggregator selection and failover**: `CiphernodeSelector` derives `AggregatorChanged`
+   from the finalized committee, enriched `CommitteeMemberExpelled` events, and its persisted
+   deadline-driven `unresponsive` set. The active aggregator is the lowest eligible `party_id` in
+   the address-sorted runtime committee. Confirmed chain progress settles or arms the next phase;
+   peer claims cannot reset a lease.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
    deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG

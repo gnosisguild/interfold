@@ -9,6 +9,8 @@ mod accusation_vote;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
+mod aggregator_failover_exhausted;
+mod aggregator_lease_updated;
 mod bond_owner_set;
 mod ciphernode_added;
 mod ciphernode_bond_updated;
@@ -88,6 +90,8 @@ pub use accusation_vote::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
+pub use aggregator_failover_exhausted::*;
+pub use aggregator_lease_updated::*;
 pub use bond_owner_set::*;
 pub use ciphernode_added::*;
 pub use ciphernode_bond_updated::*;
@@ -345,8 +349,11 @@ pub enum InterfoldEventData {
     CommitteeActivationChanged(CommitteeActivationChanged),
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
+    // Append new variants to preserve persisted bincode discriminants.
     BondOwnerSet(BondOwnerSet),
     DkgFoldAttestationContextEstablished(DkgFoldAttestationContextEstablished),
+    AggregatorLeaseUpdated(AggregatorLeaseUpdated),
+    AggregatorFailoverExhausted(AggregatorFailoverExhausted),
 }
 
 impl InterfoldEventData {
@@ -670,6 +677,8 @@ impl InterfoldEventData {
             InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
                 Some(data.e3_id.clone())
             }
+            InterfoldEventData::AggregatorLeaseUpdated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::AggregatorFailoverExhausted(ref data) => Some(data.e3_id.clone()),
             _ => None,
         }
     }
@@ -780,7 +789,9 @@ impl_event_types!(
     CommitteeViabilityUpdated,
     EvmLogObserved,
     BondOwnerSet,
-    DkgFoldAttestationContextEstablished
+    DkgFoldAttestationContextEstablished,
+    AggregatorLeaseUpdated,
+    AggregatorFailoverExhausted
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {
