@@ -186,13 +186,13 @@ Requester calls: Interfold.request({
 When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and
 `CommitteeRequested` events from the chain:
 
-Before any reader or writer is attached, every enabled chain configuration must provide an
-explicit `chain_id`. Startup compares it with the RPC-reported ID and rejects missing, mismatched,
-or duplicate IDs, so two configured chains cannot share and overwrite one event aggregate.
-Every non-local chain must also configure positive `reorg_confirmations`; the reader never promotes
-logs above the confirmed head because the append-only event log has no rollback path.
-If registry or slashing writers cannot create their signed provider and attach, node construction
-fails; readiness is never published with a read-only partial protocol stack.
+Before any reader or writer is attached, every enabled chain configuration must provide an explicit
+`chain_id`. Startup compares it with the RPC-reported ID and rejects missing, mismatched, or
+duplicate IDs, so two configured chains cannot share and overwrite one event aggregate. Every
+non-local chain must also configure positive `reorg_confirmations`; the reader never promotes logs
+above the confirmed head because the append-only event log has no rollback path. If registry or
+slashing writers cannot create their signed provider and attach, node construction fails; readiness
+is never published with a read-only partial protocol stack.
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
 It gives this data to the proof actors and registry writers before event replay starts. Events after
