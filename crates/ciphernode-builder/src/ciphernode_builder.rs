@@ -51,7 +51,7 @@ use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 const DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS: u64 = 1;
 
@@ -1107,36 +1107,32 @@ async fn setup_evm_system(
                 .recipient()
             });
 
-            // TODO: Should we not let this pass and just use '?'?
-            // Above if we include interfold in the config and we don't have a wallet it will fail
-            match provider_cache
-                    .ensure_write_provider(chain)
-                    .await
-                {
-                    Ok(write_provider) => {
-                        let request_registries = dkg_fold_contexts_by_e3
-                            .iter()
-                            .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
-                            .map(|(e3_id, context)| (e3_id.clone(), context.registry))
-                            .collect();
-                        CiphernodeRegistrySol::attach_writer(
-                            bus,
-                            write_provider.clone(),
-                            contract.address()?,
-                            request_registries,
-                        );
-                        info!("CiphernodeRegistrySolWriter attached for publishing committees");
-
-                        if pubkey_agg {
-                            info!("Attaching CommitteeFinalizer for score sortition");
-                            CommitteeFinalizer::attach(bus);
-                        }
-                    }
-                    Err(e) => error!(
-                        "Failed to create write provider (likely no wallet configured), skipping writer attachment: {}",
-                        e
+            let write_provider = provider_cache
+                .ensure_write_provider(chain)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "CiphernodeRegistry writer is required for enabled chain '{}': {e}",
+                        chain.name
                     )
-                }
+                })?;
+            let request_registries = dkg_fold_contexts_by_e3
+                .iter()
+                .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
+                .map(|(e3_id, context)| (e3_id.clone(), context.registry))
+                .collect();
+            CiphernodeRegistrySol::attach_writer(
+                bus,
+                write_provider.clone(),
+                contract_address,
+                request_registries,
+            );
+            info!("CiphernodeRegistrySolWriter attached for publishing committees");
+
+            if pubkey_agg {
+                info!("Attaching CommitteeFinalizer for score sortition");
+                CommitteeFinalizer::attach(bus);
+            }
         }
 
         if contract_components.slashing_manager {
@@ -1153,29 +1149,27 @@ async fn setup_evm_system(
                 SlashingManagerSolReader::setup(&next).recipient()
             });
 
-            // Writer: submit proposeSlash transactions
-            match provider_cache.ensure_write_provider(chain).await {
-                Ok(write_provider) => {
-                    match SlashingManagerSolWriter::attach(
-                        bus,
-                        write_provider.clone(),
-                        contract_addr,
-                    )
+            // Writer: submit proposeSlash transactions. This is a required component whenever
+            // slashing is enabled; partial startup would advertise readiness without a fault path.
+            let write_provider =
+                provider_cache
+                    .ensure_write_provider(chain)
                     .await
-                    {
-                        Ok(_) => {
-                            info!("SlashingManagerSolWriter attached for fault submission");
-                        }
-                        Err(e) => {
-                            error!("Failed to attach SlashingManagerSolWriter, skipping: {}", e)
-                        }
-                    }
-                }
-                Err(e) => error!(
-                    "Failed to create write provider for SlashingManager, skipping: {}",
-                    e
-                ),
-            }
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "SlashingManager writer is required for enabled chain '{}': {e}",
+                            chain.name
+                        )
+                    })?;
+            SlashingManagerSolWriter::attach(bus, write_provider.clone(), contract_addr)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to attach required SlashingManager writer for chain '{}': {e}",
+                        chain.name
+                    )
+                })?;
+            info!("SlashingManagerSolWriter attached for fault submission");
         }
 
         gateways.push(system.build_with_readiness());
