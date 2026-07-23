@@ -124,7 +124,10 @@ mod tests {
     fn short_or_empty_signals() {
         let link = C1RowsSkCommitmentLink;
         assert!(link.extract_source_values(&[0u8; 60]).is_empty());
-        assert!(!link.check_signals(&[], &c1_signals(make_field(1), make_field(2), make_field(3))));
+        assert!(!link.check_signals(
+            &[],
+            &c1_signals(make_field(1), make_field(2), make_field(3))
+        ));
         assert!(!link.check_signals(&[make_field(1)], &[0u8; 10]));
     }
 }
