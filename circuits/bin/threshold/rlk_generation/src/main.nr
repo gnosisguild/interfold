@@ -37,22 +37,21 @@ fn main(
     let a = CRP_GADGET_ROWS[row_index];
     let g = G_GADGET_ROWS[row_index];
 
-    let rlk_generation: RlkGeneration<N, L, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_R1_D0, RLK_GENERATION_BIT_R2_D0, RLK_GENERATION_BIT_R1_D2, RLK_GENERATION_BIT_R2_D2, RLK_GENERATION_BIT_D> =
-        RlkGeneration::new(
-            RLK_GENERATION_CONFIGS,
-            d1,
-            a,
-            g,
-            sk,
-            r,
-            e0,
-            e2,
-            r1_d0,
-            r2_d0,
-            r1_d2,
-            r2_d2,
-            d0,
-            d2,
-        );
+    let rlk_generation: RlkGeneration<N, L, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_R1_D0, RLK_GENERATION_BIT_R2_D0, RLK_GENERATION_BIT_R1_D2, RLK_GENERATION_BIT_R2_D2, RLK_GENERATION_BIT_D> = RlkGeneration::new(
+        RLK_GENERATION_CONFIGS,
+        d1,
+        a,
+        g,
+        sk,
+        r,
+        e0,
+        e2,
+        r1_d0,
+        r2_d0,
+        r1_d2,
+        r2_d2,
+        d0,
+        d2,
+    );
     rlk_generation.execute()
 }

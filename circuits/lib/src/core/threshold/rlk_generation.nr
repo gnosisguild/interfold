@@ -128,26 +128,16 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
         d0: [Polynomial<N>; L],
         d2: [Polynomial<N>; L],
     ) -> Self {
-        RlkGeneration {
-            configs,
-            d1,
-            a,
-            g,
-            sk,
-            r,
-            e0,
-            e2,
-            r1_d0,
-            r2_d0,
-            r1_d2,
-            r2_d2,
-            d0,
-            d2,
-        }
+        RlkGeneration { configs, d1, a, g, sk, r, e0, e2, r1_d0, r2_d0, r1_d2, r2_d2, d0, d2 }
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
-    fn payload(self, sk_commitment: Field, d0_commitment: Field, d2_commitment: Field) -> Vec<Field> {
+    fn payload(
+        self,
+        sk_commitment: Field,
+        d0_commitment: Field,
+        d2_commitment: Field,
+    ) -> Vec<Field> {
         let mut inputs = Vec::new();
 
         inputs = flatten::<_, _, BIT_D>(inputs, self.d1);
@@ -190,7 +180,12 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
     }
 
     /// Generates the Fiat-Shamir challenge using the SAFE cryptographic sponge.
-    fn generate_challenge(self, sk_commitment: Field, d0_commitment: Field, d2_commitment: Field) -> Field {
+    fn generate_challenge(
+        self,
+        sk_commitment: Field,
+        d0_commitment: Field,
+        d2_commitment: Field,
+    ) -> Field {
         let inputs = self.payload(sk_commitment, d0_commitment, d2_commitment);
 
         compute_rlk_generation_challenge(inputs)
