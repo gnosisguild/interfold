@@ -7,6 +7,8 @@
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
+use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
@@ -1094,6 +1096,67 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
 /// before deploying.
 pub global GADGET_DIM: u32 = L;
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP];
+
+/// l-BFV RLK generation: `d1` (URS) per gadget row.
+///
+/// TODO: duplicates CRP as a placeholder URS, and G_GADGET_ROWS below defaults every
+/// row's Garner gadget scalar to 1. Neither is secure for production l-BFV/RLK use -
+/// `d1` needs an independently sampled URS per row (distinct from `a`/CRP), and `g_j`
+/// needs the real Garner basis coefficient for row j. Regenerate both once the
+/// build-circuits.ts-equivalent tooling for l-BFV is in place.
+pub global D1_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP];
+pub global G_GADGET_ROWS: [Field; GADGET_DIM] = [1, 1];
+
+/************************************
+-------------------------------------
+rlk_generation (NEW CIRCUIT - l-BFV RELINEARIZATION KEY GENERATION)
+-------------------------------------
+************************************/
+
+pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+
+pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+
+/// TODO: r1/r2 bounds above are reused verbatim from pk_generation (same equation
+/// shape: mod-q_l reduction + cyclotomic reduction). This is a conservative
+/// approximation, not a re-derived bound for the RLK d0/d2 equations specifically -
+/// verify formally (same process used for PK_GENERATION_R1_BOUNDS/R2_BOUNDS) before
+/// treating these as tight/final.
+pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+    QIS,
+    RLK_GENERATION_R_BOUND,
+    RLK_GENERATION_SK_BOUND,
+    RLK_GENERATION_E0_BOUND,
+    RLK_GENERATION_E2_BOUND,
+    RLK_GENERATION_R1_D0_BOUNDS,
+    RLK_GENERATION_R2_D0_BOUNDS,
+    RLK_GENERATION_R1_D2_BOUNDS,
+    RLK_GENERATION_R2_D2_BOUNDS,
+);
+
+/************************************
+-------------------------------------
+rlk_aggregation (NEW CIRCUIT - l-BFV RELINEARIZATION KEY AGGREGATION)
+-------------------------------------
+************************************/
+
+pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************
 -------------------------------------
