@@ -394,6 +394,9 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
 │   │   ├─ Evaluates all registered CommitmentLinks:
 │   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
+│   │   │     C1 rows (SameParty, self-referential): l-BFV — a party's GADGET_DIM per-row
+│   │   │                                          C1 proofs must all share the same sk_commitment
+│   │   │                                          (source and target proof type are both C1PkGeneration)
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
 │   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
@@ -404,6 +407,11 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment
 │   │   │     (on-chain / E3 state)              C3 `ct_commitment` output and C6 `ct_commitment` input bind to the same ciphertext as user_data_encryption (not a CommitmentLink row)
+│   │   │
+│   │   ├─ NOTE: "C1 rows" is currently inert — `PendingThresholdProofs.pk_generation_proof`
+│   │   │   and the C1 request/response wire types still carry exactly one C1 proof per party
+│   │   │   (no `row_index`). The link activates once that plumbing is extended to dispatch
+│   │   │   and collect GADGET_DIM C1 proofs per party.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)
