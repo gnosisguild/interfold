@@ -10,23 +10,27 @@ import { getRoundDetails, getRoundTokenDetails } from '../src/state'
 import { CRISP_SERVER_URL } from './constants'
 import { CRISP_SERVER_STATE_LITE_ENDPOINT } from '../src/constants'
 import { zeroAddress } from 'viem'
-import type { RoundDetailsResponse } from '../src/types'
+import { CreditMode } from '../src/types'
+import type { E3StateLiteResponse } from '../src/types'
 
 describe('State', () => {
-  const mockRoundDetailsResponse: RoundDetailsResponse = {
-    id: '0',
-    chain_id: '11155111',
+  const mockStateLiteResponse: E3StateLiteResponse = {
+    id: 0,
+    chain_id: 11155111,
     interfold_address: '0x1234567890123456789012345678901234567890',
     status: 'active',
-    vote_count: '10',
-    start_time: '1000000',
-    duration: '86400',
-    expiration: '1086400',
-    start_block: '12345',
-    committee_public_key: ['0xabc', '0xdef'],
+    vote_count: 10,
+    start_time: 1000000,
+    end_time: 1086400,
+    start_block: 12345,
+    committee_public_key: [1, 2, 3],
     emojis: ['👍', '👎'],
     token_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
     balance_threshold: '1000',
+    num_options: '2',
+    requester: '0x9876543210987654321098765432109876543210',
+    credit_mode: CreditMode.CONSTANT,
+    credits: null,
   }
 
   beforeEach(() => {
@@ -39,7 +43,7 @@ describe('State', () => {
 
   describe('getRoundDetails', () => {
     it('should get the state for a given e3Id from the CRISP server', async () => {
-      const mockResponse = mockRoundDetailsResponse
+      const mockResponse = mockStateLiteResponse
 
       const mockFetchResponse = {
         ok: true,
@@ -57,13 +61,16 @@ describe('State', () => {
       expect(state.status).toBe('active')
       expect(state.voteCount).toBe(10n)
       expect(state.startTime).toBe(1000000n)
-      expect(state.duration).toBe(86400n)
-      expect(state.expiration).toBe(1086400n)
+      expect(state.endTime).toBe(1086400n)
       expect(state.startBlock).toBe(12345n)
-      expect(state.committeePublicKey).toEqual(['0xabc', '0xdef'])
+      expect(state.committeePublicKey).toEqual(new Uint8Array([1, 2, 3]))
       expect(state.emojis).toEqual(['👍', '👎'])
       expect(state.tokenAddress).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')
       expect(state.balanceThreshold).toBe(1000n)
+      expect(state.numOptions).toBe(2n)
+      expect(state.requester).toBe('0x9876543210987654321098765432109876543210')
+      expect(state.creditMode).toBe(CreditMode.CONSTANT)
+      expect(state.credits).toBeUndefined()
 
       expect(fetch).toHaveBeenCalledWith(
         `${CRISP_SERVER_URL}/${CRISP_SERVER_STATE_LITE_ENDPOINT}`,
@@ -76,11 +83,25 @@ describe('State', () => {
         }),
       )
     })
+
+    it('should convert custom credits to a bigint', async () => {
+      const mockFetchResponse = {
+        ok: true,
+        json: async () => ({ ...mockStateLiteResponse, credit_mode: CreditMode.CUSTOM, credits: '500' }),
+      } as Response
+
+      vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockFetchResponse)
+
+      const state = await getRoundDetails(CRISP_SERVER_URL, 0)
+
+      expect(state.creditMode).toBe(CreditMode.CUSTOM)
+      expect(state.credits).toBe(500n)
+    })
   })
 
   describe('getTokenDetails', () => {
     it('should return the details of the token for a given e3Id from the CRISP server', async () => {
-      const mockResponse = mockRoundDetailsResponse
+      const mockResponse = mockStateLiteResponse
 
       const mockFetchResponse = {
         ok: true,

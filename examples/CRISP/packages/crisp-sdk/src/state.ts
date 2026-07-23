@@ -4,23 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { CRISP_SERVER_STATE_LITE_ENDPOINT, CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
+import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
+import { getRoundStateLite } from './api'
 
-import type { RoundDetailsResponse, RoundDetails, TokenDetails } from './types'
+import type { RoundDetails, TokenDetails } from './types'
 
 /**
- * Get the details of a specific round
+ * Get the details of a specific round in a camelCase convenience format
+ * @param serverUrl - The base URL of the CRISP server
+ * @param e3Id - The e3Id of the round
+ * @returns The round details
  */
 export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<RoundDetails> => {
-  const response = await fetch(`${serverUrl}/${CRISP_SERVER_STATE_LITE_ENDPOINT}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ round_id: e3Id }),
-  })
-
-  const data = (await response.json()) as RoundDetailsResponse
+  const data = await getRoundStateLite(serverUrl, e3Id)
 
   return {
     e3Id: BigInt(data.id),
@@ -31,11 +27,14 @@ export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<
     status: data.status,
     voteCount: BigInt(data.vote_count),
     startTime: BigInt(data.start_time),
-    duration: BigInt(data.duration),
-    expiration: BigInt(data.expiration),
+    endTime: BigInt(data.end_time),
     startBlock: BigInt(data.start_block),
-    committeePublicKey: data.committee_public_key,
+    committeePublicKey: new Uint8Array(data.committee_public_key),
     emojis: data.emojis,
+    numOptions: BigInt(data.num_options),
+    requester: data.requester,
+    creditMode: data.credit_mode,
+    credits: data.credits !== null ? BigInt(data.credits) : undefined,
   }
 }
 
