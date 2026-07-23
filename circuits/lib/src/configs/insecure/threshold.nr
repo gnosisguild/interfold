@@ -1082,6 +1082,19 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_R2_BOUNDS,
 );
 
+/// l-BFV gadget dimension: one full (pk0, a) pair per gadget row, each pair itself an
+/// L-limb RNS ciphertext (see pk_generation bin). Equal to L (one gadget row per active
+/// RNS modulus at the ciphertext level) - kept as its own name to distinguish "which
+/// gadget row" from "which CRT limb within a row" at call sites.
+///
+/// TODO: CRP_GADGET_ROWS below duplicates the single CRP row GADGET_DIM times as a
+/// placeholder. This is NOT secure for production l-BFV use - each row must use an
+/// independently sampled CRS. Regenerate via the same build-circuits.ts flow that
+/// produces CRP, extended to emit GADGET_DIM independent [Polynomial<N>; L] arrays,
+/// before deploying.
+pub global GADGET_DIM: u32 = L;
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP];
+
 /************************************
 -------------------------------------
 pk_aggregation (CIRCUIT 5)
