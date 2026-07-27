@@ -624,7 +624,9 @@ contract CiphernodeRegistryOwnable is
         uint256 len = c.topNodes.length;
         uint256[] memory scores = new uint256[](len);
         for (uint256 i = 0; i < len; ++i) {
-            scores[i] = c.scoreOf[c.topNodes[i]];
+            address node = c.topNodes[i];
+            c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
+            scores[i] = c.scoreOf[node];
         }
 
         _interfoldFor(e3Id).onCommitteeFinalized(e3Id);
@@ -933,9 +935,10 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id,
         address node
     ) external view returns (bool) {
+        Committee storage c = committees[e3Id];
         return
-            committees[e3Id].memberStatus[node] !=
-            ICiphernodeRegistry.MemberStatus.None;
+            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized &&
+            c.memberStatus[node] != ICiphernodeRegistry.MemberStatus.None;
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -963,8 +966,20 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) external view returns (address[] memory nodes, uint256[] memory scores) {
         Committee storage c = committees[e3Id];
+        if (c.stage != ICiphernodeRegistry.CommitteeStage.Finalized) {
+            return (new address[](0), new uint256[](0));
+        }
+
         uint256 total = c.topNodes.length;
-        uint256 actCount = c.activeCount;
+        uint256 actCount = 0;
+        for (uint256 i = 0; i < total; ++i) {
+            if (
+                c.memberStatus[c.topNodes[i]] ==
+                ICiphernodeRegistry.MemberStatus.Active
+            ) {
+                actCount++;
+            }
+        }
 
         nodes = new address[](actCount);
         scores = new uint256[](actCount);
@@ -1125,7 +1140,6 @@ contract CiphernodeRegistryOwnable is
         if (top.length < cap) {
             top.push(node);
             c.scoreOf[node] = score;
-            c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
             return true;
         }
 
@@ -1141,10 +1155,8 @@ contract CiphernodeRegistryOwnable is
 
         if (score >= worstScore) return false;
 
-        c.memberStatus[top[worstIdx]] = ICiphernodeRegistry.MemberStatus.None;
         top[worstIdx] = node;
         c.scoreOf[node] = score;
-        c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
 
         return true;
     }

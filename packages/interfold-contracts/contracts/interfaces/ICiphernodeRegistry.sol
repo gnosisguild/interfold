@@ -593,6 +593,7 @@ interface ICiphernodeRegistry {
     ) external view returns (address);
 
     /// @notice Get active (non-expelled) committee nodes for an E3
+    /// @dev Returns empty arrays before successful committee finalization.
     /// @param e3Id ID of the E3 computation
     /// @return nodes Array of active committee member addresses
     /// @return scores Array of active committee member ticket scores aligned with `nodes`
