@@ -28,6 +28,9 @@ allocation to the request-time treasury. The manager does not create zero-value 
 A committee-affecting slash policy can use only a supplier-paid failure reason. Policy validation
 rejects a requester-paid reason before governance stores the policy.
 
+During the failure grace period, only active finalized committee members have committee authority.
+Expelled members and provisional candidates do not have this authority.
+
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
 > `block.timestamp` directly against the raw deadlines (which themselves already incorporate the

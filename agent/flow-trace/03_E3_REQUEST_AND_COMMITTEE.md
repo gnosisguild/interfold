@@ -429,8 +429,9 @@ post-request rebalancing therefore cannot inflate a node's selection weight; the
 
 When `markFailedGracePeriod > 0` (set via `Interfold.setMarkFailedGracePeriod`), calling
 `markE3Failed` within `deadline … deadline + markFailedGracePeriod` is restricted to
-`{ original requester, contract owner, any committee member }`. After that window any caller may
-finalize the failure. Default `markFailedGracePeriod = 0` preserves the legacy permissionless flow.
+`{ original requester, contract owner, active finalized committee member }`. After that window, any
+caller can finalize the failure. Default `markFailedGracePeriod = 0` preserves the permissionless
+flow.
 
 ### H-26 — timestamp-clock `requestBlock`
 
