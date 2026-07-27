@@ -802,6 +802,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         if (current != E3Stage.CommitteeFinalized) {
             revert InvalidStage(e3Id, E3Stage.CommitteeFinalized, current);
         }
+        uint256 dkgDeadline = _e3Deadlines[e3Id].dkgDeadline;
+        if (block.timestamp > dkgDeadline) {
+            revert DKGDeadlinePassed(e3Id, dkgDeadline);
+        }
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;

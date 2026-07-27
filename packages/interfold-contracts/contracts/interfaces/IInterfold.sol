@@ -403,6 +403,11 @@ interface IInterfold {
     /// @notice Failure condition not yet met
     error FailureConditionNotMet(uint256 e3Id);
 
+    /// @notice Thrown when a committee publishes its key after the DKG deadline.
+    /// @param e3Id The E3 identifier.
+    /// @param deadline The last valid publication timestamp.
+    error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+
     /// @notice The Input deadline is invalid
     error InvalidInputDeadline(uint256 deadline);
 
