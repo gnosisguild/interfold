@@ -779,15 +779,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         bytes32 committeePublicKey
     ) external {
-        InterfoldPricing.validateRegistryCaller(
+        InterfoldPricing.validateCommitteePublication(
             msg.sender,
-            address(_registryFor(e3Id))
+            address(_registryFor(e3Id)),
+            e3Id,
+            uint8(_e3Stages[e3Id]),
+            _e3Deadlines[e3Id].dkgDeadline
         );
         E3 storage e3 = e3s[e3Id];
-        E3Stage current = _e3Stages[e3Id];
-        if (current != E3Stage.CommitteeFinalized) {
-            revert InvalidStage(e3Id, E3Stage.CommitteeFinalized, current);
-        }
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;

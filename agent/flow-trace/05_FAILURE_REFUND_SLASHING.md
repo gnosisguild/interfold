@@ -34,6 +34,9 @@ Expelled members and provisional candidates do not.
 Interfold rejects `None`, the enum sentinel, and larger failure reason values before it changes the
 E3 stage.
 
+Committee key publication is valid through the DKG deadline. Later publication is rejected as a
+supplier-side timeout.
+
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
 > `block.timestamp` directly against the raw deadlines (which themselves already incorporate the

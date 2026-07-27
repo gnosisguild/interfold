@@ -652,6 +652,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .to.emit(interfold, "CommitteeFormed")
         .withArgs(0);
     });
+
+    it("rejects committee publication after the DKG deadline", async function () {
+      const { interfold, registry, finalizeReadyCommittee } =
+        await loadFixture(setup);
+      await finalizeReadyCommittee();
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      const pkCommitment = ethers.keccak256(publicKey);
+      const { dkgDeadline } = await interfold.getDeadlines(0);
+      await time.increaseTo(dkgDeadline + 1n);
+
+      await expect(
+        registry.publishCommittee(
+          0,
+          publicKey,
+          pkCommitment,
+          encodeMockDkgProof(pkCommitment),
+          "0x01",
+        ),
+      ).to.be.revertedWithCustomError(interfold, "DKGDeadlinePassed");
+    });
   });
 
   describe("processE3Failure()", function () {

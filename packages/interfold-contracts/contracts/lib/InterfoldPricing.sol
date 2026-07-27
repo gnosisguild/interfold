@@ -115,6 +115,18 @@ library InterfoldPricing {
         );
     }
 
+    // prettier-ignore
+    function validateCommitteePublication(
+        address caller, address registry, uint256 e3Id, uint8 current, uint256 dkgDeadline
+    ) external view {
+        if (caller != registry) revert IInterfold.OnlyCiphernodeRegistry();
+        IInterfold.E3Stage stage = IInterfold.E3Stage(current);
+        if (stage != IInterfold.E3Stage.CommitteeFinalized)
+            revert IInterfold.InvalidStage(e3Id, IInterfold.E3Stage.CommitteeFinalized, stage);
+        if (block.timestamp > dkgDeadline)
+            revert IInterfold.DKGDeadlinePassed(e3Id, dkgDeadline);
+    }
+
     function honestNodes(
         address registryAddress,
         uint256 e3Id,
