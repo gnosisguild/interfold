@@ -22,6 +22,9 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 Anyone can call `markE3Failed()` when a deadline is missed. A ready committee cannot fail through
 this function. The registry must finalize that committee.
 
+If an honest-node allocation is smaller than the node count, the refund manager credits the full
+allocation to the request-time treasury. The manager does not create zero-value node claims.
+
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
 > `block.timestamp` directly against the raw deadlines (which themselves already incorporate the
