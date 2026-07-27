@@ -101,6 +101,7 @@ impl ScoreBackend {
                     return None;
                 }
 
+                // This local workload limit is not an on-chain eligibility rule.
                 let count = node_state.available_tickets(&addr_str);
                 let total_tickets = if node_state.ticket_price.is_zero() {
                     0u64

@@ -221,13 +221,17 @@ flowchart LR
 - **State Per Node**:
   - `ticket_balance`: Current ticket balance
   - `active`: Whether node is active (has min ticket balance)
-  - `active_jobs`: Number of active E3 jobs
+  - `active_jobs`: Local workload count for voluntary participation limits
 - **Persistence**: State survives node restarts
 - **Events**:
   - `CiphernodeAdded` / `CiphernodeRemoved`
   - `TicketBalanceUpdated`
   - `OperatorActivationChanged`
   - `ConfigurationUpdated` (for ticketPrice)
+
+The active-job adjustment is a node policy. It does not reserve collateral or reduce the ticket
+range that Solidity accepts. The submitted on-chain candidates are authoritative. Operators can
+choose different workload limits or ignore this adjustment.
 
 ### 4. Sortition Actor
 
