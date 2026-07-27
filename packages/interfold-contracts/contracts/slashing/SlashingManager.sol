@@ -355,10 +355,32 @@ contract SlashingManager is
                     uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
                 InvalidPolicy()
             );
+            require(
+                _isSupplierFailureReason(policy.failureReason),
+                InvalidPolicy()
+            );
         }
 
         slashPolicies[reason] = policy;
         emit SlashPolicyUpdated(reason, policy);
+    }
+
+    function _isSupplierFailureReason(
+        uint8 reason
+    ) internal pure returns (bool) {
+        IInterfold.FailureReason failureReason = IInterfold.FailureReason(
+            reason
+        );
+        return
+            failureReason ==
+            IInterfold.FailureReason.CommitteeFormationTimeout ||
+            failureReason ==
+            IInterfold.FailureReason.InsufficientCommitteeMembers ||
+            failureReason == IInterfold.FailureReason.DKGTimeout ||
+            failureReason == IInterfold.FailureReason.DKGInvalidShares ||
+            failureReason == IInterfold.FailureReason.DecryptionTimeout ||
+            failureReason == IInterfold.FailureReason.DecryptionInvalidShares ||
+            failureReason == IInterfold.FailureReason.VerificationFailed;
     }
 
     /// @inheritdoc ISlashingManager
