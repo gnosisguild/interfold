@@ -771,6 +771,11 @@ Compute provider runs computation on encrypted data:
 
 ## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
 
+Before proof verification, the BFV wrapper requires every public input to use its canonical BN254
+field representation. Message coefficients must also fit exactly in 64 bits. This second check is
+defense in depth because the wrapper does not store the BFV plaintext modulus for each parameter
+set.
+
 ```
 InterfoldSolReader decodes CiphertextOutputPublished event
 │
