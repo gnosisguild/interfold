@@ -322,6 +322,10 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  └─────────────────────────────────────────────────────────┘
 ```
 
+Ticket submission changes only the provisional `topNodes` set. It does not grant committee
+membership. Successful finalization assigns `Active` status to the final address-sorted members.
+Failed formation leaves no active or historical committee members.
+
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
 ```text

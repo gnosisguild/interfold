@@ -417,6 +417,30 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("getActiveCommitteeNodes()", function () {
+    it("does not grant membership to provisional candidates", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
+      await registry.connect(operator1).submitTicket(0, 1);
+      const operator = await operator1.getAddress();
+
+      expect(await registry.isCommitteeMember(0, operator)).to.equal(false);
+      const [nodes] = await registry.getActiveCommitteeNodes(0);
+      expect(nodes).to.deep.equal([]);
+    });
+
     it("returns active committee nodes with their scores", async function () {
       const {
         registry,
@@ -451,6 +475,10 @@ describe("CiphernodeRegistryOwnable", function () {
 
       expect(activeNodes).to.deep.equal(finalizedEvent.args.committee);
       expect(activeScores).to.deep.equal(finalizedEvent.args.scores);
+      for (const node of activeNodes) {
+        expect(await registry.isCommitteeMember(0, node)).to.equal(true);
+        expect(await registry.isCommitteeMemberActive(0, node)).to.equal(true);
+      }
     });
   });
 

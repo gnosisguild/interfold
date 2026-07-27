@@ -115,6 +115,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 ├─ 3. Get honest nodes:
 │     (honestNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
 │     → Returns committee members NOT expelled by slashing plus their ticket scores
+│     → Returns empty arrays when committee formation did not finalize
 │
 ├─ 4. Transfer payment to E3RefundManager:
 │     paymentToken = _e3FeeTokens[e3Id]  (per-E3 token, not current global)

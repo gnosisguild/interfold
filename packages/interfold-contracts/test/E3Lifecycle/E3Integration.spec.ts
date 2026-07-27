@@ -781,6 +781,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distribution.protocolAmount).to.equal(0);
     });
 
+    it("processes failure after an incomplete provisional committee", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        operator1,
+        makeReadyRequest,
+      } = await loadFixture(setup);
+
+      await makeReadyRequest();
+      await registry.connect(operator1).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+
+      await registry.finalizeCommittee(0);
+      expect(await interfold.getFailureReason(0)).to.equal(2);
+
+      await interfold.processE3Failure(0);
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      expect(distribution.honestNodeAmount).to.equal(0);
+    });
+
     it("allows requester to claim refund after failure processing", async function () {
       const {
         interfold,
