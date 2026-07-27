@@ -189,9 +189,11 @@ if committee.contains(my_address) {
 }
 ```
 
-Because the scoring function is deterministic and all inputs are public (on-chain balances at a
-fixed block, the seed), every honest node computes the same committee. A node that the algorithm
-says should submit but doesn't is simply dropping out — it may be expelled later.
+The score is deterministic for a given ticket, E3, and seed. Each node can use its own `active_jobs`
+count for voluntary load balancing. It does not reduce any other operator's candidate range.
+
+Solidity accepts tickets from the full snapshotted balance, so the on-chain candidate set remains
+authoritative. Operators can choose or ignore local workload limits.
 
 ---
 

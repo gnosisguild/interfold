@@ -218,6 +218,15 @@ describe("CiphernodeRegistryOwnable", function () {
       expect(await registry.rootAt(0)).to.not.equal(0);
     });
 
+    it("allows one ticket ID across concurrent E3 requests", async function () {
+      const { registry, operator1, request } = await loadFixture(setup);
+
+      for (let e3Id = 0; e3Id < 2; e3Id++) {
+        await request();
+        await registry.connect(operator1).submitTicket(e3Id, 1);
+      }
+    });
+
     it("AUD-M03: fails closed after governance updates until operators refresh", async function () {
       const {
         registry,
