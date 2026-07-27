@@ -763,6 +763,9 @@ Compute provider runs computation on encrypted data:
 
 ## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
 
+The BFV wrapper accepts only canonical BN254 field values for plaintext coefficients. Each
+coefficient must also fit exactly in 64 bits before the wrapper reconstructs and hashes plaintext.
+
 ```
 InterfoldSolReader decodes CiphertextOutputPublished event
 │

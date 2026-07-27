@@ -25,6 +25,8 @@ const [testSigner] = await ethers.getSigners();
 
 /** Must match `BfvDecryptionVerifier.MESSAGE_COEFFS_COUNT` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
 const MESSAGE_COEFFS_COUNT = 100;
+const BN254_SCALAR_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 const EXPECTED_C6_FOLD_KEY_HASH = ethers.id("c6_fold");
 const EXPECTED_C7_KEY_HASH = ethers.id("c7");
@@ -327,6 +329,40 @@ describe("BfvDecryptionVerifier", function () {
         bfvDecryptionVerifier,
         "InvalidPublicInputsLength",
       );
+    });
+
+    it("rejects every in-range BN254 alias of a message coefficient", async function () {
+      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { decryptionDomain } = ctx();
+      const coefficient = 21n;
+      const messageOffset = EXPECTED_PUBLIC_INPUTS_LEN - MESSAGE_COEFFS_COUNT;
+
+      for (let multiplier = 1n; multiplier <= 5n; multiplier++) {
+        const alias = coefficient + multiplier * BN254_SCALAR_MODULUS;
+        const publicInputs = buildPublicInputsWithMessage([]);
+        publicInputs[messageOffset] = ethers.toBeHex(alias, 32);
+        const plaintextHash = plaintextToHash([BigInt.asUintN(64, alias)]);
+        const proof = encodeProof("0x01", publicInputs);
+
+        await expect(
+          bfvDecryptionVerifier.verify.staticCall(
+            E3_ID,
+            decryptionDomain,
+            plaintextHash,
+            ethers.ZeroHash,
+            CIPHERTEXT_COMMITMENT,
+            proof,
+          ),
+        )
+          .to.be.revertedWithCustomError(
+            bfvDecryptionVerifier,
+            "NonCanonicalPublicInput",
+          )
+          .withArgs(messageOffset);
+      }
     });
 
     it("reverts VkHashMismatch when c6_fold key hash does not match (M-34)", async function () {
