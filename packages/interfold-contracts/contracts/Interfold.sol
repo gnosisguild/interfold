@@ -910,6 +910,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     {
         (deadline, reason) = _stageDeadlineAndReason(e3Id, stage);
         canFail = deadline != 0 && block.timestamp > deadline;
+        if (
+            canFail &&
+            stage == E3Stage.Requested &&
+            _registryFor(e3Id).committeeThresholdMet(e3Id)
+        ) {
+            return (false, FailureReason.None, deadline);
+        }
         if (!canFail) reason = FailureReason.None;
     }
 

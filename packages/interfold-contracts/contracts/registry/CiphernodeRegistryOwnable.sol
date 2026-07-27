@@ -632,6 +632,14 @@ contract CiphernodeRegistryOwnable is
         return true;
     }
 
+    /// @inheritdoc ICiphernodeRegistry
+    function committeeThresholdMet(uint256 e3Id) external view returns (bool) {
+        Committee storage c = committees[e3Id];
+        return
+            c.stage == ICiphernodeRegistry.CommitteeStage.Requested &&
+            c.topNodes.length >= c.threshold[1];
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                   Set Functions                        //
