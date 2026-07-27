@@ -528,6 +528,11 @@ interface ICiphernodeRegistry {
     /// @return success True if committee formed successfully, false if threshold not met
     function finalizeCommittee(uint256 e3Id) external returns (bool success);
 
+    /// @notice Check if a requested committee has enough selected members.
+    /// @param e3Id ID of the E3 computation
+    /// @return Whether the requested committee is ready for finalization
+    function committeeThresholdMet(uint256 e3Id) external view returns (bool);
+
     /// @notice Check if submission window is still open for an E3
     /// @param e3Id ID of the E3 computation
     /// @return Whether the submission window is open

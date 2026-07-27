@@ -380,7 +380,8 @@ Time ─────────────────────────
 │                │ CommFinalized   │               │
 │                │ ───►DKG starts  │               │
 
-If any deadline is missed → anyone can call markE3Failed()
+If a stage deadline is missed → anyone can call `markE3Failed()`.
+The registry must finalize a ready committee.
 ```
 
 ---

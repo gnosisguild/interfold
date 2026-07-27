@@ -19,7 +19,8 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed:
+Anyone can call `markE3Failed()` when a deadline is missed. A ready committee cannot fail through
+this function. The registry must finalize it.
 
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare

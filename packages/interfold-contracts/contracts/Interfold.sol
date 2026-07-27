@@ -894,30 +894,24 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         view
         returns (bool canFail, FailureReason reason, uint256 deadline)
     {
-        (deadline, reason) = _stageDeadlineAndReason(e3Id, stage);
-        canFail = deadline != 0 && block.timestamp > deadline;
-        if (!canFail) reason = FailureReason.None;
-    }
+        uint8 rawReason;
+        (deadline, rawReason) = InterfoldPricing.stageDeadlineAndReason(
+            address(_registryFor(e3Id)),
+            e3Id,
+            uint8(stage),
+            _e3Deadlines[e3Id]
+        );
+        reason = FailureReason(rawReason);
 
-    /// @dev Returns the deadline and matching failure reason for `stage`.
-    ///      A `deadline == 0` (unknown stage) signals "no failure possible".
-    function _stageDeadlineAndReason(
-        uint256 e3Id,
-        E3Stage stage
-    ) private view returns (uint256 deadline, FailureReason reason) {
-        if (stage == E3Stage.Requested)
-            return (
-                _registryFor(e3Id).getCommitteeDeadline(e3Id),
-                FailureReason.CommitteeFormationTimeout
-            );
-        E3Deadlines memory d = _e3Deadlines[e3Id];
-        if (stage == E3Stage.CommitteeFinalized)
-            return (d.dkgDeadline, FailureReason.DKGTimeout);
-        if (stage == E3Stage.KeyPublished)
-            return (d.computeDeadline, FailureReason.ComputeTimeout);
-        if (stage == E3Stage.CiphertextReady)
-            return (d.decryptionDeadline, FailureReason.DecryptionTimeout);
-        return (0, FailureReason.None);
+        canFail = deadline != 0 && block.timestamp > deadline;
+        if (
+            canFail &&
+            stage == E3Stage.Requested &&
+            _registryFor(e3Id).committeeThresholdMet(e3Id)
+        ) {
+            return (false, FailureReason.None, deadline);
+        }
+        if (!canFail) reason = FailureReason.None;
     }
 
     /// @notice Get current stage of an E3

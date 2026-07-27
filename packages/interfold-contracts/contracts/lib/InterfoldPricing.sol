@@ -205,6 +205,33 @@ library InterfoldPricing {
         ) revert IInterfold.MarkE3FailedInGracePeriod(e3Id, graceEnds);
     }
 
+    // prettier-ignore
+    function stageDeadlineAndReason(
+        address registryAddress, uint256 e3Id, uint8 current, IInterfold.E3Deadlines calldata deadlines
+    ) external view returns (uint256 deadline, uint8 reason) {
+        IInterfold.E3Stage stage = IInterfold.E3Stage(current);
+        if (stage == IInterfold.E3Stage.Requested)
+            return (
+                ICiphernodeRegistry(registryAddress).getCommitteeDeadline(e3Id),
+                uint8(IInterfold.FailureReason.CommitteeFormationTimeout)
+            );
+        if (stage == IInterfold.E3Stage.CommitteeFinalized)
+            return (
+                deadlines.dkgDeadline,
+                uint8(IInterfold.FailureReason.DKGTimeout)
+            );
+        if (stage == IInterfold.E3Stage.KeyPublished)
+            return (
+                deadlines.computeDeadline,
+                uint8(IInterfold.FailureReason.ComputeTimeout)
+            );
+        if (stage == IInterfold.E3Stage.CiphertextReady)
+            return (
+                deadlines.decryptionDeadline,
+                uint8(IInterfold.FailureReason.DecryptionTimeout)
+            );
+    }
+
     /// @notice Mirrors the threshold / min-size gates at the top of
     ///         {Interfold.getE3Quote} (post param-set existence check).
     /// @param committeeSize  ABI-encoded as `uint8` to avoid qualified enum

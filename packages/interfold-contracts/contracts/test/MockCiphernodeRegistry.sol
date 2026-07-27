@@ -161,6 +161,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         return true;
     }
 
+    function committeeThresholdMet(uint256) external pure returns (bool) {
+        return false;
+    }
+
     function sortitionSubmissionWindow() external pure returns (uint256) {
         return 0;
     }
@@ -375,6 +379,10 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
     // solhint-disable-next-line no-empty-blocks
     function finalizeCommittee(uint256) external pure returns (bool) {
         return true;
+    }
+
+    function committeeThresholdMet(uint256) external pure returns (bool) {
+        return false;
     }
 
     function isOpen(uint256) external pure returns (bool) {

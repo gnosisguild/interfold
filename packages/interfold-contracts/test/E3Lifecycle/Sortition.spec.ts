@@ -141,6 +141,28 @@ async function deployStack() {
 }
 
 describe("Sortition & E3 lifecycle", function () {
+  it("prevents timeout failure when the committee is ready", async function () {
+    const ctx = await loadFixture(deployStack);
+    const { interfold, ciphernodeRegistry, other, op1, op2, op3 } = ctx;
+
+    await ctx.makeRequest();
+    for (const operator of [op1, op2, op3]) {
+      await ciphernodeRegistry.connect(operator).submitTicket(0, 1);
+    }
+
+    const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+    await time.increaseTo(deadline + 1n);
+
+    await expect(
+      interfold.connect(other).markE3Failed(0),
+    ).to.be.revertedWithCustomError(interfold, "FailureConditionNotMet");
+
+    await expect(ciphernodeRegistry.finalizeCommittee(0)).to.emit(
+      interfold,
+      "CommitteeFinalized",
+    );
+  });
+
   describe("Committee.requestBlock uses block.timestamp", function () {
     it("stores block.timestamp (not block.number) in requestBlock", async function () {
       const ctx = await loadFixture(deployStack);
