@@ -201,7 +201,7 @@ library InterfoldPricing {
             block.timestamp < graceEnds &&
             caller != requester &&
             caller != contractOwner &&
-            !ICiphernodeRegistry(registry).isCommitteeMember(e3Id, caller)
+            !ICiphernodeRegistry(registry).isCommitteeMemberActive(e3Id, caller)
         ) revert IInterfold.MarkE3FailedInGracePeriod(e3Id, graceEnds);
     }
 

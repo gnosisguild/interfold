@@ -922,9 +922,10 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id,
         address node
     ) external view returns (bool) {
+        Committee storage c = committees[e3Id];
         return
-            committees[e3Id].memberStatus[node] ==
-            ICiphernodeRegistry.MemberStatus.Active;
+            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized &&
+            c.memberStatus[node] == ICiphernodeRegistry.MemberStatus.Active;
     }
 
     /// @inheritdoc ICiphernodeRegistry
