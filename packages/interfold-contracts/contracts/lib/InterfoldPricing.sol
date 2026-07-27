@@ -186,6 +186,25 @@ library InterfoldPricing {
             revert IInterfold.E3AlreadyFailed(e3Id);
     }
 
+    // prettier-ignore
+    function validateReportedFailure(
+        address caller, address registry, address slashManager, uint256 e3Id, uint8 current, uint8 reason
+    ) external pure {
+        if (caller != registry && caller != slashManager)
+            revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
+        IInterfold.E3Stage stage = IInterfold.E3Stage(current);
+        if (stage == IInterfold.E3Stage.None)
+            revert IInterfold.InvalidStage(e3Id, IInterfold.E3Stage.Requested, stage);
+        if (stage == IInterfold.E3Stage.Complete)
+            revert IInterfold.E3AlreadyComplete(e3Id);
+        if (stage == IInterfold.E3Stage.Failed)
+            revert IInterfold.E3AlreadyFailed(e3Id);
+        if (
+            reason == uint8(IInterfold.FailureReason.None) ||
+            reason >= uint8(IInterfold.FailureReason._MAX_FAILURE_REASON)
+        ) revert IInterfold.InvalidFailureReason(reason);
+    }
+
     function validateMarkFailedCaller(
         uint256 e3Id,
         uint256 deadline,

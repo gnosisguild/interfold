@@ -328,6 +328,10 @@ interface IInterfold {
     /// @notice Thrown when committee selection fails during E3 request or activation.
     error CommitteeSelectionFailed();
 
+    /// @notice Thrown when a dependency reports a value that is not a failure reason.
+    /// @param reason The rejected value.
+    error InvalidFailureReason(uint8 reason);
+
     /// @notice Thrown when an E3 request uses a program that is not enabled.
     /// @param e3Program The E3 program address that is not allowed.
     error E3ProgramNotAllowed(IE3Program e3Program);

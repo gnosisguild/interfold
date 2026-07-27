@@ -802,17 +802,15 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function onE3Failed(uint256 e3Id, uint8 reason) external {
-        InterfoldPricing.validateRegistryOrSlashCaller(
+        E3Stage current = _e3Stages[e3Id];
+        InterfoldPricing.validateReportedFailure(
             msg.sender,
             address(_registryFor(e3Id)),
-            address(_slashingManagerFor(e3Id))
+            address(_slashingManagerFor(e3Id)),
+            e3Id,
+            uint8(current),
+            reason
         );
-        require(
-            reason > 0 && reason <= uint8(FailureReason._MAX_FAILURE_REASON),
-            "Invalid failure reason"
-        );
-        E3Stage current = _e3Stages[e3Id];
-        InterfoldPricing.validateMarkFailedStage(e3Id, uint8(current));
         _markE3FailedWithReason(e3Id, current, FailureReason(reason));
     }
 
