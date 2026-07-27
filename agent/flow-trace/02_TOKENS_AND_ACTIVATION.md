@@ -24,12 +24,12 @@ Before a node can register, it must stake two types of collateral:
 │                                                           │
 │  Lifecycle phases (derived from CCA window + TGE):        │
 │    Virtual → PublicSale → Cooldown → Live                 │
-│    - Virtual: mint() + mintAllocations() allowed           │
+│    - Virtual: pre-sale setup                                │
 │    - PublicSale: CCA bidding window                        │
 │    - Cooldown: CCA ended, TGE not yet called               │
 │    - Live: TGE fired (permissionless after cooldown)       │
 │                                                           │
-│  Minting (Virtual phase only):                            │
+│  Minting (all pre-TGE phases):                            │
 │    - mint(recipient, amount, label)                        │
 │      DEFAULT_ADMIN_ROLE — unlocked tokens                  │
 │    - mintAllocations(MintAllocation[])                     │
@@ -456,9 +456,9 @@ The FOLD token was rewritten to implement a CCA-auction-aligned lifecycle with w
 enforcement based on immutable policy curves. Key changes:
 
 - **Phase-based lifecycle.** The token derives its phase from immutable `CCA_START` / `CCA_END` and
-  the one-way `tge()` call: Virtual → PublicSale → Cooldown → Live. Minting is gated to Virtual
-  phase only; TGE is permissionless after `CCA_END + TGE_COOLDOWN` (40 days). The pre-TGE transfer
-  gate automatically lifts at TGE — no `disableTransferRestrictions` / `transfersRestricted` flag.
+  the one-way `tge()` call: Virtual → PublicSale → Cooldown → Live. Minting remains available in all
+  pre-TGE phases. TGE is permissionless after `CCA_END + TGE_COOLDOWN` (40 days). The pre-TGE
+  transfer gate automatically lifts at TGE. There is no manual transfer restriction flag.
 - **Pre-TGE transfer gate.** Before TGE, only bonding-registry transfers, claim-source
   distributions, and whitelisted addresses can transfer. Bonding is always allowed so operators can
   stake during Virtual phase.
@@ -478,7 +478,8 @@ enforcement based on immutable policy curves. Key changes:
 - **EIP-6372 timestamp clock.** `clock()` returns `block.timestamp`, `CLOCK_MODE()` is
   `"mode=timestamp"`.
 - **Minting.** `mint(recipient, amount, label)` (DEFAULT_ADMIN_ROLE, unlocked) and
-  `mintAllocations(MintAllocation[])` (MINTER_ROLE, locked to a policy) are both Virtual-only.
+  `mintAllocations(MintAllocation[])` (MINTER_ROLE, locked to a policy) remain available during
+  Virtual, PublicSale, and Cooldown. TGE permanently closes both functions.
 - **Ownership.** `renounceOwnership()` is disabled. Two-step ownership transfer via Ownable2Step
   syncs all AccessControl roles atomically.
 

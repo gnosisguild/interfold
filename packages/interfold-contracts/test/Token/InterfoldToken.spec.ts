@@ -425,6 +425,41 @@ describe("InterfoldToken", function () {
       expect(await token.balanceOf(await alice.getAddress())).to.equal(amount);
     });
 
+    it("allows authorized minting throughout pre-TGE phases", async function () {
+      const { token, admin, alice, bob, ccaStart, ccaEnd } =
+        await loadFixture(deploy);
+      const amount = ethers.parseEther("100");
+      const policyId = await createLinearPolicy(token, admin, "PRE_TGE_POLICY");
+
+      await time.increaseTo(ccaStart);
+      await token
+        .connect(admin)
+        .mint(await alice.getAddress(), amount, ethers.ZeroHash);
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: await alice.getAddress(),
+          amount,
+          policyId,
+          label: ethers.ZeroHash,
+        },
+      ]);
+
+      await time.increaseTo(ccaEnd);
+      await token
+        .connect(admin)
+        .mint(await bob.getAddress(), amount, ethers.ZeroHash);
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: await bob.getAddress(),
+          amount,
+          policyId,
+          label: ethers.ZeroHash,
+        },
+      ]);
+
+      expect(await token.totalSupply()).to.equal(amount * 4n);
+    });
+
     it("mint reverts after TGE (Live phase)", async function () {
       const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);

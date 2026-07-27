@@ -112,8 +112,7 @@ contract InterfoldToken is
     ///         ({CLAIM_SOURCE} sending, any phase).
     error TransferRestricted(address from, address to);
 
-    /// @notice {mint} or {mintAllocations} was called after the Virtual phase; the
-    ///         full supply is distributed before {CCA_START}.
+    /// @notice {mint} or {mintAllocations} was called after TGE.
     error MintingClosed();
 
     /// @notice {tge} was called but the token is already live.
@@ -196,7 +195,7 @@ contract InterfoldToken is
 
     uint256 public constant MAX_SUPPLY = 1_200_000_000e18;
 
-    /// @notice Role authorized to mint allocations, while Virtual.
+    /// @notice Role authorized to mint allocations before TGE.
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
     /// @notice Role authorized to manage the pre-TGE transfer whitelist.
