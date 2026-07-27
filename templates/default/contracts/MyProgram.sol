@@ -89,14 +89,20 @@ contract MyProgram is IE3Program, Ownable {
   /// @param e3Id The E3 program ID
   /// @param ciphertextOutputHash The hash of the ciphertext output
   /// @param proof The proof to verify
-  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external override returns (bool) {
+  function verify(
+    uint256 e3Id,
+    bytes32 ciphertextOutputHash,
+    bytes32 ciphertextCommitment,
+    bytes memory proof
+  ) external override returns (bool) {
     require(paramsHashes[e3Id] != bytes32(0), E3DoesNotExist());
     bytes32 inputRoot = bytes32(inputs[e3Id]._root());
-    bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
+    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
 
     encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    encodeLengthPrefixAndHash(journal, 132, paramsHashes[e3Id]);
-    encodeLengthPrefixAndHash(journal, 264, inputRoot);
+    encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
+    encodeLengthPrefixAndHash(journal, 264, paramsHashes[e3Id]);
+    encodeLengthPrefixAndHash(journal, 396, inputRoot);
 
     verifier.verify(proof, imageId, sha256(journal));
     return true;

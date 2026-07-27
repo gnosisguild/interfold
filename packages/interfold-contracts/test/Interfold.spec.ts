@@ -654,6 +654,53 @@ describe("Interfold", function () {
       expect(e3.ciphertextOutput).to.equal(ethers.keccak256(data));
       expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
+
+    it("binds the ciphertext commitment to program verification", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+      const poisonedCommitment = ethers.keccak256("0xbad0");
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await mocks.e3Program.setExpectedCiphertextCommitment(
+        e3Id,
+        ciphertextCommitment,
+      );
+
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          poisonedCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
+    });
+
     it("returns true if output is published successfully", async function () {
       const {
         interfold,

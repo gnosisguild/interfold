@@ -387,7 +387,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             block.timestamp +
             _timeoutConfig.decryptionWindow;
 
-        (success) = e3.e3Program.verify(e3Id, ciphertextOutputHash, proof);
+        (success) = e3.e3Program.verify(
+            e3Id,
+            ciphertextOutputHash,
+            ciphertextCommitment,
+            proof
+        );
         require(success, InvalidOutput(ciphertextOutput));
 
         emit CiphertextOutputPublished(

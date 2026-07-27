@@ -40,6 +40,7 @@ interface IE3Program {
   function verify(
     uint256 e3Id,
     bytes32 ciphertextOutputHash,
+    bytes32 ciphertextCommitment,
     bytes memory proof
   ) external returns (bool success);
 }
@@ -203,6 +204,7 @@ program. CRISP's implementation checks the RISC Zero proof:
 function verify(
   uint256 e3Id,
   bytes32 ciphertextOutputHash,
+  bytes32 ciphertextCommitment,
   bytes memory proof
 ) external returns (bool) {
   if (msg.sender != address(interfold)) revert CallerNotAuthorized();
@@ -210,6 +212,7 @@ function verify(
   // Reconstruct the expected journal from known values
   bytes memory journal = abi.encodePacked(
     ciphertextOutputHash,
+    ciphertextCommitment,
     e3Data[e3Id].paramsHash,
     e3Data[e3Id].votes._root(TREE_DEPTH)
   );
@@ -221,9 +224,8 @@ function verify(
 }
 ```
 
-The journal reconstruction is critical — it binds the proof to the specific inputs (via the Merkle
-root) and parameters (via the params hash) for this E3. A proof generated for different inputs or
-parameters would fail verification.
+The journal binds the proof to the output hash, SAFE commitment, inputs, and parameters. A
+front-runner cannot replace the commitment while reusing a valid proof.
 
 ---
 

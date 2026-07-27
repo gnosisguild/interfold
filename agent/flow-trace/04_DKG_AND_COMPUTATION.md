@@ -748,8 +748,8 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
 │  │    5. e3.ciphertextOutput = keccak256(output)           │
 │  │       e3.ciphertextCommitment = commitment               │
-│  │    6. e3Program.verify(e3Id, hash, proof)               │
-    │  │       → Program verifies computation correctness        │
+│  │    6. e3Program.verify(e3Id, hash, commitment, proof)   │
+    │  │       → Program binds the output and SAFE commitment    │
     │  │       → Must return true                                │
     │  │    7. stage = CiphertextReady                           │
     │  │    8. decryptionDeadline = now + decryptionWindow       │
