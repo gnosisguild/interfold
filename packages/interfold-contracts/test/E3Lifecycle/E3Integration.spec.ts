@@ -183,6 +183,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .addTicketBalanceFor(operatorAddress, ticketAmount);
     };
 
+    const makeReadyRequest = async () => {
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await makeRequest();
+    };
+
+    const finalizeReadyCommittee = async () => {
+      await makeReadyRequest();
+      for (const operator of [operator1, operator2, operator3]) {
+        await registry.connect(operator).submitTicket(0, 1);
+      }
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+    };
+
     return {
       interfold,
       e3RefundManager,
@@ -203,6 +219,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       computeProvider,
       makeRequest,
       setupOperator,
+      makeReadyRequest,
+      finalizeReadyCommittee,
     };
   };
 
@@ -249,6 +267,59 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         e3RefundManager.getFailurePayer(13),
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
+    });
+
+    it("routes zero-value node shares to the treasury", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        usdcToken,
+        treasury,
+        finalizeReadyCommittee,
+      } = await loadFixture(setup);
+
+      await interfold.setPricingConfig({
+        keyGenFixedPerNode: 0,
+        keyGenPerEncryptionProof: 0,
+        coordinationPerPair: 0,
+        availabilityPerNodePerSec: 0,
+        decryptionPerNode: 0,
+        publicationBase: 5,
+        verificationPerProof: 0,
+        protocolTreasury: await treasury.getAddress(),
+        marginBps: 0,
+        protocolShareBps: 0,
+        dkgUtilizationBps: 0,
+        computeUtilizationBps: 0,
+        decryptUtilizationBps: 0,
+        minCommitteeSize: 0,
+        minThreshold: 0,
+      });
+
+      await finalizeReadyCommittee();
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      const pkCommitment = ethers.keccak256(publicKey);
+      await registry.publishCommittee(
+        0,
+        publicKey,
+        pkCommitment,
+        encodeMockDkgProof(pkCommitment),
+        "0x01",
+      );
+
+      const deadlines = await interfold.getDeadlines(0);
+      await time.increaseTo(deadlines.computeDeadline + 1n);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      expect(
+        await e3RefundManager.pendingTreasuryClaim(
+          await treasury.getAddress(),
+          await usdcToken.getAddress(),
+        ),
+      ).to.equal(3);
     });
 
     it("AUD-M07: snapshots failure allocation and treasury at request time", async function () {

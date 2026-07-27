@@ -236,6 +236,22 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             finalDist.perNodeAmount =
                 finalDist.honestNodeAmount /
                 honestNodes.length;
+            if (
+                finalDist.perNodeAmount == 0 && finalDist.honestNodeAmount > 0
+            ) {
+                uint256 unclaimableAmount = finalDist.honestNodeAmount;
+                finalDist.honestNodeAmount = 0;
+                finalDist.protocolAmount += unclaimableAmount;
+                address policyTreasury = _treasuryFor(e3Id);
+                _pendingTreasury[policyTreasury][
+                    paymentToken
+                ] += unclaimableAmount;
+                emit TreasurySlashedCredited(
+                    policyTreasury,
+                    paymentToken,
+                    unclaimableAmount
+                );
+            }
         }
 
         if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
