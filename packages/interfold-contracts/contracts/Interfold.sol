@@ -821,13 +821,21 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             address(_registryFor(e3Id)),
             address(_slashingManagerFor(e3Id))
         );
-        require(
-            reason > 0 && reason <= uint8(FailureReason._MAX_FAILURE_REASON),
-            "Invalid failure reason"
-        );
+        FailureReason validatedReason = _validateFailureReason(reason);
         E3Stage current = _e3Stages[e3Id];
         InterfoldPricing.validateMarkFailedStage(e3Id, uint8(current));
-        _markE3FailedWithReason(e3Id, current, FailureReason(reason));
+        _markE3FailedWithReason(e3Id, current, validatedReason);
+    }
+
+    function _validateFailureReason(
+        uint8 raw
+    ) private pure returns (FailureReason reason) {
+        if (
+            raw == uint8(FailureReason.None) ||
+            raw >= uint8(FailureReason._MAX_FAILURE_REASON)
+        ) revert InvalidFailureReason(raw);
+
+        return FailureReason(raw);
     }
 
     ////////////////////////////////////////////////////////////

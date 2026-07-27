@@ -263,6 +263,29 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
     });
 
+    it("rejects invalid failure reasons from an authorized dependency", async function () {
+      const { interfold, registry, makeReadyRequest } =
+        await loadFixture(setup);
+      await makeReadyRequest();
+
+      const registryAddress = await registry.getAddress();
+      await networkHelpers.impersonateAccount(registryAddress);
+      await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
+      const registrySigner = await ethers.getSigner(registryAddress);
+
+      for (const reason of [0, 13, 255]) {
+        await expect(interfold.connect(registrySigner).onE3Failed(0, reason))
+          .to.be.revertedWithCustomError(interfold, "InvalidFailureReason")
+          .withArgs(reason);
+      }
+
+      await expect(interfold.connect(registrySigner).onE3Failed(0, 2))
+        .to.emit(interfold, "E3Failed")
+        .withArgs(0, 1, 2);
+
+      await networkHelpers.stopImpersonatingAccount(registryAddress);
+    });
+
     it("routes zero-value node shares to the treasury", async function () {
       const {
         interfold,

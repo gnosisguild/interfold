@@ -31,6 +31,9 @@ rejects a requester-paid reason before governance stores the policy.
 During the failure grace period, only active finalized committee members have committee authority.
 Expelled members and provisional candidates do not have this authority.
 
+Interfold accepts only real failure reasons from the registry and slashing manager. It rejects
+`None`, the enum sentinel, and values beyond the sentinel before it changes the E3 stage.
+
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
 > `block.timestamp` directly against the raw deadlines (which themselves already incorporate the
