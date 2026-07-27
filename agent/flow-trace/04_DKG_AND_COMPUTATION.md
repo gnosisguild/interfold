@@ -688,6 +688,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  └─────────────────────────────────────────────────────┘
 ```
 
+The committee hash is `keccak256` over each ordered member's complete 20-byte address. Solidity,
+Rust, and Noir use the same unpadded bytes.
+
 The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
 `e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
 circuit's public-key commitment using the request's parameter set, and requires equality with the
