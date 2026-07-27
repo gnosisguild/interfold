@@ -17,6 +17,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
+import { FailurePayerLib } from "../lib/FailurePayerLib.sol";
 
 /**
  * @title SlashingManager
@@ -353,6 +354,12 @@ contract SlashingManager is
             require(
                 policy.failureReason <
                     uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
+                InvalidPolicy()
+            );
+            require(
+                FailurePayerLib.getFailurePayer(
+                    IInterfold.FailureReason(policy.failureReason)
+                ) == IE3RefundManager.FailurePayer.Ciphernodes,
                 InvalidPolicy()
             );
         }

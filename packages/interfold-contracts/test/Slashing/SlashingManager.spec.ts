@@ -396,6 +396,21 @@ describe("SlashingManager", function () {
       ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
     });
 
+    it("rejects a requester-paid failure reason", async function () {
+      const { slashingManager } = await loadFixture(setup);
+
+      await expect(
+        slashingManager.setSlashPolicy(
+          REASON_PT_0,
+          buildProofPolicy({
+            licensePenalty: 0n,
+            affectsCommittee: true,
+            failureReason: 6,
+          }),
+        ),
+      ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
+    });
+
     it("should allow proof-based policy without verifier (attestation model)", async function () {
       const { slashingManager } = await loadFixture(setup);
 

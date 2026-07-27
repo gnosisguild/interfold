@@ -25,6 +25,9 @@ this function. The registry must finalize it.
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
 
+A committee-affecting slash policy can use only a supplier-paid failure reason. Policy validation
+and refund settlement use the same payer classifier.
+
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
 > `block.timestamp` directly against the raw deadlines (which themselves already incorporate the
