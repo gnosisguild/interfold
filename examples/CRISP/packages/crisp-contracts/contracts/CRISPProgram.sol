@@ -269,15 +269,21 @@ contract CRISPProgram is IE3Program, Ownable {
   }
 
   /// @inheritdoc IE3Program
-  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external view override returns (bool) {
+  function verify(
+    uint256 e3Id,
+    bytes32 ciphertextOutputHash,
+    bytes32 ciphertextCommitment,
+    bytes memory proof
+  ) external view override returns (bool) {
     bytes32 paramsHash = getParamsHash(e3Id);
 
     bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root(TREE_DEPTH));
-    bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
+    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
 
     _encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    _encodeLengthPrefixAndHash(journal, 132, paramsHash);
-    _encodeLengthPrefixAndHash(journal, 264, inputRoot);
+    _encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
+    _encodeLengthPrefixAndHash(journal, 264, paramsHash);
+    _encodeLengthPrefixAndHash(journal, 396, inputRoot);
 
     risc0Verifier.verify(proof, imageId, sha256(journal));
     return true;

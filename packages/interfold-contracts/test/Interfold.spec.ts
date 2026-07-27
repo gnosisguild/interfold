@@ -657,6 +657,7 @@ describe("Interfold", function () {
         operator1,
         operator2,
         operator3,
+        mocks,
       } = await loadFixture(setup);
       const e3Id = 0;
 
@@ -671,18 +672,29 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      expect(
-        await interfold.publishCiphertextOutput(
+      await mocks.e3Program.setExpectedCiphertextCommitment(
+        e3Id,
+        ciphertextCommitment,
+      );
+      await expect(
+        interfold.publishCiphertextOutput(
           e3Id,
           data,
-          ciphertextCommitment,
+          ethers.keccak256("0xbad0"),
           proof,
         ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
       );
       const e3 = await interfold.getE3(e3Id);
       expect(e3.ciphertextOutput).to.equal(ethers.keccak256(data));
       expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
+
     it("returns true if output is published successfully", async function () {
       const {
         interfold,

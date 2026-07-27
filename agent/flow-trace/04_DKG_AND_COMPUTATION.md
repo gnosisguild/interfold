@@ -736,6 +736,10 @@ Data providers submit encrypted inputs:
 
 ### Ciphertext Output Publication
 
+The RISC Zero guest commits the output hash, SAFE commitment, parameter hash, and input root in that
+order. Boundless returns this journal to the support app. The app forwards the journal's commitment
+in the callback. CRISP reconstructs the same 528-byte serialization before it verifies the receipt.
+
 ```
 Compute provider runs computation on encrypted data:
 │
@@ -752,8 +756,8 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
 │  │    5. e3.ciphertextOutput = keccak256(output)           │
 │  │       e3.ciphertextCommitment = commitment               │
-│  │    6. e3Program.verify(e3Id, hash, proof)               │
-    │  │       → Program verifies computation correctness        │
+│  │    6. e3Program.verify(e3Id, hash, commitment, proof)   │
+    │  │       → Program binds the output and SAFE commitment    │
     │  │       → Must return true                                │
     │  │    7. stage = CiphertextReady                           │
     │  │    8. decryptionDeadline = now + decryptionWindow       │
@@ -947,8 +951,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │         committeeHash, ciphertextOutput,            │
         │  │         committeePublicKey                          │
         │  │       )), then call decryptionVerifier.verify(      │
-         │  │         e3Id, decryptionDomain, keccak256(output),  │
-        │  │         committeeHash, proof                        │
+        │  │         e3Id, decryptionDomain, keccak256(output),  │
+        │  │         committeeHash, ciphertextCommitment, proof  │
         │  │       )                                             │
         │  │       → C-03: final proof domain must match the      │
         │  │         domain already committed by every C6 leaf.  │
