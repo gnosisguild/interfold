@@ -74,8 +74,9 @@ class CRISPPublisher {
         console.log('      - @crisp-e3/sdk')
         console.log('      - @crisp-e3/contracts')
         console.log('      - @crisp-e3/zk-inputs')
+        console.log('   6. Update the standalone client/pnpm-lock.yaml')
         if (!this.options.skipGit) {
-          console.log('   6. Commit changes')
+          console.log('   7. Commit changes')
         }
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
         return
@@ -95,6 +96,9 @@ class CRISPPublisher {
 
       // Publish packages
       await this.publishPackages()
+
+      // Update the client lock file, which resolves the packages from npm
+      this.updateClientLockFile()
 
       // Git operations (just commit, no tagging)
       if (!this.options.skipGit && !this.options.dryRun) {
@@ -314,6 +318,29 @@ class CRISPPublisher {
   }
 
   /**
+   * Update the standalone client lock file.
+   *
+   * The client is deployed on its own (`pnpm install --ignore-workspace`, see
+   * client/.npmrc and client/vercel.json), so it keeps a lock file which resolves
+   * the CRISP packages from npm rather than from the workspace. It can only be
+   * refreshed once the new version has been published.
+   */
+  private updateClientLockFile(): void {
+    console.log('\n🔒 Updating the client lock file...')
+
+    try {
+      execSync('pnpm install --ignore-workspace --lockfile-only', {
+        cwd: join(this.crispDir, 'client'),
+        stdio: 'pipe',
+      })
+      console.log('   ✓ client/pnpm-lock.yaml updated')
+    } catch {
+      console.warn('   ⚠️  Could not update client/pnpm-lock.yaml')
+      console.warn('   Vercel installs with a frozen lock file and will fail until it is regenerated')
+    }
+  }
+
+  /**
    * Validate version format (semantic versioning)
    */
   private validateVersion(version: string): void {
@@ -475,7 +502,8 @@ The script will:
   4. Update pnpm-lock.yaml
   5. Build packages
   6. Publish to npm
-  7. Commit changes (no tags)
+  7. Update the standalone client/pnpm-lock.yaml
+  8. Commit changes (no tags)
 
 Note: Make sure you're logged in to npm (npm login) before publishing.
 `)
