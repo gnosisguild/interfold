@@ -98,7 +98,7 @@ class CRISPPublisher {
       await this.publishPackages()
 
       // Update the client lock file, which resolves the packages from npm
-      this.updateClientLockFile()
+      await this.updateClientLockFile()
 
       // Git operations (just commit, no tagging)
       if (!this.options.skipGit && !this.options.dryRun) {
@@ -325,18 +325,45 @@ class CRISPPublisher {
    * the CRISP packages from npm rather than from the workspace. It can only be
    * refreshed once the new version has been published.
    */
-  private updateClientLockFile(): void {
+  private async updateClientLockFile(): Promise<void> {
     console.log('\n🔒 Updating the client lock file...')
 
-    try {
-      execSync('pnpm install --ignore-workspace --lockfile-only', {
-        cwd: join(this.crispDir, 'client'),
-        stdio: 'pipe',
-      })
-      console.log('   ✓ client/pnpm-lock.yaml updated')
-    } catch {
-      console.warn('   ⚠️  Could not update client/pnpm-lock.yaml')
-      console.warn('   Vercel installs with a frozen lock file and will fail until it is regenerated')
+    const clientDir = join(this.crispDir, 'client')
+
+    // The registry needs a moment to serve a freshly published version, and the
+    // install below resolves from it rather than from the workspace.
+    await this.waitForRegistry('@crisp-e3/sdk')
+
+    execSync('pnpm install --ignore-workspace --lockfile-only', {
+      cwd: clientDir,
+      stdio: 'pipe',
+    })
+
+    // A stale registry cache can resolve the previous version without failing, which
+    // would produce a lock file that Vercel then rejects.
+    const lockFile = readFileSync(join(clientDir, 'pnpm-lock.yaml'), 'utf-8')
+    if (!lockFile.includes(`'@crisp-e3/sdk@${this.newVersion}'`)) {
+      throw new Error(`client/pnpm-lock.yaml does not reference @crisp-e3/sdk@${this.newVersion} after the install`)
+    }
+
+    console.log('   ✓ client/pnpm-lock.yaml updated')
+  }
+
+  /**
+   * Wait for a freshly published version to be visible on the npm registry.
+   */
+  private async waitForRegistry(packageName: string, attempts = 10): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        execSync(`npm view ${packageName}@${this.newVersion} version`, { stdio: 'pipe' })
+        return
+      } catch {
+        if (attempt === attempts) {
+          throw new Error(`${packageName}@${this.newVersion} is not available on the registry after ${attempts} attempts`)
+        }
+        console.log(`   … waiting for ${packageName}@${this.newVersion} on the registry (${attempt}/${attempts})`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+      }
     }
   }
 
