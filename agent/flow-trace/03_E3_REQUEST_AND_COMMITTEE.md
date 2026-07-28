@@ -213,7 +213,8 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │    4. require(!submitted[msg.sender])                   │
     │  │       → Each node submits only once                     │
     │  │    5. require(isCiphernodeEligible(msg.sender))         │
-    │  │       → Must be in IMT AND bondingRegistry.isActive()   │
+    │  │       → Must be enabled AND bondingRegistry.isActive()  │
+    │  │       → Active status fails closed for a retained ban   │
     │  │                                                         │
     │  │    6. _validateNodeEligibility(e3Id, msg.sender,        │
     │  │                                ticketNumber):           │
