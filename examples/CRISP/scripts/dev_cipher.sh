@@ -39,11 +39,22 @@ SWARM_PID=$!
 cleanup_swarm() {
   kill -TERM "$SWARM_PID" 2>/dev/null || true
 }
-# INT/TERM as well as EXIT: `dev_services.sh` runs this under `concurrently -kr`, which SIGTERMs
-# this script - and an untrapped SIGTERM kills the shell without running the EXIT trap. The
-# `pkill -f "interfold start"` in dev.sh only matches the child nodes, not this supervisor, so
-# without this it survives holding 127.0.0.1:13415 and the next `nodes up` bails as already running.
-trap cleanup_swarm EXIT INT TERM
+# A signal trap that returns resumes the script where it was interrupted, so the signal handler has
+# to exit explicitly. Without that, a Ctrl-C or the SIGTERM `concurrently -kr` sends from
+# dev_services.sh would kill the swarm and then let this script carry on to register ciphernodes
+# against dead nodes, write the ready file and exit 0.
+# `trap - EXIT` first so the EXIT trap does not run cleanup a second time on the way out.
+on_signal() {
+  trap - EXIT
+  cleanup_swarm
+  exit "$1"
+}
+# INT/TERM as well as EXIT: an untrapped SIGTERM kills the shell without running the EXIT trap, and
+# the `pkill -f "interfold start"` in dev.sh only matches the child nodes, not this supervisor - left
+# behind it holds 127.0.0.1:13415 and the next `nodes up` bails as already running.
+trap cleanup_swarm EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 
 # A node counts as `Started` as soon as its process is spawned, which is earlier than the point
 # where it is actually usable, so a single sample can catch a node that is about to die. Require

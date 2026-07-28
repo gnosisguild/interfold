@@ -108,8 +108,17 @@ done
 if [[ "$STABLE_SAMPLES" -lt "$REQUIRED_STABLE_SAMPLES" ]]; then
   echo "ERROR: only ${STARTED_NODES}/${EXPECTED_NODES} ciphernodes stayed up. Current status:" >&2
   interfold nodes ps >&2 || true
-  echo "See the node output above for the cause. If it mentions a missing Cargo feature, the" >&2
-  echo "installed interfold binary was not built for this template - re-run 'pnpm dev:setup'." >&2
+  echo "See the node output above for the cause. If it mentions the" >&2
+  echo "'test-only-skip-proof-aggregation' Cargo feature, the installed interfold binary cannot" >&2
+  echo "honour SKIP_PROOF_AGGREGATION:" >&2
+  if template_monorepo_build_available; then
+    echo "  - re-run 'pnpm dev:setup' to reinstall the CLI from ${INTERFOLD_REPO_ROOT}" >&2
+  else
+    echo "  - this is a standalone template, so 'pnpm dev:setup' cannot fix it: released interfold" >&2
+    echo "    binaries are built without that feature. Install the CLI from an interfold checkout" >&2
+    echo "    with '--features test-only-skip-proof-aggregation', or unset the" >&2
+    echo "    E3_NODES__CN*__SKIP_PROOF_AGGREGATION exports and run with proof aggregation on." >&2
+  fi
   exit 1
 fi
 
