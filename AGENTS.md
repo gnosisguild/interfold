@@ -9,7 +9,9 @@ Read before starting any task, in this order:
 1. `agent/RULES.md` — mandatory working rules (always)
 2. `agent/CONTEXT.md` — what Interfold is: terminology, monorepo map, commands, conventions
 3. `agent/INVARIANTS.md` — protocol, crypto, runtime, and build invariants you must not break
-4. Area-specific, when relevant:
+4. `.agents/skills/asd-ste100/SKILL.md` — before writing or reviewing comments, docs, error text,
+   requirements, PR prose, or other natural-language technical content
+5. Area-specific, when relevant:
    - Rust work → `agent/ARCHITECTURE.md` (contribution rules) and `agent/CRATES_ARCHITECTURE.md`
      (implemented runtime/topology)
    - Protocol behavior → `agent/flow-trace/00_INDEX.md` (lifecycle traces, known bugs)
@@ -21,18 +23,32 @@ Canonical, tool-neutral (edit these; they are the single source of truth):
 - `agent/*.md`, `agent/flow-trace/` — rules, context, invariants, architecture
 - `agent/prompts/` — bodies for reusable agents/commands (invariant-reviewer, switch-committee,
   update-flow-trace)
+- `.agents/skills/` — portable, repository-scoped skills; detailed material stays in each skill's
+  `references/` directory
 - `scripts/check-*.sh` + `.husky/pre-push` — mechanical gates (committee sync, doc drift, invariant
   ratchets); tool-independent
-- `.mcp.json` — docs MCP server (`interfold-docs`)
+- `packages/interfold-mcp/` — implementation of the `interfold-docs` MCP server
 
 Per-tool adapters (thin wrappers; never put content here):
 
-- Claude Code: `CLAUDE.md`, `.claude/settings.json` (permissions + format hook), `.claude/agents/`,
-  `.claude/commands/` — each agent/command file is frontmatter plus a pointer into `agent/prompts/`
-- OpenCode: `opencode.json` (permissions; registers `invariant-reviewer` with its prompt loaded
-  directly from `agent/prompts/`), `.opencode/skills/` — pointers into `agent/prompts/`
-- Others (Cursor, Cline, Windsurf, Copilot): one-line pointers to `agent/RULES.md`
+- Claude Code: `CLAUDE.md`, `.claude/settings.json` (permissions + format hook), `.mcp.json`,
+  `.claude/agents/`, `.claude/commands/`, `.claude/skills/`
+- Codex: `AGENTS.md`, `.agents/skills/`, `.codex/config.toml`
+- OpenCode: `opencode.json` (permissions, MCP, and `invariant-reviewer`) and `.opencode/skills/`;
+  portable skills load from `.agents/skills/`
+- Others (Cursor, Cline, Windsurf, Copilot): one-line pointers to `AGENTS.md`
 
-Sync rules: the permission allowlists in `.claude/settings.json` and `opencode.json` mirror each
-other — change both together. When adding an agent/command, put the body in `agent/prompts/` and add
-a wrapper per tool; when editing one, edit the canonical body, not the wrappers.
+Sync rules: the permission policies in `.claude/settings.json` and `opencode.json` must grant and
+deny the same capabilities with each tool's native syntax. Change both together. When adding an
+agent or command, put the body in `agent/prompts/` and add a wrapper per tool. Edit the canonical
+body, not the wrappers.
+
+## Code Review Rules
+
+- Treat `agent/INVARIANTS.md` as required review guidance for contracts, circuits, actor runtime,
+  durable schemas, cryptography, and build configuration. Cite the applicable invariant in each
+  finding. Safe path: preserve it or implement an explicit, tested migration.
+- Do not accept a protocol-bearing change only because it compiles. Verify compatibility, replay,
+  persistence, cross-layer behavior, and the matching flow-trace update.
+- Keep formatting and other mechanical findings in automated checks. Report only consequential,
+  actionable review findings.

@@ -9,5 +9,12 @@ target
 
 dist
 
+# agent-local state
+.claude/settings.local.json
+.claude/worktrees/
+.codex-log/
+__pycache__/
+*.pyc
+
 # circuit benchmarks
 circuits/benchmarks/results_*/raw/

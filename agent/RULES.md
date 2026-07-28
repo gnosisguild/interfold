@@ -4,7 +4,7 @@ These rules apply to any LLM agent working on this codebase. Tool-specific confi
 CLAUDE.md, .cursor/rules/interfold.mdc, .clinerules, .windsurfrules, etc.) should reference this
 file rather than duplicating its content.
 
-## Harness map (`agent/`)
+## Harness map
 
 | File                     | Read when                                                                                            |
 | ------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -15,6 +15,7 @@ file rather than duplicating its content.
 | `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                     |
 | `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                   |
 | `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/`, `.opencode/` point here |
+| `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                  |
 
 Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
 of them (a command, an invariant, a crate's role), update the doc **in the same PR** — surgical
@@ -31,6 +32,10 @@ message carries `[skip-doc-sync]`.
 - Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
   `.active-preset.json`) — see `INVARIANTS.md` §Build / config sync.
 - Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.
+- Before writing or reviewing natural-language technical content, load
+  `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
+  requirements, procedures, help text, error text, release notes, and PR prose. Preserve protected
+  code and exact interface literals.
 - Before assuming current behavior is correct, check the "Verified Bugs & Protocol Concerns" table
   in `flow-trace/00_INDEX.md` and the open-issues list in `INVARIANTS.md`.
 

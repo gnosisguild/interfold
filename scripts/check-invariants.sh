@@ -25,11 +25,14 @@ cd "$(dirname "$0")/.."
 
 fail=0
 baseline_file="scripts/invariant-baselines.env"
-# shellcheck source=/dev/null
-source "$baseline_file"
+DO_SEND_BASELINE="$(sed -nE 's/^DO_SEND_BASELINE=([0-9]+)$/\1/p' "$baseline_file")"
+if [[ -z "$DO_SEND_BASELINE" ]]; then
+  echo "check-invariants: FAILED — invalid or missing DO_SEND_BASELINE in $baseline_file"
+  exit 1
+fi
 
 # --- 1. do_send ratchet -----------------------------------------------------------
-count=$(grep -rE '\.do_send\(' crates --include='*.rs' | wc -l | tr -d ' ')
+count=$({ grep -rE '\.do_send\(' crates --include='*.rs' || true; } | wc -l | tr -d ' ')
 if ((count > DO_SEND_BASELINE)); then
   echo "check-invariants: FAILED — .do_send( call sites grew: $count > baseline $DO_SEND_BASELINE"
   echo "  do_send is fire-and-forget and allowed only for best-effort telemetry"
@@ -43,17 +46,7 @@ elif ((count < DO_SEND_BASELINE)); then
 fi
 
 # --- 2. skip-proof feature containment --------------------------------------------
-# A default feature list must never include the test-only flag.
-if grep -rn --include='Cargo.toml' -E '^default *= *\[[^]]*test-only-skip-proof-aggregation' crates; then
-  echo "check-invariants: FAILED — test-only-skip-proof-aggregation is a default feature (above)."
-  fail=1
-fi
-# Only crates/tests may enable the feature on a dependency (features = [...] on a dep line).
-enablers=$(grep -rln --include='Cargo.toml' -E '^[a-zA-Z0-9_-]+ *= *\{[^}]*features *= *\[[^]]*"[a-z0-9/-]*test-only-skip-proof-aggregation"' crates | grep -v '^crates/tests/' || true)
-if [[ -n "$enablers" ]]; then
-  echo "check-invariants: FAILED — test-only-skip-proof-aggregation enabled outside crates/tests:"
-  sed 's/^/  - /' <<<"$enablers"
-  echo "  Production binaries must reject skip_proof_aggregation (INVARIANTS §C-02)."
+if ! python3 scripts/check-cargo-feature-containment.py; then
   fail=1
 fi
 

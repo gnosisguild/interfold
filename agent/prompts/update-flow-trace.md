@@ -6,7 +6,9 @@ to change the procedure.
 Goal: bring the `agent/` harness docs in sync with the current branch's changes. If the invoking
 prompt names a specific change or area, scope to that.
 
-1. Collect the diff: `git diff origin/main...HEAD` plus uncommitted changes.
+1. Collect the diff: `git diff origin/main...HEAD` plus tracked, uncommitted changes from
+   `git diff HEAD`. Use `git status --short` to identify untracked files and include only untracked
+   files that belong to the requested change.
 2. Map changed areas to docs using the table in `agent/RULES.md` §Flow-Trace Documentation and the
    harness map. Typical triggers: contract signature/event/state-variable changes, actor
    message-handling or routing changes, CLI behavior changes, circuit/proof pipeline changes,

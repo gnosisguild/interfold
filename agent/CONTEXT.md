@@ -80,8 +80,10 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
   `check:docs` (harness-doc drift gate — escape with `[skip-doc-sync]` in a commit message when no
   documented behavior changed), `check:invariants` (grep-enforced invariants: `do_send` ratchet,
   skip-proof feature containment — baselines in `scripts/invariant-baselines.env`).
-- **Docs MCP server:** `.mcp.json` exposes `@interfold/mcp` (`interfold-docs`) to MCP-capable
-  agents; run `pnpm mcp:build` first if `packages/interfold-mcp/dist/` is missing.
+- **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
+  `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
+  TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable
+  package.
 - **License headers:** every `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header
   (CI-enforced).
 
