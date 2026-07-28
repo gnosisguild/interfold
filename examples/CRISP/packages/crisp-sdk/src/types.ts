@@ -18,7 +18,10 @@ export type RoundDetails = {
   voteCount: bigint
   startTime: bigint
   endTime: bigint
+  /// The block the E3 was requested at
   startBlock: bigint
+  /// The block the census was built at
+  snapshotBlock: bigint
   committeePublicKey: Uint8Array
   emojis: [string, string]
   tokenAddress: string
@@ -189,6 +192,7 @@ export type E3StateLiteResponse = {
   start_time: number
   end_time: number
   start_block: number
+  snapshot_block: number
   committee_public_key: number[]
   emojis: [string, string]
   token_address: string

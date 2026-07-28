@@ -29,6 +29,7 @@ describe('State', () => {
     start_time: 1000000,
     end_time: 1086400,
     start_block: 12345,
+    snapshot_block: 12344,
     committee_public_key: [1, 2, 3],
     emojis: ['👍', '👎'],
     token_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
@@ -69,6 +70,7 @@ describe('State', () => {
       expect(state.startTime).toBe(1000000n)
       expect(state.endTime).toBe(1086400n)
       expect(state.startBlock).toBe(12345n)
+      expect(state.snapshotBlock).toBe(12344n)
       expect(state.committeePublicKey).toEqual(new Uint8Array([1, 2, 3]))
       expect(state.emojis).toEqual(['👍', '👎'])
       expect(state.tokenAddress).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')
@@ -175,7 +177,8 @@ describe('State', () => {
       expect(tokenDetails.threshold).toBeGreaterThan(0)
       expect(tokenDetails.threshold).toBe(1000n)
       expect(tokenDetails.snapshotBlock).toBeGreaterThan(0)
-      expect(tokenDetails.snapshotBlock).toBe(12345n)
+      // the census is built at the block before the request, not at the request block
+      expect(tokenDetails.snapshotBlock).toBe(12344n)
     })
   })
 })

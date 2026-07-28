@@ -32,6 +32,7 @@ export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<
     startTime: BigInt(data.start_time),
     endTime: BigInt(data.end_time),
     startBlock: BigInt(data.start_block),
+    snapshotBlock: BigInt(data.snapshot_block),
     committeePublicKey: new Uint8Array(data.committee_public_key),
     emojis: data.emojis,
     numOptions: BigInt(data.num_options),
@@ -52,7 +53,7 @@ export const getRoundTokenDetails = async (serverUrl: string, e3Id: number): Pro
   return {
     tokenAddress: roundDetails.tokenAddress,
     threshold: roundDetails.balanceThreshold,
-    snapshotBlock: roundDetails.startBlock,
+    snapshotBlock: roundDetails.snapshotBlock,
   }
 }
 
