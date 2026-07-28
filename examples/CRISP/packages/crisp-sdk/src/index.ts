@@ -31,6 +31,7 @@ export {
 export { CrispSDK } from './sdk'
 
 export type {
+  OnChainRoundData,
   RoundDetails,
   TokenDetails,
   Vote,

@@ -17,7 +17,7 @@ import {
   getVoteStatus,
   requestNewRound,
 } from './api'
-import { getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
+import { getOnChainRoundData, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
 import { generateMaskVoteProof, generateVoteProof } from './vote'
 
 import type {
@@ -28,6 +28,7 @@ import type {
   JsonResponse,
   MaskVoteProofRequest,
   NewRoundRequest,
+  OnChainRoundData,
   ProofData,
   RoundDetails,
   TokenDetails,
@@ -177,6 +178,22 @@ export class CrispSDK {
    */
   async getRoundDetails(e3Id: number): Promise<RoundDetails> {
     return getRoundDetails(this.serverUrl, e3Id)
+  }
+
+  /**
+   * Get the round data stored in the CRISPProgram contract, read directly from the chain.
+   *
+   * When the chain id is omitted it is looked up on the CRISP server.
+   *
+   * @param programAddress - The address of the CRISPProgram contract
+   * @param e3Id - The e3Id of the round
+   * @param chainId - The chain ID of the network the program is deployed on
+   * @returns The on chain round data
+   */
+  async getOnChainRoundData(programAddress: string, e3Id: number, chainId?: number): Promise<OnChainRoundData> {
+    const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
+
+    return getOnChainRoundData(programAddress, e3Id, chain)
   }
 
   /**

@@ -6,12 +6,18 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
-import { getRoundDetails, getRoundTokenDetails } from '../src/state'
+import { getOnChainRoundData, getRoundDetails, getRoundTokenDetails } from '../src/state'
 import { CRISP_SERVER_URL } from './constants'
 import { CRISP_SERVER_STATE_LITE_ENDPOINT } from '../src/constants'
 import { zeroAddress } from 'viem'
 import { CreditMode } from '../src/types'
 import type { E3StateLiteResponse } from '../src/types'
+
+const { readContract } = vi.hoisted(() => ({ readContract: vi.fn() }))
+
+vi.mock('../src/chain', () => ({
+  getPublicClient: () => ({ readContract }),
+}))
 
 describe('State', () => {
   const mockStateLiteResponse: E3StateLiteResponse = {
@@ -96,6 +102,58 @@ describe('State', () => {
 
       expect(state.creditMode).toBe(CreditMode.CUSTOM)
       expect(state.credits).toBe(500n)
+    })
+  })
+
+  describe('getOnChainRoundData', () => {
+    const programAddress = '0x1111111111111111111111111111111111111111'
+    const paramsHash = `0x${'ab'.repeat(32)}` as const
+    const inputRoot = 987654321n
+
+    it('should read the round data from the CRISPProgram contract', async () => {
+      readContract.mockResolvedValueOnce([100n, paramsHash, 2n, 0, inputRoot, 3])
+
+      const roundData = await getOnChainRoundData(programAddress, 5, 31337)
+
+      expect(roundData.merkleRoot).toBe(100n)
+      expect(roundData.paramsHash).toBe(paramsHash)
+      expect(roundData.numOptions).toBe(2n)
+      expect(roundData.creditMode).toBe(CreditMode.CONSTANT)
+      expect(roundData.inputRoot).toBe(inputRoot)
+      // uint40 is returned as a number by viem, but normalized to a bigint
+      expect(roundData.numberOfVotes).toBe(3n)
+
+      expect(readContract).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address: programAddress,
+          functionName: 'getRoundData',
+          args: [5n],
+        }),
+      )
+    })
+
+    it('should return the custom credit mode', async () => {
+      readContract.mockResolvedValueOnce([100n, paramsHash, 2n, 1, inputRoot, 3])
+
+      const roundData = await getOnChainRoundData(programAddress, 5, 31337)
+
+      expect(roundData.creditMode).toBe(CreditMode.CUSTOM)
+    })
+
+    it('should return zeroed data for a round which was not initialized', async () => {
+      readContract.mockResolvedValueOnce([0n, `0x${'00'.repeat(32)}`, 0n, 0, inputRoot, 0])
+
+      const roundData = await getOnChainRoundData(programAddress, 42, 31337)
+
+      expect(roundData.merkleRoot).toBe(0n)
+      expect(roundData.numOptions).toBe(0n)
+      expect(roundData.numberOfVotes).toBe(0n)
+    })
+
+    it('should propagate contract read errors', async () => {
+      readContract.mockRejectedValueOnce(new Error('execution reverted'))
+
+      await expect(getOnChainRoundData(programAddress, 5, 31337)).rejects.toThrow('execution reverted')
     })
   })
 

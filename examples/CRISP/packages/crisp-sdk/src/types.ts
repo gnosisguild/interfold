@@ -30,6 +30,24 @@ export type RoundDetails = {
 }
 
 /**
+ * Type representing the round data stored in the CRISPProgram contract
+ */
+export type OnChainRoundData = {
+  /// The merkle root of the census
+  merkleRoot: bigint
+  /// The hash of the E3 program params
+  paramsHash: `0x${string}`
+  /// The number of vote options
+  numOptions: bigint
+  /// The credit mode of the round
+  creditMode: CreditMode
+  /// The root of the merkle tree holding the encrypted votes
+  inputRoot: bigint
+  /// The number of votes published on chain
+  numberOfVotes: bigint
+}
+
+/**
  * Type representing the token details required for participation in a round
  */
 export type TokenDetails = {

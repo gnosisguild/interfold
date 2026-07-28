@@ -4,10 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { parseAbi } from 'viem'
+
 import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
 import { getRoundStateLite } from './api'
+import { getPublicClient } from './chain'
 
-import type { RoundDetails, TokenDetails } from './types'
+import type { CreditMode, OnChainRoundData, RoundDetails, TokenDetails } from './types'
 
 /**
  * Get the details of a specific round in a camelCase convenience format
@@ -50,6 +53,40 @@ export const getRoundTokenDetails = async (serverUrl: string, e3Id: number): Pro
     tokenAddress: roundDetails.tokenAddress,
     threshold: roundDetails.balanceThreshold,
     snapshotBlock: roundDetails.startBlock,
+  }
+}
+
+/**
+ * Get the round data stored in the CRISPProgram contract, such as the merkle root
+ * of the census and the merkle root of the encrypted votes published so far.
+ *
+ * Unlike {@link getRoundDetails}, this reads directly from the chain and so does not
+ * depend on the CRISP server.
+ *
+ * @param programAddress - The address of the CRISPProgram contract
+ * @param e3Id - The e3Id of the round
+ * @param chainId - The chain ID of the network the program is deployed on
+ * @returns The on chain round data
+ */
+export const getOnChainRoundData = async (programAddress: string, e3Id: number, chainId: number): Promise<OnChainRoundData> => {
+  const publicClient = getPublicClient(chainId)
+
+  const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await publicClient.readContract({
+    address: programAddress as `0x${string}`,
+    abi: parseAbi([
+      'function getRoundData(uint256 e3Id) view returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, uint8 creditMode, uint256 inputRoot, uint40 numberOfVotes)',
+    ]),
+    functionName: 'getRoundData',
+    args: [BigInt(e3Id)],
+  })
+
+  return {
+    merkleRoot,
+    paramsHash,
+    numOptions,
+    creditMode: creditMode as CreditMode,
+    inputRoot,
+    numberOfVotes: BigInt(numberOfVotes),
   }
 }
 
