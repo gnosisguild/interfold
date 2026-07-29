@@ -526,62 +526,19 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         uint256 cnAmount = totalAmount - protocolAmount;
 
-        uint256[] memory amounts = InterfoldPricing.computeNodeAmounts(
+        // Split the ciphernode share and credit each node owner's pull balance.
+        uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
+            _pendingRewards,
+            _e3Dependencies[e3Id].bonding,
             cnAmount,
-            activeLength,
-            e3Id
+            e3Id,
+            activeNodes,
+            paymentToken
         );
-
-        // Credit each node's pull-payment balance (instead of pushing via bondingRegistry)
-        _creditRewards(e3Id, activeNodes, amounts, paymentToken);
 
         emit RewardsDistributed(e3Id, activeNodes, amounts);
 
         refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
-    }
-
-    /// @notice Credits per-node reward balances and emits `RewardCredited`.
-    function _creditRewards(
-        uint256 e3Id,
-        address[] memory nodes,
-        uint256[] memory amounts,
-        IERC20 token
-    ) private {
-        uint256 n = nodes.length;
-        IBondingRegistry rewardRegistry = _e3Dependencies[e3Id].bonding;
-        bytes4 ownerSelector = IBondingRegistry.bondOwnerOf.selector;
-        for (uint256 i = 0; i < n; ) {
-            uint256 a = amounts[i];
-            if (a != 0) {
-                address node = nodes[i];
-                address recipient;
-                // solhint-disable-next-line no-inline-assembly
-                assembly ("memory-safe") {
-                    mstore(0, ownerSelector)
-                    mstore(0x04, node)
-                    if or(
-                        iszero(
-                            staticcall(gas(), rewardRegistry, 0, 0x24, 0, 0x20)
-                        ),
-                        lt(returndatasize(), 0x20)
-                    ) {
-                        revert(0, 0)
-                    }
-                    recipient := mload(0)
-                    if iszero(recipient) {
-                        recipient := node
-                    }
-                }
-                unchecked {
-                    // Distribution executes once and all credits sum to cnAmount.
-                    _pendingRewards[e3Id][recipient] += a;
-                }
-                emit RewardCredited(e3Id, recipient, token, a);
-            }
-            unchecked {
-                ++i;
-            }
-        }
     }
 
     /// @notice Retrieves the honest committee nodes for a given E3.
