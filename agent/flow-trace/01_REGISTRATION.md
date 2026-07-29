@@ -11,6 +11,31 @@ For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode 
 hidden-prompt paths so encryption passwords and private keys do not appear in process arguments or
 environment metadata.
 
+## Identity model: bond owner vs operator key
+
+The on-chain operator remains the address whose key is loaded by the ciphernode. That address is
+inserted into the registry, owns the non-transferable tFOLD voting balance, submits sortition
+tickets, signs DKG proofs, and is the identity targeted by bans and slashes.
+
+Before creating a position, the operator can run:
+
+```text
+interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
+```
+
+This sends `BondingRegistry.setBondOwner(owner)` from the operator key and emits the typed
+`BondOwnerSet(operator, bondOwner)` event. The authorization is immutable and requires an empty
+position, preventing a third party from assigning itself to an operator and preventing ownership
+changes while collateral is live or queued.
+
+After a distinct owner is set, only that owner can call the financial/lifecycle `...For(operator)`
+entry points: `bondLicenseFor`, `addTicketBalanceFor`, `registerOperatorFor`,
+`removeTicketBalanceFor`, `unbondLicenseFor`, `deregisterOperatorFor`, and `claimExitsFor`. The hot
+operator key cannot withdraw, deregister, or claim the bond. The CLI's legacy bond/register/exit
+commands fail early with an owner-wallet instruction in this mode. If no explicit owner is set,
+`bondOwnerOf(operator)` defaults to the operator and the existing self-owned CLI flow remains
+compatible.
+
 ---
 
 ## Step 1: `interfold ciphernode setup`
@@ -74,8 +99,13 @@ User runs: interfold ciphernode setup
 ### Prerequisites (must be done FIRST):
 
 - Setup completed (config + password + private key exist)
-- License bonded: `interfold ciphernode license bond --amount N` (see Part 2)
-- Tickets purchased: `interfold ciphernode tickets buy --amount N` (see Part 2)
+- Self-owned mode: license bonded and tickets purchased with the ciphernode CLI (see Part 2)
+- Split mode: the operator first authorizes its owner, then the owner calls `bondLicenseFor`,
+  `addTicketBalanceFor`, and `registerOperatorFor` from the cold wallet or Safe
+
+The call trace below describes the backwards-compatible self-owned path. In split mode,
+`registerOperatorFor(operator)` executes the same internal registration logic with `operator`
+replacing `msg.sender`; authorization is checked against `bondOwnerOf(operator)`.
 
 ### What happens call-by-call:
 
@@ -183,13 +213,15 @@ User runs: interfold ciphernode status
 │   ├─ operator.exitRequested
 │   ├─ ticketToken.balanceOf(address) → ticket balance
 │   ├─ operator.licenseBond → license bond amount
+│   ├─ bondingRegistry.bondOwnerOf(address) → collateral owner
 │   ├─ pendingExits.ticketAmount, pendingExits.licenseAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket
 │   └─ bondingRegistry.licenseRequiredBond → required bond
 │
 └─ OUTPUT:
-   Address:          0x1234...
+   Operator Key:     0x1234...
+   Bond Owner:       0xabcd...
    Registered:       true
    Active:           true
    Exit Pending:     false
@@ -216,6 +248,9 @@ BondingRegistrySolReader detects OperatorActivationChanged event
 │
 └─ This node is now part of the sortition pool for future E3 committees
 ```
+
+`BondOwnerSet` is also decoded into a typed Rust event. The dashboard records the owner for the
+local operator, while `ciphernode status` reads it directly from `bondOwnerOf`.
 
 ```
 CiphernodeRegistrySolReader detects CiphernodeAdded event

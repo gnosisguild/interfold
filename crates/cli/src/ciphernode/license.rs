@@ -10,7 +10,7 @@ use e3_console::{log, Console};
 use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
-use super::utils::{ensure_allowance, parse_amount};
+use super::utils::{ensure_allowance, ensure_self_managed, parse_amount};
 use super::LicenseCommands;
 
 pub(crate) async fn execute(
@@ -18,6 +18,7 @@ pub(crate) async fn execute(
     ctx: &ChainContext,
     command: LicenseCommands,
 ) -> Result<()> {
+    ensure_self_managed(ctx).await?;
     match command {
         LicenseCommands::Bond { amount } => {
             bond_license(out, ctx, &amount).await?;

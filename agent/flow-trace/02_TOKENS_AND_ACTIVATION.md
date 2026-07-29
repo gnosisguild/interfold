@@ -8,6 +8,18 @@ Before a node can register, it must stake two types of collateral:
 2. **Stablecoin via tFOLD tickets** (ticket collateral) — USDC wrapped into non-transferable
    InterfoldTicketToken
 
+Collateral ownership and operator identity are separate namespaces:
+
+- `operator` is the hot node key and remains the registry, ticket, sortition, DKG, ban, and slash
+  identity.
+- `bondOwnerOf(operator)` is the wallet that funds and controls collateral. It defaults to
+  `operator` for backwards compatibility, or is immutably set by the operator before a position
+  exists.
+- Split positions use the owner-only `...For(operator)` calls. Ticket tokens are still minted to the
+  operator; exit payouts go only to the owner.
+- A bond owner may fund multiple operator keys. `totalBonded(owner)` aggregates its active and
+  pending FOLD across those keys so FOLD wallet-level lock accounting remains correct.
+
 ---
 
 ## Token Architecture
@@ -107,6 +119,10 @@ the one-time license-token placeholder used to resolve the circular FOLD/Bonding
 
 **File:** `crates/cli/src/ciphernode/license.rs`
 
+The trace below is the self-owned compatibility path. For a split position, the owner approves FOLD
+and calls `bondLicenseFor(operator, amount)`. The registry pulls from the owner, credits the
+operator's license position, and credits `totalBonded(owner)`.
+
 ```
 User runs: interfold ciphernode license bond --amount 50000
 │
@@ -145,11 +161,11 @@ User runs: interfold ciphernode license bond --amount 50000
 
 ### Locked FOLD bonding
 
-`BondingRegistry.totalBonded(account)` returns active FOLD license bond plus pending FOLD exits that
-remain slashable/not returned. `InterfoldToken` uses this view for pooled wallet-level locks, so
-locked FOLD can be self-bonded by the same account without becoming transferable. Delegated
-source-aware bonding is not part of the pooled-lock model; license bonds are credited to
-`msg.sender` through `bondLicense(amount)`.
+`BondingRegistry.totalBonded(account)` returns FOLD owned by that account across its self-owned
+position and every distinctly owned operator position, including pending exits that remain
+slashable/not returned. `InterfoldToken` uses this view for pooled wallet-level locks, so locked
+FOLD can be bonded without becoming transferable. A claim or license slash removes the exact amount
+from the owner's aggregate credit.
 
 ### Activation check after bonding:
 
@@ -193,6 +209,10 @@ A completed ban or unban refreshes the affected registered operator immediately.
 ## Step 2: Buy Tickets (`interfold ciphernode tickets buy`)
 
 **File:** `crates/cli/src/ciphernode/tickets.rs`
+
+In split mode the owner calls `addTicketBalanceFor(operator, amount)`: USDC is pulled from the owner
+but non-transferable tFOLD is minted to the operator so committee snapshots remain keyed to the
+node. The following trace describes self-owned compatibility.
 
 > **IMPORTANT:** The `amount` parameter to `addTicketBalance` is in **underlying stablecoin base
 > units** (e.g., USDC wei), NOT in ticket count. The CLI parses the user's input using the
@@ -257,6 +277,9 @@ tFOLD tokens cannot be transferred between addresses. This ensures:
 
 ## Step 3: Unbond License (`interfold ciphernode license unbond`)
 
+In split mode only the owner may call `unbondLicenseFor(operator, amount)`. The operator's hot key
+cannot queue the owner's FOLD for exit.
+
 ```
 User runs: interfold ciphernode license unbond --amount 10000
 │
@@ -286,6 +309,8 @@ User runs: interfold ciphernode license unbond --amount 10000
 ---
 
 ## Step 4: Burn Tickets (`interfold ciphernode tickets burn`)
+
+In split mode only the owner may call `removeTicketBalanceFor(operator, amount)`.
 
 > **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units**
 > (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI
@@ -333,6 +358,10 @@ User runs: interfold ciphernode tickets burn --amount 50
 
 ## Step 5: Claim Exits (`interfold ciphernode license claim`)
 
+In split mode the owner calls `claimExitsFor(operator, ...)`; both ticket underlying and FOLD are
+paid to `bondOwnerOf(operator)`, never to the hot operator key. The exit queue remains keyed by
+operator so queued assets remain slashable against the correct protocol identity.
+
 ```
 User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 10000]
 │
@@ -375,7 +404,7 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
 │
-└─ Operator receives back USDC; FOLD goes to each source's withdrawal address
+└─ Self-owned mode pays the operator; split mode pays both assets to the bond owner
 ```
 
 ---
@@ -405,9 +434,9 @@ active = registered
 ```
                 BOND LICENSE                          BUY TICKETS
                 ────────────                          ───────────
-  Operator                                 Operator
+  Bond owner                               Bond owner
   FOLD wallet ──→ BondingRegistry          USDC wallet ──→ InterfoldTicketToken
-                  (licenseBond++)                          (wraps USDC → mints tFOLD)
+                  (operator licenseBond++)                 (wraps USDC → mints tFOLD)
                                                            tFOLD → Operator balance
 
                UNBOND LICENSE                         BURN TICKETS
@@ -419,8 +448,8 @@ active = registered
                               CLAIM EXITS
                               ───────────
                    After exitDelay seconds:
-                   FOLD → returned to source withdrawal address
-                   USDC → paid out from tFOLD.payableBalance
+                   FOLD → returned to bond owner
+                   USDC → bond owner from tFOLD.payableBalance
 ```
 
 ---
@@ -495,7 +524,8 @@ enforcement based on immutable policy curves. Key changes:
 
 ### Node-operator event projection
 
-The EVM reader now emits typed `LicenseBondUpdated` and `CiphernodeDeregistrationRequested` events
-alongside the existing ticket and activation events. The local dashboard rebuilds each chain's
-registered/active node sets and the operator's ticket, license, and exit state from EventStore
-history; it does not parse human-oriented CLI status output.
+The EVM reader now emits typed `BondOwnerSet`, `LicenseBondUpdated`, and
+`CiphernodeDeregistrationRequested` events alongside the existing ticket and activation events. The
+local dashboard rebuilds each chain's registered/active node sets and the local operator's bond
+owner, ticket, license, and exit state from EventStore history; it does not parse human-oriented CLI
+status output.

@@ -6,6 +6,11 @@ An operator can voluntarily leave the network by deactivating (withdrawing colla
 deregistering (removing from the Merkle tree). The exit is time-locked, and pending exits remain
 slashable until claimed.
 
+For an explicitly split position, these are bond-owner actions: `removeTicketBalanceFor(operator)`,
+`unbondLicenseFor(operator)`, `deregisterOperatorFor(operator)`, and `claimExitsFor(operator)`. The
+hot node key cannot trigger them. The self-owned CLI traces below remain valid only when
+`bondOwnerOf(operator) == operator`.
+
 ---
 
 ## Voluntary Deactivation
@@ -54,7 +59,7 @@ User runs: interfold ciphernode deactivate --license 20000
     │  │    1. require(amount != 0, sufficient bonded FOLD)      │
     │  │    2. operators[op].licenseBond -= 20000                │
     │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
-    │  │       → Pending FOLD remains in totalBonded(op) for     │
+    │  │       → Pending FOLD remains in totalBonded(bondOwner)  │
     │  │         token-level locked-floor accounting             │
     │  │    4. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
@@ -113,7 +118,8 @@ User runs: interfold ciphernode deregister
     │  │         fullTicketBalance,  // tickets                   │
     │  │         0                   // license handled below     │
     │  │       )                                                  │
-    │  │       _queueLicenseExitFromSources(op, licenseBondAmount)│
+    │  │       _exits.queueAssetsForExit(                        │
+    │  │         op, exitDelay, fullTicketBalance, licenseBondAmount)│
     │  │                                                         │
     │  │    8. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(msg.sender)             │
@@ -136,11 +142,15 @@ User runs: interfold ciphernode deregister
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 │
-└─ After exitDelay seconds, operator can claim unlocked exits:
+└─ After exitDelay seconds, the self-owner can claim unlocked exits:
     interfold ciphernode license claim
     # optional caps:
     interfold ciphernode license claim --max-ticket X --max-license Y
 ```
+
+In split mode, the bond owner instead calls `claimExitsFor(operator, maxTicket, maxLicense)`.
+Underlying USDC and FOLD are both paid to that owner. The queue and slash target remain keyed by the
+operator until the claim completes.
 
 ## E3 Completion (Happy Path)
 
@@ -451,8 +461,8 @@ history.
 ```
 Time ──────────────────────────────────────────────────────►
 
-│ deregister()     │                    │ claimExits()     │
-│ or deactivate()  │   EXIT DELAY       │                  │
+│ deregister[For]()│                    │ claimExits[For]()│
+│ or deactivate    │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
 │ tFOLD burned       │  Cannot cancel     │ USDC returned    │

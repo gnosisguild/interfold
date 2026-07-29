@@ -416,6 +416,10 @@ If any deadline is missed → anyone can call markE3Failed()
    transactions, request-time validation rejects every intermediate state; a requester can only
    freeze the fully old or fully new graph.
 
+8. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
+   `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
+   committee membership, and party IDs never use the bond-owner address.
+
 ---
 
 ## Cluster 7 audit additions (post-fix semantics)

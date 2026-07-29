@@ -690,19 +690,14 @@ _executeSlash(proposalId):
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
-│     │  │  1. Compute active + pending FOLD source total        │
+│     │  │  1. Compute active + pending FOLD total               │
 │     │  │                                                       │
-│     │  │  2. _slashLicenseSourcesLifo(operator, amount):       │
-│     │  │     Compare newest active source sequence with        │
-│     │  │     newest pending-exit source sequence               │
-│     │  │     Slash the newest source first                     │
+│     │  │  2. Slash active bond first, then pending exits       │
 │     │  │     → Active slash decrements operators[op].licenseBond│
 │     │  │     → Pending slash decrements pending license totals │
-│     │  │     → totalBonded(op) drops immediately; if op has   │
-│     │  │       token-level locks, same-wallet FOLD may become │
+│     │  │     → totalBonded(bondOwner) drops immediately; if   │
+│     │  │       the owner has token locks, wallet FOLD may become│
 │     │  │       encumbered until the locked floor decays/top-up │
-│     │  │     → Receiver callback gets (operator, amount,       │
-│     │  │       sourceId) when supported                        │
 │     │  │                                                       │
 │     │  │  3. slashedLicenseBond += totalSlashed                │
 │     │  │  4. _updateOperatorStatus(operator)                   │
@@ -1196,6 +1191,10 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 - `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
+- For a split position, the equivalent owner-only `...For(operator)` calls have the same gate.
+  Proposals, bans, evidence signatures, and slash execution remain keyed by the hot operator
+  address; a license slash reduces the authorized owner's aggregate `totalBonded` credit. Separating
+  keys therefore protects withdrawal authority but does not create a slashing escape hatch.
 - That check covers every authorized current or retained historical slashing manager. Rotation
   therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes an
   old manager only after its E3s, proposals, and pending routes are terminal.

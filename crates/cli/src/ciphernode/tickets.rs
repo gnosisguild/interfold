@@ -9,7 +9,7 @@ use e3_console::{log, Console};
 use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
-use super::utils::{ensure_allowance, parse_amount};
+use super::utils::{ensure_allowance, ensure_self_managed, parse_amount};
 use super::TicketCommands;
 
 pub(crate) async fn execute(
@@ -17,6 +17,7 @@ pub(crate) async fn execute(
     ctx: &ChainContext,
     command: TicketCommands,
 ) -> Result<()> {
+    ensure_self_managed(ctx).await?;
     match command {
         TicketCommands::Buy { amount } => {
             let ticket_contract = ctx.ticket_token_address().await?;

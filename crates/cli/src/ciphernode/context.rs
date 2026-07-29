@@ -102,6 +102,10 @@ impl ChainContext {
         self.signer_address
     }
 
+    pub(crate) async fn bond_owner(&self) -> Result<Address> {
+        Ok(self.bonding().bondOwnerOf(self.operator()).call().await?)
+    }
+
     pub(crate) fn chain_label(&self) -> &str {
         &self.chain_label
     }
@@ -149,6 +153,6 @@ fn select_chain<'a>(config: &'a AppConfig, name: Option<&str>) -> Result<&'a Cha
     }
 }
 
-fn parse_address(value: &str) -> Result<Address> {
-    Address::from_str(value).context("Invalid address in configuration")
+pub(crate) fn parse_address(value: &str) -> Result<Address> {
+    Address::from_str(value).context("Invalid EVM address")
 }

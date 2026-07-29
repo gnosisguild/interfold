@@ -2715,6 +2715,57 @@ describe("InterfoldToken", function () {
       );
     });
 
+    it("locked tokens can fund a distinct operator key", async function () {
+      const signers = await ethers.getSigners();
+      const [, beneficiary, operator] = signers;
+      const beneficiaryAddress = await beneficiary.getAddress();
+      const operatorAddress = await operator.getAddress();
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        mintUsdcTo: [],
+      });
+      const { bondingRegistry, licenseToken } = sys;
+      const bondingRegistryAddress = await bondingRegistry.getAddress();
+
+      const policyId = ethers.encodeBytes32String("DELEGATED_LOCKED_BOND");
+      await licenseToken.createLockPolicy(policyId, {
+        holdUntil: 0n,
+        unlock: {
+          anchor: 1,
+          start: 0n,
+          cliffDuration: 0n,
+          vestDuration: 2n * YEAR,
+        },
+      });
+      const lockAmount = ethers.parseEther("1000");
+      await licenseToken.mintAllocations([
+        {
+          recipient: beneficiaryAddress,
+          amount: lockAmount,
+          policyId,
+          label: ethers.encodeBytes32String("delegated locked"),
+        },
+      ]);
+
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await licenseToken
+        .connect(beneficiary)
+        .approve(bondingRegistryAddress, lockAmount);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, lockAmount);
+
+      expect(await licenseToken.balanceOf(beneficiaryAddress)).to.equal(0n);
+      expect(await bondingRegistry.totalBonded(beneficiaryAddress)).to.equal(
+        lockAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operatorAddress)).to.equal(0n);
+      expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
+        lockAmount,
+      );
+    });
+
     it("after bonding locked tokens, cannot transfer below locked floor", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, slasher] = signers;

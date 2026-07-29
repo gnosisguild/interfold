@@ -9,6 +9,7 @@ mod accusation_vote;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
+mod bond_owner_set;
 mod ciphernode_added;
 mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
@@ -86,6 +87,7 @@ pub use accusation_vote::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
+pub use bond_owner_set::*;
 pub use ciphernode_added::*;
 pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
@@ -341,6 +343,7 @@ pub enum InterfoldEventData {
     CommitteeActivationChanged(CommitteeActivationChanged),
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
+    BondOwnerSet(BondOwnerSet),
 }
 
 impl InterfoldEventData {
@@ -769,7 +772,8 @@ impl_event_types!(
     CommitteeFormationFailed,
     CommitteeActivationChanged,
     CommitteeViabilityUpdated,
-    EvmLogObserved
+    EvmLogObserved,
+    BondOwnerSet
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

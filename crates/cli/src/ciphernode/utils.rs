@@ -12,6 +12,17 @@ use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 
+pub(crate) async fn ensure_self_managed(ctx: &ChainContext) -> Result<()> {
+    let operator = ctx.operator();
+    let bond_owner = ctx.bond_owner().await?;
+    if bond_owner != operator {
+        bail!(
+            "Operator {operator:#x} delegated collateral control to {bond_owner:#x}; submit this action from the bond-owner wallet using the corresponding `...For(operator)` contract call"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn format_amount(amount: U256, decimals: u8) -> String {
     let scale = U256::from(10u64).pow(U256::from(decimals as u64));
     let int_part = amount / scale;

@@ -9,10 +9,11 @@ use anyhow::{bail, Result};
 use e3_console::{log, Console};
 use e3_utils::require_successful_receipt;
 
-use super::context::ChainContext;
-use super::utils::{format_amount, parse_amount};
+use super::context::{parse_address, ChainContext};
+use super::utils::{ensure_self_managed, format_amount, parse_amount};
 
 pub(crate) async fn register(out: Console, ctx: &ChainContext) -> Result<()> {
+    ensure_self_managed(ctx).await?;
     let receipt = ctx
         .bonding()
         .registerOperator()
@@ -30,7 +31,28 @@ pub(crate) async fn register(out: Console, ctx: &ChainContext) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn set_bond_owner(out: Console, ctx: &ChainContext, owner: &str) -> Result<()> {
+    let owner = parse_address(owner)?;
+    let receipt = ctx
+        .bonding()
+        .setBondOwner(owner)
+        .send()
+        .await?
+        .get_receipt()
+        .await?;
+    require_successful_receipt("set bond owner", &receipt)?;
+    log!(
+        out,
+        "Authorized immutable bond owner {:#x} for operator {:#x} (tx: {:#x})",
+        owner,
+        ctx.operator(),
+        receipt.transaction_hash
+    );
+    Ok(())
+}
+
 pub(crate) async fn deregister(out: Console, ctx: &ChainContext) -> Result<()> {
+    ensure_self_managed(ctx).await?;
     let receipt = ctx
         .bonding()
         .deregisterOperator()
@@ -57,6 +79,7 @@ pub(crate) async fn deactivate(
     ticket_amount: Option<String>,
     license_amount: Option<String>,
 ) -> Result<()> {
+    ensure_self_managed(ctx).await?;
     if ticket_amount.is_none() && license_amount.is_none() {
         bail!(
             "Provide --tickets and/or --license to specify what should be withdrawn for deactivation"
@@ -113,6 +136,7 @@ pub(crate) async fn deactivate(
 pub(crate) async fn status(out: Console, ctx: &ChainContext) -> Result<()> {
     let contract = ctx.bonding();
     let operator = ctx.operator();
+    let bond_owner = contract.bondOwnerOf(operator).call().await?;
     let ticket_balance: U256 = contract.getTicketBalance(operator).call().await?;
     let license_bond: U256 = contract.getLicenseBond(operator).call().await?;
     let available_tickets: U256 = contract.availableTickets(operator).call().await?;
@@ -132,7 +156,8 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext) -> Result<()> {
     let license_decimals = ctx.erc20(license_token).decimals().call().await?;
 
     log!(out, "Ciphernode status on {}:", ctx.chain_label());
-    log!(out, "  Address: {:#x}", operator);
+    log!(out, "  Operator key: {:#x}", operator);
+    log!(out, "  Bond owner: {:#x}", bond_owner);
     log!(out, "  Registered: {}", is_registered);
     log!(out, "  Active: {}", is_active);
     log!(out, "  Exit pending: {}", has_exit);

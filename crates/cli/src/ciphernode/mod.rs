@@ -88,6 +88,14 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
+    /// Irreversibly authorize the wallet that will own this node's collateral
+    SetBondOwner {
+        /// Cold wallet or Safe that will fund and control the bond
+        #[arg(long = "owner", value_name = "ADDRESS")]
+        owner: String,
+        #[command(flatten)]
+        chain: ChainArgs,
+    },
     /// Request deregistration from the bonding registry
     Deregister {
         #[command(flatten)]
@@ -162,6 +170,10 @@ pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConf
         CiphernodeCommands::Register { chain } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
             lifecycle::register(out, &ctx).await?
+        }
+        CiphernodeCommands::SetBondOwner { chain, owner } => {
+            let ctx = ChainContext::new(config, chain.selection()).await?;
+            lifecycle::set_bond_owner(out, &ctx, &owner).await?
         }
         CiphernodeCommands::Deregister { chain } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;

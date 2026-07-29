@@ -107,6 +107,198 @@ describe("BondingRegistry", function () {
     });
   });
 
+  describe("separate bond owner and operator key", function () {
+    it("keeps the operator as protocol identity while the owner controls collateral", async function () {
+      const {
+        bondingRegistry,
+        ticketToken,
+        licenseToken,
+        usdcToken,
+        operator1,
+        operator2: bondOwner,
+        operator1Address,
+        operator2Address: bondOwnerAddress,
+      } = await loadFixture(setup);
+      const registryAddress = await bondingRegistry.getAddress();
+      const ticketTokenAddress = await ticketToken.getAddress();
+      const bondAmount = LICENSE_REQUIRED_BOND;
+      const ticketAmount = ethers.parseUnits("100", 6);
+
+      await expect(
+        bondingRegistry.connect(operator1).setBondOwner(bondOwnerAddress),
+      )
+        .to.emit(bondingRegistry, "BondOwnerSet")
+        .withArgs(operator1Address, bondOwnerAddress);
+      expect(await bondingRegistry.bondOwnerOf(operator1Address)).to.equal(
+        bondOwnerAddress,
+      );
+
+      await licenseToken
+        .connect(bondOwner)
+        .approve(registryAddress, bondAmount);
+      await bondingRegistry
+        .connect(bondOwner)
+        .bondLicenseFor(operator1Address, bondAmount);
+      expect(await bondingRegistry.getLicenseBond(operator1Address)).to.equal(
+        bondAmount,
+      );
+      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(
+        bondAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operator1Address)).to.equal(0);
+
+      await bondingRegistry
+        .connect(bondOwner)
+        .registerOperatorFor(operator1Address);
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
+
+      await usdcToken
+        .connect(bondOwner)
+        .approve(ticketTokenAddress, ticketAmount);
+      await bondingRegistry
+        .connect(bondOwner)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
+      expect(await ticketToken.balanceOf(operator1Address)).to.equal(
+        ticketAmount,
+      );
+      expect(await ticketToken.balanceOf(bondOwnerAddress)).to.equal(0);
+
+      await expect(bondingRegistry.connect(operator1).unbondLicense(1))
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(operator1Address, operator1Address);
+      await expect(bondingRegistry.connect(operator1).deregisterOperator())
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(operator1Address, operator1Address);
+
+      await bondingRegistry
+        .connect(bondOwner)
+        .deregisterOperatorFor(operator1Address);
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+
+      const ownerUsdcBefore = await usdcToken.balanceOf(bondOwnerAddress);
+      const ownerFoldBefore = await licenseToken.balanceOf(bondOwnerAddress);
+      const operatorUsdcBefore = await usdcToken.balanceOf(operator1Address);
+      const operatorFoldBefore = await licenseToken.balanceOf(operator1Address);
+
+      await expect(
+        bondingRegistry.connect(operator1).claimExits(ticketAmount, bondAmount),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(operator1Address, operator1Address);
+      await bondingRegistry
+        .connect(bondOwner)
+        .claimExitsFor(operator1Address, ticketAmount, bondAmount);
+
+      expect(await usdcToken.balanceOf(bondOwnerAddress)).to.equal(
+        ownerUsdcBefore + ticketAmount,
+      );
+      expect(await licenseToken.balanceOf(bondOwnerAddress)).to.equal(
+        ownerFoldBefore + bondAmount,
+      );
+      expect(await usdcToken.balanceOf(operator1Address)).to.equal(
+        operatorUsdcBefore,
+      );
+      expect(await licenseToken.balanceOf(operator1Address)).to.equal(
+        operatorFoldBefore,
+      );
+      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(0);
+    });
+
+    it("makes owner authorization immutable and only permits an empty position", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        ownerAddress,
+        operator1,
+        operator2,
+        operator1Address,
+        operator2Address,
+      } = await loadFixture(setup);
+
+      await bondingRegistry.connect(operator1).setBondOwner(ownerAddress);
+      await expect(
+        bondingRegistry.connect(operator1).setBondOwner(operator2Address),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "BondOwnerAlreadySet")
+        .withArgs(operator1Address, ownerAddress);
+
+      await licenseToken
+        .connect(operator2)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator2)
+        .bondLicense(LICENSE_REQUIRED_BOND);
+      await expect(
+        bondingRegistry.connect(operator2).setBondOwner(ownerAddress),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "BondOwnerRequiresEmptyPosition",
+        )
+        .withArgs(operator2Address);
+    });
+
+    it("aggregates delegated FOLD and reduces the owner's lock on slash", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        owner,
+        operator1,
+        operator2,
+        notTheOwner,
+        ownerAddress,
+        operator1Address,
+        operator2Address,
+      } = await loadFixture(setup);
+      const bondAmount = LICENSE_REQUIRED_BOND;
+      const slashAmount = bondAmount / 2n;
+
+      await bondingRegistry.connect(operator1).setBondOwner(ownerAddress);
+      await bondingRegistry.connect(operator2).setBondOwner(ownerAddress);
+      await licenseToken
+        .connect(owner)
+        .approve(await bondingRegistry.getAddress(), bondAmount * 2n);
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(operator2Address, bondAmount);
+
+      expect(await bondingRegistry.totalBonded(ownerAddress)).to.equal(
+        bondAmount * 2n,
+      );
+
+      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+      await bondingRegistry
+        .connect(notTheOwner)
+        .slashLicenseBond(
+          operator1Address,
+          slashAmount,
+          ethers.encodeBytes32String("TEST_SLASH"),
+        );
+
+      expect(await bondingRegistry.totalBonded(ownerAddress)).to.equal(
+        bondAmount * 2n - slashAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operator1Address)).to.equal(0);
+      expect(await bondingRegistry.totalBonded(operator2Address)).to.equal(0);
+    });
+
+    it("rejects callers that were not authorized by the operator", async function () {
+      const { bondingRegistry, owner, operator1Address, ownerAddress } =
+        await loadFixture(setup);
+
+      await expect(
+        bondingRegistry
+          .connect(owner)
+          .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(ownerAddress, operator1Address);
+    });
+  });
+
   describe("bondLicense()", function () {
     it("allows operators to bond license tokens", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
