@@ -1,0 +1,4 @@
+[mcp_servers.interfold-docs]
+command = "pnpm"
+args = ["--filter", "@interfold/mcp", "exec", "tsx", "src/index.ts"]
+startup_timeout_sec = 15
