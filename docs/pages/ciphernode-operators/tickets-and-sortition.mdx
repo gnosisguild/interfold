@@ -28,9 +28,9 @@ availableTickets = floor(ticketTokenBalance / ticketPrice)
 
 The bond owner approves the ticket wrapper and funds the operator:
 
-```solidity
-usdc.approve(address(ticketToken), amount);
-bondingRegistry.addTicketBalanceFor(operator, amount);
+```bash
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
 This:
@@ -43,8 +43,9 @@ This:
 
 The bond owner queues ticket collateral for withdrawal:
 
-```solidity
-bondingRegistry.removeTicketBalanceFor(operator, amount);
+```bash
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR burn --amount 25
 ```
 
 > Burning tickets takes effect immediately. Dropping below the minimum ticket balance makes you

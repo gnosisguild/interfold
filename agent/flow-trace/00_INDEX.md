@@ -21,9 +21,10 @@
                   → Automation passes secrets over stdin, never argv/environment metadata
 
 2. AUTHORIZE    interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
-                  → Hot operator key immutably authorizes its collateral owner
+                  → Hot operator key authorizes its initial collateral owner
                   → A separate cold wallet or Safe is recommended, but optional
                   → Required before the operator can hold collateral or register
+                  → Later owner rotation is current-owner propose + new-owner accept
 
 3. BOND         Bond owner calls bondLicenseFor(operator, N)
                   → Owner's FOLD tokens locked against the operator position
@@ -74,13 +75,13 @@
                   → C7 proof (proves reconstruction correct)
 
 15. COMPLETE    Active aggregator permissionlessly calls publishPlaintextOutput()
-                  → rewards distributed
+                  → rewards credited to each active operator's bond owner
                   → Treasury receives snapshotted protocolShareBps of gross fee
                   → Active committee members split the remaining CN pool
                   → Any escrowed slashed funds split:
                     nodes (successSlashedNodeBps) + treasury
 
-16. DEREGISTER  Bond owner calls deregisterOperatorFor(operator)
+16. DEREGISTER  Bond owner or operator kill switch calls deregisterOperatorFor(operator)
                   → All collateral queued for exit
                   → Removed from IMT
                   → After exitDelay: claimExitsFor pays USDC + FOLD to bond owner

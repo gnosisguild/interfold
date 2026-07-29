@@ -55,11 +55,11 @@ Requester calls: Interfold.request({
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
 │   ├─ Snapshot Interfold dependencies for this E3:
-│   │   registry, refund manager, and slashing manager
+│   │   registry, bonding registry, refund manager, and slashing manager
 │   │   → later global rotations apply only to new requests
 │   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
 │   │   → freezes refund/slash allocation, treasury, policy version,
-│   │     request-time Interfold, and request-time committee registry
+│   │     request-time Interfold, committee registry, and bonding registry
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
 │   │     not relied upon for cryptographic unpredictability.

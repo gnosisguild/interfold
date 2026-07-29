@@ -194,16 +194,9 @@ describe("BondingRegistry", function () {
       )
         .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
         .withArgs(operator1Address, operator1Address);
-      await expect(
-        bondingRegistry
-          .connect(operatorKey1)
-          .deregisterOperatorFor(operator1Address),
-      )
-        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
-        .withArgs(operator1Address, operator1Address);
 
       await bondingRegistry
-        .connect(operator1)
+        .connect(operatorKey1)
         .deregisterOperatorFor(operator1Address);
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
@@ -242,7 +235,7 @@ describe("BondingRegistry", function () {
       );
     });
 
-    it("allows an explicit self-owned position while keeping the owner immutable", async function () {
+    it("allows self-ownership while blocking direct reassignment", async function () {
       const { bondingRegistry, licenseToken } = await loadFixture(setup);
       const signers = await ethers.getSigners();
       const operator = signers[7];
@@ -296,6 +289,112 @@ describe("BondingRegistry", function () {
         .withArgs(operatorAddress, operatorAddress);
     });
 
+    it("allows the operator to correct an owner before the position is funded", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      const signers = await ethers.getSigners();
+      const operator = signers[7];
+      const typoOwner = signers[8];
+      const correctedOwner = signers[9];
+      const operatorAddress = await operator.getAddress();
+      const correctedOwnerAddress = await correctedOwner.getAddress();
+
+      await bondingRegistry
+        .connect(operator)
+        .setBondOwner(await typoOwner.getAddress());
+      await expect(
+        bondingRegistry.connect(operator).setBondOwner(correctedOwnerAddress),
+      )
+        .to.emit(bondingRegistry, "BondOwnerSet")
+        .withArgs(operatorAddress, correctedOwnerAddress);
+
+      expect(await bondingRegistry.bondOwnerOf(operatorAddress)).to.equal(
+        correctedOwnerAddress,
+      );
+    });
+
+    it("transfers ownership and migrates active plus pending FOLD accounting", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        operator1,
+        operator2,
+        operator1Address,
+        operator1OwnerAddress,
+        operator2OwnerAddress,
+        notTheOwner,
+      } = await loadFixture(setup);
+      const bondAmount = ethers.parseEther("1000");
+      const pendingAmount = ethers.parseEther("300");
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, pendingAmount);
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .proposeBondOwner(operator1Address, operator2OwnerAddress),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(await notTheOwner.getAddress(), operator1Address);
+
+      await expect(
+        bondingRegistry
+          .connect(operator1)
+          .proposeBondOwner(operator1Address, operator2OwnerAddress),
+      )
+        .to.emit(bondingRegistry, "BondOwnerTransferProposed")
+        .withArgs(
+          operator1Address,
+          operator1OwnerAddress,
+          operator2OwnerAddress,
+        );
+      expect(
+        await bondingRegistry.pendingBondOwnerOf(operator1Address),
+      ).to.equal(operator2OwnerAddress);
+
+      await expect(
+        bondingRegistry.connect(notTheOwner).acceptBondOwner(operator1Address),
+      ).to.be.revertedWithCustomError(bondingRegistry, "Unauthorized");
+
+      await expect(
+        bondingRegistry.connect(operator2).acceptBondOwner(operator1Address),
+      )
+        .to.emit(bondingRegistry, "BondOwnerSet")
+        .withArgs(operator1Address, operator2OwnerAddress);
+
+      expect(await bondingRegistry.bondOwnerOf(operator1Address)).to.equal(
+        operator2OwnerAddress,
+      );
+      expect(
+        await bondingRegistry.pendingBondOwnerOf(operator1Address),
+      ).to.equal(ethers.ZeroAddress);
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
+        0,
+      );
+      expect(await bondingRegistry.totalBonded(operator2OwnerAddress)).to.equal(
+        bondAmount,
+      );
+
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+      const before = await licenseToken.balanceOf(operator2OwnerAddress);
+      await bondingRegistry
+        .connect(operator2)
+        .claimExitsFor(operator1Address, 0, pendingAmount);
+      expect(await licenseToken.balanceOf(operator2OwnerAddress)).to.equal(
+        before + pendingAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operator2OwnerAddress)).to.equal(
+        bondAmount - pendingAmount,
+      );
+    });
+
     it("aggregates owned FOLD and reduces the owner's lock on slash", async function () {
       const {
         bondingRegistry,
@@ -342,6 +441,48 @@ describe("BondingRegistry", function () {
       );
       expect(await bondingRegistry.totalBonded(operator1Address)).to.equal(0);
       expect(await bondingRegistry.totalBonded(operator2Address)).to.equal(0);
+    });
+
+    it("routes distributor rewards to the configured owner", async function () {
+      const {
+        bondingRegistry,
+        usdcToken,
+        owner,
+        notTheOwner,
+        operator1Address,
+        operator1OwnerAddress,
+      } = await loadFixture(setup);
+      const ownerAddress = await owner.getAddress();
+      const fallbackRecipient = await notTheOwner.getAddress();
+      const ownerReward = ethers.parseUnits("10", 6);
+      const fallbackReward = ethers.parseUnits("5", 6);
+
+      await bondingRegistry.setRewardDistributor(ownerAddress);
+      await usdcToken
+        .connect(owner)
+        .approve(
+          await bondingRegistry.getAddress(),
+          ownerReward + fallbackReward,
+        );
+
+      const bondOwnerBefore = await usdcToken.balanceOf(operator1OwnerAddress);
+      const operatorBefore = await usdcToken.balanceOf(operator1Address);
+      const fallbackBefore = await usdcToken.balanceOf(fallbackRecipient);
+      await bondingRegistry.distributeRewards(
+        await usdcToken.getAddress(),
+        [operator1Address, fallbackRecipient],
+        [ownerReward, fallbackReward],
+      );
+
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
+        bondOwnerBefore + ownerReward,
+      );
+      expect(await usdcToken.balanceOf(operator1Address)).to.equal(
+        operatorBefore,
+      );
+      expect(await usdcToken.balanceOf(fallbackRecipient)).to.equal(
+        fallbackBefore + fallbackReward,
+      );
     });
   });
 
@@ -677,6 +818,51 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.isRegistered(operator1Address)).to.be.false;
       expect(await bondingRegistry.hasExitInProgress(operator1Address)).to.be
         .true;
+    });
+
+    it("allows the operator key to trigger an emergency exit", async function () {
+      const { bondingRegistry, licenseToken, operatorKey1, operator1 } =
+        await loadFixture(setup);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+
+      await expect(
+        bondingRegistry
+          .connect(operatorKey1)
+          .deregisterOperatorFor(operator1Address),
+      ).to.emit(bondingRegistry, "CiphernodeDeregistrationRequested");
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.false;
+    });
+
+    it("rejects deregistration by unrelated callers", async function () {
+      const { bondingRegistry, licenseToken, operator1, notTheOwner } =
+        await loadFixture(setup);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .deregisterOperatorFor(operator1Address),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(await notTheOwner.getAddress(), operator1Address);
     });
 
     it("reverts if not registered", async function () {

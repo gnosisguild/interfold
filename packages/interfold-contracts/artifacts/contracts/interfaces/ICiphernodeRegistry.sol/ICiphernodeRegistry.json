@@ -1345,5 +1345,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-ae86dc841ec043ea6850e3d3de31a9605042ee41"
+  "buildInfoId": "solc-0_8_28-af2f4c5c173140a060dbc8f528fbe9293a1d8d1a"
 }

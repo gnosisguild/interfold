@@ -6,9 +6,10 @@ An operator can voluntarily leave the network by deactivating (withdrawing colla
 deregistering (removing from the Merkle tree). The exit is time-locked, and pending exits remain
 slashable until claimed.
 
-These are bond-owner actions: `removeTicketBalanceFor(operator)`, `unbondLicenseFor(operator)`,
-`deregisterOperatorFor(operator)`, and `claimExitsFor(operator)`. The hot node key cannot trigger
-them.
+Collateral withdrawals and claims are bond-owner actions: `removeTicketBalanceFor(operator)`,
+`unbondLicenseFor(operator)`, and `claimExitsFor(operator)`. Deregistration is callable by either
+the owner or the operator key, giving the running node an emergency kill switch while keeping all
+payouts owner-only.
 
 ---
 
@@ -87,14 +88,14 @@ Bond owner submits both owner-authorized calls
 ## Full Deregistration
 
 ```
-Bond owner submits deregisterOperatorFor(operator)
+Bond owner or operator submits deregisterOperatorFor(operator)
 │
 └─ BondingRegistry.deregisterOperatorFor(operator)
     │
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
     │  │  deregisterOperatorFor(operator) {                       │
-    │  │    1. require(msg.sender == bondOwnerOf(operator))      │
+    │  │    1. require(msg.sender == operator OR bondOwner)      │
     │  │    2. require(operators[operator].registered)           │
     │  │    3. require(!exitInProgress(operator))                │
     │  │       → Cannot deregister if an exit is already pending │
@@ -167,12 +168,12 @@ publishPlaintextOutput() succeeds
 │   │   ├─ if protocolAmount > 0:
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
-│   │   │   → Credits pull-payment rewards to each registered operator
+│   │   │   → Resolves bondOwnerOf(node) and credits that owner
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
 │   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
-│   │   │     nodes portion distributed evenly to activeNodes
+│   │   │     nodes portion split by active node, then credited to bond owners
 │   │   │     remainder sent to protocol treasury
 │   │   │   → If no escrowed funds: no-op
 │   │   └─ Emit RewardsDistributed(e3Id)

@@ -12,7 +12,7 @@ operator. Make sure your node is already [running](./running) before proceeding.
 
 Registration supports one or two wallets:
 
-- The **operator key** runs the node and authorizes its bond owner once.
+- The **operator key** runs the node and authorizes its initial bond owner.
 - The **bond owner** holds FOLD and USDC and controls the position lifecycle.
 
 Using a separate cold wallet or Safe as the bond owner is strongly recommended so the running node
@@ -59,31 +59,35 @@ Ciphernode status on sepolia:
 
 ### Step 2: Authorize the Bond Owner
 
-From the node's operator key, immutably authorize the wallet or Safe that will control collateral:
+From the node's operator key, authorize the wallet or Safe that will control collateral:
 
 ```bash
 interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 ```
 
-The owner must be nonzero and cannot be changed after assignment. It may equal the operator address,
-although a separate cold wallet or Safe is recommended.
+The owner must be nonzero and may equal the operator address, although a separate cold wallet or
+Safe is recommended. The operator can correct the address before the position is funded. Once it
+holds collateral or is registered, owner changes use the two-step proposal and acceptance flow
+described below.
 
 ### Step 3: Fund and Register the Operator
 
-From the authorized bond-owner wallet or Safe:
+For an EOA bond owner, run the owner-aware CLI commands using a config whose encrypted signer is
+that owner:
 
-```solidity
-fold.approve(address(bondingRegistry), foldAmount);
-bondingRegistry.bondLicenseFor(operator, foldAmount);
-bondingRegistry.registerOperatorFor(operator);
-
-usdc.approve(address(ticketToken), ticketAmount);
-bondingRegistry.addTicketBalanceFor(operator, ticketAmount);
+```bash
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR bond --amount 100
+interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
-The owner supplies the assets, while the operator address is added to the registry Merkle tree and
-receives non-transferable tFOLD. With the recommended separate-owner setup, the hot operator key
-does not control FOLD or USDC withdrawals.
+The CLI submits any required token approval first. Safe owners can submit the same `bondLicenseFor`,
+`registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe interface. The owner
+supplies the assets, while the operator address is added to the registry Merkle tree and receives
+non-transferable tFOLD. With the recommended separate-owner setup, the hot operator key does not
+control FOLD or USDC withdrawals, and protocol rewards are credited to the bond owner.
 
 The number of usable tickets is calculated as:
 
@@ -122,12 +126,36 @@ Ciphernode status on sepolia:
 # Authorize the bond owner from the hot operator key
 interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 
+# Fund and register from an EOA bond-owner config
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR bond --amount 100
+interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
+
+# The owner or operator can stop participation
+interfold ciphernode deregister --operator 0xOPERATOR
+
 # Check status
-interfold ciphernode status
+interfold ciphernode status --operator 0xOPERATOR
 ```
 
-Financial and lifecycle actions are intentionally absent from the node CLI. Submit the
-`...For(operator)` calls from the bond-owner wallet or Safe.
+Omit `--operator` for a self-owned position. In the recommended two-wallet setup, run financial
+commands with the bond-owner config and pass the node's operator address explicitly.
+
+### Rotate the Bond Owner
+
+The current owner proposes a replacement, then the new owner accepts:
+
+```bash
+interfold --config /path/to/current-owner.yaml ciphernode propose-bond-owner \
+  --operator 0xOPERATOR --new-owner 0xNEW_OWNER
+interfold --config /path/to/new-owner.yaml ciphernode accept-bond-owner \
+  --operator 0xOPERATOR
+```
+
+Active and pending FOLD ownership accounting moves atomically on acceptance. The operator key is not
+involved in rotation.
 
 ### Multi-Chain Support
 

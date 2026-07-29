@@ -163,6 +163,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ICiphernodeRegistry registry;
         IE3RefundManager refundManager;
         ISlashingManager slashManager;
+        IBondingRegistry bonding;
     }
 
     /// @notice Grace window (seconds) after a stage deadline during which only
@@ -271,11 +272,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         );
 
         e3Id = nexte3Id;
-        nexte3Id++;
+        unchecked {
+            nexte3Id = e3Id + 1;
+        }
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         dependencies.registry = ciphernodeRegistry;
         dependencies.refundManager = e3RefundManager;
         dependencies.slashManager = slashingManager;
+        dependencies.bonding = bondingRegistry;
         dependencies.refundManager.snapshotE3Policy(
             e3Id,
             address(dependencies.registry)
@@ -500,7 +504,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         }
 
         // Split between protocol treasury and CN rewards
-        uint256 protocolAmount = 0;
+        uint256 protocolAmount;
         uint16 _protocolShareBps = _e3ProtocolShareBps[e3Id];
         address _protocolTreasury = _e3ProtocolTreasury[e3Id];
         if (_protocolShareBps > 0 && _protocolTreasury != address(0)) {
@@ -544,11 +548,39 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 token
     ) private {
         uint256 n = nodes.length;
-        for (uint256 i = 0; i < n; i++) {
+        IBondingRegistry rewardRegistry = _e3Dependencies[e3Id].bonding;
+        bytes4 ownerSelector = IBondingRegistry.bondOwnerOf.selector;
+        for (uint256 i = 0; i < n; ) {
             uint256 a = amounts[i];
-            if (a == 0) continue;
-            _pendingRewards[e3Id][nodes[i]] += a;
-            emit RewardCredited(e3Id, nodes[i], token, a);
+            if (a != 0) {
+                address node = nodes[i];
+                address recipient;
+                // solhint-disable-next-line no-inline-assembly
+                assembly ("memory-safe") {
+                    mstore(0, ownerSelector)
+                    mstore(0x04, node)
+                    if or(
+                        iszero(
+                            staticcall(gas(), rewardRegistry, 0, 0x24, 0, 0x20)
+                        ),
+                        lt(returndatasize(), 0x20)
+                    ) {
+                        revert(0, 0)
+                    }
+                    recipient := mload(0)
+                    if iszero(recipient) {
+                        recipient := node
+                    }
+                }
+                unchecked {
+                    // Distribution executes once and all credits sum to cnAmount.
+                    _pendingRewards[e3Id][recipient] += a;
+                }
+                emit RewardCredited(e3Id, recipient, token, a);
+            }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -1105,11 +1137,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @inheritdoc IInterfold
     function claimRewards(uint256[] calldata e3Ids) external {
         uint256 len = e3Ids.length;
-        uint256 totalClaimed;
-        for (uint256 i = 0; i < len; i++) {
-            totalClaimed += _claimReward(e3Ids[i], msg.sender);
+        bool claimed;
+        for (uint256 i = 0; i < len; ) {
+            if (_claimReward(e3Ids[i], msg.sender) != 0) claimed = true;
+            unchecked {
+                ++i;
+            }
         }
-        require(totalClaimed > 0, NothingToClaim());
+        require(claimed, NothingToClaim());
     }
 
     /// @notice Internal helper: drains the caller's pull balance for one E3

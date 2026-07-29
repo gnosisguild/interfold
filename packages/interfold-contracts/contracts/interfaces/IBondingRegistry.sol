@@ -229,12 +229,23 @@ interface IBondingRegistry {
     );
 
     /**
-     * @notice Emitted when an operator authorizes the wallet that owns its collateral.
-     * @dev The authorization is immutable for this operator address.
+     * @notice Emitted when the wallet that owns an operator's collateral is set.
      * @param operator Hot operator key used by the node
      * @param bondOwner Wallet that funds and controls the operator's collateral
      */
     event BondOwnerSet(address indexed operator, address indexed bondOwner);
+
+    /**
+     * @notice Emitted when the current owner proposes transferring an operator position.
+     * @param operator Hot operator key used by the node
+     * @param currentOwner Current wallet controlling the operator's collateral
+     * @param pendingOwner Wallet that may accept ownership
+     */
+    event BondOwnerTransferProposed(
+        address indexed operator,
+        address indexed currentOwner,
+        address indexed pendingOwner
+    );
 
     // ======================
     // View Functions
@@ -275,9 +286,16 @@ interface IBondingRegistry {
 
     /**
      * @notice Get the wallet that owns and controls an operator's collateral.
-     * @dev Returns address(0) until the operator authorizes a distinct owner.
+     * @dev Returns address(0) until the operator authorizes an owner.
      */
     function bondOwnerOf(address operator) external view returns (address);
+
+    /**
+     * @notice Get the wallet currently nominated to accept an operator position.
+     */
+    function pendingBondOwnerOf(
+        address operator
+    ) external view returns (address);
 
     /**
      * @notice Get FOLD that still counts toward an account's locked-floor collateral.
@@ -434,7 +452,8 @@ interface IBondingRegistry {
     function registerOperatorFor(address operator) external;
 
     /**
-     * @notice Deregister an operator whose collateral is controlled by the caller.
+     * @notice Deregister an operator.
+     * @dev Callable by the bond owner or by the operator as an emergency kill switch.
      */
     function deregisterOperatorFor(address operator) external;
 
@@ -460,9 +479,23 @@ interface IBondingRegistry {
 
     /**
      * @notice Authorize a bond owner for the caller's operator key.
-     * @dev The owner may be the operator itself and cannot be changed.
+     * @dev The owner may be the operator itself. The operator may correct this
+     *      choice while the position is empty; funded positions require current-owner
+     *      proposal and new-owner acceptance.
      */
     function setBondOwner(address bondOwner) external;
+
+    /**
+     * @notice Propose transferring an operator position to a new bond owner.
+     * @dev Only the current bond owner may propose or replace a pending transfer.
+     */
+    function proposeBondOwner(address operator, address newOwner) external;
+
+    /**
+     * @notice Accept a proposed operator position from its current bond owner.
+     * @dev Moves ownership accounting for active and pending license collateral.
+     */
+    function acceptBondOwner(address operator) external;
 
     // ======================
     // Claim Functions
@@ -522,11 +555,12 @@ interface IBondingRegistry {
     // Reward Distribution Functions
     // ======================
     /**
-     * @notice Distribute rewards to operators
+     * @notice Distribute rewards for operators to their configured bond owners.
      * @param rewardToken Reward token contract
      * @param operators Addresses of the operators to distribute rewards to
      * @param amounts Amounts of rewards to distribute to each operator
-     * @dev Only callable by authorized distributors.
+     * @dev Falls back to the supplied address when it has no configured bond owner.
+     *      Only callable by authorized distributors.
      */
     function distributeRewards(
         IERC20 rewardToken,

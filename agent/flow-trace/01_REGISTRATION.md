@@ -3,8 +3,8 @@
 ## Overview
 
 A ciphernode operator uses the CLI to configure local state, encrypt credentials, and authorize an
-immutable bond owner. A separate wallet or Safe is recommended, but the operator may explicitly
-choose itself. The configured owner then funds and registers the operator on-chain.
+initial bond owner. A separate wallet or Safe is recommended, but the operator may explicitly choose
+itself. The configured owner then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
 `--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
@@ -25,14 +25,16 @@ interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
 
 This sends `BondingRegistry.setBondOwner(owner)` from the operator key and emits the typed
 `BondOwnerSet(operator, bondOwner)` event. The owner must be nonzero and may be the operator itself.
-The authorization is immutable, and every collateral or registration action requires it.
+The operator may correct the address while the position is empty. Every collateral or registration
+action requires the configured owner; after funding or registration, rotation is two-step:
+`proposeBondOwner(operator, newOwner)` from the current owner, followed by
+`acceptBondOwner(operator)` from the proposed owner.
 
 Only that owner can call the financial/lifecycle `...For(operator)` entry points: `bondLicenseFor`,
-`addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`,
-`deregisterOperatorFor`, and `claimExitsFor`. With the recommended separate-owner setup, the hot
-operator key cannot fund, withdraw, deregister, or claim the position. The node CLI intentionally
-exposes no bond, ticket, register, or exit transactions; the configured owner submits those calls
-through the owner interface.
+`addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`, and
+`claimExitsFor`. `deregisterOperatorFor` is also callable by the operator as an emergency kill
+switch, but payouts remain owner-only. The CLI exposes owner-aware bond, ticket, registration, and
+exit commands with an explicit `--operator`; self-owned positions may omit it.
 
 ---
 
@@ -101,7 +103,8 @@ Operator runs:
 └─ BondingRegistry.setBondOwner(owner)
    ├─ Rejects the zero address
    ├─ Allows owner == operator (separate owner recommended)
-   ├─ Rejects a second assignment
+   ├─ Allows operator correction only while the position is empty
+   ├─ Requires current-owner proposal + new-owner acceptance after funding
    ├─ Stores bondOwners[operator] = owner
    └─ Emits BondOwnerSet(operator, owner)
 ```
@@ -109,20 +112,27 @@ Operator runs:
 Until this transaction is mined, `bondOwnerOf(operator)` returns the zero address and all
 owner-authorized position calls fail.
 
+The current owner can later call `proposeBondOwner(operator, newOwner)`. Acceptance by `newOwner`
+moves the operator's active plus pending FOLD credit between `_bondedByOwner` accounts atomically
+and emits a new `BondOwnerSet`, so the event projection follows rotations.
+
 ---
 
 ## Step 3: Owner-funded registration
 
-The bond owner wallet or Safe performs the on-chain position transactions. These transactions are
-not node CLI commands because the CLI contains only the hot operator key.
+The bond owner wallet or Safe performs the on-chain position transactions. For an EOA owner, the CLI
+uses the signer from the selected owner config and targets the node with `--operator`.
 
 ```
 Bond owner
 │
+├─ CLI: ciphernode license --operator OP bond --amount N
 ├─ licenseToken.approve(BondingRegistry, bondAmount)
 ├─ BondingRegistry.bondLicenseFor(operator, bondAmount)
+├─ CLI: ciphernode tickets --operator OP buy --amount N
 ├─ stablecoin.approve(InterfoldTicketToken, ticketAmount)
 ├─ BondingRegistry.addTicketBalanceFor(operator, ticketAmount)
+├─ CLI: ciphernode register --operator OP
 └─ BondingRegistry.registerOperatorFor(operator)
    ├─ Verifies msg.sender == bondOwnerOf(operator)
    ├─ Verifies the operator is not banned or already registered
@@ -156,6 +166,7 @@ User runs: interfold ciphernode status
 │   ├─ ticketToken.balanceOf(address) → ticket balance
 │   ├─ operator.licenseBond → license bond amount
 │   ├─ bondingRegistry.bondOwnerOf(address) → collateral owner
+│   ├─ bondingRegistry.pendingBondOwnerOf(address) → proposed replacement owner
 │   ├─ pendingExits.ticketAmount, pendingExits.licenseAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket

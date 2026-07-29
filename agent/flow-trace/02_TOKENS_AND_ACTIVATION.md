@@ -13,8 +13,9 @@ Collateral ownership and operator identity are separate namespaces:
 - `operator` is the hot node key and remains the registry, ticket, sortition, DKG, ban, and slash
   identity.
 - `bondOwnerOf(operator)` is the wallet that funds and controls collateral. The operator must set it
-  once to a nonzero address before any position action. It may choose itself, although a separate
-  cold wallet or Safe is recommended.
+  to a nonzero address before any position action. It may choose itself, although a separate cold
+  wallet or Safe is recommended. The current owner can later rotate ownership through a two-step
+  proposal and acceptance.
 - Positions use only the owner-authorized `...For(operator)` calls. Ticket tokens are minted to the
   operator; exit payouts go only to the owner.
 - A bond owner may fund multiple operator keys. `totalBonded(owner)` aggregates its active and
@@ -135,7 +136,8 @@ Bond owner submits bondLicenseFor(operator, 50000)
 │     │  │    1. require(msg.sender == bondOwnerOf(operator))   │
 │     │  │    2. require(amount > 0)                            │
 │     │  │    3. operators[operator].licenseBond += amount      │
-│     │  │       → totalBonded(msg.sender) now includes amount  │
+│     │  │       → Resolve bondOwnerOf(operator) locally         │
+│     │  │       → totalBonded(bondOwner) now includes amount   │
 │     │  │    4. licenseToken.safeTransferFrom(                 │
 │     │  │         msg.sender,   // from bond owner             │
 │     │  │         address(this), // to BondingRegistry         │

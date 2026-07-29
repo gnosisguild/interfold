@@ -909,16 +909,20 @@ contract SlashingManager is
     // ======================
 
     /// @inheritdoc ISlashingManager
-    /// @dev Only the accused operator may appeal (no delegate support). Consider an `appealDelegate`
-    ///      mapping for production to handle lost-key or banned-operator scenarios.
-    ///      Appeals are now permitted for proof-verified (Lane A) proposals when their
+    /// @dev Appeals are permitted for proof-verified (Lane A) proposals when their
     ///      policy is configured with a non-zero `appealWindow`.
     function fileAppeal(uint256 proposalId, string calldata evidence) external {
         require(proposalId < totalProposals, InvalidProposal());
         SlashProposal storage p = _proposals[proposalId];
 
-        // Only the accused can appeal
-        require(msg.sender == p.operator, Unauthorized());
+        // The accused operator or the owner whose collateral is at risk may appeal.
+        address bondOwner = _e3Dependencies[p.e3Id].bonding.bondOwnerOf(
+            p.operator
+        );
+        require(
+            msg.sender == p.operator || msg.sender == bondOwner,
+            Unauthorized()
+        );
         // Already-executed slashes (Lane A with appealWindow == 0) cannot be appealed.
         require(!p.executed, AlreadyExecuted());
         // Only within the appeal window

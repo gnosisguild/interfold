@@ -26,6 +26,17 @@ mod bonding_registry_contract {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
+mod interfold_ticket_token_contract {
+    use super::sol;
+
+    sol!(
+        #[sol(rpc)]
+        InterfoldTicketTokenContract,
+        "../../packages/interfold-contracts/artifacts/contracts/token/InterfoldTicketToken.sol/InterfoldTicketToken.json"
+    );
+}
+
 mod erc20_metadata_interface {
     use super::sol;
 
@@ -44,6 +55,7 @@ mod erc20_metadata_interface {
 
 use bonding_registry_contract::BondingRegistryContract;
 use erc20_metadata_interface::IERC20Metadata;
+use interfold_ticket_token_contract::InterfoldTicketTokenContract;
 
 pub(crate) struct ChainContext {
     chain_label: String,
@@ -90,6 +102,16 @@ impl ChainContext {
         self.signer_address
     }
 
+    pub(crate) fn resolve_operator(&self, operator: Option<&str>) -> Result<Address> {
+        operator
+            .map(parse_address)
+            .unwrap_or(Ok(self.signer_address))
+    }
+
+    pub(crate) fn bonding_registry(&self) -> Address {
+        self.bonding_registry
+    }
+
     pub(crate) fn chain_label(&self) -> &str {
         &self.chain_label
     }
@@ -100,6 +122,16 @@ impl ChainContext {
 
     pub(crate) async fn ticket_token_address(&self) -> Result<Address> {
         Ok(self.bonding().getTicketToken().call().await?)
+    }
+
+    pub(crate) async fn ticket_underlying_address(&self) -> Result<Address> {
+        Ok(InterfoldTicketTokenContract::new(
+            self.ticket_token_address().await?,
+            self.provider_client(),
+        )
+        .underlying()
+        .call()
+        .await?)
     }
 
     pub(crate) fn erc20(

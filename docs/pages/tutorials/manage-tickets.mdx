@@ -37,11 +37,11 @@ you'll be selected roughly 10% of the time (assuming no buffer effects).
 
 ## Buying Tickets
 
-From the bond-owner wallet or Safe, approve the ticket wrapper and fund the operator:
+From an EOA bond-owner config, fund the operator:
 
-```solidity
-usdc.approve(address(ticketToken), amount);
-bondingRegistry.addTicketBalanceFor(operator, amount);
+```bash
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
 This:
@@ -64,8 +64,9 @@ Check `ticketPrice` with `interfold ciphernode status` — it's set by governanc
 
 Queue underlying stablecoins for withdrawal:
 
-```solidity
-bondingRegistry.removeTicketBalanceFor(operator, amount);
+```bash
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR burn --amount 25
 ```
 
 Burning takes effect **immediately**. If it drops you below `minTicketBalance`, your node becomes

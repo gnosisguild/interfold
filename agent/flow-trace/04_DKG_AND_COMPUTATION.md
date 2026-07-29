@@ -976,8 +976,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       │  │     _pendingTreasury[treasury][token]  │  │
         │  │       │  │       += protocolAmount                │  │
         │  │       │  │     Emit TreasuryCredited(...)         │  │
-        │  │       │  │  5. Credit each node (no push):        │  │
-        │  │       │  │     _pendingRewards[e3Id][node]        │  │
+        │  │       │  │  5. Resolve each node's bond owner,    │  │
+        │  │       │  │     then credit it (no push):          │  │
+        │  │       │  │     _pendingRewards[e3Id][bondOwner]   │  │
         │  │       │  │       += perNode                       │  │
         │  │       │  │     Emit RewardCredited(...)           │  │
         │  │       │  │  6. Emit RewardsDistributed (compat)   │  │
@@ -991,7 +992,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  }                                                  │
         │  │                                                     │
         │  │  // Funds are NOT pushed at publish-time.           │
-        │  │  // Recipients must call:                           │
+        │  │  // Bond-owner recipients must call:                │
         │  │  //   - interfold.claimReward(e3Id) or                │
         │  │  //     interfold.claimRewards(e3Ids[])               │
         │  │  //   - interfold.treasuryClaim(token)                │

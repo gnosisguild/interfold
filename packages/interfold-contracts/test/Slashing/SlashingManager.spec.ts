@@ -1325,7 +1325,36 @@ describe("SlashingManager", function () {
       expect(proposal.appealed).to.be.true;
     });
 
-    it("should revert if non-operator tries to appeal", async function () {
+    it("should allow the bond owner to appeal", async function () {
+      const {
+        slashingManager,
+        slasher,
+        operator,
+        operatorAddress,
+        owner,
+        bondingRegistry,
+      } = await loadFixture(setup);
+
+      await bondingRegistry
+        .connect(operator)
+        .setBondOwner(await owner.getAddress());
+      await setupPolicies(slashingManager);
+      await slashingManager
+        .connect(slasher)
+        .proposeSlashEvidence(
+          0,
+          operatorAddress,
+          REASON_INACTIVITY,
+          ethers.toUtf8Bytes("evidence"),
+        );
+
+      await expect(
+        slashingManager.connect(owner).fileAppeal(0, "Protect collateral"),
+      ).to.emit(slashingManager, "AppealFiled");
+      expect((await slashingManager.getSlashProposal(0)).appealed).to.be.true;
+    });
+
+    it("should revert if neither operator nor bond owner tries to appeal", async function () {
       const { slashingManager, slasher, notTheOwner, operatorAddress } =
         await loadFixture(setup);
 
