@@ -171,6 +171,7 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "AssetsQueuedForExit(address,uint256,uint256,uint64)",
         None,
     ),
+    EvmEventDefinition::new("BondOwnerSet", "BondOwnerSet(address,address)", None),
     EvmEventDefinition::new(
         "CiphernodeDeregistrationRequested",
         "CiphernodeDeregistrationRequested(address,uint64)",
