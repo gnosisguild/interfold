@@ -936,6 +936,7 @@ jobs:
         with:
           name: compiled-circuits
           path: |
+            circuits/bin/.active-preset.json
             circuits/bin/dkg/target/
             circuits/bin/threshold/target/
             circuits/bin/recursive_aggregation/wrapper/dkg/target/
