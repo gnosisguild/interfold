@@ -27,6 +27,10 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
+interface ILockAwareLicenseToken {
+    function lockedBalanceOf(address account) external view returns (uint256);
+}
+
 /**
  * @title BondingRegistry
  * @notice Implementation of the bonding registry managing operator ticket balances and license bonds
@@ -464,6 +468,23 @@ contract BondingRegistry is
         (, uint256 pendingLicense) = _exits.getPendingAmounts(operator);
         uint256 delegatedBond = operators[operator].licenseBond +
             pendingLicense;
+
+        if (delegatedBond != 0) {
+            uint256 remainingBonded = _bondedByOwner[previousOwner] -
+                delegatedBond;
+            uint256 lockedBalance = ILockAwareLicenseToken(
+                address(licenseToken)
+            ).lockedBalanceOf(previousOwner);
+            uint256 controlledBalance = licenseToken.balanceOf(previousOwner) +
+                remainingBonded;
+            if (lockedBalance > controlledBalance) {
+                revert BondOwnerTransferViolatesLock(
+                    previousOwner,
+                    lockedBalance,
+                    controlledBalance
+                );
+            }
+        }
 
         delete _pendingBondOwnerOf[operator];
         _bondOwnerOf[operator] = msg.sender;

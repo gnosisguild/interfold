@@ -67,6 +67,14 @@ interface IBondingRegistry {
     /// @notice Thrown when an operator attempts to replace an already-authorized bond owner.
     error BondOwnerAlreadySet(address operator, address bondOwner);
 
+    /// @notice Moving a license position would leave the previous owner with
+    ///         less wallet-plus-bonded FOLD than its current locked balance.
+    error BondOwnerTransferViolatesLock(
+        address bondOwner,
+        uint256 lockedBalance,
+        uint256 controlledBalance
+    );
+
     // ======================
     // Events (Protocol-Named)
     // ======================
@@ -493,7 +501,8 @@ interface IBondingRegistry {
 
     /**
      * @notice Accept a proposed operator position from its current bond owner.
-     * @dev Moves ownership accounting for active and pending license collateral.
+     * @dev Moves ownership accounting for active and pending license collateral
+     *      only when doing so preserves the previous owner's locked-FOLD coverage.
      */
     function acceptBondOwner(address operator) external;
 

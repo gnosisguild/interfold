@@ -2784,6 +2784,89 @@ describe("InterfoldToken", function () {
       );
     });
 
+    it("blocks bond-owner rotation that would detach locked FOLD", async function () {
+      const signers = await ethers.getSigners();
+      const [, beneficiary, newOwner, operator] = signers;
+      const beneficiaryAddress = await beneficiary.getAddress();
+      const newOwnerAddress = await newOwner.getAddress();
+      const operatorAddress = await operator.getAddress();
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        mintUsdcTo: [],
+      });
+      const { bondingRegistry, licenseToken } = sys;
+      const bondingRegistryAddress = await bondingRegistry.getAddress();
+
+      const policyId = ethers.encodeBytes32String("ROTATION_LOCK");
+      await licenseToken.createLockPolicy(policyId, {
+        holdUntil: 0n,
+        unlock: {
+          anchor: 1,
+          start: 0n,
+          cliffDuration: 0n,
+          vestDuration: 2n * YEAR,
+        },
+      });
+      const lockAmount = ethers.parseEther("1000");
+      await licenseToken.mintAllocations([
+        {
+          recipient: beneficiaryAddress,
+          amount: lockAmount,
+          policyId,
+          label: ethers.encodeBytes32String("rotation locked"),
+        },
+      ]);
+
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await licenseToken
+        .connect(beneficiary)
+        .approve(bondingRegistryAddress, lockAmount);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, lockAmount);
+      await bondingRegistry
+        .connect(beneficiary)
+        .proposeBondOwner(operatorAddress, newOwnerAddress);
+
+      await expect(
+        bondingRegistry.connect(newOwner).acceptBondOwner(operatorAddress),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "BondOwnerTransferViolatesLock",
+        )
+        .withArgs(beneficiaryAddress, lockAmount, 0);
+
+      expect(await bondingRegistry.bondOwnerOf(operatorAddress)).to.equal(
+        beneficiaryAddress,
+      );
+      expect(await bondingRegistry.totalBonded(beneficiaryAddress)).to.equal(
+        lockAmount,
+      );
+      expect(await bondingRegistry.totalBonded(newOwnerAddress)).to.equal(0);
+
+      await bondingRegistry
+        .connect(beneficiary)
+        .unbondLicenseFor(operatorAddress, lockAmount);
+      await time.increase(Number(await bondingRegistry.exitDelay()) + 1);
+      await bondingRegistry
+        .connect(beneficiary)
+        .claimExitsFor(operatorAddress, 0, lockAmount);
+
+      await expect(
+        bondingRegistry.connect(newOwner).acceptBondOwner(operatorAddress),
+      )
+        .to.emit(bondingRegistry, "BondOwnerSet")
+        .withArgs(operatorAddress, newOwnerAddress);
+      expect(await licenseToken.balanceOf(beneficiaryAddress)).to.equal(
+        lockAmount,
+      );
+      expect(
+        await licenseToken.transferableBalanceOf(beneficiaryAddress),
+      ).to.equal(0);
+    });
+
     it("after bonding locked tokens, cannot transfer below locked floor", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, slasher, operator] = signers;

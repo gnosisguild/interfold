@@ -15,7 +15,8 @@ Collateral ownership and operator identity are separate namespaces:
 - `bondOwnerOf(operator)` is the wallet that funds and controls collateral. The operator must set it
   to a nonzero address before any position action. It may choose itself, although a separate cold
   wallet or Safe is recommended. The current owner can later rotate ownership through a two-step
-  proposal and acceptance.
+  proposal and acceptance, provided removing the position's FOLD credit does not break the old
+  owner's locked-balance coverage.
 - Positions use only the owner-authorized `...For(operator)` calls. Ticket tokens are minted to the
   operator; exit payouts go only to the owner.
 - A bond owner may fund multiple operator keys. `totalBonded(owner)` aggregates its active and
@@ -161,7 +162,11 @@ Bond owner submits bondLicenseFor(operator, 50000)
 `BondingRegistry.totalBonded(account)` returns FOLD owned by that account across every operator
 position it funds, including pending exits that remain slashable/not returned. `InterfoldToken` uses
 this view for pooled wallet-level locks, so locked FOLD can be bonded without becoming transferable.
-A claim or license slash removes the exact amount from the owner's aggregate credit.
+A claim or license slash removes the exact amount from the owner's aggregate credit. Bond-owner
+acceptance checks that the previous owner's wallet balance plus its remaining aggregate bond still
+covers `lockedBalanceOf(previousOwner)` before migrating a position's credit. Without that check, a
+second wallet could claim the migrated bond as unlocked FOLD while the original lock holder remains
+empty.
 
 ### Activation check after bonding:
 

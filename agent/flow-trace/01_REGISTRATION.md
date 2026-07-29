@@ -28,7 +28,9 @@ This sends `BondingRegistry.setBondOwner(owner)` from the operator key and emits
 The operator may correct the address while the position is empty. Every collateral or registration
 action requires the configured owner; after funding or registration, rotation is two-step:
 `proposeBondOwner(operator, newOwner)` from the current owner, followed by
-`acceptBondOwner(operator)` from the proposed owner.
+`acceptBondOwner(operator)` from the proposed owner. Acceptance is blocked if moving the operator's
+FOLD credit would leave the previous owner's wallet-plus-remaining-bonds below its current locked
+FOLD balance.
 
 Only that owner can call the financial/lifecycle `...For(operator)` entry points: `bondLicenseFor`,
 `addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`, and
@@ -105,6 +107,7 @@ Operator runs:
    ├─ Allows owner == operator (separate owner recommended)
    ├─ Allows operator correction only while the position is empty
    ├─ Requires current-owner proposal + new-owner acceptance after funding
+   ├─ Preserves the previous owner's locked-FOLD coverage on acceptance
    ├─ Stores bondOwners[operator] = owner
    └─ Emits BondOwnerSet(operator, owner)
 ```
@@ -114,7 +117,11 @@ owner-authorized position calls fail.
 
 The current owner can later call `proposeBondOwner(operator, newOwner)`. Acceptance by `newOwner`
 moves the operator's active plus pending FOLD credit between `_bondedByOwner` accounts atomically
-and emits a new `BondOwnerSet`, so the event projection follows rotations.
+only when the previous owner's wallet balance plus its remaining bonds still covers
+`lockedBalanceOf(previousOwner)`. This prevents ownership rotation from converting bonded locked
+FOLD into an unlocked exit payout. A position backed entirely by locked FOLD can be rotated after
+the old owner exits and reclaims it, or after equivalent FOLD is returned to that owner's wallet.
+Successful acceptance emits a new `BondOwnerSet`, so the event projection follows rotations.
 
 ---
 

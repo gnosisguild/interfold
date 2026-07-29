@@ -34,6 +34,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   eligibility at `requestBlock-1` stays attributable. — `flow-trace/02`
 - `totalBonded(account)` = active FOLD license bond + pending-but-still-slashable exits; FOLD
   `_update` enforces locked-floor accounting. — `flow-trace/02`
+- A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
+  plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
+  `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
 - Bonding-asset rotation only after old-asset balances fully drain; replacement assets must be
   deployed contracts. — `flow-trace/02`; INDEX concern #23
 
