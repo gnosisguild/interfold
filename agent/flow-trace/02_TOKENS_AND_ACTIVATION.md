@@ -13,7 +13,8 @@ Collateral ownership and operator identity are separate namespaces:
 - `operator` is the hot node key and remains the registry, ticket, sortition, DKG, ban, and slash
   identity.
 - `bondOwnerOf(operator)` is the wallet that funds and controls collateral. The operator must set it
-  once to a distinct, nonzero address before any position action.
+  once to a nonzero address before any position action. It may choose itself, although a separate
+  cold wallet or Safe is recommended.
 - Positions use only the owner-authorized `...For(operator)` calls. Ticket tokens are minted to the
   operator; exit payouts go only to the owner.
 - A bond owner may fund multiple operator keys. `totalBonded(owner)` aggregates its active and
@@ -262,8 +263,8 @@ tFOLD tokens cannot be transferred between addresses. This ensures:
 
 ## Step 3: Unbond License
 
-Only the owner may call `unbondLicenseFor(operator, amount)`. The operator's hot key cannot queue
-the owner's FOLD for exit.
+Only the configured owner may call `unbondLicenseFor(operator, amount)`. With a separate owner, the
+operator's hot key cannot queue the owner's FOLD for exit.
 
 ```
 Bond owner submits unbondLicenseFor(operator, 10000)
@@ -343,8 +344,8 @@ Bond owner submits removeTicketBalanceFor(operator, rawAmount)
 ## Step 5: Claim Exits
 
 The owner calls `claimExitsFor(operator, ...)`; both ticket underlying and FOLD are paid to
-`bondOwnerOf(operator)`, never to the hot operator key. The exit queue remains keyed by operator so
-queued assets remain slashable against the correct protocol identity.
+`bondOwnerOf(operator)`, which may be the operator itself. The exit queue remains keyed by operator
+so queued assets remain slashable against the correct protocol identity.
 
 ```
 Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)

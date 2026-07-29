@@ -69,7 +69,7 @@ pub enum CiphernodeCommands {
     },
     /// Irreversibly authorize the wallet that will own this node's collateral
     SetBondOwner {
-        /// Cold wallet or Safe that will fund and control the bond
+        /// Wallet or Safe that controls the bond; a separate cold owner is recommended
         #[arg(long = "owner", value_name = "ADDRESS")]
         owner: String,
         #[command(flatten)]

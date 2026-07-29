@@ -242,25 +242,24 @@ describe("BondingRegistry", function () {
       );
     });
 
-    it("requires an explicit, distinct, immutable owner", async function () {
-      const { bondingRegistry } = await loadFixture(setup);
+    it("allows an explicit self-owned position while keeping the owner immutable", async function () {
+      const { bondingRegistry, licenseToken } = await loadFixture(setup);
       const signers = await ethers.getSigners();
       const operator = signers[7];
       const bondOwner = signers[8];
       const operatorAddress = await operator.getAddress();
       const bondOwnerAddress = await bondOwner.getAddress();
+      const registryAddress = await bondingRegistry.getAddress();
+      const bondAmount = LICENSE_REQUIRED_BOND;
 
       expect(await bondingRegistry.bondOwnerOf(operatorAddress)).to.equal(
         ethers.ZeroAddress,
       );
       await expect(
-        bondingRegistry.connect(operator).setBondOwner(operatorAddress),
+        bondingRegistry.connect(operator).setBondOwner(ethers.ZeroAddress),
       )
-        .to.be.revertedWithCustomError(
-          bondingRegistry,
-          "BondOwnerMustDifferFromOperator",
-        )
-        .withArgs(operatorAddress);
+        .to.be.revertedWithCustomError(bondingRegistry, "ZeroAddress")
+        .withArgs();
       await expect(
         bondingRegistry
           .connect(bondOwner)
@@ -269,15 +268,32 @@ describe("BondingRegistry", function () {
         .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
         .withArgs(bondOwnerAddress, operatorAddress);
       await expect(
-        bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress),
+        bondingRegistry.connect(operator).setBondOwner(operatorAddress),
       )
         .to.emit(bondingRegistry, "BondOwnerSet")
-        .withArgs(operatorAddress, bondOwnerAddress);
+        .withArgs(operatorAddress, operatorAddress);
+
+      await licenseToken.mint(
+        operatorAddress,
+        bondAmount,
+        ethers.encodeBytes32String("Self-owned operator"),
+      );
+      await licenseToken.connect(operator).approve(registryAddress, bondAmount);
+      await bondingRegistry
+        .connect(operator)
+        .bondLicenseFor(operatorAddress, bondAmount);
+
+      expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
+        bondAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operatorAddress)).to.equal(
+        bondAmount,
+      );
       await expect(
         bondingRegistry.connect(operator).setBondOwner(signers[9].address),
       )
         .to.be.revertedWithCustomError(bondingRegistry, "BondOwnerAlreadySet")
-        .withArgs(operatorAddress, bondOwnerAddress);
+        .withArgs(operatorAddress, operatorAddress);
     });
 
     it("aggregates owned FOLD and reduces the owner's lock on slash", async function () {

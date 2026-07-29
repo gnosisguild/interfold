@@ -67,9 +67,6 @@ interface IBondingRegistry {
     /// @notice Thrown when an operator attempts to replace an already-authorized bond owner.
     error BondOwnerAlreadySet(address operator, address bondOwner);
 
-    /// @notice Thrown when an operator attempts to own its own collateral.
-    error BondOwnerMustDifferFromOperator(address operator);
-
     // ======================
     // Events (Protocol-Named)
     // ======================
@@ -463,7 +460,7 @@ interface IBondingRegistry {
 
     /**
      * @notice Authorize a bond owner for the caller's operator key.
-     * @dev The owner must differ from the operator and cannot be changed.
+     * @dev The owner may be the operator itself and cannot be changed.
      */
     function setBondOwner(address bondOwner) external;
 

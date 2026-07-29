@@ -2,8 +2,9 @@
 
 ## Overview
 
-A ciphernode operator uses the CLI to configure local state, encrypt credentials, and authorize a
-separate bond owner. That owner wallet or Safe then funds and registers the operator on-chain.
+A ciphernode operator uses the CLI to configure local state, encrypt credentials, and authorize an
+immutable bond owner. A separate wallet or Safe is recommended, but the operator may explicitly
+choose itself. The configured owner then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
 `--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
@@ -23,15 +24,15 @@ interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
 ```
 
 This sends `BondingRegistry.setBondOwner(owner)` from the operator key and emits the typed
-`BondOwnerSet(operator, bondOwner)` event. The owner must be nonzero and different from the
-operator. The authorization is immutable, and every collateral or registration action requires it.
+`BondOwnerSet(operator, bondOwner)` event. The owner must be nonzero and may be the operator itself.
+The authorization is immutable, and every collateral or registration action requires it.
 
 Only that owner can call the financial/lifecycle `...For(operator)` entry points: `bondLicenseFor`,
 `addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`,
-`deregisterOperatorFor`, and `claimExitsFor`. The hot operator key cannot fund, withdraw,
-deregister, or claim the position. The node CLI intentionally exposes no bond, ticket, register, or
-exit transactions because its configured signer is the hot operator key; the owner wallet or Safe
-submits those calls through the owner interface.
+`deregisterOperatorFor`, and `claimExitsFor`. With the recommended separate-owner setup, the hot
+operator key cannot fund, withdraw, deregister, or claim the position. The node CLI intentionally
+exposes no bond, ticket, register, or exit transactions; the configured owner submits those calls
+through the owner interface.
 
 ---
 
@@ -99,7 +100,7 @@ Operator runs:
 │
 └─ BondingRegistry.setBondOwner(owner)
    ├─ Rejects the zero address
-   ├─ Rejects owner == operator
+   ├─ Allows owner == operator (separate owner recommended)
    ├─ Rejects a second assignment
    ├─ Stores bondOwners[operator] = owner
    └─ Emits BondOwnerSet(operator, owner)

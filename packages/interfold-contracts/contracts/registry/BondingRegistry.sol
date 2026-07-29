@@ -409,9 +409,6 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function setBondOwner(address bondOwner) external {
         require(bondOwner != address(0), ZeroAddress());
-        if (bondOwner == msg.sender) {
-            revert BondOwnerMustDifferFromOperator(msg.sender);
-        }
 
         address currentOwner = _bondOwnerOf[msg.sender];
         if (currentOwner != address(0)) {

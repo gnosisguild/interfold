@@ -10,12 +10,14 @@ operator. Make sure your node is already [running](./running) before proceeding.
 
 ## Prerequisites
 
-Registration uses two wallets:
+Registration supports one or two wallets:
 
 - The **operator key** runs the node and authorizes its bond owner once.
 - The **bond owner** holds FOLD and USDC and controls the position lifecycle.
 
-The two addresses must be different. Ensure the bond-owner wallet has:
+Using a separate cold wallet or Safe as the bond owner is strongly recommended so the running node
+does not hold the key controlling collateral. Self-ownership is supported if an operator prefers a
+single-wallet setup. Ensure the selected bond-owner wallet has:
 
 | Token                   | Amount Required                          | Purpose                      |
 | ----------------------- | ---------------------------------------- | ---------------------------- |
@@ -63,7 +65,8 @@ From the node's operator key, immutably authorize the wallet or Safe that will c
 interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 ```
 
-The owner must be nonzero and different from the operator. It cannot be changed after assignment.
+The owner must be nonzero and cannot be changed after assignment. It may equal the operator address,
+although a separate cold wallet or Safe is recommended.
 
 ### Step 3: Fund and Register the Operator
 
@@ -79,7 +82,8 @@ bondingRegistry.addTicketBalanceFor(operator, ticketAmount);
 ```
 
 The owner supplies the assets, while the operator address is added to the registry Merkle tree and
-receives non-transferable tFOLD. The hot operator key never controls the FOLD or USDC withdrawals.
+receives non-transferable tFOLD. With the recommended separate-owner setup, the hot operator key
+does not control FOLD or USDC withdrawals.
 
 The number of usable tickets is calculated as:
 
