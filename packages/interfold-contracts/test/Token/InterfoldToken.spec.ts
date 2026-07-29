@@ -2458,8 +2458,9 @@ describe("InterfoldToken", function () {
   describe("BondingRegistry integration", function () {
     it("bonded balance covers aggregate mixed locks without affecting grant accounting", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
+      const operatorAddress = await operator.getAddress();
       const slasherAddress = await slasher.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
@@ -2532,7 +2533,10 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, bondAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(bondAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, bondAmount);
 
       // Wallet = totalTokens - bondAmount = 1700 - 1000 = 700.
       expect(await licenseToken.balanceOf(beneficiaryAddress)).to.equal(
@@ -2556,9 +2560,10 @@ describe("InterfoldToken", function () {
 
     it("transferableBalanceOf counts bonded FOLD toward the locked floor", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const slasherAddress = await slasher.getAddress();
+      const operatorAddress = await operator.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
         setupOperators: 0,
@@ -2581,7 +2586,10 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, bondAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(bondAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, bondAmount);
 
       // Wallet balance is totalAmount - bondAmount, bonded = bondAmount.
       // No locks so everything is transferable.
@@ -2641,6 +2649,7 @@ describe("InterfoldToken", function () {
       const { bondingRegistry, licenseToken, owner } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
       const bondAmount = ethers.parseEther("100");
+      const [, operator] = await ethers.getSigners();
 
       await licenseToken.mint(
         await owner.getAddress(),
@@ -2651,14 +2660,20 @@ describe("InterfoldToken", function () {
         .connect(owner)
         .approve(bondingRegistryAddress, bondAmount);
       // Bonding transfer should succeed.
-      await bondingRegistry.connect(owner).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator)
+        .setBondOwner(await owner.getAddress());
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(await operator.getAddress(), bondAmount);
     });
 
     it("locked tokens can be bonded (pre-credit visible to token)", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const slasherAddress = await slasher.getAddress();
+      const operatorAddress = await operator.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
         setupOperators: 0,
@@ -2705,7 +2720,10 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, lockAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(lockAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, lockAmount);
 
       // After bonding: wallet = 0, locked ≈ 1000, bonded = 1000.
       // Bond covers lock, so no mustRetain.
@@ -2768,9 +2786,10 @@ describe("InterfoldToken", function () {
 
     it("after bonding locked tokens, cannot transfer below locked floor", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const slasherAddress = await slasher.getAddress();
+      const operatorAddress = await operator.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
         setupOperators: 0,
@@ -2807,7 +2826,10 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, bondAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(bondAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, bondAmount);
 
       // Wallet = 400, locked ≈ 1000, bonded = 600.
       // mustRetain = max(0, 1000 - 600) = 400.
@@ -2818,9 +2840,10 @@ describe("InterfoldToken", function () {
 
     it("slashing does not reduce locked balance", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const slasherAddress = await slasher.getAddress();
+      const operatorAddress = await operator.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
         setupOperators: 0,
@@ -2856,7 +2879,10 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, lockAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(lockAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, lockAmount);
 
       const lockedBefore =
         await licenseToken.lockedBalanceOf(beneficiaryAddress);
@@ -2867,7 +2893,7 @@ describe("InterfoldToken", function () {
       await bondingRegistry
         .connect(slasher)
         .slashLicenseBond(
-          beneficiaryAddress,
+          operatorAddress,
           slashAmount,
           ethers.encodeBytes32String("SLASH"),
         );
@@ -2885,9 +2911,10 @@ describe("InterfoldToken", function () {
 
     it("after slashing, incoming tokens are retained by lock-floor invariant", async function () {
       const signers = await ethers.getSigners();
-      const [, beneficiary, slasher] = signers;
+      const [, beneficiary, slasher, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const slasherAddress = await slasher.getAddress();
+      const operatorAddress = await operator.getAddress();
       const sys = await deployInterfoldSystem({
         useMockCiphernodeRegistry: true,
         setupOperators: 0,
@@ -2923,12 +2950,15 @@ describe("InterfoldToken", function () {
       await licenseToken
         .connect(beneficiary)
         .approve(bondingRegistryAddress, lockAmount);
-      await bondingRegistry.connect(beneficiary).bondLicense(lockAmount);
+      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
+      await bondingRegistry
+        .connect(beneficiary)
+        .bondLicenseFor(operatorAddress, lockAmount);
       const slashAmount = ethers.parseEther("500");
       await bondingRegistry
         .connect(slasher)
         .slashLicenseBond(
-          beneficiaryAddress,
+          operatorAddress,
           slashAmount,
           ethers.encodeBytes32String("SLASH"),
         );

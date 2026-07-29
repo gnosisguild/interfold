@@ -2,9 +2,8 @@
 
 ## Overview
 
-A ciphernode operator goes from zero to registered on-chain through a series of CLI commands that
-configure local state, encrypt credentials, and submit an on-chain transaction to the
-`BondingRegistry`.
+A ciphernode operator uses the CLI to configure local state, encrypt credentials, and authorize a
+separate bond owner. That owner wallet or Safe then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
 `--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
@@ -24,17 +23,15 @@ interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
 ```
 
 This sends `BondingRegistry.setBondOwner(owner)` from the operator key and emits the typed
-`BondOwnerSet(operator, bondOwner)` event. The authorization is immutable and requires an empty
-position, preventing a third party from assigning itself to an operator and preventing ownership
-changes while collateral is live or queued.
+`BondOwnerSet(operator, bondOwner)` event. The owner must be nonzero and different from the
+operator. The authorization is immutable, and every collateral or registration action requires it.
 
-After a distinct owner is set, only that owner can call the financial/lifecycle `...For(operator)`
-entry points: `bondLicenseFor`, `addTicketBalanceFor`, `registerOperatorFor`,
-`removeTicketBalanceFor`, `unbondLicenseFor`, `deregisterOperatorFor`, and `claimExitsFor`. The hot
-operator key cannot withdraw, deregister, or claim the bond. The CLI's legacy bond/register/exit
-commands fail early with an owner-wallet instruction in this mode. If no explicit owner is set,
-`bondOwnerOf(operator)` defaults to the operator and the existing self-owned CLI flow remains
-compatible.
+Only that owner can call the financial/lifecycle `...For(operator)` entry points: `bondLicenseFor`,
+`addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`,
+`deregisterOperatorFor`, and `claimExitsFor`. The hot operator key cannot fund, withdraw,
+deregister, or claim the position. The node CLI intentionally exposes no bond, ticket, register, or
+exit transactions because its configured signer is the hot operator key; the owner wallet or Safe
+submits those calls through the owner interface.
 
 ---
 
@@ -92,109 +89,53 @@ User runs: interfold ciphernode setup
 
 ---
 
-## Step 2: `interfold ciphernode register`
+## Step 2: Authorize the bond owner
 
-**File:** `crates/cli/src/ciphernode/lifecycle.rs` → `register()`
-
-### Prerequisites (must be done FIRST):
-
-- Setup completed (config + password + private key exist)
-- Self-owned mode: license bonded and tickets purchased with the ciphernode CLI (see Part 2)
-- Split mode: the operator first authorizes its owner, then the owner calls `bondLicenseFor`,
-  `addTicketBalanceFor`, and `registerOperatorFor` from the cold wallet or Safe
-
-The call trace below describes the backwards-compatible self-owned path. In split mode,
-`registerOperatorFor(operator)` executes the same internal registration logic with `operator`
-replacing `msg.sender`; authorization is checked against `bondOwnerOf(operator)`.
-
-### What happens call-by-call:
+**File:** `crates/cli/src/ciphernode/lifecycle.rs` → `set_bond_owner()`
 
 ```
-User runs: interfold ciphernode register [--chain default]
+Operator runs:
+  interfold ciphernode set-bond-owner --owner 0xCOLD_WALLET
 │
-├─ 1. ChainContext::new()
-│     ├─ Loads AppConfig from disk
-│     ├─ Selects chain config (by --chain name or first configured)
-│     ├─ Reads bonding_registry contract address from config
-│     ├─ Decrypts private key from keystore using Cipher
-│     ├─ Creates alloy EVM signer (SignerProvider)
-│     └─ Connects to BondingRegistryContract instance
-│
-├─ 2. BondingRegistryContract.registerOperator().send().await
-│     │
-│     │  ┌─── ON-CHAIN (BondingRegistry.sol) ───────────────────┐
-│     │  │                                                       │
-│     │  │  registerOperator() {                                 │
-│     │  │    1. Clears any previous exit request                │
-│     │  │    2. Checks: SlashingManager.isBanned(msg.sender)    │
-│     │  │       → REVERTS if banned                             │
-│     │  │    3. Checks: !operators[msg.sender].registered       │
-│     │  │       → REVERTS if already registered                 │
-│     │  │    4. Checks: operators[msg.sender].licenseBond       │
-│     │  │              >= licenseRequiredBond                    │
-│     │  │       → REVERTS if insufficient bond                  │
-│     │  │    5. Sets operators[msg.sender].registered = true    │
-│     │  │    6. Calls registry.addCiphernode(msg.sender)        │
-│     │  │       │                                               │
-│     │  │       │  ┌─ CiphernodeRegistryOwnable ──────────┐    │
-│     │  │       │  │  addCiphernode(node):                 │    │
-│     │  │       │  │    Inserts uint160(node) into         │    │
-│     │  │       │  │    Lean Incremental Merkle Tree (IMT) │    │
-│     │  │       │  │    Increments numCiphernodes          │    │
-│     │  │       │  │    Emits CiphernodeAdded(node)        │    │
-│     │  │       │  └───────────────────────────────────────┘    │
-│     │  │    7. Calls _updateOperatorStatus(msg.sender)         │
-│     │  │       │                                               │
-│     │  │       │  Activation check (ALL must be true):         │
-│     │  │       │  ✓ registered == true                         │
-│     │  │       │  ✓ not banned by an authorized slash manager  │
-│     │  │       │  ✓ licenseBond >= requiredBond * 80%          │
-│     │  │       │  ✓ ticketBalance / ticketPrice >= minTickets  │
-│     │  │       │                                               │
-│     │  │       │  If ALL true AND was not active:              │
-│     │  │       │    → active = true                            │
-│     │  │       │    → numActiveOperators++                     │
-│     │  │       │    → Emit OperatorActivationChanged(node,true)│
-│     │  │  }                                                    │
-│     │  └───────────────────────────────────────────────────────┘
-│     │
-├─ 3. Waits for transaction receipt
-│
-└─ OUTPUT: "Transaction hash: 0x..."
+└─ BondingRegistry.setBondOwner(owner)
+   ├─ Rejects the zero address
+   ├─ Rejects owner == operator
+   ├─ Rejects a second assignment
+   ├─ Stores bondOwners[operator] = owner
+   └─ Emits BondOwnerSet(operator, owner)
 ```
 
-### What the on-chain registration achieves:
-
-1. **IMT Insertion**: The node's address is now in the Incremental Merkle Tree. This tree is
-   snapshot at each E3 request to determine eligible committee members.
-2. **Active Status**: If bond and tickets meet thresholds, the node is active and eligible for
-   committee selection unless an authorized slashing manager has banned it.
-3. **Event Emission**: `CiphernodeAdded` and `OperatorActivationChanged` events are emitted, which
-   running ciphernodes pick up via their EVM readers.
+Until this transaction is mined, `bondOwnerOf(operator)` returns the zero address and all
+owner-authorized position calls fail.
 
 ---
 
-## Step 3: `interfold ciphernode activate`
+## Step 3: Owner-funded registration
 
-**File:** `crates/cli/src/ciphernode/lifecycle.rs` → `activate()`
+The bond owner wallet or Safe performs the on-chain position transactions. These transactions are
+not node CLI commands because the CLI contains only the hot operator key.
 
 ```
-User runs: interfold ciphernode activate
+Bond owner
 │
-└─ Currently delegates directly to register()
-   └─ Calls BondingRegistryContract.registerOperator()
+├─ licenseToken.approve(BondingRegistry, bondAmount)
+├─ BondingRegistry.bondLicenseFor(operator, bondAmount)
+├─ stablecoin.approve(InterfoldTicketToken, ticketAmount)
+├─ BondingRegistry.addTicketBalanceFor(operator, ticketAmount)
+└─ BondingRegistry.registerOperatorFor(operator)
+   ├─ Verifies msg.sender == bondOwnerOf(operator)
+   ├─ Verifies the operator is not banned or already registered
+   ├─ Verifies the operator has the required FOLD bond
+   ├─ Sets operators[operator].registered = true
+   ├─ Calls registry.addCiphernode(operator)
+   │  ├─ Inserts uint160(operator) into the Lean IMT
+   │  └─ Emits CiphernodeAdded(operator)
+   └─ Calls _updateOperatorStatus(operator)
+      └─ Activates when bond and ticket thresholds are met
 ```
 
-> **BUG / LIMITATION:** `activate()` simply calls `register()` which calls `registerOperator()`. The
-> contract has `require(!operators[msg.sender].registered, AlreadyRegistered())`, so calling
-> `activate` on an already-registered operator will **revert**. This command only works for
-> operators who were previously deregistered (and whose exit has unlocked) — it re-registers them.
->
-> There is currently **no on-chain function** to force re-evaluation of an operator's active status
-> without a state change. If an operator becomes inactive (e.g., ticket balance drops below
-> threshold) and later tops up tickets, the `_updateOperatorStatus()` call inside
-> `addTicketBalance()` or `bondLicense()` will automatically re-activate them. A standalone
-> "activate" trigger doesn't exist on the contract.
+The node's address—not the bond owner's—is inserted into the IMT, owns the tFOLD balance, and
+remains the committee and slashing identity.
 
 ---
 
@@ -205,7 +146,7 @@ User runs: interfold ciphernode activate
 ```
 User runs: interfold ciphernode status
 │
-├─ ChainContext::new() (same as register)
+├─ ChainContext::new()
 │
 ├─ Reads on-chain state (multiple view calls):
 │   ├─ operator.registered
@@ -265,9 +206,9 @@ CiphernodeRegistrySolReader detects CiphernodeAdded event
 ## Contract Interaction Diagram
 
 ```
-┌──────────────┐     registerOperator()     ┌──────────────────┐
-│   CLI/User   │ ──────────────────────────→ │  BondingRegistry │
-└──────────────┘                             └────────┬─────────┘
+┌────────────────┐ registerOperatorFor(operator) ┌──────────────────┐
+│ Bond owner/Safe│ ─────────────────────────────→ │  BondingRegistry │
+└────────────────┘                                └────────┬─────────┘
                                                       │
                                           addCiphernode(node)
                                                       │

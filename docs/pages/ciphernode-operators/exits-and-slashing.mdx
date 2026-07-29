@@ -99,10 +99,10 @@ To safely exit the ciphernode registry:
 
 ### Step 1: Deregister
 
-Request deregistration:
+From the bond-owner wallet or Safe, request deregistration for the operator:
 
-```bash
-interfold ciphernode deregister
+```solidity
+bondingRegistry.deregisterOperatorFor(operator);
 ```
 
 ### Step 2: Wait for Exit Delay
@@ -124,35 +124,33 @@ Look for "Exit pending" and "Pending exits" fields.
 
 ### Step 3: Claim Exits
 
-After the delay period:
+After the delay period, the bond owner claims both assets:
 
-```bash
-# Claim all pending exits
-interfold ciphernode license claim
-
-# Or specify maximum amounts
-interfold ciphernode license claim --max-ticket 100 --max-license 50
+```solidity
+bondingRegistry.claimExitsFor(operator, maxTicketAmount, maxLicenseAmount);
 ```
 
-### Cancel Exit
+The USDC and FOLD are paid to the bond owner, while the exit queue and any slashing remain keyed to
+the operator.
 
-To cancel an exit and return to active status:
+### Re-register
 
-```bash
-interfold ciphernode register
+After the prior exit has completed, the owner can fund and register the operator again:
+
+```solidity
+bondingRegistry.bondLicenseFor(operator, foldAmount);
+bondingRegistry.registerOperatorFor(operator);
 ```
 
-This clears the exit queue and re-registers you in the registry.
+## Actions Summary
 
-## CLI Commands Summary
-
-| Command                              | Description                        |
-| ------------------------------------ | ---------------------------------- |
-| `interfold ciphernode status`        | Check registration and exit status |
-| `interfold ciphernode deregister`    | Start exit process                 |
-| `interfold ciphernode license claim` | Claim unlocked exits               |
-| `interfold ciphernode register`      | Cancel exit and re-register        |
-| `interfold ciphernode deactivate`    | Withdraw stakes to become inactive |
+| Action                                           | Signer     | Description                        |
+| ------------------------------------------------ | ---------- | ---------------------------------- |
+| `interfold ciphernode status`                    | Operator   | Check registration and exit status |
+| `deregisterOperatorFor(operator)`                | Bond owner | Start the full exit process        |
+| `removeTicketBalanceFor(operator, amount)`       | Bond owner | Queue ticket collateral for exit   |
+| `unbondLicenseFor(operator, amount)`             | Bond owner | Queue FOLD for exit                |
+| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner | Claim unlocked assets              |
 
 ## Monitoring Checklist
 
@@ -209,7 +207,7 @@ To minimize slashing risk:
 | -------------- | ------------------------------------------- |
 | **Active**     | Monitor rewards, watch for slash proposals  |
 | **Slashing**   | Review policy, file appeal if allowed, wait |
-| **Exit Start** | Call deregister with proof                  |
+| **Exit Start** | Bond owner deregisters the operator         |
 | **Exit Wait**  | Wait 7 days (check `exitUnlocksAt`)         |
 | **Exit Claim** | Claim tickets and license                   |
 | **Post-Exit**  | Purge secrets, revoke access, document      |

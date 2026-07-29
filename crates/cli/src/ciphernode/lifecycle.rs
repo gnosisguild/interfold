@@ -5,31 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use alloy::primitives::U256;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use e3_console::{log, Console};
 use e3_utils::require_successful_receipt;
 
 use super::context::{parse_address, ChainContext};
-use super::utils::{ensure_self_managed, format_amount, parse_amount};
-
-pub(crate) async fn register(out: Console, ctx: &ChainContext) -> Result<()> {
-    ensure_self_managed(ctx).await?;
-    let receipt = ctx
-        .bonding()
-        .registerOperator()
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("register ciphernode", &receipt)?;
-    log!(
-        out,
-        "Registered ciphernode on {} (tx: {:#x})",
-        ctx.chain_label(),
-        receipt.transaction_hash
-    );
-    Ok(())
-}
+use super::utils::format_amount;
 
 pub(crate) async fn set_bond_owner(out: Console, ctx: &ChainContext, owner: &str) -> Result<()> {
     let owner = parse_address(owner)?;
@@ -47,88 +28,6 @@ pub(crate) async fn set_bond_owner(out: Console, ctx: &ChainContext, owner: &str
         owner,
         ctx.operator(),
         receipt.transaction_hash
-    );
-    Ok(())
-}
-
-pub(crate) async fn deregister(out: Console, ctx: &ChainContext) -> Result<()> {
-    ensure_self_managed(ctx).await?;
-    let receipt = ctx
-        .bonding()
-        .deregisterOperator()
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("deregister ciphernode", &receipt)?;
-    log!(
-        out,
-        "Deregistration requested (tx: {:#x})",
-        receipt.transaction_hash
-    );
-    Ok(())
-}
-
-pub(crate) async fn activate(out: Console, ctx: &ChainContext) -> Result<()> {
-    register(out, ctx).await
-}
-
-pub(crate) async fn deactivate(
-    out: Console,
-    ctx: &ChainContext,
-    ticket_amount: Option<String>,
-    license_amount: Option<String>,
-) -> Result<()> {
-    ensure_self_managed(ctx).await?;
-    if ticket_amount.is_none() && license_amount.is_none() {
-        bail!(
-            "Provide --tickets and/or --license to specify what should be withdrawn for deactivation"
-        );
-    }
-
-    if let Some(amount) = ticket_amount {
-        let ticket_contract = ctx.ticket_token_address().await?;
-        let decimals = ctx.erc20(ticket_contract).decimals().call().await?;
-        let parsed = parse_amount(&amount, decimals)?;
-        let receipt = ctx
-            .bonding()
-            .removeTicketBalance(parsed)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        require_successful_receipt("remove ticket balance", &receipt)?;
-        log!(
-            out,
-            "Removed {} tickets (tx: {:#x})",
-            amount,
-            receipt.transaction_hash
-        );
-    }
-
-    if let Some(amount) = license_amount {
-        let license = ctx.license_token_address().await?;
-        let decimals = ctx.erc20(license).decimals().call().await?;
-        let parsed = parse_amount(&amount, decimals)?;
-        let receipt = ctx
-            .bonding()
-            .unbondLicense(parsed)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        require_successful_receipt("unbond license", &receipt)?;
-        log!(
-            out,
-            "Queued {} FOLD for exit (tx: {:#x})",
-            amount,
-            receipt.transaction_hash
-        );
-    }
-
-    log!(
-        out,
-        "Submitted deactivation transactions; monitor exit delays before claiming."
     );
     Ok(())
 }
@@ -157,7 +56,11 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext) -> Result<()> {
 
     log!(out, "Ciphernode status on {}:", ctx.chain_label());
     log!(out, "  Operator key: {:#x}", operator);
-    log!(out, "  Bond owner: {:#x}", bond_owner);
+    if bond_owner.is_zero() {
+        log!(out, "  Bond owner: not configured");
+    } else {
+        log!(out, "  Bond owner: {:#x}", bond_owner);
+    }
     log!(out, "  Registered: {}", is_registered);
     log!(out, "  Active: {}", is_active);
     log!(out, "  Exit pending: {}", has_exit);

@@ -67,8 +67,8 @@ interface IBondingRegistry {
     /// @notice Thrown when an operator attempts to replace an already-authorized bond owner.
     error BondOwnerAlreadySet(address operator, address bondOwner);
 
-    /// @notice Thrown when bond ownership is configured after an operator position exists.
-    error BondOwnerRequiresEmptyPosition(address operator);
+    /// @notice Thrown when an operator attempts to own its own collateral.
+    error BondOwnerMustDifferFromOperator(address operator);
 
     // ======================
     // Events (Protocol-Named)
@@ -278,7 +278,7 @@ interface IBondingRegistry {
 
     /**
      * @notice Get the wallet that owns and controls an operator's collateral.
-     * @dev Defaults to the operator itself until a distinct owner is authorized.
+     * @dev Returns address(0) until the operator authorizes a distinct owner.
      */
     function bondOwnerOf(address operator) external view returns (address);
 
@@ -432,20 +432,9 @@ interface IBondingRegistry {
     // ======================
 
     /**
-     * @notice Register as an operator (callable by licensed operators)
-     * @dev Requires sufficient license bond and calls registry
-     */
-    function registerOperator() external;
-
-    /**
      * @notice Register an operator whose collateral is controlled by the caller.
      */
     function registerOperatorFor(address operator) external;
-
-    /**
-     * @notice Deregister as an operator and remove from IMT
-     */
-    function deregisterOperator() external;
 
     /**
      * @notice Deregister an operator whose collateral is controlled by the caller.
@@ -453,23 +442,9 @@ interface IBondingRegistry {
     function deregisterOperatorFor(address operator) external;
 
     /**
-     * @notice Increase operator's ticket balance by depositing tokens
-     * @param amount Amount of ticket tokens to deposit
-     * @dev Requires approval for ticket token transfer
-     */
-    function addTicketBalance(uint256 amount) external;
-
-    /**
      * @notice Increase an operator's ticket balance using the bond owner's funds.
      */
     function addTicketBalanceFor(address operator, uint256 amount) external;
-
-    /**
-     * @notice Decrease operator's ticket balance by withdrawing tokens
-     * @param amount Amount of ticket tokens to withdraw
-     * @dev Reverts if operator is in any active committee
-     */
-    function removeTicketBalance(uint256 amount) external;
 
     /**
      * @notice Queue ticket collateral owned by the caller for withdrawal.
@@ -477,23 +452,9 @@ interface IBondingRegistry {
     function removeTicketBalanceFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Bond license tokens to become eligible for registration
-     * @param amount Amount of license tokens to bond
-     * @dev Requires approval for license token transfer
-     */
-    function bondLicense(uint256 amount) external;
-
-    /**
      * @notice Bond license tokens for an operator using the bond owner's funds.
      */
     function bondLicenseFor(address operator, uint256 amount) external;
-
-    /**
-     * @notice Unbond license tokens
-     * @param amount Amount of license tokens to unbond
-     * @dev Reverts if operator is in any active committee or still registered
-     */
-    function unbondLicense(uint256 amount) external;
 
     /**
      * @notice Queue license collateral owned by the caller for withdrawal.
@@ -502,23 +463,13 @@ interface IBondingRegistry {
 
     /**
      * @notice Authorize a bond owner for the caller's operator key.
-     * @dev May only be called before any position exists and cannot be changed.
+     * @dev The owner must differ from the operator and cannot be changed.
      */
     function setBondOwner(address bondOwner) external;
 
     // ======================
     // Claim Functions
     // ======================
-
-    /**
-     * @notice Claim operator's ticket balance and license bond
-     * @param maxTicketAmount Maximum amount of ticket tokens to claim
-     * @param maxLicenseAmount Maximum amount of license tokens to claim
-     */
-    function claimExits(
-        uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
-    ) external;
 
     /**
      * @notice Claim an operator's matured exits to its bond owner.

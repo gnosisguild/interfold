@@ -153,28 +153,34 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     const setupOperator = async (operator: Signer) => {
       const operatorAddress = await operator.getAddress();
+      const bondOwnerAddress = await computeProvider.getAddress();
       const ticketTokenAddress = await bondingRegistry.ticketToken();
       const ticketAmount = ethers.parseUnits("100", 6);
 
       await foldToken.mint(
-        operatorAddress,
+        bondOwnerAddress,
         ethers.parseEther("10000"),
         ethers.encodeBytes32String("Test allocation"),
       );
-      await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
+      await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
+      await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
       await foldToken
-        .connect(operator)
+        .connect(computeProvider)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
-        .connect(operator)
-        .bondLicense(ethers.parseEther("1000"));
-      await bondingRegistry.connect(operator).registerOperator();
+        .connect(computeProvider)
+        .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+      await bondingRegistry
+        .connect(computeProvider)
+        .registerOperatorFor(operatorAddress);
 
       await usdcToken
-        .connect(operator)
+        .connect(computeProvider)
         .approve(ticketTokenAddress, ticketAmount);
-      await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(computeProvider)
+        .addTicketBalanceFor(operatorAddress, ticketAmount);
     };
 
     return {
@@ -1568,6 +1574,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         interfold,
         e3RefundManager,
         registry,
+        usdcToken,
         makeRequest,
         operator1,
         operator2,
@@ -1578,6 +1585,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator1);
       await setupOperator(operator2);
       await setupOperator(operator3);
+      await usdcToken.mint(
+        await operator1.getAddress(),
+        ethers.parseUnits("10000", 6),
+      );
       await makeRequest(operator1);
 
       await registry.connect(operator1).submitTicket(0, 1);

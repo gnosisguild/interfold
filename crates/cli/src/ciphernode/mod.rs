@@ -9,10 +9,8 @@ use clap::{Args, Subcommand};
 use e3_config::AppConfig;
 
 mod context;
-mod license;
 mod lifecycle;
 pub mod setup;
-mod tickets;
 mod utils;
 
 use context::ChainContext;
@@ -69,49 +67,11 @@ pub enum CiphernodeCommands {
         #[arg(long, conflicts_with = "private_key")]
         private_key_stdin: bool,
     },
-    /// Manage FOLD license tokens and bonding state
-    License {
-        #[command(subcommand)]
-        command: LicenseCommands,
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
-    /// Manage collateral tickets backed by the stable token
-    Tickets {
-        #[command(subcommand)]
-        command: TicketCommands,
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
-    /// Register the current operator in the bonding registry
-    Register {
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
     /// Irreversibly authorize the wallet that will own this node's collateral
     SetBondOwner {
         /// Cold wallet or Safe that will fund and control the bond
         #[arg(long = "owner", value_name = "ADDRESS")]
         owner: String,
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
-    /// Request deregistration from the bonding registry
-    Deregister {
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
-    /// Force the registry to recompute activation for the node
-    Activate {
-        #[command(flatten)]
-        chain: ChainArgs,
-    },
-    /// Intentionally deactivate by withdrawing tickets and/or license stake
-    Deactivate {
-        #[arg(long = "tickets", value_name = "AMOUNT")]
-        ticket_amount: Option<String>,
-        #[arg(long = "license", value_name = "AMOUNT")]
-        license_amount: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
@@ -122,74 +82,11 @@ pub enum CiphernodeCommands {
     },
 }
 
-#[derive(Subcommand, Clone, Debug)]
-pub enum LicenseCommands {
-    /// Bond FOLD into the bonding registry
-    Bond {
-        #[arg(long = "amount")]
-        amount: String,
-    },
-    /// Unbond FOLD (moves stake to the exit queue)
-    Unbond {
-        #[arg(long = "amount")]
-        amount: String,
-    },
-    /// Claim any unlocked exits
-    Claim {
-        #[arg(long = "max-ticket")]
-        max_ticket: Option<String>,
-        #[arg(long = "max-license")]
-        max_license: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum TicketCommands {
-    /// Deposit stablecoins to mint tickets
-    Buy {
-        #[arg(long = "amount")]
-        amount: String,
-    },
-    /// Burn tickets by withdrawing the underlying stablecoin
-    Burn {
-        #[arg(long = "amount")]
-        amount: String,
-    },
-}
-
 pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConfig) -> Result<()> {
     match command {
-        CiphernodeCommands::License { chain, command } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            license::execute(out, &ctx, command).await?
-        }
-        CiphernodeCommands::Tickets { chain, command } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            tickets::execute(out, &ctx, command).await?
-        }
-        CiphernodeCommands::Register { chain } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::register(out, &ctx).await?
-        }
         CiphernodeCommands::SetBondOwner { chain, owner } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
             lifecycle::set_bond_owner(out, &ctx, &owner).await?
-        }
-        CiphernodeCommands::Deregister { chain } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::deregister(out, &ctx).await?
-        }
-        CiphernodeCommands::Activate { chain } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::activate(out, &ctx).await?
-        }
-        CiphernodeCommands::Deactivate {
-            chain,
-            ticket_amount,
-            license_amount,
-        } => {
-            let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::deactivate(out, &ctx, ticket_amount, license_amount).await?
         }
         CiphernodeCommands::Status { chain } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;

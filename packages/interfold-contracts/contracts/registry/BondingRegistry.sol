@@ -296,17 +296,12 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function bondOwnerOf(address operator) public view returns (address) {
-        address explicitOwner = _explicitBondOwnerOf[operator];
-        return explicitOwner == address(0) ? operator : explicitOwner;
+        return _bondOwnerOf[operator];
     }
 
     /// @inheritdoc IBondingRegistry
     function totalBonded(address account) external view returns (uint256) {
-        (, uint256 pendingLicense) = _exits.getPendingAmounts(account);
-        uint256 selfOwnedBond = bondOwnerOf(account) == account
-            ? operators[account].licenseBond + pendingLicense
-            : 0;
-        return selfOwnedBond + _delegatedBondedByOwner[account];
+        return _bondedByOwner[account];
     }
 
     /// @inheritdoc IBondingRegistry
@@ -414,36 +409,17 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function setBondOwner(address bondOwner) external {
         require(bondOwner != address(0), ZeroAddress());
+        if (bondOwner == msg.sender) {
+            revert BondOwnerMustDifferFromOperator(msg.sender);
+        }
 
-        address currentOwner = _explicitBondOwnerOf[msg.sender];
+        address currentOwner = _bondOwnerOf[msg.sender];
         if (currentOwner != address(0)) {
             revert BondOwnerAlreadySet(msg.sender, currentOwner);
         }
 
-        Operator storage op = operators[msg.sender];
-        (uint256 pendingTicket, uint256 pendingLicense) = _exits
-            .getPendingAmounts(msg.sender);
-        if (
-            op.registered ||
-            op.licenseBond != 0 ||
-            ticketToken.balanceOf(msg.sender) != 0 ||
-            pendingTicket != 0 ||
-            pendingLicense != 0
-        ) {
-            revert BondOwnerRequiresEmptyPosition(msg.sender);
-        }
-
-        _explicitBondOwnerOf[msg.sender] = bondOwner;
+        _bondOwnerOf[msg.sender] = bondOwner;
         emit BondOwnerSet(msg.sender, bondOwner);
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function registerOperator()
-        external
-        noExitInProgress(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _registerOperator(msg.sender);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -474,16 +450,6 @@ contract BondingRegistry is
         registry.addCiphernode(operator);
 
         _updateOperatorStatus(operator);
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function deregisterOperator()
-        external
-        noExitInProgress(msg.sender)
-        noOpenSlashProposal(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _deregisterOperator(msg.sender);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -544,13 +510,6 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function addTicketBalance(
-        uint256 amount
-    ) external noExitInProgress(msg.sender) onlyBondOwner(msg.sender) {
-        _addTicketBalance(msg.sender, amount);
-    }
-
-    /// @inheritdoc IBondingRegistry
     function addTicketBalanceFor(
         address operator,
         uint256 amount
@@ -572,18 +531,6 @@ contract BondingRegistry is
         );
 
         _updateOperatorStatus(operator);
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function removeTicketBalance(
-        uint256 amount
-    )
-        external
-        noExitInProgress(msg.sender)
-        noOpenSlashProposal(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _removeTicketBalance(msg.sender, amount);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -621,36 +568,11 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function bondLicense(
-        uint256 amount
-    )
-        external
-        nonReentrant
-        noExitInProgress(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _bondLicense(msg.sender, msg.sender, amount);
-    }
-
-    /// @inheritdoc IBondingRegistry
     function bondLicenseFor(
         address operator,
         uint256 amount
     ) external nonReentrant noExitInProgress(operator) onlyBondOwner(operator) {
-        _bondLicense(operator, msg.sender, amount);
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function unbondLicense(
-        uint256 amount
-    )
-        external
-        nonReentrant
-        noExitInProgress(msg.sender)
-        noOpenSlashProposal(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _unbondLicense(msg.sender, amount);
+        _bondLicense(operator, amount);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -690,19 +612,6 @@ contract BondingRegistry is
     // ======================
     // Claim Functions
     // ======================
-
-    /// @inheritdoc IBondingRegistry
-    function claimExits(
-        uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
-    )
-        external
-        nonReentrant
-        noOpenSlashProposal(msg.sender)
-        onlyBondOwner(msg.sender)
-    {
-        _claimExits(msg.sender, maxTicketAmount, maxLicenseAmount);
-    }
 
     /// @inheritdoc IBondingRegistry
     function claimExitsFor(
@@ -1168,21 +1077,15 @@ contract BondingRegistry is
     // Internal Functions
     // ======================
 
-    function _bondLicense(
-        address operator,
-        address bondOwner,
-        uint256 amount
-    ) internal {
+    function _bondLicense(address operator, uint256 amount) internal {
         require(operator != address(0), ZeroAddress());
         require(amount != 0, ZeroAmount());
 
         operators[operator].licenseBond += amount;
-        if (bondOwner != operator) {
-            _delegatedBondedByOwner[bondOwner] += amount;
-        }
+        _bondedByOwner[msg.sender] += amount;
 
         uint256 balanceBefore = licenseToken.balanceOf(address(this));
-        licenseToken.safeTransferFrom(bondOwner, address(this), amount);
+        licenseToken.safeTransferFrom(msg.sender, address(this), amount);
         uint256 actualReceived = licenseToken.balanceOf(address(this)) -
             balanceBefore;
         require(actualReceived == amount, InvalidAmount());
@@ -1200,9 +1103,7 @@ contract BondingRegistry is
 
     function _decreaseDelegatedBond(address operator, uint256 amount) internal {
         address bondOwner = bondOwnerOf(operator);
-        if (bondOwner != operator) {
-            _delegatedBondedByOwner[bondOwner] -= amount;
-        }
+        _bondedByOwner[bondOwner] -= amount;
     }
 
     function _checkBondOwner(address operator) internal view {
@@ -1311,15 +1212,11 @@ contract BondingRegistry is
             interfaceId == type(IERC165).interfaceId;
     }
 
-    /// @dev Explicit owner authorized by an operator. Zero preserves the
-    ///      backwards-compatible self-owned position.
-    mapping(address operator => address bondOwner) private _explicitBondOwnerOf;
+    /// @dev Explicit, distinct owner authorized by an operator. Zero means unset.
+    mapping(address operator => address bondOwner) private _bondOwnerOf;
 
-    /// @dev Aggregate license collateral owned by an account but assigned to
-    ///      distinct operator keys. Self-owned collateral is read directly from
-    ///      the operator position in {totalBonded}.
-    mapping(address bondOwner => uint256 amount)
-        private _delegatedBondedByOwner;
+    /// @dev Aggregate license collateral owned by an account across operator keys.
+    mapping(address bondOwner => uint256 amount) private _bondedByOwner;
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase

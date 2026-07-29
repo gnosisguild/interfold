@@ -37,7 +37,7 @@
           "type": "address"
         }
       ],
-      "name": "BondOwnerRequiresEmptyPosition",
+      "name": "BondOwnerMustDifferFromOperator",
       "type": "error"
     },
     {
@@ -523,19 +523,6 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "addTicketBalance",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "address",
           "name": "operator",
           "type": "address"
@@ -605,19 +592,6 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "bondLicense",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "address",
           "name": "operator",
           "type": "address"
@@ -655,24 +629,6 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "maxTicketAmount",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "maxLicenseAmount",
-          "type": "uint256"
-        }
-      ],
-      "name": "claimExits",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "address",
           "name": "operator",
           "type": "address"
@@ -689,13 +645,6 @@
         }
       ],
       "name": "claimExitsFor",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "deregisterOperator",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1077,13 +1026,6 @@
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "registerOperator",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
           "internalType": "address",
@@ -1092,19 +1034,6 @@
         }
       ],
       "name": "registerOperatorFor",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "removeTicketBalance",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1500,19 +1429,6 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "unbondLicense",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "address",
           "name": "operator",
           "type": "address"
@@ -1553,5 +1469,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-b2847414f0df6ea15431a7d530b2270960d70629"
+  "buildInfoId": "solc-0_8_28-2072d8f8dcc45373b5307a123e1bc84c183cc8a0"
 }

@@ -24,12 +24,27 @@ const REASON_UNBOND = ethers.encodeBytes32String("UNBOND");
 
 describe("BondingRegistry", function () {
   const SEVEN_DAYS_IN_SECONDS = SEVEN_DAYS;
+  let operator1Address: string;
+  let operator2Address: string;
+  let operator1OwnerAddress: string;
+  let operator2OwnerAddress: string;
+
   async function setup() {
     const signers = await ethers.getSigners();
-    const [owner, operator1, operator2, treasury, notTheOwner] = signers;
+    const [
+      owner,
+      operatorKey1,
+      operatorKey2,
+      treasury,
+      notTheOwner,
+      operator1,
+      operator2,
+    ] = signers;
     const ownerAddress = await owner.getAddress();
-    const operator1Address = await operator1.getAddress();
-    const operator2Address = await operator2.getAddress();
+    operator1Address = await operatorKey1.getAddress();
+    operator2Address = await operatorKey2.getAddress();
+    operator1OwnerAddress = await operator1.getAddress();
+    operator2OwnerAddress = await operator2.getAddress();
     const treasuryAddress = await treasury.getAddress();
 
     const sys = await deployInterfoldSystem({
@@ -50,11 +65,15 @@ describe("BondingRegistry", function () {
     // Spec consumes the (mock) registry typed as the real interface.
     const ciphernodeRegistry = mockCiphernodeRegistry!;
 
-    // ── Mint Tokens (owner + spec-local operator1/operator2) ─────────────────
+    // ── Mint Tokens (owner + spec-local bond owners) ────────────────────────
     const USDC_AMOUNT = ethers.parseUnits("100000", 6);
     const LICENSE_AMOUNT = ethers.parseEther("100000");
 
-    for (const address of [ownerAddress, operator1Address, operator2Address]) {
+    for (const address of [
+      ownerAddress,
+      operator1OwnerAddress,
+      operator2OwnerAddress,
+    ]) {
       await usdcToken.mint(address, USDC_AMOUNT);
       await licenseToken.mint(
         address,
@@ -62,6 +81,12 @@ describe("BondingRegistry", function () {
         ethers.encodeBytes32String("Test allocation"),
       );
     }
+    await bondingRegistry
+      .connect(operatorKey1)
+      .setBondOwner(operator1OwnerAddress);
+    await bondingRegistry
+      .connect(operatorKey2)
+      .setBondOwner(operator2OwnerAddress);
 
     return {
       bondingRegistry,
@@ -71,6 +96,8 @@ describe("BondingRegistry", function () {
       slashingManager,
       ciphernodeRegistry,
       owner,
+      operatorKey1,
+      operatorKey2,
       operator1,
       operator2,
       treasury,
@@ -78,6 +105,8 @@ describe("BondingRegistry", function () {
       ownerAddress,
       operator1Address,
       operator2Address,
+      operator1OwnerAddress,
+      operator2OwnerAddress,
       treasuryAddress,
     };
   }
@@ -114,85 +143,92 @@ describe("BondingRegistry", function () {
         ticketToken,
         licenseToken,
         usdcToken,
+        operatorKey1,
         operator1,
-        operator2: bondOwner,
         operator1Address,
-        operator2Address: bondOwnerAddress,
+        operator1OwnerAddress,
       } = await loadFixture(setup);
       const registryAddress = await bondingRegistry.getAddress();
       const ticketTokenAddress = await ticketToken.getAddress();
       const bondAmount = LICENSE_REQUIRED_BOND;
       const ticketAmount = ethers.parseUnits("100", 6);
 
-      await expect(
-        bondingRegistry.connect(operator1).setBondOwner(bondOwnerAddress),
-      )
-        .to.emit(bondingRegistry, "BondOwnerSet")
-        .withArgs(operator1Address, bondOwnerAddress);
       expect(await bondingRegistry.bondOwnerOf(operator1Address)).to.equal(
-        bondOwnerAddress,
+        operator1OwnerAddress,
       );
 
       await licenseToken
-        .connect(bondOwner)
+        .connect(operator1)
         .approve(registryAddress, bondAmount);
       await bondingRegistry
-        .connect(bondOwner)
+        .connect(operator1)
         .bondLicenseFor(operator1Address, bondAmount);
       expect(await bondingRegistry.getLicenseBond(operator1Address)).to.equal(
         bondAmount,
       );
-      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
         bondAmount,
       );
       expect(await bondingRegistry.totalBonded(operator1Address)).to.equal(0);
 
       await bondingRegistry
-        .connect(bondOwner)
+        .connect(operator1)
         .registerOperatorFor(operator1Address);
       expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
 
       await usdcToken
-        .connect(bondOwner)
+        .connect(operator1)
         .approve(ticketTokenAddress, ticketAmount);
       await bondingRegistry
-        .connect(bondOwner)
+        .connect(operator1)
         .addTicketBalanceFor(operator1Address, ticketAmount);
       expect(await ticketToken.balanceOf(operator1Address)).to.equal(
         ticketAmount,
       );
-      expect(await ticketToken.balanceOf(bondOwnerAddress)).to.equal(0);
+      expect(await ticketToken.balanceOf(operator1OwnerAddress)).to.equal(0);
 
-      await expect(bondingRegistry.connect(operator1).unbondLicense(1))
+      await expect(
+        bondingRegistry
+          .connect(operatorKey1)
+          .unbondLicenseFor(operator1Address, 1),
+      )
         .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
         .withArgs(operator1Address, operator1Address);
-      await expect(bondingRegistry.connect(operator1).deregisterOperator())
+      await expect(
+        bondingRegistry
+          .connect(operatorKey1)
+          .deregisterOperatorFor(operator1Address),
+      )
         .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
         .withArgs(operator1Address, operator1Address);
 
       await bondingRegistry
-        .connect(bondOwner)
+        .connect(operator1)
         .deregisterOperatorFor(operator1Address);
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
-      const ownerUsdcBefore = await usdcToken.balanceOf(bondOwnerAddress);
-      const ownerFoldBefore = await licenseToken.balanceOf(bondOwnerAddress);
+      const ownerUsdcBefore = await usdcToken.balanceOf(operator1OwnerAddress);
+      const ownerFoldBefore = await licenseToken.balanceOf(
+        operator1OwnerAddress,
+      );
       const operatorUsdcBefore = await usdcToken.balanceOf(operator1Address);
       const operatorFoldBefore = await licenseToken.balanceOf(operator1Address);
 
       await expect(
-        bondingRegistry.connect(operator1).claimExits(ticketAmount, bondAmount),
+        bondingRegistry
+          .connect(operatorKey1)
+          .claimExitsFor(operator1Address, ticketAmount, bondAmount),
       )
         .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
         .withArgs(operator1Address, operator1Address);
       await bondingRegistry
-        .connect(bondOwner)
+        .connect(operator1)
         .claimExitsFor(operator1Address, ticketAmount, bondAmount);
 
-      expect(await usdcToken.balanceOf(bondOwnerAddress)).to.equal(
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
         ownerUsdcBefore + ticketAmount,
       );
-      expect(await licenseToken.balanceOf(bondOwnerAddress)).to.equal(
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
         ownerFoldBefore + bondAmount,
       );
       expect(await usdcToken.balanceOf(operator1Address)).to.equal(
@@ -201,55 +237,62 @@ describe("BondingRegistry", function () {
       expect(await licenseToken.balanceOf(operator1Address)).to.equal(
         operatorFoldBefore,
       );
-      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(0);
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
+        0,
+      );
     });
 
-    it("makes owner authorization immutable and only permits an empty position", async function () {
-      const {
-        bondingRegistry,
-        licenseToken,
-        ownerAddress,
-        operator1,
-        operator2,
-        operator1Address,
-        operator2Address,
-      } = await loadFixture(setup);
+    it("requires an explicit, distinct, immutable owner", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      const signers = await ethers.getSigners();
+      const operator = signers[7];
+      const bondOwner = signers[8];
+      const operatorAddress = await operator.getAddress();
+      const bondOwnerAddress = await bondOwner.getAddress();
 
-      await bondingRegistry.connect(operator1).setBondOwner(ownerAddress);
+      expect(await bondingRegistry.bondOwnerOf(operatorAddress)).to.equal(
+        ethers.ZeroAddress,
+      );
       await expect(
-        bondingRegistry.connect(operator1).setBondOwner(operator2Address),
-      )
-        .to.be.revertedWithCustomError(bondingRegistry, "BondOwnerAlreadySet")
-        .withArgs(operator1Address, ownerAddress);
-
-      await licenseToken
-        .connect(operator2)
-        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
-      await bondingRegistry
-        .connect(operator2)
-        .bondLicense(LICENSE_REQUIRED_BOND);
-      await expect(
-        bondingRegistry.connect(operator2).setBondOwner(ownerAddress),
+        bondingRegistry.connect(operator).setBondOwner(operatorAddress),
       )
         .to.be.revertedWithCustomError(
           bondingRegistry,
-          "BondOwnerRequiresEmptyPosition",
+          "BondOwnerMustDifferFromOperator",
         )
-        .withArgs(operator2Address);
+        .withArgs(operatorAddress);
+      await expect(
+        bondingRegistry
+          .connect(bondOwner)
+          .bondLicenseFor(operatorAddress, LICENSE_REQUIRED_BOND),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(bondOwnerAddress, operatorAddress);
+      await expect(
+        bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress),
+      )
+        .to.emit(bondingRegistry, "BondOwnerSet")
+        .withArgs(operatorAddress, bondOwnerAddress);
+      await expect(
+        bondingRegistry.connect(operator).setBondOwner(signers[9].address),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "BondOwnerAlreadySet")
+        .withArgs(operatorAddress, bondOwnerAddress);
     });
 
-    it("aggregates delegated FOLD and reduces the owner's lock on slash", async function () {
+    it("aggregates owned FOLD and reduces the owner's lock on slash", async function () {
       const {
         bondingRegistry,
         licenseToken,
         owner,
-        operator1,
-        operator2,
         notTheOwner,
         ownerAddress,
-        operator1Address,
-        operator2Address,
       } = await loadFixture(setup);
+      const signers = await ethers.getSigners();
+      const operator1 = signers[7];
+      const operator2 = signers[8];
+      const operator1Address = await operator1.getAddress();
+      const operator2Address = await operator2.getAddress();
       const bondAmount = LICENSE_REQUIRED_BOND;
       const slashAmount = bondAmount / 2n;
 
@@ -284,22 +327,9 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.totalBonded(operator1Address)).to.equal(0);
       expect(await bondingRegistry.totalBonded(operator2Address)).to.equal(0);
     });
-
-    it("rejects callers that were not authorized by the operator", async function () {
-      const { bondingRegistry, owner, operator1Address, ownerAddress } =
-        await loadFixture(setup);
-
-      await expect(
-        bondingRegistry
-          .connect(owner)
-          .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND),
-      )
-        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
-        .withArgs(ownerAddress, operator1Address);
-    });
   });
 
-  describe("bondLicense()", function () {
+  describe("bondLicenseFor()", function () {
     it("allows operators to bond license tokens", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
@@ -309,21 +339,20 @@ describe("BondingRegistry", function () {
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
 
-      await expect(bondingRegistry.connect(operator1).bondLicense(bondAmount))
+      await expect(
+        bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, bondAmount),
+      )
         .to.emit(bondingRegistry, "LicenseBondUpdated")
-        .withArgs(
-          await operator1.getAddress(),
-          bondAmount,
-          bondAmount,
-          REASON_BOND,
-        );
+        .withArgs(operator1Address, bondAmount, bondAmount, REASON_BOND);
 
-      expect(
-        await bondingRegistry.getLicenseBond(await operator1.getAddress()),
-      ).to.equal(bondAmount);
-      expect(
-        await bondingRegistry.totalBonded(await operator1.getAddress()),
-      ).to.equal(bondAmount);
+      expect(await bondingRegistry.getLicenseBond(operator1Address)).to.equal(
+        bondAmount,
+      );
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
+        bondAmount,
+      );
       expect(await bondingRegistry.totalLicenseLiability()).to.equal(
         bondAmount,
       );
@@ -333,7 +362,7 @@ describe("BondingRegistry", function () {
       const { bondingRegistry, operator1 } = await loadFixture(setup);
 
       await expect(
-        bondingRegistry.connect(operator1).bondLicense(0),
+        bondingRegistry.connect(operator1).bondLicenseFor(operator1Address, 0),
       ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAmount");
     });
 
@@ -345,17 +374,25 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
 
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
       await expect(
-        bondingRegistry.connect(operator1).bondLicense(bondAmount),
+        bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, bondAmount),
       ).to.be.revertedWithCustomError(bondingRegistry, "ExitInProgress");
     });
 
@@ -369,20 +406,24 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount1);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount1);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount1);
 
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount2);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount2);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount2);
 
-      expect(
-        await bondingRegistry.getLicenseBond(await operator1.getAddress()),
-      ).to.equal(bondAmount1 + bondAmount2);
+      expect(await bondingRegistry.getLicenseBond(operator1Address)).to.equal(
+        bondAmount1 + bondAmount2,
+      );
     });
   });
 
-  describe("unbondLicense()", function () {
+  describe("unbondLicenseFor()", function () {
     it("allows operators to unbond license tokens", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
@@ -393,29 +434,35 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
 
       await expect(
-        bondingRegistry.connect(operator1).unbondLicense(unbondAmount),
+        bondingRegistry
+          .connect(operator1)
+          .unbondLicenseFor(operator1Address, unbondAmount),
       )
         .to.emit(bondingRegistry, "LicenseBondUpdated")
         .withArgs(
-          await operator1.getAddress(),
+          operator1Address,
           -unbondAmount,
           bondAmount - unbondAmount,
           REASON_UNBOND,
         );
 
-      expect(
-        await bondingRegistry.getLicenseBond(await operator1.getAddress()),
-      ).to.equal(bondAmount - unbondAmount);
+      expect(await bondingRegistry.getLicenseBond(operator1Address)).to.equal(
+        bondAmount - unbondAmount,
+      );
     });
 
     it("reverts if amount is zero", async function () {
       const { bondingRegistry, operator1 } = await loadFixture(setup);
 
       await expect(
-        bondingRegistry.connect(operator1).unbondLicense(0),
+        bondingRegistry
+          .connect(operator1)
+          .unbondLicenseFor(operator1Address, 0),
       ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAmount");
     });
 
@@ -425,7 +472,7 @@ describe("BondingRegistry", function () {
       await expect(
         bondingRegistry
           .connect(operator1)
-          .unbondLicense(ethers.parseEther("100")),
+          .unbondLicenseFor(operator1Address, ethers.parseEther("100")),
       ).to.be.revertedWithCustomError(bondingRegistry, "InsufficientBalance");
     });
 
@@ -439,23 +486,26 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
 
-      await bondingRegistry.connect(operator1).unbondLicense(unbondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, unbondAmount);
 
-      const [, licensePending] = await bondingRegistry.pendingExits(
-        await operator1.getAddress(),
-      );
+      const [, licensePending] =
+        await bondingRegistry.pendingExits(operator1Address);
       expect(licensePending).to.equal(unbondAmount);
-      expect(
-        await bondingRegistry.totalBonded(await operator1.getAddress()),
-      ).to.equal(bondAmount);
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
+        bondAmount,
+      );
     });
 
     it("slashes active and pending license bond from totalBonded", async function () {
       const { bondingRegistry, licenseToken, operator1, notTheOwner } =
         await loadFixture(setup);
-      const operatorAddress = await operator1.getAddress();
+      const operatorAddress = operator1Address;
       const slashReason = ethers.encodeBytes32String("TEST_SLASH");
 
       const bondAmount = ethers.parseEther("1000");
@@ -465,8 +515,12 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).unbondLicense(unbondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, unbondAmount);
       await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
 
       await expect(
@@ -480,7 +534,7 @@ describe("BondingRegistry", function () {
       const [, pendingLicense] =
         await bondingRegistry.pendingExits(operatorAddress);
       expect(pendingLicense).to.equal(bondAmount - slashAmount);
-      expect(await bondingRegistry.totalBonded(operatorAddress)).to.equal(
+      expect(await bondingRegistry.totalBonded(operator1OwnerAddress)).to.equal(
         bondAmount - slashAmount,
       );
       expect(await bondingRegistry.slashedLicenseBond()).to.equal(slashAmount);
@@ -490,7 +544,7 @@ describe("BondingRegistry", function () {
     });
   });
 
-  describe("registerOperator()", function () {
+  describe("registerOperatorFor()", function () {
     it("allows properly licensed operators to register", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
@@ -499,21 +553,25 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
 
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.true;
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .false;
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
     });
 
     it("reverts if not properly licensed", async function () {
       const { bondingRegistry, operator1 } = await loadFixture(setup);
 
       await expect(
-        bondingRegistry.connect(operator1).registerOperator(),
+        bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address),
       ).to.be.revertedWithCustomError(bondingRegistry, "NotLicensed");
     });
 
@@ -525,11 +583,17 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       await expect(
-        bondingRegistry.connect(operator1).registerOperator(),
+        bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address),
       ).to.be.revertedWithCustomError(bondingRegistry, "AlreadyRegistered");
     });
 
@@ -541,26 +605,35 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
-      expect(
-        await bondingRegistry.hasExitInProgress(await operator1.getAddress()),
-      ).to.be.false;
+      expect(await bondingRegistry.hasExitInProgress(operator1Address)).to.be
+        .false;
     });
   });
 
-  describe("deregisterOperator()", function () {
+  describe("deregisterOperatorFor()", function () {
     it("allows registered operators to deregister", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
@@ -569,29 +642,34 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const latestTime = await time.latest();
-      await expect(bondingRegistry.connect(operator1).deregisterOperator())
+      await expect(
+        bondingRegistry
+          .connect(operator1)
+          .deregisterOperatorFor(operator1Address),
+      )
         .to.emit(bondingRegistry, "CiphernodeDeregistrationRequested")
-        .withArgs(
-          await operator1.getAddress(),
-          latestTime + SEVEN_DAYS_IN_SECONDS + 1,
-        );
+        .withArgs(operator1Address, latestTime + SEVEN_DAYS_IN_SECONDS + 1);
 
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.false;
-      expect(
-        await bondingRegistry.hasExitInProgress(await operator1.getAddress()),
-      ).to.be.true;
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.false;
+      expect(await bondingRegistry.hasExitInProgress(operator1Address)).to.be
+        .true;
     });
 
     it("reverts if not registered", async function () {
       const { bondingRegistry, operator1 } = await loadFixture(setup);
 
       await expect(
-        bondingRegistry.connect(operator1).deregisterOperator(),
+        bondingRegistry
+          .connect(operator1)
+          .deregisterOperatorFor(operator1Address),
       ).to.be.revertedWithCustomError(bondingRegistry, "NotRegistered");
     });
 
@@ -608,25 +686,33 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       const [ticketPending, licensePending] =
-        await bondingRegistry.pendingExits(await operator1.getAddress());
+        await bondingRegistry.pendingExits(operator1Address);
       expect(ticketPending).to.equal(ticketAmount);
       expect(licensePending).to.equal(bondAmount);
     });
   });
 
-  describe("addTicketBalance()", function () {
+  describe("addTicketBalanceFor()", function () {
     it("allows registered operators to add ticket balance", async function () {
       const {
         bondingRegistry,
@@ -640,8 +726,12 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
@@ -649,19 +739,16 @@ describe("BondingRegistry", function () {
         .approve(await ticketToken.getAddress(), ticketAmount);
 
       await expect(
-        bondingRegistry.connect(operator1).addTicketBalance(ticketAmount),
+        bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount),
       )
         .to.emit(bondingRegistry, "TicketBalanceUpdated")
-        .withArgs(
-          await operator1.getAddress(),
-          ticketAmount,
-          ticketAmount,
-          REASON_DEPOSIT,
-        );
+        .withArgs(operator1Address, ticketAmount, ticketAmount, REASON_DEPOSIT);
 
-      expect(
-        await bondingRegistry.getTicketBalance(await operator1.getAddress()),
-      ).to.equal(ticketAmount);
+      expect(await bondingRegistry.getTicketBalance(operator1Address)).to.equal(
+        ticketAmount,
+      );
     });
 
     it("activates operator when minimum balance is reached", async function () {
@@ -677,8 +764,12 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("50", 6);
       await usdcToken
@@ -686,13 +777,14 @@ describe("BondingRegistry", function () {
         .approve(await ticketToken.getAddress(), ticketAmount);
 
       await expect(
-        bondingRegistry.connect(operator1).addTicketBalance(ticketAmount),
+        bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount),
       )
         .to.emit(bondingRegistry, "OperatorActivationChanged")
-        .withArgs(await operator1.getAddress(), true);
+        .withArgs(operator1Address, true);
 
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .true;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.true;
     });
 
     it("reverts if not registered", async function () {
@@ -701,7 +793,7 @@ describe("BondingRegistry", function () {
       await expect(
         bondingRegistry
           .connect(operator1)
-          .addTicketBalance(ethers.parseUnits("100", 6)),
+          .addTicketBalanceFor(operator1Address, ethers.parseUnits("100", 6)),
       ).to.be.revertedWithCustomError(bondingRegistry, "NotRegistered");
     });
 
@@ -713,16 +805,22 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       await expect(
-        bondingRegistry.connect(operator1).addTicketBalance(0),
+        bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, 0),
       ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAmount");
     });
   });
 
-  describe("removeTicketBalance()", function () {
+  describe("removeTicketBalanceFor()", function () {
     it("allows operators to remove ticket balance", async function () {
       const {
         bondingRegistry,
@@ -736,30 +834,38 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       const removeAmount = ethers.parseUnits("30", 6);
       await expect(
-        bondingRegistry.connect(operator1).removeTicketBalance(removeAmount),
+        bondingRegistry
+          .connect(operator1)
+          .removeTicketBalanceFor(operator1Address, removeAmount),
       )
         .to.emit(bondingRegistry, "TicketBalanceUpdated")
         .withArgs(
-          await operator1.getAddress(),
+          operator1Address,
           -removeAmount,
           ticketAmount - removeAmount,
           REASON_WITHDRAW,
         );
 
-      expect(
-        await bondingRegistry.getTicketBalance(await operator1.getAddress()),
-      ).to.equal(ticketAmount - removeAmount);
+      expect(await bondingRegistry.getTicketBalance(operator1Address)).to.equal(
+        ticketAmount - removeAmount,
+      );
     });
 
     it("queues removed tickets for exit", async function () {
@@ -775,23 +881,28 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       const removeAmount = ethers.parseUnits("30", 6);
       await bondingRegistry
         .connect(operator1)
-        .removeTicketBalance(removeAmount);
+        .removeTicketBalanceFor(operator1Address, removeAmount);
 
-      const [ticketPending] = await bondingRegistry.pendingExits(
-        await operator1.getAddress(),
-      );
+      const [ticketPending] =
+        await bondingRegistry.pendingExits(operator1Address);
       expect(ticketPending).to.equal(removeAmount);
     });
 
@@ -808,24 +919,31 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("60", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       const removeAmount = ethers.parseUnits("20", 6);
       await expect(
-        bondingRegistry.connect(operator1).removeTicketBalance(removeAmount),
+        bondingRegistry
+          .connect(operator1)
+          .removeTicketBalanceFor(operator1Address, removeAmount),
       )
         .to.emit(bondingRegistry, "OperatorActivationChanged")
-        .withArgs(await operator1.getAddress(), false);
+        .withArgs(operator1Address, false);
 
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .false;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
     });
 
     it("reverts if insufficient balance", async function () {
@@ -836,18 +954,25 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       await expect(
         bondingRegistry
           .connect(operator1)
-          .removeTicketBalance(ethers.parseUnits("100", 6)),
+          .removeTicketBalanceFor(
+            operator1Address,
+            ethers.parseUnits("100", 6),
+          ),
       ).to.be.revertedWithCustomError(bondingRegistry, "InsufficientBalance");
     });
   });
 
-  describe("claimExits()", function () {
+  describe("claimExitsFor()", function () {
     it("allows claiming after exit delay", async function () {
       const {
         bondingRegistry,
@@ -861,36 +986,44 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
       const initialUSDCBalance = await usdcToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
       const initialFOLDBalance = await licenseToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
 
       await bondingRegistry
         .connect(operator1)
-        .claimExits(ticketAmount, bondAmount);
+        .claimExitsFor(operator1Address, ticketAmount, bondAmount);
 
-      expect(await usdcToken.balanceOf(await operator1.getAddress())).to.equal(
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
         initialUSDCBalance + ticketAmount,
       );
-      expect(
-        await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialFOLDBalance + bondAmount);
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
+        initialFOLDBalance + bondAmount,
+      );
     });
 
     it("reverts if exit not ready", async function () {
@@ -901,13 +1034,21 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       await expect(
-        bondingRegistry.connect(operator1).claimExits(0, bondAmount),
+        bondingRegistry
+          .connect(operator1)
+          .claimExitsFor(operator1Address, 0, bondAmount),
       ).to.be.revertedWithCustomError(bondingRegistry, "ExitNotReady");
     });
 
@@ -924,16 +1065,24 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
 
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
@@ -941,25 +1090,25 @@ describe("BondingRegistry", function () {
       const partialLicense = ethers.parseEther("500");
 
       const initialUSDCBalance = await usdcToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
       const initialFOLDBalance = await licenseToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
 
       await bondingRegistry
         .connect(operator1)
-        .claimExits(partialTickets, partialLicense);
+        .claimExitsFor(operator1Address, partialTickets, partialLicense);
 
-      expect(await usdcToken.balanceOf(await operator1.getAddress())).to.equal(
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
         initialUSDCBalance + partialTickets,
       );
-      expect(
-        await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialFOLDBalance + partialLicense);
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
+        initialFOLDBalance + partialLicense,
+      );
 
       const [remainingTickets, remainingLicense] =
-        await bondingRegistry.pendingExits(await operator1.getAddress());
+        await bondingRegistry.pendingExits(operator1Address);
       expect(remainingTickets).to.equal(ticketAmount - partialTickets);
       expect(remainingLicense).to.equal(bondAmount - partialLicense);
     });
@@ -974,10 +1123,11 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), minBond);
-      await bondingRegistry.connect(operator1).bondLicense(minBond);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, minBond);
 
-      expect(await bondingRegistry.isLicensed(await operator1.getAddress())).to
-        .be.true;
+      expect(await bondingRegistry.isLicensed(operator1Address)).to.be.true;
     });
 
     it("returns false when operator has insufficient license bond", async function () {
@@ -988,10 +1138,11 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), insufficientBond);
-      await bondingRegistry.connect(operator1).bondLicense(insufficientBond);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, insufficientBond);
 
-      expect(await bondingRegistry.isLicensed(await operator1.getAddress())).to
-        .be.false;
+      expect(await bondingRegistry.isLicensed(operator1Address)).to.be.false;
     });
   });
 
@@ -1009,26 +1160,32 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
-      expect(
-        await bondingRegistry.availableTickets(await operator1.getAddress()),
-      ).to.equal(10);
+      expect(await bondingRegistry.availableTickets(operator1Address)).to.equal(
+        10,
+      );
     });
 
     it("returns 0 when operator has zero ticket balance", async function () {
-      const { bondingRegistry, operator1 } = await loadFixture(setup);
+      const { bondingRegistry } = await loadFixture(setup);
 
-      expect(
-        await bondingRegistry.availableTickets(await operator1.getAddress()),
-      ).to.equal(0);
+      expect(await bondingRegistry.availableTickets(operator1Address)).to.equal(
+        0,
+      );
     });
   });
 
@@ -1122,21 +1279,25 @@ describe("BondingRegistry", function () {
         operator1,
         operator2,
       } = await loadFixture(setup);
-      const operator = await operator1.getAddress();
+      const operator = operator1Address;
 
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
       await bondingRegistry
         .connect(operator1)
-        .bondLicense(LICENSE_REQUIRED_BOND);
-      await bondingRegistry.connect(operator1).registerOperator();
+        .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       expect(await bondingRegistry.isActive(operator)).to.equal(true);
       expect(await bondingRegistry.numActiveOperators()).to.equal(1);
@@ -1219,24 +1380,29 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("60", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .true;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.true;
 
       const unbondAmount = LICENSE_REQUIRED_BOND / 5n;
-      await bondingRegistry.connect(operator1).unbondLicense(unbondAmount + 1n);
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .false;
-      expect(await bondingRegistry.isLicensed(await operator1.getAddress())).to
-        .be.false;
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, unbondAmount + 1n);
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
+      expect(await bondingRegistry.isLicensed(operator1Address)).to.be.false;
     });
 
     it("handles multiple operators with different states", async function () {
@@ -1253,30 +1419,36 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       await licenseToken
         .connect(operator2)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator2).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator2).registerOperator();
+      await bondingRegistry
+        .connect(operator2)
+        .bondLicenseFor(operator2Address, bondAmount);
+      await bondingRegistry
+        .connect(operator2)
+        .registerOperatorFor(operator2Address);
 
       const ticketAmount = ethers.parseUnits("60", 6);
       await usdcToken
         .connect(operator2)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator2).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator2)
+        .addTicketBalanceFor(operator2Address, ticketAmount);
 
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.true;
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .false;
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
 
-      expect(await bondingRegistry.isRegistered(await operator2.getAddress()))
-        .to.be.true;
-      expect(await bondingRegistry.isActive(await operator2.getAddress())).to.be
-        .true;
+      expect(await bondingRegistry.isRegistered(operator2Address)).to.be.true;
+      expect(await bondingRegistry.isActive(operator2Address)).to.be.true;
     });
 
     it("handles the complete operator lifecycle", async function () {
@@ -1292,58 +1464,63 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      expect(await bondingRegistry.isLicensed(await operator1.getAddress())).to
-        .be.true;
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      expect(await bondingRegistry.isLicensed(operator1Address)).to.be.true;
 
-      await bondingRegistry.connect(operator1).registerOperator();
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.true;
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .false;
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
 
       const ticketAmount = ethers.parseUnits("60", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
-      expect(await bondingRegistry.isActive(await operator1.getAddress())).to.be
-        .true;
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
+      expect(await bondingRegistry.isActive(operator1Address)).to.be.true;
 
-      await bondingRegistry.connect(operator1).deregisterOperator();
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.false;
-      expect(
-        await bondingRegistry.hasExitInProgress(await operator1.getAddress()),
-      ).to.be.true;
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operator1Address);
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.false;
+      expect(await bondingRegistry.hasExitInProgress(operator1Address)).to.be
+        .true;
 
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
 
       const initialUSDCBalance = await usdcToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
       const initialFOLDBalance = await licenseToken.balanceOf(
-        await operator1.getAddress(),
+        operator1OwnerAddress,
       );
 
       await bondingRegistry
         .connect(operator1)
-        .claimExits(ticketAmount, bondAmount);
+        .claimExitsFor(operator1Address, ticketAmount, bondAmount);
 
-      expect(await usdcToken.balanceOf(await operator1.getAddress())).to.equal(
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
         initialUSDCBalance + ticketAmount,
       );
-      expect(
-        await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialFOLDBalance + bondAmount);
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
+        initialFOLDBalance + bondAmount,
+      );
 
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
-      expect(await bondingRegistry.isRegistered(await operator1.getAddress()))
-        .to.be.true;
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
     });
   });
 
@@ -1381,18 +1558,26 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       // Tranche #0 (license-only): unbond half the license.
       const halfLicense = bondAmount / 2n;
-      await bondingRegistry.connect(operator1).unbondLicense(halfLicense);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, halfLicense);
 
       // Advance time so the next tranche gets a distinct unlock timestamp
       // (otherwise it would merge into tranche #0 and defeat the test).
@@ -1400,7 +1585,9 @@ describe("BondingRegistry", function () {
 
       // Tranche #1 (ticket-only): remove some tickets to the queue.
       const halfTickets = ticketAmount / 2n;
-      await bondingRegistry.connect(operator1).removeTicketBalance(halfTickets);
+      await bondingRegistry
+        .connect(operator1)
+        .removeTicketBalanceFor(operator1Address, halfTickets);
 
       // Wait past the exit delay so both tranches are unlocked.
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
@@ -1408,7 +1595,9 @@ describe("BondingRegistry", function () {
       // Claim ONLY the ticket leg from tranche #1.
       // Pre-fix: this would advance the shared head past tranche #0 too,
       // permanently stranding `halfLicense` in the queue.
-      await bondingRegistry.connect(operator1).claimExits(halfTickets, 0);
+      await bondingRegistry
+        .connect(operator1)
+        .claimExitsFor(operator1Address, halfTickets, 0);
 
       // The license leg from tranche #0 must still be claimable.
       const [pendingTickets, pendingLicense] =
@@ -1416,9 +1605,11 @@ describe("BondingRegistry", function () {
       expect(pendingTickets).to.equal(0n);
       expect(pendingLicense).to.equal(halfLicense);
 
-      const beforeLicense = await licenseToken.balanceOf(operator1Address);
-      await bondingRegistry.connect(operator1).claimExits(0, halfLicense);
-      expect(await licenseToken.balanceOf(operator1Address)).to.equal(
+      const beforeLicense = await licenseToken.balanceOf(operator1OwnerAddress);
+      await bondingRegistry
+        .connect(operator1)
+        .claimExitsFor(operator1Address, 0, halfLicense);
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
         beforeLicense + halfLicense,
       );
     });
@@ -1442,12 +1633,18 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       // Tranche A: unbond with the original 7-day delay.
       const quarter = bondAmount / 4n;
-      await bondingRegistry.connect(operator1).unbondLicense(quarter);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, quarter);
 
       // Governance reduces the exit delay to 1 day.
       const ONE_DAY = 24 * 60 * 60;
@@ -1456,7 +1653,9 @@ describe("BondingRegistry", function () {
       await time.increase(60);
 
       // Tranche B: unbond under the new 1-day delay.
-      await bondingRegistry.connect(operator1).unbondLicense(quarter);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, quarter);
 
       // Move ~2 days forward — B is unlocked, A is still locked.
       await time.increase(2 * ONE_DAY);
@@ -1466,9 +1665,11 @@ describe("BondingRegistry", function () {
       // Pre-fix `break` would have returned 0; with `continue` we see B.
       expect(pendingLicense).to.equal(quarter);
 
-      const beforeLicense = await licenseToken.balanceOf(operator1Address);
-      await bondingRegistry.connect(operator1).claimExits(0, quarter);
-      expect(await licenseToken.balanceOf(operator1Address)).to.equal(
+      const beforeLicense = await licenseToken.balanceOf(operator1OwnerAddress);
+      await bondingRegistry
+        .connect(operator1)
+        .claimExitsFor(operator1Address, 0, quarter);
+      expect(await licenseToken.balanceOf(operator1OwnerAddress)).to.equal(
         beforeLicense + quarter,
       );
 
@@ -1501,33 +1702,47 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
-      await bondingRegistry.connect(operator1).registerOperator();
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("10000", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       // Fill the queue with 64 distinct-timestamp tranches.
       const step = ethers.parseUnits("1", 6);
       for (let i = 0; i < 64; i++) {
-        await bondingRegistry.connect(operator1).removeTicketBalance(step);
+        await bondingRegistry
+          .connect(operator1)
+          .removeTicketBalanceFor(operator1Address, step);
         // Ensure next unlock timestamp differs (no merge).
         await time.increase(1);
       }
 
       // The 65th must revert.
       await expect(
-        bondingRegistry.connect(operator1).removeTicketBalance(step),
+        bondingRegistry
+          .connect(operator1)
+          .removeTicketBalanceFor(operator1Address, step),
       ).to.be.revertedWithCustomError(bondingRegistry, "TooManyTranches");
 
       // Draining the 64 ticket-only tranches must release all 64 slots even
       // though the independent license head never advanced through them.
       await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
-      await bondingRegistry.connect(operator1).claimExits(step * 64n, 0);
-      await bondingRegistry.connect(operator1).removeTicketBalance(step);
+      await bondingRegistry
+        .connect(operator1)
+        .claimExitsFor(operator1Address, step * 64n, 0);
+      await bondingRegistry
+        .connect(operator1)
+        .removeTicketBalanceFor(operator1Address, step);
     });
 
     it("AUD-M08: blocks license-token rotation until old liabilities are drained", async function () {
@@ -1538,7 +1753,9 @@ describe("BondingRegistry", function () {
       await licenseToken
         .connect(operator1)
         .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
 
       const FoTFactory = await ethers.getContractFactory(
         "MockFeeOnTransferToken",
@@ -1616,14 +1833,18 @@ describe("BondingRegistry", function () {
         .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
       await bondingRegistry
         .connect(operator1)
-        .bondLicense(LICENSE_REQUIRED_BOND);
-      await bondingRegistry.connect(operator1).registerOperator();
+        .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
 
       const ticketAmount = ethers.parseUnits("10", 6);
       await usdcToken
         .connect(operator1)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
 
       const replacement = await (
         await ethers.getContractFactory("InterfoldTicketToken")
