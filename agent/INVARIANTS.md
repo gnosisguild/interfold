@@ -125,6 +125,20 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
 
+### Noir / Barretenberg compatibility
+
+- Treat Nargo, the Rust Noir crates, witness serialization, Barretenberg, circuit release archives,
+  verification keys, and generated Solidity verifiers as one compatibility unit. The current unit
+  is Nargo and Rust Noir `1.0.0-beta.22` with Barretenberg `5.0.0`. — `.github/workflows/ci.yml`;
+  `crates/zk-prover/versions.json`; `Cargo.toml`
+- Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
+  with `bincode`; Barretenberg 5 accepts the beta.22 MessagePack format markers, not the legacy
+  marker. — `crates/zk-prover/src/witness.rs`
+- Rebuild and publish circuit archives with the pinned Nargo version before changing
+  `required_circuits_version`. Regenerate all dependent verification keys and Solidity verifiers
+  with the pinned Barretenberg version. A release archive from an older serialization format can
+  pass checksum verification but fail during ACIR decoding or proof generation.
+
 ### DKG / threshold structure
 
 - SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
