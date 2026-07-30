@@ -25,9 +25,7 @@ use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::Computation;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs as ShareComputationInputs,
-};
+use e3_zk_helpers::dkg::share_computation::Inputs as ShareComputationInputs;
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuit;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuit;
@@ -36,7 +34,8 @@ use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
 use e3_zk_prover::{
-    generate_sequential_c3_fold, prove_chunked_share_computation, CircuitVariant, Provable, ZkProver,
+    generate_sequential_c3_fold, prove_chunked_share_computation, CircuitVariant, Provable,
+    ZkProver,
 };
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
 use node_fold_witness::{
@@ -225,22 +224,12 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("C1 pk_generation proof");
 
-    let c2a_proof = prove_chunked_share_computation(
-        &prover,
-        preset,
-        &share_sk,
-        c2a_e3,
-        &artifacts_dir,
-    )
-    .expect("C2a chunked proof");
-    let c2b_proof = prove_chunked_share_computation(
-        &prover,
-        preset,
-        &share_esm,
-        c2b_e3,
-        &artifacts_dir,
-    )
-    .expect("C2b chunked proof");
+    let c2a_proof =
+        prove_chunked_share_computation(&prover, preset, &share_sk, c2a_e3, &artifacts_dir)
+            .expect("C2a chunked proof");
+    let c2b_proof =
+        prove_chunked_share_computation(&prover, preset, &share_esm, c2b_e3, &artifacts_dir)
+            .expect("C2b chunked proof");
 
     let c2a_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),

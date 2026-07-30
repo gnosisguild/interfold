@@ -308,15 +308,14 @@ for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then
 The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
 
-The chunked C2 migration path is available through the internal
-`sk_share_computation_chunk`, `e_sm_share_computation_chunk`, `sc_chunk_batch`,
-`sk_share_computation_final`, and `e_sm_share_computation_final`
-circuits. Chunk witnesses keep secret and share slices private, expose only the authenticated chunk
-index and commitments, and reconstruct ordered chunk roots. The final wrapper also exposes a
-`compute_vk_hash` lineage for the chunk and batch verification keys. The current
-`ThresholdKeyshare` request now uses the chunk, batch, and final wrappers. Outer C2 aggregation and
-the final SK/ESM VKs now consume the final-wrapper roots. C1, C3, and C4 use the same
-party/limb-specific chunk-root commitment scheme for their cross-phase checks.
+The chunked C2 migration path is available through the internal `sk_share_computation_chunk`,
+`e_sm_share_computation_chunk`, `sc_chunk_batch`, `sk_share_computation_final`, and
+`e_sm_share_computation_final` circuits. Chunk witnesses keep secret and share slices private,
+expose only the authenticated chunk index and commitments, and reconstruct ordered chunk roots. The
+final wrapper also exposes a `compute_vk_hash` lineage for the chunk and batch verification keys.
+The current `ThresholdKeyshare` request now uses the chunk, batch, and final wrappers. Outer C2
+aggregation and the final SK/ESM VKs now consume the final-wrapper roots. C1, C3, and C4 use the
+same party/limb-specific chunk-root commitment scheme for their cross-phase checks.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
