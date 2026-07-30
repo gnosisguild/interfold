@@ -15,9 +15,13 @@ use noirc_abi::{input_parser::InputValue, InputMap};
 
 const FIELD_SIZE: usize = 32;
 
-/// Matches `bb_proof_verification::RECURSIVE_ZK_PROOF_LENGTH` (`UltraHonkZKProof`).
+/// Matches `bb_proof_verification::UltraHonkZKProof` for the pinned Noir toolchain.
 #[allow(dead_code)]
-pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 508;
+pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 458;
+
+/// Matches `bb_proof_verification::UltraHonkProof` for the pinned Noir toolchain.
+#[allow(dead_code)]
+pub const ULTRA_HONK_PROOF_FIELD_COUNT: usize = 410;
 
 /// Converts raw ZK proof bytes to field strings for `UltraHonkZKProof` witness input.
 ///
@@ -25,7 +29,20 @@ pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 508;
 /// type is a fixed-width array, so shorter proofs are zero-padded at the end.
 #[allow(dead_code)]
 pub fn zk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
-    let need = ULTRA_HONK_ZK_PROOF_FIELD_COUNT * FIELD_SIZE;
+    fixed_proof_bytes_to_field_strings(bytes, ULTRA_HONK_ZK_PROOF_FIELD_COUNT)
+}
+
+/// Converts raw non-ZK proof bytes to field strings for `UltraHonkProof` witness input.
+#[allow(dead_code)]
+pub fn honk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
+    fixed_proof_bytes_to_field_strings(bytes, ULTRA_HONK_PROOF_FIELD_COUNT)
+}
+
+fn fixed_proof_bytes_to_field_strings(
+    bytes: &[u8],
+    field_count: usize,
+) -> Result<Vec<String>, ZkError> {
+    let need = field_count * FIELD_SIZE;
     if bytes.len() > need {
         return Err(ZkError::InvalidInput(format!(
             "zk proof bytes length {} exceeds fixed width {}",
@@ -189,4 +206,31 @@ fn json_value_to_input_value(v: &serde_json::Value) -> Result<InputValue, ZkErro
     Err(ZkError::SerializationError(
         "unexpected json structure".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pads_recursive_proofs_to_the_abi_width() {
+        assert_eq!(
+            zk_proof_bytes_to_field_strings(&[0u8; FIELD_SIZE])
+                .unwrap()
+                .len(),
+            ULTRA_HONK_ZK_PROOF_FIELD_COUNT
+        );
+        assert_eq!(
+            honk_proof_bytes_to_field_strings(&[0u8; FIELD_SIZE])
+                .unwrap()
+                .len(),
+            ULTRA_HONK_PROOF_FIELD_COUNT
+        );
+    }
+
+    #[test]
+    fn rejects_proofs_that_exceed_the_abi_width() {
+        let bytes = vec![0u8; (ULTRA_HONK_PROOF_FIELD_COUNT + 1) * FIELD_SIZE];
+        assert!(honk_proof_bytes_to_field_strings(&bytes).is_err());
+    }
 }

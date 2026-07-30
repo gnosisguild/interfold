@@ -57,6 +57,21 @@ pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> 
 
 /************************************
 -------------------------------------
+share_computation_chunk (CIRCUIT 2c)
+-------------------------------------
+************************************/
+
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 =
+    (N + SHARE_COMPUTATION_CHUNK_SIZE - 1) / SHARE_COMPUTATION_CHUNK_SIZE;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 1;
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = (
+    SHARE_COMPUTATION_N_CHUNKS + SHARE_COMPUTATION_CHUNKS_PER_BATCH - 1
+)
+    / SHARE_COMPUTATION_CHUNKS_PER_BATCH;
+
+/************************************
+-------------------------------------
 share_encryption_sk (CIRCUIT 3a)
 share_encryption_e_sm (CIRCUIT 3b)
 -------------------------------------

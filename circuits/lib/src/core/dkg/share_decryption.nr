@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message,
+    compute_aggregated_shares_commitment, compute_sc_party_share_root_from_polynomial,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -24,11 +24,12 @@ use crate::math::polynomial::Polynomial;
 /// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
 /// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
 pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> {
-    /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
-    /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
+    /// Expected roots for the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
+    /// via the chunk-root commitment scheme. Organised as [party_idx][mod_idx], covering all H honest
     /// parties and L CRT moduli.
     /// (public witnesses)
     expected_commitments: [[Field; L]; H],
+    honest_party_ids: [u32; H],
 
     /// Decrypted share polynomials from H honest parties.
     /// Organised as [party_idx][mod_idx].
@@ -39,15 +40,16 @@ pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32,
 impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG> {
     pub fn new(
         expected_commitments: [[Field; L]; H],
+        honest_party_ids: [u32; H],
         decrypted_shares: [[Polynomial<N>; L]; H],
     ) -> Self {
-        ShareDecryption { expected_commitments, decrypted_shares }
+        ShareDecryption { expected_commitments, honest_party_ids, decrypted_shares }
     }
 
     /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
     ///
     /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
-    /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
+    /// and confirms it equals the root produced in C2.
     /// Since commitments are binding, any substitution or tampering, claiming a different
     /// decrypted value or using the wrong secret key, will cause this assertion to fail.
     fn verify_commitments(self) {
@@ -61,9 +63,11 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
                     reversed_coeffs[N - 1 - i] = share.coefficients[i];
                 }
                 assert(
-                    compute_share_encryption_commitment_from_message::<N, BIT_MSG>(Polynomial::new(
-                        reversed_coeffs,
-                    ))
+                    compute_sc_party_share_root_from_polynomial::<N, (N + 511) / 512, BIT_MSG>(
+                        self.honest_party_ids[party_idx],
+                        mod_idx,
+                        Polynomial::new(reversed_coeffs),
+                    )
                         == self.expected_commitments[party_idx][mod_idx],
                     "Commitment mismatch",
                 );

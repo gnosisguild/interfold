@@ -16,6 +16,8 @@ use lib::math::polynomial::Polynomial;
 fn main(
     expected_pk_commitment: pub Field,
     expected_message_commitment: pub Field,
+    share_party_idx: pub u32,
+    share_mod_idx: pub u32,
     pk0is: [Polynomial<N>; L],
     pk1is: [Polynomial<N>; L],
     ct0is: [Polynomial<N>; L],
@@ -35,6 +37,8 @@ fn main(
         SHARE_ENCRYPTION_CONFIGS,
         expected_pk_commitment,
         expected_message_commitment,
+        share_party_idx,
+        share_mod_idx,
         pk0is,
         pk1is,
         ct0is,

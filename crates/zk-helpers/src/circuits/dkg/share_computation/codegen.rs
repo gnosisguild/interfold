@@ -9,8 +9,9 @@
 use crate::circuits::computation::CircuitComputation;
 use crate::circuits::computation::Computation;
 use crate::circuits::dkg::share_computation::{
-    utils::parity_matrix_constant_string, Bits, Inputs, ShareComputationCircuit,
-    ShareComputationCircuitData, ShareComputationOutput,
+    batch_count, chunk_count, chunks_per_batch, utils::parity_matrix_constant_string, Bits,
+    ChunkInputs, Inputs, ShareComputationCircuit, ShareComputationCircuitData,
+    ShareComputationOutput, SHARE_COMPUTATION_CHUNK_SIZE,
 };
 use crate::circuits::{Artifacts, CircuitCodegen, CircuitsErrors, CodegenToml};
 use crate::codegen::CodegenConfigs;
@@ -46,6 +47,13 @@ pub fn generate_toml(witness: &Inputs) -> Result<CodegenToml, CircuitsErrors> {
     Ok(toml::to_string(&json)?)
 }
 
+/// Build a `Prover.toml` for one private chunk witness.
+pub fn generate_chunk_toml(witness: &ChunkInputs) -> Result<CodegenToml, CircuitsErrors> {
+    let json = witness.to_json().map_err(CircuitsErrors::SerdeJson)?;
+
+    Ok(toml::to_string(&json)?)
+}
+
 /// Builds the configs.nr string (N, L, parity matrix, bit parameters, configs) for the Noir prover.
 ///
 /// `n_parties` and `threshold` are used to build the parity matrix (Reed–Solomon generator null space)
@@ -59,6 +67,10 @@ pub fn generate_configs(
     let (threshold_params, _) =
         build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
     let config_name = preset.metadata().security.as_config_str();
+    let n = preset.metadata().degree;
+    let n_chunks = chunk_count(n, SHARE_COMPUTATION_CHUNK_SIZE);
+    let chunks_per_batch = chunks_per_batch(n);
+    let n_batches = batch_count(n_chunks, chunks_per_batch);
     let parity_matrix_str = parity_matrix_constant_string(&threshold_params, n_parties, threshold)?;
     let prefix = <ShareComputationCircuit as Circuit>::PREFIX;
     let configs = format!(
@@ -94,9 +106,20 @@ pub global {}_E_SM_BIT_SECRET: u32 = {};
 // verify_shares - configs
 pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
+
+/************************************
+-------------------------------------
+share_computation_chunk (CIRCUIT 2c)
+-------------------------------------
+************************************/
+
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = {};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = {};
 "#,
         config_name,
-        preset.metadata().degree,
+        n,
         parity_matrix_str,
         prefix,
         bits.bit_share,
@@ -106,6 +129,10 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
         prefix,
         bits.bit_e_sm_secret,
         prefix,
+        SHARE_COMPUTATION_CHUNK_SIZE,
+        n_chunks,
+        chunks_per_batch,
+        n_batches,
     );
 
     Ok(configs)
@@ -185,5 +212,32 @@ mod tests {
         assert!(configs_content.contains(
             format!("{}_E_SM_BIT_SECRET: u32 = {}", prefix, bits.bit_e_sm_secret).as_str()
         ));
+        assert!(configs_content.contains("SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512"));
+        assert!(configs_content.contains("SHARE_COMPUTATION_N_CHUNKS: u32 = 1"));
+        assert!(configs_content.contains("SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 1"));
+        assert!(configs_content.contains("SHARE_COMPUTATION_N_BATCHES: u32 = 1"));
+    }
+
+    #[test]
+    fn test_chunk_toml_keeps_private_witness_names() {
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let sample = ShareComputationCircuitData::generate_sample(
+            BfvPreset::InsecureThreshold512,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let chunk = inputs.split_into_chunks(512).unwrap().remove(0);
+        let toml = generate_chunk_toml(&chunk).unwrap();
+        let parsed: toml::Value = toml.parse().unwrap();
+
+        assert_eq!(
+            parsed.get("chunk_idx").and_then(toml::Value::as_integer),
+            Some(0)
+        );
+        assert!(parsed.get("secret_chunk").is_some());
+        assert!(parsed.get("y_chunk").is_some());
+        assert!(parsed.get("expected_secret_commitment").is_none());
     }
 }

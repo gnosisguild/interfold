@@ -150,7 +150,19 @@ pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment
 pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("expected_pk_commitment"),
     f("expected_message_commitment"),
+    f("share_party_idx"),
+    f("share_mod_idx"),
 ];
+
+/// C2 chunk proof — public chunk index.
+pub const SHARE_COMPUTATION_CHUNK_INPUTS: &[OutputField] = &[f("chunk_idx")];
+
+/// C2 chunk batch wrapper — public chunk VK hash and batch index.
+pub const SHARE_COMPUTATION_CHUNK_BATCH_INPUTS: &[OutputField] =
+    &[f("chunk_key_hash"), f("batch_idx")];
+
+/// C2 final wrapper — public batch VK hash.
+pub const SHARE_COMPUTATION_FINAL_INPUTS: &[OutputField] = &[f("batch_key_hash")];
 
 /// Describes the public input layout of a circuit.
 ///
@@ -441,7 +453,7 @@ mod tests {
                 fields: SHARE_ENCRYPTION_INPUTS
             }
             .field_count(),
-            Some(2)
+            Some(4)
         );
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
     }

@@ -26,7 +26,7 @@ use e3_zk_helpers::computation::Computation;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::dkg::share_computation::{
-    Inputs as ShareComputationInputs, ShareComputationCircuit,
+    Inputs as ShareComputationInputs,
 };
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuit;
@@ -35,7 +35,9 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
-use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
+use e3_zk_prover::{
+    generate_sequential_c3_fold, prove_chunked_share_computation, CircuitVariant, Provable, ZkProver,
+};
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
 use node_fold_witness::{
     pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
@@ -162,24 +164,19 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     for g in [
         "pk",
-        "sk_share_computation",
-        "e_sm_share_computation",
+        "sk_share_computation_chunk",
+        "e_sm_share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ] {
-        let name = match g {
-            "pk" => "pk",
-            "sk_share_computation" => "sk_share_computation",
-            "e_sm_share_computation" => "e_sm_share_computation",
-            "share_encryption" => "share_encryption",
-            "share_decryption" => "share_decryption",
-            _ => unreachable!(),
-        };
-        setup_compiled_circuit(&backend, "dkg", name).await;
+        setup_compiled_circuit(&backend, "dkg", g).await;
     }
     setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
 
     for c in [
+        CircuitName::ShareComputationChunkBatch,
+        CircuitName::SkShareComputationFinal,
+        CircuitName::ESmShareComputationFinal,
         CircuitName::C2abFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
@@ -228,35 +225,31 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("C1 pk_generation proof");
 
-    let c2a_proof = ShareComputationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &share_sk,
-            c2a_e3,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C2a proof");
-    let c2b_proof = ShareComputationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &share_esm,
-            c2b_e3,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C2b proof");
+    let c2a_proof = prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_sk,
+        c2a_e3,
+        &artifacts_dir,
+    )
+    .expect("C2a chunked proof");
+    let c2b_proof = prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_esm,
+        c2b_e3,
+        &artifacts_dir,
+    )
+    .expect("C2b chunked proof");
 
     let c2a_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::SkShareComputation,
+        CircuitName::SkShareComputationFinal,
     )
     .expect("c2a vk");
     let c2b_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::ESmShareComputation,
+        CircuitName::ESmShareComputationFinal,
     )
     .expect("c2b vk");
 

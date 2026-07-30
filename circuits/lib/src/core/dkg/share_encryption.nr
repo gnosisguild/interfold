@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_ciphertext_commitment, compute_share_encryption_challenge,
-    compute_share_encryption_commitment_from_message,
+    compute_ciphertext_commitment, compute_sc_party_share_root_from_polynomial,
+    compute_share_encryption_challenge,
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
 use crate::math::helpers::flatten;
@@ -100,6 +100,8 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     /// - C3b: commit(e_sm_share[party_idx][mod_idx]) produced by C2b
     /// (public witness)
     expected_message_commitment: Field,
+    share_party_idx: u32,
+    share_mod_idx: u32,
     /// Public key component 0 for each CRT basis (committed witnesses)
     pk0is: [Polynomial<N>; L],
     /// Public key component 1 for each CRT basis (committed witnesses)
@@ -135,6 +137,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         configs: Configs<L>,
         expected_pk_commitment: Field,
         expected_message_commitment: Field,
+        share_party_idx: u32,
+        share_mod_idx: u32,
         pk0is: [Polynomial<N>; L],
         pk1is: [Polynomial<N>; L],
         ct0is: [Polynomial<N>; L],
@@ -154,6 +158,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             configs,
             expected_pk_commitment,
             expected_message_commitment,
+            share_party_idx,
+            share_mod_idx,
             pk0is,
             pk1is,
             ct0is,
@@ -191,7 +197,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// a forged share, will cause this assertion to fail.
     fn verify_message_commitment(self) {
         assert(
-            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)
+            compute_sc_party_share_root_from_polynomial::<N, (N + 511) / 512, BIT_MSG>(
+                self.share_party_idx,
+                self.share_mod_idx,
+                self.message,
+            )
                 == self.expected_message_commitment,
             "Message commitment mismatch",
         );

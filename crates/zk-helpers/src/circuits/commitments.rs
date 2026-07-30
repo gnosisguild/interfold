@@ -140,6 +140,19 @@ const DS_CLG_SHARE_DECRYPTION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+const fn domain_separator(label: &[u8]) -> [u8; 64] {
+    let mut domain = [0u8; 64];
+    let mut index = 0;
+    while index < label.len() {
+        domain[index] = label[index];
+        index += 1;
+    }
+    domain
+}
+
+const DS_SC_CHUNK: [u8; 64] = domain_separator(b"SC_CHUNK");
+const DS_SC_PARTY_SHARE_CHUNK: [u8; 64] = domain_separator(b"SC_PARTY_SHARE_CHUNK");
+
 // ============================================================================
 // WRAPPERS
 // ============================================================================
@@ -344,6 +357,270 @@ pub fn compute_share_computation_e_sm_commitment(e_sm: &CrtPolynomial, bit_e_sm:
     let commitment_field = compute_commitments(payload, DS_SHARE_COMPUTATION, io_pattern)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+fn bigint_to_field(value: &BigInt) -> Field {
+    let (_, bytes) = value.to_bytes_le();
+    Field::from_le_bytes_mod_order(&bytes)
+}
+
+/// Compute one SK secret chunk commitment.
+pub fn compute_sc_secret_chunk_commitment(
+    kind_tag: u64,
+    chunk_idx: usize,
+    n: usize,
+    chunk: &Polynomial,
+    bit_secret: u32,
+) -> BigInt {
+    let mut canonical = chunk.clone();
+    canonical.reverse();
+    let mut payload = vec![
+        Field::from(0u64),
+        Field::from(kind_tag),
+        Field::from(chunk_idx as u64),
+        Field::from(n as u64),
+        Field::from(chunk.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(&canonical), bit_secret);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute one ESM secret chunk commitment over all CRT limbs.
+pub fn compute_sc_esm_secret_chunk_commitment(
+    chunk_idx: usize,
+    n: usize,
+    chunk: &CrtPolynomial,
+    moduli: &[u64],
+    bit_secret: u32,
+) -> BigInt {
+    assert_eq!(chunk.limbs.len(), moduli.len());
+    let limbs = chunk
+        .limbs
+        .iter()
+        .zip(moduli.iter())
+        .map(|(limb, &modulus)| {
+            let half = BigInt::from((modulus - 1) / 2);
+            let modulus = BigInt::from(modulus);
+            let mut coefficients = limb.coefficients().to_vec();
+            coefficients.reverse();
+            for coefficient in &mut coefficients {
+                if *coefficient > half {
+                    *coefficient -= &modulus;
+                }
+            }
+            Polynomial::new(coefficients)
+        })
+        .collect::<Vec<_>>();
+
+    let mut payload = vec![
+        Field::from(0u64),
+        Field::from(1u64),
+        Field::from(chunk_idx as u64),
+        Field::from(n as u64),
+        Field::from(chunk.limbs[0].coefficients().len() as u64),
+    ];
+    payload = flatten(payload, &limbs, bit_secret);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute one party/CRT-limb share chunk commitment from a y slice.
+pub fn compute_sc_party_share_chunk_commitment(
+    y_chunk: &[Vec<Vec<BigInt>>],
+    party_idx: usize,
+    mod_idx: usize,
+    chunk_idx: usize,
+    n: usize,
+    bit_share: u32,
+) -> BigInt {
+    let coefficients = y_chunk
+        .iter()
+        .rev()
+        .map(|row| row[mod_idx][party_idx + 1].clone())
+        .collect::<Vec<_>>();
+    let polynomial = Polynomial::new(coefficients);
+    let mut payload = vec![
+        Field::from(0u64),
+        Field::from(2u64),
+        Field::from(party_idx as u64),
+        Field::from(mod_idx as u64),
+        Field::from(chunk_idx as u64),
+        Field::from(n as u64),
+        Field::from(polynomial.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(&polynomial), bit_share);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_PARTY_SHARE_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute one party-share chunk commitment from a polynomial already in C3/C4 order.
+pub fn compute_sc_party_share_chunk_commitment_from_polynomial(
+    polynomial: &Polynomial,
+    party_idx: usize,
+    mod_idx: usize,
+    chunk_idx: usize,
+    n: usize,
+    bit_share: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(0u64),
+        Field::from(2u64),
+        Field::from(party_idx as u64),
+        Field::from(mod_idx as u64),
+        Field::from(chunk_idx as u64),
+        Field::from(n as u64),
+        Field::from(polynomial.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(polynomial), bit_share);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_PARTY_SHARE_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute the ordered root for SK or ESM secret chunks.
+pub fn compute_sc_secret_chunk_root_commitment(
+    kind_tag: u64,
+    n: usize,
+    chunk_size: usize,
+    chunks: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(kind_tag),
+        Field::from(n as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(chunks.iter().map(bigint_to_field));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute the ordered root for one party/CRT-limb share.
+pub fn compute_sc_party_share_chunk_root_commitment(
+    party_idx: usize,
+    mod_idx: usize,
+    n: usize,
+    chunk_size: usize,
+    chunks: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(2u64),
+        Field::from(party_idx as u64),
+        Field::from(mod_idx as u64),
+        Field::from(n as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(chunks.iter().map(bigint_to_field));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let field = compute_commitments(payload, DS_SC_PARTY_SHARE_CHUNK, io)[0];
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+/// Compute a party-share root from a polynomial in C3/C4 order.
+pub fn compute_sc_party_share_root_from_polynomial(
+    polynomial: &Polynomial,
+    party_idx: usize,
+    mod_idx: usize,
+    n: usize,
+    chunk_size: usize,
+    bit_share: u32,
+) -> BigInt {
+    let n_chunks = (n + chunk_size - 1) / chunk_size;
+    let chunks = (0..n_chunks)
+        .map(|chunk_idx| {
+            let start = n - (chunk_idx + 1) * chunk_size;
+            let end = start + chunk_size;
+            compute_sc_party_share_chunk_commitment_from_polynomial(
+                &Polynomial::new(polynomial.coefficients()[start..end].to_vec()),
+                party_idx,
+                mod_idx,
+                chunk_idx,
+                n,
+                bit_share,
+            )
+        })
+        .collect::<Vec<_>>();
+    compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, n, chunk_size, &chunks)
+}
+
+/// Compute the SK chunk-root commitment from the original coefficient order.
+pub fn compute_sc_sk_secret_root_commitment(
+    sk: &Polynomial,
+    n: usize,
+    chunk_size: usize,
+    bit_secret: u32,
+) -> BigInt {
+    let chunks = sk
+        .coefficients()
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, coefficients)| {
+            compute_sc_secret_chunk_commitment(
+                0,
+                chunk_idx,
+                n,
+                &Polynomial::new(coefficients.to_vec()),
+                bit_secret,
+            )
+        })
+        .collect::<Vec<_>>();
+    compute_sc_secret_chunk_root_commitment(0, n, chunk_size, &chunks)
+}
+
+/// Compute the ESM chunk-root commitment from the original coefficient order.
+pub fn compute_sc_esm_secret_root_commitment(
+    e_sm: &CrtPolynomial,
+    n: usize,
+    chunk_size: usize,
+    moduli: &[u64],
+    bit_secret: u32,
+) -> BigInt {
+    let n_chunks = e_sm.limbs.first().map_or(0, |limb| {
+        (limb.coefficients().len() + chunk_size - 1) / chunk_size
+    });
+    let chunks = (0..n_chunks)
+        .map(|chunk_idx| {
+            let limbs = e_sm
+                .limbs
+                .iter()
+                .map(|limb| {
+                    let start = chunk_idx * chunk_size;
+                    Polynomial::new(
+                        limb.coefficients()
+                            .get(start..start + chunk_size.min(limb.coefficients().len() - start))
+                            .unwrap_or_default()
+                            .to_vec(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let max_len = limbs.first().map_or(0, |limb| limb.coefficients().len());
+            let padded = limbs
+                .into_iter()
+                .map(|mut limb| {
+                    if limb.coefficients().len() < max_len {
+                        let mut coefficients = limb.coefficients().to_vec();
+                        coefficients.resize(max_len, BigInt::from(0u8));
+                        limb = Polynomial::new(coefficients);
+                    }
+                    limb
+                })
+                .collect::<Vec<_>>();
+            compute_sc_esm_secret_chunk_commitment(
+                chunk_idx,
+                n,
+                &CrtPolynomial::new(padded),
+                moduli,
+                bit_secret,
+            )
+        })
+        .collect::<Vec<_>>();
+    compute_sc_secret_chunk_root_commitment(1, n, chunk_size, &chunks)
 }
 
 /// Compute share encryption commitment from message polynomial.

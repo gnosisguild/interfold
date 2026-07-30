@@ -12,11 +12,12 @@ use lib::core::dkg::share_decryption::ShareDecryption;
 use lib::math::polynomial::Polynomial;
 
 fn main(
+    honest_party_ids: pub [u32; H],
     expected_commitments: pub [[Field; L_THRESHOLD]; H],
     decrypted_shares: [[Polynomial<N>; L_THRESHOLD]; H],
 ) -> pub Field {
     let share_decryption: ShareDecryption<N, L_THRESHOLD, H, SHARE_DECRYPTION_BIT_MSG, SHARE_DECRYPTION_BIT_AGG> =
-        ShareDecryption::new(expected_commitments, decrypted_shares);
+        ShareDecryption::new(expected_commitments, honest_party_ids, decrypted_shares);
 
     share_decryption.execute(QIS_THRESHOLD)
 }

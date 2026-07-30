@@ -65,7 +65,7 @@ use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
+use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
@@ -73,9 +73,10 @@ use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
-    generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
-    NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
+    generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
+    prove_dkg_aggregation, prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob,
+    DkgAggregationInput, NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError,
+    ZkProver,
 };
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::PublicKeyShare;
@@ -930,26 +931,23 @@ fn handle_share_computation_proof(
     };
 
     let bb_work = zk_bb_work_id(&request);
-    let inner_job_id = format!("{bb_work}_c2_inner");
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
-    let circuit = ShareComputationCircuit;
-    let proof = circuit
-        .prove(
-            prover,
-            &req.params_preset,
-            &circuit_data,
-            &inner_job_id,
-            &artifacts_dir,
+    // 7. Chunked C2 proof: chunk proofs -> batch proofs -> final wrapper.
+    let proof = prove_chunked_share_computation(
+        prover,
+        req.params_preset,
+        &circuit_data,
+        &bb_work,
+        &artifacts_dir,
+    )
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
         )
-        .map_err(|e| {
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-                request.clone(),
-            )
-        })?;
+    })?;
 
     Ok(ComputeResponse::zk(
         ZkResponse::ShareComputation(ShareComputationProofResponse {
@@ -1150,6 +1148,8 @@ fn handle_share_encryption_proof(
         u_rns,
         e0_rns,
         e1_rns,
+        party_idx: req.recipient_party_id,
+        mod_idx: req.row_index,
         dkg_input_type: req.dkg_input_type,
     };
 
@@ -1205,6 +1205,16 @@ fn handle_dkg_share_decryption_proof(
     // External slots = (H - 1), each carrying L ciphertexts.
     let h = req.num_honest_parties;
     let l = req.num_moduli;
+    if req.honest_party_ids.len() != h {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "honest_party_ids has {} entries, expected {}",
+                req.honest_party_ids.len(),
+                h
+            ),
+        ));
+    }
     if req.own_plaintext_idx >= h {
         return Err(make_zk_error(
             &request,
@@ -1297,6 +1307,7 @@ fn handle_dkg_share_decryption_proof(
         secret_key,
         honest_ciphertexts,
         own_plaintext_share,
+        honest_party_ids: req.honest_party_ids,
         dkg_input_type: req.dkg_input_type,
     };
 

@@ -308,6 +308,16 @@ for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then
 The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
 
+The chunked C2 migration path is available through the internal
+`sk_share_computation_chunk`, `e_sm_share_computation_chunk`, `sc_chunk_batch`,
+`sk_share_computation_final`, and `e_sm_share_computation_final`
+circuits. Chunk witnesses keep secret and share slices private, expose only the authenticated chunk
+index and commitments, and reconstruct ordered chunk roots. The final wrapper also exposes a
+`compute_vk_hash` lineage for the chunk and batch verification keys. The current
+`ThresholdKeyshare` request now uses the chunk, batch, and final wrappers. Outer C2 aggregation and
+the final SK/ESM VKs now consume the final-wrapper roots. C1, C3, and C4 use the same
+party/limb-specific chunk-root commitment scheme for their cross-phase checks.
+
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
 `ZkRequest::DkgAggregation` (`NodesFold` + C5 + `DkgAggregator`), and
@@ -405,12 +415,12 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
 │   │   ├─ Evaluates all registered CommitmentLinks:
 │   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
-│   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
-│   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
+│   │   │     C1→C2a  (SameParty):                C1's SK root == C2a's secret root
+│   │   │     C1→C2b  (SameParty):                C1's ESM root == C2b's secret root
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
-│   │   │     C2→C3   (SameParty):                C3's expected_message_commitment ∈ C2's share commitments
-│   │   │     C2→C4   (SourceMustExistInTargets): C2's L share commitments for recipient R exactly
-│   │   │                                          match C4_R's expected_commitments row for sender X
+│   │   │     C2→C3   (SameParty):                C3's expected share root ∈ C2's share roots
+│   │   │     C2→C4   (SourceMustExistInTargets): C2's L share roots for recipient R exactly
+│   │   │                                          match C4_R's expected root row for sender X
 │   │   │     C4a→C6  (SameParty):                C4a's commitment == C6's expected_sk_commitment
 │   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment

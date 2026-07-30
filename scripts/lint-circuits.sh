@@ -26,6 +26,9 @@ DIRS=(
   "bin/recursive_aggregation/nodes_fold_kernel"
   "bin/recursive_aggregation/dkg_aggregator"
   "bin/recursive_aggregation/decryption_aggregator"
+  "bin/recursive_aggregation/sc_chunk_batch"
+  "bin/recursive_aggregation/sk_share_computation_final"
+  "bin/recursive_aggregation/e_sm_share_computation_final"
   "bin/dkg"
   "bin/threshold"
 )

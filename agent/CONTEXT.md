@@ -96,8 +96,9 @@ opentelemetry/tracing.
 
 ## Circuit map (IDs ↔ `CircuitName` in `crates/events`)
 
-- **DKG** (`circuits/bin/dkg/`): C0 `pk` (PkBfv) · C2a `sk_share_computation` · C2b
-  `e_sm_share_computation` · C3 `share_encryption` · C4 `share_decryption`
+- **DKG** (`circuits/bin/dkg/`): C0 `pk` (PkBfv) · chunked C2a/C2b
+  (`sk_share_computation_chunk`, `e_sm_share_computation_chunk`) · C3 `share_encryption` · C4
+  `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
   `decrypted_shares_aggregation`

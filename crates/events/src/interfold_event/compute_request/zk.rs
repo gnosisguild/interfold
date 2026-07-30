@@ -216,6 +216,8 @@ pub struct DkgShareDecryptionProofRequest {
     /// Position of the own party within the H ascending-party_id ordering. The prover
     /// splices `own_share_raw` into this slot when assembling C4 inputs.
     pub own_plaintext_idx: usize,
+    /// Canonical party IDs for the H commitment rows, in ascending order.
+    pub honest_party_ids: Vec<u64>,
     /// Bincode-serialised `Vec<Vec<u64>>` of shape `[L][N]` — the own party's plaintext
     /// share row per modulus (witness — encrypted at rest).
     pub own_share_raw: SensitiveBytes,

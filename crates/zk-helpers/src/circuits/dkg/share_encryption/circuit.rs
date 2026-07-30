@@ -43,6 +43,10 @@ pub struct ShareEncryptionCircuitData {
     pub e0_rns: Poly<Ntt>,
     /// Encryption error e1 in RNS form.
     pub e1_rns: Poly<Ntt>,
+    /// Committee party index for the encrypted share.
+    pub party_idx: usize,
+    /// Threshold CRT-limb index for the encrypted share.
+    pub mod_idx: usize,
     /// Type of DKG input (SecretKey or SmudgingNoise) to determine which circuit variant to use.
     pub dkg_input_type: DkgInputType,
 }

@@ -12,10 +12,12 @@ fn make_field(val: u8) -> [u8; 32] {
     f
 }
 
-/// C2 inner signals: [expected_secret_commitment] + share commitments (row-major: party, mod).
+/// C2 final signals: [batch hash, lineage, secret root] + share roots.
 fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
-    let mut v = Vec::new();
-    v.extend_from_slice(&make_field(0xFF)); // expected_secret_commitment (skipped)
+    let mut v = vec![0u8; 96];
+    v[0..32].copy_from_slice(&make_field(0xF0));
+    v[32..64].copy_from_slice(&make_field(0xF1));
+    v[64..96].copy_from_slice(&make_field(0xFF)); // secret root (skipped)
     for c in share_commits {
         v.extend_from_slice(c);
     }
@@ -25,6 +27,9 @@ fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
 /// C4 signals: [expected_commitments row-major (party, mod)..., aggregated_commitment].
 fn c4_signals(rows: &[Vec<[u8; 32]>], aggregated: [u8; 32]) -> Vec<u8> {
     let mut v = Vec::new();
+    for (party_id, _) in rows.iter().enumerate() {
+        v.extend_from_slice(&make_field(party_id as u8));
+    }
     for row in rows {
         for c in row {
             v.extend_from_slice(c);

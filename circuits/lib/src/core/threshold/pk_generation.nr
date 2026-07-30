@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
+    compute_sc_esm_secret_root_from_polynomial, compute_sc_sk_secret_root_from_polynomial,
     compute_threshold_pk_challenge, compute_threshold_pk_commitment,
 };
 use crate::math::helpers::flatten;
@@ -127,9 +127,11 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         self.perform_range_checks();
 
         // Step 2: Derive commitments for the FS transcript.
-        let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
-        let e_sm_commitment =
-            compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
+        let sk_commitment =
+            compute_sc_sk_secret_root_from_polynomial::<N, (N + 511) / 512, BIT_SK>(self.sk);
+        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, (N + 511) / 512, BIT_E_SM>(
+            self.e_sm,
+        );
         let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
         // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.

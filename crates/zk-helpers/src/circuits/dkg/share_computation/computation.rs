@@ -12,7 +12,7 @@
 
 use crate::bigint_3d_to_json_values;
 use crate::circuits::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
+    compute_sc_esm_secret_root_commitment, compute_sc_sk_secret_root_commitment,
 };
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
@@ -22,7 +22,7 @@ use crate::{calculate_bit_width, crt_polynomial_to_toml_json, poly_coefficients_
 use crate::{CircuitComputation, Computation};
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
-use e3_polynomial::{reduce, CrtPolynomial};
+use e3_polynomial::{reduce, CrtPolynomial, Polynomial};
 use fhe::bfv::SecretKey;
 use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
 use num_bigint::{BigInt, BigUint};
@@ -60,6 +60,10 @@ impl CircuitComputation for ShareComputationCircuit {
 pub struct Configs {
     pub n: usize,
     pub l: usize,
+    pub chunk_size: usize,
+    pub n_chunks: usize,
+    pub chunks_per_batch: usize,
+    pub n_batches: usize,
     pub moduli: Vec<u64>,
     pub bits: Bits,
     pub bounds: Bounds,
@@ -97,6 +101,149 @@ pub struct Inputs {
     pub dkg_input_type: DkgInputType,
 }
 
+/// Fixed-width private witness for one share-computation chunk.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChunkInputs {
+    pub chunk_idx: usize,
+    pub secret_crt: CrtPolynomial,
+    pub y_chunk: Vec<Vec<Vec<BigInt>>>,
+    pub dkg_input_type: DkgInputType,
+}
+
+/// Reference chunk width used by the insecure and secure presets.
+pub const SHARE_COMPUTATION_CHUNK_SIZE: usize = 512;
+
+/// Return the number of fixed-width chunks required for a polynomial.
+pub fn chunk_count(n: usize, chunk_size: usize) -> usize {
+    assert!(chunk_size > 0);
+    (n + chunk_size - 1) / chunk_size
+}
+
+/// Return the configured batch width for a polynomial degree.
+pub fn chunks_per_batch(n: usize) -> usize {
+    if n <= SHARE_COMPUTATION_CHUNK_SIZE {
+        1
+    } else {
+        4
+    }
+}
+
+/// Return the number of batches required for the configured chunk width.
+pub fn batch_count(n_chunks: usize, chunks_per_batch: usize) -> usize {
+    assert!(chunks_per_batch > 0);
+    (n_chunks + chunks_per_batch - 1) / chunks_per_batch
+}
+
+impl Inputs {
+    /// Split the full witness into fixed-width, zero-padded private chunks.
+    pub fn split_into_chunks(&self, chunk_size: usize) -> Result<Vec<ChunkInputs>, CircuitsErrors> {
+        if chunk_size == 0 {
+            return Err(CircuitsErrors::Sample(
+                "chunk size must be greater than zero".into(),
+            ));
+        }
+        if self.y.is_empty() {
+            return Err(CircuitsErrors::Sample(
+                "share-computation witness has no coefficients".into(),
+            ));
+        }
+
+        let n = self.y.len();
+        let n_chunks = chunk_count(n, chunk_size);
+        let l = self.y[0].len();
+        let width = self.y[0].first().map_or(0, Vec::len);
+        if l == 0 || width == 0 {
+            return Err(CircuitsErrors::Sample(
+                "share-computation witness has an empty row".into(),
+            ));
+        }
+        if self.secret_crt.limbs.len() != l {
+            return Err(CircuitsErrors::Sample(format!(
+                "secret limb count {} does not match y modulus count {}",
+                self.secret_crt.limbs.len(),
+                l
+            )));
+        }
+
+        let zero_row = || vec![vec![BigInt::from(0u8); width]; l];
+        let mut chunks = Vec::with_capacity(n_chunks);
+        for chunk_idx in 0..n_chunks {
+            let start = chunk_idx * chunk_size;
+            let mut y_chunk = Vec::with_capacity(chunk_size);
+            for offset in 0..chunk_size {
+                y_chunk.push(
+                    self.y
+                        .get(start + offset)
+                        .cloned()
+                        .unwrap_or_else(|| zero_row()),
+                );
+            }
+
+            let limbs = self
+                .secret_crt
+                .limbs
+                .iter()
+                .map(|limb| {
+                    let coefficients = (0..chunk_size)
+                        .map(|offset| {
+                            limb.coefficients()
+                                .get(start + offset)
+                                .cloned()
+                                .unwrap_or_else(|| BigInt::from(0u8))
+                        })
+                        .collect();
+                    Polynomial::new(coefficients)
+                })
+                .collect();
+
+            chunks.push(ChunkInputs {
+                chunk_idx,
+                secret_crt: CrtPolynomial::new(limbs),
+                y_chunk,
+                dkg_input_type: self.dkg_input_type,
+            });
+        }
+
+        Ok(chunks)
+    }
+}
+
+impl ChunkInputs {
+    pub fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        let secret = match self.dkg_input_type {
+            DkgInputType::SecretKey => serde_json::json!({
+                "coefficients": self
+                    .secret_crt
+                    .limb(0)
+                    .coefficients()
+                    .iter()
+                    .map(crate::bigint_to_json_value)
+                    .collect::<Vec<_>>(),
+            }),
+            DkgInputType::SmudgingNoise => {
+                serde_json::Value::Array(crt_polynomial_to_toml_json(&self.secret_crt))
+            }
+        };
+
+        Ok(serde_json::json!({
+            "chunk_idx": self.chunk_idx,
+            "secret_chunk": secret,
+            "y_chunk": bigint_3d_to_json_values(&self.y_chunk),
+        }))
+    }
+}
+
+impl Serialize for ChunkInputs {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_json()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
 impl Computation for Configs {
     type Preset = BfvPreset;
     type Data = ShareComputationCircuitData;
@@ -114,6 +261,13 @@ impl Computation for Configs {
         Ok(Configs {
             n: threshold_params.degree(),
             l,
+            chunk_size: SHARE_COMPUTATION_CHUNK_SIZE,
+            n_chunks: chunk_count(threshold_params.degree(), SHARE_COMPUTATION_CHUNK_SIZE),
+            chunks_per_batch: chunks_per_batch(threshold_params.degree()),
+            n_batches: batch_count(
+                chunk_count(threshold_params.degree(), SHARE_COMPUTATION_CHUNK_SIZE),
+                chunks_per_batch(threshold_params.degree()),
+            ),
             moduli,
             bits,
             bounds,
@@ -224,36 +378,21 @@ impl Computation for Inputs {
 
         let bounds = Bounds::compute(preset, data)?;
         let bits = Bits::compute(preset, &bounds)?;
-        // Reverse+center before committing to match C1 (PkGeneration)'s convention:
-        // C1 applies reverse then center to sk/e_sm before computing the commitment.
-        // For SK the values are already centered ({-1,0,1}) so centering is a no-op.
-        // For e_sm values are in [0,q) here, so we must center to [-(q-1)/2, (q-1)/2].
+        // The chunk-root commitment uses the same reverse and center transforms as C1.
         let expected_secret_commitment = match data.dkg_input_type {
-            DkgInputType::SecretKey => {
-                let mut reversed = secret_crt.limb(0).clone();
-                reversed.reverse();
-                compute_share_computation_sk_commitment(&reversed, bits.bit_sk_secret)
-            }
-            DkgInputType::SmudgingNoise => {
-                let centered_reversed_crt = e3_polynomial::CrtPolynomial::new(
-                    secret_crt
-                        .limbs
-                        .iter()
-                        .zip(moduli.iter())
-                        .map(|(l, &qi)| {
-                            let q = num_bigint::BigInt::from(qi);
-                            let mut r = l.clone();
-                            r.reverse();
-                            r.center(&q);
-                            r
-                        })
-                        .collect(),
-                );
-                compute_share_computation_e_sm_commitment(
-                    &centered_reversed_crt,
-                    bits.bit_e_sm_secret,
-                )
-            }
+            DkgInputType::SecretKey => compute_sc_sk_secret_root_commitment(
+                secret_crt.limb(0),
+                degree,
+                SHARE_COMPUTATION_CHUNK_SIZE,
+                bits.bit_sk_secret,
+            ),
+            DkgInputType::SmudgingNoise => compute_sc_esm_secret_root_commitment(
+                &secret_crt,
+                degree,
+                SHARE_COMPUTATION_CHUNK_SIZE,
+                moduli,
+                bits.bit_e_sm_secret,
+            ),
         };
 
         Ok(Inputs {
@@ -361,5 +500,38 @@ mod tests {
         assert_eq!(decoded.moduli, constants.moduli);
         assert_eq!(decoded.bits, constants.bits);
         assert_eq!(decoded.bounds, constants.bounds);
+    }
+
+    #[test]
+    fn test_chunk_dimensions_use_ceil_division() {
+        assert_eq!(chunk_count(512, 512), 1);
+        assert_eq!(chunk_count(513, 512), 2);
+        assert_eq!(batch_count(5, 4), 2);
+        assert_eq!(chunks_per_batch(512), 1);
+        assert_eq!(chunks_per_batch(8192), 4);
+    }
+
+    #[test]
+    fn test_inputs_split_into_fixed_width_chunks() {
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let sample = ShareComputationCircuitData::generate_sample(
+            BfvPreset::InsecureThreshold512,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let chunks = inputs.split_into_chunks(128).unwrap();
+
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0].chunk_idx, 0);
+        assert_eq!(chunks[3].chunk_idx, 3);
+        assert_eq!(chunks[0].y_chunk.len(), 128);
+        assert_eq!(chunks[0].secret_crt.limb(0).coefficients().len(), 128);
+        assert_eq!(chunks[0].y_chunk[0], inputs.y[0]);
+        assert_eq!(
+            chunks[3].secret_crt.limb(0).coefficients()[0],
+            inputs.secret_crt.limb(0).coefficients()[384]
+        );
     }
 }

@@ -792,6 +792,16 @@ class NoirCircuitBuilder {
         result.vk = existsSync(vkFile) ? vkFile : null
         result.vkHash = existsSync(vkHashFile) ? vkHashFile : null
       }
+
+      // The final share-computation wrapper is consumed as a ZK inner proof by `c2ab_fold`.
+      // Keep the default non-ZK VK for batch-style tooling and also publish a recursive ZK VK.
+      if (['sk_share_computation_final', 'e_sm_share_computation_final'].includes(basename(circuit.path))) {
+        if (!runWriteVk('noir-recursive', vkNoirFile, vkNoirHashFile)) {
+          throw new Error(`VK generation failed for ${packageName} (noir-recursive)`)
+        }
+        result.vkNoir = existsSync(vkNoirFile) ? vkNoirFile : null
+        result.vkNoirHash = existsSync(vkNoirHashFile) ? vkNoirHashFile : null
+      }
     } else {
       // Base DKG/threshold circuits: evm + noir-recursive-no-zk + noir-recursive
       if (!runWriteVk('evm', vkFile, vkHashFile)) {

@@ -4,8 +4,10 @@ use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS, PK_AGGREGATION_OUTPUTS,
-    PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
-    THRESHOLD_SHARE_DECRYPTION_INPUTS, THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
+    PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_COMPUTATION_CHUNK_BATCH_INPUTS,
+    SHARE_COMPUTATION_CHUNK_INPUTS, SHARE_COMPUTATION_FINAL_INPUTS, SHARE_ENCRYPTION_INPUTS,
+    SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -148,6 +150,16 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
+    /// SK share-computation chunk proof (internal, recursive).
+    SkShareComputationChunk,
+    /// E_SM share-computation chunk proof (internal, recursive).
+    ESmShareComputationChunk,
+    /// Share-computation chunk batch wrapper (internal, non-ZK accumulator).
+    ShareComputationChunkBatch,
+    /// Final SK share-computation wrapper (internal, recursive ZK proof).
+    SkShareComputationFinal,
+    /// Final ESM share-computation wrapper (internal, recursive ZK proof).
+    ESmShareComputationFinal,
 }
 
 impl CircuitName {
@@ -157,6 +169,8 @@ impl CircuitName {
             CircuitName::PkGeneration => "pk_generation",
             CircuitName::SkShareComputation => "sk_share_computation",
             CircuitName::ESmShareComputation => "e_sm_share_computation",
+            CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
+            CircuitName::ESmShareComputationChunk => "e_sm_share_computation_chunk",
             CircuitName::ShareEncryption => "share_encryption",
             CircuitName::DkgShareDecryption => "share_decryption",
             CircuitName::PkAggregation => "pk_aggregation",
@@ -167,6 +181,9 @@ impl CircuitName {
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
+            CircuitName::ShareComputationChunkBatch => "sc_chunk_batch",
+            CircuitName::SkShareComputationFinal => "sk_share_computation_final",
+            CircuitName::ESmShareComputationFinal => "e_sm_share_computation_final",
             CircuitName::C3abFold => "c3ab_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
@@ -182,6 +199,8 @@ impl CircuitName {
             CircuitName::PkBfv => "dkg",
             CircuitName::SkShareComputation => "dkg",
             CircuitName::ESmShareComputation => "dkg",
+            CircuitName::SkShareComputationChunk => "dkg",
+            CircuitName::ESmShareComputationChunk => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
@@ -193,6 +212,9 @@ impl CircuitName {
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
+            | CircuitName::ShareComputationChunkBatch
+            | CircuitName::SkShareComputationFinal
+            | CircuitName::ESmShareComputationFinal
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -218,9 +240,13 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
-                CircuitOutputLayout::Dynamic
-            }
+            CircuitName::SkShareComputation
+            | CircuitName::ESmShareComputation
+            | CircuitName::SkShareComputationChunk
+            | CircuitName::ESmShareComputationChunk
+            | CircuitName::SkShareComputationFinal
+            | CircuitName::ESmShareComputationFinal
+            | CircuitName::ShareComputationChunkBatch => CircuitOutputLayout::Dynamic,
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
             },
@@ -258,6 +284,19 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption => CircuitInputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_INPUTS,
             },
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
+                CircuitInputLayout::Fixed {
+                    fields: SHARE_COMPUTATION_CHUNK_INPUTS,
+                }
+            }
+            CircuitName::ShareComputationChunkBatch => CircuitInputLayout::Fixed {
+                fields: SHARE_COMPUTATION_CHUNK_BATCH_INPUTS,
+            },
+            CircuitName::SkShareComputationFinal | CircuitName::ESmShareComputationFinal => {
+                CircuitInputLayout::Fixed {
+                    fields: SHARE_COMPUTATION_FINAL_INPUTS,
+                }
+            }
             _ => CircuitInputLayout::None,
         }
     }
@@ -398,7 +437,7 @@ mod tests {
     #[test]
     fn input_layout_share_encryption() {
         let layout = CircuitName::ShareEncryption.input_layout();
-        assert_eq!(layout.field_count(), Some(2));
+        assert_eq!(layout.field_count(), Some(4));
     }
 
     #[test]
@@ -407,6 +446,34 @@ mod tests {
         assert_eq!(
             CircuitName::PkGeneration.input_layout().field_count(),
             Some(0)
+        );
+    }
+
+    #[test]
+    fn input_layout_chunked_share_computation() {
+        assert_eq!(
+            CircuitName::SkShareComputationChunk
+                .input_layout()
+                .field_count(),
+            Some(1)
+        );
+        assert_eq!(
+            CircuitName::ShareComputationChunkBatch
+                .input_layout()
+                .field_count(),
+            Some(2)
+        );
+        assert_eq!(
+            CircuitName::SkShareComputationFinal
+                .input_layout()
+                .field_count(),
+            Some(1)
+        );
+        assert_eq!(
+            CircuitName::ShareComputationChunkBatch
+                .output_layout()
+                .field_count(),
+            None
         );
     }
 

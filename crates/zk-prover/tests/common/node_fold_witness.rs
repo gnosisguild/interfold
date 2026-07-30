@@ -236,6 +236,8 @@ pub fn share_encryption_for_slot(
         u_rns,
         e0_rns,
         e1_rns,
+        party_idx: party,
+        mod_idx: mod_ix,
         dkg_input_type,
     })
 }

@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C2 (ShareComputation) → C3 (ShareEncryption) message commitment link.
+//! C2 (chunked ShareComputation) → C3 (ShareEncryption) message commitment link.
 //!
-//! C2's inner circuit outputs per-party-per-modulus share commitments via
-//! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
+//! C2's final wrapper outputs per-party-per-modulus share roots. C3 claims
+//! `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
 //! The signed C2 proof is the **inner** circuit proof (SkShareComputation /
@@ -103,11 +103,11 @@ fn extract_message_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
 }
 
 /// Check whether `source_values[0]` (from a C3 proof) appears in the share
-/// commitment section of a C2 inner proof's public signals.
+/// commitment section of a C2 final-wrapper proof's public signals.
 ///
-/// C2 inner circuit public signals layout:
-///   - field 0:       `expected_secret_commitment` (public input, skipped)
-///   - fields 1..:    `commit_to_party_shares[party_idx][mod_idx]` outputs
+/// C2 final-wrapper public signals layout:
+///   - fields 0..2: batch hash, VK lineage, and secret root (skipped)
+///   - remaining fields: party share roots
 ///
 /// Barretenberg's `noir-recursive` variant sometimes doubles the signal
 /// buffer (448 = 2×224 bytes for a 7-field circuit).  We detect and
@@ -118,11 +118,11 @@ fn commitment_in_c2_outputs(source_values: &[FieldValue], target_public_signals:
     }
     let expected = &source_values[0];
     let signals = deduplicate(target_public_signals);
-    // Skip first field (expected_secret_commitment public input).
-    if signals.len() < 2 * FIELD_BYTE_LEN {
+    // Skip the batch hash, VK lineage, and secret root.
+    if signals.len() < 4 * FIELD_BYTE_LEN {
         return false;
     }
-    signals[FIELD_BYTE_LEN..]
+    signals[3 * FIELD_BYTE_LEN..]
         .chunks(FIELD_BYTE_LEN)
         .any(|chunk| chunk == expected.as_slice())
 }
@@ -149,20 +149,22 @@ mod tests {
         f
     }
 
-    /// C3 signals: [expected_pk_commitment (32B)] + [expected_message_commitment (32B)]
+    /// C3 signals: [expected_pk, expected_message, party index, modulus index]
     fn c3_signals(pk: [u8; 32], msg: [u8; 32]) -> Vec<u8> {
-        let mut v = vec![0u8; 64];
+        let mut v = vec![0u8; 128];
         v[0..32].copy_from_slice(&pk);
         v[32..64].copy_from_slice(&msg);
         v
     }
 
-    /// C2 inner signals: [expected_secret_commitment] + N share commitments.
+    /// C2 final signals: [batch hash, lineage, secret root] + N share roots.
     fn c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = vec![0u8; 32 + commitments.len() * 32];
-        v[0..32].copy_from_slice(&make_field(0xFF)); // expected_secret_commitment
+        let mut v = vec![0u8; 96 + commitments.len() * 32];
+        v[0..32].copy_from_slice(&make_field(0xF0));
+        v[32..64].copy_from_slice(&make_field(0xF1));
+        v[64..96].copy_from_slice(&make_field(0xFF)); // secret root
         for (i, c) in commitments.iter().enumerate() {
-            v[32 + i * 32..32 + (i + 1) * 32].copy_from_slice(c);
+            v[96 + i * 32..96 + (i + 1) * 32].copy_from_slice(c);
         }
         v
     }
@@ -194,9 +196,9 @@ mod tests {
 
     #[test]
     fn consistency_ignores_first_field_secret_commitment() {
-        // The first field is expected_secret_commitment and must not be matched.
+        // The prefix fields are not share roots and must not be matched.
         let link = C3aToC2aShareEncryptionLink;
-        let msg = make_field(0xFF); // same value as the secret_commitment placeholder
+        let msg = make_field(0xFF); // same value as the secret-root placeholder
         let c2 = c2_signals(&[make_field(1)]); // share commitments don't include 0xFF
         assert!(!link.check_signals(&[msg], &c2));
     }

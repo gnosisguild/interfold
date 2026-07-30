@@ -26,7 +26,7 @@ pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 fn main(
     inner_vk: UltraHonkVerificationKey,
     inner_proof: UltraHonkZKProof,
-    c3_public_inputs: [Field; 3],
+    c3_public_inputs: [Field; 5],
     acc_vk: UltraHonkVerificationKey,
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; C3_FOLD_PUBLIC_LEN],
@@ -43,7 +43,7 @@ fn main(
 
     let pk_new = c3_public_inputs[0];
     let msg_new = c3_public_inputs[1];
-    let ct_new = c3_public_inputs[2];
+    let ct_new = c3_public_inputs[4];
 
     let mut out_pk: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut out_msg: [Field; C3_SLOTS] = [0; C3_SLOTS];

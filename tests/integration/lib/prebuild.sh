@@ -35,8 +35,10 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   (cd "$ROOT_DIR" && pnpm generate:verifiers --check --no-compile --no-clean-targets)
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
-  # still execute. Build only those two source groups for the fast CI profile.
+  # still execute. Build the leaf groups and the C2 chunk batch circuit for
+  # the fast CI profile.
   (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 --group recursive_aggregation --circuit sc_chunk_batch --circuit sk_share_computation_final --circuit e_sm_share_computation_final --no-clean -o "${INTEGRATION_NOIR}/circuits")
 fi
 
 if ! command -v jq >/dev/null 2>&1; then

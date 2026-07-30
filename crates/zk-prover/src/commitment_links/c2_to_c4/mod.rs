@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C2a/C2b (ShareComputation) → C4a/C4b (ShareDecryption)
+//! C2a/C2b (chunked ShareComputation) → C4a/C4b (ShareDecryption)
 //! share-commitment consistency links.
 //!
 //! ## Purpose
@@ -158,16 +158,16 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
 /// Extract all share commitments from C2's public signals.
 ///
 /// C2 inner-circuit public signals:
-///   - field 0: `expected_secret_commitment` (skipped)
-///   - fields 1..: `commit_to_party_shares[party_idx][mod_idx]` outputs,
+///   - fields 0..2: batch hash, VK lineage, and secret root (skipped)
+///   - remaining fields: party share roots,
 ///     row-major (party first, modulus second)
 ///
-/// Returns every 32-byte chunk after the first field.
+/// Returns every 32-byte chunk after the three final-wrapper prefix fields.
 fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
-    if public_signals.len() < 2 * FIELD_BYTE_LEN {
+    if public_signals.len() < 4 * FIELD_BYTE_LEN {
         return vec![];
     }
-    public_signals[FIELD_BYTE_LEN..]
+    public_signals[3 * FIELD_BYTE_LEN..]
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
@@ -214,9 +214,24 @@ fn check_exact_l_commitments(
     }
     let c2_block = &source_values[c2_start..c2_end];
 
-    // C4 row for src_idx (the C2 sender): bytes [X*L*32 .. (X+1)*L*32].
-    // C4 must also have the aggregated output as the last field.
-    let c4_row_start = src_idx * l * FIELD_BYTE_LEN;
+    let c4_fields = target_public_signals.len() / FIELD_BYTE_LEN;
+    if !target_public_signals.len().is_multiple_of(FIELD_BYTE_LEN)
+        || c4_fields < 1
+        || !(c4_fields - 1).is_multiple_of(l + 1)
+    {
+        return false;
+    }
+    let h = (c4_fields - 1) / (l + 1);
+    let expected_party_id = (src_idx as u64).to_be_bytes();
+    let Some(c4_row_idx) = (0..h).find(|row| {
+        let offset = row * FIELD_BYTE_LEN;
+        target_public_signals[offset + 24..offset + FIELD_BYTE_LEN] == expected_party_id
+    }) else {
+        return false;
+    };
+
+    // C4 row for the C2 sender starts after the H public party IDs.
+    let c4_row_start = (h + c4_row_idx * l) * FIELD_BYTE_LEN;
     let c4_row_end = c4_row_start + l * FIELD_BYTE_LEN;
     if target_public_signals.len() < c4_row_end + FIELD_BYTE_LEN {
         return false;

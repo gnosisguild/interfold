@@ -151,6 +151,7 @@ impl ShareDecryptionCircuitData {
 
         Ok(ShareDecryptionCircuitData {
             honest_ciphertexts,
+            honest_party_ids: (0..committee.h as u64).collect(),
             own_plaintext_share,
             secret_key: dkg_secret_key,
             dkg_input_type,

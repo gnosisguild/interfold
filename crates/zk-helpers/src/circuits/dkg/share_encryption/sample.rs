@@ -112,6 +112,8 @@ impl ShareEncryptionCircuitData {
             u_rns,
             e0_rns,
             e1_rns,
+            party_idx: 0,
+            mod_idx: 0,
             dkg_input_type,
         })
     }

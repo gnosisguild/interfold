@@ -11,7 +11,10 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
 use lib::math::commitments::compute_vk_hash;
 
-/// C2 inner public IO: `expected_secret_commitment` + `[[Field; L_THRESHOLD]; N_PARTIES]`.
+/// C2 final public IO: `batch_key_hash`, VK lineage, secret root, and share roots.
+pub global C2_FINAL_PUBLIC_LEN: u32 = 3 + (N_PARTIES * L_THRESHOLD);
+
+/// C2 output IO: secret root and `[[Field; L_THRESHOLD]; N_PARTIES]` share roots.
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 
 /// Two key-hash params + combined key hash + two C2-sized public vectors (a and b).
@@ -20,10 +23,10 @@ pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
 fn main(
     c2a_vk: UltraHonkVerificationKey,
     c2a_proof: UltraHonkZKProof,
-    c2a_public: [Field; C2_PUBLIC_LEN],
+    c2a_public: [Field; C2_FINAL_PUBLIC_LEN],
     c2b_vk: UltraHonkVerificationKey,
     c2b_proof: UltraHonkZKProof,
-    c2b_public: [Field; C2_PUBLIC_LEN],
+    c2b_public: [Field; C2_FINAL_PUBLIC_LEN],
     c2a_key_hash: pub Field,
     c2b_key_hash: pub Field,
     ) -> pub (Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
@@ -33,19 +36,19 @@ fn main(
     let vk_hashes = [c2a_key_hash, c2b_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
 
-    let c2a_expected = c2a_public[0];
+    let c2a_expected = c2a_public[2];
     let mut c2a_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     for j in 0..N_PARTIES {
         for l in 0..L_THRESHOLD {
-            c2a_shares[j][l] = c2a_public[1 + j * L_THRESHOLD + l];
+            c2a_shares[j][l] = c2a_public[3 + j * L_THRESHOLD + l];
         }
     }
 
-    let c2b_expected = c2b_public[0];
+    let c2b_expected = c2b_public[2];
     let mut c2b_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     for j in 0..N_PARTIES {
         for l in 0..L_THRESHOLD {
-            c2b_shares[j][l] = c2b_public[1 + j * L_THRESHOLD + l];
+            c2b_shares[j][l] = c2b_public[3 + j * L_THRESHOLD + l];
         }
     }
 

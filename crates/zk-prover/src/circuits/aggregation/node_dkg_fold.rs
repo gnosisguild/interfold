@@ -177,11 +177,11 @@ pub fn prove_node_dkg_fold(
     let mut step_timings = Vec::with_capacity(6);
     let c2a_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::SkShareComputation,
+        CircuitName::SkShareComputationFinal,
     )?;
     let c2b_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::ESmShareComputation,
+        CircuitName::ESmShareComputationFinal,
     )?;
 
     let c2ab = C2abFoldWitness {

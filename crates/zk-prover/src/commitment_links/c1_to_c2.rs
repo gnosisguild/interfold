@@ -14,9 +14,9 @@
 //! - field 1: `pk_commitment`   (byte offset  32..64)
 //! - field 2: `e_sm_commitment` (byte offset  64..96)
 //!
-//! **C2a/C2b (ShareComputation inner circuit)** takes `expected_secret_commitment`
-//! as its first public input (head, bytes 0..32). The remaining fields are
-//! per-party-per-modulus share commitment outputs from `commit_to_party_shares`.
+//! **C2a/C2b (final share-computation wrapper)** exposes the batch VK hash, VK lineage,
+//! secret root, and per-party-per-modulus share roots. The secret root is the third
+//! public field.
 //!
 //! ## Checks
 //!
@@ -66,7 +66,10 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
         if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
+        let secret_root_start = 2 * FIELD_BYTE_LEN;
+        target_public_signals.len() >= secret_root_start + FIELD_BYTE_LEN
+            && target_public_signals[secret_root_start..secret_root_start + FIELD_BYTE_LEN]
+                == source_values[0]
     }
 }
 
@@ -104,7 +107,10 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
         if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
+        let secret_root_start = 2 * FIELD_BYTE_LEN;
+        target_public_signals.len() >= secret_root_start + FIELD_BYTE_LEN
+            && target_public_signals[secret_root_start..secret_root_start + FIELD_BYTE_LEN]
+                == source_values[0]
     }
 }
 
@@ -127,9 +133,11 @@ mod tests {
         v
     }
 
-    /// C2 inner public signals: [expected_secret_commitment] + share commitments...
+    /// C2 final public signals: [batch hash, lineage, secret root] + share roots...
     fn c2_signals(secret_commitment: [u8; 32], share_commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(32 + share_commitments.len() * 32);
+        let mut v = Vec::with_capacity(96 + share_commitments.len() * 32);
+        v.extend_from_slice(&make_field(0xA0));
+        v.extend_from_slice(&make_field(0xA1));
         v.extend_from_slice(&secret_commitment);
         for c in share_commitments {
             v.extend_from_slice(c);

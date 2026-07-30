@@ -135,8 +135,11 @@ export const deployAndSaveVerifier = async (
     [libraryFQN]: zkTranscriptLibAddress,
   };
 
-  // Deploy the verifier contract with linked library
-  const factory = await ethers.getContractFactory(contractName, { libraries });
+  // Deploy the verifier contract with linked library.
+  const verifierFQN = isNpmArtifactContext()
+    ? `${NPM_HONK_SOURCE_PREFIX}/${contractName}.sol:${contractName}`
+    : `${BFV_HONK_VERIFIER_DIR}/${contractName}.sol:${contractName}`;
+  const factory = await ethers.getContractFactory(verifierFQN, { libraries });
   const contract = await factory.deploy();
   await contract.waitForDeployment();
 

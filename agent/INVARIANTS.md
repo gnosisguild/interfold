@@ -152,6 +152,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- Chunked C2 proofs must keep secret and share slices private, authenticate each chunk index, verify
+  secret consistency, range bounds, and parity inside every chunk, reconstruct roots in canonical
+  order, and expose a composite VK lineage for the chunk and batch wrappers. — `split-c2/plan.md`;
+  `flow-trace/04`
 - All C0–C7 proofs must complete before `ThresholdShareCreated` is published. — `flow-trace/04`
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)

@@ -115,8 +115,8 @@ fn generate_c3_fold_kernel_genesis_proof(
     Ok(proof)
 }
 
-/// Inner C3 public transcript: two inputs + `ct_commitment` output.
-fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], ZkError> {
+/// Inner C3 public transcript: four inputs + `ct_commitment` output.
+fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 5], ZkError> {
     if proof.circuit != CircuitName::ShareEncryption {
         return Err(ZkError::InvalidInput(format!(
             "expected ShareEncryption inner proof, got {}",
@@ -127,6 +127,8 @@ fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], Zk
     Ok([
         extract_single_field(proof, "input", field_keys::EXPECTED_PK_COMMITMENT, ctx)?,
         extract_single_field(proof, "input", field_keys::EXPECTED_MESSAGE_COMMITMENT, ctx)?,
+        extract_single_field(proof, "input", field_keys::SHARE_PARTY_IDX, ctx)?,
+        extract_single_field(proof, "input", field_keys::SHARE_MOD_IDX, ctx)?,
         extract_single_field(proof, "output", field_keys::CT_COMMITMENT, ctx)?,
     ])
 }
@@ -135,7 +137,7 @@ fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], Zk
 struct C3FoldStepInput {
     inner_vk: Vec<String>,
     inner_proof: Vec<String>,
-    c3_public_inputs: [String; 3],
+    c3_public_inputs: [String; 5],
     acc_vk: Vec<String>,
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,

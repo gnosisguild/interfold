@@ -13,7 +13,7 @@ use e3_events::{CircuitName, Proof};
 
 /// Field count for `UltraHonkProof` (non-ZK) used as the `acc_proof` parameter in every
 /// recursive fold step. Sourced from `nargo compile` ABI.
-pub const ACC_NONZK_PROOF_FIELDS: usize = 457;
+pub const ACC_NONZK_PROOF_FIELDS: usize = 410;
 
 /// String keys for inner-circuit public input/output extraction. Centralised so a
 /// rename in the Noir ABI surfaces as a single edit instead of a runtime panic.
@@ -23,6 +23,8 @@ pub const ACC_NONZK_PROOF_FIELDS: usize = 457;
 pub mod field_keys {
     pub const EXPECTED_PK_COMMITMENT: &str = "expected_pk_commitment";
     pub const EXPECTED_MESSAGE_COMMITMENT: &str = "expected_message_commitment";
+    pub const SHARE_PARTY_IDX: &str = "share_party_idx";
+    pub const SHARE_MOD_IDX: &str = "share_mod_idx";
     pub const EXPECTED_SK_COMMITMENT: &str = "expected_sk_commitment";
     pub const EXPECTED_E_SM_COMMITMENT: &str = "expected_e_sm_commitment";
     pub const CT_COMMITMENT: &str = "ct_commitment";

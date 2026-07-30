@@ -133,7 +133,7 @@ pub async fn setup_compiled_circuit_for_committee(
     }
 }
 
-/// Stages a `recursive_aggregation/*` fold binary for [`CircuitVariant::Default`] (`noir-recursive-no-zk`).
+/// Stages a `recursive_aggregation/*` binary for default and recursive proving.
 ///
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
@@ -148,6 +148,8 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
     let json_path = target_dir.join(format!("{pkg}.json"));
     let vk_recursive_path = target_dir.join(format!("{pkg}.vk_recursive"));
     let vk_recursive_hash_path = target_dir.join(format!("{pkg}.vk_recursive_hash"));
+    let vk_noir_path = target_dir.join(format!("{pkg}.vk_noir"));
+    let vk_noir_hash_path = target_dir.join(format!("{pkg}.vk_noir_hash"));
     let vk_evm_path = target_dir.join(format!("{pkg}.vk"));
     let vk_evm_hash_path = target_dir.join(format!("{pkg}.vk_hash"));
 
@@ -178,6 +180,25 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         )
         .await
         .unwrap();
+    }
+
+    let recursive_dir = preset_dir.join("recursive").join(circuit.group()).join(pkg);
+    fs::create_dir_all(&recursive_dir).await.unwrap();
+    fs::copy(&json_path, recursive_dir.join(format!("{pkg}.json")))
+        .await
+        .unwrap();
+    let (recursive_vk, recursive_hash) = if vk_noir_path.exists() {
+        (&vk_noir_path, &vk_noir_hash_path)
+    } else {
+        (&vk_recursive_path, &vk_recursive_hash_path)
+    };
+    fs::copy(recursive_vk, recursive_dir.join(format!("{pkg}.vk")))
+        .await
+        .unwrap();
+    if recursive_hash.exists() {
+        fs::copy(recursive_hash, recursive_dir.join(format!("{pkg}.vk_hash")))
+            .await
+            .unwrap();
     }
 
     if vk_evm_path.exists() {
