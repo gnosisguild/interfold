@@ -72,8 +72,34 @@ describe('Vote', () => {
       const encoded = encodeVote(expected)
       const decoded = decodeTally(encoded, 2)
 
-      expect(decoded[0]).toBe(expected[0])
-      expect(decoded[1]).toBe(expected[1])
+      expect(decoded[0]).toBe(BigInt(expected[0]))
+      expect(decoded[1]).toBe(BigInt(expected[1]))
+    })
+
+    it('Should decode totals above Number.MAX_SAFE_INTEGER without losing precision', () => {
+      // After aggregation a coefficient is a ballot count, not a bit. This models 4096
+      // ballots landing on the top coefficient of option 0 and one on its bottom coefficient,
+      // giving a total that a double cannot represent exactly.
+      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
+      coefficients[0] = 4096
+      coefficients[49] = 1
+
+      const decoded = decodeTally(coefficients, 2)
+
+      expect(decoded[0]).toBe((1n << 61n) + 1n)
+      expect(decoded[0] > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true)
+    })
+
+    it('Should reject a tally shorter than the payload region', () => {
+      const tooShort = new Array(MAX_MSG_NON_ZERO_COEFFS - 1).fill(0)
+
+      expect(() => decodeTally(tooShort, 2)).toThrow('is less than MAX_MSG_NON_ZERO_COEFFS')
+    })
+
+    it('Should reject a non-positive number of choices', () => {
+      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
+
+      expect(() => decodeTally(coefficients, 0)).toThrow('Number of choices must be positive')
     })
   })
 
@@ -87,16 +113,16 @@ describe('Vote', () => {
       const encoded = encodeVote([10, 2])
       const decoded = decodeTally(encoded, 2)
 
-      expect(decoded[0]).toBe(10)
-      expect(decoded[1]).toBe(2)
+      expect(decoded[0]).toBe(10n)
+      expect(decoded[1]).toBe(2n)
     })
 
     it('Should encode zero votes correctly', () => {
       const encoded = encodeVote([0, 5])
       const decoded = decodeTally(encoded, 2)
 
-      expect(decoded[0]).toBe(0)
-      expect(decoded[1]).toBe(5)
+      expect(decoded[0]).toBe(0n)
+      expect(decoded[1]).toBe(5n)
     })
 
     it('Should only contain binary digits (0 or 1)', () => {
@@ -109,29 +135,29 @@ describe('Vote', () => {
       const encoded = encodeVote([10, 2, 3])
       const decoded = decodeTally(encoded, 3)
 
-      expect(decoded[0]).toBe(10)
-      expect(decoded[1]).toBe(2)
-      expect(decoded[2]).toBe(3)
+      expect(decoded[0]).toBe(10n)
+      expect(decoded[1]).toBe(2n)
+      expect(decoded[2]).toBe(3n)
     })
 
     it('Should encode votes correctly with 5 choices', () => {
       const encoded = encodeVote([100, 50, 25, 10, 5])
       const decoded = decodeTally(encoded, 5)
 
-      expect(decoded[0]).toBe(100)
-      expect(decoded[1]).toBe(50)
-      expect(decoded[2]).toBe(25)
-      expect(decoded[3]).toBe(10)
-      expect(decoded[4]).toBe(5)
+      expect(decoded[0]).toBe(100n)
+      expect(decoded[1]).toBe(50n)
+      expect(decoded[2]).toBe(25n)
+      expect(decoded[3]).toBe(10n)
+      expect(decoded[4]).toBe(5n)
     })
 
     it('Should zero-pad unused slots in the first MAX_MSG_NON_ZERO_COEFFS coeffs for 3 choices', () => {
       const encoded = encodeVote([1, 1, 1])
       const decoded = decodeTally(encoded, 3)
 
-      expect(decoded[0]).toBe(1)
-      expect(decoded[1]).toBe(1)
-      expect(decoded[2]).toBe(1)
+      expect(decoded[0]).toBe(1n)
+      expect(decoded[1]).toBe(1n)
+      expect(decoded[2]).toBe(1n)
 
       const segmentSize = Math.floor(MAX_MSG_NON_ZERO_COEFFS / 3)
       expect(encoded.slice(segmentSize * 3, MAX_MSG_NON_ZERO_COEFFS).every((b) => b === 0)).toBe(true)
@@ -160,7 +186,7 @@ describe('Vote', () => {
 
       const decryptedVote = decryptVote(proof.encryptedVote, secretKey, vote.length)
 
-      expect(decryptedVote).toEqual(vote)
+      expect(decryptedVote).toEqual(vote.map(BigInt))
 
       const isValid = await verifyProof(proof)
 
@@ -188,7 +214,7 @@ describe('Vote', () => {
 
       const decryptedVote = decryptVote(proof.encryptedVote, secretKey, 2)
 
-      expect(decryptedVote).toEqual(zeroVote)
+      expect(decryptedVote).toEqual(zeroVote.map(BigInt))
 
       const isValid = await verifyProof(proof)
 
@@ -213,7 +239,7 @@ describe('Vote', () => {
 
       const decryptedVote = decryptVote(previousCiphertext, secretKey, 2)
 
-      expect(decryptedVote).toEqual(zeroVote)
+      expect(decryptedVote).toEqual(zeroVote.map(BigInt))
 
       const isValid = await verifyProof(proof)
 

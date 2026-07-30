@@ -54,12 +54,14 @@ export function adaptHistoryEntries(list: E3Summary[], detailsCache: Map<string,
 // we have the result; otherwise reflects the on-chain stage (failed / expired /
 // in progress / completed) rather than a blanket "Pending".
 function historyResult(s: E3Summary, detail: E3FullDetails | undefined, meta: ReturnType<typeof pollMetaFor>): string {
-  if (detail) {
-    const tally = decodeCrispTally(detail.plaintextOutput)
+  // Without the on-chain option count the segment layout is unknown, so the tally is
+  // left undecoded rather than guessed from the off-chain label list.
+  if (detail && detail.numOptions) {
+    const tally = decodeCrispTally(detail.plaintextOutput, detail.numOptions)
     if (tally && tally.length > 0) {
-      const total = tally.reduce((a, b) => a + b, 0)
-      const max = Math.max(...tally)
-      const pct = total > 0 ? Math.round((max / total) * 100) : 0
+      const total = tally.reduce((a, b) => a + b, 0n)
+      const max = tally.reduce((a, b) => (b > a ? b : a), 0n)
+      const pct = total > 0n ? Number((max * 100n) / total) : 0
       const winnerLabel = meta.options[tally.indexOf(max)]?.label ?? 'Outcome'
       const verdict = /^no/i.test(winnerLabel) ? 'Declined' : /^abs/i.test(winnerLabel) ? 'Inconclusive' : 'Approved'
       return `${verdict} · ${pct}%`

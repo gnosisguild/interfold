@@ -39,8 +39,10 @@ contract CRISPProgram is IE3Program, Ownable {
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
   /// @notice The depth of the input Merkle tree.
   uint8 public constant TREE_DEPTH = 20;
-  /// @notice Maximum number of bits allocated for vote counts in the plaintext output per option.
-  uint256 constant MAX_VOTE_BITS = 50;
+  /// @notice Number of leading plaintext coefficients that carry the vote payload.
+  /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
+  /// The remaining coefficients up to the BFV degree are zero padding.
+  uint256 constant MAX_MSG_NON_ZERO_COEFFS = 100;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -237,20 +239,24 @@ contract CRISPProgram is IE3Program, Ownable {
 
     uint64[] memory tally = _decodeBytesToUint64Array(e3.plaintextOutput);
 
-    uint256 segmentSize = tally.length / numOptions;
-    uint256 effectiveSize = segmentSize > MAX_VOTE_BITS ? MAX_VOTE_BITS : segmentSize;
+    // The payload lives in the first MAX_MSG_NON_ZERO_COEFFS coefficients; the rest of
+    // the polynomial is zero padding and must not be read.
+    if (tally.length < MAX_MSG_NON_ZERO_COEFFS) revert InvalidTallyLength();
+
+    uint256 segmentSize = MAX_MSG_NON_ZERO_COEFFS / numOptions;
+    // More options than payload coefficients leaves nothing to decode.
+    if (segmentSize == 0) return new uint256[](0);
 
     votes = new uint256[](numOptions);
 
     for (uint256 optIdx = 0; optIdx < numOptions; optIdx++) {
       uint256 segmentStart = optIdx * segmentSize;
-      // Read only the last effectiveSize bits (where the value is, MSB first)
-      uint256 readStart = segmentStart + segmentSize - effectiveSize;
       uint256 value = 0;
 
-      for (uint256 i = 0; i < effectiveSize; i++) {
-        uint256 weight = 2 ** (effectiveSize - 1 - i);
-        value += uint256(tally[readStart + i]) * weight;
+      // Each segment holds the count in binary, most significant coefficient first.
+      for (uint256 i = 0; i < segmentSize; i++) {
+        uint256 weight = 2 ** (segmentSize - 1 - i);
+        value += uint256(tally[segmentStart + i]) * weight;
       }
 
       votes[optIdx] = value;

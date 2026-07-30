@@ -15,11 +15,11 @@
  */
 
 import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
-import { toBinary, numberArrayToBigInt64Array, decodeBytesToNumbers, getMaxVoteValue } from './utils'
+import { toBinary, numberArrayToBigInt64Array, decodeBytesToBigInts, getMaxVoteValue } from './utils'
 import { MAX_MSG_NON_ZERO_COEFFS } from './constants'
 import { hexToBytes } from 'viem'
 import type { Hex } from 'viem'
-import type { Vote } from './types'
+import type { TallyResult, Vote } from './types'
 
 let _zkInputsGenerator: InstanceType<typeof ZKInputsGenerator> | null = null
 
@@ -101,34 +101,44 @@ export const encryptVote = (vote: Vote, publicKey: Uint8Array): Uint8Array => {
 }
 
 /**
- * Decodes raw tally bytes (or hex string) into vote values per choice.
+ * Decodes raw tally bytes (or coefficients) into a total per choice.
  * Expects the same segment layout as used in encodeVote.
  *
- * @param tallyBytes - Hex string or array of decoded numbers from tally/decryption
+ * Mirrors `crisp_utils::decode_tally` (Rust) and `CRISPProgram.decodeTally` (Solidity):
+ * only the first MAX_MSG_NON_ZERO_COEFFS coefficients carry the payload, split into
+ * `floor(MAX_MSG_NON_ZERO_COEFFS / numChoices)` binary coefficients per choice, MSB first.
+ *
+ * @param tallyBytes - Hex string, or the polynomial coefficients from tally/decryption
  * @param numChoices - Number of vote options
- * @returns Vote array with one value per choice
+ * @returns One total per choice
+ * @throws If numChoices is not positive, or there are fewer coefficients than the payload region
  */
-export const decodeTally = (tallyBytes: string | number[], numChoices: number): Vote => {
-  if (typeof tallyBytes === 'string') {
-    const hexString = tallyBytes.startsWith('0x') ? tallyBytes : `0x${tallyBytes}`
-    tallyBytes = decodeBytesToNumbers(hexToBytes(hexString as Hex))
-  }
-
+export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult => {
   if (numChoices <= 0) {
     throw new Error('Number of choices must be positive')
   }
 
+  let coefficients: bigint[]
+  if (typeof tallyBytes === 'string') {
+    const hexString = tallyBytes.startsWith('0x') ? tallyBytes : `0x${tallyBytes}`
+    coefficients = decodeBytesToBigInts(hexToBytes(hexString as Hex))
+  } else {
+    coefficients = (tallyBytes as Array<number | bigint>).map(BigInt)
+  }
+
+  if (coefficients.length < MAX_MSG_NON_ZERO_COEFFS) {
+    throw new Error(`decoded coefficient count (${coefficients.length}) is less than MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
+  }
+
   const segmentSize = Math.floor(MAX_MSG_NON_ZERO_COEFFS / numChoices)
-  const results: Vote = []
+  const results: TallyResult = []
 
   for (let choiceIdx = 0; choiceIdx < numChoices; choiceIdx++) {
     const segmentStart = choiceIdx * segmentSize
-    const segment = tallyBytes.slice(segmentStart, segmentStart + segmentSize)
 
-    let value = 0
-    for (let i = 0; i < segment.length; i++) {
-      const weight = 2 ** (segment.length - 1 - i)
-      value += segment[i] * weight
+    let value = 0n
+    for (let i = 0; i < segmentSize; i++) {
+      value += coefficients[segmentStart + i] << BigInt(segmentSize - 1 - i)
     }
 
     results.push(value)
@@ -143,15 +153,12 @@ export const decodeTally = (tallyBytes: string | number[], numChoices: number): 
  * @param ciphertext - Encrypted vote
  * @param secretKey - BFV secret key
  * @param numChoices - Number of vote options
- * @returns Decrypted vote array
+ * @returns One total per choice
  */
-export const decryptVote = (ciphertext: Uint8Array, secretKey: Uint8Array, numChoices: number): Vote => {
+export const decryptVote = (ciphertext: Uint8Array, secretKey: Uint8Array, numChoices: number): TallyResult => {
   const decryptedVote = getZkInputsGenerator().decryptVote(secretKey, ciphertext)
 
-  return decodeTally(
-    Array.from(decryptedVote).map((v) => Number(v)),
-    numChoices,
-  )
+  return decodeTally(Array.from(decryptedVote), numChoices)
 }
 
 /**
