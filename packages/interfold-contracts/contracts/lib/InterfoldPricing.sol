@@ -337,7 +337,7 @@ library InterfoldPricing {
         uint256 per = cnAmount / n;
         uint256 dust = cnAmount - per * n;
         uint256 dustIndex = e3Id % n;
-        for (uint256 i = 0; i < n; ) {
+        for (uint256 i = 0; i < n; i++) {
             uint256 amount = per;
             if (i == dustIndex) amount += dust;
             amounts[i] = amount;
@@ -345,15 +345,8 @@ library InterfoldPricing {
                 address operator = nodes[i];
                 address recipient = bonding.bondOwnerOf(operator);
                 if (recipient == address(0)) recipient = operator;
-                unchecked {
-                    // Distribution executes once and all credits sum to the
-                    // ciphernode share of the E3 payment.
-                    pendingRewards[e3Id][recipient] += amount;
-                }
+                pendingRewards[e3Id][recipient] += amount;
                 emit RewardCredited(e3Id, recipient, token, amount);
-            }
-            unchecked {
-                ++i;
             }
         }
     }

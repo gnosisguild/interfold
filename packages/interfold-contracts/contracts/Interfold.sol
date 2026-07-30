@@ -271,10 +271,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             maxDuration
         );
 
-        e3Id = nexte3Id;
-        unchecked {
-            nexte3Id = e3Id + 1;
-        }
+        e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         dependencies.registry = ciphernodeRegistry;
         dependencies.refundManager = e3RefundManager;
@@ -1095,11 +1092,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     function claimRewards(uint256[] calldata e3Ids) external {
         uint256 len = e3Ids.length;
         bool claimed;
-        for (uint256 i = 0; i < len; ) {
+        for (uint256 i = 0; i < len; i++) {
             if (_claimReward(e3Ids[i], msg.sender) != 0) claimed = true;
-            unchecked {
-                ++i;
-            }
         }
         require(claimed, NothingToClaim());
     }

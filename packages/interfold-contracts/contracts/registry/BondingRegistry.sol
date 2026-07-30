@@ -24,12 +24,9 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { ILockAwareLicenseToken } from "../interfaces/ILockAwareLicenseToken.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
-
-interface ILockAwareLicenseToken {
-    function lockedBalanceOf(address account) external view returns (uint256);
-}
 
 /**
  * @title BondingRegistry
