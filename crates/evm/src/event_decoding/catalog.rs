@@ -173,6 +173,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("BondOwnerSet", "BondOwnerSet(address,address)", None),
     EvmEventDefinition::new(
+        "BondOwnerTransferProposed",
+        "BondOwnerTransferProposed(address,address,address)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "CiphernodeDeregistrationRequested",
         "CiphernodeDeregistrationRequested(address,uint64)",
         None,
