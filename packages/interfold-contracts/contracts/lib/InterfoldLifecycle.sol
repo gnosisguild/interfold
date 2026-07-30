@@ -66,14 +66,16 @@ library InterfoldLifecycle {
                 committeePublicKey
             )
         );
-        IDecryptionVerifier(verifierAddress).verify(
-            e3Id,
-            decryptionDomain,
-            plaintextHash,
-            committeeHash,
-            ciphertextCommitment,
-            proof
-        );
+        if (
+            !IDecryptionVerifier(verifierAddress).verify(
+                e3Id,
+                decryptionDomain,
+                plaintextHash,
+                committeeHash,
+                ciphertextCommitment,
+                proof
+            )
+        ) revert IDecryptionVerifier.InvalidProof();
     }
 
     // prettier-ignore

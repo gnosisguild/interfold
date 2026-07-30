@@ -662,10 +662,10 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
         │  │    4. require(proof.length > 0)                    │
-        │  │       e3.pkVerifier.verify(                         │
+        │  │       require(e3.pkVerifier.verify(                │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
-        │  │       )                                             │
+        │  │       ), InvalidProof())                            │
         │  │       → BFV: `BfvPkVerifier` (DkgAggregator Honk)  │
         │  │         • M-34: immutable nodesFold / C5 VK hashes  │
         │  │           checked against publicInputs[0..1]        │
@@ -971,10 +971,10 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │         chainId, address(this), e3Id,               │
         │  │         committeeHash, ciphertextOutput,            │
         │  │         committeePublicKey                          │
-        │  │       )), then call decryptionVerifier.verify(      │
+        │  │       )), then require decryptionVerifier.verify(   │
         │  │         e3Id, decryptionDomain, keccak256(output),  │
         │  │         committeeHash, ciphertextCommitment, proof  │
-        │  │       )                                             │
+        │  │       ) == true                                     │
         │  │       → C-03: final proof domain must match the      │
         │  │         domain already committed by every C6 leaf.  │
          │  │       → IF-003: e3Id resolves stored DKG anchors;  │

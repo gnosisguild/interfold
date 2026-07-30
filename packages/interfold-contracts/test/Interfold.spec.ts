@@ -913,6 +913,40 @@ describe("Interfold", function () {
         interfold.publishPlaintextOutput(e3Id, data, "0xdeadbeef"),
       ).to.be.revert(ethers);
     });
+    it("rejects a false decryption verifier result", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
+
+      await expect(
+        interfold.publishPlaintextOutput(e3Id, data, "0xfafafafa"),
+      ).to.be.revertedWithCustomError(mocks.decryptionVerifier, "InvalidProof");
+    });
     it("sets plaintextOutput correctly", async function () {
       const {
         interfold,

@@ -60,6 +60,7 @@ describe("CiphernodeRegistryOwnable", function () {
       usdcToken: sys.usdcToken,
       mockE3Program: sys.mocks.e3Program,
       mockDecryptionVerifier: sys.mocks.decryptionVerifier,
+      mockPkVerifier: sys.mocks.pkVerifier,
       request,
     };
   }
@@ -424,6 +425,37 @@ describe("CiphernodeRegistryOwnable", function () {
           "0x",
         ),
       ).to.be.revertedWithCustomError(registry, "FoldAttestationsRequired");
+    });
+    it("rejects a false public-key verifier result", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        mockPkVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await finalizeCommitteeAfterWindow(registry, 0);
+
+      const falseProof = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["bytes", "bytes32[]"],
+        ["0xfafafafa", [dataHash]],
+      );
+      await expect(
+        registry.publishCommittee(0, data, dataHash, falseProof, "0x01"),
+      ).to.be.revertedWithCustomError(mockPkVerifier, "InvalidProof");
     });
     it("allows any caller to publish a finalized committee", async function () {
       const {

@@ -9,6 +9,7 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { E3 } from "../interfaces/IE3.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import {
     Ownable2StepUpgradeable
@@ -369,14 +370,16 @@ contract CiphernodeRegistryOwnable is
         require(proof.length > 0, DkgProofRequired());
         // Reverts with a typed error on any mismatch; binds to the on-chain
         // committee (sortedNodes = c.topNodes) per audit finding C-08.
-        e3.pkVerifier.verify(
-            e3Id,
-            committeeRoot,
-            sortedNodes,
-            pkCommitment,
-            committeeHash,
-            proof
-        );
+        if (
+            !e3.pkVerifier.verify(
+                e3Id,
+                committeeRoot,
+                sortedNodes,
+                pkCommitment,
+                committeeHash,
+                proof
+            )
+        ) revert IPkVerifier.InvalidProof();
         _verifyAndStoreFoldAttestation(e3Id, proof, dkgAttestationBundle);
     }
 
