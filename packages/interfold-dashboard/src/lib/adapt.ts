@@ -61,7 +61,9 @@ function historyResult(s: E3Summary, detail: E3FullDetails | undefined, meta: Re
     if (tally && tally.length > 0) {
       const total = tally.reduce((a, b) => a + b, 0n)
       const max = tally.reduce((a, b) => (b > a ? b : a), 0n)
-      const pct = total > 0n ? Number((max * 100n) / total) : 0
+      // Integer division truncates, so bias the numerator by half a percentage point
+      // to round half-up — matching the display before totals became bigint.
+      const pct = total > 0n ? Number((max * 200n + total) / (total * 2n)) : 0
       const winnerLabel = meta.options[tally.indexOf(max)]?.label ?? 'Outcome'
       const verdict = /^no/i.test(winnerLabel) ? 'Declined' : /^abs/i.test(winnerLabel) ? 'Inconclusive' : 'Approved'
       return `${verdict} · ${pct}%`
