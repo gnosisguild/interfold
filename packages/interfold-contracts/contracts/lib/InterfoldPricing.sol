@@ -20,8 +20,6 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  */
 library InterfoldPricing {
     uint16 internal constant BPS_BASE = 10000;
-    uint16 internal constant MAX_PROTOCOL_SHARE_BPS = 5_000;
-    uint16 internal constant MAX_MARGIN_BPS = 5_000;
     event RewardCredited(
         uint256 indexed e3Id,
         address indexed account,
@@ -51,11 +49,13 @@ library InterfoldPricing {
 
     /// @notice Mirrors {Interfold.setPricingConfig} validation.
     function validatePricingConfig(
-        IInterfold.PricingConfig calldata config
+        IInterfold.PricingConfig calldata config,
+        uint16 maxMarginBps,
+        uint16 maxProtocolShareBps
     ) external pure {
-        if (config.marginBps > MAX_MARGIN_BPS)
+        if (config.marginBps > maxMarginBps)
             revert IInterfold.BpsExceedsMax(config.marginBps);
-        if (config.protocolShareBps > MAX_PROTOCOL_SHARE_BPS)
+        if (config.protocolShareBps > maxProtocolShareBps)
             revert IInterfold.BpsExceedsMax(config.protocolShareBps);
         if (config.dkgUtilizationBps > BPS_BASE)
             revert IInterfold.UtilizationBpsExceedsMax(

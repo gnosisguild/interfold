@@ -16,8 +16,6 @@ import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
-    uint32 internal constant MAX_COMMITTEE_SIZE = 256;
-
     function validateRegistryCaller(
         address caller,
         address registry
@@ -228,11 +226,12 @@ library InterfoldLifecycle {
     function validateCommitteeThresholds(
         uint32[2] calldata threshold,
         uint32 minCommitteeSize,
-        uint32 minThreshold
+        uint32 minThreshold,
+        uint32 maxCommitteeSize
     ) external pure {
         if (threshold[0] == 0 || threshold[1] < threshold[0])
             revert IInterfold.InvalidThresholdValues();
-        if (threshold[1] > MAX_COMMITTEE_SIZE)
+        if (threshold[1] > maxCommitteeSize)
             revert IInterfold.InvalidThresholdValues();
         if (minCommitteeSize > 0 && threshold[1] < minCommitteeSize)
             revert IInterfold.BelowMinCommitteeSize(

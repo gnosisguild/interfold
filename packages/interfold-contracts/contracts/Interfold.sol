@@ -988,7 +988,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         InterfoldLifecycle.validateCommitteeThresholds(
             threshold,
             pc.minCommitteeSize,
-            pc.minThreshold
+            pc.minThreshold,
+            MAX_COMMITTEE_SIZE
         );
         committeeThresholds[size] = threshold;
         emit CommitteeThresholdsUpdated(size, threshold);
@@ -1006,7 +1007,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         // (external library link) to keep the deployed Interfold runtime
         // bytecode under the EIP-170 24,576-byte cap. Revert selectors are
         // preserved via shared {IInterfold} error declarations.
-        InterfoldPricing.validatePricingConfig(config);
+        InterfoldPricing.validatePricingConfig(
+            config,
+            MAX_MARGIN_BPS,
+            MAX_PROTOCOL_SHARE_BPS
+        );
         _pricingConfig = config;
         emit PricingConfigUpdated(config);
     }
