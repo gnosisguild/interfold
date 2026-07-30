@@ -542,12 +542,13 @@ interface IBondingRegistry {
      * @param amount Amount to slash
      * @param reason Reason for slashing (stored in event)
      * @dev Only callable by authorized slashing manager
+     * @return actualAmount Amount removed from active and pending license collateral
      */
     function slashLicenseBond(
         address operator,
         uint256 amount,
         bytes32 reason
-    ) external;
+    ) external returns (uint256 actualAmount);
 
     /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
     /// @dev Only callable by the configured slashing manager.

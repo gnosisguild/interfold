@@ -783,7 +783,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlyAuthorizedSlashingManager nonReentrant {
+    ) external onlyAuthorizedSlashingManager nonReentrant returns (uint256) {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
@@ -795,7 +795,7 @@ contract BondingRegistry is
             totalAvailableBalance
         );
 
-        if (actualSlashAmount == 0) return;
+        if (actualSlashAmount == 0) return 0;
 
         uint256 activeSlashAmount = Math.min(
             actualSlashAmount,
@@ -829,6 +829,7 @@ contract BondingRegistry is
         );
 
         _updateOperatorStatus(operator);
+        return actualSlashAmount;
     }
 
     /// @inheritdoc IBondingRegistry

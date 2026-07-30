@@ -704,9 +704,10 @@ _executeSlash(proposalId):
 │     │  └───────────────────────────────────────────────────────┘
 │
 ├─ 2. SLASH LICENSE BOND (if licenseAmount > 0):
-│     bondingRegistry.slashLicenseBond(
+│     actualLicenseSlashed = bondingRegistry.slashLicenseBond(
 │       operator, proposal.licenseAmount, reason
 │     )
+│     → Returns ACTUAL amount slashed (may be less if balance insufficient)
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
@@ -820,7 +821,7 @@ _executeSlash(proposalId):
 │        → transfer + accounting succeed atomically, or all state reverts
 │
 └─ 7. Emit SlashExecuted(proposalId, e3Id, operator, reason,
-       ticketSlashed, licenseSlashed, banned)
+       actualTicketSlashed, actualLicenseSlashed, banned)
 ```
 
 > **License transfer note.** `withdrawSlashedFunds` (the treasury sweep for slashed license bonds)

@@ -766,6 +766,7 @@ contract SlashingManager is
         E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
+        uint256 actualLicenseSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
@@ -777,7 +778,7 @@ contract SlashingManager is
         }
 
         if (p.licenseAmount > 0) {
-            dependencies.bonding.slashLicenseBond(
+            actualLicenseSlashed = dependencies.bonding.slashLicenseBond(
                 p.operator,
                 p.licenseAmount,
                 p.reason
@@ -861,8 +862,8 @@ contract SlashingManager is
             p.e3Id,
             p.operator,
             p.reason,
-            p.ticketAmount,
-            p.licenseAmount,
+            actualTicketSlashed,
+            actualLicenseSlashed,
             true,
             lane
         );
