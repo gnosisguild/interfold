@@ -136,21 +136,30 @@ Bond owner
 ├─ CLI: ciphernode license --operator OP bond --amount N
 ├─ licenseToken.approve(BondingRegistry, bondAmount)
 ├─ BondingRegistry.bondLicenseFor(operator, bondAmount)
+├─ CLI: ciphernode register --operator OP
+├─ BondingRegistry.registerOperatorFor(operator)
+│  ├─ Verifies msg.sender == bondOwnerOf(operator)
+│  ├─ Verifies the operator is not banned or already registered
+│  ├─ Verifies the operator has the required FOLD bond
+│  ├─ Sets operators[operator].registered = true
+│  ├─ Calls registry.addCiphernode(operator)
+│  │  ├─ Inserts uint160(operator) into the Lean IMT
+│  │  └─ Emits CiphernodeAdded(operator)
+│  └─ Calls _updateOperatorStatus(operator)
+│     └─ Registered but inactive: the ticket threshold is not met yet
 ├─ CLI: ciphernode tickets --operator OP buy --amount N
 ├─ stablecoin.approve(InterfoldTicketToken, ticketAmount)
-├─ BondingRegistry.addTicketBalanceFor(operator, ticketAmount)
-├─ CLI: ciphernode register --operator OP
-└─ BondingRegistry.registerOperatorFor(operator)
-   ├─ Verifies msg.sender == bondOwnerOf(operator)
-   ├─ Verifies the operator is not banned or already registered
-   ├─ Verifies the operator has the required FOLD bond
-   ├─ Sets operators[operator].registered = true
-   ├─ Calls registry.addCiphernode(operator)
-   │  ├─ Inserts uint160(operator) into the Lean IMT
-   │  └─ Emits CiphernodeAdded(operator)
+└─ BondingRegistry.addTicketBalanceFor(operator, ticketAmount)
+   ├─ Reverts with NotRegistered() when registration has not happened
+   ├─ Mints tFOLD to the operator from the owner's stablecoin
    └─ Calls _updateOperatorStatus(operator)
       └─ Activates when bond and ticket thresholds are met
 ```
+
+Registration must precede the ticket purchase. `_addTicketBalance` requires
+`operators[operator].registered`, so funding tickets first reverts with `NotRegistered()`. The
+license bond is the reverse: `registerOperatorFor` requires `licenseBond >= licenseRequiredBond`, so
+the bond must already be in place. The only valid order is bond, register, tickets.
 
 The node's address—not the bond owner's—is inserted into the IMT, owns the tFOLD balance, and
 remains the committee and slashing identity.

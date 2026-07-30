@@ -28,12 +28,15 @@
 
 3. BOND         Bond owner calls bondLicenseFor(operator, N)
                   → Owner's FOLD tokens locked against the operator position
+                  → Must reach licenseRequiredBond before the next step
 
-4. TICKETS      Bond owner calls addTicketBalanceFor(operator, N)
-                  → Owner's USDC → non-transferable tFOLD minted to operator
-
-5. REGISTER     Bond owner calls registerOperatorFor(operator)
+4. REGISTER     Bond owner calls registerOperatorFor(operator)
                   → CiphernodeRegistry.addCiphernode() (IMT insert)
+                  → Registered but still inactive: no tickets yet
+
+5. TICKETS      Bond owner calls addTicketBalanceFor(operator, N)
+                  → Reverts with NotRegistered() before step 4
+                  → Owner's USDC → non-transferable tFOLD minted to operator
                   → If bond+tickets meet thresholds → active=true
 
 6. START        interfold start
