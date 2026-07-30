@@ -20,8 +20,8 @@ requirement strength, limit, unit, identifier, or safety classification to satis
 1. Classify the text as a procedure, description, safety instruction, requirement, or protected
    literal.
 2. Preserve code, identifiers, commands, paths, URLs, equations, API names, UI labels, log output,
-   quotations, required legal text, and interface-stable message literals exactly. Apply the
-   writing rules to new messages and to messages that are safe to change.
+   quotations, required legal text, and interface-stable message literals exactly. Apply the writing
+   rules to new messages and to messages that are safe to change.
 3. Read [references/rules.md](references/rules.md). Apply the sections relevant to the text.
 4. Use one consistent project-approved term for each concept.
 5. Prefer short active sentences, direct verbs, explicit subjects, and parallel lists.

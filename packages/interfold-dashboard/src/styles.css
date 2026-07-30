@@ -1939,3 +1939,394 @@ button {
     gap: 22px;
   }
 }
+
+/* ── Ciphernode operator guide ───────────────────────────────────────────── */
+.opguide {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.opguide__head {
+  max-width: 760px;
+}
+.opguide__title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+  margin: 6px 0 12px;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.opguide__lede {
+  font-size: 16px;
+  line-height: 1.62;
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+
+/* Network parameters strip. Borrows the .insp-stats grid; as a standalone card
+   it replaces that rule's divider border and top-only padding (this block is
+   later in the file, so the shorthands win). */
+.opparams {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 24px 36px;
+}
+
+/* Live position summary */
+.opposition {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 26px 36px 28px;
+}
+.opposition__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.opposition__addr {
+  margin-top: 4px;
+}
+
+/* Step list */
+.opsteps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.opstep {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition:
+    border-color 140ms,
+    opacity 140ms;
+}
+.opstep--active {
+  border-color: var(--accent-soft);
+  box-shadow: 0 1px 0 var(--accent-soft);
+}
+.opstep--todo {
+  opacity: 0.86;
+}
+.opstep__rail {
+  display: flex;
+  justify-content: center;
+  /* Aligns the marker with the cap height of .opstep__title. */
+  padding: 23px 0;
+  border-right: 1px solid var(--rule-soft);
+  background: var(--paper);
+}
+.opstep__num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 540;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  color: var(--ink-3);
+}
+.opstep--active .opstep__num {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+.opstep--done .opstep__num {
+  background: var(--accent-bg);
+  border-color: var(--accent-soft);
+  color: var(--accent-deep);
+}
+.opstep__body {
+  padding: 22px 28px 26px;
+  min-width: 0;
+}
+.opstep__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.opstep__title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  margin: 0;
+  color: var(--ink);
+}
+.opstep__badge {
+  font-size: 11px;
+  font-weight: 540;
+  padding: 4px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  flex: none;
+  white-space: nowrap;
+}
+.opstep__badge--done {
+  background: var(--accent-bg);
+  color: var(--accent-deep);
+  border: 1px solid var(--accent-soft);
+}
+.opstep__badge--active {
+  background: var(--accent-deep);
+  color: #fff;
+}
+.opstep__badge--todo {
+  background: var(--paper);
+  color: var(--ink-3);
+  border: 1px solid var(--rule);
+}
+.opstep__lede {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 680px;
+  margin: 8px 0 0;
+  text-wrap: pretty;
+}
+.opstep__content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 20px;
+}
+.opstep__content:empty {
+  margin-top: 0;
+}
+.opstep__content .dl {
+  width: 100%;
+  max-width: 680px;
+}
+/* Inline contract-function references inside prose. */
+.opstep code,
+.opnote code,
+.opnext code {
+  font-size: 12.5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--paper-3);
+  color: var(--ink-2);
+}
+
+/* Inputs */
+.opfields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 24px;
+  width: 100%;
+}
+.opfield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  max-width: 520px;
+}
+.opfield__label {
+  font-size: 12px;
+  font-weight: 540;
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+}
+.opfield__control {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.opfield__input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  padding: 10px 12px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+.opfield__input:focus {
+  border-color: var(--accent-soft);
+  background: var(--paper-2);
+}
+.opfield__input--bad {
+  border-color: #d9a3a3;
+}
+.opfield__hint {
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+/* Inline notices */
+.opnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
+  max-width: 680px;
+}
+.opnote__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--ink-4);
+}
+.opnote--warn {
+  background: #fdf4ef;
+  border-color: #f0ddd0;
+  color: #6d4327;
+}
+.opnote--warn .opnote__dot {
+  background: #c07a44;
+}
+.opnote--warn code {
+  background: #f6e7db;
+  color: #6d4327;
+}
+
+.opactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* The operator guide is the first page with disabled buttons — gate steps the
+   connected wallet cannot send. Defined on .btn so any future page inherits it. */
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.btn:disabled:hover {
+  transform: none;
+  border-color: var(--rule);
+}
+
+/* Testnet faucet */
+.opfaucet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 14px 18px;
+  background: var(--paper);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius-sm);
+}
+.opfaucet__title {
+  font-size: 13.5px;
+  font-weight: 540;
+  color: var(--ink);
+}
+.opfaucet__sub {
+  font-size: 12.5px;
+  color: var(--ink-4);
+  margin-top: 2px;
+  max-width: 520px;
+}
+
+.optx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+/* Closing section */
+.opnext {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 26px 36px 28px;
+}
+.opnext__title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.014em;
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+.opnext__body {
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: var(--ink-2);
+  max-width: 700px;
+  margin: 0;
+  text-wrap: pretty;
+}
+.opnext__body--muted {
+  color: var(--ink-4);
+  font-size: 13.5px;
+  margin-top: 18px;
+}
+.opnext__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+@media (max-width: 880px) {
+  .opstep {
+    grid-template-columns: 1fr;
+  }
+  .opstep__rail {
+    justify-content: flex-start;
+    padding: 14px 20px 0;
+    border-right: 0;
+    background: transparent;
+  }
+  .opstep__body {
+    padding: 12px 20px 22px;
+  }
+  .opfields {
+    grid-template-columns: 1fr;
+  }
+  .opparams {
+    padding: 18px 20px 4px;
+    border-radius: var(--radius);
+  }
+  .opposition,
+  .opnext {
+    padding: 20px 20px 22px;
+    border-radius: var(--radius);
+  }
+  .opguide__lede {
+    font-size: 15px;
+  }
+  .opfaucet {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
