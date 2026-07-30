@@ -51,7 +51,9 @@ fi
 # rather than failing the gate on the environment. The check also falls back to the
 # tomli package, so accept either module here.
 python_bin=""
-for candidate in python3 python3.13 python3.12 python3.11; do
+# 3.10 and 3.9 qualify too when tomli is installed, so their versioned names are
+# candidates as well; newest first after the default `python3`.
+for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
   if command -v "$candidate" >/dev/null 2>&1 &&
     "$candidate" -c 'import importlib.util as u, sys; sys.exit(0 if u.find_spec("tomllib") or u.find_spec("tomli") else 1)' >/dev/null 2>&1; then
     python_bin="$candidate"
