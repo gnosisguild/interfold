@@ -126,11 +126,12 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
 
         for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
             // Compute (t * u_global) mod Q using BigNum
-            let u = self.u_global.coefficients[coeff_idx];
+            let u_bn = SecureThreshold8192::from(self.u_global.coefficients[coeff_idx]);
             let t_bn = SecureThreshold8192::from(self.configs.plaintext_modulus);
             // Q is at most 208 bits and t is about 10 bits, so t * u fits in BN254.
-            let t_times_u_bn_q =
-                SecureThreshold8192::from(self.configs.plaintext_modulus * u).umod(&q_bn);
+            let u_bn_mod_q = u_bn.umod(&q_bn);
+            let t_bn_mod_q = t_bn.umod(&q_bn);
+            let t_times_u_bn_q = (t_bn_mod_q * u_bn_mod_q).umod(&q_bn);
 
             // t ~ 1000; all inputs < t; quotient < t << 2^64: safe for ModU64.
             let m = ModU64::new(self.configs.plaintext_modulus as u64);
