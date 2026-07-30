@@ -1229,10 +1229,16 @@ contract BondingRegistry is
         return false;
     }
 
-    /// @dev Calculates the minimum license bond required to maintain active status
-    /// @return Minimum license bond (licenseRequiredBond * licenseActiveBps / 10000)
+    /// @dev Calculates the minimum license bond required to maintain active status.
+    /// @return Minimum license bond, rounded up to the next base unit.
     function _minLicenseBond() internal view returns (uint256) {
-        return (licenseRequiredBond * licenseActiveBps) / BPS_BASE;
+        return
+            Math.mulDiv(
+                licenseRequiredBond,
+                licenseActiveBps,
+                BPS_BASE,
+                Math.Rounding.Ceil
+            );
     }
 
     /// @dev Invalidates every cached active status in O(1). Operators are

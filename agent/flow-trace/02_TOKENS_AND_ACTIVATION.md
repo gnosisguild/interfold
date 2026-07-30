@@ -177,7 +177,7 @@ _updateOperatorStatus(operator):
   isNowActive = (
     operators[operator].registered == true
     AND no authorized slashing manager has banned the operator
-    AND operators[operator].licenseBond >= (licenseRequiredBond * licenseActiveBps / 10000)
+    AND operators[operator].licenseBond >= ceil(licenseRequiredBond * licenseActiveBps / 10000)
         // Default: licenseActiveBps = 8000 (80%)
         // So if licenseRequiredBond = 50000, need >= 40000 FOLD
     AND ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance
@@ -416,7 +416,7 @@ Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 
 ```
 active = registered
-  AND licenseBond >= (licenseRequiredBond * licenseActiveBps / 10000)
+  AND licenseBond >= ceil(licenseRequiredBond * licenseActiveBps / 10000)
   AND (ticketToken.balanceOf(operator) / ticketPrice) >= minTicketBalance
 ```
 

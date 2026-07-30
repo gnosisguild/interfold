@@ -1526,6 +1526,73 @@ describe("BondingRegistry", function () {
           "InvalidConfiguration",
         );
       });
+
+      it("keeps every positive retained-bond requirement above zero", async function () {
+        const { bondingRegistry } = await loadFixture(setup);
+
+        for (const [requiredBond, activeBps] of [
+          [1n, 8_000n],
+          [9_999n, 1n],
+          [1n, 10_000n],
+        ]) {
+          await bondingRegistry.setLicenseRequiredBond(requiredBond);
+          await bondingRegistry.setLicenseActiveBps(activeBps);
+          expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
+            false,
+          );
+        }
+
+        await bondingRegistry.setLicenseRequiredBond(ethers.MaxUint256);
+        await bondingRegistry.setLicenseActiveBps(8_000);
+        expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
+          false,
+        );
+      });
+
+      it("deactivates an operator that unbonds and claims its last license unit", async function () {
+        const {
+          bondingRegistry,
+          licenseToken,
+          usdcToken,
+          ticketToken,
+          operator1,
+        } = await loadFixture(setup);
+        const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
+
+        await bondingRegistry.setLicenseRequiredBond(1);
+        await bondingRegistry.setLicenseActiveBps(8_000);
+        await licenseToken
+          .connect(operator1)
+          .approve(await bondingRegistry.getAddress(), 1);
+        await bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, 1);
+        await bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address);
+        await usdcToken
+          .connect(operator1)
+          .approve(await ticketToken.getAddress(), ticketAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount);
+
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(true);
+        await bondingRegistry
+          .connect(operator1)
+          .unbondLicenseFor(operator1Address, 1);
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(
+          false,
+        );
+
+        await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+        await bondingRegistry
+          .connect(operator1)
+          .claimExitsFor(operator1Address, 0, 1);
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(
+          false,
+        );
+      });
     });
 
     it("AUD-M03: governs eligibility parameters and refreshes cached status by policy version", async function () {
