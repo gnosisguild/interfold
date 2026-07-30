@@ -91,7 +91,7 @@ Requester calls: Interfold.request({
 │   │   │  │  requestCommittee(e3Id, seed, threshold) {          │
 │   │   │  │    1. require(!committees[e3Id].initialized)        │
 │   │   │  │    2. Snapshot request-time Interfold, bonding,     │
-│   │   │  │       and slashing manager for this committee       │
+│   │   │  │       slashing manager, and fold verifier           │
 │   │   │  │       → ask SlashingManager to snapshot its         │
 │   │   │  │         bonding, registry, Interfold, refund routes │
 │   │   │  │    3. require(threshold[1] <=                       │
@@ -108,7 +108,9 @@ Requester calls: Interfold.request({
 │   │   │  │    5. roots[e3Id] = ciphernodes._root()             │
 │   │   │  │       → SNAPSHOT the IMT root at this moment        │
 │   │   │  │       → Only nodes in tree at request time eligible │
-│   │   │  │    6. Emit CommitteeRequested(e3Id, seed, threshold,│
+│   │   │  │    6. Emit DkgFoldAttestationContextEstablished(    │
+│   │   │  │              e3Id, registry, foldVerifier)          │
+│   │   │  │       Emit CommitteeRequested(e3Id, seed, threshold,│
 │   │   │  │              requestBlock, committeeDeadline)       │
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
@@ -127,11 +129,20 @@ Requester calls: Interfold.request({
 
 ## Step 2: Sortition — Committee Selection (Rust-Side)
 
-When the running ciphernodes detect `E3Requested` and `CommitteeRequested` events from the chain:
+When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and
+`CommitteeRequested` events from the chain:
 
-### 2a. E3Requested Event Processing
+At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
+It gives this data to the proof actors and registry writers before event replay starts. Events after
+the latest snapshot then replay in order and add any newer E3 contexts.
 
-```
+### 2a. Request Event Processing
+
+```text
+CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
+│
+└─ Stores the E3's request-time registry and verifier for signing, validation, and publication
+
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
 ├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
@@ -320,7 +331,9 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       │  │  }                                       │  │
     │  │       │  └──────────────────────────────────────────┘  │
     │  │                                                         │
-    │  │    6. Emit SortitionCommitteeFinalized(e3Id, committee, scores)│
+    │  │    6. Emit SortitionCommitteeFinalized(                 │
+    │  │         e3Id, committee, scores                         │
+    │  │       )                                                 │
     │  │       [ICiphernodeRegistry event]                       │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
@@ -332,8 +345,8 @@ membership and `Active` status to the final address-sorted members. Failed forma
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
 ```text
-CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
-│  [ICiphernodeRegistry.SortitionCommitteeFinalized — NOT IInterfold.CommitteeFinalized]
+CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
+│  [ICiphernodeRegistry event]
 │
 ├─ Publishes InterfoldEvent::CommitteeFinalized {
 │     e3_id, committee: [addr1, addr2, ..., addrN], scores: [s1, s2, ..., sN], chain_id

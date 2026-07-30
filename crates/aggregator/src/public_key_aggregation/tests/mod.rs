@@ -94,6 +94,7 @@ async fn build_public_key_aggregator_with_committee(
             e3_id: e3_id.clone(),
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size,
+            dkg_fold_attestation_context: None,
         },
         test_state(initial_state),
     );

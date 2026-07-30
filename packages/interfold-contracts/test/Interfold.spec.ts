@@ -889,6 +889,7 @@ describe("Interfold", function () {
         e3Id,
         data,
         await ciphernodeRegistryContract.dkgFoldAttestationVerifier(),
+        await ciphernodeRegistryContract.getAddress(),
       );
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,

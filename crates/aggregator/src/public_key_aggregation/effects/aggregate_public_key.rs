@@ -134,6 +134,13 @@ impl PublicKeyAggregator {
                     // no-aggregation mode — skip attestation verification
                 }
                 (Some(proof), Some(attestation)) => {
+                    let Some(expected_context) = self.dkg_fold_attestation_context else {
+                        warn!(
+                            party_id = msg.party_id,
+                            "DKG fold attestation context missing — rejecting"
+                        );
+                        return Ok(());
+                    };
                     let meta = self.params_preset.metadata();
                     let committee_n = *circuit_committee_n;
                     let committee_h = *circuit_committee_h;
@@ -150,6 +157,7 @@ impl PublicKeyAggregator {
                         msg.party_id,
                         proof,
                         attestation,
+                        expected_context,
                         expected_node,
                         committee_n,
                         committee_h,

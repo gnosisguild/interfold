@@ -48,6 +48,7 @@ export async function signFoldAttestation(
   signer: Signer,
   chainId: bigint,
   verifyingContract: string,
+  registry: string,
   e3Id: number,
   partyId: number,
   skAggCommit: string,
@@ -61,6 +62,7 @@ export async function signFoldAttestation(
   };
   const types = {
     DkgFoldAttestation: [
+      { name: "registry", type: "address" },
       { name: "e3Id", type: "uint256" },
       { name: "partyId", type: "uint256" },
       { name: "skAggCommit", type: "bytes32" },
@@ -68,6 +70,7 @@ export async function signFoldAttestation(
     ],
   };
   return signer.signTypedData(domain, types, {
+    registry,
     e3Id,
     partyId,
     skAggCommit,
@@ -84,6 +87,7 @@ export async function buildMockDkgAttestationFixtureData(
   e3Id: number,
   pkCommitment: string,
   signingVerifierAddress: string,
+  signingRegistryAddress: string,
 ): Promise<{
   ordered: { op: Signer; addr: string }[];
   proof: string;
@@ -127,6 +131,7 @@ export async function buildMockDkgAttestationFixtureData(
         ordered[i].op,
         chainId,
         signingVerifierAddress,
+        signingRegistryAddress,
         e3Id,
         i,
         skCommits[i],
@@ -162,12 +167,14 @@ export async function buildMockAggregationPublishArgs(
   e3Id: number,
   publicKey: string,
   signingVerifierAddress: string,
+  signingRegistryAddress: string,
 ): Promise<{ proof: string; bundle: string }> {
   const fixture = await buildMockDkgAttestationFixtureData(
     operators,
     e3Id,
     ethers.keccak256(publicKey),
     signingVerifierAddress,
+    signingRegistryAddress,
   );
   return { proof: fixture.proof, bundle: fixture.bundle };
 }

@@ -172,6 +172,7 @@ contract CiphernodeRegistryOwnable is
         IInterfold interfoldContract;
         IBondingRegistry bonding;
         ISlashingManager slashManager;
+        IDkgFoldAttestationVerifier dkgFoldAttestationVerifier;
     }
 
     /// @notice External contracts frozen for each committee lifecycle.
@@ -268,7 +269,17 @@ contract CiphernodeRegistryOwnable is
         dependencies.interfoldContract = IInterfold(msg.sender);
         dependencies.bonding = bondingRegistry;
         dependencies.slashManager = slashingManager;
+        require(
+            address(dkgFoldAttestationVerifier) != address(0),
+            FoldAttestationVerifierNotSet()
+        );
+        dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
+        emit DkgFoldAttestationContextEstablished(
+            e3Id,
+            address(this),
+            address(dependencies.dkgFoldAttestationVerifier)
+        );
 
         uint256 activeCount = bondingRegistry.numActiveOperators();
         require(
@@ -376,8 +387,11 @@ contract CiphernodeRegistryOwnable is
         bytes calldata dkgAttestationBundle
     ) internal {
         require(dkgAttestationBundle.length > 0, FoldAttestationsRequired());
+        IDkgFoldAttestationVerifier verifier = _dkgFoldAttestationVerifierFor(
+            e3Id
+        );
         require(
-            address(dkgFoldAttestationVerifier) != address(0),
+            address(verifier) != address(0),
             FoldAttestationVerifierNotSet()
         );
 
@@ -385,7 +399,7 @@ contract CiphernodeRegistryOwnable is
             uint256[] memory partyIds,
             bytes32[] memory skAgg,
             bytes32[] memory esmAgg
-        ) = dkgFoldAttestationVerifier.verify(
+        ) = verifier.verify(
                 address(this),
                 block.chainid,
                 e3Id,
@@ -405,21 +419,8 @@ contract CiphernodeRegistryOwnable is
     ///      the same window before the verifier is active. For the deploy-time
     ///      initial set, see `setInitialDkgFoldAttestationVerifier`.
     ///
-    /// @dev **Node-operator requirement.** Ciphernodes fetch
-    ///      `dkgFoldAttestationVerifier()` from this registry **once at process
-    ///      startup** and use the returned address as the EIP-712 `verifyingContract`
-    ///      for every fold attestation they sign during the process lifetime.
-    ///      After a successful `commitDkgFoldAttestationVerifier`, signatures
-    ///      produced by long-running nodes will be rejected on-chain by the new
-    ///      verifier (different `verifyingContract` → different EIP-712 domain
-    ///      separator → `ECDSA.recover` returns the wrong address).
-    ///
-    ///      Operators MUST restart all ciphernodes within `DKG_FOLD_VERIFIER_TIMELOCK`
-    ///      after this function is called — the 2-day window is sized to give
-    ///      operators time to coordinate a rolling restart before the swap
-    ///      becomes effective. Nodes that miss the window will silently produce
-    ///      invalid fold attestations and be treated as dishonest by aggregators
-    ///      until they restart.
+    /// @dev Each committee keeps the verifier that was active when it was requested.
+    ///      The context-established event tells ciphernodes which verifier to use.
     function proposeDkgFoldAttestationVerifier(
         IDkgFoldAttestationVerifier verifier
     ) external onlyOwner {
@@ -1096,6 +1097,23 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) internal view returns (ISlashingManager e3SlashingManager) {
         return _committeeDependencies[e3Id].slashManager;
+    }
+
+    function _dkgFoldAttestationVerifierFor(
+        uint256 e3Id
+    )
+        internal
+        view
+        returns (IDkgFoldAttestationVerifier e3DkgFoldAttestationVerifier)
+    {
+        return _committeeDependencies[e3Id].dkgFoldAttestationVerifier;
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function dkgFoldAttestationVerifierFor(
+        uint256 e3Id
+    ) external view returns (IDkgFoldAttestationVerifier) {
+        return _dkgFoldAttestationVerifierFor(e3Id);
     }
 
     /// @notice Sort `topNodes` by ascending address before committee finalization.

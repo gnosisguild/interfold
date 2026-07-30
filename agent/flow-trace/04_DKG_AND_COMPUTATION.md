@@ -642,16 +642,21 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
+  ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to confirm committee public key is still unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
+  └─ Calls contract.publishCommittee(
+       e3_id, publicKey, pkCommitment, proof, dkgAttestationBundle
+     )
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
-        │  │  publishCommittee(e3Id, publicKey, pkCommitment, proof) { │
+        │  │  publishCommittee(                                  │
+        │  │    e3Id, publicKey, pkCommitment, proof, attestations│
+        │  │  ) {                                                │
         │  │    1. require(stage == Finalized)                   │
         │  │    2. require(c.publicKey == 0) — publish once      │
         │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
@@ -690,6 +695,14 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 
 The committee hash is `keccak256` over each ordered member's complete 20-byte address. Solidity,
 Rust, and Noir use the same unpadded bytes.
+
+Each E3 request freezes its registry and fold verifier. The `DkgFoldAttestationContextEstablished`
+event carries both addresses before DKG starts. Event replay restores them after a node restart.
+Each NodeFold signer includes the frozen registry in the EIP-712 attestation and uses the frozen
+verifier as the EIP-712 verifying contract. The aggregator checks both addresses before it accepts
+an attestation. The registry uses the same frozen verifier when the committee publishes its key. An
+attestation from another registry or verifier therefore fails even when both registries use the same
+E3 ID and committee.
 
 The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
 `e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the

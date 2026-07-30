@@ -14,6 +14,9 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
     fn handle(&mut self, msg: InterfoldEvent, _ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
         match data {
+            InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
+                self.handle_dkg_fold_attestation_context(TypedEvent::new(data, ec));
+            }
             InterfoldEventData::ThresholdSharePending(data) => {
                 self.handle_threshold_share_pending(TypedEvent::new(data, ec));
             }
@@ -28,6 +31,18 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
             }
             _ => {}
         }
+    }
+}
+
+impl Handler<TypedEvent<DkgFoldAttestationContextEstablished>> for NodeProofAggregator {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<DkgFoldAttestationContextEstablished>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        self.handle_dkg_fold_attestation_context(msg);
     }
 }
 
@@ -80,16 +95,31 @@ impl Handler<TypedEvent<ComputeRequestError>> for NodeProofAggregator {
 }
 
 impl NodeProofAggregator {
-    pub(super) fn dkg_fold_attestation_verifier_for(&self, e3_id: &E3id) -> Option<Address> {
+    pub(super) fn handle_dkg_fold_attestation_context(
+        &mut self,
+        msg: TypedEvent<DkgFoldAttestationContextEstablished>,
+    ) {
+        let (msg, _) = msg.into_components();
+        if msg.schema_version == DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION {
+            self.dkg_fold_attestation_contexts_by_e3
+                .insert(msg.e3_id, msg.context);
+        }
+    }
+
+    pub(super) fn dkg_fold_attestation_context_for(
+        &self,
+        e3_id: &E3id,
+    ) -> Option<DkgFoldAttestationContext> {
+        if let Some(context) = self.dkg_fold_attestation_contexts_by_e3.get(e3_id) {
+            return Some(*context);
+        }
+
         let chain_id = e3_id.chain_id();
-        match self.dkg_fold_attestation_verifiers_by_chain.get(&chain_id) {
-            Some(Some(addr)) => Some(*addr),
+        match self.dkg_fold_attestation_contexts_by_chain.get(&chain_id) {
+            Some(Some(context)) => Some(*context),
             Some(None) => None,
             None => {
-                warn!(
-                    chain_id,
-                    "no dkgFoldAttestationVerifier configured for chain"
-                );
+                warn!(chain_id, "no DKG fold-attestation context available for E3");
                 None
             }
         }

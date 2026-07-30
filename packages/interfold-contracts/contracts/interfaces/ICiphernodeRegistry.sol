@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { IInterfold } from "./IInterfold.sol";
 import { IBondingRegistry } from "./IBondingRegistry.sol";
+import { IDkgFoldAttestationVerifier } from "./IDkgFoldAttestationVerifier.sol";
 
 /**
  * @title ICiphernodeRegistry
@@ -17,6 +18,11 @@ import { IBondingRegistry } from "./IBondingRegistry.sol";
 interface ICiphernodeRegistry {
     /// @notice Current number of registered ciphernodes.
     function numCiphernodes() external view returns (uint256);
+
+    /// @notice Verifier frozen for one E3.
+    function dkgFoldAttestationVerifierFor(
+        uint256 e3Id
+    ) external view returns (IDkgFoldAttestationVerifier);
 
     /// @notice Tracks a committee member's lifecycle state for a given E3.
     enum MemberStatus {
@@ -100,6 +106,16 @@ interface ICiphernodeRegistry {
         uint256 indexed e3Id,
         address[] committee,
         uint256[] scores
+    );
+
+    /// @notice Emitted with the signing domain frozen when the E3 was requested.
+    /// @param e3Id ID of the E3 computation.
+    /// @param registry Registry frozen for this E3.
+    /// @param dkgFoldAttestationVerifier Verifier frozen for this E3.
+    event DkgFoldAttestationContextEstablished(
+        uint256 indexed e3Id,
+        address indexed registry,
+        address indexed dkgFoldAttestationVerifier
     );
 
     /// @notice This event MUST be emitted when committee formation fails (threshold not met)

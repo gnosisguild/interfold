@@ -329,6 +329,67 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("publishCommittee()", function () {
+    it("keeps each E3 on its request-time fold verifier after rotation", async function () {
+      const {
+        owner,
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+      const oldVerifier = await registry.dkgFoldAttestationVerifier();
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
+      const newVerifier = await ethers.deployContract(
+        "MockDkgFoldAttestationVerifier",
+      );
+      await newVerifier.waitForDeployment();
+      await registry
+        .connect(owner)
+        .proposeDkgFoldAttestationVerifier(await newVerifier.getAddress());
+      await networkHelpers.time.increase(
+        Number(await registry.DKG_FOLD_VERIFIER_TIMELOCK()) + 1,
+      );
+      await registry
+        .connect(owner)
+        .commitDkgFoldAttestationVerifier(await newVerifier.getAddress());
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
+      expect(await registry.dkgFoldAttestationVerifierFor(0)).to.equal(
+        oldVerifier,
+      );
+      expect(await registry.dkgFoldAttestationVerifierFor(1)).to.equal(
+        await newVerifier.getAddress(),
+      );
+      const contextEvents = await registry.queryFilter(
+        registry.filters.DkgFoldAttestationContextEstablished(),
+      );
+      expect(contextEvents.map((event) => event.args.e3Id)).to.deep.equal([
+        0n,
+        1n,
+      ]);
+      expect(contextEvents.map((event) => event.args.registry)).to.deep.equal([
+        await registry.getAddress(),
+        await registry.getAddress(),
+      ]);
+      expect(
+        contextEvents.map((event) => event.args.dkgFoldAttestationVerifier),
+      ).to.deep.equal([oldVerifier, await newVerifier.getAddress()]);
+    });
+
     it("AUD-C02: requires a final DKG proof and attestation bundle", async function () {
       const {
         registry,
