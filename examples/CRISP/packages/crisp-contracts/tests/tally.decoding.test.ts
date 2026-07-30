@@ -15,7 +15,7 @@
  * the real SDK encoder and assert all readers agree.
  */
 
-import { encodeVote, decodeTally, MAX_MSG_NON_ZERO_COEFFS } from '@crisp-e3/sdk'
+import { encodeVote, decodeTally, MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS } from '@crisp-e3/sdk'
 import { expect } from 'chai'
 import { deployCRISPProgram, deployMockInterfold } from './utils'
 import type { CRISPProgram, MockInterfold } from '../types'
@@ -133,25 +133,28 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
   })
 
   describe('option count bounds', function () {
-    it('should reject a round with more options than payload coefficients', async function () {
-      await expect(
-        mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_MSG_NON_ZERO_COEFFS + 1),
-      ).to.be.revertedWithCustomError(crispProgram, 'InvalidNumOptions')
+    // The Noir circuit asserts num_options <= MAX_OPTIONS (10). A round above that could
+    // never accept a ballot, so the contract and the SDK must reject it at the same point.
+    it('should reject a round with more options than the circuit allows', async function () {
+      await expect(mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_VOTE_OPTIONS + 1)).to.be.revertedWithCustomError(
+        crispProgram,
+        'InvalidNumOptions',
+      )
     })
 
-    it('should accept a round at exactly MAX_MSG_NON_ZERO_COEFFS options', async function () {
+    it('should accept a round at exactly MAX_VOTE_OPTIONS options', async function () {
       const e3Id = await mockInterfold.nextE3Id()
 
-      await mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_MSG_NON_ZERO_COEFFS)
+      await mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_VOTE_OPTIONS)
 
       const [, , numOptions] = await crispProgram.getRoundData(e3Id)
-      expect(numOptions).to.equal(BigInt(MAX_MSG_NON_ZERO_COEFFS))
+      expect(numOptions).to.equal(BigInt(MAX_VOTE_OPTIONS))
     })
 
-    it('should reject decoding more options than payload coefficients off chain', function () {
+    it('should reject decoding more options than the circuit allows off chain', function () {
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
 
-      expect(() => decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS + 1)).to.throw('exceeds MAX_MSG_NON_ZERO_COEFFS')
+      expect(() => decodeTally(coefficients, MAX_VOTE_OPTIONS + 1)).to.throw('exceeds MAX_VOTE_OPTIONS')
     })
   })
 })

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { Vote } from '../src/types'
-import { MAX_MSG_NON_ZERO_COEFFS, SIGNATURE_MESSAGE_HASH, SIGNATURE_MESSAGE } from '../src/constants'
+import { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS, SIGNATURE_MESSAGE_HASH, SIGNATURE_MESSAGE } from '../src/constants'
 import { getZeroVote } from '../src/utils'
 import { decodeTally, verifyProof, encodeVote, generateBFVKeys, encryptVote, decryptVote, destroyBBApi } from '../src/vote'
 import { publicKeyToAddress, signMessage } from 'viem/accounts'
@@ -102,12 +102,12 @@ describe('Vote', () => {
       expect(() => decodeTally(coefficients, 0)).toThrow('Number of choices must be positive')
     })
 
-    it('Should reject more choices than payload coefficients', () => {
+    it('Should reject more choices than the circuit allows', () => {
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
 
-      expect(() => decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS + 1)).toThrow('exceeds MAX_MSG_NON_ZERO_COEFFS')
-      // The boundary itself stays decodable: one coefficient per choice.
-      expect(decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS)).toHaveLength(MAX_MSG_NON_ZERO_COEFFS)
+      expect(() => decodeTally(coefficients, MAX_VOTE_OPTIONS + 1)).toThrow('exceeds MAX_VOTE_OPTIONS')
+      // The boundary itself stays decodable.
+      expect(decodeTally(coefficients, MAX_VOTE_OPTIONS)).toHaveLength(MAX_VOTE_OPTIONS)
     })
   })
 
@@ -117,14 +117,11 @@ describe('Vote', () => {
       expect(() => encodeVote([])).toThrow('Vote must have at least two choices')
     })
 
-    it('Should fail when the number of choices exceeds the payload coefficients', () => {
-      expect(() => encodeVote(new Array(MAX_MSG_NON_ZERO_COEFFS + 1).fill(0))).toThrow('exceeds MAX_MSG_NON_ZERO_COEFFS')
-      // The boundary itself still encodes: one coefficient per choice.
-      expect(
-        encodeVote(new Array(MAX_MSG_NON_ZERO_COEFFS).fill(1))
-          .slice(0, MAX_MSG_NON_ZERO_COEFFS)
-          .every((b) => b === 1),
-      ).toBe(true)
+    it('Should fail when the number of choices exceeds the circuit maximum', () => {
+      expect(() => encodeVote(new Array(MAX_VOTE_OPTIONS + 1).fill(0))).toThrow('exceeds MAX_VOTE_OPTIONS')
+      // The boundary itself still encodes and round-trips.
+      const encoded = encodeVote(new Array(MAX_VOTE_OPTIONS).fill(1))
+      expect(decodeTally(encoded, MAX_VOTE_OPTIONS)).toEqual(new Array(MAX_VOTE_OPTIONS).fill(1n))
     })
 
     it('Should encode votes correctly with 2 choices', () => {

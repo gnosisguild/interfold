@@ -43,6 +43,11 @@ contract CRISPProgram is IE3Program, Ownable {
   /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
   /// The remaining coefficients up to the BFV degree are zero padding.
   uint256 constant MAX_MSG_NON_ZERO_COEFFS = 100;
+  /// @notice Maximum number of vote options a round may configure.
+  /// @dev Bounded by the Noir circuit, which asserts `num_options <= MAX_OPTIONS`
+  /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
+  /// vote proof fails. Must stay aligned with the SDK constant of the same name.
+  uint256 constant MAX_VOTE_OPTIONS = 10;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -158,9 +163,9 @@ contract CRISPProgram is IE3Program, Ownable {
 
     // decode custom params to get the number of options
     (, , uint256 numOptions, CreditMode creditMode, ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256));
-    // Above MAX_MSG_NON_ZERO_COEFFS each option gets a zero-width segment and the tally
-    // is undecodable, so reject the round here rather than letting it report all zeros.
-    if (numOptions < 2 || numOptions > MAX_MSG_NON_ZERO_COEFFS) revert InvalidNumOptions();
+    // The circuit rejects anything above MAX_VOTE_OPTIONS, so a round configured beyond
+    // it could never accept a ballot. Reject at creation rather than stranding the round.
+    if (numOptions < 2 || numOptions > MAX_VOTE_OPTIONS) revert InvalidNumOptions();
 
     // we need to know the number of options for decoding the tally
     e3Data[e3Id].numOptions = numOptions;

@@ -16,7 +16,7 @@
 
 import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 import { toBinary, numberArrayToBigInt64Array, decodeBytesToBigInts, getMaxVoteValue } from './utils'
-import { MAX_MSG_NON_ZERO_COEFFS } from './constants'
+import { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS } from './constants'
 import { hexToBytes } from 'viem'
 import type { Hex } from 'viem'
 import type { TallyResult, Vote } from './types'
@@ -50,10 +50,10 @@ export const encodeVote = (vote: Vote): number[] => {
     throw new Error('Vote must have at least two choices')
   }
 
-  // Above this each choice would get a zero-width segment, producing a vector that
-  // decodeTally cannot read back. Reject it here rather than encoding an unusable vote.
-  if (numChoices > MAX_MSG_NON_ZERO_COEFFS) {
-    throw new Error(`Number of choices (${numChoices}) exceeds MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
+  // The Noir circuit asserts num_options <= MAX_OPTIONS, so a vote beyond this can never
+  // produce a valid proof. Reject it here rather than encoding an unprovable vote.
+  if (numChoices > MAX_VOTE_OPTIONS) {
+    throw new Error(`Number of choices (${numChoices}) exceeds MAX_VOTE_OPTIONS (${MAX_VOTE_OPTIONS})`)
   }
 
   const bfvParams = getZkInputsGenerator().getBFVParams()
@@ -124,10 +124,10 @@ export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices
     throw new Error('Number of choices must be positive')
   }
 
-  // Above this there is less than one coefficient per choice, so no total can be
-  // recovered. Reject instead of returning a zero for every choice.
-  if (numChoices > MAX_MSG_NON_ZERO_COEFFS) {
-    throw new Error(`Number of choices (${numChoices}) exceeds MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
+  // Rounds cannot exceed MAX_VOTE_OPTIONS (the circuit's MAX_OPTIONS), so a larger count
+  // is a caller error rather than a tally to decode.
+  if (numChoices > MAX_VOTE_OPTIONS) {
+    throw new Error(`Number of choices (${numChoices}) exceeds MAX_VOTE_OPTIONS (${MAX_VOTE_OPTIONS})`)
   }
 
   let coefficients: bigint[]
