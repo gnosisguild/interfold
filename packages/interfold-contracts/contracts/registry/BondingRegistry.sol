@@ -24,7 +24,9 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
-import { ILockAwareLicenseToken } from "../interfaces/ILockAwareLicenseToken.sol";
+import {
+    ILockAwareLicenseToken
+} from "../interfaces/ILockAwareLicenseToken.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
@@ -754,12 +756,13 @@ contract BondingRegistry is
         // Slash remaining amount from pending queue
         uint256 remainingToSlash = actualSlashAmount - slashedFromActiveBalance;
         if (remainingToSlash > 0) {
-            _exits.slashPendingAssets(
+            (uint256 pendingSlashed, ) = _exits.slashPendingAssets(
                 operator,
                 remainingToSlash,
                 0, // licenseAmount
                 true
             );
+            require(pendingSlashed == remainingToSlash, InsufficientBalance());
         }
 
         slashedTicketBalance += actualSlashAmount;

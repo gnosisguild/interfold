@@ -692,6 +692,7 @@ _executeSlash(proposalId):
 │     │  │         operator, remaining, 0,                       │
 │     │  │         includeLockedAssets=true                      │
 │     │  │       )                                               │
+│     │  │       require(actualPendingSlash == remaining)         │
 │     │  │       → Can slash EVEN LOCKED exit tranches           │
 │     │  │       → No escaping via queued exits                  │
 │     │  │                                                       │
