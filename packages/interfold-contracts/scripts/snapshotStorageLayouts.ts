@@ -6,11 +6,15 @@ import * as fs from "fs";
 import * as path from "path";
 
 import {
-  PACKAGE_DIR,
+  COMPILER_INPUT_DIR,
   SNAPSHOT_DIR,
   type StorageSnapshot,
   UPGRADEABLE_CONTRACTS,
+  WORKSPACE_DIR,
+  compilerInputPath,
+  compilerInputSha256,
   loadLayoutFromBuildInfo,
+  pnpmPackageKeys,
   sha256,
 } from "./storageLayouts";
 
@@ -30,31 +34,82 @@ async function main(): Promise<void> {
     throw new Error("--source-commit must be a full 40-character Git SHA.");
   }
 
+  const committedLock = execFileSync(
+    "git",
+    ["show", `${sourceCommit}:pnpm-lock.yaml`],
+    { cwd: WORKSPACE_DIR, encoding: "utf8" },
+  );
+  const committedPackages = pnpmPackageKeys(committedLock);
   fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  fs.mkdirSync(COMPILER_INPUT_DIR, { recursive: true });
   for (const { source, contract } of UPGRADEABLE_CONTRACTS) {
     const located = loadLayoutFromBuildInfo(outputPath, source, contract);
-    const committedSource = execFileSync(
-      "git",
-      ["show", `${sourceCommit}:packages/interfold-contracts/${source}`],
-      { cwd: PACKAGE_DIR, encoding: "utf8" },
-    );
-    if (sha256(committedSource) !== sha256(located.sourceContent)) {
-      throw new Error(
-        `${source}:${contract} in build-info does not match ${sourceCommit}.`,
+    for (const [sourceKey, compilerSource] of Object.entries(
+      located.compilerInput.sources,
+    )) {
+      if (sourceKey.startsWith("project/")) {
+        const expectedSource = execFileSync(
+          "git",
+          [
+            "show",
+            `${sourceCommit}:packages/interfold-contracts/${sourceKey.slice(
+              "project/".length,
+            )}`,
+          ],
+          { cwd: WORKSPACE_DIR, encoding: "utf8" },
+        );
+        if (sha256(expectedSource) !== sha256(compilerSource.content)) {
+          throw new Error(
+            `${sourceKey} in build-info does not match ${sourceCommit}.`,
+          );
+        }
+        continue;
+      }
+
+      const npmMatch = sourceKey.match(
+        /^npm\/(@[^/]+\/[^@/]+|[^/@]+)@([^/]+)\//,
       );
+      if (
+        !npmMatch?.[1] ||
+        !npmMatch[2] ||
+        !committedPackages.has(`${npmMatch[1]}@${npmMatch[2]}`)
+      ) {
+        throw new Error(
+          `${sourceKey} is not pinned by ${sourceCommit}:pnpm-lock.yaml.`,
+        );
+      }
     }
+
+    const inputSha256 = compilerInputSha256(located.compilerInput);
+    const inputPath = compilerInputPath(inputSha256);
+    const archivedInput = `${JSON.stringify(located.compilerInput, null, 2)}\n`;
+    if (
+      fs.existsSync(inputPath) &&
+      compilerInputSha256(
+        JSON.parse(
+          fs.readFileSync(inputPath, "utf8"),
+        ) as typeof located.compilerInput,
+      ) !== inputSha256
+    ) {
+      throw new Error(`Archived compiler input is invalid: ${inputPath}.`);
+    }
+    if (!fs.existsSync(inputPath)) fs.writeFileSync(inputPath, archivedInput);
+
     const snapshot: StorageSnapshot = {
-      _format: "interfold-storage-layout-v1",
+      _format: "interfold-storage-layout-v2",
       contract,
       source,
       baseline: {
         buildInfoId: located.buildInfoId,
         compiler: located.compiler,
+        compilerInputSha256: inputSha256,
+        dependencyLockSha256: sha256(committedLock),
         evmVersion: located.evmVersion,
         optimizerRuns: located.optimizerRuns,
         sourceCommit,
         sourceSha256: sha256(located.sourceContent),
       },
+      metadata: located.metadata,
       storage: located.layout.storage,
       types: located.layout.types,
     };
