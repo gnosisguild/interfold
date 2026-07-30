@@ -131,4 +131,27 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
       expect(Array.from(onChain)).to.deep.equal(offChain)
     })
   })
+
+  describe('option count bounds', function () {
+    it('should reject a round with more options than payload coefficients', async function () {
+      await expect(
+        mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_MSG_NON_ZERO_COEFFS + 1),
+      ).to.be.revertedWithCustomError(crispProgram, 'InvalidNumOptions')
+    })
+
+    it('should accept a round at exactly MAX_MSG_NON_ZERO_COEFFS options', async function () {
+      const e3Id = await mockInterfold.nextE3Id()
+
+      await mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_MSG_NON_ZERO_COEFFS)
+
+      const [, , numOptions] = await crispProgram.getRoundData(e3Id)
+      expect(numOptions).to.equal(BigInt(MAX_MSG_NON_ZERO_COEFFS))
+    })
+
+    it('should reject decoding more options than payload coefficients off chain', function () {
+      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
+
+      expect(() => decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS + 1)).to.throw('exceeds MAX_MSG_NON_ZERO_COEFFS')
+    })
+  })
 })

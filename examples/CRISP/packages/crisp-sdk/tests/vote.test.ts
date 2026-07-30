@@ -101,12 +101,30 @@ describe('Vote', () => {
 
       expect(() => decodeTally(coefficients, 0)).toThrow('Number of choices must be positive')
     })
+
+    it('Should reject more choices than payload coefficients', () => {
+      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
+
+      expect(() => decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS + 1)).toThrow('exceeds MAX_MSG_NON_ZERO_COEFFS')
+      // The boundary itself stays decodable: one coefficient per choice.
+      expect(decodeTally(coefficients, MAX_MSG_NON_ZERO_COEFFS)).toHaveLength(MAX_MSG_NON_ZERO_COEFFS)
+    })
   })
 
   describe('encodeVote', () => {
     it('Should fail when the number of choices is less than 2', () => {
       expect(() => encodeVote([10])).toThrow('Vote must have at least two choices')
       expect(() => encodeVote([])).toThrow('Vote must have at least two choices')
+    })
+
+    it('Should fail when the number of choices exceeds the payload coefficients', () => {
+      expect(() => encodeVote(new Array(MAX_MSG_NON_ZERO_COEFFS + 1).fill(0))).toThrow('exceeds MAX_MSG_NON_ZERO_COEFFS')
+      // The boundary itself still encodes: one coefficient per choice.
+      expect(
+        encodeVote(new Array(MAX_MSG_NON_ZERO_COEFFS).fill(1))
+          .slice(0, MAX_MSG_NON_ZERO_COEFFS)
+          .every((b) => b === 1),
+      ).toBe(true)
     })
 
     it('Should encode votes correctly with 2 choices', () => {

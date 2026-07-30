@@ -48,10 +48,12 @@ fi
 # --- 2. skip-proof feature containment --------------------------------------------
 # The containment check parses Cargo.toml with tomllib, which is stdlib only from
 # Python 3.11. macOS still ships 3.9 as `python3`, so find an interpreter that has it
-# rather than failing the gate on the environment.
+# rather than failing the gate on the environment. The check also falls back to the
+# tomli package, so accept either module here.
 python_bin=""
 for candidate in python3 python3.13 python3.12 python3.11; do
-  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import tomllib' >/dev/null 2>&1; then
+  if command -v "$candidate" >/dev/null 2>&1 &&
+    "$candidate" -c 'import importlib.util as u, sys; sys.exit(0 if u.find_spec("tomllib") or u.find_spec("tomli") else 1)' >/dev/null 2>&1; then
     python_bin="$candidate"
     break
   fi

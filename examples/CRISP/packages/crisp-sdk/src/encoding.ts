@@ -50,6 +50,12 @@ export const encodeVote = (vote: Vote): number[] => {
     throw new Error('Vote must have at least two choices')
   }
 
+  // Above this each choice would get a zero-width segment, producing a vector that
+  // decodeTally cannot read back. Reject it here rather than encoding an unusable vote.
+  if (numChoices > MAX_MSG_NON_ZERO_COEFFS) {
+    throw new Error(`Number of choices (${numChoices}) exceeds MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
+  }
+
   const bfvParams = getZkInputsGenerator().getBFVParams()
   const degree = bfvParams.degree
   if (degree < MAX_MSG_NON_ZERO_COEFFS) {
@@ -116,6 +122,12 @@ export const encryptVote = (vote: Vote, publicKey: Uint8Array): Uint8Array => {
 export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult => {
   if (numChoices <= 0) {
     throw new Error('Number of choices must be positive')
+  }
+
+  // Above this there is less than one coefficient per choice, so no total can be
+  // recovered. Reject instead of returning a zero for every choice.
+  if (numChoices > MAX_MSG_NON_ZERO_COEFFS) {
+    throw new Error(`Number of choices (${numChoices}) exceeds MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
   }
 
   let coefficients: bigint[]

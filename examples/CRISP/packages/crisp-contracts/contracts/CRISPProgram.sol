@@ -158,7 +158,9 @@ contract CRISPProgram is IE3Program, Ownable {
 
     // decode custom params to get the number of options
     (, , uint256 numOptions, CreditMode creditMode, ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256));
-    if (numOptions < 2) revert InvalidNumOptions();
+    // Above MAX_MSG_NON_ZERO_COEFFS each option gets a zero-width segment and the tally
+    // is undecodable, so reject the round here rather than letting it report all zeros.
+    if (numOptions < 2 || numOptions > MAX_MSG_NON_ZERO_COEFFS) revert InvalidNumOptions();
 
     // we need to know the number of options for decoding the tally
     e3Data[e3Id].numOptions = numOptions;
