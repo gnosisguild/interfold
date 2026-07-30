@@ -733,8 +733,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         address[] memory honestNodes = InterfoldLifecycle.honestNodes(
             address(_registryFor(e3Id)),
-            e3Id,
-            uint8(_e3FailureReasons[e3Id])
+            e3Id
         );
 
         IERC20 paymentToken = _e3FeeTokens[e3Id];

@@ -17,6 +17,7 @@ import {
   encodeMockDkgProof,
   ethers,
   ignition,
+  makeRequest,
   networkHelpers,
   signAndEncodeAttestation,
 } from "../fixtures";
@@ -798,6 +799,33 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.processE3Failure(0);
       const distribution = await e3RefundManager.getRefundDistribution(0);
       expect(distribution.honestNodeAmount).to.equal(0);
+    });
+
+    it("rolls back failure processing when the registry lookup reverts", async function () {
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+      });
+      const registry = sys.mockCiphernodeRegistry!;
+      await makeRequest(sys.interfold, sys.usdcToken, sys.request);
+      const payment = await sys.interfold.e3Payments(0);
+      const registryAddress = await registry.getAddress();
+
+      await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
+      await networkHelpers.impersonateAccount(registryAddress);
+      await sys.interfold
+        .connect(await ethers.getSigner(registryAddress))
+        .onE3Failed(0, 8);
+      await networkHelpers.stopImpersonatingAccount(registryAddress);
+      await registry.setRevertActiveCommitteeNodes(true);
+
+      await expect(
+        sys.interfold.processE3Failure(0),
+      ).to.be.revertedWithCustomError(registry, "ActiveCommitteeLookupFailed");
+      expect(await sys.interfold.e3Payments(0)).to.equal(payment);
+      const distribution = await sys.e3RefundManager.getRefundDistribution(0);
+      expect(distribution.calculated).to.equal(false);
     });
 
     it("allows requester to claim refund after failure processing", async function () {

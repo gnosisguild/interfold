@@ -24,6 +24,9 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     mapping(uint256 e3Id => uint256[] partyIds) private _dkgPartyIds;
     mapping(uint256 e3Id => bytes32[] skAggCommits) private _dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) private _dkgEsmAggCommits;
+    bool private _revertActiveCommitteeNodes;
+
+    error ActiveCommitteeLookupFailed();
 
     function dkgFoldAttestationVerifierFor(
         uint256
@@ -45,6 +48,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     /// @notice Set the threshold M for an E3 (test helper)
     function setThreshold(uint256 e3Id, uint32 m) external {
         _thresholdM[e3Id] = m;
+    }
+
+    function setRevertActiveCommitteeNodes(bool shouldRevert) external {
+        _revertActiveCommitteeNodes = shouldRevert;
     }
 
     /// @notice Set DKG anchors for an E3 (test helper)
@@ -255,7 +262,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 
     function getActiveCommitteeNodes(
         uint256
-    ) external pure returns (address[] memory nodes, uint256[] memory scores) {
+    ) external view returns (address[] memory nodes, uint256[] memory scores) {
+        if (_revertActiveCommitteeNodes) {
+            revert ActiveCommitteeLookupFailed();
+        }
         nodes = new address[](0);
         scores = new uint256[](0);
     }

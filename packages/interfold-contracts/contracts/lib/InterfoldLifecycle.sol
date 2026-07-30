@@ -92,25 +92,11 @@ library InterfoldLifecycle {
 
     function honestNodes(
         address registryAddress,
-        uint256 e3Id,
-        uint8 reason
+        uint256 e3Id
     ) external view returns (address[] memory) {
-        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
-        if (
-            reason ==
-            uint8(IInterfold.FailureReason.CommitteeFormationTimeout) ||
-            reason ==
-            uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
-        ) return new address[](0);
-
-        try registry.getActiveCommitteeNodes(e3Id) returns (
-            address[] memory nodes,
-            uint256[] memory
-        ) {
-            return nodes;
-        } catch {
-            return new address[](0);
-        }
+        (address[] memory nodes, ) = ICiphernodeRegistry(registryAddress)
+            .getActiveCommitteeNodes(e3Id);
+        return nodes;
     }
 
     /// @notice Checks the publication gates for a ciphertext output.

@@ -116,6 +116,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     (honestNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
 │     → Returns committee members NOT expelled by slashing plus their ticket scores
 │     → Returns empty arrays when committee formation did not finalize
+│     → An unexpected registry failure reverts the transaction and restores the payment
 │
 ├─ 4. Transfer payment to E3RefundManager:
 │     paymentToken = _e3FeeTokens[e3Id]  (per-E3 token, not current global)
