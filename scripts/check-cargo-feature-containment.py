@@ -5,8 +5,18 @@
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # tomllib is stdlib only from Python 3.11
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        sys.exit(
+            "check-cargo-feature-containment: needs Python 3.11+ for tomllib, or the "
+            f"tomli package. Running under Python {sys.version.split()[0]}."
+        )
 
 TARGET = "test-only-skip-proof-aggregation"
 ROOT = Path(__file__).resolve().parent.parent
