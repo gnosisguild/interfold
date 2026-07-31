@@ -113,7 +113,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     const mockCiphernodeRegistry = mockCiphernodeRegistryOpt!;
 
     await interfoldToken.mint(
-      operatorAddress,
+      await owner.getAddress(),
       ethers.parseEther("2000"),
       ethers.encodeBytes32String("Test allocation"),
     );
@@ -200,14 +200,25 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     async function registerOperatorForExit(
       ctx: Awaited<ReturnType<typeof setup>>,
     ) {
-      const { bondingRegistry, interfoldToken, operator } = ctx;
+      const {
+        bondingRegistry,
+        interfoldToken,
+        operator,
+        operatorAddress,
+        owner,
+      } = ctx;
       // Bond the license required to register.
       const licenseAmount = ethers.parseEther("1000");
-      await interfoldToken
+      await bondingRegistry
         .connect(operator)
+        .setBondOwner(await owner.getAddress());
+      await interfoldToken
+        .connect(owner)
         .approve(await bondingRegistry.getAddress(), licenseAmount);
-      await bondingRegistry.connect(operator).bondLicense(licenseAmount);
-      await bondingRegistry.connect(operator).registerOperator();
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(operatorAddress, licenseAmount);
+      await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
     }
 
     it("hasOpenSlashProposal flips true after proposeSlashEvidence and false after executeSlash", async function () {
@@ -244,7 +255,6 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         slashingManager,
         bondingRegistry,
         slasher,
-        operator,
         operatorAddress,
       } = ctx;
       await registerOperatorForExit(ctx);
@@ -280,7 +290,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       );
 
       await expect(
-        bondingRegistry.connect(operator).unbondLicense(1),
+        bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
       await time.increase(APPEAL_WINDOW + 1);
@@ -289,7 +299,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
         ethers.parseEther("950"),
       );
-      await bondingRegistry.connect(operator).unbondLicense(1);
+      await bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1);
 
       await bondingRegistry.revokeSlashingManager(
         await slashingManager.getAddress(),
@@ -309,8 +319,8 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       const {
         slashingManager,
         bondingRegistry,
+        owner,
         slasher,
-        operator,
         operatorAddress,
       } = ctx;
       await registerOperatorForExit(ctx);
@@ -326,7 +336,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         );
 
       await expect(
-        bondingRegistry.connect(operator).deregisterOperator(),
+        bondingRegistry.connect(owner).deregisterOperatorFor(operatorAddress),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
     });
 
@@ -335,8 +345,8 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       const {
         slashingManager,
         bondingRegistry,
+        owner,
         slasher,
-        operator,
         operatorAddress,
       } = ctx;
       await registerOperatorForExit(ctx);
@@ -353,7 +363,9 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await time.increase(APPEAL_WINDOW + 1);
       await slashingManager.executeSlash(0);
 
-      await bondingRegistry.connect(operator).deregisterOperator();
+      await bondingRegistry
+        .connect(owner)
+        .deregisterOperatorFor(operatorAddress);
       expect(await bondingRegistry.isRegistered(operatorAddress)).to.be.false;
       expect(await bondingRegistry.hasExitInProgress(operatorAddress)).to.be
         .true;
@@ -389,7 +401,9 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
 
       expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
         .false;
-      await bondingRegistry.connect(operator).deregisterOperator();
+      await bondingRegistry
+        .connect(owner)
+        .deregisterOperatorFor(operatorAddress);
       expect(await bondingRegistry.isRegistered(operatorAddress)).to.be.false;
       expect(await bondingRegistry.hasExitInProgress(operatorAddress)).to.be
         .true;
@@ -418,15 +432,35 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     async function registerOperatorWithQueuedExit(
       ctx: Awaited<ReturnType<typeof setup>>,
     ) {
-      const { bondingRegistry, interfoldToken, operator } = ctx;
+      const {
+        bondingRegistry,
+        interfoldToken,
+        newAdmin,
+        operator,
+        operatorAddress,
+      } = ctx;
       const licenseAmount = ethers.parseEther("1000");
       const queuedAmount = ethers.parseEther("100");
-      await interfoldToken
+      await interfoldToken.mint(
+        await newAdmin.getAddress(),
+        licenseAmount,
+        ethers.encodeBytes32String("Test allocation"),
+      );
+      await bondingRegistry
         .connect(operator)
+        .setBondOwner(await newAdmin.getAddress());
+      await interfoldToken
+        .connect(newAdmin)
         .approve(await bondingRegistry.getAddress(), licenseAmount);
-      await bondingRegistry.connect(operator).bondLicense(licenseAmount);
-      await bondingRegistry.connect(operator).registerOperator();
-      await bondingRegistry.connect(operator).unbondLicense(queuedAmount);
+      await bondingRegistry
+        .connect(newAdmin)
+        .bondLicenseFor(operatorAddress, licenseAmount);
+      await bondingRegistry
+        .connect(newAdmin)
+        .registerOperatorFor(operatorAddress);
+      await bondingRegistry
+        .connect(newAdmin)
+        .unbondLicenseFor(operatorAddress, queuedAmount);
       return queuedAmount;
     }
 
@@ -476,7 +510,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         slashingManager,
         bondingRegistry,
         proposer,
-        operator,
+        newAdmin,
         operatorAddress,
         voter1,
         voter2,
@@ -496,22 +530,30 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         .proposeSlash(0, operatorAddress, proof);
 
       await expect(
-        bondingRegistry.connect(operator).deregisterOperator(),
+        bondingRegistry
+          .connect(newAdmin)
+          .deregisterOperatorFor(operatorAddress),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
       await expect(
-        bondingRegistry.connect(operator).removeTicketBalance(1),
+        bondingRegistry
+          .connect(newAdmin)
+          .removeTicketBalanceFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
       await expect(
-        bondingRegistry.connect(operator).unbondLicense(1),
+        bondingRegistry.connect(newAdmin).unbondLicenseFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
       await time.increase(APPEAL_WINDOW + 1);
       await expect(
-        bondingRegistry.connect(operator).claimExits(0, queuedAmount),
+        bondingRegistry
+          .connect(newAdmin)
+          .claimExitsFor(operatorAddress, 0, queuedAmount),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
       await slashingManager.executeSlash(0);
-      await bondingRegistry.connect(operator).claimExits(0, queuedAmount);
+      await bondingRegistry
+        .connect(newAdmin)
+        .claimExitsFor(operatorAddress, 0, queuedAmount);
       expect((await bondingRegistry.pendingExits(operatorAddress))[1]).to.equal(
         0n,
       );

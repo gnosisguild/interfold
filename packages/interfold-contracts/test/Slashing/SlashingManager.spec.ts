@@ -141,7 +141,7 @@ describe("SlashingManager", function () {
       await mockCiphernodeRegistry.getAddress();
 
     await interfoldToken.mint(
-      operatorAddress,
+      await owner.getAddress(),
       ethers.parseEther("2000"),
       ethers.encodeBytes32String("Test allocation"),
     );
@@ -954,6 +954,7 @@ describe("SlashingManager", function () {
         proposer,
         operatorAddress,
         operator,
+        owner,
         voter1,
         voter2,
         bondingRegistry,
@@ -963,23 +964,28 @@ describe("SlashingManager", function () {
         mockCiphernodeRegistry,
       } = await loadFixture(setup);
 
-      await interfoldToken
+      await bondingRegistry
         .connect(operator)
+        .setBondOwner(await owner.getAddress());
+      await interfoldToken
+        .connect(owner)
         .approve(
           await bondingRegistry.getAddress(),
           LICENSE_REQUIRED_BOND * 2n,
         );
       await bondingRegistry
-        .connect(operator)
-        .bondLicense(LICENSE_REQUIRED_BOND * 2n);
-      await bondingRegistry.connect(operator).registerOperator();
+        .connect(owner)
+        .bondLicenseFor(operatorAddress, LICENSE_REQUIRED_BOND * 2n);
+      await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
 
       const ticketAmount = ethers.parseUnits("200", 6);
-      await usdcToken.mint(operatorAddress, ticketAmount);
+      await usdcToken.mint(await owner.getAddress(), ticketAmount);
       await usdcToken
-        .connect(operator)
+        .connect(owner)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(owner)
+        .addTicketBalanceFor(operatorAddress, ticketAmount);
       expect(await bondingRegistry.isActive(operatorAddress)).to.be.true;
 
       await setupPolicies(slashingManager);
@@ -1319,7 +1325,36 @@ describe("SlashingManager", function () {
       expect(proposal.appealed).to.be.true;
     });
 
-    it("should revert if non-operator tries to appeal", async function () {
+    it("should allow the bond owner to appeal", async function () {
+      const {
+        slashingManager,
+        slasher,
+        operator,
+        operatorAddress,
+        owner,
+        bondingRegistry,
+      } = await loadFixture(setup);
+
+      await bondingRegistry
+        .connect(operator)
+        .setBondOwner(await owner.getAddress());
+      await setupPolicies(slashingManager);
+      await slashingManager
+        .connect(slasher)
+        .proposeSlashEvidence(
+          0,
+          operatorAddress,
+          REASON_INACTIVITY,
+          ethers.toUtf8Bytes("evidence"),
+        );
+
+      await expect(
+        slashingManager.connect(owner).fileAppeal(0, "Protect collateral"),
+      ).to.emit(slashingManager, "AppealFiled");
+      expect((await slashingManager.getSlashProposal(0)).appealed).to.be.true;
+    });
+
+    it("should revert if neither operator nor bond owner tries to appeal", async function () {
       const { slashingManager, slasher, notTheOwner, operatorAddress } =
         await loadFixture(setup);
 

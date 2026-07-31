@@ -6,6 +6,11 @@ An operator can voluntarily leave the network by deactivating (withdrawing colla
 deregistering (removing from the Merkle tree). The exit is time-locked, and pending exits remain
 slashable until claimed.
 
+Collateral withdrawals and claims are bond-owner actions: `removeTicketBalanceFor(operator)`,
+`unbondLicenseFor(operator)`, and `claimExitsFor(operator)`. Deregistration is callable by either
+the owner or the operator key, giving the running node an emergency kill switch while keeping all
+payouts owner-only.
+
 ---
 
 ## Voluntary Deactivation
@@ -13,29 +18,28 @@ slashable until claimed.
 ### Via Ticket Withdrawal
 
 ```
-User runs: interfold ciphernode deactivate --tickets 50
+Bond owner submits removeTicketBalanceFor(operator, 50)
 │
-├─ ChainContext::new() → loads config, decrypts wallet
-│
-└─ BondingRegistryContract.removeTicketBalance(50).send().await
+└─ BondingRegistry.removeTicketBalanceFor(operator, 50)
     │
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
-    │  │  removeTicketBalance(50):                               │
-    │  │    1. require(amount != 0, registered, sufficient tFOLD)  │
-    │  │    2. ticketToken.burnTickets(operator, amount)         │
+    │  │  removeTicketBalanceFor(operator, 50):                  │
+    │  │    1. require(msg.sender == bondOwnerOf(operator))      │
+    │  │    2. require(amount != 0, registered, sufficient tFOLD)│
+    │  │    3. ticketToken.burnTickets(operator, amount)         │
     │  │       → tFOLD destroyed, underlying becomes claimable      │
-    │  │    3. _exits.queueTicketsForExit(                       │
+    │  │    4. _exits.queueTicketsForExit(                       │
     │  │         operator, exitDelay, amount                      │
     │  │       )                                                  │
     │  │       → Locked in ExitQueue until now + exitDelay        │
-    │  │    4. _updateOperatorStatus(operator)                   │
+    │  │    5. _updateOperatorStatus(operator)                   │
     │  │       → Active iff registered &&                         │
     │  │         licenseBond >= _minLicenseBond() &&              │
     │  │         (ticketBalance / ticketPrice) >= minTicketBalance│
     │  │         active = false, numActiveOperators--             │
     │  │         Emit OperatorActivationChanged(op, false)        │
-    │  │    5. Emit TicketBalanceUpdated(op, -amount, newBal,     │
+    │  │    6. Emit TicketBalanceUpdated(op, -amount, newBal,     │
     │  │       "WITHDRAW")                                         │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
@@ -44,24 +48,25 @@ User runs: interfold ciphernode deactivate --tickets 50
 ### Via License Withdrawal
 
 ```
-User runs: interfold ciphernode deactivate --license 20000
+Bond owner submits unbondLicenseFor(operator, 20000)
 │
-└─ BondingRegistryContract.unbondLicense(20000).send().await
+└─ BondingRegistry.unbondLicenseFor(operator, 20000)
     │
     │  ┌─── ON-CHAIN ───────────────────────────────────────────┐
     │  │                                                         │
-    │  │  unbondLicense(20000):                                  │
-    │  │    1. require(amount != 0, sufficient bonded FOLD)      │
-    │  │    2. operators[op].licenseBond -= 20000                │
-    │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
-    │  │       → Pending FOLD remains in totalBonded(op) for     │
+    │  │  unbondLicenseFor(operator, 20000):                     │
+    │  │    1. require(msg.sender == bondOwnerOf(operator))      │
+    │  │    2. require(amount != 0, sufficient bonded FOLD)      │
+    │  │    3. operators[op].licenseBond -= 20000                │
+    │  │    4. _exits.queueLicensesForExit(op, exitDelay, 20000)│
+    │  │       → Pending FOLD remains in totalBonded(bondOwner)  │
     │  │         token-level locked-floor accounting             │
-    │  │    4. _updateOperatorStatus(operator)                   │
+    │  │    5. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
     │  │         (licenseRequiredBond * licenseActiveBps / 10000)│
     │  │         (default: 80% of required bond):                │
     │  │         active = false, numActiveOperators--             │
-    │  │    5. Emit LicenseBondUpdated(op, -amount, newBond,      │
+    │  │    6. Emit LicenseBondUpdated(op, -amount, newBond,      │
     │  │       "UNBOND")                                          │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
@@ -70,10 +75,10 @@ User runs: interfold ciphernode deactivate --license 20000
 ### Combined Deactivation
 
 ```
-User runs: interfold ciphernode deactivate --tickets 50 --license 20000
+Bond owner submits both owner-authorized calls
 │
-├─ Calls removeTicketBalance(50) first
-└─ Then calls unbondLicense(20000)
+├─ Calls removeTicketBalanceFor(operator, 50) first
+└─ Then calls unbondLicenseFor(operator, 20000)
   → Tickets are queued in ExitQueueLib
   → FOLD is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
 ```
@@ -83,29 +88,28 @@ User runs: interfold ciphernode deactivate --tickets 50 --license 20000
 ## Full Deregistration
 
 ```
-User runs: interfold ciphernode deregister
+Bond owner or operator submits deregisterOperatorFor(operator)
 │
-├─ ChainContext::new()
-│
-└─ BondingRegistryContract.deregisterOperator().send().await
+└─ BondingRegistry.deregisterOperatorFor(operator)
     │
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
-    │  │  deregisterOperator() {                                  │
-    │  │    1. require(operators[msg.sender].registered)         │
-    │  │    2. require(!exitInProgress(msg.sender))              │
+    │  │  deregisterOperatorFor(operator) {                       │
+    │  │    1. require(msg.sender == operator OR bondOwner)      │
+    │  │    2. require(operators[operator].registered)           │
+    │  │    3. require(!exitInProgress(operator))                │
     │  │       → Cannot deregister if an exit is already pending │
     │  │                                                         │
-    │  │    3. operators[msg.sender].registered = false          │
-    │  │    4. operators[msg.sender].exitRequested = true        │
-    │  │    5. operators[msg.sender].exitUnlocksAt =             │
+    │  │    4. operators[operator].registered = false            │
+    │  │    5. operators[operator].exitRequested = true          │
+    │  │    6. operators[operator].exitUnlocksAt =               │
     │  │         block.timestamp + exitDelay                      │
     │  │                                                         │
-    │  │    6. Burn ALL tickets:                                 │
+    │  │    7. Burn ALL tickets:                                 │
     │  │       fullTicketBalance = ticketToken.balanceOf(op)     │
     │  │       ticketToken.burnTickets(op, fullTicketBalance)    │
     │  │                                                         │
-    │  │    7. Queue ALL collateral for exit:                    │
+    │  │    8. Queue ALL collateral for exit:                    │
     │  │       licenseBondAmount = operators[op].licenseBond     │
     │  │       operators[op].licenseBond = 0                     │
     │  │       _exits.queueAssetsForExit(                        │
@@ -113,10 +117,11 @@ User runs: interfold ciphernode deregister
     │  │         fullTicketBalance,  // tickets                   │
     │  │         0                   // license handled below     │
     │  │       )                                                  │
-    │  │       _queueLicenseExitFromSources(op, licenseBondAmount)│
+    │  │       _exits.queueAssetsForExit(                        │
+    │  │         op, exitDelay, fullTicketBalance, licenseBondAmount)│
     │  │                                                         │
-    │  │    8. Remove from Merkle tree:                          │
-    │  │       registry.removeCiphernode(msg.sender)             │
+    │  │    9. Remove from Merkle tree:                          │
+    │  │       registry.removeCiphernode(operator)               │
     │  │       │                                                  │
     │  │       │  ┌─ CiphernodeRegistryOwnable ──────────────┐  │
     │  │       │  │  removeCiphernode(node):                  │  │
@@ -127,20 +132,21 @@ User runs: interfold ciphernode deregister
     │  │       │  │    Emit CiphernodeRemoved(node)           │  │
     │  │       │  └──────────────────────────────────────────┘  │
     │  │                                                         │
-    │  │    9. _updateOperatorStatus(msg.sender)                 │
+    │  │   10. _updateOperatorStatus(operator)                   │
     │  │       → active = false (registered is now false)        │
     │  │       → numActiveOperators--                            │
     │  │       → Emit OperatorActivationChanged(op, false)       │
     │  │                                                         │
-    │  │   10. Emit CiphernodeDeregistrationRequested(op)        │
+    │  │   11. Emit CiphernodeDeregistrationRequested(op)        │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 │
-└─ After exitDelay seconds, operator can claim unlocked exits:
-    interfold ciphernode license claim
-    # optional caps:
-    interfold ciphernode license claim --max-ticket X --max-license Y
+└─ After exitDelay seconds, the owner calls:
+   claimExitsFor(operator, maxTicket, maxLicense)
 ```
+
+Underlying USDC and FOLD are both paid to the bond owner. The queue and slash target remain keyed by
+the operator until the claim completes.
 
 ## E3 Completion (Happy Path)
 
@@ -162,12 +168,12 @@ publishPlaintextOutput() succeeds
 │   │   ├─ if protocolAmount > 0:
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
-│   │   │   → Credits pull-payment rewards to each registered operator
+│   │   │   → Resolves bondOwnerOf(node) and credits that owner
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
 │   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
-│   │   │     nodes portion distributed evenly to activeNodes
+│   │   │     nodes portion split by active node, then credited to bond owners
 │   │   │     remainder sent to protocol treasury
 │   │   │   → If no escrowed funds: no-op
 │   │   └─ Emit RewardsDistributed(e3Id)
@@ -451,8 +457,8 @@ history.
 ```
 Time ──────────────────────────────────────────────────────►
 
-│ deregister()     │                    │ claimExits()     │
-│ or deactivate()  │   EXIT DELAY       │                  │
+│ deregister[For]()│                    │ claimExits[For]()│
+│ or deactivate    │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
 │ tFOLD burned       │  Cannot cancel     │ USDC returned    │
@@ -494,7 +500,7 @@ SLASHING → operator banned:
     → BondingRegistry refreshes registered operator status
     → active = false and numActiveOperators decreases
     → Cannot submit tickets for new committee selection
-    → Cannot call registerOperator() (reverts with CiphernodeBanned)
+    → Bond owner cannot call registerOperatorFor(operator) (reverts with CiphernodeBanned)
   → Permanent until governance intervenes
 
 GOVERNANCE lifts ban:

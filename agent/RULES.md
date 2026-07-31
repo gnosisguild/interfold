@@ -1,8 +1,60 @@
 # Interfold — Agent Rules
 
-These rules apply to any LLM agent working on this codebase. Tool-specific config files
-(.cursor/rules/interfold.mdc, CLAUDE.md, etc.) should reference this file rather than duplicating
-its content.
+These rules apply to any LLM agent working on this codebase. Tool-specific config files (AGENTS.md,
+CLAUDE.md, .cursor/rules/interfold.mdc, .clinerules, .windsurfrules, etc.) should reference this
+file rather than duplicating its content.
+
+## Harness map
+
+| File                     | Read when                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `RULES.md` (this file)   | Always, before any task                                                                              |
+| `CONTEXT.md`             | You need project overview, terminology, monorepo map, commands, or conventions                       |
+| `INVARIANTS.md`          | Before changing contracts, circuits, actor runtime, or build config — things that must not break     |
+| `ARCHITECTURE.md`        | Rust contribution rules (target design, layering, durability, testing)                               |
+| `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                     |
+| `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                   |
+| `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/`, `.opencode/` point here |
+| `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                  |
+
+Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
+of them (a command, an invariant, a crate's role), update the doc **in the same PR** — surgical
+edits, same style as flow-trace updates below. Enforced mechanically by `pnpm check:docs`
+(pre-push): protocol-bearing code changes without an `agent/` diff are rejected unless a commit
+message carries `[skip-doc-sync]`.
+
+## Working rules
+
+- Run builds/tests/lint through the root pnpm scripts (`pnpm test`, `pnpm rust:test`, `pnpm lint`,
+  ...) — not raw cargo/nargo/hardhat. Full command table: `CONTEXT.md`.
+- Commits: Conventional Commits, types `feat`/`fix`/`chore` only, description ≤ 72 chars, `!` for
+  breaking changes.
+- Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
+  `.active-preset.json`) — see `INVARIANTS.md` §Build / config sync.
+- Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.
+- Before writing or reviewing natural-language technical content, load
+  `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
+  requirements, procedures, help text, error text, release notes, and PR prose. Preserve protected
+  code and exact interface literals.
+- Before assuming current behavior is correct, check the "Verified Bugs & Protocol Concerns" table
+  in `flow-trace/00_INDEX.md` and the open-issues list in `INVARIANTS.md`.
+
+## Verification ladder
+
+Verify every change at the smallest scope that covers it, and state which command you ran when
+reporting done. Escalate only as needed:
+
+1. **Single crate:** `cargo test -p e3-<crate>` (exception to the pnpm-scripts rule — per-crate
+   scoping has no pnpm wrapper). Type-check fast with `cargo check -p e3-<crate>`.
+2. **One layer:** `pnpm rust:test` · `pnpm evm:test` · `pnpm sdk:test` · `pnpm noir:test`.
+3. **One integration scenario:** `pnpm test:integration <name>` (e.g. `net`; `--no-prebuild` to skip
+   the binary rebuild when only re-running).
+4. **Everything:** `pnpm test` — rarely needed locally; CI runs it anyway.
+
+Cross-layer changes (contracts ↔ Rust ↔ circuits) need at least one integration scenario, not just
+unit tests. CI additionally runs things pre-push does not: full integration suites, circuit builds,
+zk-prover e2e, contract storage/size gates, and commit-message validation — a green pre-push is not
+a green CI.
 
 ## Project Structure
 
@@ -49,7 +101,7 @@ Read the relevant flow-trace file **before** modifying code in any of these area
 | Area                                                                                 | File to read                        |
 | ------------------------------------------------------------------------------------ | ----------------------------------- |
 | CLI commands (`setup`, `register`, `activate`, `status`), on-chain registration, IMT | `01_REGISTRATION.md`                |
-| INTF bonding, USDC tickets, activation thresholds, exit queue                        | `02_TOKENS_AND_ACTIVATION.md`       |
+| FOLD bonding, tFOLD/USDC tickets, activation thresholds, exit queue                  | `02_TOKENS_AND_ACTIVATION.md`       |
 | E3 requests, fee payment, committee selection, sortition, ticket submission          | `03_E3_REQUEST_AND_COMMITTEE.md`    |
 | DKG, BFV keygen, ZK proofs (C0–C7), Shamir shares, key aggregation, decryption       | `04_DKG_AND_COMPUTATION.md`         |
 | Timeouts, `markE3Failed`, refunds, accusations, slashing (Lane A/B)                  | `05_FAILURE_REFUND_SLASHING.md`     |

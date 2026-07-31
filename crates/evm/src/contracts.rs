@@ -265,6 +265,7 @@ sol! {
     interface IBondingRegistry {
         function getTicketBalance(address operator) external view returns (uint256);
         function getLicenseBond(address operator) external view returns (uint256);
+        function bondOwnerOf(address operator) external view returns (address);
         function availableTickets(address operator) external view returns (uint256);
         function isRegistered(address operator) external view returns (bool);
         function isActive(address operator) external view returns (bool);
@@ -288,6 +289,8 @@ sol! {
         event CiphernodeDeregistrationRequested(address indexed operator, uint64 unlockAt);
 
         event OperatorActivationChanged(address indexed operator, bool active);
+
+        event BondOwnerSet(address indexed operator, address indexed bondOwner);
 
         event ConfigurationUpdated(
             bytes32 indexed parameter,

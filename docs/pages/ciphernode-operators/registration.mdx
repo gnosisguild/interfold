@@ -1,6 +1,6 @@
 ---
 title: 'Registration & Licensing'
-description: 'Bond your license, register as an operator, and add tickets'
+description: 'Authorize a bond owner, fund an operator, and register the node'
 ---
 
 # Registration & Licensing
@@ -10,7 +10,14 @@ operator. Make sure your node is already [running](./running) before proceeding.
 
 ## Prerequisites
 
-Before registering, ensure your wallet has:
+Registration supports one or two wallets:
+
+- The **operator key** runs the node and authorizes its initial bond owner.
+- The **bond owner** holds FOLD and USDC and controls the position lifecycle.
+
+Using a separate cold wallet or Safe as the bond owner is strongly recommended so the running node
+does not hold the key controlling collateral. Self-ownership is supported if an operator prefers a
+single-wallet setup. Ensure the selected bond-owner wallet has:
 
 | Token                   | Amount Required                          | Purpose                      |
 | ----------------------- | ---------------------------------------- | ---------------------------- |
@@ -39,7 +46,8 @@ Example output:
 
 ```
 Ciphernode status on sepolia:
-  Address: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Bond owner: not configured
   Registered: false
   Active: false
   Exit pending: false
@@ -49,43 +57,37 @@ Ciphernode status on sepolia:
   Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
-### Step 2: Bond Your License
+### Step 2: Authorize the Bond Owner
 
-Bond FOLD tokens to meet the license requirement:
-
-```bash
-interfold ciphernode license bond --amount 100
-```
-
-This command:
-
-- Approves the BondingRegistry to spend your FOLD (if needed)
-- Calls `bondLicense(100e18)` on the BondingRegistry contract
-
-> You can bond more than the minimum for a buffer against slashing. The active license floor is 80%
-> of the required bond.
-
-### Step 3: Register as an Operator
-
-Register your address in the CiphernodeRegistry:
+From the node's operator key, authorize the wallet or Safe that will control collateral:
 
 ```bash
-interfold ciphernode register
+interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 ```
 
-After registration, your node will be added to the registry's Merkle tree and can participate in
-committee formation once you have tickets.
+The owner must be nonzero and may equal the operator address, although a separate cold wallet or
+Safe is recommended. The operator can correct the address before the position is funded. Once it
+holds collateral or is registered, owner changes use the two-step proposal and acceptance flow
+described below.
 
-### Step 4: Add Ticket Balance
+### Step 3: Fund and Register the Operator
 
-Purchase tickets by depositing the underlying stablecoin:
+For an EOA bond owner, run the owner-aware CLI commands using a config whose encrypted signer is
+that owner:
 
 ```bash
-interfold ciphernode tickets buy --amount 100
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR bond --amount 100
+interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
-This deposits 100 USDC (or fee token units) and mints the equivalent in non-transferable tFOLD
-(InterfoldTicketToken).
+The CLI submits any required token approval first. Safe owners can submit the same `bondLicenseFor`,
+`registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe interface. The owner
+supplies the assets, while the operator address is added to the registry Merkle tree and receives
+non-transferable tFOLD. With the recommended separate-owner setup, the hot operator key does not
+control FOLD or USDC withdrawals, and protocol rewards are credited to the bond owner.
 
 The number of usable tickets is calculated as:
 
@@ -95,7 +97,7 @@ availableTickets = floor(ticketTokenBalance / ticketPrice)
 
 With a ticket price of 10 USDC and a 100 USDC deposit, you get 10 available tickets.
 
-### Step 5: Verify Active Status
+### Step 4: Verify Active Status
 
 Confirm your registration is complete:
 
@@ -107,7 +109,8 @@ Expected output for an active operator:
 
 ```
 Ciphernode status on sepolia:
-  Address: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Bond owner: 0xBOND_OWNER
   Registered: true
   Active: true
   Exit pending: false
@@ -117,50 +120,42 @@ Ciphernode status on sepolia:
   Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
-## CLI Command Reference
-
-### License Commands
+## Operator CLI Commands
 
 ```bash
-# Bond FOLD tokens
-interfold ciphernode license bond --amount <AMOUNT>
+# Authorize the bond owner from the hot operator key
+interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 
-# Unbond FOLD (moves to exit queue)
-interfold ciphernode license unbond --amount <AMOUNT>
+# Fund and register from an EOA bond-owner config
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR bond --amount 100
+interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 
-# Claim unlocked exits
-interfold ciphernode license claim
-interfold ciphernode license claim --max-ticket 50 --max-license 100
-```
-
-### Ticket Commands
-
-```bash
-# Buy tickets (deposit stablecoin)
-interfold ciphernode tickets buy --amount <AMOUNT>
-
-# Burn tickets (withdraw stablecoin)
-interfold ciphernode tickets burn --amount <AMOUNT>
-```
-
-### Lifecycle Commands
-
-```bash
-# Register as an operator
-interfold ciphernode register
-
-# Deregister (burns tickets and queues all assets for exit)
-interfold ciphernode deregister
-
-# Re-register (also cancels a pending exit)
-interfold ciphernode activate
-
-# Deactivate by withdrawing stake (without full deregistration)
-interfold ciphernode deactivate --tickets <AMOUNT> --license <AMOUNT>
+# The owner or operator can stop participation
+interfold ciphernode deregister --operator 0xOPERATOR
 
 # Check status
-interfold ciphernode status
+interfold ciphernode status --operator 0xOPERATOR
 ```
+
+Omit `--operator` for a self-owned position. In the recommended two-wallet setup, run financial
+commands with the bond-owner config and pass the node's operator address explicitly.
+
+### Rotate the Bond Owner
+
+The current owner proposes a replacement, then the new owner accepts:
+
+```bash
+interfold --config /path/to/current-owner.yaml ciphernode propose-bond-owner \
+  --operator 0xOPERATOR --new-owner 0xNEW_OWNER
+interfold --config /path/to/new-owner.yaml ciphernode accept-bond-owner \
+  --operator 0xOPERATOR
+```
+
+Active and pending FOLD ownership accounting moves atomically on acceptance. The operator key is not
+involved in rotation.
 
 ### Multi-Chain Support
 
@@ -168,7 +163,7 @@ Specify a chain when operating on multiple networks:
 
 ```bash
 interfold ciphernode status --chain mainnet
-interfold ciphernode license bond --amount 100 --chain sepolia
+interfold ciphernode set-bond-owner --owner 0xBOND_OWNER --chain sepolia
 ```
 
 The `--chain` parameter matches the `name` field in your config's `chains` array.

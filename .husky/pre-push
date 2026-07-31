@@ -1,4 +1,8 @@
+#!/usr/bin/env sh
+
 pnpm lint
 pnpm check:pnpm
 pnpm check:license
 pnpm check:committee
+pnpm check:docs
+pnpm check:invariants

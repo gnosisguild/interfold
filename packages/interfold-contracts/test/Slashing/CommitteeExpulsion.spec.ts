@@ -107,27 +107,31 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     // ── Helpers ────────────────────────────────────────────────────────────
     async function setupOperator(operator: Signer) {
       const operatorAddress = await operator.getAddress();
+      const bondOwnerAddress = await owner.getAddress();
 
       await foldToken.mint(
-        operatorAddress,
+        bondOwnerAddress,
         ethers.parseEther("10000"),
         ethers.encodeBytes32String("Test allocation"),
       );
-      await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
+      await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
+      await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
       await foldToken
-        .connect(operator)
+        .connect(owner)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
-        .connect(operator)
-        .bondLicense(ethers.parseEther("1000"));
-      await bondingRegistry.connect(operator).registerOperator();
+        .connect(owner)
+        .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+      await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
-        .connect(operator)
+        .connect(owner)
         .approve(await bondingRegistry.ticketToken(), ticketAmount);
-      await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(owner)
+        .addTicketBalanceFor(operatorAddress, ticketAmount);
     }
 
     async function makeRequest(committeeSize: number = COMMITTEE_SIZE_MINIMUM) {

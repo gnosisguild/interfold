@@ -70,16 +70,17 @@ A ciphernode moves through several states during its lifecycle:
 ```mermaid
 stateDiagram-v2
     [*] --> Unbonded
-    Unbonded --> Licensed: bondLicense(amount >= requiredBond)
-    Licensed --> Registered: registerOperator()
-    Registered --> Active: addTicketBalance(balance >= minBalance)
-    Active --> Inactive: removeTicketBalance() OR unbondLicense()
-    Inactive --> Active: addTicketBalance() OR bondLicense()
-    Active --> ExitPending: deregisterOperator()
-    Inactive --> ExitPending: deregisterOperator()
-    Registered --> ExitPending: deregisterOperator()
-    ExitPending --> [*]: claimExits() after exitDelay
-    ExitPending --> Registered: registerOperator() (after exitDelay)
+    Unbonded --> Unbonded: setBondOwner(owner)
+    Unbonded --> Licensed: bondLicenseFor(operator, amount >= requiredBond)
+    Licensed --> Registered: registerOperatorFor(operator)
+    Registered --> Active: addTicketBalanceFor(operator, balance >= minBalance)
+    Active --> Inactive: removeTicketBalanceFor(...) OR unbondLicenseFor(...)
+    Inactive --> Active: addTicketBalanceFor(...) OR bondLicenseFor(...)
+    Active --> ExitPending: deregisterOperatorFor(operator)
+    Inactive --> ExitPending: deregisterOperatorFor(operator)
+    Registered --> ExitPending: deregisterOperatorFor(operator)
+    ExitPending --> [*]: claimExitsFor(operator, ...) after exitDelay
+    ExitPending --> Registered: registerOperatorFor(operator) (after exitDelay)
 ```
 
 ### State Descriptions

@@ -14,6 +14,43 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        }
+      ],
+      "name": "BondOwnerAlreadySet",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "lockedBalance",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "controlledBalance",
+          "type": "uint256"
+        }
+      ],
+      "name": "BondOwnerTransferViolatesLock",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "CiphernodeBanned",
       "type": "error"
@@ -76,6 +113,22 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "caller",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "NotBondOwner",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "NotLicensed",
       "type": "error"
@@ -135,6 +188,50 @@
       "inputs": [],
       "name": "ZeroAmount",
       "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        }
+      ],
+      "name": "BondOwnerSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "currentOwner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "pendingOwner",
+          "type": "address"
+        }
+      ],
+      "name": "BondOwnerTransferProposed",
+      "type": "event"
     },
     {
       "anonymous": false,
@@ -461,12 +558,30 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "acceptBondOwner",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
         }
       ],
-      "name": "addTicketBalance",
+      "name": "addTicketBalanceFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -525,18 +640,47 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
         }
       ],
-      "name": "bondLicense",
+      "name": "bondLicenseFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },
     {
       "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "bondOwnerOf",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
         {
           "internalType": "uint256",
           "name": "maxTicketAmount",
@@ -548,14 +692,20 @@
           "type": "uint256"
         }
       ],
-      "name": "claimExits",
+      "name": "claimExitsFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "deregisterOperator",
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "deregisterOperatorFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -839,6 +989,25 @@
           "type": "address"
         }
       ],
+      "name": "pendingBondOwnerOf",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
       "name": "pendingExits",
       "outputs": [
         {
@@ -877,6 +1046,24 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "proposeBondOwner",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -924,8 +1111,14 @@
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "registerOperator",
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "registerOperatorFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -933,12 +1126,17 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
         }
       ],
-      "name": "removeTicketBalance",
+      "name": "removeTicketBalanceFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -991,6 +1189,19 @@
         }
       ],
       "name": "revokeSlashingManager",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        }
+      ],
+      "name": "setBondOwner",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1303,12 +1514,17 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
         }
       ],
-      "name": "unbondLicense",
+      "name": "unbondLicenseFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1338,5 +1554,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-cc17cff9355f9567b3850c6bbe0afb765e5b8687"
+  "buildInfoId": "solc-0_8_28-f5755ecb7841fc95c54f70765c61457db4efede6"
 }

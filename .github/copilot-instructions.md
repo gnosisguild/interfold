@@ -1,1 +1,1 @@
-Read and follow the agent rules in `agent/RULES.md` before starting any task.
+Read and follow `AGENTS.md` before starting any task.

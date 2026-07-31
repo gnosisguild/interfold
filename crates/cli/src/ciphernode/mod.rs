@@ -69,32 +69,74 @@ pub enum CiphernodeCommands {
         #[arg(long, conflicts_with = "private_key")]
         private_key_stdin: bool,
     },
-    /// Manage FOLD license tokens and bonding state
+    /// Authorize the initial wallet that will own this node's collateral
+    SetBondOwner {
+        /// Wallet or Safe that controls the bond; a separate cold owner is recommended
+        #[arg(long = "owner", value_name = "ADDRESS")]
+        owner: String,
+        #[command(flatten)]
+        chain: ChainArgs,
+    },
+    /// Propose transferring an operator position to a new bond owner
+    ProposeBondOwner {
+        /// Operator position to transfer
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: String,
+        /// Wallet or Safe that may accept ownership
+        #[arg(long = "new-owner", value_name = "ADDRESS")]
+        new_owner: String,
+        #[command(flatten)]
+        chain: ChainArgs,
+    },
+    /// Accept a proposed bond-owner transfer
+    AcceptBondOwner {
+        /// Operator position being accepted
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: String,
+        #[command(flatten)]
+        chain: ChainArgs,
+    },
+    /// Manage FOLD license bonding for an operator
     License {
         #[command(subcommand)]
         command: LicenseCommands,
+        /// Target operator; defaults to the configured signer for self-owned positions
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Manage collateral tickets backed by the stable token
+    /// Manage stablecoin-backed tickets for an operator
     Tickets {
         #[command(subcommand)]
         command: TicketCommands,
+        /// Target operator; defaults to the configured signer for self-owned positions
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Register the current operator in the bonding registry
+    /// Register an operator using the configured bond-owner signer
     Register {
+        /// Target operator; defaults to the configured signer for self-owned positions
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Request deregistration from the bonding registry
+    /// Request deregistration as the bond owner or operator emergency key
     Deregister {
+        /// Target operator; defaults to the configured signer
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Force the registry to recompute activation for the node
+    /// Register an operator and recompute its activation state
     Activate {
+        /// Target operator; defaults to the configured signer for self-owned positions
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
@@ -104,11 +146,17 @@ pub enum CiphernodeCommands {
         ticket_amount: Option<String>,
         #[arg(long = "license", value_name = "AMOUNT")]
         license_amount: Option<String>,
+        /// Target operator; defaults to the configured signer for self-owned positions
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
     /// Display the current on-chain status for this operator
     Status {
+        /// Target operator; defaults to the configured signer
+        #[arg(long = "operator", value_name = "ADDRESS")]
+        operator: Option<String>,
         #[command(flatten)]
         chain: ChainArgs,
     },
@@ -116,17 +164,17 @@ pub enum CiphernodeCommands {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum LicenseCommands {
-    /// Bond FOLD into the bonding registry
+    /// Bond FOLD into an operator position
     Bond {
         #[arg(long = "amount")]
         amount: String,
     },
-    /// Unbond FOLD (moves stake to the exit queue)
+    /// Queue FOLD from an operator position for exit
     Unbond {
         #[arg(long = "amount")]
         amount: String,
     },
-    /// Claim any unlocked exits
+    /// Claim unlocked ticket and license exits
     Claim {
         #[arg(long = "max-ticket")]
         max_ticket: Option<String>,
@@ -137,12 +185,12 @@ pub enum LicenseCommands {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum TicketCommands {
-    /// Deposit stablecoins to mint tickets
+    /// Deposit stablecoins to mint tickets for an operator
     Buy {
         #[arg(long = "amount")]
         amount: String,
     },
-    /// Burn tickets by withdrawing the underlying stablecoin
+    /// Burn an operator's tickets and queue the stablecoins for exit
     Burn {
         #[arg(long = "amount")]
         amount: String,
@@ -151,37 +199,69 @@ pub enum TicketCommands {
 
 pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConfig) -> Result<()> {
     match command {
-        CiphernodeCommands::License { chain, command } => {
+        CiphernodeCommands::SetBondOwner { chain, owner } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            license::execute(out, &ctx, command).await?
+            lifecycle::set_bond_owner(out, &ctx, &owner).await?
         }
-        CiphernodeCommands::Tickets { chain, command } => {
+        CiphernodeCommands::ProposeBondOwner {
+            chain,
+            operator,
+            new_owner,
+        } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            tickets::execute(out, &ctx, command).await?
+            lifecycle::propose_bond_owner(out, &ctx, &operator, &new_owner).await?
         }
-        CiphernodeCommands::Register { chain } => {
+        CiphernodeCommands::AcceptBondOwner { chain, operator } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::register(out, &ctx).await?
+            lifecycle::accept_bond_owner(out, &ctx, &operator).await?
         }
-        CiphernodeCommands::Deregister { chain } => {
+        CiphernodeCommands::License {
+            chain,
+            operator,
+            command,
+        } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::deregister(out, &ctx).await?
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            license::execute(out, &ctx, operator, command).await?
         }
-        CiphernodeCommands::Activate { chain } => {
+        CiphernodeCommands::Tickets {
+            chain,
+            operator,
+            command,
+        } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::activate(out, &ctx).await?
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            tickets::execute(out, &ctx, operator, command).await?
+        }
+        CiphernodeCommands::Register { chain, operator } => {
+            let ctx = ChainContext::new(config, chain.selection()).await?;
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            lifecycle::register(out, &ctx, operator).await?
+        }
+        CiphernodeCommands::Deregister { chain, operator } => {
+            let ctx = ChainContext::new(config, chain.selection()).await?;
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            lifecycle::deregister(out, &ctx, operator).await?
+        }
+        CiphernodeCommands::Activate { chain, operator } => {
+            let ctx = ChainContext::new(config, chain.selection()).await?;
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            lifecycle::activate(out, &ctx, operator).await?
         }
         CiphernodeCommands::Deactivate {
             chain,
+            operator,
             ticket_amount,
             license_amount,
         } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::deactivate(out, &ctx, ticket_amount, license_amount).await?
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            lifecycle::deactivate(out, &ctx, operator, ticket_amount, license_amount).await?
         }
-        CiphernodeCommands::Status { chain } => {
+        CiphernodeCommands::Status { chain, operator } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
-            lifecycle::status(out, &ctx).await?
+            let operator = ctx.resolve_operator(operator.as_deref())?;
+            lifecycle::status(out, &ctx, operator).await?
         }
         CiphernodeCommands::Setup { .. } => {
             bail!(

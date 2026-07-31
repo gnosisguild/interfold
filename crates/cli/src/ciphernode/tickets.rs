@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use alloy::primitives::Address;
 use anyhow::Result;
 use e3_console::{log, Console};
 use e3_utils::require_successful_receipt;
@@ -15,6 +16,7 @@ use super::TicketCommands;
 pub(crate) async fn execute(
     out: Console,
     ctx: &ChainContext,
+    operator: Address,
     command: TicketCommands,
 ) -> Result<()> {
     match command {
@@ -27,7 +29,7 @@ pub(crate) async fn execute(
             ensure_allowance(ctx, underlying, ticket_contract, parsed).await?;
             let receipt = ctx
                 .bonding()
-                .addTicketBalance(parsed)
+                .addTicketBalanceFor(operator, parsed)
                 .send()
                 .await?
                 .get_receipt()
@@ -35,8 +37,9 @@ pub(crate) async fn execute(
             require_successful_receipt("add ticket balance", &receipt)?;
             log!(
                 out,
-                "Purchased {} tickets (tx: {:#x})",
+                "Purchased {} tickets for operator {:#x} (tx: {:#x})",
                 amount,
+                operator,
                 receipt.transaction_hash
             );
         }
@@ -46,7 +49,7 @@ pub(crate) async fn execute(
             let parsed = parse_amount(&amount, decimals)?;
             let receipt = ctx
                 .bonding()
-                .removeTicketBalance(parsed)
+                .removeTicketBalanceFor(operator, parsed)
                 .send()
                 .await?
                 .get_receipt()
@@ -54,8 +57,9 @@ pub(crate) async fn execute(
             require_successful_receipt("remove ticket balance", &receipt)?;
             log!(
                 out,
-                "Removed {} tickets (tx: {:#x})",
+                "Removed {} tickets from operator {:#x} (tx: {:#x})",
                 amount,
+                operator,
                 receipt.transaction_hash
             );
         }

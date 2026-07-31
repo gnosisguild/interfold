@@ -61,6 +61,20 @@ interface IBondingRegistry {
     /// @notice Thrown when {renounceOwnership} is called.
     error RenounceOwnershipDisabled();
 
+    /// @notice Thrown when a caller attempts to manage another operator's collateral.
+    error NotBondOwner(address caller, address operator);
+
+    /// @notice Thrown when an operator attempts to replace an already-authorized bond owner.
+    error BondOwnerAlreadySet(address operator, address bondOwner);
+
+    /// @notice Moving a license position would leave the previous owner with
+    ///         less wallet-plus-bonded FOLD than its current locked balance.
+    error BondOwnerTransferViolatesLock(
+        address bondOwner,
+        uint256 lockedBalance,
+        uint256 controlledBalance
+    );
+
     // ======================
     // Events (Protocol-Named)
     // ======================
@@ -222,6 +236,25 @@ interface IBondingRegistry {
         uint256 actualAmount
     );
 
+    /**
+     * @notice Emitted when the wallet that owns an operator's collateral is set.
+     * @param operator Hot operator key used by the node
+     * @param bondOwner Wallet that funds and controls the operator's collateral
+     */
+    event BondOwnerSet(address indexed operator, address indexed bondOwner);
+
+    /**
+     * @notice Emitted when the current owner proposes transferring an operator position.
+     * @param operator Hot operator key used by the node
+     * @param currentOwner Current wallet controlling the operator's collateral
+     * @param pendingOwner Wallet that may accept ownership
+     */
+    event BondOwnerTransferProposed(
+        address indexed operator,
+        address indexed currentOwner,
+        address indexed pendingOwner
+    );
+
     // ======================
     // View Functions
     // ======================
@@ -260,9 +293,22 @@ interface IBondingRegistry {
     function getLicenseBond(address operator) external view returns (uint256);
 
     /**
+     * @notice Get the wallet that owns and controls an operator's collateral.
+     * @dev Returns address(0) until the operator authorizes an owner.
+     */
+    function bondOwnerOf(address operator) external view returns (address);
+
+    /**
+     * @notice Get the wallet currently nominated to accept an operator position.
+     */
+    function pendingBondOwnerOf(
+        address operator
+    ) external view returns (address);
+
+    /**
      * @notice Get FOLD that still counts toward an account's locked-floor collateral.
      * @dev Includes active license bond plus pending FOLD exits that remain slashable/not returned.
-     * @param account Account/operator whose FOLD bond credit is queried
+     * @param account Bond owner whose aggregate FOLD bond credit is queried
      * @return Active plus pending license-bond amount
      */
     function totalBonded(address account) external view returns (uint256);
@@ -409,54 +455,66 @@ interface IBondingRegistry {
     // ======================
 
     /**
-     * @notice Register as an operator (callable by licensed operators)
-     * @dev Requires sufficient license bond and calls registry
+     * @notice Register an operator whose collateral is controlled by the caller.
      */
-    function registerOperator() external;
+    function registerOperatorFor(address operator) external;
 
     /**
-     * @notice Deregister as an operator and remove from IMT
+     * @notice Deregister an operator.
+     * @dev Callable by the bond owner or by the operator as an emergency kill switch.
      */
-    function deregisterOperator() external;
+    function deregisterOperatorFor(address operator) external;
 
     /**
-     * @notice Increase operator's ticket balance by depositing tokens
-     * @param amount Amount of ticket tokens to deposit
-     * @dev Requires approval for ticket token transfer
+     * @notice Increase an operator's ticket balance using the bond owner's funds.
      */
-    function addTicketBalance(uint256 amount) external;
+    function addTicketBalanceFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Decrease operator's ticket balance by withdrawing tokens
-     * @param amount Amount of ticket tokens to withdraw
-     * @dev Reverts if operator is in any active committee
+     * @notice Queue ticket collateral owned by the caller for withdrawal.
      */
-    function removeTicketBalance(uint256 amount) external;
+    function removeTicketBalanceFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Bond license tokens to become eligible for registration
-     * @param amount Amount of license tokens to bond
-     * @dev Requires approval for license token transfer
+     * @notice Bond license tokens for an operator using the bond owner's funds.
      */
-    function bondLicense(uint256 amount) external;
+    function bondLicenseFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Unbond license tokens
-     * @param amount Amount of license tokens to unbond
-     * @dev Reverts if operator is in any active committee or still registered
+     * @notice Queue license collateral owned by the caller for withdrawal.
      */
-    function unbondLicense(uint256 amount) external;
+    function unbondLicenseFor(address operator, uint256 amount) external;
+
+    /**
+     * @notice Authorize a bond owner for the caller's operator key.
+     * @dev The owner may be the operator itself. The operator may correct this
+     *      choice while the position is empty; funded positions require current-owner
+     *      proposal and new-owner acceptance.
+     */
+    function setBondOwner(address bondOwner) external;
+
+    /**
+     * @notice Propose transferring an operator position to a new bond owner.
+     * @dev Only the current bond owner may propose or replace a pending transfer.
+     */
+    function proposeBondOwner(address operator, address newOwner) external;
+
+    /**
+     * @notice Accept a proposed operator position from its current bond owner.
+     * @dev Moves ownership accounting for active and pending license collateral
+     *      only when doing so preserves the previous owner's locked-FOLD coverage.
+     */
+    function acceptBondOwner(address operator) external;
 
     // ======================
     // Claim Functions
     // ======================
 
     /**
-     * @notice Claim operator's ticket balance and license bond
-     * @param maxTicketAmount Maximum amount of ticket tokens to claim
-     * @param maxLicenseAmount Maximum amount of license tokens to claim
+     * @notice Claim an operator's matured exits to its bond owner.
      */
-    function claimExits(
+    function claimExitsFor(
+        address operator,
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
     ) external;
@@ -506,11 +564,12 @@ interface IBondingRegistry {
     // Reward Distribution Functions
     // ======================
     /**
-     * @notice Distribute rewards to operators
+     * @notice Distribute rewards for operators to their configured bond owners.
      * @param rewardToken Reward token contract
      * @param operators Addresses of the operators to distribute rewards to
      * @param amounts Amounts of rewards to distribute to each operator
-     * @dev Only callable by authorized distributors.
+     * @dev Falls back to the supplied address when it has no configured bond owner.
+     *      Only callable by authorized distributors.
      */
     function distributeRewards(
         IERC20 rewardToken,

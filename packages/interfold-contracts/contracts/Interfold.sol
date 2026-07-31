@@ -163,6 +163,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ICiphernodeRegistry registry;
         IE3RefundManager refundManager;
         ISlashingManager slashManager;
+        IBondingRegistry bonding;
     }
 
     /// @notice Grace window (seconds) after a stage deadline during which only
@@ -270,12 +271,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             maxDuration
         );
 
-        e3Id = nexte3Id;
-        nexte3Id++;
+        e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         dependencies.registry = ciphernodeRegistry;
         dependencies.refundManager = e3RefundManager;
         dependencies.slashManager = slashingManager;
+        dependencies.bonding = bondingRegistry;
         dependencies.refundManager.snapshotE3Policy(
             e3Id,
             address(dependencies.registry)
@@ -500,7 +501,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         }
 
         // Split between protocol treasury and CN rewards
-        uint256 protocolAmount = 0;
+        uint256 protocolAmount;
         uint16 _protocolShareBps = _e3ProtocolShareBps[e3Id];
         address _protocolTreasury = _e3ProtocolTreasury[e3Id];
         if (_protocolShareBps > 0 && _protocolTreasury != address(0)) {
@@ -522,34 +523,19 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         uint256 cnAmount = totalAmount - protocolAmount;
 
-        uint256[] memory amounts = InterfoldPricing.computeNodeAmounts(
+        // Split the ciphernode share and credit each node owner's pull balance.
+        uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
+            _pendingRewards,
+            _e3Dependencies[e3Id].bonding,
             cnAmount,
-            activeLength,
-            e3Id
+            e3Id,
+            activeNodes,
+            paymentToken
         );
-
-        // Credit each node's pull-payment balance (instead of pushing via bondingRegistry)
-        _creditRewards(e3Id, activeNodes, amounts, paymentToken);
 
         emit RewardsDistributed(e3Id, activeNodes, amounts);
 
         refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
-    }
-
-    /// @notice Credits per-node reward balances and emits `RewardCredited`.
-    function _creditRewards(
-        uint256 e3Id,
-        address[] memory nodes,
-        uint256[] memory amounts,
-        IERC20 token
-    ) private {
-        uint256 n = nodes.length;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 a = amounts[i];
-            if (a == 0) continue;
-            _pendingRewards[e3Id][nodes[i]] += a;
-            emit RewardCredited(e3Id, nodes[i], token, a);
-        }
     }
 
     /// @notice Retrieves the honest committee nodes for a given E3.
@@ -1105,11 +1091,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @inheritdoc IInterfold
     function claimRewards(uint256[] calldata e3Ids) external {
         uint256 len = e3Ids.length;
-        uint256 totalClaimed;
+        bool claimed;
         for (uint256 i = 0; i < len; i++) {
-            totalClaimed += _claimReward(e3Ids[i], msg.sender);
+            if (_claimReward(e3Ids[i], msg.sender) != 0) claimed = true;
         }
-        require(totalClaimed > 0, NothingToClaim());
+        require(claimed, NothingToClaim());
     }
 
     /// @notice Internal helper: drains the caller's pull balance for one E3

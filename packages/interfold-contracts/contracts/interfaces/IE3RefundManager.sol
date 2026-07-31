@@ -41,6 +41,7 @@ interface IE3RefundManager {
         address registry;
         uint64 version;
         bool initialized;
+        address bondingRegistry;
     }
     /// @notice Refund distribution for a failed E3
     struct RefundDistribution {
@@ -131,6 +132,7 @@ interface IE3RefundManager {
         address indexed treasury,
         address interfold,
         address registry,
+        address bondingRegistry,
         WorkValueAllocation allocation
     );
     /// @notice Emitted when the Interfold address is set
@@ -198,11 +200,13 @@ interface IE3RefundManager {
         uint256 e3Id
     ) external returns (uint256 amount);
 
-    /// @notice Honest node claims their reward
+    /// @notice An honest operator's bond owner claims its reward.
     /// @param e3Id The failed E3 ID
+    /// @param operator The honest operator whose reward is being claimed
     /// @return amount The amount claimed
     function claimHonestNodeReward(
-        uint256 e3Id
+        uint256 e3Id,
+        address operator
     ) external returns (uint256 amount);
 
     /// @notice Escrow slashed funds — destination decided at terminal state
@@ -261,10 +265,10 @@ interface IE3RefundManager {
         address claimant
     ) external view returns (bool claimed);
 
-    /// @notice Check whether an address claimed the honest-node reward role
+    /// @notice Check whether an honest operator's owner claimed its reward.
     function hasHonestNodeClaimed(
         uint256 e3Id,
-        address claimant
+        address operator
     ) external view returns (bool claimed);
 
     /// @notice Calculate work value for a given stage

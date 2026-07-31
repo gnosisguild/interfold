@@ -8,6 +8,20 @@ Before a node can register, it must stake two types of collateral:
 2. **Stablecoin via tFOLD tickets** (ticket collateral) — USDC wrapped into non-transferable
    InterfoldTicketToken
 
+Collateral ownership and operator identity are separate namespaces:
+
+- `operator` is the hot node key and remains the registry, ticket, sortition, DKG, ban, and slash
+  identity.
+- `bondOwnerOf(operator)` is the wallet that funds and controls collateral. The operator must set it
+  to a nonzero address before any position action. It may choose itself, although a separate cold
+  wallet or Safe is recommended. The current owner can later rotate ownership through a two-step
+  proposal and acceptance, provided removing the position's FOLD credit does not break the old
+  owner's locked-balance coverage.
+- Positions use only the owner-authorized `...For(operator)` calls. Ticket tokens are minted to the
+  operator; exit payouts go only to the owner.
+- A bond owner may fund multiple operator keys. `totalBonded(owner)` aggregates its active and
+  pending FOLD across those keys so FOLD wallet-level lock accounting remains correct.
+
 ---
 
 ## Token Architecture
@@ -103,53 +117,56 @@ the one-time license-token placeholder used to resolve the circular FOLD/Bonding
 
 ---
 
-## Step 1: Bond License (`interfold ciphernode license bond`)
+## Step 1: Bond License
 
-**File:** `crates/cli/src/ciphernode/license.rs`
+The owner wallet or Safe approves FOLD and calls `bondLicenseFor(operator, amount)`. The registry
+pulls from the owner, credits the operator's license position, and credits `totalBonded(owner)`.
 
 ```
-User runs: interfold ciphernode license bond --amount 50000
+Bond owner submits bondLicenseFor(operator, 50000)
 │
-├─ 1. ChainContext::new()
-│     └─ Loads config, decrypts wallet, connects to BondingRegistry
-│
-├─ 2. Approve FOLD spend:
+├─ 1. Approve FOLD spend:
 │     └─ InterfoldToken.approve(bondingRegistry, 50000)
 │        → Allows BondingRegistry to pull FOLD tokens
 │
-├─ 3. BondingRegistryContract.bondLicense(50000).send().await
+├─ 2. BondingRegistry.bondLicenseFor(operator, 50000)
 │     │
 │     │  ┌─── ON-CHAIN (BondingRegistry.sol) ──────────────────┐
 │     │  │                                                      │
-│     │  │  bondLicense(uint256 amount) {                       │
-│     │  │    1. require(amount > 0)                            │
-│     │  │    2. operators[msg.sender].licenseBond += amount    │
-│     │  │       → totalBonded(msg.sender) now includes amount  │
-│     │  │    3. licenseToken.safeTransferFrom(                 │
-│     │  │         msg.sender,   // from operator               │
+│     │  │  bondLicenseFor(address operator, uint256 amount) {  │
+│     │  │    1. require(msg.sender == bondOwnerOf(operator))   │
+│     │  │    2. require(amount > 0)                            │
+│     │  │    3. operators[operator].licenseBond += amount      │
+│     │  │       → Resolve bondOwnerOf(operator) locally         │
+│     │  │       → totalBonded(bondOwner) now includes amount   │
+│     │  │    4. licenseToken.safeTransferFrom(                 │
+│     │  │         msg.sender,   // from bond owner             │
 │     │  │         address(this), // to BondingRegistry         │
 │     │  │         amount                                       │
 │     │  │       )                                              │
 │     │  │       → FOLD _update can see the pre-recorded bond   │
 │     │  │         and enforce locked-floor accounting          │
-│     │  │       → FOLD tokens move from operator → contract    │
-│     │  │    4. totalLicenseLiability += amount                │
-│     │  │    5. _updateOperatorStatus(msg.sender)              │
+│     │  │       → FOLD tokens move from owner → contract       │
+│     │  │    5. totalLicenseLiability += amount                │
+│     │  │    6. _updateOperatorStatus(operator)                │
 │     │  │       → May activate if all conditions now met       │
-│     │  │    6. Emit LicenseBondUpdated(msg.sender, newBond)   │
+│     │  │    7. Emit LicenseBondUpdated(operator, newBond)     │
 │     │  │  }                                                   │
 │     │  └──────────────────────────────────────────────────────┘
 │     │
-└─ OUTPUT: "Transaction hash: 0x..."
+└─ Bond is owned by msg.sender and attributed to operator
 ```
 
 ### Locked FOLD bonding
 
-`BondingRegistry.totalBonded(account)` returns active FOLD license bond plus pending FOLD exits that
-remain slashable/not returned. `InterfoldToken` uses this view for pooled wallet-level locks, so
-locked FOLD can be self-bonded by the same account without becoming transferable. Delegated
-source-aware bonding is not part of the pooled-lock model; license bonds are credited to
-`msg.sender` through `bondLicense(amount)`.
+`BondingRegistry.totalBonded(account)` returns FOLD owned by that account across every operator
+position it funds, including pending exits that remain slashable/not returned. `InterfoldToken` uses
+this view for pooled wallet-level locks, so locked FOLD can be bonded without becoming transferable.
+A claim or license slash removes the exact amount from the owner's aggregate credit. Bond-owner
+acceptance checks that the previous owner's wallet balance plus its remaining aggregate bond still
+covers `lockedBalanceOf(previousOwner)` before migrating a position's credit. Without that check, a
+second wallet could claim the migrated bond as unlocked FOLD while the original lock holder remains
+empty.
 
 ### Activation check after bonding:
 
@@ -190,59 +207,55 @@ A completed ban or unban refreshes the affected registered operator immediately.
 
 ---
 
-## Step 2: Buy Tickets (`interfold ciphernode tickets buy`)
+## Step 2: Fund Tickets
 
-**File:** `crates/cli/src/ciphernode/tickets.rs`
+The owner calls `addTicketBalanceFor(operator, amount)`: USDC is pulled from the owner but
+non-transferable tFOLD is minted to the operator so committee snapshots remain keyed to the node.
 
-> **IMPORTANT:** The `amount` parameter to `addTicketBalance` is in **underlying stablecoin base
-> units** (e.g., USDC wei), NOT in ticket count. The CLI parses the user's input using the
-> underlying token's decimals. `ticketPrice` is only used in the activation check
+> **IMPORTANT:** The `amount` parameter is in **underlying stablecoin base units** (e.g., USDC wei),
+> NOT in ticket count. `ticketPrice` is only used in the activation check
 > (`balanceOf / ticketPrice >= minTicketBalance`) and in sortition eligibility — it is NOT used to
 > multiply the deposit amount.
 
 ```
-User runs: interfold ciphernode tickets buy --amount 100
+Bond owner submits addTicketBalanceFor(operator, 100_000_000)
 │
-├─ 1. ChainContext::new()
-│
-├─ 2. CLI resolves the ticket token's underlying stablecoin address
-│     and its decimals, then parses "100" → 100_000_000 (raw units)
-│
-├─ 3. Approve stablecoin spend:
+├─ 1. Approve stablecoin spend:
 │     └─ USDC.approve(ticketTokenAddress, 100_000_000)
 │        → Note: approval is to the TicketToken contract (not BondingRegistry)
 │        → because depositFrom pulls USDC into the TicketToken wrapper
 │
-├─ 4. BondingRegistryContract.addTicketBalance(100_000_000).send().await
+├─ 2. BondingRegistry.addTicketBalanceFor(operator, 100_000_000)
 │     │
 │     │  ┌─── ON-CHAIN (BondingRegistry.sol) ──────────────────┐
 │     │  │                                                      │
-│     │  │  addTicketBalance(uint256 amount) {                  │
-│     │  │    1. require(amount > 0)                            │
-│     │  │    2. require(operators[msg.sender].registered)      │
-│     │  │    3. modifier: require(!exitInProgress(msg.sender)) │
-│     │  │    4. ticketToken.depositFrom(                       │
-│     │  │         msg.sender,  // pull USDC from operator      │
-│     │  │         msg.sender,  // mint tFOLD to operator         │
+│     │  │  addTicketBalanceFor(operator, amount) {             │
+│     │  │    1. require(msg.sender == bondOwnerOf(operator))   │
+│     │  │    2. require(amount > 0)                            │
+│     │  │    3. require(operators[operator].registered)        │
+│     │  │    4. require(!exitInProgress(operator))             │
+│     │  │    5. ticketToken.depositFrom(                       │
+│     │  │         msg.sender,  // pull USDC from bond owner    │
+│     │  │         operator,    // mint tFOLD to operator       │
 │     │  │         amount       // RAW stablecoin units         │
 │     │  │       )              // NO ticketPrice multiplication│
 │     │  │       │                                              │
 │     │  │       │  ┌─ InterfoldTicketToken.depositFrom() ────┐  │
 │     │  │       │  │  1. underlying.transferFrom(           │  │
 │     │  │       │  │       from, address(this), amount)     │  │
-│     │  │       │  │     → USDC moves: operator → tFOLD       │  │
+│     │  │       │  │     → USDC moves: owner → tFOLD          │  │
 │     │  │       │  │  2. _mint(to, amount)                  │  │
 │     │  │       │  │     → tFOLD minted 1:1 with USDC         │  │
 │     │  │       │  │  3. Auto-delegate to self on first     │  │
 │     │  │       │  │     deposit (for voting power tracking)│  │
 │     │  │       │  └────────────────────────────────────────┘  │
-│     │  │    5. _updateOperatorStatus(msg.sender)              │
-│     │  │    6. Emit TicketBalanceUpdated(msg.sender,          │
+│     │  │    6. _updateOperatorStatus(operator)                │
+│     │  │    7. Emit TicketBalanceUpdated(operator,            │
 │     │  │         +amount, newBalance, "DEPOSIT")              │
 │     │  │  }                                                   │
 │     │  └──────────────────────────────────────────────────────┘
 │     │
-└─ OUTPUT: "Purchased 100 tickets (tx: 0x...)"
+└─ Operator receives tFOLD; owner retains lifecycle control
 ```
 
 ### Why tickets are non-transferable:
@@ -255,28 +268,32 @@ tFOLD tokens cannot be transferred between addresses. This ensures:
 
 ---
 
-## Step 3: Unbond License (`interfold ciphernode license unbond`)
+## Step 3: Unbond License
+
+Only the configured owner may call `unbondLicenseFor(operator, amount)`. With a separate owner, the
+operator's hot key cannot queue the owner's FOLD for exit.
 
 ```
-User runs: interfold ciphernode license unbond --amount 10000
+Bond owner submits unbondLicenseFor(operator, 10000)
 │
-├─ BondingRegistryContract.unbondLicense(10000).send().await
+├─ BondingRegistry.unbondLicenseFor(operator, 10000)
 │     │
 │     │  ┌─── ON-CHAIN ─────────────────────────────────────────┐
 │     │  │                                                       │
-│     │  │  unbondLicense(uint256 amount) {                      │
-│     │  │    1. require(amount > 0)                             │
-│     │  │    2. require(operators[msg.sender].licenseBond       │
+│     │  │  unbondLicenseFor(operator, amount) {                 │
+│     │  │    1. require(msg.sender == bondOwnerOf(operator))    │
+│     │  │    2. require(amount > 0)                             │
+│     │  │    3. require(operators[operator].licenseBond         │
 │     │  │              >= amount)                               │
-│     │  │    3. operators[msg.sender].licenseBond -= amount     │
-│     │  │    4. _exits.queueLicensesForExit(                   │
-│     │  │         msg.sender, exitDelay, amount                 │
+│     │  │    4. operators[operator].licenseBond -= amount       │
+│     │  │    5. _exits.queueLicensesForExit(                   │
+│     │  │         operator, exitDelay, amount                   │
 │     │  │       )                                               │
 │     │  │       → Pending FOLD still counts in totalBonded()    │
 │     │  │         until claimed or slashed                      │
-│     │  │    5. _updateOperatorStatus(msg.sender)               │
+│     │  │    6. _updateOperatorStatus(operator)                 │
 │     │  │       → May DEACTIVATE if bond drops below threshold  │
-│     │  │    6. Emit LicenseBondUpdated(msg.sender, newBond)    │
+│     │  │    7. Emit LicenseBondUpdated(operator, newBond)      │
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
 │
@@ -285,27 +302,27 @@ User runs: interfold ciphernode license unbond --amount 10000
 
 ---
 
-## Step 4: Burn Tickets (`interfold ciphernode tickets burn`)
+## Step 4: Burn Tickets
+
+Only the owner may call `removeTicketBalanceFor(operator, amount)`.
 
 > **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units**
-> (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI
-> parses the user's amount using the ticket token's decimals.
+> (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication.
 
 ```
-User runs: interfold ciphernode tickets burn --amount 50
+Bond owner submits removeTicketBalanceFor(operator, rawAmount)
 │
-├─ CLI parses "50" using ticket token decimals → raw units
-│
-├─ BondingRegistryContract.removeTicketBalance(rawAmount).send().await
+├─ BondingRegistry.removeTicketBalanceFor(operator, rawAmount)
 │     │
 │     │  ┌─── ON-CHAIN ─────────────────────────────────────────┐
 │     │  │                                                       │
-│     │  │  removeTicketBalance(uint256 amount) {                │
-│     │  │    1. require(amount > 0)                             │
-│     │  │    2. require(operators[msg.sender].registered)       │
-│     │  │    3. require(ticketToken.balanceOf(msg.sender)       │
+│     │  │  removeTicketBalanceFor(operator, amount) {           │
+│     │  │    1. require(msg.sender == bondOwnerOf(operator))    │
+│     │  │    2. require(amount > 0)                             │
+│     │  │    3. require(operators[operator].registered)         │
+│     │  │    4. require(ticketToken.balanceOf(operator)         │
 │     │  │              >= amount)                               │
-│     │  │    4. ticketToken.burnTickets(msg.sender, amount)     │
+│     │  │    5. ticketToken.burnTickets(operator, amount)       │
 │     │  │       │  (NO ticketPrice multiplication — raw units)  │
 │     │  │       │                                               │
 │     │  │       │  ┌─ InterfoldTicketToken ───────────────────┐  │
@@ -317,11 +334,11 @@ User runs: interfold ciphernode tickets burn --amount 50
 │     │  │       │  │    → Tracked in payableBalance for     │  │
 │     │  │       │  │      later payout()                    │  │
 │     │  │       │  └────────────────────────────────────────┘  │
-│     │  │    5. _exits.queueTicketsForExit(                    │
-│     │  │         msg.sender, exitDelay, amount)                │
-│     │  │    6. _updateOperatorStatus(msg.sender)               │
+│     │  │    6. _exits.queueTicketsForExit(                    │
+│     │  │         operator, exitDelay, amount)                  │
+│     │  │    7. _updateOperatorStatus(operator)                 │
 │     │  │       → May DEACTIVATE if tickets drop below minimum  │
-│     │  │    7. Emit TicketBalanceUpdated(msg.sender,           │
+│     │  │    8. Emit TicketBalanceUpdated(operator,             │
 │     │  │         -amount, newBalance, "WITHDRAW")              │
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
@@ -331,19 +348,24 @@ User runs: interfold ciphernode tickets burn --amount 50
 
 ---
 
-## Step 5: Claim Exits (`interfold ciphernode license claim`)
+## Step 5: Claim Exits
+
+The owner calls `claimExitsFor(operator, ...)`; both ticket underlying and FOLD are paid to
+`bondOwnerOf(operator)`, which may be the operator itself. The exit queue remains keyed by operator
+so queued assets remain slashable against the correct protocol identity.
 
 ```
-User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 10000]
+Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 │
-├─ BondingRegistryContract.claimExits(50, 10000).send().await
+├─ BondingRegistry.claimExitsFor(operator, maxTicket, maxLicense)
 │     │
 │     │  ┌─── ON-CHAIN ─────────────────────────────────────────┐
 │     │  │                                                       │
-│     │  │  claimExits(maxTicket, maxLicense) {                  │
-│     │  │    1. (ticketAmount, _) =                             │
+│     │  │  claimExitsFor(operator, maxTicket, maxLicense) {     │
+│     │  │    1. require(msg.sender == bondOwnerOf(operator))    │
+│     │  │    2. (ticketAmount, _) =                             │
 │     │  │       _exits.claimAssets(                             │
-│     │  │         msg.sender, maxTicket, 0                      │
+│     │  │         operator, maxTicket, 0                        │
 │     │  │       )                                               │
 │     │  │       │                                               │
 │     │  │       │  ┌─ ExitQueueLib.claimAssets() ───────────┐  │
@@ -357,17 +379,17 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 │     │  │       │  │  Update pendingTotals                  │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    2. if ticketAmount > 0:                            │
+│     │  │    3. if ticketAmount > 0:                            │
 │     │  │       ticketToken.payout(msg.sender, ticketAmount)    │
 │     │  │       │                                               │
 │     │  │       │  ┌─ InterfoldTicketToken.payout() ──────────┐  │
 │     │  │       │  │  Transfers underlying USDC from        │  │
-│     │  │       │  │  payableBalance to operator             │  │
+│     │  │       │  │  payableBalance to bond owner           │  │
 │     │  │       │  │  payableBalance -= amount               │  │
 │     │  │       │  │  underlying.safeTransfer(to, amount)    │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    3. if licenseAmount > 0:                           │
+│     │  │    4. if licenseAmount > 0:                           │
 │     │  │       totalLicenseLiability -= licenseAmount          │
 │     │  │       licenseToken.safeTransfer(msg.sender, amount)   │
 │     │  │       → Pending FOLD is removed from totalBonded()    │
@@ -375,7 +397,7 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
 │
-└─ Operator receives back USDC; FOLD goes to each source's withdrawal address
+└─ Both assets are paid to the bond owner
 ```
 
 ---
@@ -405,9 +427,9 @@ active = registered
 ```
                 BOND LICENSE                          BUY TICKETS
                 ────────────                          ───────────
-  Operator                                 Operator
+  Bond owner                               Bond owner
   FOLD wallet ──→ BondingRegistry          USDC wallet ──→ InterfoldTicketToken
-                  (licenseBond++)                          (wraps USDC → mints tFOLD)
+                  (operator licenseBond++)                 (wraps USDC → mints tFOLD)
                                                            tFOLD → Operator balance
 
                UNBOND LICENSE                         BURN TICKETS
@@ -419,8 +441,8 @@ active = registered
                               CLAIM EXITS
                               ───────────
                    After exitDelay seconds:
-                   FOLD → returned to source withdrawal address
-                   USDC → paid out from tFOLD.payableBalance
+                   FOLD → returned to bond owner
+                   USDC → bond owner from tFOLD.payableBalance
 ```
 
 ---
@@ -495,7 +517,8 @@ enforcement based on immutable policy curves. Key changes:
 
 ### Node-operator event projection
 
-The EVM reader now emits typed `LicenseBondUpdated` and `CiphernodeDeregistrationRequested` events
-alongside the existing ticket and activation events. The local dashboard rebuilds each chain's
-registered/active node sets and the operator's ticket, license, and exit state from EventStore
-history; it does not parse human-oriented CLI status output.
+The EVM reader now emits typed `BondOwnerSet`, `LicenseBondUpdated`, and
+`CiphernodeDeregistrationRequested` events alongside the existing ticket and activation events. The
+local dashboard rebuilds each chain's registered/active node sets and the local operator's bond
+owner, ticket, license, and exit state from EventStore history; it does not parse human-oriented CLI
+status output.

@@ -6,17 +6,20 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title InterfoldPricing
  * @notice External library extracted from {Interfold} to keep its deployed
  *         runtime bytecode under the EIP-170 24,576-byte cap.
  *
- *         All functions contain validation / fee-quote math. They are
- *         declared `external` so Solidity emits a linked library DELEGATECALL
- *         site at each call instead of inlining the bytes into Interfold.
+ *         Functions contain validation, fee-quote math, and bounded reward
+ *         accounting. They are declared `external` so Solidity emits a linked
+ *         library DELEGATECALL site at each call instead of inlining the bytes
+ *         into Interfold.
  *
  *         Behaviour and revert selectors match the inlined originals: typed
  *         errors are imported from {IInterfold} so off-chain
@@ -34,6 +37,12 @@ library InterfoldPricing {
         uint8 paramSet,
         bytes previousParams,
         bytes newParams
+    );
+    event RewardCredited(
+        uint256 indexed e3Id,
+        address indexed account,
+        IERC20 indexed token,
+        uint256 amount
     );
 
     function emitParamSetChange(
@@ -310,19 +319,36 @@ library InterfoldPricing {
             revert IInterfold.MinSizeBelowMinThreshold();
     }
 
-    /// @notice Splits `cnAmount` equally across `n` slots, sweeping any
-    ///         integer-division dust into a slot chosen by `e3Id % n`.
-    ///         Matches the original {Interfold._computeNodeAmounts}.
-    function computeNodeAmounts(
+    /// @notice Splits and credits committee rewards to each operator's bond
+    ///         owner, sweeping integer-division dust into a slot selected by
+    ///         `e3Id % n`.
+    /// @dev Runs through a linked library call to keep the accounting loop out
+    ///      of Interfold's size-constrained runtime bytecode.
+    function computeAndCreditRewards(
+        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
+        IBondingRegistry bonding,
         uint256 cnAmount,
-        uint256 n,
-        uint256 e3Id
-    ) external pure returns (uint256[] memory amounts) {
+        uint256 e3Id,
+        address[] memory nodes,
+        IERC20 token
+    ) external returns (uint256[] memory amounts) {
+        uint256 n = nodes.length;
         amounts = new uint256[](n);
         uint256 per = cnAmount / n;
-        for (uint256 i = 0; i < n; i++) amounts[i] = per;
         uint256 dust = cnAmount - per * n;
-        if (dust > 0) amounts[e3Id % n] += dust;
+        uint256 dustIndex = e3Id % n;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 amount = per;
+            if (i == dustIndex) amount += dust;
+            amounts[i] = amount;
+            if (amount > 0) {
+                address operator = nodes[i];
+                address recipient = bonding.bondOwnerOf(operator);
+                if (recipient == address(0)) recipient = operator;
+                pendingRewards[e3Id][recipient] += amount;
+                emit RewardCredited(e3Id, recipient, token, amount);
+            }
+        }
     }
 
     /// @notice Pure fee quote math. The caller (Interfold) is responsible for

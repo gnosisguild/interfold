@@ -9,6 +9,10 @@ members buffer them, and the active aggregator combines them. The runtime first 
 finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
 non-expelled `party_id` in that normalized order.
 
+Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
+by the hot operator key and verified against the operator address snapshotted into the committee.
+The bond owner never signs DKG, key-publication, computation, or decryption messages.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation
@@ -972,8 +976,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       │  │     _pendingTreasury[treasury][token]  │  │
         │  │       │  │       += protocolAmount                │  │
         │  │       │  │     Emit TreasuryCredited(...)         │  │
-        │  │       │  │  5. Credit each node (no push):        │  │
-        │  │       │  │     _pendingRewards[e3Id][node]        │  │
+        │  │       │  │  5. Resolve each node's bond owner,    │  │
+        │  │       │  │     then credit it (no push):          │  │
+        │  │       │  │     _pendingRewards[e3Id][bondOwner]   │  │
         │  │       │  │       += perNode                       │  │
         │  │       │  │     Emit RewardCredited(...)           │  │
         │  │       │  │  6. Emit RewardsDistributed (compat)   │  │
@@ -987,7 +992,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  }                                                  │
         │  │                                                     │
         │  │  // Funds are NOT pushed at publish-time.           │
-        │  │  // Recipients must call:                           │
+        │  │  // Bond-owner recipients must call:                │
         │  │  //   - interfold.claimReward(e3Id) or                │
         │  │  //     interfold.claimRewards(e3Ids[])               │
         │  │  //   - interfold.treasuryClaim(token)                │

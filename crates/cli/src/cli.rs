@@ -359,6 +359,7 @@ pub enum RemoteCommand {
     NetGetPeerId,
     CiphernodeStatus {
         chain: ChainArgs,
+        operator: Option<String>,
     },
     NoirStatus,
     WalletGet,
@@ -390,8 +391,8 @@ impl TryFrom<Commands> for RemoteCommand {
                 command: NoirCommands::Status,
             } => Ok(RemoteCommand::NoirStatus),
             Commands::Ciphernode {
-                command: CiphernodeCommands::Status { chain },
-            } => Ok(RemoteCommand::CiphernodeStatus { chain }),
+                command: CiphernodeCommands::Status { chain, operator },
+            } => Ok(RemoteCommand::CiphernodeStatus { chain, operator }),
             Commands::PrintEnv { chain, vite } => Ok(RemoteCommand::PrintEnv { vite, chain }),
             Commands::Events {
                 command: EventsCommands::Query { agg, since, limit },
@@ -444,8 +445,8 @@ impl TryFrom<RemoteCommand> for Commands {
                 command: WalletCommands::Get,
             },
             RemoteCommand::PrintEnv { vite, chain } => Commands::PrintEnv { vite, chain },
-            RemoteCommand::CiphernodeStatus { chain } => Commands::Ciphernode {
-                command: CiphernodeCommands::Status { chain },
+            RemoteCommand::CiphernodeStatus { chain, operator } => Commands::Ciphernode {
+                command: CiphernodeCommands::Status { chain, operator },
             },
             RemoteCommand::NoirStatus => Commands::Noir {
                 command: NoirCommands::Status,

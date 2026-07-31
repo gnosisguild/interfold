@@ -528,6 +528,7 @@ export async function deployInterfoldSystem(
     for (const operator of operators) {
       await setupOperatorForSortition(
         operator,
+        owner,
         bondingRegistry,
         licenseToken,
         usdcToken,

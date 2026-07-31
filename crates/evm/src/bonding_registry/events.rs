@@ -11,7 +11,9 @@ use alloy::{
     primitives::{LogData, B256},
     sol_types::SolEvent,
 };
-use e3_events::{CiphernodeDeregistrationRequested, InterfoldEventData, LicenseBondUpdated};
+use e3_events::{
+    BondOwnerSet, CiphernodeDeregistrationRequested, InterfoldEventData, LicenseBondUpdated,
+};
 use tracing::{error, trace};
 
 struct TicketBalanceUpdatedWithChainId(pub IBondingRegistry::TicketBalanceUpdated, pub u64);
@@ -128,6 +130,24 @@ impl From<CiphernodeDeregistrationRequestedWithChainId> for InterfoldEventData {
     }
 }
 
+struct BondOwnerSetWithChainId(pub IBondingRegistry::BondOwnerSet, pub u64);
+
+impl From<BondOwnerSetWithChainId> for BondOwnerSet {
+    fn from(value: BondOwnerSetWithChainId) -> Self {
+        Self {
+            operator: value.0.operator.to_string(),
+            bond_owner: value.0.bondOwner.to_string(),
+            chain_id: value.1,
+        }
+    }
+}
+
+impl From<BondOwnerSetWithChainId> for InterfoldEventData {
+    fn from(value: BondOwnerSetWithChainId) -> Self {
+        BondOwnerSet::from(value).into()
+    }
+}
+
 pub(crate) fn extractor(
     data: &LogData,
     topics: &[B256],
@@ -177,6 +197,13 @@ pub(crate) fn extractor(
             Some(InterfoldEventData::from(ConfigurationUpdatedWithChainId(
                 event, chain_id,
             )))
+        }
+        Some(&IBondingRegistry::BondOwnerSet::SIGNATURE_HASH) => {
+            let Ok(event) = IBondingRegistry::BondOwnerSet::decode_log_data(data) else {
+                error!("Error parsing event BondOwnerSet after topic matched!");
+                return None;
+            };
+            Some(BondOwnerSetWithChainId(event, chain_id).into())
         }
         _ => {
             trace!(
@@ -232,6 +259,28 @@ mod tests {
         let converted: e3_events::ConfigurationUpdated =
             ConfigurationUpdatedWithChainId(event, 1).into();
         assert_eq!(converted.parameter, "price");
+    }
+
+    #[test]
+    fn test_extractor_decodes_bond_owner_set() {
+        let event = IBondingRegistry::BondOwnerSet {
+            operator: Address::repeat_byte(0x11),
+            bondOwner: Address::repeat_byte(0x22),
+        };
+        let log_data = event.encode_log_data();
+        let out = extractor(
+            &log_data,
+            &[IBondingRegistry::BondOwnerSet::SIGNATURE_HASH],
+            55,
+        );
+        match out {
+            Some(InterfoldEventData::BondOwnerSet(data)) => {
+                assert_eq!(data.operator, Address::repeat_byte(0x11).to_string());
+                assert_eq!(data.bond_owner, Address::repeat_byte(0x22).to_string());
+                assert_eq!(data.chain_id, 55);
+            }
+            other => panic!("expected BondOwnerSet, got {other:?}"),
+        }
     }
 
     #[test]
