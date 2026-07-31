@@ -56,7 +56,7 @@ contract:
 
 ## Proof Generation
 
-Proof generation is delegated to [Boundless](https://boundless.xyz) (a Risc0 proving service):
+Proof generation is delegated to [Boundless](https://boundless.network) (a Risc0 proving service):
 
 - **Development / local:** The program can run the Risc0 guest directly (no Boundless needed).
 - **Production:** Set the `BOUNDLESS_RPC_URL` and `BOUNDLESS_PRIVATE_KEY` environment variables to
