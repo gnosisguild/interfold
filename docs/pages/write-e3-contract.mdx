@@ -58,12 +58,13 @@ or check out the
 function verify(
   uint256 e3Id,
   bytes32 ciphertextOutputHash,
+  bytes32 ciphertextCommitment,
   bytes memory proof
 ) external returns (bool success);
 ```
 
-The verify function receives the hash of the ciphertext output and the accompanying proof generated
-by your chosen Compute Provider to assess the validity of the proof.
+The verify function receives the output hash, its SAFE commitment, and the compute provider proof.
+The verified statement must bind both values.
 
 ### Input Validation via `publishInput`
 

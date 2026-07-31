@@ -16,7 +16,7 @@ methods = { workspace = true }
 risc0-ethereum-contracts = { workspace = true }
 risc0-zkvm = { workspace = true }
 tokio = { workspace = true }
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", tag = "v0.2.2" }
+e3-compute-provider = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
 fhe-util = { workspace = true }
@@ -27,3 +27,6 @@ boundless-market = { workspace = true }
 url = { workspace = true }
 dotenvy = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+
+[dev-dependencies]
+hex = { workspace = true }

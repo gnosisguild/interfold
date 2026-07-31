@@ -1368,7 +1368,13 @@
         }
       ],
       "name": "slashLicenseBond",
-      "outputs": [],
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "actualAmount",
+          "type": "uint256"
+        }
+      ],
       "stateMutability": "nonpayable",
       "type": "function"
     },
@@ -1554,5 +1560,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-f5755ecb7841fc95c54f70765c61457db4efede6"
+  "buildInfoId": "solc-0_8_28-333bedd9b9edefb785c3ddd79bdef9ffb671c898"
 }

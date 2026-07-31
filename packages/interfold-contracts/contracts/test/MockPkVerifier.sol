@@ -8,6 +8,8 @@ pragma solidity 0.8.28;
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 
 contract MockPkVerifier is IPkVerifier {
+    bytes4 private constant _RETURN_FALSE_MAGIC = 0xfafafafa;
+
     /// @dev Permissive test mock: only enforces the pk-commitment slot the
     ///      real wrapper enforces, so existing fixtures (`[pkCommitment]`)
     ///      keep working. Intentionally ignores VK-hash slots and domain
@@ -21,7 +23,7 @@ contract MockPkVerifier is IPkVerifier {
         bytes32,
         bytes calldata proof
     ) external pure returns (bool) {
-        (, bytes32[] memory publicInputs) = abi.decode(
+        (bytes memory rawProof, bytes32[] memory publicInputs) = abi.decode(
             proof,
             (bytes, bytes32[])
         );
@@ -29,6 +31,10 @@ contract MockPkVerifier is IPkVerifier {
         if (publicInputs[publicInputs.length - 1] != pkCommitment) {
             revert PkCommitmentMismatch();
         }
+        if (
+            keccak256(rawProof) ==
+            keccak256(abi.encodePacked(_RETURN_FALSE_MAGIC))
+        ) return false;
         return true;
     }
 }

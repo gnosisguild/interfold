@@ -141,6 +141,28 @@ async function deployStack() {
 }
 
 describe("Sortition & E3 lifecycle", function () {
+  it("prevents timeout failure when the committee is ready", async function () {
+    const ctx = await loadFixture(deployStack);
+    const { interfold, ciphernodeRegistry, other, op1, op2, op3 } = ctx;
+
+    await ctx.makeRequest();
+    for (const operator of [op1, op2, op3]) {
+      await ciphernodeRegistry.connect(operator).submitTicket(0, 1);
+    }
+
+    const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+    await time.increaseTo(deadline + 1n);
+
+    await expect(
+      interfold.connect(other).markE3Failed(0),
+    ).to.be.revertedWithCustomError(interfold, "FailureConditionNotMet");
+
+    await expect(ciphernodeRegistry.finalizeCommittee(0)).to.emit(
+      interfold,
+      "CommitteeFinalized",
+    );
+  });
+
   describe("Committee.requestBlock uses block.timestamp", function () {
     it("stores block.timestamp (not block.number) in requestBlock", async function () {
       const ctx = await loadFixture(deployStack);
@@ -207,6 +229,23 @@ describe("Sortition & E3 lifecycle", function () {
         interfold,
         "E3Failed",
       );
+    });
+
+    it("rejects a provisional member during the grace window", async function () {
+      const ctx = await loadFixture(deployStack);
+      const { interfold, ciphernodeRegistry, op1, makeRequest } = ctx;
+
+      const grace = 600;
+      await interfold.setMarkFailedGracePeriod(grace);
+      await makeRequest();
+      await ciphernodeRegistry.connect(op1).submitTicket(0, 1);
+
+      const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+      await time.increaseTo(deadline + 1n);
+
+      await expect(
+        interfold.connect(op1).markE3Failed(0),
+      ).to.be.revertedWithCustomError(interfold, "MarkE3FailedInGracePeriod");
     });
 
     it("setMarkFailedGracePeriod is owner-only and emits event", async function () {

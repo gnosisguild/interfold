@@ -73,6 +73,7 @@ impl ScoreBackend {
         &self,
         chain_id: u64,
         node_state: &NodeStateStore,
+        local_address: Address,
     ) -> Vec<RegisteredNode> {
         info!(
             chain_id = chain_id,
@@ -101,13 +102,17 @@ impl ScoreBackend {
                     return None;
                 }
 
-                let count = node_state.available_tickets(&addr_str);
                 let total_tickets = if node_state.ticket_price.is_zero() {
                     0u64
                 } else {
                     (ns.ticket_balance / node_state.ticket_price)
                         .try_into()
                         .unwrap_or(0u64)
+                };
+                let count = if n.address == local_address {
+                    node_state.available_tickets(&addr_str)
+                } else {
+                    total_tickets
                 };
 
                 if count == 0 {
@@ -117,7 +122,8 @@ impl ScoreBackend {
                         ticket_price = ?node_state.ticket_price,
                         total_tickets = total_tickets,
                         active_jobs = ns.active_jobs,
-                        "Node has no available tickets"
+                        is_local = n.address == local_address,
+                        "Node has no tickets in the local sortition view"
                     );
                     return None;
                 }
@@ -149,7 +155,8 @@ impl SortitionList<String> for ScoreBackend {
             return Ok(false);
         }
 
-        let nodes = self.build_nodes_from_state(chain_id, node_state);
+        let want: Address = address.parse()?;
+        let nodes = self.build_nodes_from_state(chain_id, node_state, want);
         if nodes.is_empty() {
             return Ok(false);
         }
@@ -169,7 +176,6 @@ impl SortitionList<String> for ScoreBackend {
             "Sortition completed - selected nodes"
         );
 
-        let want: Address = address.parse()?;
         Ok(winners.iter().any(|w| w.address == want))
     }
 
@@ -189,7 +195,8 @@ impl SortitionList<String> for ScoreBackend {
             return Ok(None);
         }
 
-        let nodes: Vec<RegisteredNode> = self.build_nodes_from_state(chain_id, node_state);
+        let want: alloy::primitives::Address = address.parse()?;
+        let nodes: Vec<RegisteredNode> = self.build_nodes_from_state(chain_id, node_state, want);
 
         if nodes.is_empty() {
             return Ok(None);
@@ -209,8 +216,6 @@ impl SortitionList<String> for ScoreBackend {
             nodes = ?selected_nodes,
             "Sortition completed - selected nodes"
         );
-
-        let want: alloy::primitives::Address = address.parse()?;
 
         let maybe = winners
             .iter()
@@ -254,6 +259,58 @@ impl SortitionList<String> for ScoreBackend {
             .iter()
             .map(|n| n.address.to_string())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::node_registry::NodeState;
+    use alloy::primitives::U256;
+
+    fn ticket_count(nodes: &[RegisteredNode], address: Address) -> Option<usize> {
+        nodes
+            .iter()
+            .find(|node| node.address == address)
+            .map(|node| node.tickets.len())
+    }
+
+    #[test]
+    fn active_jobs_reduce_only_the_local_nodes_ticket_range() {
+        let local = Address::from([0x11; 20]);
+        let remote = Address::from([0x22; 20]);
+        let mut backend = ScoreBackend::default();
+        backend.add(local.to_string());
+        backend.add(remote.to_string());
+
+        let mut state = NodeStateStore {
+            ticket_price: U256::from(10),
+            ..Default::default()
+        };
+        state.nodes.insert(
+            local.to_string(),
+            NodeState {
+                ticket_balance: U256::from(30),
+                active_jobs: 2,
+                active: true,
+            },
+        );
+        state.nodes.insert(
+            remote.to_string(),
+            NodeState {
+                ticket_balance: U256::from(30),
+                active_jobs: 3,
+                active: true,
+            },
+        );
+
+        let local_view = backend.build_nodes_from_state(1, &state, local);
+        assert_eq!(ticket_count(&local_view, local), Some(1));
+        assert_eq!(ticket_count(&local_view, remote), Some(3));
+
+        let remote_view = backend.build_nodes_from_state(1, &state, remote);
+        assert_eq!(ticket_count(&remote_view, local), Some(3));
+        assert_eq!(ticket_count(&remote_view, remote), None);
     }
 }
 

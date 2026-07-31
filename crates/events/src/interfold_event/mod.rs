@@ -31,6 +31,7 @@ mod decryption_share_proofs;
 mod decryptionshare_created;
 mod die;
 mod dkg_fold_attestation;
+mod dkg_fold_attestation_context_established;
 mod dkg_inner_proof_ready;
 mod dkg_recursive_aggregation_complete;
 mod e3_failed;
@@ -109,6 +110,7 @@ pub use decryption_share_proofs::*;
 pub use decryptionshare_created::*;
 pub use die::*;
 pub use dkg_fold_attestation::*;
+pub use dkg_fold_attestation_context_established::*;
 pub use dkg_inner_proof_ready::*;
 pub use dkg_recursive_aggregation_complete::*;
 pub use e3_failed::*;
@@ -344,6 +346,7 @@ pub enum InterfoldEventData {
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
     BondOwnerSet(BondOwnerSet),
+    DkgFoldAttestationContextEstablished(DkgFoldAttestationContextEstablished),
 }
 
 impl InterfoldEventData {
@@ -664,6 +667,9 @@ impl InterfoldEventData {
             InterfoldEventData::CommitteeActivationChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
+            InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
+                Some(data.e3_id.clone())
+            }
             _ => None,
         }
     }
@@ -773,7 +779,8 @@ impl_event_types!(
     CommitteeActivationChanged,
     CommitteeViabilityUpdated,
     EvmLogObserved,
-    BondOwnerSet
+    BondOwnerSet,
+    DkgFoldAttestationContextEstablished
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

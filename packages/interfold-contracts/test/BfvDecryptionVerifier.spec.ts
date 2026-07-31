@@ -25,11 +25,17 @@ const [testSigner] = await ethers.getSigners();
 
 /** Must match `BfvDecryptionVerifier.MESSAGE_COEFFS_COUNT` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
 const MESSAGE_COEFFS_COUNT = 100;
+const BN254_SCALAR_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
-const EXPECTED_C6_FOLD_KEY_HASH = ethers.id("c6_fold");
-const EXPECTED_C7_KEY_HASH = ethers.id("c7");
+function fieldHash(label: string): string {
+  return ethers.toBeHex(BigInt(ethers.id(label)) % BN254_SCALAR_MODULUS, 32);
+}
+
+const EXPECTED_C6_FOLD_KEY_HASH = fieldHash("c6_fold");
+const EXPECTED_C7_KEY_HASH = fieldHash("c7");
 const DECRYPTION_DOMAIN = ethers.id("e3-decryption-domain");
-const CIPHERTEXT_COMMITMENT = ethers.id("ciphertext-commitment");
+const CIPHERTEXT_COMMITMENT = fieldHash("ciphertext-commitment");
 
 /** Must match `BfvDecryptionVerifier.threshold` / default circuit `T`. */
 const THRESHOLD = BFV_THRESHOLD_T;
@@ -62,10 +68,10 @@ const DEFAULT_CIRCUIT_PARTY_IDS = DEFAULT_REGISTRY_PARTY_IDS.map(
   (id) => id + 1,
 ); // 1-indexed Shamir x-coordinates, as emitted by `decryption_aggregator`
 const DEFAULT_SK_COMMITS = DEFAULT_REGISTRY_PARTY_IDS.map((id) =>
-  ethers.id(`sk-${id}`),
+  fieldHash(`sk-${id}`),
 );
 const DEFAULT_ESM_COMMITS = DEFAULT_REGISTRY_PARTY_IDS.map((id) =>
-  ethers.id(`esm-${id}`),
+  fieldHash(`esm-${id}`),
 );
 
 function committeeHashHi(committeeHash: string): string {
@@ -329,6 +335,61 @@ describe("BfvDecryptionVerifier", function () {
       );
     });
 
+    it("rejects every in-range BN254 alias of a message coefficient", async function () {
+      const { bfvDecryptionVerifier } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      const { decryptionDomain } = ctx();
+      const messageOffset = EXPECTED_PUBLIC_INPUTS_LEN - MESSAGE_COEFFS_COUNT;
+      const verifyAlias = (alias: bigint) => {
+        const publicInputs = buildPublicInputsWithMessage([]);
+        publicInputs[messageOffset] = ethers.toBeHex(alias, 32);
+        return bfvDecryptionVerifier.verify.staticCall(
+          E3_ID,
+          decryptionDomain,
+          plaintextToHash([BigInt.asUintN(64, alias)]),
+          ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
+          encodeProof("0x01", publicInputs),
+        );
+      };
+
+      for (let multiplier = 1n; multiplier <= 5n; multiplier++) {
+        const alias = 21n + multiplier * BN254_SCALAR_MODULUS;
+        await expect(verifyAlias(alias))
+          .to.be.revertedWithCustomError(
+            bfvDecryptionVerifier,
+            "NonCanonicalPublicInput",
+          )
+          .withArgs(messageOffset);
+      }
+    });
+
+    it("rejects a non-canonical value outside the message coefficients", async function () {
+      const { bfvDecryptionVerifier } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      const { decryptionDomain } = ctx();
+      const publicInputs = buildPublicInputsWithMessage([]);
+      publicInputs[0] = ethers.toBeHex(BN254_SCALAR_MODULUS, 32);
+
+      await expect(
+        bfvDecryptionVerifier.verify.staticCall(
+          E3_ID,
+          decryptionDomain,
+          plaintextToHash([]),
+          ethers.ZeroHash,
+          CIPHERTEXT_COMMITMENT,
+          encodeProof("0x01", publicInputs),
+        ),
+      )
+        .to.be.revertedWithCustomError(
+          bfvDecryptionVerifier,
+          "NonCanonicalPublicInput",
+        )
+        .withArgs(0);
+    });
+
     it("reverts VkHashMismatch when c6_fold key hash does not match (M-34)", async function () {
       const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
@@ -340,7 +401,7 @@ describe("BfvDecryptionVerifier", function () {
       const publicInputs = buildPublicInputsWithMessage(
         messageCoeffs,
         EXPECTED_PUBLIC_INPUTS_LEN,
-        [ethers.id("wrong-c6"), EXPECTED_C7_KEY_HASH],
+        [fieldHash("wrong-c6"), EXPECTED_C7_KEY_HASH],
       );
       const plaintextHash = plaintextToHash(messageCoeffs);
       const proof = encodeProof("0x01", publicInputs);
@@ -368,7 +429,7 @@ describe("BfvDecryptionVerifier", function () {
       const publicInputs = buildPublicInputsWithMessage(
         messageCoeffs,
         EXPECTED_PUBLIC_INPUTS_LEN,
-        [EXPECTED_C6_FOLD_KEY_HASH, ethers.id("wrong-c7")],
+        [EXPECTED_C6_FOLD_KEY_HASH, fieldHash("wrong-c7")],
       );
       const plaintextHash = plaintextToHash(messageCoeffs);
       const proof = encodeProof("0x01", publicInputs);
@@ -570,7 +631,7 @@ describe("BfvDecryptionVerifier", function () {
       const { e3Id, decryptionDomain } = ctx();
 
       const messageCoeffs = [1n, 2n, 3n];
-      const forgedSkCommits = [ethers.id("forged-sk-0"), DEFAULT_SK_COMMITS[1]];
+      const forgedSkCommits = [fieldHash("forged-sk-0"), DEFAULT_SK_COMMITS[1]];
       const publicInputs = buildPublicInputsWithMessage(
         messageCoeffs,
         EXPECTED_PUBLIC_INPUTS_LEN,
@@ -608,7 +669,7 @@ describe("BfvDecryptionVerifier", function () {
       const messageCoeffs = [1n, 2n, 3n];
       const forgedEsmCommits = [
         DEFAULT_ESM_COMMITS[0],
-        ethers.id("forged-esm-1"),
+        fieldHash("forged-esm-1"),
       ];
       const publicInputs = buildPublicInputsWithMessage(
         messageCoeffs,

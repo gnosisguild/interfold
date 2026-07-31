@@ -35,12 +35,15 @@ export default buildModule("Interfold", (m) => {
     minThreshold: 0,
   });
 
-  // Pure pricing math is delegated to the InterfoldPricing external library
-  // (DELEGATECALL link) so the deployed Interfold runtime stays under the
-  // EIP-170 24,576-byte cap.
+  // External libraries keep pricing and lifecycle helpers out of the
+  // size-constrained Interfold runtime.
+  const interfoldLifecycle = m.library("InterfoldLifecycle");
   const interfoldPricing = m.library("InterfoldPricing");
   const interfoldImpl = m.contract("Interfold", [], {
-    libraries: { InterfoldPricing: interfoldPricing },
+    libraries: {
+      InterfoldLifecycle: interfoldLifecycle,
+      InterfoldPricing: interfoldPricing,
+    },
   });
 
   const initData = m.encodeFunctionCall(interfoldImpl, "initialize", [
@@ -60,5 +63,5 @@ export default buildModule("Interfold", (m) => {
     initData,
   ]);
 
-  return { interfold };
+  return { interfold, interfoldLifecycle, interfoldPricing };
 }) as any;

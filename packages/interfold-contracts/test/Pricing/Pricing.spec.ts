@@ -256,12 +256,19 @@ describe("E3 Pricing", function () {
       expect(feeAfter).to.be.gt(feeBefore);
     });
 
-    it("reverts if margin exceeds the 50% cap", async function () {
+    it("enforces the public margin cap", async function () {
       const { interfold } = await loadFixture(setup);
+      const cap = await interfold.MAX_MARGIN_BPS();
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          marginBps: 5001,
+          marginBps: cap,
+        }),
+      ).to.not.be.revert(ethers);
+      await expect(
+        interfold.setPricingConfig({
+          ...defaultPricingConfig,
+          marginBps: cap + 1n,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -276,12 +283,22 @@ describe("E3 Pricing", function () {
       expect(pc.marginBps).to.equal(0);
     });
 
-    it("reverts if protocolShareBps exceeds the 50% cap", async function () {
-      const { interfold } = await loadFixture(setup);
+    it("enforces the public protocol-share cap", async function () {
+      const { interfold, treasury } = await loadFixture(setup);
+      const cap = await interfold.MAX_PROTOCOL_SHARE_BPS();
+      const protocolTreasury = await treasury.getAddress();
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          protocolShareBps: 5001,
+          protocolTreasury,
+          protocolShareBps: cap,
+        }),
+      ).to.not.be.revert(ethers);
+      await expect(
+        interfold.setPricingConfig({
+          ...defaultPricingConfig,
+          protocolTreasury,
+          protocolShareBps: cap + 1n,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -299,6 +316,7 @@ describe("E3 Pricing", function () {
 
     it("enforces bounds on setCommitteeThresholds", async function () {
       const { interfold } = await loadFixture(setup);
+      const cap = await interfold.MAX_COMMITTEE_SIZE();
 
       // Set minimum bounds via pricing config
       await interfold.setPricingConfig({
@@ -321,6 +339,14 @@ describe("E3 Pricing", function () {
       await expect(
         interfold.setCommitteeThresholds(0, [3, 5]),
       ).to.not.be.revert(ethers);
+
+      await expect(
+        interfold.setCommitteeThresholds(0, [3, cap]),
+      ).to.not.be.revert(ethers);
+
+      await expect(
+        interfold.setCommitteeThresholds(0, [3, cap + 1n]),
+      ).to.be.revertedWithCustomError(interfold, "InvalidThresholdValues");
     });
   });
 

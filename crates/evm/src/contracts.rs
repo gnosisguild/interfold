@@ -201,6 +201,12 @@ sol! {
             uint256[] scores
         );
 
+        event DkgFoldAttestationContextEstablished(
+            uint256 indexed e3Id,
+            address indexed registry,
+            address indexed dkgFoldAttestationVerifier
+        );
+
         event CommitteeFormationFailed(
             uint256 indexed e3Id,
             uint256 nodesSubmitted,

@@ -17,6 +17,7 @@ import {
   encodeMockDkgProof,
   ethers,
   ignition,
+  makeRequest,
   networkHelpers,
   signAndEncodeAttestation,
 } from "../fixtures";
@@ -183,6 +184,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .addTicketBalanceFor(operatorAddress, ticketAmount);
     };
 
+    const makeReadyRequest = async () => {
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await makeRequest();
+    };
+
+    const finalizeReadyCommittee = async () => {
+      await makeReadyRequest();
+      for (const operator of [operator1, operator2, operator3]) {
+        await registry.connect(operator).submitTicket(0, 1);
+      }
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(0);
+    };
+
     return {
       interfold,
       e3RefundManager,
@@ -203,6 +220,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       computeProvider,
       makeRequest,
       setupOperator,
+      makeReadyRequest,
+      finalizeReadyCommittee,
     };
   };
 
@@ -249,6 +268,78 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         e3RefundManager.getFailurePayer(13),
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
+    });
+
+    it("rejects invalid failure reasons from an authorized dependency", async function () {
+      const { interfold, registry, makeReadyRequest } =
+        await loadFixture(setup);
+      await makeReadyRequest();
+
+      const registryAddress = await registry.getAddress();
+      await networkHelpers.impersonateAccount(registryAddress);
+      await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
+      const registrySigner = await ethers.getSigner(registryAddress);
+
+      for (const reason of [0, 13, 255]) {
+        await expect(interfold.connect(registrySigner).onE3Failed(0, reason))
+          .to.be.revertedWithCustomError(interfold, "InvalidFailureReason")
+          .withArgs(reason);
+      }
+
+      await networkHelpers.stopImpersonatingAccount(registryAddress);
+    });
+
+    it("routes zero-value node shares to the treasury", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        usdcToken,
+        treasury,
+        finalizeReadyCommittee,
+      } = await loadFixture(setup);
+
+      await interfold.setPricingConfig({
+        keyGenFixedPerNode: 0,
+        keyGenPerEncryptionProof: 0,
+        coordinationPerPair: 0,
+        availabilityPerNodePerSec: 0,
+        decryptionPerNode: 0,
+        publicationBase: 5,
+        verificationPerProof: 0,
+        protocolTreasury: await treasury.getAddress(),
+        marginBps: 0,
+        protocolShareBps: 0,
+        dkgUtilizationBps: 0,
+        computeUtilizationBps: 0,
+        decryptUtilizationBps: 0,
+        minCommitteeSize: 0,
+        minThreshold: 0,
+      });
+
+      await finalizeReadyCommittee();
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      const pkCommitment = ethers.keccak256(publicKey);
+      await registry.publishCommittee(
+        0,
+        publicKey,
+        pkCommitment,
+        encodeMockDkgProof(pkCommitment),
+        "0x01",
+      );
+
+      const deadlines = await interfold.getDeadlines(0);
+      await time.increaseTo(deadlines.computeDeadline + 1n);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      expect(
+        await e3RefundManager.pendingTreasuryClaim(
+          await treasury.getAddress(),
+          await usdcToken.getAddress(),
+        ),
+      ).to.equal(3);
     });
 
     it("AUD-M07: snapshots failure allocation and treasury at request time", async function () {
@@ -562,6 +653,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .to.emit(interfold, "CommitteeFormed")
         .withArgs(0);
     });
+
+    it("rejects committee publication after the DKG deadline", async function () {
+      const { interfold, registry, finalizeReadyCommittee } =
+        await loadFixture(setup);
+      await finalizeReadyCommittee();
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      const pkCommitment = ethers.keccak256(publicKey);
+      const { dkgDeadline } = await interfold.getDeadlines(0);
+      await time.increaseTo(dkgDeadline + 1n);
+
+      await expect(
+        registry.publishCommittee(
+          0,
+          publicKey,
+          pkCommitment,
+          encodeMockDkgProof(pkCommitment),
+          "0x01",
+        ),
+      ).to.be.revertedWithCustomError(interfold, "DKGDeadlinePassed");
+    });
   });
 
   describe("processE3Failure()", function () {
@@ -667,6 +779,53 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       expect(distribution.honestNodeAmount).to.equal(0);
       expect(distribution.protocolAmount).to.equal(0);
+    });
+
+    it("processes failure after an incomplete provisional committee", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        registry,
+        operator1,
+        makeReadyRequest,
+      } = await loadFixture(setup);
+
+      await makeReadyRequest();
+      await registry.connect(operator1).submitTicket(0, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+
+      await registry.finalizeCommittee(0);
+
+      await interfold.processE3Failure(0);
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      expect(distribution.honestNodeAmount).to.equal(0);
+    });
+
+    it("rolls back failure processing when the registry lookup reverts", async function () {
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+      });
+      const registry = sys.mockCiphernodeRegistry!;
+      await makeRequest(sys.interfold, sys.usdcToken, sys.request);
+      const payment = await sys.interfold.e3Payments(0);
+      const registryAddress = await registry.getAddress();
+
+      await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
+      await networkHelpers.impersonateAccount(registryAddress);
+      await sys.interfold
+        .connect(await ethers.getSigner(registryAddress))
+        .onE3Failed(0, 8);
+      await networkHelpers.stopImpersonatingAccount(registryAddress);
+      await registry.setRevertActiveCommitteeNodes(true);
+
+      await expect(
+        sys.interfold.processE3Failure(0),
+      ).to.be.revertedWithCustomError(registry, "ActiveCommitteeLookupFailed");
+      expect(await sys.interfold.e3Payments(0)).to.equal(payment);
+      const distribution = await sys.e3RefundManager.getRefundDistribution(0);
+      expect(distribution.calculated).to.equal(false);
     });
 
     it("allows requester to claim refund after failure processing", async function () {

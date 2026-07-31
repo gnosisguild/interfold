@@ -1174,6 +1174,62 @@ describe("BondingRegistry", function () {
     });
   });
 
+  describe("slashTicketBalance()", function () {
+    it("accounts for the ticket amount taken from the exit queue", async function () {
+      const {
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        operator1,
+        notTheOwner,
+      } = await loadFixture(setup);
+      const bondAmount = LICENSE_REQUIRED_BOND;
+      const ticketAmount = ethers.parseUnits("100", 6);
+      const slashReason = ethers.encodeBytes32String("TEST_SLASH");
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .removeTicketBalanceFor(operator1Address, ticketAmount);
+      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+
+      expect(
+        await bondingRegistry
+          .connect(notTheOwner)
+          .slashTicketBalance.staticCall(
+            operator1Address,
+            ticketAmount,
+            slashReason,
+          ),
+      ).to.equal(ticketAmount);
+      await bondingRegistry
+        .connect(notTheOwner)
+        .slashTicketBalance(operator1Address, ticketAmount, slashReason);
+
+      const [pendingTickets] =
+        await bondingRegistry.pendingExits(operator1Address);
+      expect(pendingTickets).to.equal(0);
+      expect(await bondingRegistry.slashedTicketBalance()).to.equal(
+        ticketAmount,
+      );
+    });
+  });
+
   describe("claimExitsFor()", function () {
     it("allows claiming after exit delay", async function () {
       const {
@@ -1468,6 +1524,73 @@ describe("BondingRegistry", function () {
         ).to.be.revertedWithCustomError(
           bondingRegistry,
           "InvalidConfiguration",
+        );
+      });
+
+      it("keeps every positive retained-bond requirement above zero", async function () {
+        const { bondingRegistry } = await loadFixture(setup);
+
+        for (const [requiredBond, activeBps] of [
+          [1n, 8_000n],
+          [9_999n, 1n],
+          [1n, 10_000n],
+        ]) {
+          await bondingRegistry.setLicenseRequiredBond(requiredBond);
+          await bondingRegistry.setLicenseActiveBps(activeBps);
+          expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
+            false,
+          );
+        }
+
+        await bondingRegistry.setLicenseRequiredBond(ethers.MaxUint256);
+        await bondingRegistry.setLicenseActiveBps(8_000);
+        expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
+          false,
+        );
+      });
+
+      it("deactivates an operator that unbonds and claims its last license unit", async function () {
+        const {
+          bondingRegistry,
+          licenseToken,
+          usdcToken,
+          ticketToken,
+          operator1,
+        } = await loadFixture(setup);
+        const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
+
+        await bondingRegistry.setLicenseRequiredBond(1);
+        await bondingRegistry.setLicenseActiveBps(8_000);
+        await licenseToken
+          .connect(operator1)
+          .approve(await bondingRegistry.getAddress(), 1);
+        await bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, 1);
+        await bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address);
+        await usdcToken
+          .connect(operator1)
+          .approve(await ticketToken.getAddress(), ticketAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount);
+
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(true);
+        await bondingRegistry
+          .connect(operator1)
+          .unbondLicenseFor(operator1Address, 1);
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(
+          false,
+        );
+
+        await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+        await bondingRegistry
+          .connect(operator1)
+          .claimExitsFor(operator1Address, 0, 1);
+        expect(await bondingRegistry.isActive(operator1Address)).to.equal(
+          false,
         );
       });
     });

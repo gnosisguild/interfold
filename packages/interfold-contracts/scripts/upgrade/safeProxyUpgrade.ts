@@ -35,6 +35,7 @@ interface UpgradePlan {
   proxy: string;
   proxyAdmin: string;
   implementation: string;
+  lifecycleLibrary?: string;
   pricingLibrary?: string;
   operator: string;
   safe: string;
@@ -96,6 +97,7 @@ export async function proposeProxyUpgrade(
     proxy,
     proxyAdmin,
     implementation: deployed.implementation,
+    lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     operator: operatorAddress,
     safe: config.safe,
@@ -115,19 +117,34 @@ async function deployImplementation(
   operator: any,
   target: UpgradeTarget,
   deployment: ProtocolDeployment,
-): Promise<{ implementation: string; pricingLibrary?: string }> {
+): Promise<{
+  implementation: string;
+  lifecycleLibrary?: string;
+  pricingLibrary?: string;
+}> {
   if (target === "interfold") {
     const pricingFactory = await ethers.getContractFactory("InterfoldPricing");
     const pricing = await pricingFactory.deploy();
     await pricing.waitForDeployment();
     const pricingLibrary = await deployedAddress(pricing);
+
+    const lifecycleFactory =
+      await ethers.getContractFactory("InterfoldLifecycle");
+    const lifecycle = await lifecycleFactory.deploy();
+    await lifecycle.waitForDeployment();
+    const lifecycleLibrary = await deployedAddress(lifecycle);
+
     const factory = await ethers.getContractFactory("Interfold", {
-      libraries: { InterfoldPricing: pricingLibrary },
+      libraries: {
+        InterfoldLifecycle: lifecycleLibrary,
+        InterfoldPricing: pricingLibrary,
+      },
     });
     const implementation = await factory.deploy();
     await implementation.waitForDeployment();
     return {
       implementation: await deployedAddress(implementation),
+      lifecycleLibrary,
       pricingLibrary,
     };
   }
@@ -198,6 +215,7 @@ Protocol upgrade prepared
   proxy:           ${plan.proxy}
   proxyAdmin:      ${plan.proxyAdmin}
   implementation:  ${plan.implementation}
+  lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}
   Safe owner:      ${plan.safe}

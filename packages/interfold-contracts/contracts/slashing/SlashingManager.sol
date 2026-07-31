@@ -17,6 +17,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
+import { FailurePayerLib } from "../lib/FailurePayerLib.sol";
 
 /**
  * @title SlashingManager
@@ -353,6 +354,12 @@ contract SlashingManager is
             require(
                 policy.failureReason <
                     uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
+                InvalidPolicy()
+            );
+            require(
+                FailurePayerLib.getFailurePayer(
+                    IInterfold.FailureReason(policy.failureReason)
+                ) == IE3RefundManager.FailurePayer.Ciphernodes,
                 InvalidPolicy()
             );
         }
@@ -759,6 +766,7 @@ contract SlashingManager is
         E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
+        uint256 actualLicenseSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
@@ -770,7 +778,7 @@ contract SlashingManager is
         }
 
         if (p.licenseAmount > 0) {
-            dependencies.bonding.slashLicenseBond(
+            actualLicenseSlashed = dependencies.bonding.slashLicenseBond(
                 p.operator,
                 p.licenseAmount,
                 p.reason
@@ -854,8 +862,8 @@ contract SlashingManager is
             p.e3Id,
             p.operator,
             p.reason,
-            p.ticketAmount,
-            p.licenseAmount,
+            actualTicketSlashed,
+            actualLicenseSlashed,
             true,
             lane
         );

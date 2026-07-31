@@ -184,6 +184,8 @@ export interface InterfoldSystemMocks {
 export interface InterfoldSystem {
   // Core
   interfold: Interfold;
+  interfoldLifecycle: string;
+  interfoldPricing: string;
   ciphernodeRegistry: CiphernodeRegistryOwnable;
   /** Populated only when `useMockCiphernodeRegistry: true`. */
   mockCiphernodeRegistry?: MockCiphernodeRegistry;
@@ -392,7 +394,11 @@ export async function deployInterfoldSystem(
   await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
 
   // ── Interfold ────────────────────────────────────────────────────────────────
-  const { interfold: _interfold } = await ignition.deploy(InterfoldModule, {
+  const {
+    interfold: _interfold,
+    interfoldLifecycle: _interfoldLifecycle,
+    interfoldPricing: _interfoldPricing,
+  } = await ignition.deploy(InterfoldModule, {
     parameters: {
       Interfold: {
         owner: ownerAddress,
@@ -407,6 +413,8 @@ export async function deployInterfoldSystem(
   });
   const interfoldAddress = await _interfold.getAddress();
   const interfold = InterfoldFactory.connect(interfoldAddress, owner);
+  const interfoldLifecycle = await _interfoldLifecycle.getAddress();
+  const interfoldPricing = await _interfoldPricing.getAddress();
 
   const { e3RefundManager: _e3RefundManager } = await ignition.deploy(
     E3RefundManagerModule,
@@ -569,6 +577,8 @@ export async function deployInterfoldSystem(
 
   return {
     interfold,
+    interfoldLifecycle,
+    interfoldPricing,
     ciphernodeRegistry,
     mockCiphernodeRegistry,
     bondingRegistry,

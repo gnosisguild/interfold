@@ -17,14 +17,15 @@ use e3_aggregator::CommitteeFinalizer;
 use e3_config::chain_config::ChainConfig;
 use e3_crypto::Cipher;
 use e3_data::{InMemStore, RepositoriesFactory};
+use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     AggregateConfig, AggregateId, BusHandle, EventBus, EventBusConfig, EvmEventConfig,
     InterfoldEvent,
 };
 use e3_evm::{
-    fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
-    InterfoldSolWriter, ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
+    fetch_accusation_vote_validity, BondingRegistrySolReader, CiphernodeRegistrySol,
+    CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter,
+    ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -34,8 +35,10 @@ use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
     NetRepositoryFactory,
 };
-use e3_request::E3Router;
-use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
+use e3_request::{
+    load_dkg_fold_attestation_contexts, E3LifecycleCoordinator, E3LifecycleRepositoryFactory,
+    E3Router,
+};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
     CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
@@ -245,32 +248,6 @@ impl CiphernodeBuilder {
                      it is the EIP-712 `verifyingContract` for accusation vote signatures"
                 )
             })
-    }
-
-    /// Fetch `CiphernodeRegistry.dkgFoldAttestationVerifier()` for one chain (EIP-712 verifying contract).
-    async fn fetch_fold_verifier(
-        provider_cache: &mut ProviderCache<WriteEnabled>,
-        chain: &ChainConfig,
-    ) -> Result<Option<Address>> {
-        let provider = provider_cache.ensure_read_provider(chain).await?;
-        let registry = chain.contracts.ciphernode_registry.address()?;
-        let verifier = fetch_dkg_fold_attestation_verifier(provider.provider(), registry).await?;
-        if verifier.is_none() {
-            tracing::warn!(
-                chain = %chain.name,
-                registry = %registry,
-                "CiphernodeRegistry.dkgFoldAttestationVerifier is not set on-chain; \
-                 nodes will not sign DKG fold attestations when proof aggregation is enabled"
-            );
-        } else if let Some(addr) = verifier {
-            info!(
-                chain = %chain.name,
-                registry = %registry,
-                verifier = %addr,
-                "loaded dkgFoldAttestationVerifier from CiphernodeRegistry"
-            );
-        }
-        Ok(verifier)
     }
 
     /// Fetch `CiphernodeRegistry.accusationVoteValidity()` for one chain (off-chain
@@ -550,6 +527,7 @@ impl CiphernodeBuilder {
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
         preflight_schema_version(&repositories, &aggregate_config, &eventstore.seq()).await?;
+        let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =
             provider_cache.with_write_support(Arc::clone(&self.cipher), Arc::clone(&repositories));
@@ -572,10 +550,12 @@ impl CiphernodeBuilder {
         E3LifecycleCoordinator::attach(&bus, store.clone()).await?;
 
         // Setup EVM contract event listeners
-        let (evm_config, evm_gateways) = self.setup_evm_system(&mut provider_cache, &bus).await?;
+        let (evm_config, evm_gateways) = self
+            .setup_evm_system(&mut provider_cache, &bus, &dkg_fold_contexts_by_e3)
+            .await?;
 
         // Fetch on-chain ZK/slashing configuration
-        let (dkg_fold_verifier_by_chain, accusation_vote_validity_by_chain) =
+        let (dkg_fold_context_by_chain, accusation_vote_validity_by_chain) =
             self.fetch_chain_configuration(&mut provider_cache).await?;
 
         // Setup protocol extensions (keyshare, aggregation, ZK, accusation, commitment)
@@ -586,7 +566,8 @@ impl CiphernodeBuilder {
                 &mut provider_cache,
                 &sortition,
                 &addr,
-                &dkg_fold_verifier_by_chain,
+                &dkg_fold_context_by_chain,
+                &dkg_fold_contexts_by_e3,
                 &accusation_vote_validity_by_chain,
             )
             .await?;
@@ -713,6 +694,7 @@ impl CiphernodeBuilder {
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
+        dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
     ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
             &self.chains,
@@ -721,6 +703,7 @@ impl CiphernodeBuilder {
             &self.contract_components,
             self.pubkey_agg,
             self.max_buffered_evm_events,
+            dkg_fold_contexts_by_e3,
         )
         .await
     }
@@ -730,29 +713,31 @@ impl CiphernodeBuilder {
     async fn fetch_chain_configuration(
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
-    ) -> Result<(HashMap<u64, Option<Address>>, HashMap<u64, u64>)> {
+    ) -> Result<(
+        HashMap<u64, Option<DkgFoldAttestationContext>>,
+        HashMap<u64, u64>,
+    )> {
         let needs_zk = self.keyshare.is_some() || (self.pubkey_agg && self.keyshare.is_none());
 
-        let mut dkg_fold_verifier_by_chain: HashMap<u64, Option<Address>> = HashMap::new();
+        let mut dkg_fold_context_by_chain = HashMap::new();
         if needs_zk {
-            for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
-                let provider = provider_cache.ensure_read_provider(chain).await?;
-                let chain_id = provider.chain_id();
-                validate_chain_id(chain, chain_id)?;
-                let verifier = Self::fetch_fold_verifier(provider_cache, chain).await?;
-                dkg_fold_verifier_by_chain.insert(chain_id, verifier);
-            }
-            // For disabled chains with a statically-configured verifier address (e.g. benchmark),
-            // populate from config so ZK actors can function without an RPC connection.
+            // Synthetic runs have no committee-finalized log to carry request-time addresses.
+            // Use static configuration only when the chain itself is disabled.
             for chain in self.chains.iter().filter(|c| !c.enabled.unwrap_or(true)) {
                 let Some(chain_id) = chain.chain_id else {
                     continue;
                 };
                 if let Some(ref contract) = chain.contracts.dkg_fold_attestation_verifier {
-                    if let Ok(addr) = contract.address() {
-                        dkg_fold_verifier_by_chain
-                            .entry(chain_id)
-                            .or_insert(Some(addr));
+                    if let (Ok(registry), Ok(verifying_contract)) = (
+                        chain.contracts.ciphernode_registry.address(),
+                        contract.address(),
+                    ) {
+                        dkg_fold_context_by_chain.entry(chain_id).or_insert(Some(
+                            DkgFoldAttestationContext {
+                                registry,
+                                verifying_contract,
+                            },
+                        ));
                     }
                 }
             }
@@ -771,10 +756,7 @@ impl CiphernodeBuilder {
             }
         }
 
-        Ok((
-            dkg_fold_verifier_by_chain,
-            accusation_vote_validity_by_chain,
-        ))
+        Ok((dkg_fold_context_by_chain, accusation_vote_validity_by_chain))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -785,7 +767,8 @@ impl CiphernodeBuilder {
         provider_cache: &mut ProviderCache<WriteEnabled>,
         sortition: &Addr<Sortition>,
         addr: &str,
-        dkg_fold_verifier_by_chain: &HashMap<u64, Option<Address>>,
+        dkg_fold_context_by_chain: &HashMap<u64, Option<DkgFoldAttestationContext>>,
+        dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let mut e3_builder = E3Router::builder(bus, store.clone());
@@ -801,7 +784,11 @@ impl CiphernodeBuilder {
             .await?
             .map(|state| state.e3_cache)
             .unwrap_or_default();
-        let zk_recovery = ZkActorRecovery::new(persisted_committees, persisted_e3_metadata);
+        let zk_recovery = ZkActorRecovery::new(
+            persisted_committees,
+            persisted_e3_metadata,
+            dkg_fold_contexts_by_e3.clone(),
+        );
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
@@ -839,7 +826,7 @@ impl CiphernodeBuilder {
                 bus,
                 backend,
                 _signer,
-                dkg_fold_verifier_by_chain.clone(),
+                dkg_fold_context_by_chain.clone(),
                 zk_recovery.clone(),
                 self.proof_aggregation_enabled,
             );
@@ -865,7 +852,7 @@ impl CiphernodeBuilder {
                     bus,
                     backend,
                     signer,
-                    dkg_fold_verifier_by_chain.clone(),
+                    dkg_fold_context_by_chain.clone(),
                     zk_recovery,
                     self.proof_aggregation_enabled,
                 );
@@ -1043,6 +1030,7 @@ async fn setup_evm_system(
     contract_components: &ContractComponents,
     pubkey_agg: bool,
     max_buffered_evm_events: usize,
+    dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
 ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
@@ -1098,10 +1086,16 @@ async fn setup_evm_system(
                     .await
                 {
                     Ok(write_provider) => {
+                        let request_registries = dkg_fold_contexts_by_e3
+                            .iter()
+                            .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
+                            .map(|(e3_id, context)| (e3_id.clone(), context.registry))
+                            .collect();
                         CiphernodeRegistrySol::attach_writer(
                             bus,
                             write_provider.clone(),
                             contract.address()?,
+                            request_registries,
                         );
                         info!("CiphernodeRegistrySolWriter attached for publishing committees");
 

@@ -5,9 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_data::{Repositories, Repository};
-use e3_events::E3Stage;
-use e3_events::E3id;
-use e3_events::StoreKeys;
+use e3_events::{DkgFoldAttestationContextEstablished, E3Stage, E3id, StoreKeys};
 use std::collections::HashMap;
 
 use crate::{E3ContextSnapshot, E3Meta, E3RouterSnapshot};
@@ -19,6 +17,25 @@ pub trait MetaRepositoryFactory {
 impl MetaRepositoryFactory for Repositories {
     fn meta(&self, e3_id: &E3id) -> Repository<E3Meta> {
         Repository::new(self.store.scope(StoreKeys::meta(e3_id)))
+    }
+}
+
+pub trait DkgFoldAttestationContextRepositoryFactory {
+    fn dkg_fold_attestation_context(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<DkgFoldAttestationContextEstablished>;
+}
+
+impl DkgFoldAttestationContextRepositoryFactory for Repositories {
+    fn dkg_fold_attestation_context(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<DkgFoldAttestationContextEstablished> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::dkg_fold_attestation_context(e3_id)),
+        )
     }
 }
 

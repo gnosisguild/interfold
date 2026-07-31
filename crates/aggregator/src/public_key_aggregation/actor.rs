@@ -12,6 +12,7 @@ use crate::workflow::publickey_aggregation::{
 use actix::prelude::*;
 use anyhow::Result;
 use e3_data::Persistable;
+use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     prelude::*, BusHandle, ComputeRequest, ComputeRequestError, ComputeResponse,
     ComputeResponseKind, CorrelationId, DKGRecursiveAggregationComplete, Die,
@@ -44,6 +45,7 @@ pub struct PublicKeyAggregator {
     state: Persistable<PublicKeyAggregatorState>,
     params_preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
+    dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
 }
@@ -54,6 +56,7 @@ pub struct PublicKeyAggregatorParams {
     pub e3_id: E3id,
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,
+    pub dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
 }
 
 /// Aggregate PublicKey for a committee of nodes. This actor listens for KeyshareCreated events
@@ -71,6 +74,7 @@ impl PublicKeyAggregator {
             state,
             params_preset: params.params_preset,
             committee_size: params.committee_size,
+            dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             early_dkg_proofs: Vec::new(),
         }
     }

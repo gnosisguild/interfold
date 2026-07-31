@@ -18,6 +18,7 @@ import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IInterfold } from "./interfaces/IInterfold.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
+import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
 
 /**
  * @title E3RefundManager
@@ -236,6 +237,22 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             finalDist.perNodeAmount =
                 finalDist.honestNodeAmount /
                 honestNodes.length;
+            if (
+                finalDist.perNodeAmount == 0 && finalDist.honestNodeAmount > 0
+            ) {
+                uint256 unclaimableAmount = finalDist.honestNodeAmount;
+                finalDist.honestNodeAmount = 0;
+                finalDist.protocolAmount += unclaimableAmount;
+                address policyTreasury = _treasuryFor(e3Id);
+                _pendingTreasury[policyTreasury][
+                    paymentToken
+                ] += unclaimableAmount;
+                emit TreasurySlashedCredited(
+                    policyTreasury,
+                    paymentToken,
+                    unclaimableAmount
+                );
+            }
         }
 
         if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
@@ -282,29 +299,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function getFailurePayer(
         IInterfold.FailureReason reason
     ) public pure returns (FailurePayer payer) {
-        if (
-            reason == IInterfold.FailureReason.NoInputsReceived ||
-            reason == IInterfold.FailureReason.ComputeTimeout ||
-            reason == IInterfold.FailureReason.ComputeProviderExpired ||
-            reason == IInterfold.FailureReason.ComputeProviderFailed ||
-            reason == IInterfold.FailureReason.RequesterCancelled
-        ) {
-            return FailurePayer.Requester;
-        }
-
-        if (
-            reason == IInterfold.FailureReason.CommitteeFormationTimeout ||
-            reason == IInterfold.FailureReason.InsufficientCommitteeMembers ||
-            reason == IInterfold.FailureReason.DKGTimeout ||
-            reason == IInterfold.FailureReason.DKGInvalidShares ||
-            reason == IInterfold.FailureReason.DecryptionTimeout ||
-            reason == IInterfold.FailureReason.DecryptionInvalidShares ||
-            reason == IInterfold.FailureReason.VerificationFailed
-        ) {
-            return FailurePayer.Ciphernodes;
-        }
-
-        revert InvalidFailureReason(reason);
+        return FailurePayerLib.getFailurePayer(reason);
     }
 
     /// @notice Get the stage at which a requester-attributable E3 failed.

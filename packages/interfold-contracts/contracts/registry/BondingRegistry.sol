@@ -24,7 +24,9 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
-import { ILockAwareLicenseToken } from "../interfaces/ILockAwareLicenseToken.sol";
+import {
+    ILockAwareLicenseToken
+} from "../interfaces/ILockAwareLicenseToken.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
@@ -754,12 +756,13 @@ contract BondingRegistry is
         // Slash remaining amount from pending queue
         uint256 remainingToSlash = actualSlashAmount - slashedFromActiveBalance;
         if (remainingToSlash > 0) {
-            _exits.slashPendingAssets(
+            (uint256 pendingSlashed, ) = _exits.slashPendingAssets(
                 operator,
                 remainingToSlash,
                 0, // licenseAmount
                 true
             );
+            require(pendingSlashed == remainingToSlash, InsufficientBalance());
         }
 
         slashedTicketBalance += actualSlashAmount;
@@ -780,7 +783,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlyAuthorizedSlashingManager nonReentrant {
+    ) external onlyAuthorizedSlashingManager nonReentrant returns (uint256) {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
@@ -792,7 +795,7 @@ contract BondingRegistry is
             totalAvailableBalance
         );
 
-        if (actualSlashAmount == 0) return;
+        if (actualSlashAmount == 0) return 0;
 
         uint256 activeSlashAmount = Math.min(
             actualSlashAmount,
@@ -826,6 +829,7 @@ contract BondingRegistry is
         );
 
         _updateOperatorStatus(operator);
+        return actualSlashAmount;
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1226,10 +1230,16 @@ contract BondingRegistry is
         return false;
     }
 
-    /// @dev Calculates the minimum license bond required to maintain active status
-    /// @return Minimum license bond (licenseRequiredBond * licenseActiveBps / 10000)
+    /// @dev Calculates the minimum license bond required to maintain active status.
+    /// @return Minimum license bond, rounded up to the next base unit.
     function _minLicenseBond() internal view returns (uint256) {
-        return (licenseRequiredBond * licenseActiveBps) / BPS_BASE;
+        return
+            Math.mulDiv(
+                licenseRequiredBond,
+                licenseActiveBps,
+                BPS_BASE,
+                Math.Rounding.Ceil
+            );
     }
 
     /// @dev Invalidates every cached active status in O(1). Operators are
