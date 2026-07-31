@@ -258,7 +258,7 @@ library InterfoldLifecycle {
             nowTs +
             computeWindow +
             decryptionWindow;
-        if (totalDuration >= maxDuration)
+        if (totalDuration > maxDuration)
             revert IInterfold.InvalidDuration(totalDuration);
     }
 }

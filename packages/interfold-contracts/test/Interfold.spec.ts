@@ -417,6 +417,26 @@ describe("Interfold", function () {
         }),
       ).to.be.revertedWithCustomError(interfold, "InvalidDuration");
     });
+    it("allows total duration equal to maxDuration", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      const requestAt = BigInt((await time.latest()) + 10);
+      const maxDuration = await interfold.maxDuration();
+      const inputEnd =
+        requestAt +
+        maxDuration -
+        BigInt(timeoutConfig.computeWindow) -
+        BigInt(timeoutConfig.decryptionWindow);
+      const exactDurationRequest = {
+        ...request,
+        inputWindow: [requestAt, inputEnd] as [bigint, bigint],
+      };
+      const fee = await interfold.getE3Quote(exactDurationRequest);
+      await usdcToken.approve(await interfold.getAddress(), fee);
+      await time.setNextBlockTimestamp(requestAt);
+
+      await interfold.request(exactDurationRequest);
+      expect(await interfold.nexte3Id()).to.equal(1);
+    });
     it("rejects a schedule whose compute deadline cannot follow committee finalization", async function () {
       const { interfold, ciphernodeRegistryContract, request, usdcToken } =
         await loadFixture(setup);
