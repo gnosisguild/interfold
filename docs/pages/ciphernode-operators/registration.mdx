@@ -153,7 +153,7 @@ commands with the bond-owner config and pass the node's operator address explici
 Two commands adjust the activation state of an operator without a full exit:
 
 ```bash
-# Register the operator and recompute its activation state
+# Register an operator again after a full exit
 interfold --config /path/to/owner.yaml ciphernode activate --operator 0xOPERATOR
 
 # Queue collateral for exit and drop below the active thresholds
@@ -161,8 +161,13 @@ interfold --config /path/to/owner.yaml ciphernode deactivate \
   --operator 0xOPERATOR --tickets 50 --license 25
 ```
 
-`activate` sends the same registration call as `register`. Use it to restore active status after an
-eligibility parameter changes on-chain.
+`activate` sends the same registration call as `register`. Use it only to register an operator again
+after a [deregister](./exits-and-slashing#step-1-deregister). The call reverts with
+`AlreadyRegistered` for an operator that is still registered.
+
+To restore the active status of a registered operator after an eligibility parameter changes
+on-chain, call `refreshOperatorStatus(operator)` on the BondingRegistry. The call is permissionless.
+The CLI has no command for it.
 
 `deactivate` requires `--tickets`, `--license`, or both. It calls `removeTicketBalanceFor` for the
 ticket amount and `unbondLicenseFor` for the license amount. Both amounts enter the exit queue and

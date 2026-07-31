@@ -101,9 +101,11 @@ Read the current state with these view functions:
 | `totalBonded(account)`         | FOLD that counts toward the locked-floor collateral of an owner   |
 | `hasExitInProgress(operator)`  | Whether an exit is queued                                         |
 
-> `refreshOperatorStatus` is permissionless. Governance changes to the ticket price, the required
-> bond, or the minimum ticket balance invalidate cached status. Call this function to restore the
-> correct status for an operator.
+> `refreshOperatorStatus` is permissionless, but the operator must be registered. The call reverts
+> with `NotRegistered()` for an operator that is not in the registry. `refreshOperatorStatuses`
+> reverts if any operator in the list is not registered. Governance changes to the ticket price, the
+> required bond, or the minimum ticket balance invalidate cached status. Call this function to
+> restore the correct status for an operator.
 
 ## Operator Lifecycle
 

@@ -177,7 +177,7 @@ export default function Operator() {
   const bondOwnerSet = Boolean(status?.bondOwner)
   const isBondOwner = sameAddress(wallet.address, status?.bondOwner)
   const isOperatorWallet = sameAddress(wallet.address, operator)
-  const bonded = Boolean(config && status && status.licenseBond >= config.licenseRequiredBond && config.licenseRequiredBond > 0n)
+  const bonded = Boolean(config && status && status.licenseBond >= config.licenseRequiredBond)
   const registered = Boolean(status?.registered)
   const ticketed = Boolean(config && status && status.availableTickets >= config.minTicketBalance)
 
