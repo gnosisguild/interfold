@@ -19,7 +19,23 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed:
+Anyone can call `markE3Failed()` when a deadline is missed. A ready committee cannot fail through
+this function. The registry must finalize it.
+
+If an honest-node allocation is smaller than the node count, the refund manager credits it to the
+request-time treasury instead of creating zero-value claims.
+
+A committee-affecting slash policy can use only a supplier-paid failure reason. Policy validation
+and refund settlement use the same payer classifier.
+
+During the failure grace period, only active finalized committee members have committee authority.
+Expelled members and provisional candidates do not.
+
+Interfold rejects `None`, the enum sentinel, and larger failure reason values before it changes the
+E3 stage.
+
+Committee key publication is valid through the DKG deadline. Later publication is rejected as a
+supplier-side timeout.
 
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
@@ -99,6 +115,8 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 ├─ 3. Get honest nodes:
 │     (honestNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
 │     → Returns committee members NOT expelled by slashing plus their ticket scores
+│     → Returns empty arrays when committee formation did not finalize
+│     → An unexpected registry failure reverts the transaction and restores the payment
 │
 ├─ 4. Transfer payment to E3RefundManager:
 │     paymentToken = _e3FeeTokens[e3Id]  (per-E3 token, not current global)
@@ -675,6 +693,7 @@ _executeSlash(proposalId):
 │     │  │         operator, remaining, 0,                       │
 │     │  │         includeLockedAssets=true                      │
 │     │  │       )                                               │
+│     │  │       require(actualPendingSlash == remaining)         │
 │     │  │       → Can slash EVEN LOCKED exit tranches           │
 │     │  │       → No escaping via queued exits                  │
 │     │  │                                                       │
@@ -686,9 +705,10 @@ _executeSlash(proposalId):
 │     │  └───────────────────────────────────────────────────────┘
 │
 ├─ 2. SLASH LICENSE BOND (if licenseAmount > 0):
-│     bondingRegistry.slashLicenseBond(
+│     actualLicenseSlashed = bondingRegistry.slashLicenseBond(
 │       operator, proposal.licenseAmount, reason
 │     )
+│     → Returns ACTUAL amount slashed (may be less if balance insufficient)
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
@@ -802,7 +822,7 @@ _executeSlash(proposalId):
 │        → transfer + accounting succeed atomically, or all state reverts
 │
 └─ 7. Emit SlashExecuted(proposalId, e3Id, operator, reason,
-       ticketSlashed, licenseSlashed, banned)
+       actualTicketSlashed, actualLicenseSlashed, banned)
 ```
 
 > **License transfer note.** `withdrawSlashedFunds` (the treasury sweep for slashed license bonds)

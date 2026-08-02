@@ -10,29 +10,29 @@
 use std::collections::{BTreeMap, HashMap};
 
 use actix::{Actor, Addr, Context, Handler};
-use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind,
-    CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationPayload,
-    E3Failed, E3Stage, E3id, EventContext, EventPublisher, EventSubscriber, EventType,
-    FailureReason, InterfoldEvent, InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation,
-    ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
+    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3Failed, E3Stage, E3id,
+    EventContext, EventPublisher, EventSubscriber, EventType, FailureReason, InterfoldEvent,
+    InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending,
+    TypedEvent, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::build_pair_for_preset;
 use tracing::{error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;
-
 /// Actor that collects DKG inner proofs and dispatches a single [`ZkRequest::NodeDkgFold`].
 pub struct NodeProofAggregator {
     bus: BusHandle,
     signer: PrivateKeySigner,
     proof_aggregation_enabled: bool,
-    /// Per-chain `DkgFoldAttestationVerifier` address (EIP-712 `verifyingContract`).
-    /// Looked up by `e3_id.chain_id()` when signing fold attestations.
-    dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+    /// Request-time registry and verifier for each E3.
+    dkg_fold_attestation_contexts_by_e3: HashMap<E3id, DkgFoldAttestationContext>,
+    /// Compatibility context for synthetic events without an on-chain context event.
+    dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     states: HashMap<E3id, DkgProofCollectionState>,
     fold_correlation: HashMap<CorrelationId, E3id>,
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
@@ -42,14 +42,16 @@ impl NodeProofAggregator {
     pub fn new(
         bus: &BusHandle,
         signer: PrivateKeySigner,
-        dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+        dkg_fold_attestation_contexts_by_e3: HashMap<E3id, DkgFoldAttestationContext>,
+        dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
         proof_aggregation_enabled: bool,
     ) -> Self {
         Self {
             bus: bus.clone(),
             signer,
             proof_aggregation_enabled,
-            dkg_fold_attestation_verifiers_by_chain,
+            dkg_fold_attestation_contexts_by_e3,
+            dkg_fold_attestation_contexts_by_chain,
             states: HashMap::new(),
             fold_correlation: HashMap::new(),
             pending_inner_proofs: HashMap::new(),
@@ -59,16 +61,22 @@ impl NodeProofAggregator {
     pub fn setup(
         bus: &BusHandle,
         signer: PrivateKeySigner,
-        dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+        dkg_fold_attestation_contexts_by_e3: HashMap<E3id, DkgFoldAttestationContext>,
+        dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
         proof_aggregation_enabled: bool,
     ) -> Addr<Self> {
         let addr = Self::new(
             bus,
             signer,
-            dkg_fold_attestation_verifiers_by_chain,
+            dkg_fold_attestation_contexts_by_e3,
+            dkg_fold_attestation_contexts_by_chain,
             proof_aggregation_enabled,
         )
         .start();
+        bus.subscribe(
+            EventType::DkgFoldAttestationContextEstablished,
+            addr.clone().into(),
+        );
         bus.subscribe(EventType::ThresholdSharePending, addr.clone().into());
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
@@ -85,6 +93,7 @@ mod handlers;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::Address;
     use anyhow::Result;
     use e3_events::{
         CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, HistoryCollector,
@@ -120,9 +129,65 @@ mod tests {
     }
 
     #[actix::test]
+    async fn request_context_events_survive_rotation_and_restart() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let old_e3 = E3id::new("41", 1);
+        let new_e3 = E3id::new("42", 1);
+        let old_context = DkgFoldAttestationContext {
+            registry: Address::repeat_byte(0x11),
+            verifying_contract: Address::repeat_byte(0x12),
+        };
+        let new_context = DkgFoldAttestationContext {
+            registry: Address::repeat_byte(0x21),
+            verifying_contract: Address::repeat_byte(0x22),
+        };
+        let startup_contexts = HashMap::from([(1, Some(new_context))]);
+
+        let mut aggregator = NodeProofAggregator::new(
+            &bus,
+            test_signer(),
+            HashMap::new(),
+            startup_contexts.clone(),
+            true,
+        );
+        for (e3_id, context) in [(old_e3.clone(), old_context), (new_e3.clone(), new_context)] {
+            let event = DkgFoldAttestationContextEstablished {
+                schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+                e3_id,
+                context,
+            };
+            aggregator.handle_dkg_fold_attestation_context(TypedEvent::new(
+                event.clone(),
+                test_ctx(event),
+            ));
+        }
+
+        let restored_contexts = aggregator.dkg_fold_attestation_contexts_by_e3;
+        let restarted = NodeProofAggregator::new(
+            &bus,
+            test_signer(),
+            restored_contexts,
+            startup_contexts,
+            true,
+        );
+
+        assert_eq!(
+            restarted.dkg_fold_attestation_context_for(&old_e3),
+            Some(old_context)
+        );
+        assert_eq!(
+            restarted.dkg_fold_attestation_context_for(&new_e3),
+            Some(new_context)
+        );
+
+        Ok(())
+    }
+
+    #[actix::test]
     async fn node_dkg_fold_compute_error_emits_e3_failed() -> Result<()> {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), true);
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
         let e3_id = E3id::new("42", 1);
         let correlation_id = CorrelationId::new();
 
@@ -207,7 +272,8 @@ mod tests {
     #[actix::test]
     async fn early_inner_proof_is_prebuffered_until_collection_starts() -> Result<()> {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), true);
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
         let e3_id = E3id::new("43", 1);
         let early_proof = dummy_proof(10);
 

@@ -56,7 +56,13 @@ The callback server receives a tagged-enum JSON payload:
 **Success:**
 
 ```json
-{ "status": "completed", "e3_id": 123, "ciphertext": "0x...", "proof": "0x..." }
+{
+  "status": "completed",
+  "e3_id": 123,
+  "ciphertext": "0x...",
+  "ciphertext_commitment": "0x...",
+  "proof": "0x..."
+}
 ```
 
 **Failure:**
@@ -188,7 +194,7 @@ The program server:
 3. Submits proof request to Boundless market
 4. Waits for a prover to fulfill the request
 5. Sends webhook callback with
-   `{"status":"completed","e3_id":1,"ciphertext":"0x...","proof":"0x..."}`
+   `{"status":"completed","e3_id":1,"ciphertext":"0x...","ciphertext_commitment":"0x...","proof":"0x..."}`
 
 ### Step 8: Webhook Handler Publishes On-Chain
 

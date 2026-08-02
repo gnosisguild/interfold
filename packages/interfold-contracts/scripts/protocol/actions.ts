@@ -104,6 +104,8 @@ Protocol contracts deployed
   slashingManager:        ${deployment.slashingManager}
   ciphernodeRegistry:     ${deployment.ciphernodeRegistry}
   interfold:              ${deployment.interfold}
+  interfoldLifecycle:     ${deployment.interfoldLifecycle}
+  interfoldPricing:       ${deployment.interfoldPricing}
   e3RefundManager:        ${deployment.e3RefundManager}
   bonding implementation: ${deployment.bondingRegistryImplementation}
 

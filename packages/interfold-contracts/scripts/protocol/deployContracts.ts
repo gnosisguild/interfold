@@ -55,8 +55,17 @@ export async function deployProtocolContracts(
   await pricingLib.waitForDeployment();
   const interfoldPricing = await deployedAddress(pricingLib);
 
+  const lifecycleLibFactory =
+    await ethers.getContractFactory("InterfoldLifecycle");
+  const lifecycleLib = await lifecycleLibFactory.deploy();
+  await lifecycleLib.waitForDeployment();
+  const interfoldLifecycle = await deployedAddress(lifecycleLib);
+
   const interfoldFactory = await ethers.getContractFactory("Interfold", {
-    libraries: { InterfoldPricing: interfoldPricing },
+    libraries: {
+      InterfoldLifecycle: interfoldLifecycle,
+      InterfoldPricing: interfoldPricing,
+    },
   });
   const interfoldImpl = await interfoldFactory.deploy();
   await interfoldImpl.waitForDeployment();
@@ -107,6 +116,7 @@ export async function deployProtocolContracts(
       interfold: interfoldProxy.proxy,
       interfoldImplementation,
       interfoldProxyAdmin: interfoldProxy.proxyAdmin,
+      interfoldLifecycle,
       interfoldPricing,
       e3RefundManager: refundProxy.proxy,
       e3RefundManagerImplementation,

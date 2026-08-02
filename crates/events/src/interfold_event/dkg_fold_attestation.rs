@@ -19,6 +19,13 @@ use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
 
+/// Registry and verifier frozen for one E3's DKG fold attestations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DkgFoldAttestationContext {
+    pub registry: Address,
+    pub verifying_contract: Address,
+}
+
 /// Commitments surfaced from a [`CircuitName::NodeFold`] proof (C4 aggregate outputs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DkgFoldAggCommits {
@@ -29,14 +36,16 @@ pub struct DkgFoldAggCommits {
 /// Canonical EIP-712 payload signed after `NodeDkgFold` completes.
 ///
 /// `chainId` and `verifying_contract` (the `DkgFoldAttestationVerifier`) are
-/// part of the EIP-712 domain; `e3_id`, `party_id`, and the commitments are the
-/// struct fields. Must stay aligned with `DkgFoldAttestationLib` in
-/// `packages/interfold-contracts`.
+/// part of the EIP-712 domain. The registry, `e3_id`, `party_id`, and the
+/// commitments are the struct fields. Must stay aligned with
+/// `DkgFoldAttestationLib` in `packages/interfold-contracts`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DkgFoldAttestationPayload {
     pub e3_id: E3id,
     /// Address of the on-chain `DkgFoldAttestationVerifier` (EIP-712 `verifyingContract`).
     pub verifying_contract: Address,
+    /// Address of the registry that owns this E3 and its canonical committee.
+    pub registry: Address,
     /// Sortition / committee slot id (index into on-chain `topNodes` when ids are dense).
     pub party_id: u64,
     pub agg_commits: DkgFoldAggCommits,
@@ -61,10 +70,10 @@ impl DkgFoldAttestationPayload {
         keccak256("1").into()
     }
 
-    /// `keccak256("DkgFoldAttestation(uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)")`.
+    /// `keccak256("DkgFoldAttestation(address registry,uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)")`.
     pub fn typehash() -> [u8; 32] {
         keccak256(
-            "DkgFoldAttestation(uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)",
+            "DkgFoldAttestation(address registry,uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)",
         )
         .into()
     }
@@ -91,6 +100,7 @@ impl DkgFoldAttestationPayload {
             .map_err(|_| anyhow!("E3id cannot be converted to U256"))?;
         let encoded = (
             Self::typehash(),
+            self.registry,
             e3_id_u256,
             U256::from(self.party_id),
             self.agg_commits.sk_agg_commit,
@@ -165,6 +175,7 @@ mod tests {
         let payload = DkgFoldAttestationPayload {
             e3_id: E3id::new("0", 1),
             verifying_contract: Address::from([0x11u8; 20]),
+            registry: Address::from([0x22u8; 20]),
             party_id: 1,
             agg_commits: DkgFoldAggCommits {
                 sk_agg_commit: [7u8; 32],

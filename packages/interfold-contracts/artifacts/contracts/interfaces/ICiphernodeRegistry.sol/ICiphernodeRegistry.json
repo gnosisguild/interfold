@@ -583,6 +583,31 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "dkgFoldAttestationVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "DkgFoldAttestationContextEstablished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "address",
           "name": "verifier",
           "type": "address"
@@ -789,6 +814,44 @@
           "internalType": "bytes32",
           "name": "publicKeyHash",
           "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "committeeThresholdMet",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "dkgFoldAttestationVerifierFor",
+      "outputs": [
+        {
+          "internalType": "contract IDkgFoldAttestationVerifier",
+          "name": "",
+          "type": "address"
         }
       ],
       "stateMutability": "view",
@@ -1345,5 +1408,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-f5755ecb7841fc95c54f70765c61457db4efede6"
+  "buildInfoId": "solc-0_8_28-333bedd9b9edefb785c3ddd79bdef9ffb671c898"
 }

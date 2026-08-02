@@ -126,6 +126,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             e3_id: e3_id.clone(),
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size: CiphernodesCommitteeSize::Micro,
+            dkg_fold_attestation_context: None,
         },
         test_state(initial_state),
     );

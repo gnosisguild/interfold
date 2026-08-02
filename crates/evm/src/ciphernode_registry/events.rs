@@ -13,7 +13,8 @@ use alloy::{
 };
 use e3_events::{
     CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed, CommitteePublished,
-    CommitteeViabilityUpdated, E3id, InterfoldEventData, Seed,
+    CommitteeViabilityUpdated, DkgFoldAttestationContext, DkgFoldAttestationContextEstablished,
+    E3id, InterfoldEventData, Seed, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::ArcBytes;
 use tracing::{error, info, trace};
@@ -117,6 +118,32 @@ impl From<CommitteeFinalizedWithChainId> for CommitteeFinalized {
         };
         result.sort_by_address();
         result
+    }
+}
+
+struct DkgFoldAttestationContextEstablishedWithChainId(
+    pub ICiphernodeRegistry::DkgFoldAttestationContextEstablished,
+    pub u64,
+);
+
+impl From<DkgFoldAttestationContextEstablishedWithChainId>
+    for DkgFoldAttestationContextEstablished
+{
+    fn from(value: DkgFoldAttestationContextEstablishedWithChainId) -> Self {
+        Self {
+            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            context: DkgFoldAttestationContext {
+                registry: value.0.registry,
+                verifying_contract: value.0.dkgFoldAttestationVerifier,
+            },
+        }
+    }
+}
+
+impl From<DkgFoldAttestationContextEstablishedWithChainId> for InterfoldEventData {
+    fn from(value: DkgFoldAttestationContextEstablishedWithChainId) -> Self {
+        DkgFoldAttestationContextEstablished::from(value).into()
     }
 }
 
@@ -298,6 +325,17 @@ pub(crate) fn extractor(
                 event, chain_id,
             )))
         }
+        Some(&ICiphernodeRegistry::DkgFoldAttestationContextEstablished::SIGNATURE_HASH) => {
+            let Ok(event) =
+                ICiphernodeRegistry::DkgFoldAttestationContextEstablished::decode_log_data(data)
+            else {
+                error!(
+                    "Error parsing event DkgFoldAttestationContextEstablished after topic was matched!"
+                );
+                return None;
+            };
+            Some(DkgFoldAttestationContextEstablishedWithChainId(event, chain_id).into())
+        }
         Some(&ICiphernodeRegistry::CommitteeFormationFailed::SIGNATURE_HASH) => {
             let Ok(mut event) =
                 ICiphernodeRegistry::CommitteeFormationFailed::decode_log_data(data)
@@ -438,6 +476,24 @@ mod tests {
             Some(b.to_string().as_str())
         );
         assert_eq!(finalized.scores.first().map(String::as_str), Some("99"));
+    }
+
+    #[test]
+    fn test_dkg_fold_context_keeps_request_time_addresses() {
+        let event = ICiphernodeRegistry::DkgFoldAttestationContextEstablished {
+            e3Id: U256::from(1u64),
+            registry: Address::repeat_byte(0x44),
+            dkgFoldAttestationVerifier: Address::repeat_byte(0x55),
+        };
+        let context: DkgFoldAttestationContextEstablished =
+            DkgFoldAttestationContextEstablishedWithChainId(event, 1).into();
+        assert_eq!(
+            context.context,
+            DkgFoldAttestationContext {
+                registry: Address::repeat_byte(0x44),
+                verifying_contract: Address::repeat_byte(0x55),
+            }
+        );
     }
 
     #[test]

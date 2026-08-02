@@ -8,7 +8,7 @@ pragma solidity 0.8.28;
 
 /**
  * @title CommitteeHashLib
- * @notice Canonical `keccak256(abi.encodePacked(topNodes))` binding for aggregator proofs.
+ * @notice Canonical hash of ordered raw 20-byte committee addresses.
  * @dev Must match `e3_utils::committee_hash` (hi/lo split into two 128-bit limbs).
  */
 library CommitteeHashLib {
@@ -23,14 +23,10 @@ library CommitteeHashLib {
         uint256 n = nodes.length;
         bytes memory packed = new bytes(n * 20);
         for (uint256 i = 0; i < n; ++i) {
-            bytes20 a = bytes20(nodes[i]);
+            bytes20 node = bytes20(nodes[i]);
             uint256 offset = i * 20;
-            // Write 20-byte address in one word store; trailing 12 bytes are
-            // zeroed and either overwritten by the next address or ignored by
-            // `keccak256(packed)` because bytes length is exactly `20*n`.
-            // solhint-disable-next-line no-inline-assembly
-            assembly {
-                mstore(add(add(packed, 0x20), offset), shl(96, a))
+            for (uint256 j = 0; j < 20; ++j) {
+                packed[offset + j] = node[j];
             }
         }
         return keccak256(packed);

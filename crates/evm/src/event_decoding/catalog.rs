@@ -359,6 +359,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "DkgFoldAttestationContextEstablished",
+        "DkgFoldAttestationContextEstablished(uint256,address,address)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "SortitionSubmissionWindowSet",
         "SortitionSubmissionWindowSet(uint256)",
         None,

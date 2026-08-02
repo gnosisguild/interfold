@@ -31,6 +31,34 @@ import { deployInterfoldSystem, ethers } from "../fixtures";
 const IERC165_ID = "0x01ffc9a7";
 const INVALID_ID = "0xffffffff";
 
+function eip1967Slot(label: string): string {
+  return ethers.toBeHex(
+    BigInt(ethers.keccak256(ethers.toUtf8Bytes(label))) - 1n,
+    32,
+  );
+}
+
+async function addressAtSlot(
+  contractAddress: string,
+  label: string,
+): Promise<string> {
+  const value = await ethers.provider.getStorage(
+    contractAddress,
+    eip1967Slot(label),
+  );
+  return ethers.getAddress(`0x${value.slice(-40)}`);
+}
+
+function expectLibraryLinks(
+  bytecode: string,
+  lifecycleAddress: string,
+  pricingAddress: string,
+): void {
+  const code = bytecode.toLowerCase();
+  expect(code).to.include(lifecycleAddress.slice(2).toLowerCase());
+  expect(code).to.include(pricingAddress.slice(2).toLowerCase());
+}
+
 // Compute the ERC-165 interfaceId of a contract interface by XORing the
 // 4-byte selectors of every public function in its ABI.
 function interfaceIdOf(iface: Interface): string {
@@ -165,6 +193,67 @@ describe("Standards & upgradeability hygiene", function () {
       expect(await all.ciphernodeRegistry.getAddress()).to.properAddress;
       expect(await all.bondingRegistry.getAddress()).to.properAddress;
       expect(await all.e3RefundManager.getAddress()).to.properAddress;
+    });
+  });
+
+  describe("Interfold library links", function () {
+    it("deployment links the lifecycle and pricing libraries", async function () {
+      const all = await deployAll();
+      const proxy = await all.interfold.getAddress();
+      const implementation = await addressAtSlot(
+        proxy,
+        "eip1967.proxy.implementation",
+      );
+      const bytecode = await ethers.provider.getCode(implementation);
+
+      expectLibraryLinks(
+        bytecode,
+        all.interfoldLifecycle,
+        all.interfoldPricing,
+      );
+    });
+
+    it("upgrade links new lifecycle and pricing library addresses", async function () {
+      const all = await deployAll();
+      const lifecycle = await ethers.deployContract("InterfoldLifecycle");
+      const pricing = await ethers.deployContract("InterfoldPricing");
+      await lifecycle.waitForDeployment();
+      await pricing.waitForDeployment();
+
+      const lifecycleAddress = await lifecycle.getAddress();
+      const pricingAddress = await pricing.getAddress();
+      const interfoldFactory = await ethers.getContractFactory("Interfold", {
+        libraries: {
+          InterfoldLifecycle: lifecycleAddress,
+          InterfoldPricing: pricingAddress,
+        },
+      });
+      const implementation = await interfoldFactory.deploy();
+      await implementation.waitForDeployment();
+      const implementationAddress = await implementation.getAddress();
+
+      const proxy = await all.interfold.getAddress();
+      const proxyAdminAddress = await addressAtSlot(
+        proxy,
+        "eip1967.proxy.admin",
+      );
+      const proxyAdmin = await ethers.getContractAt(
+        "ProxyAdmin",
+        proxyAdminAddress,
+        all.owner,
+      );
+      await (
+        await proxyAdmin.upgradeAndCall(proxy, implementationAddress, "0x")
+      ).wait();
+
+      expect(
+        await addressAtSlot(proxy, "eip1967.proxy.implementation"),
+      ).to.equal(implementationAddress);
+      expectLibraryLinks(
+        await ethers.provider.getCode(implementationAddress),
+        lifecycleAddress,
+        pricingAddress,
+      );
     });
   });
 

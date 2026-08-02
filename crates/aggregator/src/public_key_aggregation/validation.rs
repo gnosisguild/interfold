@@ -3,6 +3,7 @@
 //! Cryptographic commitment and DKG-fold attestation checks.
 
 use super::*;
+use e3_events::DkgFoldAttestationContext;
 
 /// Circuit honest-party count `H` for the committee `(threshold_m, threshold_n)`.
 pub(crate) fn committee_h_for(threshold_m: usize, threshold_n: usize) -> Result<usize> {
@@ -26,6 +27,7 @@ pub(crate) fn verify_dkg_fold_attestation(
     party_id: u64,
     proof: &Proof,
     attestation: &SignedDkgFoldAttestation,
+    expected_context: DkgFoldAttestationContext,
     expected_node: &str,
     committee_n: usize,
     committee_h: usize,
@@ -38,6 +40,14 @@ pub(crate) fn verify_dkg_fold_attestation(
     ensure!(
         attestation.payload.party_id == party_id,
         "attestation party_id mismatch"
+    );
+    ensure!(
+        attestation.payload.registry == expected_context.registry,
+        "attestation registry mismatch"
+    );
+    ensure!(
+        attestation.payload.verifying_contract == expected_context.verifying_contract,
+        "attestation verifying contract mismatch"
     );
     let expected: Address = expected_node
         .parse()
@@ -128,5 +138,72 @@ pub(crate) fn check_c1_keyshare_commitments(
     C1CommitmentAudit {
         mismatched,
         missing_proof,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::signers::local::PrivateKeySigner;
+    use e3_events::{DkgFoldAggCommits, DkgFoldAttestationPayload};
+
+    fn signed_attestation() -> (SignedDkgFoldAttestation, PrivateKeySigner) {
+        let signer: PrivateKeySigner =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .expect("test signer");
+        let payload = DkgFoldAttestationPayload {
+            e3_id: E3id::new("7", 1),
+            registry: Address::repeat_byte(0x11),
+            verifying_contract: Address::repeat_byte(0x22),
+            party_id: 3,
+            agg_commits: DkgFoldAggCommits {
+                sk_agg_commit: [1; 32],
+                esm_agg_commit: [2; 32],
+            },
+        };
+        (
+            SignedDkgFoldAttestation::sign(payload, &signer).expect("sign attestation"),
+            signer,
+        )
+    }
+
+    fn verify_with_context(expected_context: DkgFoldAttestationContext) -> Result<()> {
+        let (attestation, signer) = signed_attestation();
+        verify_dkg_fold_attestation(
+            &attestation.payload.e3_id,
+            attestation.payload.party_id,
+            &Proof::new(
+                CircuitName::NodeFold,
+                ArcBytes::from_bytes(&[1]),
+                ArcBytes::from_bytes(&[2]),
+            ),
+            &attestation,
+            expected_context,
+            &signer.address().to_string(),
+            3,
+            3,
+            1,
+        )
+    }
+
+    #[test]
+    fn rejects_attestation_for_another_registry() {
+        let err = verify_with_context(DkgFoldAttestationContext {
+            registry: Address::repeat_byte(0x33),
+            verifying_contract: Address::repeat_byte(0x22),
+        })
+        .expect_err("registry mismatch must fail");
+        assert!(err.to_string().contains("registry mismatch"));
+    }
+
+    #[test]
+    fn rejects_attestation_for_another_verifier() {
+        let err = verify_with_context(DkgFoldAttestationContext {
+            registry: Address::repeat_byte(0x11),
+            verifying_contract: Address::repeat_byte(0x44),
+        })
+        .expect_err("verifier mismatch must fail");
+        assert!(err.to_string().contains("verifying contract mismatch"));
     }
 }

@@ -7,10 +7,14 @@ import * as path from "path";
 
 import {
   SNAPSHOT_DIR,
+  type StandardCompilerInput,
   type StorageSnapshot,
   UPGRADEABLE_CONTRACTS,
+  compilerInputPath,
+  compilerInputSha256,
   diffLayouts,
   findCurrentLayout,
+  sha256,
 } from "./storageLayouts";
 
 async function main(): Promise<void> {
@@ -30,7 +34,7 @@ async function main(): Promise<void> {
       fs.readFileSync(snapshotPath, "utf8"),
     ) as StorageSnapshot;
     if (
-      snapshot._format !== "interfold-storage-layout-v1" ||
+      snapshot._format !== "interfold-storage-layout-v2" ||
       snapshot.contract !== contract ||
       snapshot.source !== source
     ) {
@@ -40,7 +44,50 @@ async function main(): Promise<void> {
     }
 
     const candidate = findCurrentLayout(source, contract);
-    const errors = diffLayouts(contract, snapshot, candidate.layout);
+    const errors = diffLayouts(
+      contract,
+      snapshot,
+      candidate.layout,
+      snapshot.metadata,
+      candidate.metadata,
+    );
+    const inputPath = compilerInputPath(snapshot.baseline.compilerInputSha256);
+    if (!fs.existsSync(inputPath)) {
+      errors.push(`${contract}: archived compiler input is missing.`);
+    } else {
+      const archivedInput = JSON.parse(
+        fs.readFileSync(inputPath, "utf8"),
+      ) as StandardCompilerInput;
+      if (
+        compilerInputSha256(archivedInput) !==
+        snapshot.baseline.compilerInputSha256
+      ) {
+        errors.push(`${contract}: archived compiler input hash is invalid.`);
+      }
+      const archivedSource =
+        archivedInput.sources[source] ??
+        archivedInput.sources[`project/${source}`];
+      if (
+        !archivedSource ||
+        sha256(archivedSource.content) !== snapshot.baseline.sourceSha256
+      ) {
+        errors.push(
+          `${contract}: archived compiler input does not contain the baseline source.`,
+        );
+      }
+      if (
+        archivedInput.settings.evmVersion !== snapshot.baseline.evmVersion ||
+        (archivedInput.settings.optimizer?.runs ?? 0) !==
+          snapshot.baseline.optimizerRuns
+      ) {
+        errors.push(
+          `${contract}: archived compiler settings differ from the baseline metadata.`,
+        );
+      }
+    }
+    if (!/^[0-9a-f]{64}$/.test(snapshot.baseline.dependencyLockSha256)) {
+      errors.push(`${contract}: dependency lock fingerprint is invalid.`);
+    }
     if (
       candidate.compiler !== snapshot.baseline.compiler ||
       candidate.evmVersion !== snapshot.baseline.evmVersion ||

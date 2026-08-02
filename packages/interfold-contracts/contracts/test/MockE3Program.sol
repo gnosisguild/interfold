@@ -23,9 +23,18 @@ contract MockE3Program is IE3Program {
     IInterfold public interfold;
 
     mapping(uint256 e3Id => bytes32 paramsHash) public paramsHashes;
+    mapping(uint256 e3Id => bytes32 commitment)
+        public expectedCiphertextCommitments;
 
     function setInterfold(IInterfold _interfold) external {
         interfold = _interfold;
+    }
+
+    function setExpectedCiphertextCommitment(
+        uint256 e3Id,
+        bytes32 commitment
+    ) external {
+        expectedCiphertextCommitments[e3Id] = commitment;
     }
 
     function validate(
@@ -82,11 +91,15 @@ contract MockE3Program is IE3Program {
     }
 
     function verify(
-        uint256,
+        uint256 e3Id,
         bytes32,
+        bytes32 ciphertextCommitment,
         bytes memory data
-    ) external pure returns (bool success) {
-        // data parameter available for custom validation logic
-        if (data.length > 0) success = true;
+    ) external view returns (bool success) {
+        bytes32 expected = expectedCiphertextCommitments[e3Id];
+        if (expected != bytes32(0) && ciphertextCommitment != expected) {
+            return false;
+        }
+        return data.length > 0;
     }
 }
