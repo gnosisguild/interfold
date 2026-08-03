@@ -33,6 +33,26 @@ use std::time::Duration;
 /// as one that reverts: no census, which the caller turns into a hard error.
 const CENSUS_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Depth of the eligibility Merkle tree. Hardcoded in the Noir circuit and mirrored by
+/// `MERKLE_TREE_MAX_DEPTH` in `@crisp-e3/sdk`.
+const MERKLE_TREE_MAX_DEPTH: u32 = 20;
+
+/// Largest census this server will accept from a requester.
+///
+/// This is the tree's own capacity, not a tuning knob: the circuit verifies Merkle paths of exactly
+/// `MERKLE_TREE_MAX_DEPTH`, so an electorate above `2^depth` produces proofs it cannot check. A
+/// larger census is therefore always a round nobody can vote in.
+///
+/// It is also the trust boundary on this input. The census is chosen by the requester, and every
+/// downstream step — dedup, per-address Poseidon hashing, tree construction — is linear in its
+/// length, so an unbounded array is an unbounded amount of server work.
+const MAX_CENSUS_SIZE: usize = 1 << MERKLE_TREE_MAX_DEPTH;
+
+/// Whether a census is too large for the eligibility tree to hold.
+fn exceeds_census_capacity(len: usize) -> bool {
+    len > MAX_CENSUS_SIZE
+}
+
 sol! {
     #[sol(rpc)]
     contract ICensusProvider {
@@ -98,6 +118,20 @@ pub async fn try_fetch_requester_census(
             return None;
         }
     };
+
+    // Checked before dedup and hashing: those are what actually scale with the array, so the
+    // rejection has to happen before any of that work is done.
+    if exceeds_census_capacity(census.len()) {
+        log::warn!(
+            "[e3_id={}] Requester {} returned {} census addresses, above the {} the eligibility \
+             tree can hold; refusing rather than building a round that cannot be voted in",
+            e3_id,
+            requester,
+            census.len(),
+            MAX_CENSUS_SIZE
+        );
+        return None;
+    }
 
     let Some(sanitized) = sanitize_census(census) else {
         log::warn!(
@@ -173,5 +207,27 @@ mod tests {
     #[test]
     fn census_of_only_zero_addresses_is_rejected() {
         assert_eq!(sanitize_census(vec![Address::ZERO, Address::ZERO]), None);
+    }
+
+    #[test]
+    fn census_capacity_matches_the_tree_depth() {
+        // Pinned so raising the circuit's depth without revisiting this cap is a test failure
+        // rather than a silently under-sized electorate.
+        assert_eq!(MAX_CENSUS_SIZE, 1_048_576);
+        assert_eq!(MAX_CENSUS_SIZE, 2usize.pow(MERKLE_TREE_MAX_DEPTH));
+    }
+
+    #[test]
+    fn a_census_up_to_tree_capacity_is_accepted() {
+        assert!(!exceeds_census_capacity(0));
+        assert!(!exceeds_census_capacity(1));
+        assert!(!exceeds_census_capacity(MAX_CENSUS_SIZE - 1));
+        assert!(!exceeds_census_capacity(MAX_CENSUS_SIZE));
+    }
+
+    #[test]
+    fn a_census_above_tree_capacity_is_rejected() {
+        assert!(exceeds_census_capacity(MAX_CENSUS_SIZE + 1));
+        assert!(exceeds_census_capacity(usize::MAX));
     }
 }
