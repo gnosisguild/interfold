@@ -12,6 +12,8 @@ const CONSTANT = 0
 const CUSTOM = 1
 const TOKEN = 0
 const BY_REQUESTER = 1
+/// Mirrors `MAX_VOTE_OPTIONS` in CRISPProgram.sol, which is not public.
+const MAX_VOTE_OPTIONS = 10
 
 /// `censusMode` says where a round's electorate comes from, and it is declared rather than inferred.
 ///
@@ -25,9 +27,9 @@ describe('CRISPProgram census mode', function () {
   let crispProgram: CRISPProgram
   let owner: string
 
-  const encode = (creditMode: number, censusMode?: number) => {
+  const encode = (creditMode: number, censusMode?: number, numOptions = 2) => {
     const types = ['address', 'uint256', 'uint256', 'uint256', 'uint256']
-    const values: unknown[] = [ethers.ZeroAddress, 0, 2, creditMode, 1]
+    const values: unknown[] = [ethers.ZeroAddress, 0, numOptions, creditMode, 1]
     if (censusMode !== undefined) {
       types.push('uint256')
       values.push(censusMode)
@@ -76,5 +78,24 @@ describe('CRISPProgram census mode', function () {
   /// round than to have it silently treated as a token vote.
   it('rejects an unknown census mode', async () => {
     await expect(validate(6, encode(CONSTANT, 2))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
+  })
+
+  /// The circuit asserts `num_options <= MAX_OPTIONS`, so a round above the cap accepts no ballot:
+  /// every vote proof fails. Refuse it at request time rather than storing a round nobody can
+  /// vote in. Mirrors `MAX_VOTE_OPTIONS` in CRISPProgram.sol, which is not public.
+  it('rejects more options than the circuit allows', async () => {
+    await expect(validate(7, encode(CONSTANT, TOKEN, MAX_VOTE_OPTIONS + 1))).to.be.revertedWithCustomError(
+      crispProgram,
+      'InvalidNumOptions',
+    )
+  })
+
+  it('accepts a round at exactly MAX_VOTE_OPTIONS options', async () => {
+    await validate(8, encode(CONSTANT, TOKEN, MAX_VOTE_OPTIONS))
+    expect(await crispProgram.censusModeOf(8)).to.equal(TOKEN)
+  })
+
+  it('rejects fewer than two options', async () => {
+    await expect(validate(9, encode(CONSTANT, TOKEN, 1))).to.be.revertedWithCustomError(crispProgram, 'InvalidNumOptions')
   })
 })

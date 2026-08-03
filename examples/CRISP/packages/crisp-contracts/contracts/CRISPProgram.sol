@@ -207,7 +207,9 @@ contract CRISPProgram is IE3Program, Ownable {
         customParams,
         (address, uint256, uint256, CreditMode, uint256, uint256)
       );
-      if (numOptions < 2) revert InvalidNumOptions();
+      // The circuit asserts `num_options <= MAX_OPTIONS`, so a round configured above it accepts no
+      // ballot at all. Reject at request time rather than stranding a round nobody can vote in.
+      if (numOptions < 2 || numOptions > MAX_VOTE_OPTIONS) revert InvalidNumOptions();
       if (rawCensusMode > uint256(type(CensusMode).max)) revert InvalidCensusMode();
 
       // Rejected here rather than by the coordinator, so a combination that can never work costs
