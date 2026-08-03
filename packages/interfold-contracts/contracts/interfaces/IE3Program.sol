@@ -31,11 +31,13 @@ interface IE3Program {
     /// @dev This function is called by the Interfold contract when ciphertext output is published
     /// @param e3Id ID of the E3 computation
     /// @param ciphertextOutputHash The keccak256 hash of output data to be verified
-    /// @param proof ABI encoded data to verify the ciphertextOutputHash
+    /// @param ciphertextCommitment The SAFE commitment authenticated by the proof
+    /// @param proof ABI encoded data that verifies the output and commitment
     /// @return success Whether the output data is valid
     function verify(
         uint256 e3Id,
         bytes32 ciphertextOutputHash,
+        bytes32 ciphertextCommitment,
         bytes memory proof
     ) external returns (bool success);
 

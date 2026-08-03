@@ -132,7 +132,7 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-pub use effects::{E3RouterBuilder, E3RouterSnapshot};
+pub use effects::{load_dkg_fold_attestation_contexts, E3RouterBuilder, E3RouterSnapshot};
 
 #[cfg(test)]
 #[path = "tests.rs"]

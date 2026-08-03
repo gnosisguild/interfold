@@ -41,17 +41,19 @@ Look for:
 ### Common causes
 
 **Low ticket count.** Selection probability scales linearly with tickets. If the network has 1000
-total tickets and you hold 10, you'll be selected ~1% of the time. Add more tickets:
+total tickets and you hold 10, you'll be selected ~1% of the time. The bond owner can top up:
 
 ```bash
-interfold ciphernode tickets buy --amount 100
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
 **Bond dropped below minimum.** If you were slashed, your bond may have fallen below
-`licenseRequiredBond`. Top it up:
+`licenseRequiredBond`. The bond owner can top it up:
 
 ```bash
-interfold ciphernode license bond --amount 100
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR bond --amount 100
 ```
 
 **Inactive status.** Both bond AND tickets must be above their minimums for `isActive` to be `true`.

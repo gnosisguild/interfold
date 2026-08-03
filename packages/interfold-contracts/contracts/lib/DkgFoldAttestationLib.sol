@@ -15,9 +15,9 @@ import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      `crates/events/src/interfold_event/dkg_fold_attestation.rs`.
  *
  *      Domain binds `chainId` and `verifyingContract` (the
- *      `DkgFoldAttestationVerifier` address); the struct binds `e3Id`,
- *      `partyId`, and the two NodeFold commitments. Signatures cannot be
- *      replayed across chains, verifier deployments, or E3s.
+ *      `DkgFoldAttestationVerifier` address); the struct binds the registry,
+ *      `e3Id`, `partyId`, and the two NodeFold commitments. Signatures cannot
+ *      be replayed across chains, verifier deployments, registries, or E3s.
  */
 library DkgFoldAttestationLib {
     /// @dev `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -33,11 +33,11 @@ library DkgFoldAttestationLib {
     /// @dev `keccak256("1")`
     bytes32 public constant DOMAIN_VERSION_HASH = keccak256(bytes("1"));
 
-    /// @dev `keccak256("DkgFoldAttestation(uint256 e3Id,uint256 partyId,
-    /// bytes32 skAggCommit,bytes32 esmAggCommit)")`
+    /// @dev `keccak256("DkgFoldAttestation(address registry,uint256 e3Id,
+    /// uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)")`
     bytes32 public constant TYPEHASH =
         keccak256(
-            "DkgFoldAttestation(uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)"
+            "DkgFoldAttestation(address registry,uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)"
         );
 
     /// @notice One node's signed fold output.
@@ -73,6 +73,7 @@ library DkgFoldAttestationLib {
 
     /// @notice `hashStruct(DkgFoldAttestation)` per EIP-712.
     function structHash(
+        address registry,
         uint256 e3Id,
         uint256 partyId,
         bytes32 skAggCommit,
@@ -80,7 +81,14 @@ library DkgFoldAttestationLib {
     ) internal pure returns (bytes32) {
         return
             keccak256(
-                abi.encode(TYPEHASH, e3Id, partyId, skAggCommit, esmAggCommit)
+                abi.encode(
+                    TYPEHASH,
+                    registry,
+                    e3Id,
+                    partyId,
+                    skAggCommit,
+                    esmAggCommit
+                )
             );
     }
 
@@ -88,6 +96,7 @@ library DkgFoldAttestationLib {
     function typedDataHash(
         uint256 chainId,
         address verifyingContract,
+        address registry,
         uint256 e3Id,
         uint256 partyId,
         bytes32 skAggCommit,
@@ -98,7 +107,13 @@ library DkgFoldAttestationLib {
                 abi.encodePacked(
                     "\x19\x01",
                     domainSeparator(chainId, verifyingContract),
-                    structHash(e3Id, partyId, skAggCommit, esmAggCommit)
+                    structHash(
+                        registry,
+                        e3Id,
+                        partyId,
+                        skAggCommit,
+                        esmAggCommit
+                    )
                 )
             );
     }
@@ -107,12 +122,14 @@ library DkgFoldAttestationLib {
     function recoverSigner(
         uint256 chainId,
         address verifyingContract,
+        address registry,
         uint256 e3Id,
         Attestation memory attestation
     ) internal pure returns (address) {
         bytes32 digest = typedDataHash(
             chainId,
             verifyingContract,
+            registry,
             e3Id,
             attestation.partyId,
             attestation.skAggCommit,

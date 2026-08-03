@@ -33,6 +33,10 @@ impl StoreKeys {
         format!("//meta/{e3_id}")
     }
 
+    pub fn dkg_fold_attestation_context(e3_id: &E3id) -> String {
+        format!("//dkg_fold_attestation_context/{e3_id}")
+    }
+
     pub fn context(e3_id: &E3id) -> String {
         format!("//context/{e3_id}")
     }

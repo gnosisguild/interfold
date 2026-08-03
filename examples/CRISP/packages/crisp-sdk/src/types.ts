@@ -76,6 +76,16 @@ export type MerkleProof = {
 export type Vote = number[]
 
 /**
+ * Type representing a decoded tally: one total per option.
+ *
+ * @remarks
+ * Uses `bigint` because an aggregated tally coefficient is a sum over all ballots,
+ * so a total can exceed `Number.MAX_SAFE_INTEGER`. This matches the `BigUint` the
+ * CRISP server returns and the `uint256` the CRISP contract returns.
+ */
+export type TallyResult = bigint[]
+
+/**
  * Type representing a vector with coefficients
  */
 export type Polynomial = {

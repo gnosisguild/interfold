@@ -17,6 +17,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
+import { FailurePayerLib } from "../lib/FailurePayerLib.sol";
 
 /**
  * @title SlashingManager
@@ -353,6 +354,12 @@ contract SlashingManager is
             require(
                 policy.failureReason <
                     uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
+                InvalidPolicy()
+            );
+            require(
+                FailurePayerLib.getFailurePayer(
+                    IInterfold.FailureReason(policy.failureReason)
+                ) == IE3RefundManager.FailurePayer.Ciphernodes,
                 InvalidPolicy()
             );
         }
@@ -759,6 +766,7 @@ contract SlashingManager is
         E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
+        uint256 actualLicenseSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
@@ -770,7 +778,7 @@ contract SlashingManager is
         }
 
         if (p.licenseAmount > 0) {
-            dependencies.bonding.slashLicenseBond(
+            actualLicenseSlashed = dependencies.bonding.slashLicenseBond(
                 p.operator,
                 p.licenseAmount,
                 p.reason
@@ -854,8 +862,8 @@ contract SlashingManager is
             p.e3Id,
             p.operator,
             p.reason,
-            p.ticketAmount,
-            p.licenseAmount,
+            actualTicketSlashed,
+            actualLicenseSlashed,
             true,
             lane
         );
@@ -909,16 +917,20 @@ contract SlashingManager is
     // ======================
 
     /// @inheritdoc ISlashingManager
-    /// @dev Only the accused operator may appeal (no delegate support). Consider an `appealDelegate`
-    ///      mapping for production to handle lost-key or banned-operator scenarios.
-    ///      Appeals are now permitted for proof-verified (Lane A) proposals when their
+    /// @dev Appeals are permitted for proof-verified (Lane A) proposals when their
     ///      policy is configured with a non-zero `appealWindow`.
     function fileAppeal(uint256 proposalId, string calldata evidence) external {
         require(proposalId < totalProposals, InvalidProposal());
         SlashProposal storage p = _proposals[proposalId];
 
-        // Only the accused can appeal
-        require(msg.sender == p.operator, Unauthorized());
+        // The accused operator or the owner whose collateral is at risk may appeal.
+        address bondOwner = _e3Dependencies[p.e3Id].bonding.bondOwnerOf(
+            p.operator
+        );
+        require(
+            msg.sender == p.operator || msg.sender == bondOwner,
+            Unauthorized()
+        );
         // Already-executed slashes (Lane A with appealWindow == 0) cannot be appealed.
         require(!p.executed, AlreadyExecuted());
         // Only within the appeal window

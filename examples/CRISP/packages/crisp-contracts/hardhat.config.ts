@@ -126,6 +126,7 @@ const config: HardhatUserConfig = {
       '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol',
       '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol',
       '@interfold/contracts/contracts/Interfold.sol',
+      '@interfold/contracts/contracts/lib/InterfoldLifecycle.sol',
       '@interfold/contracts/contracts/lib/InterfoldPricing.sol',
       '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
       '@interfold/contracts/contracts/registry/BondingRegistry.sol',

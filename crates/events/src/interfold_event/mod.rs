@@ -9,6 +9,7 @@ mod accusation_vote;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
+mod bond_owner_set;
 mod ciphernode_added;
 mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
@@ -30,6 +31,7 @@ mod decryption_share_proofs;
 mod decryptionshare_created;
 mod die;
 mod dkg_fold_attestation;
+mod dkg_fold_attestation_context_established;
 mod dkg_inner_proof_ready;
 mod dkg_recursive_aggregation_complete;
 mod e3_failed;
@@ -86,6 +88,7 @@ pub use accusation_vote::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
+pub use bond_owner_set::*;
 pub use ciphernode_added::*;
 pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
@@ -107,6 +110,7 @@ pub use decryption_share_proofs::*;
 pub use decryptionshare_created::*;
 pub use die::*;
 pub use dkg_fold_attestation::*;
+pub use dkg_fold_attestation_context_established::*;
 pub use dkg_inner_proof_ready::*;
 pub use dkg_recursive_aggregation_complete::*;
 pub use e3_failed::*;
@@ -341,6 +345,8 @@ pub enum InterfoldEventData {
     CommitteeActivationChanged(CommitteeActivationChanged),
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
+    BondOwnerSet(BondOwnerSet),
+    DkgFoldAttestationContextEstablished(DkgFoldAttestationContextEstablished),
 }
 
 impl InterfoldEventData {
@@ -661,6 +667,9 @@ impl InterfoldEventData {
             InterfoldEventData::CommitteeActivationChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
+            InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
+                Some(data.e3_id.clone())
+            }
             _ => None,
         }
     }
@@ -769,7 +778,9 @@ impl_event_types!(
     CommitteeFormationFailed,
     CommitteeActivationChanged,
     CommitteeViabilityUpdated,
-    EvmLogObserved
+    EvmLogObserved,
+    BondOwnerSet,
+    DkgFoldAttestationContextEstablished
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

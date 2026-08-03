@@ -171,6 +171,12 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "AssetsQueuedForExit(address,uint256,uint256,uint64)",
         None,
     ),
+    EvmEventDefinition::new("BondOwnerSet", "BondOwnerSet(address,address)", None),
+    EvmEventDefinition::new(
+        "BondOwnerTransferProposed",
+        "BondOwnerTransferProposed(address,address,address)",
+        None,
+    ),
     EvmEventDefinition::new(
         "CiphernodeDeregistrationRequested",
         "CiphernodeDeregistrationRequested(address,uint64)",
@@ -350,6 +356,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "SortitionCommitteeFinalized",
         "SortitionCommitteeFinalized(uint256,address[],uint256[])",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
+        "DkgFoldAttestationContextEstablished",
+        "DkgFoldAttestationContextEstablished(uint256,address,address)",
         Some(1),
     ),
     EvmEventDefinition::new(

@@ -66,6 +66,7 @@ export const setupAndPublishCommittee = async (
       e3Id,
       pkCommitment,
       verifierAddress,
+      await registry.getAddress(),
     );
     committeeProof = fixture.proof;
     dkgAttestationBundle = fixture.bundle;

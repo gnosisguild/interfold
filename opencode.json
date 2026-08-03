@@ -1,0 +1,67 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "agent": {
+    "invariant-reviewer": {
+      "description": "Reviews a diff against agent/INVARIANTS.md and the relevant flow-trace docs. Use before pushing any change to contracts, circuits, or core crates.",
+      "mode": "subagent",
+      "prompt": "{file:agent/prompts/invariant-reviewer.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    }
+  },
+  "mcp": {
+    "interfold-docs": {
+      "type": "local",
+      "command": ["pnpm", "--filter", "@interfold/mcp", "exec", "tsx", "src/index.ts"],
+      "enabled": true,
+      "timeout": 15000
+    }
+  },
+  "permission": {
+    "read": {
+      "*": "allow",
+      "**/.env": "deny",
+      "**/.env.local": "deny",
+      "**/.env.*.local": "deny",
+      "**/*.secrets.json": "deny"
+    },
+    "skill": {
+      "*": "allow"
+    },
+    "bash": {
+      "pnpm build": "allow",
+      "pnpm build:*": "allow",
+      "pnpm test": "allow",
+      "pnpm test:*": "allow",
+      "pnpm rust:*": "allow",
+      "pnpm evm:*": "allow",
+      "pnpm sdk:*": "allow",
+      "pnpm noir:*": "allow",
+      "pnpm lint": "allow",
+      "pnpm format": "allow",
+      "pnpm format:*": "allow",
+      "pnpm check:*": "allow",
+      "pnpm generate:verifiers --check": "allow",
+      "cargo build *": "allow",
+      "cargo test *": "allow",
+      "cargo check *": "allow",
+      "cargo clippy *": "allow",
+      "cargo fmt *": "allow",
+      "cargo nextest *": "allow",
+      "cargo tree *": "allow",
+      "cargo metadata *": "allow",
+      "nargo test *": "allow",
+      "nargo check *": "allow",
+      "nargo fmt *": "allow",
+      "git status": "allow",
+      "git diff *": "allow",
+      "git log *": "allow",
+      "git show *": "allow",
+      "git blame *": "allow",
+      "git branch *": "allow",
+      "*": "ask"
+    }
+  }
+}

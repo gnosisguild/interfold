@@ -7,9 +7,8 @@
 //! Startup composition for the global ZK actor system.
 
 use actix::{Actor, Addr};
-use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
-use e3_events::{BusHandle, Committee, E3id};
+use e3_events::{BusHandle, Committee, DkgFoldAttestationContext, E3id};
 use e3_request::E3Meta;
 use std::collections::HashMap;
 
@@ -20,22 +19,25 @@ use crate::ZkBackend;
 
 /// Durable inputs needed by global proof-verification actors before EventStore replay begins.
 ///
-/// Both maps are projections of canonical protocol events. They are startup seeds, not separate
+/// These maps are projections of canonical protocol events. They are startup seeds, not separate
 /// authorities: live or replayed lifecycle events continue to update the actor caches.
 #[derive(Clone, Debug, Default)]
 pub struct ZkActorRecovery {
     finalized_committees: HashMap<E3id, Committee>,
     e3_metadata: HashMap<E3id, E3Meta>,
+    dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
 }
 
 impl ZkActorRecovery {
     pub fn new(
         finalized_committees: HashMap<E3id, Committee>,
         e3_metadata: HashMap<E3id, E3Meta>,
+        dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
     ) -> Self {
         Self {
             finalized_committees,
             e3_metadata,
+            dkg_fold_attestation_contexts,
         }
     }
 }
@@ -43,19 +45,20 @@ impl ZkActorRecovery {
 /// Setup all ZK-related actors.
 ///
 /// Requires a `ZkBackend` for proof generation/verification and a `PrivateKeySigner` for signing
-/// proofs. `dkg_fold_attestation_verifiers_by_chain` maps each enabled chain to its EIP-712
-/// verifying contract. `recovery` seeds global verifier context before EventStore replay.
+/// proofs. `dkg_fold_attestation_contexts_by_chain` is a fallback for synthetic runs that have no
+/// on-chain context event. Live and replayed context events carry each E3's registry and verifier.
 pub fn setup_zk_actors(
     bus: &BusHandle,
     backend: &ZkBackend,
     signer: PrivateKeySigner,
-    dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+    dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     recovery: ZkActorRecovery,
     proof_aggregation_enabled: bool,
 ) -> ZkActors {
     let ZkActorRecovery {
         finalized_committees,
         e3_metadata,
+        dkg_fold_attestation_contexts,
     } = recovery;
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
@@ -67,7 +70,8 @@ pub fn setup_zk_actors(
     let node_proof_aggregator = NodeProofAggregator::setup(
         bus,
         signer,
-        dkg_fold_attestation_verifiers_by_chain,
+        dkg_fold_attestation_contexts,
+        dkg_fold_attestation_contexts_by_chain,
         proof_aggregation_enabled,
     );
 

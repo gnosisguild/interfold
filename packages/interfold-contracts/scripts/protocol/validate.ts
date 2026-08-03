@@ -40,6 +40,16 @@ export async function actionValidate(): Promise<void> {
     deployment.slashingManager,
   );
 
+  for (const [label, address] of [
+    ["interfoldLifecycle", deployment.interfoldLifecycle],
+    ["interfoldPricing", deployment.interfoldPricing],
+  ] as const) {
+    if ((await ethers.provider.getCode(address)) === "0x") {
+      throw new Error(`${label}: no contract at ${address}`);
+    }
+    console.log(`  ok ${label}`);
+  }
+
   const checks: Array<[string, Promise<unknown>, unknown]> = [
     ["ticket.owner", ticket.owner(), config.safe],
     ["ticket.registry", ticket.registry(), deployment.bondingRegistryProxy],

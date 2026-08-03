@@ -8,7 +8,19 @@ pragma solidity ^0.8.27;
 import { IRiscZeroVerifier, Receipt } from "risc0/IRiscZeroVerifier.sol";
 
 contract MockRISC0Verifier is IRiscZeroVerifier {
-  function verify(bytes calldata seal, bytes32 imageId, bytes32 journalDigest) public view override {}
+  bytes32 public expectedJournalDigest;
+
+  error UnexpectedJournalDigest(bytes32 actual, bytes32 expected);
+
+  function setExpectedJournalDigest(bytes32 journalDigest) external {
+    expectedJournalDigest = journalDigest;
+  }
+
+  function verify(bytes calldata, bytes32, bytes32 journalDigest) public view override {
+    if (expectedJournalDigest != bytes32(0) && journalDigest != expectedJournalDigest) {
+      revert UnexpectedJournalDigest(journalDigest, expectedJournalDigest);
+    }
+  }
 
   function verifyIntegrity(Receipt calldata receipt) external view override {}
 }

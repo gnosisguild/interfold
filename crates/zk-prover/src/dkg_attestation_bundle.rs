@@ -91,13 +91,14 @@ mod tests {
         let payload = DkgFoldAttestationPayload {
             e3_id: E3id::new("31337", 1),
             verifying_contract: Address::from([0x22u8; 20]),
+            registry: Address::from([0x33u8; 20]),
             party_id: 2,
             agg_commits: DkgFoldAggCommits {
                 sk_agg_commit: [1u8; 32],
                 esm_agg_commit: [2u8; 32],
             },
         };
-        let signed = e3_events::SignedDkgFoldAttestation::sign(payload, &signer).unwrap();
+        let signed = e3_events::SignedDkgFoldAttestation::sign(payload.clone(), &signer).unwrap();
 
         let mut honest = BTreeSet::new();
         honest.insert(2);
@@ -110,8 +111,26 @@ mod tests {
         assert!(!encoded.is_empty());
 
         let typehash = keccak256(
-            "DkgFoldAttestation(uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)",
+            "DkgFoldAttestation(address registry,uint256 e3Id,uint256 partyId,bytes32 skAggCommit,bytes32 esmAggCommit)",
         );
-        assert_eq!(typehash.len(), 32);
+        assert_eq!(
+            <[u8; 32]>::from(typehash),
+            DkgFoldAttestationPayload::typehash()
+        );
+        let expected_struct_hash = keccak256(
+            (
+                <[u8; 32]>::from(typehash),
+                payload.registry,
+                U256::from(31337),
+                U256::from(payload.party_id),
+                payload.agg_commits.sk_agg_commit,
+                payload.agg_commits.esm_agg_commit,
+            )
+                .abi_encode(),
+        );
+        assert_eq!(
+            payload.struct_hash().unwrap(),
+            <[u8; 32]>::from(expected_struct_hash)
+        );
     }
 }

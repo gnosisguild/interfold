@@ -9,6 +9,10 @@ members buffer them, and the active aggregator combines them. The runtime first 
 finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
 non-expelled `party_id` in that normalized order.
 
+Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
+by the hot operator key and verified against the operator address snapshotted into the committee.
+The bond owner never signs DKG, key-publication, computation, or decryption messages.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation
@@ -638,25 +642,30 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
+  ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to confirm committee public key is still unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
+  └─ Calls contract.publishCommittee(
+       e3_id, publicKey, pkCommitment, proof, dkgAttestationBundle
+     )
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
-        │  │  publishCommittee(e3Id, publicKey, pkCommitment, proof) { │
+        │  │  publishCommittee(                                  │
+        │  │    e3Id, publicKey, pkCommitment, proof, attestations│
+        │  │  ) {                                                │
         │  │    1. require(stage == Finalized)                   │
         │  │    2. require(c.publicKey == 0) — publish once      │
         │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
         │  │    4. require(proof.length > 0)                    │
-        │  │       e3.pkVerifier.verify(                         │
+        │  │       require(e3.pkVerifier.verify(                │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
-        │  │       )                                             │
+        │  │       ), InvalidProof())                            │
         │  │       → BFV: `BfvPkVerifier` (DkgAggregator Honk)  │
         │  │         • M-34: immutable nodesFold / C5 VK hashes  │
         │  │           checked against publicInputs[0..1]        │
@@ -672,6 +681,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │       │  ┌─ Interfold.sol ────────────────────────┐  │
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
         │  │       │  │    require(stage==CommitteeFinalized) │  │
+        │  │       │  │    require(now <= dkgDeadline)       │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
@@ -682,6 +692,17 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
 ```
+
+The committee hash is `keccak256` over each ordered member's complete 20-byte address. Solidity,
+Rust, and Noir use the same unpadded bytes.
+
+Each E3 request freezes its registry and fold verifier. The `DkgFoldAttestationContextEstablished`
+event carries both addresses before DKG starts. Event replay restores them after a node restart.
+Each NodeFold signer includes the frozen registry in the EIP-712 attestation and uses the frozen
+verifier as the EIP-712 verifying contract. The aggregator checks both addresses before it accepts
+an attestation. The registry uses the same frozen verifier when the committee publishes its key. An
+attestation from another registry or verifier therefore fails even when both registries use the same
+E3 ID and committee.
 
 The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
 `e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
@@ -731,6 +752,10 @@ Data providers submit encrypted inputs:
 
 ### Ciphertext Output Publication
 
+The RISC Zero guest commits the output hash, SAFE commitment, parameter hash, and input root in that
+order. Boundless returns this journal to the support app. The app forwards the journal's commitment
+in the callback. CRISP reconstructs the same 528-byte serialization before it verifies the receipt.
+
 ```
 Compute provider runs computation on encrypted data:
 │
@@ -747,8 +772,8 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
 │  │    5. e3.ciphertextOutput = keccak256(output)           │
 │  │       e3.ciphertextCommitment = commitment               │
-│  │    6. e3Program.verify(e3Id, hash, proof)               │
-    │  │       → Program verifies computation correctness        │
+│  │    6. e3Program.verify(e3Id, hash, commitment, proof)   │
+    │  │       → Program binds the output and SAFE commitment    │
     │  │       → Must return true                                │
     │  │    7. stage = CiphertextReady                           │
     │  │    8. decryptionDeadline = now + decryptionWindow       │
@@ -761,6 +786,11 @@ Compute provider runs computation on encrypted data:
 ---
 
 ## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
+
+Before proof verification, the BFV wrapper requires every public input to use its canonical BN254
+field representation. Message coefficients must also fit exactly in 64 bits. This second check is
+defense in depth because the wrapper does not store the BFV plaintext modulus for each parameter
+set.
 
 ```
 InterfoldSolReader decodes CiphertextOutputPublished event
@@ -941,10 +971,10 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │         chainId, address(this), e3Id,               │
         │  │         committeeHash, ciphertextOutput,            │
         │  │         committeePublicKey                          │
-        │  │       )), then call decryptionVerifier.verify(      │
-         │  │         e3Id, decryptionDomain, keccak256(output),  │
-        │  │         committeeHash, proof                        │
-        │  │       )                                             │
+        │  │       )), then require decryptionVerifier.verify(   │
+        │  │         e3Id, decryptionDomain, keccak256(output),  │
+        │  │         committeeHash, ciphertextCommitment, proof  │
+        │  │       ) == true                                     │
         │  │       → C-03: final proof domain must match the      │
         │  │         domain already committed by every C6 leaf.  │
          │  │       → IF-003: e3Id resolves stored DKG anchors;  │
@@ -972,8 +1002,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       │  │     _pendingTreasury[treasury][token]  │  │
         │  │       │  │       += protocolAmount                │  │
         │  │       │  │     Emit TreasuryCredited(...)         │  │
-        │  │       │  │  5. Credit each node (no push):        │  │
-        │  │       │  │     _pendingRewards[e3Id][node]        │  │
+        │  │       │  │  5. Resolve each node's bond owner,    │  │
+        │  │       │  │     then credit it (no push):          │  │
+        │  │       │  │     _pendingRewards[e3Id][bondOwner]   │  │
         │  │       │  │       += perNode                       │  │
         │  │       │  │     Emit RewardCredited(...)           │  │
         │  │       │  │  6. Emit RewardsDistributed (compat)   │  │
@@ -987,7 +1018,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  }                                                  │
         │  │                                                     │
         │  │  // Funds are NOT pushed at publish-time.           │
-        │  │  // Recipients must call:                           │
+        │  │  // Bond-owner recipients must call:                │
         │  │  //   - interfold.claimReward(e3Id) or                │
         │  │  //     interfold.claimRewards(e3Ids[])               │
         │  │  //   - interfold.treasuryClaim(token)                │

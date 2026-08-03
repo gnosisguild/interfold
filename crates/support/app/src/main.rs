@@ -16,21 +16,28 @@ struct ProcessingResponse {
 }
 
 async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::Result<()> {
-    let (e3_id, status_label, ciphertext_len, proof_len) = match payload {
+    let (e3_id, status_label, ciphertext_len, commitment_len, proof_len) = match payload {
         WebhookPayload::Completed {
             e3_id,
             ciphertext,
+            ciphertext_commitment,
             proof,
-        } => (*e3_id, "completed", ciphertext.len(), proof.len()),
+        } => (
+            *e3_id,
+            "completed",
+            ciphertext.len(),
+            ciphertext_commitment.len(),
+            proof.len(),
+        ),
         WebhookPayload::Failed { e3_id, error } => {
             println!("call_webhook() - status: failed, error: {}", error);
-            (*e3_id, "failed", 0, 0)
+            (*e3_id, "failed", 0, 0, 0)
         }
     };
 
     println!(
-        "call_webhook() - status: {}, ciphertext len: {}, proof len: {}",
-        status_label, ciphertext_len, proof_len
+        "call_webhook() - status: {}, ciphertext len: {}, commitment len: {}, proof len: {}",
+        status_label, ciphertext_len, commitment_len, proof_len
     );
 
     println!("Sending webhook to: {}", callback_url);
@@ -56,20 +63,27 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
     Ok(())
 }
 
-async fn run_computation_async(fhe_inputs: FHEInputs) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+async fn run_computation_async(
+    fhe_inputs: FHEInputs,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     println!("running computation...");
     let result =
         tokio::task::spawn_blocking(move || e3_support_host::run_compute(fhe_inputs)).await?;
 
     match result {
         Ok((boundless_output, ciphertext)) => match boundless_output {
-            e3_support_host::BoundlessOutput::Success { seal, .. } => {
-                println!(
-                    "have result from computation! seal len: {}, ciphertext len: {}",
-                    seal.len(),
-                    ciphertext.len()
+            e3_support_host::BoundlessOutput::Success { result, seal, .. } => {
+                anyhow::ensure!(
+                    result.ciphertext_commitment.len() == 32,
+                    "Boundless journal ciphertext commitment must be 32 bytes"
                 );
-                Ok((seal, ciphertext))
+                println!(
+                    "have result from computation! seal len: {}, ciphertext len: {}, commitment len: {}",
+                    seal.len(),
+                    ciphertext.len(),
+                    result.ciphertext_commitment.len()
+                );
+                Ok((seal, ciphertext, result.ciphertext_commitment))
             }
             e3_support_host::BoundlessOutput::Error { error } => {
                 Err(anyhow::anyhow!("Boundless request failed: {}", error))
@@ -90,12 +104,13 @@ async fn process_computation_background(
     fhe_inputs: FHEInputs,
 ) -> anyhow::Result<()> {
     match run_computation_async(fhe_inputs).await {
-        Ok((proof, ciphertext)) => {
+        Ok((proof, ciphertext, ciphertext_commitment)) => {
             println!("computation finished!");
             println!("handling webhook delivery...");
             let payload = WebhookPayload::Completed {
                 e3_id,
                 ciphertext,
+                ciphertext_commitment,
                 proof,
             };
             call_webhook(callback_url, &payload).await?;

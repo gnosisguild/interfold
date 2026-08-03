@@ -26,30 +26,31 @@ availableTickets = floor(ticketTokenBalance / ticketPrice)
 
 ### Buy Tickets
 
-Deposit stablecoins to mint tickets:
+The bond owner approves the ticket wrapper and funds the operator:
 
 ```bash
-# Buy tickets worth 100 USDC
-interfold ciphernode tickets buy --amount 100
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR buy --amount 100
 ```
 
 This:
 
-1. Approves the ticket contract to spend your USDC (if needed)
-2. Deposits the stablecoin
-3. Mints equivalent tFOLD to your balance
+1. Pulls stablecoin from the bond owner
+2. Mints equivalent tFOLD to the operator address
+3. Re-evaluates the operator's active status
 
 ### Burn Tickets
 
-Withdraw the underlying stablecoin:
+The bond owner queues ticket collateral for withdrawal:
 
 ```bash
-# Burn tickets and withdraw 50 USDC worth
-interfold ciphernode tickets burn --amount 50
+interfold --config /path/to/owner.yaml ciphernode tickets \
+  --operator 0xOPERATOR burn --amount 25
 ```
 
 > Burning tickets takes effect immediately. Dropping below the minimum ticket balance makes you
-> inactive until you top up again.
+> inactive until the owner tops it up again. Underlying stablecoin is paid to the bond owner only
+> after the exit delay and `claimExitsFor`.
 
 ### Check Balance
 

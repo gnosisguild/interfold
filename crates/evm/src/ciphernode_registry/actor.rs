@@ -24,9 +24,10 @@ use alloy::{
 };
 use anyhow::Result;
 use e3_events::{
-    prelude::*, AggregatorChanged, BusHandle, CommitteeFinalizeRequested, E3RequestComplete, E3id,
-    EType, EffectsEnabled, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof,
-    PublicKeyAggregated, Shutdown, TicketGenerated, TicketId,
+    prelude::*, AggregatorChanged, BusHandle, CommitteeFinalizeRequested,
+    DkgFoldAttestationContextEstablished, E3RequestComplete, E3id, EType, EffectsEnabled,
+    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof, PublicKeyAggregated,
+    Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -59,6 +60,7 @@ pub struct CiphernodeRegistrySolWriter<P> {
     bus: BusHandle,
     effects_enabled: bool,
     active_aggregators: HashMap<E3id, bool>,
+    request_registries: HashMap<E3id, Address>,
     /// Session-local concurrency guard. On-chain preflight is the durable
     /// cross-restart idempotency boundary.
     submitting: HashSet<E3id>,
@@ -69,6 +71,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         bus: &BusHandle,
         provider: EthProvider<P>,
         contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
     ) -> Result<Self> {
         Ok(Self {
             provider,
@@ -76,19 +79,27 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             bus: bus.clone(),
             effects_enabled: false,
             active_aggregators: HashMap::new(),
+            request_registries,
             submitting: HashSet::new(),
         })
     }
 
-    pub fn attach(bus: &BusHandle, provider: EthProvider<P>, contract_address: Address) {
-        let addr = CiphernodeRegistrySolWriter::new(bus, provider, contract_address)
-            .expect("failed to create CiphernodeRegistrySolWriter")
-            .start();
+    pub fn attach(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
+    ) {
+        let addr =
+            CiphernodeRegistrySolWriter::new(bus, provider, contract_address, request_registries)
+                .expect("failed to create CiphernodeRegistrySolWriter")
+                .start();
 
         bus.subscribe_all(
             &[
                 EventType::EffectsEnabled,
                 EventType::AggregatorChanged,
+                EventType::DkgFoldAttestationContextEstablished,
                 EventType::PublicKeyAggregated,
                 EventType::CommitteeFinalizeRequested,
                 EventType::TicketGenerated,
@@ -112,10 +123,14 @@ impl CiphernodeRegistrySol {
         CiphernodeRegistrySolReader::setup(processor)
     }
 
-    pub fn attach_writer<P>(bus: &BusHandle, provider: EthProvider<P>, contract_address: Address)
-    where
+    pub fn attach_writer<P>(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
+    ) where
         P: Provider + WalletProvider + Clone + 'static,
     {
-        CiphernodeRegistrySolWriter::attach(bus, provider, contract_address);
+        CiphernodeRegistrySolWriter::attach(bus, provider, contract_address, request_registries);
     }
 }

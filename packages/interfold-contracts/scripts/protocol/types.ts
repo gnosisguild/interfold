@@ -84,6 +84,7 @@ export interface ProtocolDeployment {
   interfold: string;
   interfoldImplementation: string;
   interfoldProxyAdmin: string;
+  interfoldLifecycle: string;
   interfoldPricing: string;
   e3RefundManager: string;
   e3RefundManagerImplementation: string;
@@ -122,6 +123,7 @@ export interface ProtocolContracts {
   interfold: string;
   interfoldImplementation: string;
   interfoldProxyAdmin: string;
+  interfoldLifecycle: string;
   interfoldPricing: string;
   e3RefundManager: string;
   e3RefundManagerImplementation: string;

@@ -67,8 +67,9 @@ export const ciphernodeAdd = task(
       const connection = await hre.network.connect();
       const { ethers } = connection;
 
-      const [signer] = await ethers.getSigners();
-      console.log(`Registering ciphernode: ${signer.address}`);
+      const [bondOwner, operator] = await ethers.getSigners();
+      console.log(`Bond owner: ${bondOwner.address}`);
+      console.log(`Registering ciphernode: ${operator.address}`);
 
       const { deployAndSaveBondingRegistry } = await import(
         "../scripts/deployAndSave/bondingRegistry"
@@ -89,15 +90,15 @@ export const ciphernodeAdd = task(
       });
       const { mockStableToken } = await deployAndSaveMockStableToken({ hre });
 
-      const licenseToken = interfoldToken.connect(signer);
-      const ticketToken = interfoldTicketToken.connect(signer);
-      const usdcToken = mockStableToken.connect(signer);
-      const bondingRegistryConnected = bondingRegistry.connect(signer);
+      const licenseToken = interfoldToken.connect(bondOwner);
+      const ticketToken = interfoldTicketToken.connect(bondOwner);
+      const usdcToken = mockStableToken.connect(bondOwner);
+      const bondingRegistryConnected = bondingRegistry.connect(bondOwner);
 
       try {
         console.log("Step 1: Checking balances...");
-        const foldBalance = await licenseToken.balanceOf(signer.address);
-        const usdcBalance = await usdcToken.balanceOf(signer.address);
+        const foldBalance = await licenseToken.balanceOf(bondOwner.address);
+        const usdcBalance = await usdcToken.balanceOf(bondOwner.address);
 
         console.log(`FOLD balance: ${ethers.formatEther(foldBalance)}`);
         console.log(`USDC balance: ${ethers.formatUnits(usdcBalance, 6)}`);
@@ -126,7 +127,13 @@ export const ciphernodeAdd = task(
         console.log("FOLD approved");
 
         console.log("Step 3: Bonding license...");
-        const bondTx = await bondingRegistryConnected.bondLicense(
+        await (
+          await bondingRegistry
+            .connect(operator)
+            .setBondOwner(bondOwner.address)
+        ).wait();
+        const bondTx = await bondingRegistryConnected.bondLicenseFor(
+          operator.address,
           licenseBondAmountBigInt,
         );
         await bondTx.wait();
@@ -135,9 +142,13 @@ export const ciphernodeAdd = task(
         );
 
         console.log("Step 4: Registering as operator...");
-        const isRegistered = await bondingRegistry.isRegistered(signer.address);
+        const isRegistered = await bondingRegistry.isRegistered(
+          operator.address,
+        );
         if (!isRegistered) {
-          const registerTx = await bondingRegistryConnected.registerOperator();
+          const registerTx = await bondingRegistryConnected.registerOperatorFor(
+            operator.address,
+          );
           await registerTx.wait();
           console.log(
             "Operator registered (automatically added to CiphernodeRegistry)",
@@ -155,23 +166,25 @@ export const ciphernodeAdd = task(
         console.log("USDC approved");
 
         console.log("Step 6: Adding ticket balance...");
-        const ticketTx =
-          await bondingRegistryConnected.addTicketBalance(ticketAmountBigInt);
+        const ticketTx = await bondingRegistryConnected.addTicketBalanceFor(
+          operator.address,
+          ticketAmountBigInt,
+        );
         await ticketTx.wait();
         console.log(
           `Ticket balance added: ${ethers.formatUnits(ticketAmountBigInt, 6)} USDC worth`,
         );
 
-        const isActive = await bondingRegistry.isActive(signer.address);
+        const isActive = await bondingRegistry.isActive(operator.address);
         const licenseBond = await bondingRegistry.getLicenseBond(
-          signer.address,
+          operator.address,
         );
         const ticketBalance = await bondingRegistry.getTicketBalance(
-          signer.address,
+          operator.address,
         );
 
         console.log("\n=== Registration Complete ===");
-        console.log(`Ciphernode: ${signer.address}`);
+        console.log(`Ciphernode: ${operator.address}`);
         console.log(`Registered: ${isRegistered}`);
         console.log(`Active: ${isActive}`);
         console.log(`License Bond: ${ethers.formatEther(licenseBond)} FOLD`);
@@ -195,26 +208,28 @@ export const ciphernodeRemove = task(
       const connection = await hre.network.connect();
       const { ethers } = connection;
 
-      const [signer] = await ethers.getSigners();
-      console.log(`Deregistering ciphernode: ${signer.address}`);
+      const [bondOwner, operator] = await ethers.getSigners();
+      console.log(`Deregistering ciphernode: ${operator.address}`);
 
       const { deployAndSaveBondingRegistry } = await import(
         "../scripts/deployAndSave/bondingRegistry"
       );
       const { bondingRegistry } = await deployAndSaveBondingRegistry({ hre });
 
-      const bondingRegistryConnected = bondingRegistry.connect(signer);
+      const bondingRegistryConnected = bondingRegistry.connect(bondOwner);
 
       try {
         console.log(
           "Deregistering operator (will also remove from CiphernodeRegistry)...",
         );
-        const tx = await bondingRegistryConnected.deregisterOperator();
+        const tx = await bondingRegistryConnected.deregisterOperatorFor(
+          operator.address,
+        );
         await tx.wait();
 
-        console.log(`Ciphernode ${signer.address} deregistered`);
+        console.log(`Ciphernode ${operator.address} deregistered`);
         console.log(
-          "Note: Funds are now in exit queue. Use claimExits() after the exit delay period.",
+          "Note: Funds are now in the exit queue. The bond owner can call claimExitsFor() after the delay.",
         );
       } catch (error) {
         console.error("Deregistration failed:", error);
@@ -417,7 +432,7 @@ export const ciphernodeAdminAdd = task(
         const licenseBondWei = ethers.parseEther(licenseBondAmount);
         const ticketAmountWei = ethers.parseUnits(ticketAmount, 6);
 
-        console.log("Step 1: Minting and transferring FOLD to ciphernode...");
+        console.log("Step 1: Minting FOLD to the bond owner...");
 
         const foldTx = await interfoldTokenConnected.mint(
           adminWallet.address,
@@ -425,13 +440,6 @@ export const ciphernodeAdminAdd = task(
           ethers.encodeBytes32String("admin-cn-reg"),
         );
         await foldTx.wait();
-
-        const transferTx = await interfoldTokenConnected.transfer(
-          ciphernodeAddress,
-          licenseBondWei,
-        );
-        await transferTx.wait();
-        console.log(`${licenseBondAmount} FOLD transferred to ciphernode`);
 
         console.log("Step 2: Minting USDC to admin...");
         const usdcTx = await mockUSDCConnected.mint(
@@ -442,7 +450,7 @@ export const ciphernodeAdminAdd = task(
         console.log(`${ticketAmount} USDC minted to admin`);
 
         console.log(
-          "Step 3: Impersonating ciphernode for license operations...",
+          "Step 3: Impersonating ciphernode to authorize the bond owner...",
         );
         const impersonationRpc = await resolveImpersonationRpc(
           provider,
@@ -455,31 +463,37 @@ export const ciphernodeAdminAdd = task(
         ]);
 
         const ciphernodeSigner = await ethers.getSigner(ciphernodeAddress);
-        const interfoldTokenAsCiphernode =
-          interfoldToken.connect(ciphernodeSigner);
         const bondingRegistryAsCiphernode =
           bondingRegistry.connect(ciphernodeSigner);
 
-        const approveTx = await interfoldTokenAsCiphernode.approve(
+        const ownerTx = await bondingRegistryAsCiphernode.setBondOwner(
+          adminWallet.address,
+        );
+        await ownerTx.wait();
+        await provider.send(impersonationRpc.stopImpersonating, [
+          ciphernodeAddress,
+        ]);
+
+        const approveTx = await interfoldTokenConnected.approve(
           await bondingRegistry.getAddress(),
           licenseBondWei,
         );
         await approveTx.wait();
 
-        const bondTx =
-          await bondingRegistryAsCiphernode.bondLicense(licenseBondWei);
+        const bondingRegistryAsOwner = bondingRegistry.connect(adminWallet);
+        const bondTx = await bondingRegistryAsOwner.bondLicenseFor(
+          ciphernodeAddress,
+          licenseBondWei,
+        );
         await bondTx.wait();
         console.log(`License bonded: ${licenseBondAmount} FOLD`);
 
-        const registerTx = await bondingRegistryAsCiphernode.registerOperator();
+        const registerTx =
+          await bondingRegistryAsOwner.registerOperatorFor(ciphernodeAddress);
         await registerTx.wait();
         console.log(
           "Operator registered (automatically added to CiphernodeRegistry)",
         );
-
-        await provider.send(impersonationRpc.stopImpersonating, [
-          ciphernodeAddress,
-        ]);
 
         console.log("Step 4: Adding ticket balance via admin...");
 
@@ -489,37 +503,18 @@ export const ciphernodeAdminAdd = task(
         );
         await approveUsdcTx.wait();
 
-        await provider.send(impersonationRpc.impersonate, [ciphernodeAddress]);
-        await provider.send(impersonationRpc.setBalance, [
-          ciphernodeAddress,
-          "0x1000000000000000000000",
-        ]);
-
-        const ciphernodeSigner2 = await ethers.getSigner(ciphernodeAddress);
-        const bondingRegistryAsCiphernode2 =
-          bondingRegistry.connect(ciphernodeSigner2);
-
-        const usdcTransferTx = await mockUSDCConnected.transfer(
-          ciphernodeAddress,
-          ticketAmountWei,
-        );
-        await usdcTransferTx.wait();
-
-        const mockUSDCAsCiphernode = mockUSDC.connect(ciphernodeSigner2);
-        const approveUsdcAsCiphernodeTx = await mockUSDCAsCiphernode.approve(
+        const approveUsdcAsOwnerTx = await mockUSDCConnected.approve(
           ticketTokenAddress,
           ticketAmountWei,
         );
-        await approveUsdcAsCiphernodeTx.wait();
+        await approveUsdcAsOwnerTx.wait();
 
-        const addTicketTx =
-          await bondingRegistryAsCiphernode2.addTicketBalance(ticketAmountWei);
+        const addTicketTx = await bondingRegistryAsOwner.addTicketBalanceFor(
+          ciphernodeAddress,
+          ticketAmountWei,
+        );
         await addTicketTx.wait();
         console.log(`Ticket balance added: ${ticketAmount} USDC worth`);
-
-        await provider.send(impersonationRpc.stopImpersonating, [
-          ciphernodeAddress,
-        ]);
 
         const isRegistered =
           await bondingRegistry.isRegistered(ciphernodeAddress);

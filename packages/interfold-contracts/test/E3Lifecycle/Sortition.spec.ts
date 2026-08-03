@@ -25,6 +25,7 @@ const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 // helper does not support).
 async function fundOperator(
   operator: Signer,
+  bondOwner: Signer,
   bondingRegistry: any,
   licenseToken: any,
   feeToken: any,
@@ -33,24 +34,28 @@ async function fundOperator(
   ticketAmount: bigint,
 ) {
   const operatorAddress = await operator.getAddress();
+  const bondOwnerAddress = await bondOwner.getAddress();
   await licenseToken.mint(
-    operatorAddress,
+    bondOwnerAddress,
     ethers.parseEther("10000"),
     ethers.encodeBytes32String("Test allocation"),
   );
-  await feeToken.mint(operatorAddress, ethers.parseUnits("1000000", 6));
+  await feeToken.mint(bondOwnerAddress, ethers.parseUnits("1000000", 6));
+  await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
   await licenseToken
-    .connect(operator)
+    .connect(bondOwner)
     .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
   await bondingRegistry
-    .connect(operator)
-    .bondLicense(ethers.parseEther("1000"));
-  await bondingRegistry.connect(operator).registerOperator();
+    .connect(bondOwner)
+    .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+  await bondingRegistry.connect(bondOwner).registerOperatorFor(operatorAddress);
   if (ticketAmount > 0n) {
     await feeToken
-      .connect(operator)
+      .connect(bondOwner)
       .approve(await ticketToken.getAddress(), ticketAmount);
-    await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+    await bondingRegistry
+      .connect(bondOwner)
+      .addTicketBalanceFor(operatorAddress, ticketAmount);
   }
   await registry.addCiphernode(operatorAddress);
 }
@@ -136,6 +141,28 @@ async function deployStack() {
 }
 
 describe("Sortition & E3 lifecycle", function () {
+  it("prevents timeout failure when the committee is ready", async function () {
+    const ctx = await loadFixture(deployStack);
+    const { interfold, ciphernodeRegistry, other, op1, op2, op3 } = ctx;
+
+    await ctx.makeRequest();
+    for (const operator of [op1, op2, op3]) {
+      await ciphernodeRegistry.connect(operator).submitTicket(0, 1);
+    }
+
+    const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+    await time.increaseTo(deadline + 1n);
+
+    await expect(
+      interfold.connect(other).markE3Failed(0),
+    ).to.be.revertedWithCustomError(interfold, "FailureConditionNotMet");
+
+    await expect(ciphernodeRegistry.finalizeCommittee(0)).to.emit(
+      interfold,
+      "CommitteeFinalized",
+    );
+  });
+
   describe("Committee.requestBlock uses block.timestamp", function () {
     it("stores block.timestamp (not block.number) in requestBlock", async function () {
       const ctx = await loadFixture(deployStack);
@@ -204,6 +231,23 @@ describe("Sortition & E3 lifecycle", function () {
       );
     });
 
+    it("rejects a provisional member during the grace window", async function () {
+      const ctx = await loadFixture(deployStack);
+      const { interfold, ciphernodeRegistry, op1, makeRequest } = ctx;
+
+      const grace = 600;
+      await interfold.setMarkFailedGracePeriod(grace);
+      await makeRequest();
+      await ciphernodeRegistry.connect(op1).submitTicket(0, 1);
+
+      const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+      await time.increaseTo(deadline + 1n);
+
+      await expect(
+        interfold.connect(op1).markE3Failed(0),
+      ).to.be.revertedWithCustomError(interfold, "MarkE3FailedInGracePeriod");
+    });
+
     it("setMarkFailedGracePeriod is owner-only and emits event", async function () {
       const ctx = await loadFixture(deployStack);
       const { interfold, other } = ctx;
@@ -243,6 +287,7 @@ describe("Sortition & E3 lifecycle", function () {
       // so they appear in the ciphernode set but have no snapshot weight.
       await fundOperator(
         latecomer,
+        ctx.owner,
         bondingRegistry,
         licenseToken,
         feeToken,
@@ -272,9 +317,11 @@ describe("Sortition & E3 lifecycle", function () {
       // at requestBlock - 1 should still be zero.
       const ticketAmount = ethers.parseUnits("100", 6);
       await feeToken
-        .connect(latecomer)
+        .connect(ctx.owner)
         .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry.connect(latecomer).addTicketBalance(ticketAmount);
+      await bondingRegistry
+        .connect(ctx.owner)
+        .addTicketBalanceFor(latecomerAddress, ticketAmount);
 
       // Confirm snapshot returns zero at requestBlock - 1.
       const snapshot = await bondingRegistry.getTicketBalanceAtBlock(

@@ -19,7 +19,23 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed:
+Anyone can call `markE3Failed()` when a deadline is missed. A ready committee cannot fail through
+this function. The registry must finalize it.
+
+If an honest-node allocation is smaller than the node count, the refund manager credits it to the
+request-time treasury instead of creating zero-value claims.
+
+A committee-affecting slash policy can use only a supplier-paid failure reason. Policy validation
+and refund settlement use the same payer classifier.
+
+During the failure grace period, only active finalized committee members have committee authority.
+Expelled members and provisional candidates do not.
+
+Interfold rejects `None`, the enum sentinel, and larger failure reason values before it changes the
+E3 stage.
+
+Committee key publication is valid through the DKG deadline. Later publication is rejected as a
+supplier-side timeout.
 
 > **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
 > is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
@@ -99,6 +115,8 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 ├─ 3. Get honest nodes:
 │     (honestNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
 │     → Returns committee members NOT expelled by slashing plus their ticket scores
+│     → Returns empty arrays when committee formation did not finalize
+│     → An unexpected registry failure reverts the transaction and restores the payment
 │
 ├─ 4. Transfer payment to E3RefundManager:
 │     paymentToken = _e3FeeTokens[e3Id]  (per-E3 token, not current global)
@@ -187,12 +205,14 @@ REQUESTER claims:
 ├─ Transfer requesterAmount in the per-E3 fee token
 └─ Emit RefundClaimed(e3Id, requester, amount)
 
-HONEST NODE claims:
-  E3RefundManager.claimHonestNodeReward(e3Id)
+HONEST NODE'S BOND OWNER claims:
+  E3RefundManager.claimHonestNodeReward(e3Id, operator)
 │
 ├─ require(distribution calculated)
-├─ require(msg.sender is in honestNodes[e3Id])
-├─ require(!honest-node reward already claimed by this node)
+├─ require(operator is in honestNodes[e3Id])
+├─ resolve recipient = request-time bondingRegistry.bondOwnerOf(operator)
+├─ require(msg.sender == recipient)
+├─ require(!honest-node reward already claimed for this operator)
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements
 ├─ honestNodeAmount exists only for requester-attributable failures
@@ -204,8 +224,8 @@ HONEST NODE claims:
 ├─ Last claimer routes the residual dust to _pendingTreasury via
 │   TreasurySlashedCredited (pull); the last node never gets a
 │   silently-inflated payout, and no per-claim dust is stranded.
-├─ Transfer directly to node (not via BondingRegistry)
-└─ Emit RefundClaimed(e3Id, node, amount)
+├─ Transfer directly to the bond owner (not via BondingRegistry)
+└─ Emit RefundClaimed(e3Id, bondOwner, amount)
 
 SLASH RECIPIENT claims a token-specific entitlement:
   E3RefundManager.claimSlashedFunds(e3Id, actualToken)
@@ -607,9 +627,9 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 
 ─── APPEAL WINDOW OPENS ─────────────────────────────────────
 
-Operator (accused) calls: SlashingManager.fileAppeal(proposalId, evidence)
+Operator or its bond owner calls: SlashingManager.fileAppeal(proposalId, evidence)
 │
-├─ require(msg.sender == proposal.operator)
+├─ require(msg.sender == proposal.operator OR bondOwnerOf(proposal.operator))
 ├─ require(block.timestamp < proposal.executableAt)
 │   → Must appeal before window closes
 ├─ require(!proposal.appealed)
@@ -673,6 +693,7 @@ _executeSlash(proposalId):
 │     │  │         operator, remaining, 0,                       │
 │     │  │         includeLockedAssets=true                      │
 │     │  │       )                                               │
+│     │  │       require(actualPendingSlash == remaining)         │
 │     │  │       → Can slash EVEN LOCKED exit tranches           │
 │     │  │       → No escaping via queued exits                  │
 │     │  │                                                       │
@@ -684,25 +705,21 @@ _executeSlash(proposalId):
 │     │  └───────────────────────────────────────────────────────┘
 │
 ├─ 2. SLASH LICENSE BOND (if licenseAmount > 0):
-│     bondingRegistry.slashLicenseBond(
+│     actualLicenseSlashed = bondingRegistry.slashLicenseBond(
 │       operator, proposal.licenseAmount, reason
 │     )
+│     → Returns ACTUAL amount slashed (may be less if balance insufficient)
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
-│     │  │  1. Compute active + pending FOLD source total        │
+│     │  │  1. Compute active + pending FOLD total               │
 │     │  │                                                       │
-│     │  │  2. _slashLicenseSourcesLifo(operator, amount):       │
-│     │  │     Compare newest active source sequence with        │
-│     │  │     newest pending-exit source sequence               │
-│     │  │     Slash the newest source first                     │
+│     │  │  2. Slash active bond first, then pending exits       │
 │     │  │     → Active slash decrements operators[op].licenseBond│
 │     │  │     → Pending slash decrements pending license totals │
-│     │  │     → totalBonded(op) drops immediately; if op has   │
-│     │  │       token-level locks, same-wallet FOLD may become │
+│     │  │     → totalBonded(bondOwner) drops immediately; if   │
+│     │  │       the owner has token locks, wallet FOLD may become│
 │     │  │       encumbered until the locked floor decays/top-up │
-│     │  │     → Receiver callback gets (operator, amount,       │
-│     │  │       sourceId) when supported                        │
 │     │  │                                                       │
 │     │  │  3. slashedLicenseBond += totalSlashed                │
 │     │  │  4. _updateOperatorStatus(operator)                   │
@@ -805,7 +822,7 @@ _executeSlash(proposalId):
 │        → transfer + accounting succeed atomically, or all state reverts
 │
 └─ 7. Emit SlashExecuted(proposalId, e3Id, operator, reason,
-       ticketSlashed, licenseSlashed, banned)
+       actualTicketSlashed, actualLicenseSlashed, banned)
 ```
 
 > **License transfer note.** `withdrawSlashedFunds` (the treasury sweep for slashed license bonds)
@@ -858,7 +875,7 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 │   settleSlashedFunds(e3Id, actualToken)
 │
 ├─ Load the immutable E3PolicySnapshot captured by Interfold.request
-│   (allocation, treasury, Interfold, registry, policy version)
+│   (allocation, treasury, Interfold, registry, bonding registry, policy version)
 ├─ Read activeNodes from the request-time registry at settlement time
 │   → Expelled nodes cannot receive a later slash-funded bonus
 ├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
@@ -868,8 +885,9 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 ├─ Credit (pull-payment, H-01/M-02) — funds are NOT pushed here:
 │   for node in activeNodes:
 │       perNode = toNodes / activeNodes.length  (dust → last node)
-│       _pendingSlashedClaims[e3Id][actualToken][node] += perNode
-│       Emit SlashedFundsCredited(e3Id, node, actualToken, perNode)
+│       recipient = bondOwnerOf(node), falling back to node if unset
+│       _pendingSlashedClaims[e3Id][actualToken][recipient] += perNode
+│       Emit SlashedFundsCredited(e3Id, recipient, actualToken, perNode)
 │
 ├─ Credit treasury for protocol share:
 │   _pendingTreasury[snapshot.treasury][actualToken] += toTreasury
@@ -879,8 +897,8 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
        toNodes, toTreasury)
 
 Claim flow (separate transactions, pull-only):
-  honest node     → e3RefundManager.claimSlashedFunds(e3Id, actualToken)
-                    → Emits SlashedFundsClaimed(e3Id, node, token, amt)
+  bond owner      → e3RefundManager.claimSlashedFunds(e3Id, actualToken)
+                    → Emits SlashedFundsClaimed(e3Id, owner, token, amt)
   protocol treasury → e3RefundManager.treasuryClaim(token)
                     → Emits TreasurySlashedClaimed(treasury, token, amt)
 
@@ -898,14 +916,17 @@ Design rationale:
 
 Every slash and settlement route resolves the dependency graph frozen when the E3 was requested:
 
-- `Interfold` uses the per-E3 registry, refund manager, and slashing manager for callbacks,
-  committee reads, verification, rewards, failure settlement, and slash escrow.
+- `Interfold` uses the per-E3 registry, bonding registry, refund manager, and slashing manager for
+  callbacks, committee reads, verification, owner-routed rewards, failure settlement, and slash
+  escrow.
 - `CiphernodeRegistryOwnable` uses the per-E3 Interfold, bonding registry, and slashing manager for
   ticket eligibility, committee callbacks, and expulsion authorization.
 - `SlashingManager` uses the per-E3 bonding registry, ciphernode registry, Interfold, and refund
   manager for attestations, penalties, expulsion, failure callbacks, and fund routing.
 - `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
 - `E3RefundManager` reads slash recipients from the committee registry recorded in that snapshot.
+- `E3RefundManager` resolves each recipient's bond owner through the bonding registry recorded in
+  that snapshot.
 - `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
   revokes them, so an old manager can finish snapshotted penalties and remains part of the exit
   gate.
@@ -1185,8 +1206,8 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 
 - `proposeSlash` no longer auto-executes when the policy's `appealWindow > 0`. The proposal is
   recorded with `executableAt = block.timestamp + appealWindow` and an event with `lane = LaneA (0)`
-  is emitted. The operator can call `fileAppeal` during that window; otherwise anyone may call
-  `executeSlash` once it elapses.
+  is emitted. The operator or its bond owner can call `fileAppeal` during that window; otherwise
+  anyone may call `executeSlash` once it elapses.
 
 ### Unified open-proposal collateral gate (H-05, AUD H-03)
 
@@ -1196,6 +1217,10 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 - `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
+- For a split position, the equivalent owner-only `...For(operator)` calls have the same gate.
+  Proposals, bans, evidence signatures, and slash execution remain keyed by the hot operator
+  address; a license slash reduces the authorized owner's aggregate `totalBonded` credit. Separating
+  keys therefore protects withdrawal authority but does not create a slashing escape hatch.
 - That check covers every authorized current or retained historical slashing manager. Rotation
   therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes an
   old manager only after its E3s, proposals, and pending routes are terminal.
@@ -1206,9 +1231,9 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 ### Pull-payment slashed funds (H-01, H-07, H-09)
 
 - Slashed funds use their own `(e3Id, token, recipient)` pull-payment ledger rather than the normal
-  reward or refund bucket. Recipients call `claimSlashedFunds(e3Id, token)`; failed-transfer
-  recipients cannot grief other claims, different token decimals never mix, and late credits remain
-  independently claimable.
+  reward or refund bucket. Node allocations resolve through `bondOwnerOf(node)` before credit.
+  Recipients call `claimSlashedFunds(e3Id, token)`; failed-transfer recipients cannot grief other
+  claims, different token decimals never mix, and late credits remain independently claimable.
 
 ### Two-step ban (M-14, M-15)
 

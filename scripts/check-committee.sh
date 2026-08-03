@@ -89,14 +89,37 @@ Either rebuild circuits with the current selection or revert active.nr to match 
   fi
 fi
 
-# 5. Sanity: the Rust enum file should exist and contain the committee name.
+# 5. Check every Rust enum row against its Noir committee module.
 if [[ ! -f "$COMMITTEE_RS" ]]; then
   fail "missing $COMMITTEE_RS"
 fi
-CAPITALIZED="$(echo "$ACTIVE_COMMITTEE" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
-if ! grep -q "CiphernodesCommitteeSize::$CAPITALIZED" "$COMMITTEE_RS"; then
-  fail "$COMMITTEE_RS does not define CiphernodesCommitteeSize::$CAPITALIZED. Rust and Noir disagree on the committee axis"
-fi
+for committee in minimum micro small; do
+  mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
+  [[ -f "$mod_file" ]] || fail "missing $mod_file"
+
+  noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  capitalized="$(echo "$committee" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+  rust_block="$(
+    awk -v marker="CiphernodesCommitteeSize::$capitalized => CiphernodesCommittee {" '
+      index($0, marker) { found = 1 }
+      found { print }
+      found && /^[[:space:]]*},[[:space:]]*$/ { exit }
+    ' "$COMMITTEE_RS"
+  )"
+  rust_n=$(grep -E '^[[:space:]]*n: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
+  rust_h=$(grep -E '^[[:space:]]*h: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
+  rust_t=$(grep -E '^[[:space:]]*threshold: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
+
+  if [[ -z "$rust_n" || -z "$rust_h" || -z "$rust_t" ]]; then
+    fail "could not parse CiphernodesCommitteeSize::$capitalized from $COMMITTEE_RS"
+  fi
+  if [[ "$rust_n" != "$noir_n" || "$rust_h" != "$noir_h" || "$rust_t" != "$noir_t" ]]; then
+    fail "drift: $mod_file has (N=$noir_n, T=$noir_t, H=$noir_h) but \
+$COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
+  fi
+done
 
 # 6. Parity matrices for every committee must match what `generate_parity_matrices` would
 #    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
@@ -191,4 +214,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, utils.ts$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

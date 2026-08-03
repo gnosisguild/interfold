@@ -54,6 +54,11 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
 contract BfvDecryptionVerifier is IDecryptionVerifier {
     error InvalidCircuitVerifier(address verifier);
     error InvalidVerificationKeyHash();
+    error NonCanonicalPublicInput(uint256 index);
+    error MessageCoefficientOutOfRange(uint256 index);
+
+    uint256 internal constant BN254_SCALAR_MODULUS =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     /// @dev Message is always the last 100 public inputs (100 uint64 coeffs = 800 bytes plaintext).
     uint256 internal constant MESSAGE_COEFFS_COUNT = 100;
@@ -161,6 +166,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         if (publicInputs.length != expectedPublicInputsLen) {
             revert InvalidPublicInputsLength();
         }
+        _validatePublicInputs(publicInputs);
 
         // Anchor recursive-aggregation trust to immutable VK hashes.
         if (publicInputs[0] != expectedC6FoldKeyHash) {
@@ -214,6 +220,21 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             revert InvalidProof();
         }
         return true;
+    }
+
+    function _validatePublicInputs(
+        bytes32[] memory publicInputs
+    ) internal view {
+        uint256 messageOffset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
+        for (uint256 i = 0; i < publicInputs.length; ++i) {
+            uint256 value = uint256(publicInputs[i]);
+            if (value >= BN254_SCALAR_MODULUS) {
+                revert NonCanonicalPublicInput(i);
+            }
+            if (i >= messageOffset && value > type(uint64).max) {
+                revert MessageCoefficientOutOfRange(i);
+            }
+        }
     }
 
     function _verifyPlaintextHash(

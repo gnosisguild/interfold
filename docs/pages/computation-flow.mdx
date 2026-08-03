@@ -144,8 +144,8 @@ the 13 `FailureReason` entries (`None` plus 12 concrete states such as `DKGTimeo
 sentinel used for bounds-checking in `IInterfold`):
 
 - The requester can claim their share via `claimRequesterRefund(e3Id)`
-- Honest committee members (non-expelled nodes) can claim compensation via
-  `claimHonestNodeReward(e3Id)`
+- An honest committee member's bond owner can claim its compensation via
+  `claimHonestNodeReward(e3Id, operator)`
 - The protocol treasury receives the configured failure-path protocol share
 
 For the complete `FailureReason` → allocation map, see the `markE3Failed` / `claimRequesterRefund`

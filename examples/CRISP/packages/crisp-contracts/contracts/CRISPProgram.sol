@@ -39,8 +39,15 @@ contract CRISPProgram is IE3Program, Ownable {
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
   /// @notice The depth of the input Merkle tree.
   uint8 public constant TREE_DEPTH = 20;
-  /// @notice Maximum number of bits allocated for vote counts in the plaintext output per option.
-  uint256 constant MAX_VOTE_BITS = 50;
+  /// @notice Number of leading plaintext coefficients that carry the vote payload.
+  /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
+  /// The remaining coefficients up to the BFV degree are zero padding.
+  uint256 constant MAX_MSG_NON_ZERO_COEFFS = 100;
+  /// @notice Maximum number of vote options a round may configure.
+  /// @dev Bounded by the Noir circuit, which asserts `num_options <= MAX_OPTIONS`
+  /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
+  /// vote proof fails. Must stay aligned with the SDK constant of the same name.
+  uint256 constant MAX_VOTE_OPTIONS = 10;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -156,7 +163,9 @@ contract CRISPProgram is IE3Program, Ownable {
 
     // decode custom params to get the number of options
     (, , uint256 numOptions, CreditMode creditMode, ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256));
-    if (numOptions < 2) revert InvalidNumOptions();
+    // The circuit rejects anything above MAX_VOTE_OPTIONS, so a round configured beyond
+    // it could never accept a ballot. Reject at creation rather than stranding the round.
+    if (numOptions < 2 || numOptions > MAX_VOTE_OPTIONS) revert InvalidNumOptions();
 
     // we need to know the number of options for decoding the tally
     e3Data[e3Id].numOptions = numOptions;
@@ -237,20 +246,24 @@ contract CRISPProgram is IE3Program, Ownable {
 
     uint64[] memory tally = _decodeBytesToUint64Array(e3.plaintextOutput);
 
-    uint256 segmentSize = tally.length / numOptions;
-    uint256 effectiveSize = segmentSize > MAX_VOTE_BITS ? MAX_VOTE_BITS : segmentSize;
+    // The payload lives in the first MAX_MSG_NON_ZERO_COEFFS coefficients; the rest of
+    // the polynomial is zero padding and must not be read.
+    if (tally.length < MAX_MSG_NON_ZERO_COEFFS) revert InvalidTallyLength();
+
+    uint256 segmentSize = MAX_MSG_NON_ZERO_COEFFS / numOptions;
+    // More options than payload coefficients leaves nothing to decode.
+    if (segmentSize == 0) return new uint256[](0);
 
     votes = new uint256[](numOptions);
 
     for (uint256 optIdx = 0; optIdx < numOptions; optIdx++) {
       uint256 segmentStart = optIdx * segmentSize;
-      // Read only the last effectiveSize bits (where the value is, MSB first)
-      uint256 readStart = segmentStart + segmentSize - effectiveSize;
       uint256 value = 0;
 
-      for (uint256 i = 0; i < effectiveSize; i++) {
-        uint256 weight = 2 ** (effectiveSize - 1 - i);
-        value += uint256(tally[readStart + i]) * weight;
+      // Each segment holds the count in binary, most significant coefficient first.
+      for (uint256 i = 0; i < segmentSize; i++) {
+        uint256 weight = 2 ** (segmentSize - 1 - i);
+        value += uint256(tally[segmentStart + i]) * weight;
       }
 
       votes[optIdx] = value;
@@ -269,15 +282,21 @@ contract CRISPProgram is IE3Program, Ownable {
   }
 
   /// @inheritdoc IE3Program
-  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external view override returns (bool) {
+  function verify(
+    uint256 e3Id,
+    bytes32 ciphertextOutputHash,
+    bytes32 ciphertextCommitment,
+    bytes memory proof
+  ) external view override returns (bool) {
     bytes32 paramsHash = getParamsHash(e3Id);
 
     bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root(TREE_DEPTH));
-    bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
+    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
 
     _encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    _encodeLengthPrefixAndHash(journal, 132, paramsHash);
-    _encodeLengthPrefixAndHash(journal, 264, inputRoot);
+    _encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
+    _encodeLengthPrefixAndHash(journal, 264, paramsHash);
+    _encodeLengthPrefixAndHash(journal, 396, inputRoot);
 
     risc0Verifier.verify(proof, imageId, sha256(journal));
     return true;
