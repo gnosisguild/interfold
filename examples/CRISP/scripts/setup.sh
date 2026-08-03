@@ -34,9 +34,11 @@ if [[ "$CRISP_SKIP_PROOF_AGGREGATION" == "true" ]]; then
   INTERFOLD_FEATURES="--features test-only-skip-proof-aggregation"
 fi
 echo "Building and installing interfold CLI (${INTERFOLD_FEATURES:-no extra features})..."
-# Always reinstall: `cargo install --path` rebuilds and replaces in place, so a stale binary
-# from an earlier checkout (or an earlier profile) cannot silently survive.
+# Always reinstall: `-f` makes `cargo install` replace in place unconditionally, so a stale binary
+# from an earlier checkout (or an earlier profile) cannot silently survive. `--bin interfold`
+# matches ci.yml and deploy/local/start.sh, and keeps this pinned to one binary if crates/cli
+# ever grows a second.
 # shellcheck disable=SC2086
-(cd "${REPO_ROOT}" && cargo install --locked --path crates/cli $INTERFOLD_FEATURES)
+(cd "${REPO_ROOT}" && cargo install --locked --path crates/cli --bin interfold -f $INTERFOLD_FEATURES)
 
 print_crisp_dev_config_summary

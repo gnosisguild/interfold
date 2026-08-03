@@ -213,6 +213,14 @@ Edit **`crisp.dev.env`** (created from `crisp.dev.env.example` on first `pnpm de
 `pnpm dev:setup` applies this profile and builds recursive circuits only when needed. `pnpm dev:up`
 deploys contracts using the same flags.
 
+**Re-run `pnpm dev:setup` after changing `CRISP_SKIP_PROOF_AGGREGATION`.** The setting is only
+honoured by an `interfold` binary built with the matching `test-only-skip-proof-aggregation` Cargo
+feature, so `dev:setup` selects that feature from the profile and reinstalls the CLI. Running
+`dev:up` against a binary from the other profile makes every ciphernode exit at startup;
+`dev_cipher.sh` now aborts with the node status table instead of continuing. Note that
+`~/.cargo/bin/interfold` is shared — a `dev:setup` in `templates/default` or another example
+overwrites the binary this profile installed.
+
 See **[docs/PROOF_AGGREGATION_AND_ZK.md](./docs/PROOF_AGGREGATION_AND_ZK.md)** for modes, address
 sync, and troubleshooting (`VkHashMismatch`, etc.).
 
