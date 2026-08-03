@@ -522,7 +522,9 @@ export default function Operator() {
               )}
               <button
                 className='btn btn--primary'
-                disabled={busy !== null || !connected || !isBondOwner || !operator || !bonded || registered}
+                disabled={
+                  busy !== null || !connected || !isBondOwner || !operator || !bonded || registered || Boolean(status?.exitInProgress)
+                }
                 onClick={() =>
                   void run('register', () =>
                     write({

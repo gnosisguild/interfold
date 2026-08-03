@@ -43,6 +43,16 @@ const envStr = (key: string, fallback: string): string => {
   return v && v.trim() !== '' ? v.trim() : fallback
 }
 
+// The faucet is the one address that can be switched off, so it needs to tell an
+// unset variable (use the default) from an explicitly empty one (disable). Every
+// other setting is resolved with `envStr`, which folds empty into the fallback
+// and so can never yield the disabled state.
+const FAUCET_DEFAULT = '0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df'
+const faucetAddress = (): string => {
+  const configured = env['VITE_FAUCET_ADDRESS']
+  return configured === undefined ? FAUCET_DEFAULT : configured.trim()
+}
+
 const RPC_URL = envStr('VITE_SEPOLIA_RPC', 'https://ethereum-sepolia.publicnode.com')
 
 export const publicClient = createPublicClient({
@@ -58,9 +68,9 @@ export const CONTRACTS = {
   // needs hardcoded — the license token, ticket wrapper, and ticket underlying
   // are all read back from it at runtime so they cannot drift.
   BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x0c25cC9c034611D2F62686e68e61978F21eEc777') as Address,
-  // Testnet-only convenience faucet (FOLD + fee token). Empty string disables the
-  // faucet card in the operator guide.
-  Faucet: envStr('VITE_FAUCET_ADDRESS', '0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df') as Address,
+  // Testnet-only convenience faucet (FOLD + fee token). The zero address or an
+  // empty string disables the faucet card in the operator guide.
+  Faucet: faucetAddress() as Address,
 }
 
 // The chain the dashboard writes to. Reads use `publicClient`; the operator guide
