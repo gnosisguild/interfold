@@ -39,7 +39,22 @@ SWARM_PID=$!
 cleanup_swarm() {
   kill -TERM "$SWARM_PID" 2>/dev/null || true
 }
+# A signal trap that returns resumes the script where it was interrupted, so the signal handler has
+# to exit explicitly. Without that, a Ctrl-C or the SIGTERM `concurrently -kr` sends from
+# dev_services.sh would kill the swarm and then let this script carry on to register ciphernodes
+# against dead nodes, write the ready file and exit 0.
+# `trap - EXIT` first so the EXIT trap does not run cleanup a second time on the way out.
+on_signal() {
+  trap - EXIT
+  cleanup_swarm
+  exit "$1"
+}
+# INT/TERM as well as EXIT: an untrapped SIGTERM kills the shell without running the EXIT trap, and
+# the `pkill -f "interfold start"` in dev.sh only matches the child nodes, not this supervisor - left
+# behind it holds 127.0.0.1:13415 and the next `nodes up` bails as already running.
 trap cleanup_swarm EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 
 # A node counts as `Started` as soon as its process is spawned, which is earlier than the point
 # where it is actually usable, so a single sample can catch a node that is about to die. Require
@@ -47,12 +62,21 @@ trap cleanup_swarm EXIT
 # Match the STATUS column exactly: node names come from this config, so a substring match over
 # the whole line could be satisfied by a node name rather than by a real status.
 EXPECTED_NODES=$(yq -r '.nodes | length' ./interfold.config.yaml)
+# A missing `nodes:` key yields `null`, which bash would evaluate as 0 in the -eq below and make
+# "no nodes started" look like success.
+if ! [[ "$EXPECTED_NODES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: could not read a node count from ./interfold.config.yaml (got '${EXPECTED_NODES}')" >&2
+  exit 1
+fi
 REQUIRED_STABLE_SAMPLES=3
 STABLE_SAMPLES=0
 STARTED_NODES=0
 
 for _ in $(seq 1 60); do
-  STARTED_NODES=$(interfold nodes ps 2>/dev/null | awk 'NR > 1 && $2 == "Started"' | wc -l | tr -d ' ')
+  # `|| true`: this is a poll, so a failing `nodes ps` has to cost a sample rather than abort the
+  # script through `set -e`. Captured first so `set -o pipefail` cannot do the same via the pipe.
+  PS_OUTPUT=$(interfold nodes ps 2>/dev/null || true)
+  STARTED_NODES=$(printf '%s\n' "$PS_OUTPUT" | awk 'NR > 1 && $2 == "Started" { c++ } END { print c + 0 }')
   if [[ "$STARTED_NODES" -eq "$EXPECTED_NODES" ]]; then
     STABLE_SAMPLES=$((STABLE_SAMPLES + 1))
   else

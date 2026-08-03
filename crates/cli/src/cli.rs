@@ -100,7 +100,7 @@ impl Cli {
             {
                 // Existing init branch
                 match self.command {
-                    Commands::Rev => rev::execute(out).await?,
+                    Commands::Rev { features } => rev::execute(out, features).await?,
                     Commands::Init {path, template, skip_cleanup} => {
                         setup_simple_tracing(log_level);
                         init::execute(path, template, skip_cleanup, self.verbose > 0).await?
@@ -193,7 +193,7 @@ impl Cli {
             Commands::Net { command } => net::execute(&out, command, &config).await?,
             Commands::Events { command } => events::execute(out, command, &config).await?,
             Commands::Node { command } => node::execute(out, command, &config).await?,
-            Commands::Rev => rev::execute(out).await?,
+            Commands::Rev { features } => rev::execute(out, features).await?,
             Commands::Config { command } => config::execute(out, command, &config).await?,
             Commands::Faucet { chain } => {
                 faucet::execute(out, &config, chain.chain.as_deref()).await?
@@ -267,7 +267,12 @@ pub enum Commands {
     },
 
     /// Return the git_sha rev that the cli was compiled against
-    Rev,
+    Rev {
+        /// List the optional Cargo features compiled into this binary instead
+        /// of the git sha. Prints nothing for a release build.
+        #[arg(long)]
+        features: bool,
+    },
 
     /// Program management commands
     Program {
@@ -383,7 +388,10 @@ impl TryFrom<Commands> for RemoteCommand {
 
     fn try_from(value: Commands) -> std::result::Result<Self, Self::Error> {
         match value {
-            Commands::Rev => Ok(RemoteCommand::Rev),
+            Commands::Rev { features: true } => bail!(
+                "`rev --features` reports the features of the local binary, so it cannot run remotely"
+            ),
+            Commands::Rev { features: false } => Ok(RemoteCommand::Rev),
             Commands::Net {
                 command: NetCommands::GetPeerId,
             } => Ok(RemoteCommand::NetGetPeerId),
@@ -440,7 +448,7 @@ impl TryFrom<RemoteCommand> for Commands {
     type Error = anyhow::Error;
     fn try_from(value: RemoteCommand) -> std::result::Result<Self, Self::Error> {
         let command = match value {
-            RemoteCommand::Rev => Commands::Rev,
+            RemoteCommand::Rev => Commands::Rev { features: false },
             RemoteCommand::WalletGet => Commands::Wallet {
                 command: WalletCommands::Get,
             },
