@@ -85,6 +85,101 @@ if [[ -n "$doc_hits" ]]; then
   exit 0
 fi
 
+unskipped_watched="$(sort -u <<<"$unskipped_watched")"
+
+# A formatter reflow cannot change behavior, so it must not demand an agent/ doc
+# update. Every remaining watched path is tested for formatting equivalence, and
+# the gate only stands down when ALL of them are equivalent — one behavioral file
+# re-arms it for the whole branch.
+#
+# Every failure mode here (missing formatter, unknown extension, added or deleted
+# file, too many paths to check) falls through to "behavioral". The gate staying
+# armed costs a commit-message tag, whereas a wrong exemption silently drops the
+# protocol-doc requirement.
+
+# Upper bound on formatter invocations. A branch touching more watched files than
+# this is not a formatting pass, and running prettier twice per file would stall
+# the pre-push hook.
+MAX_FORMAT_PROBE_PATHS=40
+
+# Reproduce a blob through the repository's own formatter. Emits nothing and
+# returns non-zero when the file type has no configured formatter.
+normalize_blob() {
+  local spec="$1" path="$2"
+  case "${path##*.}" in
+    rs)
+      command -v rustfmt >/dev/null 2>&1 || return 1
+      git show "$spec" 2>/dev/null | rustfmt --emit stdout --quiet 2>/dev/null
+      ;;
+    sol | ts | tsx | js | jsx | mjs | cjs | json | md | mdx | yml | yaml | css)
+      # --stdin-filepath makes prettier resolve the parser and .prettierrc
+      # overrides exactly as it would for the file on disk.
+      git show "$spec" 2>/dev/null | npx --no-install prettier --stdin-filepath "$path" 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when base..head changed only the formatting of "$path".
+format_only() {
+  local path="$1"
+
+  # An added or removed watched file is a structural change, never a reflow.
+  git cat-file -e "$base:$path" 2>/dev/null || return 1
+  git cat-file -e "$head:$path" 2>/dev/null || return 1
+
+  # Cheap pre-filter: when the two versions differ after removing all whitespace,
+  # the change is behavioral and prettier does not need to run. This is a reject
+  # test only. It is never used to grant an exemption, because deleting whitespace
+  # also equates distinct string literals.
+  local base_stripped head_stripped
+  base_stripped="$(git show "$base:$path" | tr -d '[:space:]')"
+  head_stripped="$(git show "$head:$path" | tr -d '[:space:]')"
+  [[ "$base_stripped" == "$head_stripped" ]] || return 1
+
+  local base_fmt head_fmt
+  base_fmt="$(normalize_blob "$base:$path" "$path")" || return 1
+  head_fmt="$(normalize_blob "$head:$path" "$path")" || return 1
+  [[ -n "$base_fmt" ]] || return 1
+
+  [[ "$base_fmt" == "$head_fmt" ]]
+}
+
+behavioral_watched=""
+formatting_watched=""
+path_count="$(grep -c . <<<"$unskipped_watched" || true)"
+
+if ((path_count > MAX_FORMAT_PROBE_PATHS)); then
+  behavioral_watched="$unskipped_watched"
+else
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if format_only "$path"; then
+      formatting_watched+="${formatting_watched:+$'\n'}$path"
+    else
+      behavioral_watched+="${behavioral_watched:+$'\n'}$path"
+    fi
+  done <<<"$unskipped_watched"
+fi
+
+if [[ -z "$behavioral_watched" && -n "$formatting_watched" ]]; then
+  echo "check-doc-sync: watched changes are formatting-only, no agent/ update required"
+  while IFS= read -r path; do
+    echo "  - $path"
+  done <<<"$formatting_watched"
+  exit 0
+fi
+
+if [[ -n "$formatting_watched" ]]; then
+  echo "check-doc-sync: ignoring formatting-only changes:"
+  while IFS= read -r path; do
+    echo "  - $path"
+  done <<<"$formatting_watched"
+  echo
+fi
+
+unskipped_watched="$behavioral_watched"
+
 echo "check-doc-sync: FAILED"
 echo
 echo "This branch changes protocol-bearing code but no file under agent/ was updated:"

@@ -13,6 +13,7 @@ import History from './History'
 import Pulse from './Pulse'
 import Inspector from './Inspector'
 import Loader from './Loader'
+import Operator from './Operator'
 import { useAllE3s, useCrispPolls, useE3Details, useRecentBallots } from './lib/useE3s'
 import { adaptHistoryEntries, adaptInspectorDetail, adaptInspectorE3List, adaptPoll } from './lib/adapt'
 import { formatE3Id } from './lib/pollMeta'
@@ -50,6 +51,7 @@ function Header({ density, view, onNav }: { density: string; view: string; onNav
         <nav className='site-nav' aria-label='Primary'>
           {link('inspector', 'E3 inspector')}
           {link('crisp', 'CRISP')}
+          {link('operator', 'Run a ciphernode')}
         </nav>
       </div>
     </header>
@@ -135,6 +137,15 @@ function SiteFooter() {
 // Fixed presentation density (the live tweak panel was removed).
 const DENSITY = 'comfortable'
 
+// Linkable views. Anything else in the hash falls back to the inspector, so a
+// stale or hand-typed fragment can never render a blank page.
+const VIEWS = ['inspector', 'crisp', 'operator']
+
+function viewFromHash(): string {
+  const id = globalThis.location?.hash.replace(/^#/, '') ?? ''
+  return VIEWS.includes(id) ? id : 'inspector'
+}
+
 // Derive the poll-card state from the UI stage + ballot count. Specifically,
 // when the input window has closed (uiStageIdx >= 4) but no ballots ever arrived,
 // the committee isn't actually tallying anything — surface that as a distinct
@@ -159,7 +170,9 @@ const DEMO_POLL: Poll = {
 export default function App() {
   // View (tab) + demo poll state. These are the only values that change at
   // runtime; everything else is fixed (accent comes from the CSS :root mint).
-  const [view, setView] = useState('inspector')
+  // The view is mirrored into the URL hash so each tab is linkable from
+  // outside — the docs site points at `#operator` for the ciphernode guide.
+  const [view, setView] = useState(viewFromHash)
   const [pollState, setPollState] = useState('open')
   const [stageIdx, setStageIdx] = useState(3)
 
@@ -228,6 +241,20 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
+  // Keep the view in sync with back/forward navigation and inbound deep links.
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  const navigate = (id: string) => {
+    setView(id)
+    // Writing the hash fires `hashchange`, which is a no-op here since the
+    // state already matches — it just keeps the URL shareable.
+    if (viewFromHash() !== id) window.location.hash = id
+  }
+
   useEffect(() => {
     if (!liveMode) return undefined
     const program = [
@@ -272,8 +299,12 @@ export default function App() {
 
   return (
     <div className={`page page--${DENSITY}`}>
-      <Header density={DENSITY} view={view} onNav={setView} />
-      {view === 'inspector' ? (
+      <Header density={DENSITY} view={view} onNav={navigate} />
+      {view === 'operator' ? (
+        <main className='main'>
+          <Operator />
+        </main>
+      ) : view === 'inspector' ? (
         <main className='main'>
           {allE3s.status === 'error' ? (
             <div className='inspector'>
@@ -318,7 +349,7 @@ export default function App() {
                       pollState={pollStateForStage(stageIdx, s.ballotCount)}
                       currentStageIdx={stageIdx}
                       ballotCount={s.ballotCount}
-                      onNavigate={setView}
+                      onNavigate={navigate}
                     />
                     <Timeline stages={STAGES} currentStageIdx={stageIdx} pollId={poll.id} density={DENSITY} />
                   </Fragment>
@@ -336,7 +367,7 @@ export default function App() {
                 liveMode={liveMode}
                 onToggleLive={() => setLiveMode((v) => !v)}
                 ballotCount={0}
-                onNavigate={setView}
+                onNavigate={navigate}
               />
               <Timeline
                 stages={STAGES}
@@ -348,7 +379,7 @@ export default function App() {
             </>
           )}
 
-          {liveHistory.length > 0 && <History entries={liveHistory} onNavigate={setView} />}
+          {liveHistory.length > 0 && <History entries={liveHistory} onNavigate={navigate} />}
         </main>
       )}
 

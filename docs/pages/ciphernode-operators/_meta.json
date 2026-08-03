@@ -13,5 +13,10 @@
   },
   "exits-and-slashing": {
     "title": "Exits, Rewards & Slashing"
+  },
+  "interactive-guide": {
+    "title": "Interactive Setup Guide",
+    "href": "https://dashboard.theinterfold.com/#operator",
+    "newWindow": true
   }
 }

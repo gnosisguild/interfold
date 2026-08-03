@@ -212,6 +212,10 @@ A completed ban or unban refreshes the affected registered operator immediately.
 The owner calls `addTicketBalanceFor(operator, amount)`: USDC is pulled from the owner but
 non-transferable tFOLD is minted to the operator so committee snapshots remain keyed to the node.
 
+These steps are token operations, not an onboarding order. The operator must already be registered:
+`addTicketBalanceFor` reverts with `NotRegistered()` otherwise. Onboarding runs bond, register, then
+tickets — see [01_REGISTRATION.md](01_REGISTRATION.md#step-3-owner-funded-registration).
+
 > **IMPORTANT:** The `amount` parameter is in **underlying stablecoin base units** (e.g., USDC wei),
 > NOT in ticket count. `ticketPrice` is only used in the activation check
 > (`balanceOf / ticketPrice >= minTicketBalance`) and in sortition eligibility — it is NOT used to

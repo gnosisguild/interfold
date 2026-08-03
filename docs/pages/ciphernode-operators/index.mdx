@@ -9,6 +9,10 @@ Ciphernodes are the distributed workers that power the Interfold network. They p
 threshold cryptography to enable encrypted execution environments (E3s) while ensuring no single
 party can access the underlying plaintext data.
 
+> **Interactive setup:** the dashboard has a step-by-step operator guide. It reads the live bonding
+> registry and sends each on-chain step from your wallet. Open
+> [Run a ciphernode](https://dashboard.theinterfold.com/#operator).
+
 ## What is a Ciphernode?
 
 A ciphernode is a node operator that:
@@ -63,6 +67,52 @@ the underlying node-fold/C5 and C6-fold/C7 sub-proofs). See `deployed_contracts.
 > Always verify addresses from `packages/interfold-contracts/deployed_contracts.json` or your
 > deployment output. Addresses differ per network.
 
+### BondingRegistry Operator Functions
+
+The CLI and the dashboard both call these functions. Use this table when you integrate directly
+against `BondingRegistry`.
+
+| Function                                         | Caller                 | Purpose                                                  |
+| ------------------------------------------------ | ---------------------- | -------------------------------------------------------- |
+| `setBondOwner(bondOwner)`                        | Operator key           | Authorize the wallet that controls this position         |
+| `proposeBondOwner(operator, newOwner)`           | Bond owner             | Nominate a replacement owner                             |
+| `acceptBondOwner(operator)`                      | Nominated owner        | Accept the position and move the FOLD accounting         |
+| `bondLicenseFor(operator, amount)`               | Bond owner             | Bond FOLD from the caller's wallet                       |
+| `unbondLicenseFor(operator, amount)`             | Bond owner             | Queue bonded FOLD for exit                               |
+| `registerOperatorFor(operator)`                  | Bond owner             | Add the operator key to the ciphernode registry          |
+| `deregisterOperatorFor(operator)`                | Bond owner or operator | Request deregistration and queue all collateral          |
+| `addTicketBalanceFor(operator, amount)`          | Bond owner             | Deposit the fee token and mint tickets                   |
+| `removeTicketBalanceFor(operator, amount)`       | Bond owner             | Burn tickets and queue the underlying for exit           |
+| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner             | Claim matured exits to the bond owner                    |
+| `refreshOperatorStatus(operator)`                | Anyone                 | Recompute one operator's status under the current policy |
+| `refreshOperatorStatuses(operators)`             | Anyone                 | Recompute a batch of operators                           |
+
+Read the current state with these view functions:
+
+| View                           | Returns                                                           |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `bondOwnerOf(operator)`        | Wallet that controls the collateral, or the zero address if unset |
+| `pendingBondOwnerOf(operator)` | Wallet nominated to accept the position                           |
+| `getLicenseBond(operator)`     | Active license bond                                               |
+| `isLicensed(operator)`         | Whether the bond meets the active-maintenance floor (see below)   |
+| `isRegistered(operator)`       | Whether the key is in the registry                                |
+| `isActive(operator)`           | Whether the operator is eligible for sortition                    |
+| `availableTickets(operator)`   | `floor(ticketBalance / ticketPrice)`                              |
+| `totalBonded(account)`         | FOLD that counts toward the locked-floor collateral of an owner   |
+| `hasExitInProgress(operator)`  | Whether an exit is queued                                         |
+
+> `isLicensed` and registration use different thresholds. `isLicensed` tests the active-maintenance
+> floor, which is `licenseRequiredBond` multiplied by `licenseActiveBps` (80% by default).
+> `registerOperatorFor` requires the full `licenseRequiredBond`. An operator between the two reads
+> as licensed but cannot register: the call reverts with `NotLicensed()`. Compare `getLicenseBond`
+> against `licenseRequiredBond` to test whether an operator can register.
+
+> `refreshOperatorStatus` is permissionless, but the operator must be registered. The call reverts
+> with `NotRegistered()` for an operator that is not in the registry. `refreshOperatorStatuses`
+> reverts if any operator in the list is not registered. Governance changes to the ticket price, the
+> required bond, or the minimum ticket balance invalidate cached status. Call this function to
+> restore the correct status for an operator.
+
 ## Operator Lifecycle
 
 A ciphernode moves through several states during its lifecycle:
@@ -114,3 +164,6 @@ Follow these guides in order to become an active ciphernode operator:
 2. **[Registration & Licensing](./registration)** - Bond your license, register, and add tickets
 3. **[Tickets & Sortition](./tickets-and-sortition)** - Understand how committee selection works
 4. **[Exits, Rewards & Slashing](./exits-and-slashing)** - Learn about rewards and exit procedures
+
+To do the on-chain steps in a browser instead of the CLI, use the
+[interactive operator guide](https://dashboard.theinterfold.com/#operator) on the dashboard.
