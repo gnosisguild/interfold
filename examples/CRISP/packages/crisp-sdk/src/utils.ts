@@ -143,11 +143,16 @@ export const getZeroVote = (numChoices: number): number[] => {
 }
 
 /**
- * Decode bytes to bigint array (little-endian, 8 bytes per value).
+ * Decode bytes to a bigint array (little-endian, 8 bytes per value).
+ *
+ * @remarks
+ * Returns `bigint` rather than `number`: a coefficient of an aggregated plaintext
+ * is a sum over all ballots and can exceed `Number.MAX_SAFE_INTEGER`.
+ *
  * @param data The bytes to decode (must be multiple of 8).
- * @returns Array of numbers.
+ * @returns Array of coefficients.
  */
-export const decodeBytesToNumbers = (data: Uint8Array): number[] => {
+export const decodeBytesToBigInts = (data: Uint8Array): bigint[] => {
   if (data.length % 8 !== 0) {
     throw new Error('Data length must be multiple of 8')
   }
@@ -160,7 +165,7 @@ export const decodeBytesToNumbers = (data: Uint8Array): number[] => {
     result.push(view.getBigUint64(i * 8, true)) // true = little-endian
   }
 
-  return result.map(Number)
+  return result
 }
 
 export const bigInt64ArrayToNumberArray = (bigInt64Array: BigInt64Array): number[] => {
