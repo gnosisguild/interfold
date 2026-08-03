@@ -1,6 +1,6 @@
 <div align="center">
   <picture>
-    <img src="./interfold-meta.jpg" alt="The Interfold" width="100%">
+    <img src="./docs/public/interfold-meta.jpg" alt="The Interfold" width="100%">
   </picture>
 
 [![Docs][docs-badge]][docs] [![Github Actions][gha-badge]][gha] [![Hardhat][hardhat-badge]][hardhat]
