@@ -228,6 +228,9 @@ pub async fn initialize_crisp_round(
     let credits = U256::from(1);
 
     // Serialize the custom parameters to bytes.
+    // Census mode 0 = Token: the CLI has no application contract to ask, so the coordinator derives
+    // the electorate from token balances as it always has.
+    let census_mode = U256::from(0);
     let custom_params_bytes = Bytes::from(
         (
             token_address,
@@ -235,6 +238,7 @@ pub async fn initialize_crisp_round(
             num_options,
             credit_mode,
             credits,
+            census_mode,
         )
             .abi_encode(),
     );

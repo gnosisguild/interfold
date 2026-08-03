@@ -38,7 +38,7 @@ contract MockInterfold {
       encryptionSchemeId: bytes32(0),
       e3Program: IE3Program(address(0)),
       paramSet: 0, // Insecure512
-      customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0),
+      customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
       committeePublicKey: committeePublicKey,
@@ -48,7 +48,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0));
+    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0));
 
     nextE3Id++;
   }
@@ -75,7 +75,7 @@ contract MockInterfold {
         encryptionSchemeId: bytes32(0),
         e3Program: IE3Program(address(0)),
         paramSet: 0, // Insecure512
-        customParams: abi.encode(address(0), 0, 2, 0, 0),
+        customParams: abi.encode(address(0), 0, 2, 0, 0, 0),
         decryptionVerifier: IDecryptionVerifier(address(0)),
         pkVerifier: IPkVerifier(address(0)),
         committeePublicKey: committeePublicKey,
