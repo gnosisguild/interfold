@@ -115,13 +115,18 @@ export const encryptVote = (vote: Vote, publicKey: Uint8Array): Uint8Array => {
  * `floor(MAX_MSG_NON_ZERO_COEFFS / numChoices)` binary coefficients per choice, MSB first.
  *
  * @param tallyBytes - Hex string, or the polynomial coefficients from tally/decryption
- * @param numChoices - Number of vote options
+ * @param numChoices - Number of vote options: an integer from 2 to MAX_VOTE_OPTIONS
  * @returns One total per choice
- * @throws If numChoices is not positive, or there are fewer coefficients than the payload region
+ * @throws If numChoices is outside 2..MAX_VOTE_OPTIONS or not an integer, or there are fewer
+ *         coefficients than the payload region
  */
 export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult => {
-  if (numChoices <= 0) {
-    throw new Error('Number of choices must be positive')
+  // `CRISPProgram.validate` rejects a round outside 2..MAX_VOTE_OPTIONS, and `encodeVote` refuses
+  // to encode fewer than two choices, so no tally in that range can exist. `Number.isInteger` also
+  // screens out NaN, Infinity, and fractions: a fractional count silently returns `ceil(numChoices)`
+  // segments, and NaN passes both bound checks to return an empty tally.
+  if (!Number.isInteger(numChoices) || numChoices < 2) {
+    throw new Error(`Number of choices (${numChoices}) must be an integer of at least 2`)
   }
 
   // Rounds cannot exceed MAX_VOTE_OPTIONS (the circuit's MAX_OPTIONS), so a larger count

@@ -96,10 +96,25 @@ describe('Vote', () => {
       expect(() => decodeTally(tooShort, 2)).toThrow('is less than MAX_MSG_NON_ZERO_COEFFS')
     })
 
-    it('Should reject a non-positive number of choices', () => {
+    it('Should reject fewer than two choices', () => {
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
 
-      expect(() => decodeTally(coefficients, 0)).toThrow('Number of choices must be positive')
+      // `CRISPProgram.validate` reverts below 2, so a one-option tally cannot exist on-chain.
+      expect(() => decodeTally(coefficients, 1)).toThrow('must be an integer of at least 2')
+      expect(() => decodeTally(coefficients, 0)).toThrow('must be an integer of at least 2')
+      expect(() => decodeTally(coefficients, -1)).toThrow('must be an integer of at least 2')
+      // The lower boundary itself stays decodable.
+      expect(decodeTally(coefficients, 2)).toHaveLength(2)
+    })
+
+    it('Should reject a non-integer number of choices', () => {
+      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
+
+      // A fraction silently decoded `ceil(numChoices)` segments; NaN passed both bound
+      // checks and returned an empty tally.
+      expect(() => decodeTally(coefficients, 2.5)).toThrow('must be an integer of at least 2')
+      expect(() => decodeTally(coefficients, Number.NaN)).toThrow('must be an integer of at least 2')
+      expect(() => decodeTally(coefficients, Number.POSITIVE_INFINITY)).toThrow('must be an integer of at least 2')
     })
 
     it('Should reject more choices than the circuit allows', () => {
