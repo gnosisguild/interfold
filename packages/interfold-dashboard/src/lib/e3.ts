@@ -39,6 +39,23 @@ const CRISP_INPUT_PUBLISHED = {
   ],
 } as const
 
+// Minimal CRISPProgram view. The option count is round configuration set in
+// `validate()`; the tally layout cannot be decoded without it.
+const CRISP_GET_ROUND_DATA = {
+  type: 'function',
+  name: 'getRoundData',
+  stateMutability: 'view',
+  inputs: [{ name: 'e3Id', type: 'uint256' }],
+  outputs: [
+    { name: 'merkleRoot', type: 'uint256' },
+    { name: 'paramsHash', type: 'bytes32' },
+    { name: 'numOptions', type: 'uint256' },
+    { name: 'creditMode', type: 'uint8' },
+    { name: 'inputRoot', type: 'uint256' },
+    { name: 'numberOfVotes', type: 'uint40' },
+  ],
+} as const
+
 // Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
 const LOG_CHUNK = 9_500n
 
@@ -122,6 +139,9 @@ export type E3FullDetails = E3Summary & {
   committeePublicKey: `0x${string}`
   ciphertextOutput: `0x${string}`
   plaintextOutput: `0x${string}`
+  // Option count for CRISP rounds, read from CRISPProgram. Undefined for non-CRISP
+  // programs or when the round was never initialised. Required to decode the tally.
+  numOptions?: number
   requestedAt?: number // unix seconds (block.timestamp of the request)
   // Block number of the E3Requested log (distinct from `requestBlock` which on
   // this contract version is actually a Unix timestamp, not a block number).
@@ -301,6 +321,19 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     }).catch(() => 0n) as Promise<bigint>,
   ])
 
+  // CRISP round configuration. Only CRISP E3s expose it, and an uninitialised round
+  // reports 0 options — in both cases the tally stays undecodable rather than guessed.
+  const numOptions = isCrispE3(e3.e3Program)
+    ? await ((publicClient.readContract as any)({
+        address: CONTRACTS.CRISPProgram,
+        abi: [CRISP_GET_ROUND_DATA],
+        functionName: 'getRoundData',
+        args: [e3Id],
+      })
+        .then((data: readonly unknown[]) => Number(data[2] as bigint) || undefined)
+        .catch(() => undefined) as Promise<number | undefined>)
+    : undefined
+
   // `e3.requestBlock` is misnamed: on this contract version it stores
   // `block.timestamp` (EIP-6372 timestamp clock), not a block number. Using it
   // as fromBlock would push the scan range past chain head and silently miss
@@ -437,6 +470,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     committeePublicKey: e3.committeePublicKey,
     ciphertextOutput: e3.ciphertextOutput,
     plaintextOutput: e3.plaintextOutput,
+    numOptions,
     committeeThreshold: threshold,
     committeeMembers: members,
     committeeFinalizedTx: finLog?.transactionHash,
@@ -461,30 +495,54 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
   }
 }
 
-// Decode CRISP tally from PlaintextOutputPublished bytes. CRISPProgram packs
-// it as a uint64[] (per CRISPProgram.decodeTally). We surface the raw counts
-// and let the UI label them by option index.
-export function decodeCrispTally(plaintextOutput: `0x${string}`): number[] | null {
-  if (!plaintextOutput || plaintextOutput === '0x' || plaintextOutput.length < 4) return null
+// Number of leading plaintext coefficients that carry the vote payload. Must match
+// MAX_MSG_NON_ZERO_COEFFS in the CRISP SDK, server and program contract.
+const MAX_MSG_NON_ZERO_COEFFS = 100
+
+// Decode a CRISP tally from `plaintextOutput`.
+//
+// The field is the decrypted BFV polynomial, packed as one little-endian uint64 per
+// coefficient (Rust `encode_vec_u64_to_bytes`) — NOT an abi-encoded array. Only the
+// first MAX_MSG_NON_ZERO_COEFFS coefficients carry the payload: each option gets
+// floor(MAX_MSG_NON_ZERO_COEFFS / numOptions) binary coefficients, most significant
+// first, and the rest of the polynomial is zero padding.
+//
+// Totals are bigint: after aggregation a coefficient is a ballot count rather than a
+// bit, so an option total can exceed Number.MAX_SAFE_INTEGER.
+export function decodeCrispTally(plaintextOutput: `0x${string}`, numOptions: number): bigint[] | null {
+  if (!plaintextOutput || plaintextOutput === '0x') return null
+  if (!Number.isInteger(numOptions) || numOptions <= 0) return null
+
+  const hex = plaintextOutput.slice(2)
+  // 8 bytes (16 hex chars) per coefficient.
+  if (hex.length === 0 || hex.length % 16 !== 0) return null
+
   try {
-    // The data is abi-encoded `bytes` → uint64[] inside. Lightweight decoder:
-    // strip 0x, treat each 32-byte word as a uint256. The first word is offset,
-    // second is length, then the data. We expect uint64 values one per word.
-    const hex = plaintextOutput.slice(2)
-    if (hex.length < 128) return null
-    const lengthWord = hex.slice(64, 128)
-    const len = parseInt(lengthWord, 16)
-    if (!Number.isFinite(len) || len > 1024) return null
-    const out: number[] = []
-    for (let i = 0; i < len; i++) {
-      const word = hex.slice(128 + i * 64, 128 + (i + 1) * 64)
-      if (word.length !== 64) return null
-      // Guard against silent precision loss converting a >2^53 word to a JS number.
-      const v = BigInt('0x' + word)
-      if (v > BigInt(Number.MAX_SAFE_INTEGER)) return null
-      out.push(Number(v))
+    const coefficients: bigint[] = []
+    for (let i = 0; i < hex.length; i += 16) {
+      const word = hex.slice(i, i + 16)
+      let bigEndian = ''
+      for (let b = 14; b >= 0; b -= 2) bigEndian += word.slice(b, b + 2)
+      coefficients.push(BigInt(`0x${bigEndian}`))
     }
-    return out
+
+    if (coefficients.length < MAX_MSG_NON_ZERO_COEFFS) return null
+
+    const segmentSize = Math.floor(MAX_MSG_NON_ZERO_COEFFS / numOptions)
+    // More options than payload coefficients leaves nothing to decode.
+    if (segmentSize === 0) return null
+
+    const totals: bigint[] = []
+    for (let optIdx = 0; optIdx < numOptions; optIdx++) {
+      const segmentStart = optIdx * segmentSize
+      let value = 0n
+      for (let i = 0; i < segmentSize; i++) {
+        value += coefficients[segmentStart + i] << BigInt(segmentSize - 1 - i)
+      }
+      totals.push(value)
+    }
+
+    return totals
   } catch {
     return null
   }
