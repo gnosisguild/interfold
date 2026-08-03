@@ -68,6 +68,9 @@ describe("Interfold", function () {
     };
   };
 
+  const setupWithInitialProgram = async () =>
+    deployInterfoldSystem({ initialE3Program: AddressTwo });
+
   describe("constructor / initialize()", function () {
     it("correctly sets owner", async function () {
       const { interfold, owner } = await loadFixture(setup);
@@ -85,6 +88,11 @@ describe("Interfold", function () {
     it("correctly sets max duration", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
+    });
+
+    it("registers the initial E3 Program", async function () {
+      const { interfold } = await loadFixture(setupWithInitialProgram);
+      expect(await interfold.e3Programs(AddressTwo)).to.be.true;
     });
   });
 
@@ -343,6 +351,14 @@ describe("Interfold", function () {
   });
 
   describe("registerE3Program()", function () {
+    it("reverts if not called by owner", async function () {
+      const { interfold, notTheOwner } = await loadFixture(setup);
+
+      await expect(interfold.connect(notTheOwner).registerE3Program(AddressTwo))
+        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
+        .withArgs(notTheOwner);
+    });
+
     it("reverts if E3 Program is already registered", async function () {
       const {
         interfold,

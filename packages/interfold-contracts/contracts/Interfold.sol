@@ -206,6 +206,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @param _feeToken The address of the ERC20 token used for E3 fees.
     /// @param _maxDuration The maximum duration of a computation in seconds.
     /// @param config Initial timeout configuration for E3 lifecycle stages.
+    /// @param initialE3Program The E3 Program to allow before ownership transfers.
     function initialize(
         address _owner,
         ICiphernodeRegistry _ciphernodeRegistry,
@@ -214,7 +215,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 _feeToken,
         uint256 _maxDuration,
         E3TimeoutConfig calldata config,
-        PricingConfig calldata pricingConfig
+        PricingConfig calldata pricingConfig,
+        IE3Program initialE3Program
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
         __Ownable_init(msg.sender);
@@ -226,6 +228,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         _setTimeoutConfig(config);
 
         _setPricingConfig(pricingConfig);
+
+        registerE3Program(initialE3Program);
 
         if (_owner != owner()) _transferOwnership(_owner);
     }
@@ -626,7 +630,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IInterfold
-    function registerE3Program(IE3Program e3Program) external {
+    function registerE3Program(IE3Program e3Program) public onlyOwner {
         require(
             !e3Programs[e3Program],
             ModuleAlreadyEnabled(address(e3Program))

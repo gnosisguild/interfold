@@ -12,6 +12,10 @@ export default buildModule("Interfold", (m) => {
   const bondingRegistry = m.getParameter("bondingRegistry");
   const e3RefundManager = m.getParameter("e3RefundManager");
   const feeToken = m.getParameter("feeToken");
+  const initialE3Program = m.getParameter(
+    "initialE3Program",
+    "0x0000000000000000000000000000000000000001",
+  );
   const timeoutConfig = m.getParameter("timeoutConfig", {
     dkgWindow: 7200,
     computeWindow: 86400,
@@ -55,6 +59,7 @@ export default buildModule("Interfold", (m) => {
     maxDuration,
     timeoutConfig,
     pricingConfig,
+    initialE3Program,
   ]);
 
   const interfold = m.contract("TransparentUpgradeableProxy", [

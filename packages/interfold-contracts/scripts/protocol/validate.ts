@@ -122,6 +122,13 @@ export async function actionValidate(): Promise<void> {
     console.log(`  ok ${label}`);
   }
 
+  for (const program of config.e3Programs) {
+    if (!(await interfold.e3Programs(program))) {
+      throw new Error(`E3 Program is not registered: ${program}`);
+    }
+    console.log(`  ok interfold.e3Programs(${program})`);
+  }
+
   const defaultAdmin = ethersLib.ZeroHash;
   if (!(await slashing.hasRole(defaultAdmin, config.safe))) {
     throw new Error("Safe does not have SlashingManager DEFAULT_ADMIN_ROLE");
