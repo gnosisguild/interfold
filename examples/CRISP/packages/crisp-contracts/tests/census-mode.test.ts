@@ -35,14 +35,7 @@ describe('CRISPProgram census mode', function () {
     return ethers.AbiCoder.defaultAbiCoder().encode(types, values)
   }
 
-  const encodeWithOptions = (numOptions: number, censusMode: number) =>
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
-      [ethers.ZeroAddress, 0, numOptions, CONSTANT, 1, censusMode],
-    )
-
-  const validate = (e3Id: number, params: string) =>
-    crispProgram.validate(e3Id, 0, '0x', '0x', params)
+  const validate = (e3Id: number, params: string) => crispProgram.validate(e3Id, 0, '0x', '0x', params)
 
   beforeEach(async () => {
     crispProgram = await deployCRISPProgram()
@@ -71,10 +64,7 @@ describe('CRISPProgram census mode', function () {
   /// each vote weighs. Rejected on chain so it costs nothing rather than failing in the indexer
   /// after the E3 has been paid for.
   it('rejects BY_REQUESTER with custom credits', async () => {
-    await expect(validate(4, encode(CUSTOM, BY_REQUESTER))).to.be.revertedWithCustomError(
-      crispProgram,
-      'CensusModeRequiresConstantCredits',
-    )
+    await expect(validate(4, encode(CUSTOM, BY_REQUESTER))).to.be.revertedWithCustomError(crispProgram, 'CensusModeRequiresConstantCredits')
   })
 
   it('still allows custom credits with token discovery', async () => {
@@ -85,9 +75,6 @@ describe('CRISPProgram census mode', function () {
   /// An unrecognised mode is a coordinator that would not know what to do. Better to refuse the
   /// round than to have it silently treated as a token vote.
   it('rejects an unknown census mode', async () => {
-    await expect(validate(6, encode(CONSTANT, 2))).to.be.revertedWithCustomError(
-      crispProgram,
-      'InvalidCensusMode',
-    )
+    await expect(validate(6, encode(CONSTANT, 2))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
   })
 })

@@ -78,8 +78,11 @@ pub async fn register_e3_requested(
                 let decoded = <CustomParamsTuple as SolType>::abi_decode(&event.e3.customParams)
                     .with_context(|| "Failed to decode custom params from E3 event")?;
 
-                let credit_mode = CreditMode::try_from(decoded.3.to::<u64>())?;
-                let census_mode = CensusMode::try_from(decoded.5.to::<u64>())?;
+                // `saturating_to` rather than `to`: these fields are attacker-chosen ABI data, and
+                // `to::<u64>()` panics on a value above `u64::MAX`. Clamping lets the `TryFrom`
+                // impls reject it as an unknown mode instead.
+                let credit_mode = CreditMode::try_from(decoded.3.saturating_to::<u64>())?;
+                let census_mode = CensusMode::try_from(decoded.5.saturating_to::<u64>())?;
                 let credits = match credit_mode {
                     CreditMode::Constant => {
                         info!("[e3_id={}] Credit mode: Constant", e3_id);

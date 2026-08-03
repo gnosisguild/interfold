@@ -27,6 +27,11 @@ use alloy::primitives::Address;
 use alloy::providers::ProviderBuilder;
 use alloy::sol;
 use std::collections::HashSet;
+use std::time::Duration;
+
+/// Ceiling on the census `eth_call`. A requester that cannot answer within this is treated the same
+/// as one that reverts: no census, which the caller turns into a hard error.
+const CENSUS_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 sol! {
     #[sol(rpc)]
@@ -67,19 +72,28 @@ pub async fn try_fetch_requester_census(
     // is a requirement on implementors, not an assumption: `getCensus(e3Id)` MUST be immutable once
     // the round is open, or ballots already cast against one eligibility tree would be validated
     // against another.
-    let census = match contract
-        .getCensus(alloy::primitives::U256::from(e3_id))
-        .call()
-        .await
-    {
-        Ok(census) => census,
-        Err(e) => {
+    // Alloy sets no default request timeout, so an unresponsive RPC endpoint would hang this probe
+    // indefinitely and stall the indexer on the E3 that triggered it.
+    // Bound to a `let` so the builder outlives the future that borrows it.
+    let call_builder = contract.getCensus(alloy::primitives::U256::from(e3_id));
+
+    let census = match tokio::time::timeout(CENSUS_CALL_TIMEOUT, call_builder.call()).await {
+        Ok(Ok(census)) => census,
+        Ok(Err(e)) => {
             log::info!(
-                "[e3_id={}] Requester {} does not provide a census ({}); \
-                 falling back to token-holder discovery",
+                "[e3_id={}] Requester {} did not answer getCensus ({})",
                 e3_id,
                 requester,
                 e
+            );
+            return None;
+        }
+        Err(_) => {
+            log::warn!(
+                "[e3_id={}] Requester {} census probe timed out after {:?}",
+                e3_id,
+                requester,
+                CENSUS_CALL_TIMEOUT
             );
             return None;
         }
@@ -87,8 +101,7 @@ pub async fn try_fetch_requester_census(
 
     let Some(sanitized) = sanitize_census(census) else {
         log::warn!(
-            "[e3_id={}] Requester {} returned no usable census addresses; \
-             falling back to token-holder discovery",
+            "[e3_id={}] Requester {} returned no usable census addresses",
             e3_id,
             requester
         );
