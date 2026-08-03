@@ -94,12 +94,18 @@ Read the current state with these view functions:
 | `bondOwnerOf(operator)`        | Wallet that controls the collateral, or the zero address if unset |
 | `pendingBondOwnerOf(operator)` | Wallet nominated to accept the position                           |
 | `getLicenseBond(operator)`     | Active license bond                                               |
-| `isLicensed(operator)`         | Whether the bond meets `licenseRequiredBond`                      |
+| `isLicensed(operator)`         | Whether the bond meets the active-maintenance floor (see below)   |
 | `isRegistered(operator)`       | Whether the key is in the registry                                |
 | `isActive(operator)`           | Whether the operator is eligible for sortition                    |
 | `availableTickets(operator)`   | `floor(ticketBalance / ticketPrice)`                              |
 | `totalBonded(account)`         | FOLD that counts toward the locked-floor collateral of an owner   |
 | `hasExitInProgress(operator)`  | Whether an exit is queued                                         |
+
+> `isLicensed` and registration use different thresholds. `isLicensed` tests the active-maintenance
+> floor, which is `licenseRequiredBond` multiplied by `licenseActiveBps` (80% by default).
+> `registerOperatorFor` requires the full `licenseRequiredBond`. An operator between the two reads
+> as licensed but cannot register: the call reverts with `NotLicensed()`. Compare `getLicenseBond`
+> against `licenseRequiredBond` to test whether an operator can register.
 
 > `refreshOperatorStatus` is permissionless, but the operator must be registered. The call reverts
 > with `NotRegistered()` for an operator that is not in the registry. `refreshOperatorStatuses`

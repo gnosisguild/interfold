@@ -177,6 +177,11 @@ export default function Operator() {
   const bondOwnerSet = Boolean(status?.bondOwner)
   const isBondOwner = sameAddress(wallet.address, status?.bondOwner)
   const isOperatorWallet = sameAddress(wallet.address, operator)
+  // Registration readiness must compare against the full `licenseRequiredBond`.
+  // `status.licensed` is the registry's `isLicensed()`, which only tests the
+  // active-maintenance floor (`licenseRequiredBond * licenseActiveBps`, 80% by
+  // default). An operator between that floor and the full bond reads as
+  // licensed, but `registerOperatorFor` still reverts with `NotLicensed`.
   const bonded = Boolean(config && status && status.licenseBond >= config.licenseRequiredBond)
   const registered = Boolean(status?.registered)
   const ticketed = Boolean(config && status && status.availableTickets >= config.minTicketBalance)
@@ -498,11 +503,18 @@ export default function Operator() {
               state={stateOf(3)}
             >
               <dl className='dl'>
-                <dt>Licensed</dt>
-                <dd>{status?.licensed ? 'Yes' : 'Not yet — bond the license first'}</dd>
+                <dt>Bonded for registration</dt>
+                <dd>{bonded ? 'Yes' : 'Not yet — bond the full license first'}</dd>
                 <dt>Registered</dt>
                 <dd>{registered ? 'Yes' : 'No'}</dd>
               </dl>
+              {status?.licensed && !bonded && (
+                <Note kind='warn'>
+                  This operator meets the active-maintenance threshold, but registration needs the full{' '}
+                  {fmtToken(config.licenseRequiredBond, config.licenseDecimals, config.licenseSymbol)}. Bond{' '}
+                  {fmtToken(shortfall, config.licenseDecimals, config.licenseSymbol)} more in step 3.
+                </Note>
+              )}
               {status?.exitInProgress && (
                 <Note kind='warn'>
                   This operator has an exit in progress. Collateral must finish unwinding before it can register again.
@@ -510,7 +522,7 @@ export default function Operator() {
               )}
               <button
                 className='btn btn--primary'
-                disabled={busy !== null || !connected || !isBondOwner || !operator || !status?.licensed || registered}
+                disabled={busy !== null || !connected || !isBondOwner || !operator || !bonded || registered}
                 onClick={() =>
                   void run('register', () =>
                     write({

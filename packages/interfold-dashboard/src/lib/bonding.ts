@@ -197,6 +197,22 @@ export function useBonding(operator: string | null, account: Address | null): Bo
 
   const validOperator = operator && isAddress(operator) ? (operator as Address) : null
 
+  // Per-identity reads must not outlive the identity they belong to. The fetch
+  // effect below only refills `status`/`funds` once the network answers, so
+  // without this the panel keeps rendering the previous operator or account for
+  // a full round trip. Clearing during render (not in an effect) drops the stale
+  // values before the browser paints them. `config` is deployment-wide, so it
+  // survives the switch and does not flash.
+  const identity = `${validOperator ?? ''}|${account ?? ''}`
+  const [loadedIdentity, setLoadedIdentity] = useState(identity)
+  if (identity !== loadedIdentity) {
+    setLoadedIdentity(identity)
+    setStatus(null)
+    setFunds(null)
+    setError(null)
+    setLoading(true)
+  }
+
   useEffect(() => {
     let cancelled = false
     let inFlight = false
