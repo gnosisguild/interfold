@@ -219,7 +219,7 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
         out,
         "  Ticket balance: {} ({} available)",
         format_amount(ticket_balance, ticket_decimals),
-        format_amount(available_tickets, ticket_decimals)
+        available_tickets
     );
     log!(
         out,
@@ -235,7 +235,7 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     log!(
         out,
         "  Requirements: minTickets={}, ticketPrice={} EKT, licenseBond={} FOLD",
-        format_amount(min_ticket_balance, ticket_decimals),
+        min_ticket_balance,
         format_amount(ticket_price, ticket_decimals),
         format_amount(license_required, license_decimals)
     );

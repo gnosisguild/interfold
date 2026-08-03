@@ -732,6 +732,33 @@ describe("BondingRegistry", function () {
       ).to.be.revertedWithCustomError(bondingRegistry, "NotLicensed");
     });
 
+    it("reverts on a bond that only meets the active-maintenance floor", async function () {
+      const { bondingRegistry, licenseToken, operator1 } =
+        await loadFixture(setup);
+
+      // isLicensed() tests licenseRequiredBond * licenseActiveBps (80% by
+      // default). Registration requires the full bond, so a bond inside that
+      // window reads as licensed but must still be rejected.
+      const activeBps = await bondingRegistry.licenseActiveBps();
+      const flooredBond = (LICENSE_REQUIRED_BOND * activeBps) / 10_000n;
+      expect(flooredBond).to.be.lessThan(LICENSE_REQUIRED_BOND);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), flooredBond);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, flooredBond);
+
+      expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(true);
+
+      await expect(
+        bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address),
+      ).to.be.revertedWithCustomError(bondingRegistry, "NotLicensed");
+    });
+
     it("reverts if already registered", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
