@@ -46,7 +46,27 @@ elif ((count < DO_SEND_BASELINE)); then
 fi
 
 # --- 2. skip-proof feature containment --------------------------------------------
-if ! python3 scripts/check-cargo-feature-containment.py; then
+# The containment check parses Cargo.toml with tomllib, which is stdlib only from
+# Python 3.11. macOS still ships 3.9 as `python3`, so find an interpreter that has it
+# rather than failing the gate on the environment. The check also falls back to the
+# tomli package, so accept either module here.
+python_bin=""
+# 3.10 and 3.9 qualify too when tomli is installed, so their versioned names are
+# candidates as well; newest first after the default `python3`.
+for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
+  if command -v "$candidate" >/dev/null 2>&1 &&
+    "$candidate" -c 'import importlib.util as u, sys; sys.exit(0 if u.find_spec("tomllib") or u.find_spec("tomli") else 1)' >/dev/null 2>&1; then
+    python_bin="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$python_bin" ]]; then
+  echo "check-invariants: FAILED — no Python with tomllib (3.11+) found on PATH."
+  echo "  The skip-proof feature containment check cannot run, so the invariant is"
+  echo "  unverified. Install Python 3.11 or newer, or 'pip install tomli' for python3."
+  fail=1
+elif ! "$python_bin" scripts/check-cargo-feature-containment.py; then
   fail=1
 fi
 

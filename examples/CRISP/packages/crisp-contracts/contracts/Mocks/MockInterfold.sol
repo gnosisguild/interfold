@@ -20,6 +20,16 @@ contract MockInterfold {
   mapping(uint256 => E3) public e3s;
 
   function request(address program) external {
+    _request(program, 2);
+  }
+
+  /// @notice Request an E3 with a caller-supplied option count, so tests can
+  /// cover tallies with more than two options.
+  function requestWithOptions(address program, uint256 numOptions) external {
+    _request(program, numOptions);
+  }
+
+  function _request(address program, uint256 numOptions) internal {
     e3s[nextE3Id] = E3({
       seed: 0,
       committeeSize: IInterfold.CommitteeSize.Minimum,
@@ -28,7 +38,7 @@ contract MockInterfold {
       encryptionSchemeId: bytes32(0),
       e3Program: IE3Program(address(0)),
       paramSet: 0, // Insecure512
-      customParams: abi.encode(address(0), nextE3Id, 2, 0, 0),
+      customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
       committeePublicKey: committeePublicKey,
@@ -38,7 +48,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, 2, 0, 0));
+    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0));
 
     nextE3Id++;
   }

@@ -18,7 +18,9 @@ export {
   getScaledBalance,
 } from './utils'
 export {
+  encodeVote,
   decodeTally,
+  decryptVote,
   generateVoteProof,
   generateMaskVoteProof,
   verifyProof,
@@ -38,6 +40,7 @@ export type {
   MaskVoteProofInputs,
   VoteProofInputs,
   ProofData,
+  TallyResult,
   CurrentRoundResponse,
   E3StateLiteResponse,
   JsonResponse,
