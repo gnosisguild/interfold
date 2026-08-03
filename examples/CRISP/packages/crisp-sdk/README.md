@@ -189,8 +189,8 @@ const previousCiphertext = await getPreviousCiphertext(serverUrl, e3Id, slotAddr
 - `generateMaskVoteProof(maskVoteProofInputs: MaskVoteProofInputs): Promise<ProofData>` - Generate a
   mask vote proof (low-level)
 - `verifyProof(proof: ProofData): Promise<boolean>` - Verify a proof locally
-- `decodeTally(tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult` - Decode an
-  encoded tally into one total per option
+- `decodeTally(tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult` - Decode
+  an encoded tally into one total per option
 - `generatePublicKey(): Uint8Array` - Generate a random public key
 - `encryptVote(vote: Vote, publicKey: Uint8Array): Uint8Array` - Encrypt a vote
 - `encodeSolidityProof(proof: ProofData): Hex` - Encode proof for Solidity contract

@@ -16,8 +16,8 @@ importers:
   .:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.14.0
-        version: 0.14.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        specifier: 0.15.0
+        version: 0.15.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -731,11 +731,11 @@ packages:
   '@coinbase/wallet-sdk@4.3.6':
     resolution: {integrity: sha512-4q8BNG1ViL4mSAAvPAtpwlOs1gpC+67eQtgIwNvT3xyeyFFd+guwkc8bcX5rTmQhXpqnhzC4f0obACbP9CqMSA==}
 
-  '@crisp-e3/sdk@0.14.0':
-    resolution: {integrity: sha512-yO5r2tYzYPUTIDM5r5eQltKJFwgw33ehToAu4YOo1i67d1y8oNLJqoZ+2kmoHDtN1fUe/hPliRDiQ7CHqaHAew==}
+  '@crisp-e3/sdk@0.15.0':
+    resolution: {integrity: sha512-iCOnZB/jm8Izg2h2kZPAZhHQc6xF5x83Zdq+jSf3uX/Ubl9PSWdVKP/bEYCvYlpII35mLsP2q0y/AwbLH09hRA==}
 
-  '@crisp-e3/zk-inputs@0.14.0':
-    resolution: {integrity: sha512-ZPHwvQJ/iFb1BrqsGjbxjXfld7oEuEQwt9Av9YnTf8r2vDotLV09TUUxsinhzeCGM4Kg9c+nKe8YUZdFTRFyqg==}
+  '@crisp-e3/zk-inputs@0.15.0':
+    resolution: {integrity: sha512-e+BzkqwOFG3lVt3JuJiQQeKTJ5XaHISS557ZSPR2geo5jxCX6NiNk6VYF5RQOXx/uCR29FxFs6BtUZz4HQ/eIw==}
 
   '@ecies/ciphers@0.2.6':
     resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -5629,10 +5629,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/sdk@0.14.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
+  '@crisp-e3/sdk@0.15.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
     dependencies:
       '@aztec/bb.js': 3.0.0-nightly.20260102
-      '@crisp-e3/zk-inputs': 0.14.0
+      '@crisp-e3/zk-inputs': 0.15.0
       '@noir-lang/noir_js': 1.0.0-beta.16
       '@zk-kit/lean-imt': 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       poseidon-lite: 0.3.0
@@ -5643,7 +5643,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/zk-inputs@0.14.0': {}
+  '@crisp-e3/zk-inputs@0.15.0': {}
 
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:
@@ -7513,8 +7513,8 @@ snapshots:
   '@walletconnect/keyvaluestorage@1.1.1':
     dependencies:
       '@walletconnect/safe-json': 1.0.2
-      idb-keyval: 6.2.4
-      unstorage: 1.17.5(idb-keyval@6.2.4)
+      idb-keyval: 6.3.0
+      unstorage: 1.17.5(idb-keyval@6.3.0)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -10472,7 +10472,7 @@ snapshots:
 
   universalify@2.0.1: {}
 
-  unstorage@1.17.5(idb-keyval@6.2.4):
+  unstorage@1.17.5(idb-keyval@6.3.0):
     dependencies:
       anymatch: 3.1.3
       chokidar: 5.0.0
@@ -10483,7 +10483,7 @@ snapshots:
       ofetch: 1.5.1
       ufo: 1.6.4
     optionalDependencies:
-      idb-keyval: 6.2.4
+      idb-keyval: 6.3.0
 
   update-browserslist-db@1.2.3(browserslist@4.28.2):
     dependencies:
