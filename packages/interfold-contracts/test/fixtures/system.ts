@@ -145,6 +145,8 @@ export interface DeployInterfoldSystemOptions {
    *  - `"large"`   → degree 2048 (used by integration tests)
    */
   bfvParams?: "default" | "large";
+  /** Program registered atomically by `Interfold.initialize`. */
+  initialE3Program?: string;
   /**
    * If `true`, also deploys the `MockCircuitVerifier` used by slashing
    * proof-based lanes. Defaults to `false`.
@@ -408,6 +410,7 @@ export async function deployInterfoldSystem(
         e3RefundManager: ADDRESS_ONE, // placeholder — overridden below
         feeToken: await usdcToken.getAddress(),
         timeoutConfig,
+        initialE3Program: opts.initialE3Program ?? ADDRESS_ONE,
       },
     },
   });

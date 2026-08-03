@@ -9,6 +9,8 @@ import { Interfold, Interfold__factory as InterfoldFactory } from "../../types";
 import { getProxyAdmin, verifyProxyAdminOwner } from "../proxy";
 import { readDeploymentArgs, storeDeploymentArgs } from "../utils";
 
+const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
+
 /**
  * Timeout configuration for E3 stages
  */
@@ -29,6 +31,7 @@ export interface InterfoldArgs {
   e3RefundManager?: string;
   feeToken?: string;
   timeoutConfig?: E3TimeoutConfig;
+  initialE3Program?: string;
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -45,6 +48,7 @@ export const deployAndSaveInterfold = async ({
   e3RefundManager,
   feeToken,
   timeoutConfig,
+  initialE3Program = ADDRESS_ONE,
   hre,
 }: InterfoldArgs): Promise<{ interfold: Interfold }> => {
   const { ethers } = await hre.network.connect();
@@ -68,7 +72,7 @@ export const deployAndSaveInterfold = async ({
       preDeployedArgs?.constructorArgs?.bondingRegistry === bondingRegistry &&
       preDeployedArgs?.constructorArgs?.e3RefundManager === e3RefundManager &&
       preDeployedArgs?.constructorArgs?.feeToken === feeToken &&
-      true)
+      preDeployedArgs?.constructorArgs?.initialE3Program === initialE3Program)
   ) {
     if (!preDeployedArgs?.address) {
       throw new Error("Interfold address not found, it must be deployed first");
@@ -145,6 +149,7 @@ export const deployAndSaveInterfold = async ({
       minCommitteeSize: 0,
       minThreshold: 0,
     },
+    initialE3Program,
   ]);
 
   const ProxyCF = await ethers.getContractFactory(
@@ -166,6 +171,7 @@ export const deployAndSaveInterfold = async ({
         feeToken,
         maxDuration,
         timeoutConfig: JSON.stringify(timeoutConfig),
+        initialE3Program,
       },
       libraries: {
         InterfoldLifecycle: lifecycleLibAddress,
