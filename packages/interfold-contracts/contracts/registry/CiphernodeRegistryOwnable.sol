@@ -697,14 +697,11 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Update the registry-wide vote validity window used by accusers
     ///         when stamping `AccusationVote.deadline`.
-    /// @dev Ciphernodes fetch this once at startup. After a change, in-flight
-    ///      ciphernode processes continue to use the previous value until
-    ///      restarted — operators should coordinate a restart if the new
-    ///      window is materially shorter than the old one, otherwise stale
-    ///      nodes will produce votes the on-chain verifier rejects.
-    /// @param _accusationVoteValidity New validity window in seconds.
-    ///        Zero is allowed and intentionally disables slashing submission
-    ///        until governance restores a nonzero value.
+    /// @dev Ciphernodes fetch this value at startup. Operators must restart
+    ///      nodes after a change. Otherwise, nodes can create vote deadlines
+    ///      that the on-chain verifier rejects.
+    /// @param _accusationVoteValidity New nonzero validity window in seconds.
+    ///        Use the proposal and commit functions to set a zero value.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -716,8 +713,8 @@ contract CiphernodeRegistryOwnable is
         emit AccusationVoteValiditySet(_accusationVoteValidity);
     }
 
-    /// @notice Propose a new accusation vote validity window (supports zero).
-    /// @dev Zeroing the window is slash-disable behavior and therefore timelocked.
+    /// @notice Propose a new accusation vote validity window. Zero is permitted.
+    /// @dev A zero value disables slash submission after the time delay.
     function proposeAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
