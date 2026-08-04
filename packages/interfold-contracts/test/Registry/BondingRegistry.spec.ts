@@ -1715,6 +1715,83 @@ describe("BondingRegistry", function () {
       ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
     });
 
+    describe("setLicenseToken()", function () {
+      it("requires a valid locked-balance response", async function () {
+        const { bondingRegistry, usdcToken } = await loadFixture(setup);
+        const plainTokenAddress = await usdcToken.getAddress();
+
+        await expect(bondingRegistry.setLicenseToken(plainTokenAddress))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "IncompatibleLicenseToken",
+          )
+          .withArgs(plainTokenAddress);
+
+        const token = await (
+          await ethers.getContractFactory("MockLockAwareLicenseToken")
+        ).deploy(1);
+        const tokenAddress = await token.getAddress();
+
+        await expect(bondingRegistry.setLicenseToken(tokenAddress))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "IncompatibleLicenseToken",
+          )
+          .withArgs(tokenAddress);
+
+        await token.setResponseMode(2);
+        await expect(bondingRegistry.setLicenseToken(tokenAddress))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "IncompatibleLicenseToken",
+          )
+          .withArgs(tokenAddress);
+
+        await token.setResponseMode(0);
+        await expect(bondingRegistry.setLicenseToken(tokenAddress))
+          .to.emit(bondingRegistry, "LicenseTokenSet")
+          .withArgs(tokenAddress);
+      });
+
+      it("reports a lock-aware token that later stops responding", async function () {
+        const {
+          bondingRegistry,
+          operator1,
+          operator2,
+          operator1Address,
+          operator2OwnerAddress,
+        } = await loadFixture(setup);
+        const token = await (
+          await ethers.getContractFactory("MockLockAwareLicenseToken")
+        ).deploy(0);
+        const tokenAddress = await token.getAddress();
+        const bondAmount = LICENSE_REQUIRED_BOND;
+
+        await bondingRegistry.setLicenseToken(tokenAddress);
+        await token.mint(await operator1.getAddress(), bondAmount);
+        await token.connect(operator1).getFunction("approve")(
+          await bondingRegistry.getAddress(),
+          bondAmount,
+        );
+        await bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .proposeBondOwner(operator1Address, operator2OwnerAddress);
+
+        await token.setResponseMode(1);
+        await expect(
+          bondingRegistry.connect(operator2).acceptBondOwner(operator1Address),
+        )
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "IncompatibleLicenseToken",
+          )
+          .withArgs(tokenAddress);
+      });
+    });
+
     describe("withdrawSlashedFunds()", function () {
       it("allows owner to withdraw slashed funds", async function () {
         const { bondingRegistry, treasury } = await loadFixture(setup);
@@ -2162,7 +2239,7 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.totalLicenseLiability()).to.equal(0);
 
       const replacement = await (
-        await ethers.getContractFactory("MockFeeOnTransferToken")
+        await ethers.getContractFactory("MockLockAwareLicenseToken")
       ).deploy(0);
       await expect(
         bondingRegistry.setLicenseToken(await replacement.getAddress()),

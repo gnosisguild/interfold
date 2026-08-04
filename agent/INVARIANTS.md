@@ -37,8 +37,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
   plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
   `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
-- Bonding-asset rotation only after old-asset balances fully drain; replacement assets must be
-  deployed contracts. — `flow-trace/02`; INDEX concern #23
+- Bonding-asset rotation only after old-asset balances fully drain. Replacement assets must be
+  deployed contracts, and a replacement license token must return a valid value from
+  `lockedBalanceOf`. — `flow-trace/02`; INDEX concern #23
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 

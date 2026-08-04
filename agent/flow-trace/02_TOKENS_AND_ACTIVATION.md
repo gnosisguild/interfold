@@ -494,6 +494,9 @@ enforcement based on immutable policy curves. Key changes:
 - **Immutable constructor parameters.** `CCA_START`, `CCA_END`, `CLAIM_SOURCE`, and
   `BONDING_REGISTRY` are set at construction and cannot change. The BondingRegistry must be deployed
   first (or a placeholder used and fixed via `setLicenseToken`).
+- **License-token compatibility.** Each nonzero token passed to `setLicenseToken` must return one
+  ABI-encoded `uint256` from `lockedBalanceOf(address)`. This keeps funded bond-owner transfers
+  available after a token rotation.
 - **Lock policy system.** `createLockPolicy(id, LockPolicy)` creates write-once policies with
   `Curve { anchor (Absolute|Tge), start, cliffDuration, vestDuration }` and optional `holdUntil`.
   `linkClaim(account, amount, policyId)` classifies pending claim-source tokens under a real policy.

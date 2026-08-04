@@ -471,9 +471,10 @@ contract BondingRegistry is
         if (delegatedBond != 0) {
             uint256 remainingBonded = _bondedByOwner[previousOwner] -
                 delegatedBond;
-            uint256 lockedBalance = ILockAwareLicenseToken(
-                address(licenseToken)
-            ).lockedBalanceOf(previousOwner);
+            uint256 lockedBalance = _lockedBalanceOf(
+                licenseToken,
+                previousOwner
+            );
             uint256 controlledBalance = licenseToken.balanceOf(previousOwner) +
                 remainingBonded;
             if (lockedBalance > controlledBalance) {
@@ -1011,6 +1012,9 @@ contract BondingRegistry is
                 );
             }
         }
+        if (next != address(0)) {
+            _lockedBalanceOf(newLicenseToken, address(this));
+        }
         licenseToken = newLicenseToken;
         emit LicenseTokenSet(next);
     }
@@ -1228,6 +1232,21 @@ contract BondingRegistry is
             if (abi.decode(result, (uint256)) != 0) return true;
         }
         return false;
+    }
+
+    /// @dev Reads a lock-aware token through a checked low-level call so a bad
+    ///      configuration returns a protocol error instead of an ABI decode error.
+    function _lockedBalanceOf(
+        IERC20 token,
+        address account
+    ) internal view returns (uint256) {
+        (bool success, bytes memory result) = address(token).staticcall(
+            abi.encodeCall(ILockAwareLicenseToken.lockedBalanceOf, (account))
+        );
+        if (!success || result.length != 32) {
+            revert IncompatibleLicenseToken(address(token));
+        }
+        return abi.decode(result, (uint256));
     }
 
     /// @dev Calculates the minimum license bond required to maintain active status.
