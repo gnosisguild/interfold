@@ -6,6 +6,7 @@
 
 //! Pure EventStore-to-dashboard projection.
 
+use alloy::primitives::U256;
 use e3_events::{
     hlc::HlcTimestamp, E3Stage, Event, EventContextAccessors, EventContextSeq, EventSource,
     InterfoldEvent, InterfoldEventData,
@@ -132,6 +133,12 @@ pub struct RewardView {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct RewardAllocationView {
+    pub operator: String,
+    pub amount: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct E3Summary {
     pub e3_id: String,
     pub chain_id: u64,
@@ -153,6 +160,7 @@ pub struct E3Trace {
     pub committee: Vec<CommitteeMemberView>,
     pub tickets: Vec<TicketView>,
     pub rewards: Vec<RewardView>,
+    pub reward_allocations: Vec<RewardAllocationView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<Value>,
     pub events: Vec<EventView>,
@@ -194,7 +202,12 @@ struct ChainState {
     license_bond: Option<String>,
     bond_owner: Option<String>,
     exit_unlock_at: Option<u64>,
-    rewards: Vec<RewardView>,
+    rewards: Vec<ChainReward>,
+}
+
+struct ChainReward {
+    e3_id: String,
+    view: RewardView,
 }
 
 #[derive(Default)]
@@ -209,6 +222,7 @@ struct E3State {
     tickets: Vec<TicketView>,
     expelled: BTreeSet<String>,
     rewards: Vec<RewardView>,
+    reward_allocations: Vec<RewardAllocationView>,
     failure: Option<Value>,
     failed_phase: Option<E3Phase>,
     first_seen_us: u64,
@@ -270,7 +284,11 @@ impl TelemetryProjection {
                     license_bond: state.license_bond.clone(),
                     bond_owner: state.bond_owner.clone(),
                     exit_unlock_at: state.exit_unlock_at,
-                    rewards_credited: state.rewards.clone(),
+                    rewards_credited: state
+                        .rewards
+                        .iter()
+                        .map(|reward| reward.view.clone())
+                        .collect(),
                 })
                 .collect(),
             e3_total: summaries.len(),
@@ -349,24 +367,31 @@ impl TelemetryProjection {
                     .entry(event.e3_id.chain_id())
                     .or_default()
                     .rewards
-                    .push(RewardView {
-                        account: event.account.clone(),
-                        token: Some(event.token.clone()),
-                        amount: event.amount.clone(),
-                        claimed: false,
+                    .push(ChainReward {
+                        e3_id: event.e3_id.to_string(),
+                        view: RewardView {
+                            account: event.account.clone(),
+                            token: Some(event.token.clone()),
+                            amount: event.amount.clone(),
+                            claimed: false,
+                        },
                     });
             }
             InterfoldEventData::RewardClaimed(event)
                 if normalize_address(&event.account) == self.local_address =>
             {
                 let state = self.chains.entry(event.e3_id.chain_id()).or_default();
-                if let Some(reward) = state.rewards.iter_mut().rev().find(|reward| {
-                    normalize_address(&reward.account) == self.local_address
-                        && reward.token.as_deref() == Some(event.token.as_str())
-                        && reward.amount == event.amount
-                }) {
-                    reward.claimed = true;
-                }
+                let e3_id = event.e3_id.to_string();
+                mark_claimed_rewards(
+                    state
+                        .rewards
+                        .iter_mut()
+                        .filter(|reward| reward.e3_id == e3_id)
+                        .map(|reward| &mut reward.view),
+                    &event.account,
+                    &event.token,
+                    &event.amount,
+                );
             }
             _ => {}
         }
@@ -446,15 +471,13 @@ impl TelemetryProjection {
                 _ => {}
             },
             InterfoldEventData::RewardsDistributed(event) => {
-                state.rewards = event
+                state.reward_allocations = event
                     .nodes
                     .iter()
                     .zip(&event.amounts)
-                    .map(|(account, amount)| RewardView {
-                        account: account.clone(),
-                        token: None,
+                    .map(|(operator, amount)| RewardAllocationView {
+                        operator: operator.clone(),
                         amount: amount.clone(),
-                        claimed: false,
                     })
                     .collect();
             }
@@ -467,13 +490,12 @@ impl TelemetryProjection {
                 });
             }
             InterfoldEventData::RewardClaimed(event) => {
-                if let Some(reward) = state.rewards.iter_mut().rev().find(|reward| {
-                    normalize_address(&reward.account) == normalize_address(&event.account)
-                        && reward.token.as_deref() == Some(event.token.as_str())
-                        && reward.amount == event.amount
-                }) {
-                    reward.claimed = true;
-                }
+                mark_claimed_rewards(
+                    state.rewards.iter_mut(),
+                    &event.account,
+                    &event.token,
+                    &event.amount,
+                );
             }
             _ => {}
         }
@@ -802,6 +824,7 @@ fn trace(state: &E3State) -> E3Trace {
             .collect(),
         tickets: state.tickets.clone(),
         rewards: state.rewards.clone(),
+        reward_allocations: state.reward_allocations.clone(),
         failure: state.failure.clone(),
         events: state.events.clone(),
     }
@@ -809,6 +832,49 @@ fn trace(state: &E3State) -> E3Trace {
 
 fn normalize_address(value: &str) -> String {
     value.to_ascii_lowercase()
+}
+
+fn mark_claimed_rewards<'a>(
+    rewards: impl IntoIterator<Item = &'a mut RewardView>,
+    account: &str,
+    token: &str,
+    claimed_amount: &str,
+) {
+    let Ok(claimed_amount) = claimed_amount.parse::<U256>() else {
+        return;
+    };
+    let account = normalize_address(account);
+    let token = normalize_address(token);
+    let mut matching = Vec::new();
+    let mut credited_amount = U256::ZERO;
+
+    for reward in rewards {
+        let matches = !reward.claimed
+            && normalize_address(&reward.account) == account
+            && reward
+                .token
+                .as_deref()
+                .is_some_and(|value| normalize_address(value) == token);
+        if !matches {
+            continue;
+        }
+
+        let Ok(amount) = reward.amount.parse::<U256>() else {
+            return;
+        };
+        let Some(next_credited_amount) = credited_amount.checked_add(amount) else {
+            return;
+        };
+        credited_amount = next_credited_amount;
+        matching.push(reward);
+    }
+
+    if credited_amount != claimed_amount {
+        return;
+    }
+    for reward in matching {
+        reward.claimed = true;
+    }
 }
 
 #[cfg(test)]
@@ -855,12 +921,15 @@ mod tests {
         let e3_id = e3_events::E3id::new("9", 31337);
         let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
         let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+        let operator_one = "0x1111111111111111111111111111111111111111";
+        let operator_two = "0x2222222222222222222222222222222222222222";
         let events = vec![
             replay_event(
-                RewardsDistributed {
+                RewardCredited {
                     e3_id: e3_id.clone(),
-                    nodes: vec![account.into()],
-                    amounts: vec!["42".into()],
+                    account: account.into(),
+                    token: token.into(),
+                    amount: "20".into(),
                 }
                 .into(),
                 1,
@@ -871,11 +940,21 @@ mod tests {
                     e3_id: e3_id.clone(),
                     account: account.into(),
                     token: token.into(),
-                    amount: "42".into(),
+                    amount: "22".into(),
                 }
                 .into(),
                 2,
                 20,
+            ),
+            replay_event(
+                RewardsDistributed {
+                    e3_id: e3_id.clone(),
+                    nodes: vec![operator_one.into(), operator_two.into()],
+                    amounts: vec!["20".into(), "22".into()],
+                }
+                .into(),
+                3,
+                30,
             ),
             replay_event(
                 RewardClaimed {
@@ -885,8 +964,8 @@ mod tests {
                     amount: "42".into(),
                 }
                 .into(),
-                3,
-                30,
+                4,
+                40,
             ),
         ];
 
@@ -911,6 +990,104 @@ mod tests {
             serde_json::to_value(live.trace("31337:9")).unwrap(),
             serde_json::to_value(rebuilt.trace("31337:9")).unwrap()
         );
+
+        let trace = live.trace("31337:9").unwrap();
+        assert_eq!(trace.rewards.len(), 2);
+        assert!(trace.rewards.iter().all(|reward| reward.claimed));
+        assert!(trace
+            .rewards
+            .iter()
+            .all(|reward| reward.account == account && reward.token.as_deref() == Some(token)));
+        assert_eq!(trace.reward_allocations.len(), 2);
+        assert_eq!(trace.reward_allocations[0].operator, operator_one);
+        assert_eq!(trace.reward_allocations[1].operator, operator_two);
+
+        let overview = live.overview();
+        let chain = overview
+            .chains
+            .iter()
+            .find(|chain| chain.chain_id == 31337)
+            .unwrap();
+        assert_eq!(chain.rewards_credited.len(), 2);
+        assert!(chain.rewards_credited.iter().all(|reward| reward.claimed));
+    }
+
+    #[test]
+    fn chain_reward_claims_are_scoped_to_one_e3() {
+        let claimed_e3 = e3_events::E3id::new("9", 31337);
+        let pending_e3 = e3_events::E3id::new("10", 31337);
+        let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
+        let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+        let events = [
+            RewardCredited {
+                e3_id: claimed_e3.clone(),
+                account: account.into(),
+                token: token.into(),
+                amount: "20".into(),
+            }
+            .into(),
+            RewardCredited {
+                e3_id: pending_e3,
+                account: account.into(),
+                token: token.into(),
+                amount: "22".into(),
+            }
+            .into(),
+            RewardClaimed {
+                e3_id: claimed_e3,
+                account: account.into(),
+                token: token.into(),
+                amount: "20".into(),
+            }
+            .into(),
+        ];
+
+        let mut projection = TelemetryProjection::new(account);
+        for (index, event) in events.into_iter().enumerate() {
+            projection.apply(replay_event(event, index as u64 + 1, index as u128 + 1));
+        }
+
+        let overview = projection.overview();
+        let rewards = &overview.chains[0].rewards_credited;
+        assert_eq!(rewards.len(), 2);
+        assert!(
+            rewards
+                .iter()
+                .find(|reward| reward.amount == "20")
+                .unwrap()
+                .claimed
+        );
+        assert!(
+            !rewards
+                .iter()
+                .find(|reward| reward.amount == "22")
+                .unwrap()
+                .claimed
+        );
+    }
+
+    #[test]
+    fn reward_claim_matching_rejects_aggregate_overflow() {
+        let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
+        let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+        let mut rewards = vec![
+            RewardView {
+                account: account.into(),
+                token: Some(token.into()),
+                amount: U256::MAX.to_string(),
+                claimed: false,
+            },
+            RewardView {
+                account: account.into(),
+                token: Some(token.into()),
+                amount: "2".into(),
+                claimed: false,
+            },
+        ];
+
+        mark_claimed_rewards(rewards.iter_mut(), account, token, "1");
+
+        assert!(rewards.iter().all(|reward| !reward.claimed));
     }
 
     fn replay_event(data: InterfoldEventData, seq: u64, timestamp: u128) -> InterfoldEvent {

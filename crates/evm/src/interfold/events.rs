@@ -403,6 +403,13 @@ pub(crate) fn extractor(
         Some(&IInterfold::RewardsDistributed::SIGNATURE_HASH) => {
             let mut event = IInterfold::RewardsDistributed::decode_log_data(data)
                 .context("failed to decode RewardsDistributed after its topic matched")?;
+            if event.nodes.len() != event.amounts.len() {
+                anyhow::bail!(
+                    "RewardsDistributed array lengths differ: nodes={}, amounts={}",
+                    event.nodes.len(),
+                    event.amounts.len()
+                );
+            }
             event.e3Id = indexed_u256(topics, 1, "RewardsDistributed")?;
             Ok(Some(RewardsDistributedWithChainId(event, chain_id).into()))
         }
@@ -531,6 +538,22 @@ mod tests {
             }
             other => panic!("expected RewardCredited, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_extractor_rejects_mismatched_reward_arrays() {
+        let event = IInterfold::RewardsDistributed {
+            e3Id: U256::from(8),
+            nodes: vec![Address::repeat_byte(0x11), Address::repeat_byte(0x22)],
+            amounts: vec![U256::from(500)],
+        };
+        let log = event.encode_log_data();
+
+        let error = extractor(&log, log.topics(), 10).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("RewardsDistributed array lengths differ"));
     }
 
     #[test]
