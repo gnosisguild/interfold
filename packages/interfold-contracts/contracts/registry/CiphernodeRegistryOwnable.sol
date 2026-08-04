@@ -192,12 +192,6 @@ contract CiphernodeRegistryOwnable is
         _;
     }
 
-    /// @dev Restricts function access to only the bonding registry
-    modifier onlyBondingRegistry() {
-        require(msg.sender == address(bondingRegistry), OnlyBondingRegistry());
-        _;
-    }
-
     /// @dev Restricts function access to owner or bonding registry
     modifier onlyOwnerOrBondingVault() {
         require(

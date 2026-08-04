@@ -341,9 +341,6 @@ interface ICiphernodeRegistry {
     /// @notice Caller is not the Interfold contract
     error OnlyInterfold();
 
-    /// @notice Caller is not the bonding registry
-    error OnlyBondingRegistry();
-
     /// @notice Caller is neither owner nor bonding registry
     error NotOwnerOrBondingRegistry();
 
