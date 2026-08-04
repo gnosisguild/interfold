@@ -469,8 +469,7 @@ describe("Interfold", function () {
         ...request,
         inputWindow: [requestAt, inputEnd] as [bigint, bigint],
       };
-      const fee = await interfold.getE3Quote(exactDurationRequest);
-      await usdcToken.approve(await interfold.getAddress(), fee);
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await time.setNextBlockTimestamp(requestAt);
 
       await interfold.request(exactDurationRequest);

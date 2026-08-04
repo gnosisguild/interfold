@@ -272,7 +272,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             E3ProgramNotAllowed(requestParams.e3Program)
         );
 
-        uint256 e3Fee = getE3Quote(requestParams);
         InterfoldLifecycle.validateRequest(
             requestParams.inputWindow,
             block.timestamp,
@@ -280,6 +279,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _timeoutConfig.decryptionWindow,
             maxDuration
         );
+        uint256 e3Fee = getE3Quote(requestParams);
 
         e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
@@ -1056,6 +1056,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     function getE3Quote(
         E3RequestParams calldata requestParams
     ) public view returns (uint256 fee) {
+        InterfoldLifecycle.validateRequest(
+            requestParams.inputWindow,
+            block.timestamp,
+            _timeoutConfig.computeWindow,
+            _timeoutConfig.decryptionWindow,
+            maxDuration
+        );
         require(
             paramSetRegistry[requestParams.paramSet].length > 0,
             "BFV param set not registered"
@@ -1081,6 +1088,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _timeoutConfig,
             ciphernodeRegistry.sortitionSubmissionWindow(),
             threshold,
+            block.timestamp,
             requestParams.inputWindow[0],
             requestParams.inputWindow[1]
         );

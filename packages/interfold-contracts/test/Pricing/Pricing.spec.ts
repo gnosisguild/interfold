@@ -177,6 +177,26 @@ describe("E3 Pricing", function () {
       expect(longFee).to.be.gt(shortFee);
     });
 
+    it("charges for an equal-length input window scheduled later", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      const now = await time.latest();
+      const windowLength = 300;
+
+      const nearFee = await interfold.getE3Quote({
+        ...request,
+        inputWindow: [now + 10, now + 10 + windowLength] as [number, number],
+      });
+      const delayedFee = await interfold.getE3Quote({
+        ...request,
+        inputWindow: [now + 7200, now + 7200 + windowLength] as [
+          number,
+          number,
+        ],
+      });
+
+      expect(delayedFee).to.be.gt(nearFee);
+    });
+
     it("fee reflects margin changes", async function () {
       const { interfold, request } = await loadFixture(setup);
 

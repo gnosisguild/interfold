@@ -48,6 +48,8 @@ Requester calls: Interfold.request({
 │   ├─ fee = getE3Quote()
 │   │   → InterfoldPricing quote from committee threshold, time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
+│   │   → availability covers at least request time through input-window end
+│   │   → a later equal-length input window therefore costs more
 │   ├─ feeToken.transferFrom(requester, address(this), fee)
 │   └─ e3Payments[e3Id] = fee  (stored per-E3)
 │       _e3FeeTokens[e3Id] = feeToken  (survives global token rotation)

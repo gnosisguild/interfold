@@ -117,6 +117,7 @@ library InterfoldPricing {
     /// @param tc                  Snapshot of `_timeoutConfig`.
     /// @param sortitionWindow     Result of `ciphernodeRegistry.sortitionSubmissionWindow()`.
     /// @param threshold           `[quorum, total]` resolved from `committeeThresholds`.
+    /// @param requestTime         Timestamp used for request validation and pricing.
     /// @param inputWindowStart    `requestParams.inputWindow[0]`.
     /// @param inputWindowEnd      `requestParams.inputWindow[1]`.
     function quote(
@@ -124,15 +125,16 @@ library InterfoldPricing {
         IInterfold.E3TimeoutConfig calldata tc,
         uint256 sortitionWindow,
         uint32[2] calldata threshold,
+        uint256 requestTime,
         uint256 inputWindowStart,
         uint256 inputWindowEnd
-    ) external view returns (uint256 fee) {
+    ) external pure returns (uint256 fee) {
         if (inputWindowEnd < inputWindowStart)
             revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
 
         {
             uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
-            uint256 committeeDeadline = block.timestamp + sortitionWindow;
+            uint256 committeeDeadline = requestTime + sortitionWindow;
             if (computeDeadline <= committeeDeadline)
                 revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
                     computeDeadline,
@@ -143,22 +145,14 @@ library InterfoldPricing {
         uint256 n = uint256(threshold[1]); // total committee size
         uint256 m = uint256(threshold[0]); // quorum/decryption threshold
 
-        // Duration covers the full availability period, using expected-case
-        // utilization fractions for protocol-controlled timeout windows.
-        // Sum the BPS-weighted windows first then divide once so the
-        // duration does not lose up to ~3 seconds of weight to per-term
-        // integer-division truncation.
-        uint256 weightedTimeoutsBps = tc.dkgWindow *
-            uint256(pc.dkgUtilizationBps) +
-            tc.computeWindow *
-            uint256(pc.computeUtilizationBps) +
-            tc.decryptionWindow *
-            uint256(pc.decryptUtilizationBps);
-        uint256 duration = sortitionWindow +
-            inputWindowEnd -
-            inputWindowStart +
-            weightedTimeoutsBps /
-            uint256(BPS_BASE);
+        uint256 duration = _billableDuration(
+            pc,
+            tc,
+            sortitionWindow,
+            requestTime,
+            inputWindowStart,
+            inputWindowEnd
+        );
 
         // ZK proof count per node: 14 fixed + 4 × (N-1) scaling.
         uint256 proofsPerNode = 14 + 4 * (n - 1);
@@ -194,5 +188,36 @@ library InterfoldPricing {
             uint256(BPS_BASE);
 
         if (fee == 0) revert IInterfold.PaymentRequired(fee);
+    }
+
+    function _billableDuration(
+        IInterfold.PricingConfig calldata pc,
+        IInterfold.E3TimeoutConfig calldata tc,
+        uint256 sortitionWindow,
+        uint256 requestTime,
+        uint256 inputWindowStart,
+        uint256 inputWindowEnd
+    ) private pure returns (uint256) {
+        // Charge at least the complete request-to-input-end reservation. For
+        // near-term requests, preserve the existing weighted DKG estimate.
+        uint256 inputWindowLength = inputWindowEnd - inputWindowStart;
+        uint256 weightedPreComputeBps = (sortitionWindow + inputWindowLength) *
+            BPS_BASE +
+            tc.dkgWindow *
+            uint256(pc.dkgUtilizationBps);
+        uint256 reservedThroughInputEndBps = (inputWindowEnd - requestTime) *
+            BPS_BASE;
+        uint256 preComputeBps = weightedPreComputeBps >
+            reservedThroughInputEndBps
+            ? weightedPreComputeBps
+            : reservedThroughInputEndBps;
+
+        // Sum all weighted terms before division to avoid per-term rounding.
+        uint256 durationBps = preComputeBps +
+            tc.computeWindow *
+            uint256(pc.computeUtilizationBps) +
+            tc.decryptionWindow *
+            uint256(pc.decryptUtilizationBps);
+        return durationBps / uint256(BPS_BASE);
     }
 }
