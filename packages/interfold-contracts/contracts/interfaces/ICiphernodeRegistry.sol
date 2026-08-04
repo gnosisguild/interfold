@@ -341,9 +341,6 @@ interface ICiphernodeRegistry {
     /// @notice Caller is not the Interfold contract
     error OnlyInterfold();
 
-    /// @notice Caller is not the bonding registry
-    error OnlyBondingRegistry();
-
     /// @notice Caller is neither owner nor bonding registry
     error NotOwnerOrBondingRegistry();
 
@@ -383,11 +380,14 @@ interface ICiphernodeRegistry {
     //                                                        //
     ////////////////////////////////////////////////////////////
 
-    /// @notice Check if a ciphernode is eligible for committee selection
-    /// @dev A ciphernode is eligible if it is enabled in the registry and meets bonding requirements
+    /// @notice Check current global eligibility for future committee selection.
+    /// @dev This view uses the current bonding registry. E3 ticket validation
+    ///      uses the bonding registry saved for that E3.
     /// @param ciphernode Address of the ciphernode to check
     /// @return eligible Whether the ciphernode is eligible for committee selection
-    function isCiphernodeEligible(address ciphernode) external returns (bool);
+    function isCiphernodeEligible(
+        address ciphernode
+    ) external view returns (bool);
 
     /// @notice Check if a ciphernode is enabled in the registry
     /// @param node Address of the ciphernode

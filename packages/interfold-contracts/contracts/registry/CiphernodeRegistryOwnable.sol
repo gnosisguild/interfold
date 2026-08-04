@@ -192,12 +192,6 @@ contract CiphernodeRegistryOwnable is
         _;
     }
 
-    /// @dev Restricts function access to only the bonding registry
-    modifier onlyBondingRegistry() {
-        require(msg.sender == address(bondingRegistry), OnlyBondingRegistry());
-        _;
-    }
-
     /// @dev Restricts function access to owner or bonding registry
     modifier onlyOwnerOrBondingVault() {
         require(
@@ -703,14 +697,11 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Update the registry-wide vote validity window used by accusers
     ///         when stamping `AccusationVote.deadline`.
-    /// @dev Ciphernodes fetch this once at startup. After a change, in-flight
-    ///      ciphernode processes continue to use the previous value until
-    ///      restarted — operators should coordinate a restart if the new
-    ///      window is materially shorter than the old one, otherwise stale
-    ///      nodes will produce votes the on-chain verifier rejects.
-    /// @param _accusationVoteValidity New validity window in seconds.
-    ///        Zero is allowed and intentionally disables slashing submission
-    ///        until governance restores a nonzero value.
+    /// @dev Ciphernodes fetch this value at startup. Operators must restart
+    ///      nodes after a change. Otherwise, nodes can create vote deadlines
+    ///      that the on-chain verifier rejects.
+    /// @param _accusationVoteValidity New nonzero validity window in seconds.
+    ///        Use the proposal and commit functions to set a zero value.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -722,8 +713,8 @@ contract CiphernodeRegistryOwnable is
         emit AccusationVoteValiditySet(_accusationVoteValidity);
     }
 
-    /// @notice Propose a new accusation vote validity window (supports zero).
-    /// @dev Zeroing the window is slash-disable behavior and therefore timelocked.
+    /// @notice Propose a new accusation vote validity window. Zero is permitted.
+    /// @dev A zero value disables slash submission after the time delay.
     function proposeAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -793,6 +784,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
+    /// @dev This global view does not predict ticket acceptance for an existing E3.
     function isCiphernodeEligible(address node) public view returns (bool) {
         if (!isEnabled(node)) return false;
 
@@ -1064,13 +1056,12 @@ contract CiphernodeRegistryOwnable is
 
         Committee storage c = committees[e3Id];
 
-        // bind ticket weight to the request-time snapshot via the
-        // ticket token's EIP-6372 ERC20Votes checkpoints. The outer
-        // `isCiphernodeEligible(msg.sender)` check in {submitTicket} still
-        // gates on the operator's *current* `isActive` flag, but the score
-        // and selection weight below derive purely from the historical
-        // ticket balance at `c.requestBlock - 1`, so churn between request
-        // time and the ticket submission window cannot inflate weights.
+        // Bind ticket weight to the request-time snapshot through the ticket
+        // token's EIP-6372 ERC20Votes checkpoints. {submitTicket} uses this
+        // E3's saved bonding registry for the current `isActive` check. The
+        // score and selection weight below use only the historical ticket
+        // balance at `c.requestBlock - 1`. Later balance changes cannot
+        // increase the saved weight.
         uint256 ticketBalance = e3Bonding.getTicketBalanceAtBlock(
             node,
             c.requestBlock - 1

@@ -226,16 +226,17 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │    3. require(block.timestamp <= committeeDeadline)     │
     │  │    4. require(!submitted[msg.sender])                   │
     │  │       → Each node submits only once                     │
-    │  │    5. require(isCiphernodeEligible(msg.sender))         │
-    │  │       → Must be enabled AND bondingRegistry.isActive()  │
+    │  │    5. require(isEnabled(msg.sender) AND                 │
+    │  │               _bondingFor(e3Id).isActive(msg.sender))   │
+    │  │       → Uses the request-time bonding registry          │
     │  │       → Active status fails closed for a retained ban   │
     │  │                                                         │
     │  │    6. _validateNodeEligibility(e3Id, msg.sender,        │
     │  │                                ticketNumber):           │
     │  │       availableTickets =                                │
-    │  │         bondingRegistry.getTicketBalanceAtBlock(         │
+    │  │         _bondingFor(e3Id).getTicketBalanceAtBlock(      │
     │  │           msg.sender, requestBlock - 1                  │
-    │  │         ) / bondingRegistry.ticketPrice()               │
+    │  │         ) / _bondingFor(e3Id).ticketPrice()             │
     │  │       → Calls ticketToken.getPastVotes() internally     │
     │  │       → Uses SNAPSHOT from block before request         │
     │  │       → Prevents same-block manipulation                │
@@ -444,10 +445,10 @@ The registry must finalize a ready committee.
 ### H-04 — snapshot-based eligibility
 
 `CiphernodeRegistryOwnable._validateNodeEligibility` derives the per-node ticket weight from
-`bondingRegistry.getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
+`_bondingFor(e3Id).getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
 `InterfoldTicketToken` ERC20Votes checkpoint history (EIP-6372 timestamp clock). Same-block or
-post-request rebalancing therefore cannot inflate a node's selection weight; the outer
-`isCiphernodeEligible(msg.sender)` still gates on the current `isActive` flag for liveness.
+post-request rebalancing therefore cannot inflate a node's selection weight. `submitTicket` also
+checks the current `isActive` flag in the request-time bonding registry.
 
 ### M-33 — `markE3Failed` grace period
 

@@ -36,6 +36,9 @@ interface IBondingRegistry {
     ///         zero license-token placeholder used during circular deployment).
     error InvalidBondingAsset(address asset);
 
+    /// @notice The configured license token does not provide a valid locked balance.
+    error IncompatibleLicenseToken(address token);
+
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
 
@@ -627,7 +630,8 @@ interface IBondingRegistry {
     /**
      * @notice Set license token
      * @param newLicenseToken New license token
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. A nonzero token must implement
+     *      `ILockAwareLicenseToken.lockedBalanceOf`.
      */
     function setLicenseToken(IERC20 newLicenseToken) external;
 
