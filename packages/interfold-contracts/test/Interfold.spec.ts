@@ -68,8 +68,11 @@ describe("Interfold", function () {
     };
   };
 
-  const setupWithInitialProgram = async () =>
-    deployInterfoldSystem({ initialE3Program: AddressTwo });
+  const deployUnregisteredE3Program = async () => {
+    const e3Program = await ethers.deployContract("MockE3Program");
+    await e3Program.waitForDeployment();
+    return e3Program;
+  };
 
   describe("constructor / initialize()", function () {
     it("correctly sets owner", async function () {
@@ -91,8 +94,12 @@ describe("Interfold", function () {
     });
 
     it("registers the initial E3 Program", async function () {
-      const { interfold } = await loadFixture(setupWithInitialProgram);
-      expect(await interfold.e3Programs(AddressTwo)).to.be.true;
+      const {
+        interfold,
+        mocks: { e3Program },
+      } = await loadFixture(setup);
+      expect(await interfold.e3Programs(await e3Program.getAddress())).to.be
+        .true;
     });
   });
 
@@ -368,16 +375,32 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "ModuleAlreadyEnabled")
         .withArgs(e3Program);
     });
+    it("reverts if E3 Program is the zero address", async function () {
+      const { interfold } = await loadFixture(setup);
+      await expect(interfold.registerE3Program(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(ethers.ZeroAddress);
+    });
+    it("reverts if E3 Program has no deployed code", async function () {
+      const { interfold } = await loadFixture(setup);
+      await expect(interfold.registerE3Program(AddressTwo))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(AddressTwo);
+    });
     it("registers E3 Program correctly", async function () {
       const { interfold } = await loadFixture(setup);
-      await interfold.registerE3Program(AddressTwo);
-      expect(await interfold.e3Programs(AddressTwo)).to.be.true;
+      const e3Program = await deployUnregisteredE3Program();
+      const e3ProgramAddress = await e3Program.getAddress();
+      await interfold.registerE3Program(e3ProgramAddress);
+      expect(await interfold.e3Programs(e3ProgramAddress)).to.be.true;
     });
     it("emits E3ProgramRegistered event", async function () {
       const { interfold } = await loadFixture(setup);
-      await expect(interfold.registerE3Program(AddressTwo))
+      const e3Program = await deployUnregisteredE3Program();
+      const e3ProgramAddress = await e3Program.getAddress();
+      await expect(interfold.registerE3Program(e3ProgramAddress))
         .to.emit(interfold, "E3ProgramRegistered")
-        .withArgs(AddressTwo);
+        .withArgs(e3ProgramAddress);
     });
   });
 

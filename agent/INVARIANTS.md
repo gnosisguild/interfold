@@ -70,8 +70,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
 - **E3 program allowlist:** production initialization registers one deployed E3 program before
-  ownership transfers to the Safe. Later registrations are append-only and owner-only. —
-  `Interfold.sol`; `flow-trace/03`
+  ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
+  registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
 
 ### Deadlines
 
@@ -207,8 +207,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   deterministically recreate them. An actor-local cache is not durable just because the actor
   outlives the process. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
-  `E3Failed`. After hydration, `EffectsEnabled` redrives the saved failure and does not resume the
-  earlier DKG phase. — `flow-trace/04`; INDEX concern #36
+  `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
+  `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —
+  `flow-trace/04`; INDEX concern #36
 
 ### Ordering, backpressure, effects
 

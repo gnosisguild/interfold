@@ -146,6 +146,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @notice Basis points denominator
     uint16 internal constant BPS_BASE = 10000;
 
+    // Selectors for E3ProgramNotAllowed(address) and
+    // ModuleAlreadyEnabled(address). Registration tests verify both values.
+    uint256 private constant E3_PROGRAM_NOT_ALLOWED_SELECTOR = 0x52b4d4de;
+    uint256 private constant MODULE_ALREADY_ENABLED_SELECTOR = 0xb29d4595;
+
     /// @notice Allow-list of ERC20 tokens that may be used as the contract fee token.
     /// @dev Owner-managed. `request()` reverts if the active `feeToken` is not allow-listed.
     mapping(IERC20 token => bool allowed) internal _feeTokenAllowed;
@@ -631,11 +636,26 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function registerE3Program(IE3Program e3Program) public onlyOwner {
-        require(
-            !e3Programs[e3Program],
-            ModuleAlreadyEnabled(address(e3Program))
-        );
-        e3Programs[e3Program] = true;
+        // Use one storage lookup and compact error encoding. This keeps the
+        // runtime below the release budget without changing either error.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if iszero(extcodesize(e3Program)) {
+                mstore(0x00, E3_PROGRAM_NOT_ALLOWED_SELECTOR)
+                mstore(0x20, e3Program)
+                revert(0x1c, 0x24)
+            }
+
+            mstore(0x00, e3Program)
+            mstore(0x20, e3Programs.slot)
+            let programSlot := keccak256(0x00, 0x40)
+            if sload(programSlot) {
+                mstore(0x00, MODULE_ALREADY_ENABLED_SELECTOR)
+                mstore(0x20, e3Program)
+                revert(0x1c, 0x24)
+            }
+            sstore(programSlot, 1)
+        }
         emit E3ProgramRegistered(e3Program);
     }
 

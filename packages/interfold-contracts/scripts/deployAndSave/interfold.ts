@@ -9,8 +9,6 @@ import { Interfold, Interfold__factory as InterfoldFactory } from "../../types";
 import { getProxyAdmin, verifyProxyAdminOwner } from "../proxy";
 import { readDeploymentArgs, storeDeploymentArgs } from "../utils";
 
-const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
-
 /**
  * Timeout configuration for E3 stages
  */
@@ -31,7 +29,7 @@ export interface InterfoldArgs {
   e3RefundManager?: string;
   feeToken?: string;
   timeoutConfig?: E3TimeoutConfig;
-  initialE3Program?: string;
+  initialE3Program: string;
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -48,10 +46,16 @@ export const deployAndSaveInterfold = async ({
   e3RefundManager,
   feeToken,
   timeoutConfig,
-  initialE3Program = ADDRESS_ONE,
+  initialE3Program,
   hre,
 }: InterfoldArgs): Promise<{ interfold: Interfold }> => {
   const { ethers } = await hre.network.connect();
+
+  if ((await ethers.provider.getCode(initialE3Program)) === "0x") {
+    throw new Error(
+      `initialE3Program has no deployed code: ${initialE3Program}`,
+    );
+  }
 
   const [signer] = await ethers.getSigners();
 

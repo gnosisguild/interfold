@@ -183,7 +183,11 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }
-  config.e3Programs = [address(config.e3Programs[0], "e3Programs[0]")];
+  const initialE3Program = address(config.e3Programs[0], "e3Programs[0]");
+  if (initialE3Program === ZERO) {
+    throw new Error("e3Programs[0] must not be the zero address");
+  }
+  config.e3Programs = [initialE3Program];
   optionalAddress(config.verifiers?.decryptionVerifier, "decryptionVerifier");
   optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
   optionalAddress(

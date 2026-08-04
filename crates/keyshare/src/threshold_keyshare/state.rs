@@ -140,8 +140,11 @@ impl KeyshareState {
         use KeyshareState as K;
         // The following can be used to check that we are transitioning to a valid state
         let valid = {
+            // A persisted failure can only be written again with the same payload.
+            if matches!(self, K::Failed { .. }) {
+                self == &new_state
             // If we are in the same branch the new state is valid
-            if mem::discriminant(self) == mem::discriminant(&new_state) {
+            } else if mem::discriminant(self) == mem::discriminant(&new_state) {
                 true
             } else if matches!(&new_state, K::Failed { .. }) {
                 !matches!(self, K::Completed)

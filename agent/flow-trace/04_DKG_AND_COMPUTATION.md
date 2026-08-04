@@ -574,10 +574,11 @@ ThresholdKeyshare receives AllThresholdSharesCollected
     → Broadcast to committee members via P2P
 ```
 
-Each fatal collector path commits `KeyshareState::Failed` before it publishes `E3Failed`. If the
-process stops between these operations, startup hydrates the terminal state. `EffectsEnabled` then
-publishes the same failure payload. Event-ID deduplication makes this redrive idempotent, and the
-actor cannot resume an earlier DKG phase.
+Each fatal collector path commits `KeyshareState::Failed` before it publishes `E3Failed`. A later
+transition cannot change the saved stage or reason. If the process stops between these operations,
+startup hydrates the terminal state. `EffectsEnabled` then publishes the same failure payload.
+Event-ID deduplication makes this redrive idempotent, and the actor cannot resume an earlier DKG
+phase.
 
 ---
 

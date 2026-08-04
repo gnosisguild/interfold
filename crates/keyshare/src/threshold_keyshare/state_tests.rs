@@ -92,6 +92,13 @@ fn failure_is_terminal_and_reachable_from_active_dkg() {
     assert!(KeyshareState::CollectingEncryptionKeys(cek())
         .next(failed.clone())
         .is_ok());
+    assert!(failed.next(failed.clone()).is_ok());
+    assert!(failed
+        .next(KeyshareState::Failed {
+            failed_at_stage: E3Stage::CiphertextReady,
+            reason: FailureReason::DecryptionTimeout,
+        })
+        .is_err());
     assert!(failed.next(KeyshareState::Init).is_err());
     assert!(KeyshareState::Completed
         .next(KeyshareState::Failed {
