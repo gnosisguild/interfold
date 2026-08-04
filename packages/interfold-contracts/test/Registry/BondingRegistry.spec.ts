@@ -523,6 +523,25 @@ describe("BondingRegistry", function () {
       ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAmount");
     });
 
+    it("enforces bond-owner authorization inside the accounting path", async function () {
+      const { bondingRegistry, notTheOwner } = await loadFixture(setup);
+      const caller = await notTheOwner.getAddress();
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner")
+        .withArgs(caller, operator1Address);
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .bondLicenseFor(ethers.ZeroAddress, LICENSE_REQUIRED_BOND),
+      ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAddress");
+    });
+
     it("reverts if exit is in progress", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);

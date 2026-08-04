@@ -642,7 +642,7 @@ contract BondingRegistry is
     function bondLicenseFor(
         address operator,
         uint256 amount
-    ) external nonReentrant noExitInProgress(operator) onlyBondOwner(operator) {
+    ) external nonReentrant noExitInProgress(operator) {
         _bondLicense(operator, amount);
     }
 
@@ -1153,7 +1153,7 @@ contract BondingRegistry is
         require(amount != 0, ZeroAmount());
 
         address bondOwner = bondOwnerOf(operator);
-        require(bondOwner != address(0), NotBondOwner(msg.sender, operator));
+        require(msg.sender == bondOwner, NotBondOwner(msg.sender, operator));
 
         operators[operator].licenseBond += amount;
         _bondedByOwner[bondOwner] += amount;
