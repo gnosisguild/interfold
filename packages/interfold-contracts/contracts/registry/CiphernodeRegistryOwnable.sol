@@ -784,6 +784,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
+    /// @dev This global view does not predict ticket acceptance for an existing E3.
     function isCiphernodeEligible(address node) public view returns (bool) {
         if (!isEnabled(node)) return false;
 
@@ -1055,13 +1056,12 @@ contract CiphernodeRegistryOwnable is
 
         Committee storage c = committees[e3Id];
 
-        // bind ticket weight to the request-time snapshot via the
-        // ticket token's EIP-6372 ERC20Votes checkpoints. The outer
-        // `isCiphernodeEligible(msg.sender)` check in {submitTicket} still
-        // gates on the operator's *current* `isActive` flag, but the score
-        // and selection weight below derive purely from the historical
-        // ticket balance at `c.requestBlock - 1`, so churn between request
-        // time and the ticket submission window cannot inflate weights.
+        // Bind ticket weight to the request-time snapshot through the ticket
+        // token's EIP-6372 ERC20Votes checkpoints. {submitTicket} uses this
+        // E3's saved bonding registry for the current `isActive` check. The
+        // score and selection weight below use only the historical ticket
+        // balance at `c.requestBlock - 1`. Later balance changes cannot
+        // increase the saved weight.
         uint256 ticketBalance = e3Bonding.getTicketBalanceAtBlock(
             node,
             c.requestBlock - 1
