@@ -332,6 +332,8 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       │  │    require(stage == Requested)            │  │
     │  │       │  │    stage = CommitteeFinalized             │  │
     │  │       │  │    dkgDeadline = now + dkgWindow          │  │
+    │  │       │  │    snapshot each member's reward          │  │
+    │  │       │  │      recipient in E3RefundManager         │  │
     │  │       │  │    Emit E3StageChanged(e3Id,              │  │
     │  │       │  │          CommitteeFinalized)              │  │
     │  │       │  │  }                                       │  │
@@ -347,6 +349,8 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
 
 Ticket submission changes only the provisional `topNodes` set. Successful finalization grants
 membership and `Active` status to the final address-sorted members. Failed formation grants neither.
+Finalization also freezes each member's current bond owner as its reward recipient for this E3.
+Later bond-owner transfers apply to later committees, not to payments earned by this committee.
 
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 

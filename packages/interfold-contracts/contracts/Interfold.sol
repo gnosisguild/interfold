@@ -542,7 +542,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         // Split the ciphernode share and credit each node owner's pull balance.
         uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
             _pendingRewards,
-            _e3Dependencies[e3Id].bonding,
+            refundManager,
             cnAmount,
             e3Id,
             activeNodes,
@@ -785,15 +785,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function onCommitteeFinalized(uint256 e3Id) external {
-        InterfoldLifecycle.validateRegistryCaller(
+        InterfoldLifecycle.validateAndSnapshotCommitteeFinalization(
             msg.sender,
-            address(_registryFor(e3Id))
+            address(_registryFor(e3Id)),
+            address(_refundManagerFor(e3Id)),
+            e3Id,
+            uint8(_e3Stages[e3Id])
         );
         // Update E3 lifecycle stage - committee finalized, DKG starting
-        E3Stage current = _e3Stages[e3Id];
-        if (current != E3Stage.Requested) {
-            revert InvalidStage(e3Id, E3Stage.Requested, current);
-        }
         _e3Stages[e3Id] = E3Stage.CommitteeFinalized;
         _e3Deadlines[e3Id].dkgDeadline =
             block.timestamp +

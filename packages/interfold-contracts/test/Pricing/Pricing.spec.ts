@@ -373,7 +373,9 @@ describe("E3 Pricing", function () {
         interfold,
         usdcToken,
         ciphernodeRegistryContract,
+        bondingRegistry,
         owner,
+        notTheOwner,
         operator1,
         operator2,
         operator3,
@@ -414,6 +416,15 @@ describe("E3 Pricing", function () {
         [operator1, operator2, operator3],
       );
 
+      const operator1Address = await operator1.getAddress();
+      const newOwnerAddress = await notTheOwner.getAddress();
+      await bondingRegistry
+        .connect(owner)
+        .proposeBondOwner(operator1Address, newOwnerAddress);
+      await bondingRegistry
+        .connect(notTheOwner)
+        .acceptBondOwner(operator1Address);
+
       // Publish ciphertext
       await time.increase(inputWindowDuration + 200);
       await interfold.publishCiphertextOutput(
@@ -431,6 +442,7 @@ describe("E3 Pricing", function () {
 
       // The shared bond owner receives all three operator credits.
       expect(await interfold.pendingReward(e3Id, bondOwner)).to.equal(fee);
+      expect(await interfold.pendingReward(e3Id, newOwnerAddress)).to.equal(0);
       await interfold.connect(owner).claimReward(e3Id);
       const ownerAfter = await usdcToken.balanceOf(bondOwner);
 

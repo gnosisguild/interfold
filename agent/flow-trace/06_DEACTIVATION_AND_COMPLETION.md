@@ -168,12 +168,12 @@ publishPlaintextOutput() succeeds
 │   │   ├─ if protocolAmount > 0:
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
-│   │   │   → Resolves bondOwnerOf(node) and credits that owner
+│   │   │   → Credits the recipient frozen at committee finalization
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
 │   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
-│   │   │     nodes portion split by active node, then credited to bond owners
+│   │   │     nodes portion split by active node, then credited to frozen recipients
 │   │   │     remainder sent to protocol treasury
 │   │   │   → If no escrowed funds: no-op
 │   │   └─ Emit RewardsDistributed(e3Id)

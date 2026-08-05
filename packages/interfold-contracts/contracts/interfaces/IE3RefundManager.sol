@@ -135,6 +135,12 @@ interface IE3RefundManager {
         address bondingRegistry,
         WorkValueAllocation allocation
     );
+    /// @notice Emitted when an E3 freezes an operator's reward recipient.
+    event RewardRecipientSnapshotted(
+        uint256 indexed e3Id,
+        address indexed operator,
+        address indexed recipient
+    );
     /// @notice Emitted when the Interfold address is set
     event InterfoldSet(address indexed interfold);
     /// @notice Emitted when the treasury address is set
@@ -164,6 +170,10 @@ interface IE3RefundManager {
     error InsolventToken(IERC20 token, uint256 liability, uint256 balance);
     /// @notice Failure reason has no configured economic responsibility.
     error InvalidFailureReason(IInterfold.FailureReason reason);
+    /// @notice The operator already has a reward recipient for this E3.
+    error RewardRecipientAlreadySnapshotted(uint256 e3Id, address operator);
+    /// @notice The operator has no reward recipient for this E3.
+    error RewardRecipientNotSnapshotted(uint256 e3Id, address operator);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -192,6 +202,19 @@ interface IE3RefundManager {
     /// @notice Freeze the current allocation, treasury, and committee registry for an E3.
     /// @dev Only Interfold may call this, exactly once, during request creation.
     function snapshotE3Policy(uint256 e3Id, address registry) external;
+
+    /// @notice Freeze reward recipients when an E3 committee is finalized.
+    /// @dev Only the Interfold contract assigned to the E3 may call this once.
+    function snapshotRewardRecipients(
+        uint256 e3Id,
+        address[] calldata operators
+    ) external;
+
+    /// @notice Return an operator's frozen reward recipient for an E3.
+    function rewardRecipient(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient);
 
     /// @notice Requester claims their refund
     /// @param e3Id The failed E3 ID

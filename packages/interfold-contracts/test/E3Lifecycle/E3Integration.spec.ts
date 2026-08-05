@@ -1365,6 +1365,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const {
         interfold,
         e3RefundManager,
+        bondingRegistry,
         registry,
         slashingManager,
         usdcToken,
@@ -1409,6 +1410,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
+
+      const operator2Address = await operator2.getAddress();
+      await bondingRegistry
+        .connect(computeProvider)
+        .proposeBondOwner(operator2Address, await owner.getAddress());
+      await bondingRegistry.connect(owner).acceptBondOwner(operator2Address);
+      expect(
+        await e3RefundManager.rewardRecipient(0, operator2Address),
+      ).to.equal(await computeProvider.getAddress());
 
       // 2. Fail via compute timeout
       const e3 = await interfold.getE3(0);

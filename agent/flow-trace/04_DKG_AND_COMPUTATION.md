@@ -1024,9 +1024,10 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       │  │     _pendingTreasury[treasury][token]  │  │
         │  │       │  │       += protocolAmount                │  │
         │  │       │  │     Emit TreasuryCredited(...)         │  │
-        │  │       │  │  5. Resolve each node's bond owner,    │  │
-        │  │       │  │     then credit it (no push):          │  │
-        │  │       │  │     _pendingRewards[e3Id][bondOwner]   │  │
+        │  │       │  │  5. Load each node's recipient frozen │  │
+        │  │       │  │     at committee finalization, then    │  │
+        │  │       │  │     credit it (no push):               │  │
+        │  │       │  │     _pendingRewards[e3Id][recipient]   │  │
         │  │       │  │       += perNode                       │  │
         │  │       │  │     Emit RewardCredited(...)           │  │
         │  │       │  │  6. Emit RewardsDistributed (compat)   │  │

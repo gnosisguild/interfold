@@ -6,7 +6,7 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
-import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 
@@ -58,14 +58,13 @@ library InterfoldPricing {
             revert IInterfold.MinSizeBelowMinThreshold();
     }
 
-    /// @notice Splits and credits committee rewards to each operator's bond
-    ///         owner, sweeping integer-division dust into a slot selected by
-    ///         `e3Id % n`.
+    /// @notice Splits and credits committee rewards to each frozen recipient.
+    /// @dev Integer-division dust goes to the slot selected by `e3Id % n`.
     /// @dev Runs through a linked library call to keep the accounting loop out
     ///      of Interfold's size-constrained runtime bytecode.
     function computeAndCreditRewards(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
-        IBondingRegistry bonding,
+        IE3RefundManager refundManager,
         uint256 cnAmount,
         uint256 e3Id,
         address[] memory nodes,
@@ -81,9 +80,10 @@ library InterfoldPricing {
             if (i == dustIndex) amount += dust;
             amounts[i] = amount;
             if (amount > 0) {
-                address operator = nodes[i];
-                address recipient = bonding.bondOwnerOf(operator);
-                if (recipient == address(0)) recipient = operator;
+                address recipient = refundManager.rewardRecipient(
+                    e3Id,
+                    nodes[i]
+                );
                 pendingRewards[e3Id][recipient] += amount;
                 emit RewardCredited(e3Id, recipient, token, amount);
             }

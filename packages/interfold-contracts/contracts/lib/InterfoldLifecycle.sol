@@ -7,6 +7,7 @@ pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
@@ -18,11 +19,29 @@ import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
-    function validateRegistryCaller(
+    /// @notice Validates finalization and freezes committee reward recipients.
+    function validateAndSnapshotCommitteeFinalization(
         address caller,
-        address registry
-    ) external pure {
-        require(caller == registry, IInterfold.OnlyCiphernodeRegistry());
+        address registryAddress,
+        address refundManagerAddress,
+        uint256 e3Id,
+        uint8 current
+    ) external {
+        if (caller != registryAddress)
+            revert IInterfold.OnlyCiphernodeRegistry();
+        IInterfold.E3Stage stage = IInterfold.E3Stage(current);
+        if (stage != IInterfold.E3Stage.Requested)
+            revert IInterfold.InvalidStage(
+                e3Id,
+                IInterfold.E3Stage.Requested,
+                stage
+            );
+        (address[] memory nodes, ) = ICiphernodeRegistry(registryAddress)
+            .getActiveCommitteeNodes(e3Id);
+        IE3RefundManager(refundManagerAddress).snapshotRewardRecipients(
+            e3Id,
+            nodes
+        );
     }
 
     function validateSlashCaller(

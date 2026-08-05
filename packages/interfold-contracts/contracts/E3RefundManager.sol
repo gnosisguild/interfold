@@ -83,6 +83,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     mapping(IERC20 token => uint256 amount) internal _tokenLiability;
     /// @notice Whether successful completion enabled slash settlement for this E3.
     mapping(uint256 e3Id => bool ready) internal _successSettlementReady;
+    /// @notice Reward recipient frozen for each finalized committee member.
+    mapping(uint256 e3Id => mapping(address operator => address recipient))
+        internal _rewardRecipients;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -436,10 +439,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
         require(isHonest, NotHonestNode(e3Id, operator));
 
-        address recipient = IBondingRegistry(
-            _e3PolicySnapshots[e3Id].bondingRegistry
-        ).bondOwnerOf(operator);
-        if (recipient == address(0)) recipient = operator;
+        address recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
         require(msg.sender == recipient, Unauthorized());
 
         require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
@@ -587,17 +590,16 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        IBondingRegistry e3BondingRegistry = IBondingRegistry(
-            _e3PolicySnapshots[e3Id].bondingRegistry
-        );
         uint256 perNode = amount / nodes.length;
         uint256 distributed;
         for (uint256 i = 0; i < nodes.length; i++) {
             uint256 nodeAmount = i == nodes.length - 1
                 ? amount - distributed
                 : perNode;
-            address recipient = e3BondingRegistry.bondOwnerOf(nodes[i]);
-            if (recipient == address(0)) recipient = nodes[i];
+            address recipient = _rewardRecipients[e3Id][nodes[i]];
+            if (recipient == address(0)) {
+                revert RewardRecipientNotSnapshotted(e3Id, nodes[i]);
+            }
             _creditSlashedClaim(e3Id, token, recipient, nodeAmount);
             distributed += nodeAmount;
         }
@@ -718,6 +720,37 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             snapshot.bondingRegistry,
             _workAllocation
         );
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function snapshotRewardRecipients(
+        uint256 e3Id,
+        address[] calldata operators
+    ) external onlyE3Interfold(e3Id) {
+        IBondingRegistry e3BondingRegistry = IBondingRegistry(
+            _e3PolicySnapshots[e3Id].bondingRegistry
+        );
+        for (uint256 i = 0; i < operators.length; i++) {
+            address operator = operators[i];
+            if (_rewardRecipients[e3Id][operator] != address(0)) {
+                revert RewardRecipientAlreadySnapshotted(e3Id, operator);
+            }
+            address recipient = e3BondingRegistry.bondOwnerOf(operator);
+            if (recipient == address(0)) recipient = operator;
+            _rewardRecipients[e3Id][operator] = recipient;
+            emit RewardRecipientSnapshotted(e3Id, operator, recipient);
+        }
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function rewardRecipient(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient) {
+        recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
     }
 
     function _treasuryFor(uint256 e3Id) internal view returns (address) {
@@ -876,5 +909,5 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 }

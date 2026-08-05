@@ -210,7 +210,7 @@ HONEST NODE'S BOND OWNER claims:
 │
 ├─ require(distribution calculated)
 ├─ require(operator is in honestNodes[e3Id])
-├─ resolve recipient = request-time bondingRegistry.bondOwnerOf(operator)
+├─ load the recipient frozen when this E3's committee was finalized
 ├─ require(msg.sender == recipient)
 ├─ require(!honest-node reward already claimed for this operator)
 │  → This ledger is independent from the requester-refund claim ledger, so a
@@ -224,8 +224,8 @@ HONEST NODE'S BOND OWNER claims:
 ├─ Last claimer routes the residual dust to _pendingTreasury via
 │   TreasurySlashedCredited (pull); the last node never gets a
 │   silently-inflated payout, and no per-claim dust is stranded.
-├─ Transfer directly to the bond owner (not via BondingRegistry)
-└─ Emit RefundClaimed(e3Id, bondOwner, amount)
+├─ Transfer directly to the frozen recipient (not via BondingRegistry)
+└─ Emit RefundClaimed(e3Id, recipient, amount)
 
 SLASH RECIPIENT claims a token-specific entitlement:
   E3RefundManager.claimSlashedFunds(e3Id, actualToken)
@@ -885,7 +885,7 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 ├─ Credit (pull-payment, H-01/M-02) — funds are NOT pushed here:
 │   for node in activeNodes:
 │       perNode = toNodes / activeNodes.length  (dust → last node)
-│       recipient = bondOwnerOf(node), falling back to node if unset
+│       recipient = rewardRecipient[e3Id][node]
 │       _pendingSlashedClaims[e3Id][actualToken][recipient] += perNode
 │       Emit SlashedFundsCredited(e3Id, recipient, actualToken, perNode)
 │
@@ -925,8 +925,8 @@ Every slash and settlement route resolves the dependency graph frozen when the E
   manager for attestations, penalties, expulsion, failure callbacks, and fund routing.
 - `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
 - `E3RefundManager` reads slash recipients from the committee registry recorded in that snapshot.
-- `E3RefundManager` resolves each recipient's bond owner through the bonding registry recorded in
-  that snapshot.
+- At committee finalization, `E3RefundManager` resolves each member's bond owner through the
+  request-time bonding registry and freezes that reward recipient for the E3.
 - `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
   revokes them, so an old manager can finish snapshotted penalties and remains part of the exit
   gate.
@@ -1231,7 +1231,7 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 ### Pull-payment slashed funds (H-01, H-07, H-09)
 
 - Slashed funds use their own `(e3Id, token, recipient)` pull-payment ledger rather than the normal
-  reward or refund bucket. Node allocations resolve through `bondOwnerOf(node)` before credit.
+  reward or refund bucket. Node allocations use the recipient frozen at committee finalization.
   Recipients call `claimSlashedFunds(e3Id, token)`; failed-transfer recipients cannot grief other
   claims, different token decimals never mix, and late credits remain independently claimable.
 
