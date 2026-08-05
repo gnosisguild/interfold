@@ -219,7 +219,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -417,7 +416,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -488,7 +486,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -608,7 +605,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       await registry.publishCommittee(
         0,
-        publicKey,
         ethers.keccak256(publicKey),
         encodeMockDkgProof(ethers.keccak256(publicKey)),
         "0x01",
@@ -699,7 +695,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -746,7 +741,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         registry.publishCommittee(
           0,
-          publicKey,
           pkCommitment,
           encodeMockDkgProof(pkCommitment),
           "0x01",
@@ -769,7 +763,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         registry.publishCommittee(
           0,
-          publicKey,
           pkCommitment,
           encodeMockDkgProof(pkCommitment),
           "0x01",
@@ -1097,7 +1090,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -1245,7 +1237,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       await registry.publishCommittee(
         0,
-        publicKey,
         ethers.keccak256(publicKey),
         encodeMockDkgProof(ethers.keccak256(publicKey)),
         "0x01",
@@ -1410,7 +1401,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       await registry.publishCommittee(
         0,
-        publicKey,
         ethers.keccak256(publicKey),
         encodeMockDkgProof(ethers.keccak256(publicKey)),
         "0x01",
@@ -1556,7 +1546,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2220,7 +2209,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2363,7 +2351,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2454,7 +2441,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2719,7 +2705,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2856,7 +2841,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -2921,7 +2905,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         0,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",

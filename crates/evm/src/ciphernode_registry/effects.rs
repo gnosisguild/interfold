@@ -115,11 +115,20 @@ pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
+    expected_commitment: [u8; 32],
 ) -> Result<bool> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
     match contract.committeePublicKey(e3_id_u256).call().await {
-        Ok(_) => Ok(false),
+        Ok(commitment) => {
+            let expected = B256::from(expected_commitment);
+            if commitment != expected {
+                anyhow::bail!(
+                    "on-chain committee commitment {commitment} does not match local commitment {expected}"
+                );
+            }
+            Ok(false)
+        }
         Err(err) => {
             let err = anyhow::Error::from(err);
             let decoded = decode_error_from_str(&format!("{err:?}"));
@@ -140,13 +149,11 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-    public_key: ArcBytes,
     pk_commitment: [u8; 32],
     dkg_aggregator_proof: Option<&Proof>,
     dkg_attestation_bundle: Option<&[u8]>,
 ) -> Result<TransactionReceipt> {
     let e3_id_u256: U256 = e3_id.try_into()?;
-    let public_key_bytes = Bytes::from(public_key.extract_bytes());
     let pk_commitment_b256 = B256::from(pk_commitment);
 
     // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
@@ -164,7 +171,6 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     // RPC may not have synced finalization yet
     send_tx_with_retry("publishCommittee", &["CommitteeNotFinalized"], || {
         let provider = provider.clone();
-        let public_key_bytes = public_key_bytes.clone();
         let proof = proof.clone();
         let attestation_bundle = attestation_bundle.clone();
         async move {
@@ -178,13 +184,7 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
                 .await?;
             let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
             let builder = contract
-                .publishCommittee(
-                    e3_id_u256,
-                    public_key_bytes,
-                    pk_commitment_b256,
-                    proof,
-                    attestation_bundle,
-                )
+                .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
                 .nonce(current_nonce);
             let pending = builder.send().await?;
             drop(_nonce_guard);
@@ -193,6 +193,47 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
             Ok(receipt)
         }
     })
+    .await
+}
+
+pub async fn publish_committee_public_key_to_registry<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    public_key: ArcBytes,
+) -> Result<TransactionReceipt> {
+    let e3_id_u256: U256 = e3_id.try_into()?;
+    let public_key_bytes = Bytes::from(public_key.extract_bytes());
+
+    send_tx_with_retry(
+        "publishCommitteePublicKey",
+        &["CommitteeNotPublished"],
+        || {
+            let provider = provider.clone();
+            let public_key_bytes = public_key_bytes.clone();
+            async move {
+                info!("Calling: contract.publishCommitteePublicKey(..)");
+                let _nonce_guard = transaction_nonce_guard(&provider).await;
+                let from_address = provider.provider().default_signer_address();
+                let current_nonce = provider
+                    .provider()
+                    .get_transaction_count(from_address)
+                    .pending()
+                    .await?;
+                let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+                let builder = contract
+                    .publishCommitteePublicKey(e3_id_u256, public_key_bytes)
+                    .nonce(current_nonce);
+                let pending = builder.send().await?;
+                drop(_nonce_guard);
+                let receipt = pending.get_receipt().await?;
+                require_successful_receipt("publish committee public key", &receipt)?;
+                Ok(receipt)
+            }
+        },
+    )
     .await
 }
 

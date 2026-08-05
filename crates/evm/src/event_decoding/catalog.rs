@@ -340,6 +340,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "CommitteeProofPublished",
+        "CommitteeProofPublished(uint256,address[],bytes32,bytes)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "CommitteePublished",
         "CommitteePublished(uint256,address[],bytes,bytes32,bytes)",
         Some(1),

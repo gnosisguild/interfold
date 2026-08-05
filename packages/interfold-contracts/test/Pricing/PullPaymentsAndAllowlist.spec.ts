@@ -35,7 +35,6 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
       e3Id,
-      publicKey,
       pkCommitment,
       encodeMockDkgProof(pkCommitment),
       "0x01",

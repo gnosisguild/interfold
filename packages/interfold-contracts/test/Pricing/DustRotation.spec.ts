@@ -40,7 +40,6 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
       e3Id,
-      publicKey,
       pkCommitment,
       encodeMockDkgProof(pkCommitment),
       "0x01",

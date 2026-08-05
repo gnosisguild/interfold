@@ -172,7 +172,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
         e3Id,
-        publicKey,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -865,7 +864,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await expect(
         registry.publishCommittee(
           0,
-          publicKey,
           commitment,
           encodeMockDkgProof(commitment),
           "0x01",

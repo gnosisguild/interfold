@@ -381,9 +381,6 @@ export const publishCommittee = task(
       if (!pkCommitment) {
         throw new Error("pkCommitment is required");
       }
-      // pkCommitment is stored and emitted unconditionally by the registry, so off-chain
-      // consumers can read an unusable key if the values are inconsistent. Validate format
-      // and require both publicKey and pkCommitment to be present and non-zero.
       if (!isHexString(pkCommitment, 32)) {
         throw new Error(
           `pkCommitment must be a 32-byte hex string (got ${pkCommitment})`,
@@ -406,17 +403,33 @@ export const publishCommittee = task(
         );
       }
 
-      const tx = await ciphernodeRegistry.publishCommittee(
+      let publishedCommitment = ZeroHash;
+      try {
+        publishedCommitment = await ciphernodeRegistry.committeePublicKey(e3Id);
+      } catch {
+        // No committee proof has been published for this E3 yet.
+      }
+      if (publishedCommitment === pkCommitment) {
+        console.log("Committee proof already published");
+      } else {
+        const tx = await ciphernodeRegistry.publishCommittee(
+          e3Id,
+          pkCommitment,
+          proof,
+          dkgAttestationBundle,
+        );
+
+        console.log("Publishing committee... ", tx.hash);
+        await tx.wait();
+      }
+
+      const publicKeyTx = await ciphernodeRegistry.publishCommitteePublicKey(
         e3Id,
         publicKey,
-        pkCommitment,
-        proof,
-        dkgAttestationBundle,
       );
-
-      console.log("Publishing committee... ", tx.hash);
-      await tx.wait();
-      console.log(`Committee public key published`);
+      console.log("Publishing committee public key... ", publicKeyTx.hash);
+      await publicKeyTx.wait();
+      console.log(`Committee proof and public key published`);
     },
   }))
   .build();

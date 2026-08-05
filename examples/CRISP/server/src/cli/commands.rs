@@ -6,7 +6,6 @@
 
 use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
 use e3_fhe_params::default_param_set;
-use e3_sdk::evm_helpers::contracts::E3Stage;
 use evm_helpers::CRISPContract;
 use log::info;
 use reqwest::Client;
@@ -16,6 +15,7 @@ use super::approve;
 use super::CLI_DB;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::sol;
 use alloy::sol_types::SolValue;
 use anyhow::anyhow;
 use crisp::config::CONFIG;
@@ -31,6 +31,19 @@ use fhe_traits::{
 };
 use rand::rng;
 use std::sync::Arc;
+
+sol! {
+    #[sol(rpc)]
+    interface CiphernodeRegistryReadiness {
+        event CommitteePublished(
+            uint256 indexed e3Id,
+            address[] nodes,
+            bytes publicKey,
+            bytes32 pkCommitment,
+            bytes proof
+        );
+    }
+}
 
 // Legacy interactive CLI flows; kept for revival alongside the HTTP server path.
 #[allow(dead_code)]
@@ -175,11 +188,17 @@ pub async fn get_current_timestamp() -> Result<u64, Box<dyn std::error::Error + 
 pub async fn check_committee_key_published(
     e3_id: u64,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let contract =
-        InterfoldContract::read_only(&CONFIG.http_rpc_url, &CONFIG.interfold_address).await?;
-    let e3_stage: E3Stage = contract.get_e3_stage(U256::from(e3_id)).await?;
+    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
+    let registry_address: Address = CONFIG.ciphernode_registry_address.parse()?;
+    let registry = CiphernodeRegistryReadiness::new(registry_address, provider);
+    let events = registry
+        .CommitteePublished_filter()
+        .from_block(0)
+        .topic1(U256::from(e3_id))
+        .query()
+        .await?;
 
-    Ok(e3_stage == E3Stage::KeyPublished)
+    Ok(!events.is_empty())
 }
 
 pub async fn initialize_crisp_round(

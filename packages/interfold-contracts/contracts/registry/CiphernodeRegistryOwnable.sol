@@ -97,6 +97,10 @@ contract CiphernodeRegistryOwnable is
     ///      with {CiphernodeTreeExhausted} once `numberOfLeaves` reaches this cap.
     uint256 public constant MAX_CIPHERNODE_LEAVES = uint256(1) << TREE_DEPTH;
 
+    /// @notice Maximum serialized public-key candidate size.
+    /// @dev Covers every currently supported BFV preset, including SecureThreshold8192.
+    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 256 * 1024;
+
     /// @notice Thrown when {addCiphernode} would push the LazyIMT past its
     ///         configured {TREE_DEPTH} capacity.
     error CiphernodeTreeExhausted();
@@ -315,7 +319,6 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     function publishCommittee(
         uint256 e3Id,
-        bytes calldata publicKey,
         bytes32 pkCommitment,
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
@@ -352,12 +355,29 @@ contract CiphernodeRegistryOwnable is
 
         _interfoldFor(e3Id).onCommitteePublished(e3Id, pkCommitment);
 
+        emit CommitteeProofPublished(e3Id, c.topNodes, pkCommitment, proof);
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function publishCommitteePublicKey(
+        uint256 e3Id,
+        bytes calldata publicKey
+    ) external {
+        bytes32 pkCommitment = publicKeyHashes[e3Id];
+        require(pkCommitment != bytes32(0), CommitteeNotPublished());
+
+        uint256 length = publicKey.length;
+        require(
+            length != 0 && length <= MAX_COMMITTEE_PUBLIC_KEY_BYTES,
+            InvalidPublicKeyLength(length, MAX_COMMITTEE_PUBLIC_KEY_BYTES)
+        );
+
         emit CommitteePublished(
             e3Id,
-            c.topNodes,
+            committees[e3Id].topNodes,
             publicKey,
             pkCommitment,
-            proof
+            bytes("")
         );
     }
 

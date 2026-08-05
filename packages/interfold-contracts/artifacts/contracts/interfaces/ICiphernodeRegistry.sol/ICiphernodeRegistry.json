@@ -170,6 +170,22 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "supplied",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maximum",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidPublicKeyLength",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "InvalidTicketNumber",
       "type": "error"
@@ -488,6 +504,37 @@
         }
       ],
       "name": "CommitteeMemberExpelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address[]",
+          "name": "nodes",
+          "type": "address[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "pkCommitment",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "CommitteeProofPublished",
       "type": "event"
     },
     {
@@ -1229,11 +1276,6 @@
           "type": "uint256"
         },
         {
-          "internalType": "bytes",
-          "name": "publicKey",
-          "type": "bytes"
-        },
-        {
           "internalType": "bytes32",
           "name": "pkCommitment",
           "type": "bytes32"
@@ -1250,6 +1292,24 @@
         }
       ],
       "name": "publishCommittee",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "publicKey",
+          "type": "bytes"
+        }
+      ],
+      "name": "publishCommitteePublicKey",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1444,5 +1504,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-2f9f3ce2d87a05be5c7b63660f7107d102d47f54"
+  "buildInfoId": "solc-0_8_28-724bc38337acae256c519646ab9aa56f7dcd5163"
 }

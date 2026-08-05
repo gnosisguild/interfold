@@ -665,19 +665,21 @@ phase.
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
-  ├─ Reads chain state to confirm committee public key is still unset
+  ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishCommittee(
-       e3_id, publicKey, pkCommitment, proof, dkgAttestationBundle
-     )
+  ├─ Calls contract.publishCommittee(
+  │    e3_id, pkCommitment, proof, dkgAttestationBundle
+  │  ) when the commitment is unset
+  └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
+     commitment is available, including after restart
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
         │  │  publishCommittee(                                  │
-        │  │    e3Id, publicKey, pkCommitment, proof, attestations│
+        │  │    e3Id, pkCommitment, proof, attestations          │
         │  │  ) {                                                │
         │  │    1. require(stage == Finalized)                   │
         │  │    2. require(activeCount >= threshold[0])          │
@@ -711,8 +713,15 @@ phase.
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
-        │  │    8. Emit CommitteePublished(                    │
-        │  │         e3Id, c.topNodes, publicKey, pkCommitment, proof) │
+        │  │    8. Emit CommitteeProofPublished(                │
+        │  │         e3Id, c.topNodes, pkCommitment, proof)     │
+        │  │                                                     │
+        │  │  publishCommitteePublicKey(e3Id, publicKey) {      │
+        │  │    1. require the proven commitment                │
+        │  │    2. require 0 < publicKey.length <= 256 KiB      │
+        │  │    3. Emit CommitteePublished with the candidate,  │
+        │  │       stored commitment, and empty compatibility   │
+        │  │       proof field                                  │
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
 ```
@@ -728,7 +737,10 @@ an attestation. The registry uses the same frozen verifier when the committee pu
 attestation from another registry or verifier therefore fails even when both registries use the same
 E3 ID and committee.
 
-The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
+The serialized `publicKey` event field is a transport hint, not on-chain authority. Proof-backed
+committee publication does not accept it. A separate permissionless function emits bounded key
+candidates and remains usable after an invalid candidate, so a front-run transaction cannot
+consume the only transport slot. Before
 `e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
 circuit's public-key commitment using the request's parameter set, and requires equality with the
 event's on-chain `pkCommitment`. TypeScript event consumers receive the same `pkCommitment` and use

@@ -290,11 +290,17 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
         let self_addr = ctx.address();
 
         Box::pin(async move {
-            match should_publish_committee(provider.clone(), contract_address, e3_id.clone()).await
+            let should_publish = match should_publish_committee(
+                provider.clone(),
+                contract_address,
+                e3_id.clone(),
+                pk_commitment,
+            )
+            .await
             {
                 Ok(false) => {
-                    info!(e3_id = %e3_id, "Skipping publishCommittee; committee public key already published");
-                    return;
+                    info!(e3_id = %e3_id, "Committee proof already published; publishing the key candidate");
+                    false
                 }
                 Err(err) => {
                     error!(
@@ -305,29 +311,42 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
                     self_addr.do_send(ClearSubmitting(e3_id));
                     return;
                 }
-                Ok(true) => {}
-            }
+                Ok(true) => true,
+            };
 
-            let result = publish_committee_to_registry(
-                provider,
-                contract_address,
-                e3_id.clone(),
-                pubkey,
-                pk_commitment,
-                dkg_aggregator_proof.as_ref(),
-                dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
-            )
+            let result: Result<()> = async {
+                if should_publish {
+                    let receipt = publish_committee_to_registry(
+                        provider.clone(),
+                        contract_address,
+                        e3_id.clone(),
+                        pk_commitment,
+                        dkg_aggregator_proof.as_ref(),
+                        dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
+                    )
+                    .await?;
+                    info!(tx=%receipt.transaction_hash, "Committee proof published to registry");
+                }
+
+                let receipt = publish_committee_public_key_to_registry(
+                    provider,
+                    contract_address,
+                    e3_id.clone(),
+                    pubkey,
+                )
+                .await?;
+                info!(tx=%receipt.transaction_hash, "Committee public-key candidate published to registry");
+                Ok(())
+            }
             .await;
-            match result {
-                Ok(receipt) => {
-                    info!(tx=%receipt.transaction_hash, "Committee published to registry");
-                }
-                Err(err) => {
-                    error!("Failed to publish committee: {}", format_evm_error(&err));
-                    // Submission failed: clear the in-flight marker so a retry can proceed.
-                    self_addr.do_send(ClearSubmitting(e3_id));
-                    bus.err(EType::Evm, err);
-                }
+
+            if let Err(err) = result {
+                error!(
+                    "Failed to publish committee data: {}",
+                    format_evm_error(&err)
+                );
+                self_addr.do_send(ClearSubmitting(e3_id));
+                bus.err(EType::Evm, err);
             }
         })
     }
