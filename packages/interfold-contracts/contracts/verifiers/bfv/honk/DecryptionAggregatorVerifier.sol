@@ -283,6 +283,7 @@ library Errors {
     error PointAtInfinity();
 
     error ConsistencyCheckFailed();
+    error VerificationKeyConfigurationMismatch();
     error GeminiChallengeInSubgroup();
 }
 
@@ -2511,6 +2512,23 @@ abstract contract BaseZKHonkVerifier is IVerifier {
         $MSMSize = NUMBER_UNSHIFTED_ZK + _logN + LIBRA_COMMITMENTS + 2;
     }
 
+    function validateVerificationKey(
+        Honk.VerificationKey memory vk
+    ) internal view {
+        require(
+            $N == vk.circuitSize,
+            Errors.VerificationKeyConfigurationMismatch()
+        );
+        require(
+            $LOG_N == vk.logCircuitSize,
+            Errors.VerificationKeyConfigurationMismatch()
+        );
+        require(
+            $NUM_PUBLIC_INPUTS == vk.publicInputsSize,
+            Errors.VerificationKeyConfigurationMismatch()
+        );
+    }
+
     function verify(
         bytes calldata proof,
         bytes32[] calldata publicInputs
@@ -3230,6 +3248,9 @@ abstract contract BaseZKHonkVerifier is IVerifier {
 contract DecryptionAggregatorVerifier is
     BaseZKHonkVerifier(N, LOG_N, VK_HASH, NUMBER_OF_PUBLIC_INPUTS)
 {
+    constructor() {
+        validateVerificationKey(HonkVerificationKey.loadVerificationKey());
+    }
     function loadVerificationKey()
         internal
         pure
