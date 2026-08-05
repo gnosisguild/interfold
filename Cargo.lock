@@ -4080,6 +4080,7 @@ dependencies = [
  "duct",
  "e3-config",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
