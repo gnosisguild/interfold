@@ -89,8 +89,9 @@ CiphernodeRegistry or SlashingManager calls:
 
 Specific triggers:
 
-- **InsufficientCommitteeMembers**: `finalizeCommittee()` when < N nodes submitted tickets
-- **Committee became non-viable**: SlashingManager expelled enough members to drop below threshold M
+- **InsufficientCommitteeMembers**: `finalizeCommittee()` uses this reason when fewer than N nodes
+  submitted tickets. SlashingManager also uses it when an expulsion leaves fewer than H active
+  members. Reusing the existing supplier-paid reason preserves the persisted enum layout.
 
 ---
 
@@ -759,12 +760,13 @@ _executeSlash(proposalId):
 │     │  │  5. Return (activeCount, threshold[0])                │
 │     │  └───────────────────────────────────────────────────────┘
 │     │
-│     └─ If activeCount < thresholdM AND proposal.failureReason > 0:
-│         try interfold.onE3Failed(e3Id, proposal.failureReason)
-│         → Committee can no longer meet threshold
-│         → E3 is irrecoverably failed
-│         catch: emit RoutingFailed (E3 may already be failed)
-│         → Slash itself still proceeds regardless
+│     └─ If activeCount < thresholdM:
+│         ├─ Read the E3 stage from its request-time Interfold contract
+│         ├─ Complete or Failed: allow the later slash without another callback
+│         └─ Any other stage: call onE3Failed with InsufficientCommitteeMembers
+│            → No catch-all suppression
+│            → Callback failure rolls back penalties, ban, and expulsion
+│            → The E3 and committee cannot commit inconsistent states
 │
 │     Resolve the E3 entitlement hold as expelled:
 │       → the accused operator cannot claim its held share
@@ -1012,16 +1014,17 @@ SlashPolicy {
   appealWindow:     uint256   // seconds; required for Lane B, optional for Lane A
   enabled:          bool      // policy active
   affectsCommittee: bool      // expel from E3 committee
-  failureReason:    uint8     // FailureReason enum (0 = no E3 failure)
+  failureReason:    uint8     // retained ABI field: 0 or InsufficientCommitteeMembers
 }
 
 Constraints:
 - If requiresProof: appealWindow may be 0 (atomic) or > 0 (deferred challenge)
 - If !requiresProof: appealWindow must be > 0 (delayed execution, with appeal)
 - At least one penalty must be non-zero
-- A nonzero failureReason must be below `_MAX_FAILURE_REASON`
-- A policy with nonzero failureReason must set affectsCommittee=true
-  → The proven-faulty operator is expelled before honest slash recipients are resolved
+- failureReason is 0 or `InsufficientCommitteeMembers`
+- a nonzero failureReason requires affectsCommittee=true
+- execution always uses `InsufficientCommitteeMembers` when an expulsion breaks viability
+  → stored policies with older supplier reasons remain readable, but cannot change attribution
 
 Slash Reasons (derived from ProofType for Lane A):
   reason = keccak256(abi.encodePacked(proofType))

@@ -116,9 +116,15 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   shares, while execution reallocates them to the remaining operators. Peer claims do not wait. A
   non-expelling slash excludes its target only from that proposal's penalty proceeds. All paths use
   the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
-- Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty; nonzero
-  `failureReason < _MAX_FAILURE_REASON` and implies `affectsCommittee = true`; a failure-triggering
-  slash expels the faulty operator **before** honest recipients are resolved. — `flow-trace/05`
+- Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
+  `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
+  attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
+- **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
+  same transaction must fail the affected nonterminal E3 with the supplier-paid
+  `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum
+  layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
+  allow later slashes. Committee key, ciphertext, and plaintext publication all require a currently
+  viable request-time committee. — `flow-trace/04`, `05`; INDEX concern Z-32
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
   Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —

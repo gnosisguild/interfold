@@ -18,10 +18,8 @@ const DKG_PROOF_TYPES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 /** Proof types 8–10: aggregation / decryption (C5–C7). */
 const DECRYPTION_PROOF_TYPES = [8, 9, 10] as const;
 
-/** `IInterfold.FailureReason.DKGInvalidShares` */
-const FAILURE_REASON_DKG_INVALID_SHARES = 4;
-/** `IInterfold.FailureReason.DecryptionInvalidShares` */
-const FAILURE_REASON_DECRYPTION_INVALID_SHARES = 11;
+/** `IInterfold.FailureReason.InsufficientCommitteeMembers` */
+const FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS = 2;
 
 function slashReasonForProofType(
   ethers: typeof EthersTypes,
@@ -80,7 +78,10 @@ export async function configureLocalSlashingPolicies(
     const reason = slashReasonForProofType(ethers, proofType);
     const tx = await contract.setSlashPolicy(
       reason,
-      localAttestationSlashPolicy(ethers, FAILURE_REASON_DKG_INVALID_SHARES),
+      localAttestationSlashPolicy(
+        ethers,
+        FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
+      ),
     );
     await tx.wait();
     console.log(`  proofType ${proofType} (DKG) -> ${reason}`);
@@ -92,7 +93,7 @@ export async function configureLocalSlashingPolicies(
       reason,
       localAttestationSlashPolicy(
         ethers,
-        FAILURE_REASON_DECRYPTION_INVALID_SHARES,
+        FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
       ),
     );
     await tx.wait();

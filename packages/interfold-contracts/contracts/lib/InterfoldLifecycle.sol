@@ -72,6 +72,7 @@ library InterfoldLifecycle {
         bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external view {
+        _requireViableCommittee(registryAddress, e3Id);
         if (proof.length == 0) revert IInterfold.ProofRequired();
         bytes32 committeeHash = ICiphernodeRegistry(registryAddress)
             .getCommitteeHash(e3Id);
@@ -121,13 +122,14 @@ library InterfoldLifecycle {
     /// @notice Checks the publication gates for a ciphertext output.
     /// @param current The current E3 stage, encoded as `uint8`.
     function validatePublishCiphertext(
+        address registryAddress,
         uint256 e3Id,
         uint8 current,
         uint256 computeDeadline,
         uint256 inputWindowEnd,
         bytes32 ciphertextOutput,
         uint256 nowTs
-    ) external pure {
+    ) external view {
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
         if (stage != IInterfold.E3Stage.KeyPublished)
             revert IInterfold.InvalidStage(
@@ -141,6 +143,16 @@ library InterfoldLifecycle {
             revert IInterfold.InputDeadlineNotReached(e3Id, inputWindowEnd);
         if (ciphertextOutput != bytes32(0))
             revert IInterfold.CiphertextOutputAlreadyPublished(e3Id);
+        _requireViableCommittee(registryAddress, e3Id);
+    }
+
+    function _requireViableCommittee(
+        address registryAddress,
+        uint256 e3Id
+    ) private view {
+        (, , , bool viable) = ICiphernodeRegistry(registryAddress)
+            .getCommitteeViability(e3Id);
+        require(viable, ICiphernodeRegistry.ThresholdNotMet());
     }
 
     /// @notice Checks whether an E3 stage can enter the failure path.

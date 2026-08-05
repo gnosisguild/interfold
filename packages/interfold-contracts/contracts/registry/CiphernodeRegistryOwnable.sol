@@ -318,6 +318,7 @@ contract CiphernodeRegistryOwnable is
             c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
             CommitteeNotFinalized()
         );
+        require(c.activeCount >= c.threshold[0], ThresholdNotMet());
         require(c.publicKey == bytes32(0), CommitteeAlreadyPublished());
         require(pkCommitment != bytes32(0), PkCommitmentRequired());
 

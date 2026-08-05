@@ -53,7 +53,8 @@ interface ISlashingManager {
      * @param appealWindow Time window in seconds for operators to appeal (0 = immediate execution, no appeals)
      * @param enabled Whether this slash type is currently active and can be proposed
      * @param affectsCommittee Whether executing this slash triggers committee expulsion for the target E3
-     * @param failureReason The FailureReason enum value to use when committee drops below threshold (0 = no E3 failure)
+     * @param failureReason Reserved for storage and ABI compatibility. New policies use 0 or
+     *        InsufficientCommitteeMembers.
      */
     struct SlashPolicy {
         uint256 ticketPenalty;
@@ -104,7 +105,7 @@ interface ISlashingManager {
         bool banNode;
         /// @dev Snapshotted from SlashPolicy at proposal time to prevent execution drift
         bool affectsCommittee;
-        /// @dev Snapshotted from SlashPolicy at proposal time to prevent execution drift
+        /// @dev Reserved for storage and ABI compatibility. Committee viability loss uses a fixed reason.
         uint8 failureReason;
     }
 

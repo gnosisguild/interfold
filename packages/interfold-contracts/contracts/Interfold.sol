@@ -383,6 +383,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         // the EIP-170 24,576-byte cap. Revert selectors are preserved via
         // shared {IInterfold} error declarations.
         InterfoldLifecycle.validatePublishCiphertext(
+            address(_registryFor(e3Id)),
             e3Id,
             uint8(current),
             deadlines.computeDeadline,

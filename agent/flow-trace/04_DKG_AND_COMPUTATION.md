@@ -680,10 +680,12 @@ phase.
         │  │    e3Id, publicKey, pkCommitment, proof, attestations│
         │  │  ) {                                                │
         │  │    1. require(stage == Finalized)                   │
-        │  │    2. require(c.publicKey == 0) — publish once      │
-        │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
+        │  │    2. require(activeCount >= threshold[0])          │
+        │  │       → A non-viable committee cannot publish a key │
+        │  │    3. require(c.publicKey == 0) — publish once      │
+        │  │    4. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
-        │  │    4. require(proof.length > 0)                    │
+        │  │    5. require(proof.length > 0)                    │
         │  │       require(e3.pkVerifier.verify(                │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
@@ -696,9 +698,9 @@ phase.
         │  │         • last PI == pkCommitment                   │
         │  │         • M-35: revert on failure (no `bool false`) │
         │  │       and verify/store per-node fold attestations   │
-        │  │    5. c.publicKey = pkCommitment                    │
+        │  │    6. c.publicKey = pkCommitment                    │
         │  │       publicKeyHashes[e3Id] = pkCommitment          │
-        │  │    6. interfold.onCommitteePublished(e3Id, pkCommitment) │
+        │  │    7. interfold.onCommitteePublished(e3Id, pkCommitment) │
         │  │       │                                             │
         │  │       │  ┌─ Interfold.sol ────────────────────────┐  │
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
@@ -709,7 +711,7 @@ phase.
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
-        │  │    7. Emit CommitteePublished(                    │
+        │  │    8. Emit CommitteePublished(                    │
         │  │         e3Id, c.topNodes, publicKey, pkCommitment, proof) │
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
@@ -792,15 +794,17 @@ Compute provider runs computation on encrypted data:
     │  │       → Input window must have closed                   │
     │  │    4. require(e3.ciphertextOutput == 0)                │
     │  │       → Can only publish once                           │
-│  │    5. e3.ciphertextOutput = keccak256(output)           │
+    │  │    5. require(activeCount >= threshold[0])              │
+    │  │       → The request-time committee is still viable      │
+│  │    6. e3.ciphertextOutput = keccak256(output)           │
 │  │       e3.ciphertextCommitment = commitment               │
-│  │    6. e3Program.verify(e3Id, hash, commitment, proof)   │
+│  │    7. e3Program.verify(e3Id, hash, commitment, proof)   │
     │  │       → Program binds the output and SAFE commitment    │
     │  │       → Must return true                                │
-    │  │    7. stage = CiphertextReady                           │
-    │  │    8. decryptionDeadline = now + decryptionWindow       │
-│  │    9. Emit CiphertextOutputPublished(e3Id, output, commitment) │
-    │  │   10. Emit E3StageChanged(CiphertextReady)              │
+    │  │    8. stage = CiphertextReady                           │
+    │  │    9. decryptionDeadline = now + decryptionWindow       │
+│  │   10. Emit CiphertextOutputPublished(e3Id, output, commitment) │
+    │  │   11. Emit E3StageChanged(CiphertextReady)              │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
@@ -988,7 +992,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
-        │  │    3. require(proof.length > 0), recompute          │
+        │  │    3. require(activeCount >= threshold[0])          │
+        │  │       → The request-time committee is still viable  │
+        │  │    4. require(proof.length > 0), recompute          │
         │  │       decryptionDomain = keccak256(abi.encode(      │
         │  │         chainId, address(this), e3Id,               │
         │  │         committeeHash, ciphertextOutput,            │
@@ -1003,8 +1009,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
          │  │       │  proof party IDs and SK/ESM commitments match.│
          │  │       → M-34: c6Fold / C7 VK hashes are immutable.  │
         │  │       → M-35: revert path only (no `bool false`).   │
-        │  │    4. stage = Complete                              │
-        │  │    5. _distributeRewards(e3Id)                      │
+        │  │    5. stage = Complete                              │
+        │  │    6. _distributeRewards(e3Id)                      │
         │  │       │                                             │
         │  │       │  ┌─ Reward Distribution (pull, H-01/M-02) ┐  │
         │  │       │  │  1. Get active committee nodes:        │  │

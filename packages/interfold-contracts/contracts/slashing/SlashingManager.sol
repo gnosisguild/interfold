@@ -17,7 +17,6 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
-import { FailurePayerLib } from "../lib/FailurePayerLib.sol";
 
 /**
  * @title SlashingManager
@@ -363,22 +362,17 @@ contract SlashingManager is
         }
         // Cap the appeal window so governance cannot indefinitely delay slashing.
         require(policy.appealWindow <= MAX_APPEAL_WINDOW, InvalidPolicy());
-        if (policy.failureReason > 0) {
-            // A policy that can fail an E3 must also remove the proven-faulty
-            // operator before the refund manager snapshots honest recipients.
-            require(policy.affectsCommittee, InvalidPolicy());
-            require(
-                policy.failureReason <
-                    uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
-                InvalidPolicy()
-            );
-            require(
-                FailurePayerLib.getFailurePayer(
-                    IInterfold.FailureReason(policy.failureReason)
-                ) == IE3RefundManager.FailurePayer.Ciphernodes,
-                InvalidPolicy()
-            );
-        }
+        // Threshold loss uses the existing supplier-paid insufficient-members
+        // reason. The field remains in the policy struct for ABI and storage compatibility.
+        require(
+            policy.failureReason == 0 ||
+                (policy.affectsCommittee &&
+                    policy.failureReason ==
+                    uint8(
+                        IInterfold.FailureReason.InsufficientCommitteeMembers
+                    )),
+            InvalidPolicy()
+        );
 
         slashPolicies[reason] = policy;
         emit SlashPolicyUpdated(reason, policy);
@@ -524,7 +518,9 @@ contract SlashingManager is
         p.proofVerified = true;
         p.banNode = policy.banNode;
         p.affectsCommittee = policy.affectsCommittee;
-        p.failureReason = policy.failureReason;
+        p.failureReason = policy.affectsCommittee
+            ? uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+            : 0;
 
         _openProposal(p, proposalId);
 
@@ -611,7 +607,9 @@ contract SlashingManager is
         // to prevent execution drift if policy is modified during appeal window
         p.banNode = policy.banNode;
         p.affectsCommittee = policy.affectsCommittee;
-        p.failureReason = policy.failureReason;
+        p.failureReason = policy.affectsCommittee
+            ? uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+            : 0;
 
         _openProposal(p, proposalId);
 
@@ -843,20 +841,24 @@ contract SlashingManager is
                 .registry
                 .expelCommitteeMember(p.e3Id, p.operator, p.reason);
 
-            // If active count drops below M, fail the E3
-            if (activeCount < thresholdM && p.failureReason > 0) {
-                // NOTE: catch block must not be empty (solc optimizer bug, see below)
-                // solhint-disable-next-line no-empty-blocks
-                try
+            if (activeCount < thresholdM) {
+                IInterfold.E3Stage stage = dependencies
+                    .interfoldContract
+                    .getE3Stage(p.e3Id);
+                if (
+                    stage != IInterfold.E3Stage.Complete &&
+                    stage != IInterfold.E3Stage.Failed
+                ) {
+                    // This call must succeed with the expulsion. A revert rolls
+                    // back the penalties, ban, and committee membership change.
                     dependencies.interfoldContract.onE3Failed(
                         p.e3Id,
-                        p.failureReason
-                    )
-                {
-                    // Side effects occur in the external call
-                } catch {
-                    // E3 already failed or other error — slash still proceeds
-                    emit RoutingFailed(p.e3Id, 0);
+                        uint8(
+                            IInterfold
+                                .FailureReason
+                                .InsufficientCommitteeMembers
+                        )
+                    );
                 }
             }
             dependencies.refundManager.resolveExpulsionProposal(
