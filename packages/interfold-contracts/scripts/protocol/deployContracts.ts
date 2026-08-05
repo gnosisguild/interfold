@@ -108,6 +108,13 @@ export async function deployProtocolContracts(
   await bondingAsset.waitForDeployment();
   const bondingAssetLib = await deployedAddress(bondingAsset);
 
+  const bondingEligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+  );
+  const bondingEligibility = await bondingEligibilityFactory.deploy();
+  await bondingEligibility.waitForDeployment();
+  const bondingEligibilityLib = await deployedAddress(bondingEligibility);
+
   const bondingSlashingFactory =
     await ethers.getContractFactory("BondingSlashingLib");
   const bondingSlashing = await bondingSlashingFactory.deploy();
@@ -117,6 +124,7 @@ export async function deployProtocolContracts(
   const bondingFactory = await ethers.getContractFactory("BondingRegistry", {
     libraries: {
       BondingAssetLib: bondingAssetLib,
+      BondingEligibilityLib: bondingEligibilityLib,
       BondingSlashingLib: bondingSlashingLib,
     },
   });
@@ -140,6 +148,7 @@ export async function deployProtocolContracts(
       e3RefundManagerImplementation,
       e3RefundManagerProxyAdmin: refundProxy.proxyAdmin,
       bondingAssetLib,
+      bondingEligibilityLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),
       bondingSlashingLib,
     },

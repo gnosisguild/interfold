@@ -21,11 +21,15 @@ import {
     IERC165
 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { BondingAssetLib } from "../lib/BondingAssetLib.sol";
+import { BondingEligibilityLib } from "../lib/BondingEligibilityLib.sol";
 import { BondingSlashingLib } from "../lib/BondingSlashingLib.sol";
 import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import {
+    BondingEligibilityStorage
+} from "../storage/BondingEligibilityStorage.sol";
 import { BondingSlashingStorage } from "../storage/BondingSlashingStorage.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
@@ -37,6 +41,7 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 // solhint-disable-next-line max-states-count
 contract BondingRegistry is
     IBondingRegistry,
+    BondingEligibilityStorage,
     BondingSlashingStorage,
     Ownable2StepUpgradeable,
     ReentrancyGuardUpgradeable
@@ -297,7 +302,7 @@ contract BondingRegistry is
     function getTicketBalance(
         address operator
     ) external view returns (uint256) {
-        return ticketToken.balanceOf(operator);
+        return BondingAssetLib.ticketBalance(address(ticketToken), operator);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -326,21 +331,25 @@ contract BondingRegistry is
     function availableTickets(
         address operator
     ) external view returns (uint256) {
-        return ticketToken.balanceOf(operator) / ticketPrice;
+        return
+            BondingAssetLib.availableTickets(
+                address(ticketToken),
+                operator,
+                ticketPrice
+            );
     }
 
-    /// @notice Get operator's ticket balance at a specific timepoint (EIP-6372).
-    /// @dev The ticket token uses {block.timestamp} (mode=timestamp) for its voting clock, so
-    ///      `blockNumber` is in fact a unix timestamp. Name is preserved for storage/event
-    ///      compatibility.
-    /// @param operator Address of the operator
-    /// @param blockNumber Timepoint (block.timestamp) to query
-    /// @return Ticket balance at the specified timepoint
+    /// @inheritdoc IBondingRegistry
     function getTicketBalanceAtBlock(
         address operator,
-        uint256 blockNumber
+        uint256 timepoint
     ) external view returns (uint256) {
-        return ticketToken.getPastVotes(operator, blockNumber);
+        return
+            BondingAssetLib.ticketBalanceAt(
+                address(ticketToken),
+                operator,
+                timepoint
+            );
     }
 
     /// @notice Get operator's total pending exit amounts
@@ -365,7 +374,12 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function isLicensed(address operator) external view returns (bool) {
-        return operators[operator].licenseBond >= _minLicenseBond();
+        return
+            BondingEligibilityLib.isLicensed(
+                operators[operator].licenseBond,
+                licenseRequiredBond,
+                licenseActiveBps
+            );
     }
 
     /// @inheritdoc IBondingRegistry
@@ -382,6 +396,14 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
+    function eligibilityAt(
+        address operator,
+        uint256 timepoint
+    ) external view returns (bool active, uint256 activeOperatorCount) {
+        return BondingEligibilityLib.eligibilityAt(operator, timepoint);
+    }
+
+    /// @inheritdoc IBondingRegistry
     function refreshOperatorStatus(address operator) public {
         require(operators[operator].registered, NotRegistered());
         _updateOperatorStatus(operator);
@@ -390,7 +412,7 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function refreshOperatorStatuses(address[] calldata operatorList) external {
         uint256 len = operatorList.length;
-        for (uint256 i = 0; i < len; i++) {
+        for (uint256 i = 0; i < len; ++i) {
             refreshOperatorStatus(operatorList[i]);
         }
     }
@@ -1305,23 +1327,26 @@ contract BondingRegistry is
         uint256 currentVersion = eligibilityConfigurationVersion;
         bool oldActiveStatus = op.eligibilityVersion == currentVersion &&
             op.active;
-        bool newActiveStatus = op.registered &&
-            !_isOperatorBanned(operator) &&
-            op.licenseBond >= _minLicenseBond() &&
-            (ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance);
-
+        (uint256 activeCount, bool newActiveStatus) = BondingEligibilityLib
+            .updateOperator(
+                operator,
+                oldActiveStatus,
+                BondingEligibilityLib.OperatorRequirements({
+                    registered: op.registered,
+                    banned: _isOperatorBanned(operator),
+                    licenseBond: op.licenseBond,
+                    licenseRequiredBond: licenseRequiredBond,
+                    licenseActiveBps: licenseActiveBps,
+                    ticketBalance: ticketToken.balanceOf(operator),
+                    ticketPrice: ticketPrice,
+                    minTicketBalance: minTicketBalance
+                }),
+                currentVersion,
+                numActiveOperators
+            );
         op.eligibilityVersion = currentVersion;
         op.active = newActiveStatus;
-
-        if (oldActiveStatus != newActiveStatus) {
-            if (newActiveStatus) {
-                numActiveOperators++;
-            } else {
-                numActiveOperators--;
-            }
-
-            emit OperatorActivationChanged(operator, newActiveStatus);
-        }
+        numActiveOperators = activeCount;
     }
 
     /// @dev A ban from any retained slashing manager removes network eligibility.
@@ -1338,26 +1363,12 @@ contract BondingRegistry is
         return BondingAssetLib.lockedBalanceOf(address(token), account);
     }
 
-    /// @dev Calculates the minimum license bond required to maintain active status.
-    /// @return Minimum license bond, rounded up to the next base unit.
-    function _minLicenseBond() internal view returns (uint256) {
-        return
-            Math.mulDiv(
-                licenseRequiredBond,
-                licenseActiveBps,
-                BPS_BASE,
-                Math.Rounding.Ceil
-            );
-    }
-
     /// @dev Invalidates every cached active status in O(1). Operators are
     ///      considered inactive until they refresh under the new version.
     function _invalidateEligibilityStatuses() internal {
-        eligibilityConfigurationVersion++;
+        eligibilityConfigurationVersion = BondingEligibilityLib
+            .invalidateConfiguration(eligibilityConfigurationVersion);
         numActiveOperators = 0;
-        emit EligibilityConfigurationVersionUpdated(
-            eligibilityConfigurationVersion
-        );
     }
 
     /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta
@@ -1371,18 +1382,11 @@ contract BondingRegistry is
         address recipient,
         uint256 expectedAmount
     ) internal {
-        uint256 actualReceived = BondingAssetLib.transferWithDeltaCheck(
+        BondingAssetLib.transferWithDeltaCheck(
             address(licenseToken),
             recipient,
             expectedAmount
         );
-        if (actualReceived != expectedAmount) {
-            emit LicenseTransferShortfall(
-                recipient,
-                expectedAmount,
-                actualReceived
-            );
-        }
     }
 
     ////////////////////////////////////////////////////////////

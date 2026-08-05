@@ -86,6 +86,7 @@ impl From<CommitteeRequestedWithChainId> for e3_events::CommitteeRequested {
             threshold: [value.0.threshold[0] as usize, value.0.threshold[1] as usize],
             request_block: value.0.requestBlock.to(),
             committee_deadline: value.0.committeeDeadline.to(),
+            ticket_price: value.0.ticketPrice,
             chain_id: value.1,
         }
     }
@@ -476,6 +477,24 @@ mod tests {
             Some(b.to_string().as_str())
         );
         assert_eq!(finalized.scores.first().map(String::as_str), Some("99"));
+    }
+
+    #[test]
+    fn committee_request_keeps_the_frozen_ticket_price() {
+        let event = ICiphernodeRegistry::CommitteeRequested {
+            e3Id: U256::from(7),
+            seed: U256::from(8),
+            threshold: [2, 3],
+            requestBlock: U256::from(100),
+            committeeDeadline: U256::from(110),
+            ticketPrice: U256::from(25),
+        };
+
+        let converted: e3_events::CommitteeRequested =
+            CommitteeRequestedWithChainId(event, 1).into();
+
+        assert_eq!(converted.request_block, 100);
+        assert_eq!(converted.ticket_price, U256::from(25));
     }
 
     #[test]

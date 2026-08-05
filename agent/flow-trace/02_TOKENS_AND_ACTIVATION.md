@@ -517,11 +517,10 @@ enforcement based on immutable policy curves. Key changes:
 
 ### Registry coordination
 
-- `CiphernodeRegistryOwnable.requestBlock` now stores `block.timestamp` (the storage slot and event
-  field names are preserved for backwards compatibility). All callers — including
-  `BondingRegistry.getTicketBalanceAtBlock(node, c.requestBlock - 1)` — pass the value through
-  unchanged; the parameter is now a timepoint per EIP-6372 rather than a block number, which is
-  required for the tFOLD timestamp clock to be valid.
+- `CiphernodeRegistryOwnable.requestBlock` stores `block.timestamp` (the storage slot and event
+  field names remain unchanged for compatibility). Sortition reads tFOLD voting power at
+  `requestBlock - 1`. The value is an EIP-6372 timepoint, not a block number, as required by the
+  tFOLD timestamp clock.
 
 ### Node-operator event projection
 

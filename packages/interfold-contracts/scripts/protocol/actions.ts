@@ -109,6 +109,7 @@ Protocol contracts deployed
   interfoldPricing:       ${deployment.interfoldPricing}
   e3RefundManager:        ${deployment.e3RefundManager}
   bondingAssetLib:        ${deployment.bondingAssetLib}
+  bondingEligibilityLib:  ${deployment.bondingEligibilityLib}
   bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
 

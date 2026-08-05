@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::backends::{SortitionBackend, SortitionList};
-use crate::domain::node_registry::{NodeRegistry, NodeStateStore};
+use crate::domain::node_registry::{NodeRegistry, NodeStateStore, SortitionSnapshot};
 use crate::domain::ticket_sortition;
 use crate::messages::{
     CommitteeMembersResponse, E3CommitteeContainsRequest, E3CommitteeContainsResponse,
@@ -16,12 +16,13 @@ use crate::FinalizedCommitteeRetention;
 use actix::prelude::*;
 use anyhow::{anyhow, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
+use e3_events::hlc::HlcTimestamp;
 use e3_events::{
     prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExpelled, CommitteePublished, ConfigurationUpdated, E3Failed, E3RequestComplete,
-    E3Requested, E3Stage, E3StageChanged, EType, EventContext, EventType, InterfoldEvent,
-    OperatorActivationChanged, PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated,
-    TypedEvent,
+    CommitteeMemberExpelled, CommitteePublished, CommitteeRequested, ConfigurationUpdated,
+    E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EventContext,
+    EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished, Seed,
+    Sequenced, TicketBalanceUpdated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -115,6 +116,7 @@ impl Sortition {
                 EventType::TicketBalanceUpdated,
                 EventType::OperatorActivationChanged,
                 EventType::ConfigurationUpdated,
+                EventType::CommitteeRequested,
                 EventType::CommitteePublished,
                 EventType::PlaintextOutputPublished,
                 EventType::CommitteeFinalized,
@@ -162,6 +164,7 @@ impl Sortition {
         seed: Seed,
         size: usize,
         chain_id: u64,
+        snapshot: SortitionSnapshot,
     ) -> Option<(u64, Option<u64>)> {
         let bus = self.bus.clone();
         let map = self.backends.get()?;
@@ -170,11 +173,23 @@ impl Sortition {
         let state = state_map.get(&chain_id)?;
 
         backend
-            .get_index(e3_id, seed, size, self.address.clone(), chain_id, state)
+            .get_index(
+                e3_id,
+                seed,
+                size,
+                self.address.clone(),
+                chain_id,
+                state,
+                snapshot,
+            )
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);
                 None
             })
+    }
+
+    fn evm_timepoint(ec: &EventContext<Sequenced>) -> u64 {
+        HlcTimestamp::wall_time(ec.ts()) / 1_000_000_000
     }
 
     fn get_committee(&self, e3_id: &E3id) -> Option<Committee> {

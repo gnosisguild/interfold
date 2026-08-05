@@ -64,8 +64,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
   `seed = uint256(keccak256(block.prevrandao, e3Id))`; top-N lowest win. — `flow-trace/03`
-- Eligibility is **snapshot-based**: ticket balances at `requestBlock-1` via
-  `getTicketBalanceAtBlock`; IMT root snapshotted at request time. —
+- **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
+  count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
+  freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
+  activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
 - `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
   successful call locks the canonical on-chain committee order. — `flow-trace/03`

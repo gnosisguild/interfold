@@ -169,6 +169,11 @@ export function syncProtocolDeploymentRecords(
     opts.chain,
   );
   storeDeploymentArgs(
+    { address: deployment.bondingEligibilityLib, blockNumber },
+    "BondingEligibilityLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
     { address: deployment.bondingSlashingLib, blockNumber },
     "BondingSlashingLib",
     opts.chain,
@@ -278,6 +283,7 @@ export function syncProtocolDeploymentRecords(
       },
       libraries: {
         BondingAssetLib: deployment.bondingAssetLib,
+        BondingEligibilityLib: deployment.bondingEligibilityLib,
         BondingSlashingLib: deployment.bondingSlashingLib,
       },
       proxyRecords: {

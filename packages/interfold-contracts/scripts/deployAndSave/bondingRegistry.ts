@@ -99,6 +99,13 @@ export const deployAndSaveBondingRegistry = async ({
   await assetLibrary.waitForDeployment();
   const assetLibraryAddress = await assetLibrary.getAddress();
 
+  const eligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+  );
+  const eligibilityLibrary = await eligibilityFactory.deploy();
+  await eligibilityLibrary.waitForDeployment();
+  const eligibilityLibraryAddress = await eligibilityLibrary.getAddress();
+
   const slashingFactory = await ethers.getContractFactory("BondingSlashingLib");
   const slashingLibrary = await slashingFactory.deploy();
   await slashingLibrary.waitForDeployment();
@@ -109,6 +116,7 @@ export const deployAndSaveBondingRegistry = async ({
     {
       libraries: {
         BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
       },
     },
@@ -148,6 +156,11 @@ export const deployAndSaveBondingRegistry = async ({
     chain,
   );
   storeDeploymentArgs(
+    { address: eligibilityLibraryAddress, blockNumber },
+    "BondingEligibilityLib",
+    chain,
+  );
+  storeDeploymentArgs(
     { address: slashingLibraryAddress, blockNumber },
     "BondingSlashingLib",
     chain,
@@ -168,6 +181,7 @@ export const deployAndSaveBondingRegistry = async ({
       },
       libraries: {
         BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
       },
       proxyRecords: {
@@ -234,6 +248,14 @@ export const upgradeAndSaveBondingRegistry = async ({
   await assetLibrary.waitForDeployment();
   const assetLibraryAddress = await assetLibrary.getAddress();
 
+  const eligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+    signer,
+  );
+  const eligibilityLibrary = await eligibilityFactory.deploy();
+  await eligibilityLibrary.waitForDeployment();
+  const eligibilityLibraryAddress = await eligibilityLibrary.getAddress();
+
   const slashingFactory = await ethers.getContractFactory(
     "BondingSlashingLib",
     signer,
@@ -248,6 +270,7 @@ export const upgradeAndSaveBondingRegistry = async ({
       signer,
       libraries: {
         BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
       },
     },
@@ -296,6 +319,7 @@ export const upgradeAndSaveBondingRegistry = async ({
       ...preDeployedArgs,
       libraries: {
         BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
       },
       proxyRecords,

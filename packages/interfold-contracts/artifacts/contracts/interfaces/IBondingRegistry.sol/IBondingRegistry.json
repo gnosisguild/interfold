@@ -1183,6 +1183,35 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "timepoint",
+          "type": "uint256"
+        }
+      ],
+      "name": "eligibilityAt",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "active",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "activeOperatorCount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "eligibilityConfigurationVersion",
       "outputs": [
@@ -1302,7 +1331,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "blockNumber",
+          "name": "timepoint",
           "type": "uint256"
         }
       ],
@@ -2167,5 +2196,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-13f03f1d861b56a0cd8a63cf347faa5a3e174176"
+  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
 }

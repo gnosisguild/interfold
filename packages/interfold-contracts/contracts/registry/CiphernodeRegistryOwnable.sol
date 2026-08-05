@@ -180,6 +180,9 @@ contract CiphernodeRegistryOwnable is
     mapping(uint256 e3Id => CommitteeDependencies dependencies)
         internal _committeeDependencies;
 
+    /// @notice Ticket price frozen for each E3 sortition.
+    mapping(uint256 e3Id => uint256 ticketPrice) public sortitionTicketPrices;
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                     Modifiers                          //
@@ -242,11 +245,8 @@ contract CiphernodeRegistryOwnable is
     ////////////////////////////////////////////////////////////
 
     /// @inheritdoc ICiphernodeRegistry
-    /// @dev Uses numActiveOperators() which checks registered + minimum bond + minimum tickets.
-    ///      Between request time and ticket submission, operators may become inactive by losing
-    ///      bond or tickets. The check at request time may be stale by the time submitTicket
-    ///      is called. This is appropriately conservative — it prevents requesting committees
-    ///      when not enough operators are active even at request time.
+    /// @dev The eligible count uses the same `requestBlock - 1` boundary as ticket submission.
+    ///      Submission also requires current activity as a liveness check.
     function requestCommittee(
         uint256 e3Id,
         uint256 seed,
@@ -277,11 +277,19 @@ contract CiphernodeRegistryOwnable is
             address(dependencies.dkgFoldAttestationVerifier)
         );
 
-        uint256 activeCount = bondingRegistry.numActiveOperators();
+        c.requestBlock = block.timestamp;
+        (, uint256 activeCount) = dependencies.bonding.eligibilityAt(
+            address(0),
+            c.requestBlock - 1
+        );
         require(
             threshold[1] <= activeCount,
             InsufficientCiphernodes(threshold[1], activeCount)
         );
+
+        uint256 ticketPrice = dependencies.bonding.ticketPrice();
+        require(ticketPrice > 0, InvalidTicketNumber());
+        sortitionTicketPrices[e3Id] = ticketPrice;
 
         c.stage = ICiphernodeRegistry.CommitteeStage.Requested;
         c.seed = seed;
@@ -289,7 +297,6 @@ contract CiphernodeRegistryOwnable is
         // is kept for storage/event compatibility but it must be compared to
         // {block.timestamp}. This matches the InterfoldTicketToken's timestamp-mode clock so
         // {getPastVotes} lookups resolve consistently.
-        c.requestBlock = block.timestamp;
         c.committeeDeadline = block.timestamp + sortitionSubmissionWindow;
         c.threshold = threshold;
         roots[e3Id] = root();
@@ -299,7 +306,8 @@ contract CiphernodeRegistryOwnable is
             seed,
             threshold,
             c.requestBlock,
-            c.committeeDeadline
+            c.committeeDeadline,
+            ticketPrice
         );
         success = true;
     }
@@ -537,7 +545,7 @@ contract CiphernodeRegistryOwnable is
     ////////////////////////////////////////////////////////////
 
     /// @notice Submit a ticket for sortition
-    /// @dev Validates ticket against node's balance at request block and inserts into top-N
+    /// @dev Validates the ticket against request-boundary state and inserts it into the top-N.
     /// @param e3Id ID of the E3 computation
     /// @param ticketNumber The ticket number to submit (1 to available tickets at snapshot)
     function submitTicket(uint256 e3Id, uint256 ticketNumber) external {
@@ -555,8 +563,14 @@ contract CiphernodeRegistryOwnable is
             CommitteeDeadlineReached()
         );
         require(!c.submitted[msg.sender], NodeAlreadySubmitted());
+        (bool activeAtRequest, ) = _bondingFor(e3Id).eligibilityAt(
+            msg.sender,
+            c.requestBlock - 1
+        );
         require(
-            isEnabled(msg.sender) && _bondingFor(e3Id).isActive(msg.sender),
+            isEnabled(msg.sender) &&
+                _bondingFor(e3Id).isActive(msg.sender) &&
+                activeAtRequest,
             NodeNotEligible()
         );
 
@@ -1081,11 +1095,9 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @notice Validates that a node is eligible to submit a ticket
-    /// @dev Uses snapshot of ticket balance at (requestBlock - 1) for deterministic validation.
-    ///      The -1 offset prevents same-block manipulation attacks where an operator could deposit
-    ///      tickets and submit in the same transaction. Deposits in the request block itself are
-    ///      excluded. This is conservative — deposits in the request block itself are
-    ///      excluded to prevent same-block manipulation attacks.
+    /// @dev Uses ticket voting power at `requestBlock - 1` for deterministic validation.
+    ///      The ticket token uses an EIP-6372 timestamp clock, so changes at the request timestamp
+    ///      are excluded even when their logs precede the request event.
     /// @param node Address of the ciphernode
     /// @param ticketNumber The ticket number being submitted
     /// @param e3Id ID of the E3 computation
@@ -1106,11 +1118,11 @@ contract CiphernodeRegistryOwnable is
         // score and selection weight below use only the historical ticket
         // balance at `c.requestBlock - 1`. Later balance changes cannot
         // increase the saved weight.
-        uint256 ticketBalance = e3Bonding.getTicketBalanceAtBlock(
+        uint256 ticketBalance = e3Bonding.ticketToken().getPastVotes(
             node,
             c.requestBlock - 1
         );
-        uint256 ticketPrice = e3Bonding.ticketPrice();
+        uint256 ticketPrice = sortitionTicketPrices[e3Id];
 
         require(ticketPrice > 0, InvalidTicketNumber());
         uint256 availableTickets = ticketBalance / ticketPrice;
@@ -1235,5 +1247,5 @@ contract CiphernodeRegistryOwnable is
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 }

@@ -346,7 +346,7 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new(
         "CommitteeRequested",
-        "CommitteeRequested(uint256,uint256,uint32[2],uint256,uint256)",
+        "CommitteeRequested(uint256,uint256,uint32[2],uint256,uint256,uint256)",
         Some(1),
     ),
     EvmEventDefinition::new(

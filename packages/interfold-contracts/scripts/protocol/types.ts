@@ -76,6 +76,7 @@ export interface ProtocolDeployment {
   bondingRegistryProxyAdmin: string;
   bondingRegistryImplementation: string;
   bondingAssetLib: string;
+  bondingEligibilityLib: string;
   bondingSlashingLib: string;
   ticketToken: string;
   slashingManager: string;
@@ -132,6 +133,7 @@ export interface ProtocolContracts {
   e3RefundManagerProxyAdmin: string;
   bondingRegistryImplementation: string;
   bondingAssetLib: string;
+  bondingEligibilityLib: string;
   bondingSlashingLib: string;
 }
 

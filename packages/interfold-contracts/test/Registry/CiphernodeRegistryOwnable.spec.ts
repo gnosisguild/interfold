@@ -10,10 +10,13 @@ import { CiphernodeRegistryOwnable__factory as CiphernodeRegistryFactory } from 
 import {
   ADDRESS_ONE as AddressOne,
   ADDRESS_TWO as AddressTwo,
+  SEVEN_DAYS,
+  TICKET_PRICE,
   deployInterfoldSystem,
   encodeMockDkgProof,
   ethers,
   networkHelpers,
+  setupOperatorForSortition,
 } from "../fixtures";
 
 const { loadFixture } = networkHelpers;
@@ -225,6 +228,100 @@ describe("CiphernodeRegistryOwnable", function () {
         await request();
         await registry.connect(operator1).submitTicket(e3Id, 1);
       }
+    });
+
+    it("uses one ticket price for the full submission window", async function () {
+      const {
+        owner,
+        registry,
+        bondingRegistry,
+        operator1,
+        operator2,
+        operator3,
+        request,
+      } = await loadFixture(setup);
+
+      await registry.connect(owner).setSortitionSubmissionWindow(30);
+      await request();
+      expect(await registry.sortitionTicketPrices(0)).to.equal(TICKET_PRICE);
+
+      await bondingRegistry.setTicketPrice(TICKET_PRICE * 2n);
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+      await registry.connect(operator1).submitTicket(0, 10);
+
+      await bondingRegistry.setTicketPrice(TICKET_PRICE / 2n);
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+
+      await expect(
+        registry.connect(operator2).submitTicket.staticCall(0, 11),
+      ).to.be.revertedWithCustomError(registry, "InvalidTicketNumber");
+      await registry.connect(operator2).submitTicket(0, 10);
+    });
+
+    it("does not admit an operator activated after the seed is known", async function () {
+      const {
+        owner,
+        registry,
+        bondingRegistry,
+        licenseToken,
+        ticketToken,
+        usdcToken,
+        request,
+      } = await loadFixture(setup);
+      const signers = await ethers.getSigners();
+      const lateOperator = signers[5];
+      const lateOperatorAddress = await lateOperator.getAddress();
+
+      await setupOperatorForSortition(
+        lateOperator,
+        owner,
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        registry,
+      );
+      await bondingRegistry
+        .connect(owner)
+        .unbondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+      await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+      const tx = await request();
+      const receipt = await tx.wait();
+      const event = receipt!.logs
+        .map((log: any) => {
+          try {
+            return registry.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((log: any) => log?.name === "CommitteeRequested");
+      const requestBlock = event!.args.requestBlock as bigint;
+
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+      expect(await bondingRegistry.isActive(lateOperatorAddress)).to.equal(
+        true,
+      );
+      const [activeAtRequest] = await bondingRegistry.eligibilityAt(
+        lateOperatorAddress,
+        requestBlock - 1n,
+      );
+      expect(activeAtRequest).to.equal(false);
+
+      await expect(
+        registry.connect(lateOperator).submitTicket(0, 1),
+      ).to.be.revertedWithCustomError(registry, "NodeNotEligible");
     });
 
     it("AUD-M03: fails closed after governance updates until operators refresh", async function () {

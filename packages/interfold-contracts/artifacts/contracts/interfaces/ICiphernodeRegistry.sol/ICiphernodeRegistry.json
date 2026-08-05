@@ -559,6 +559,12 @@
           "internalType": "uint256",
           "name": "committeeDeadline",
           "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ticketPrice",
+          "type": "uint256"
         }
       ],
       "name": "CommitteeRequested",
@@ -1438,5 +1444,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-13f03f1d861b56a0cd8a63cf347faa5a3e174176"
+  "buildInfoId": "solc-0_8_28-2f9f3ce2d87a05be5c7b63660f7107d102d47f54"
 }

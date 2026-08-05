@@ -71,6 +71,7 @@ impl Handler<TypedEvent<TicketBalanceUpdated>> for Sortition {
         _: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        let timepoint = Self::evm_timepoint(&ec);
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.node_state.try_mutate(&ec, |mut state_map| {
                 NodeRegistry::set_ticket_balance(
@@ -78,6 +79,7 @@ impl Handler<TypedEvent<TicketBalanceUpdated>> for Sortition {
                     msg.chain_id,
                     msg.operator.clone(),
                     msg.new_balance,
+                    timepoint,
                 );
                 Ok(state_map)
             })
@@ -94,6 +96,7 @@ impl Handler<TypedEvent<OperatorActivationChanged>> for Sortition {
         _: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        let timepoint = Self::evm_timepoint(&ec);
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.node_state.try_mutate(&ec, |mut state_map| {
                 NodeRegistry::set_operator_active(
@@ -101,6 +104,7 @@ impl Handler<TypedEvent<OperatorActivationChanged>> for Sortition {
                     msg.chain_id,
                     msg.operator.clone(),
                     msg.active,
+                    timepoint,
                 );
                 Ok(state_map)
             })
@@ -117,6 +121,7 @@ impl Handler<TypedEvent<ConfigurationUpdated>> for Sortition {
         _: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        let timepoint = Self::evm_timepoint(&ec);
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             let eligibility_parameter = matches!(
                 msg.parameter.as_str(),
@@ -131,10 +136,33 @@ impl Handler<TypedEvent<ConfigurationUpdated>> for Sortition {
                 if msg.parameter == "ticketPrice" {
                     NodeRegistry::set_ticket_price(&mut state_map, msg.chain_id, msg.new_value);
                 }
-                NodeRegistry::invalidate_operator_activity(&mut state_map, msg.chain_id);
+                NodeRegistry::invalidate_operator_activity(&mut state_map, msg.chain_id, timepoint);
                 Ok(state_map)
             })?;
             Ok(())
+        })
+    }
+}
+
+impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitteeRequested>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let (msg, ec) = msg.into_components();
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            self.node_state.try_mutate(&ec, |mut state_map| {
+                NodeRegistry::record_sortition_snapshot(
+                    &mut state_map,
+                    &msg.e3_id,
+                    msg.request_block,
+                    msg.ticket_price,
+                );
+                Ok(state_map)
+            })
         })
     }
 }

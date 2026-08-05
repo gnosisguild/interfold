@@ -35,6 +35,9 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::ConfigurationUpdated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitteeRequested(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::CommitteePublished(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

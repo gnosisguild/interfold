@@ -6,10 +6,9 @@
 //     requester / owner / committee members; permissionless afterwards.
 //   * `Committee.requestBlock` stores `block.timestamp` so it
 //     resolves consistently against the ticket-token EIP-6372 clock.
-//   * `_validateNodeEligibility` derives weight from the
-//     `getTicketBalanceAtBlock(operator, requestBlock - 1)` snapshot, so
-//     operators cannot top up tickets after `requestCommittee` to inflate
-//     their selection weight.
+//   * `_validateNodeEligibility` derives weight from voting power at
+//     `requestBlock - 1`, so operators cannot top up tickets after
+//     `requestCommittee` to inflate their selection weight.
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
@@ -324,7 +323,7 @@ describe("Sortition & E3 lifecycle", function () {
         .addTicketBalanceFor(latecomerAddress, ticketAmount);
 
       // Confirm snapshot returns zero at requestBlock - 1.
-      const snapshot = await bondingRegistry.getTicketBalanceAtBlock(
+      const snapshot = await ticketToken.getPastVotes(
         latecomerAddress,
         requestBlock - 1n,
       );

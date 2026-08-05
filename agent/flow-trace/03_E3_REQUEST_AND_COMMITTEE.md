@@ -102,9 +102,10 @@ Requester calls: Interfold.request({
 │   │   │  │       slashing manager, and fold verifier           │
 │   │   │  │       → ask SlashingManager to snapshot its         │
 │   │   │  │         bonding, registry, Interfold, refund routes │
-│   │   │  │    3. require(threshold[1] <=                       │
-│   │   │  │         bondingRegistry.numActiveOperators())       │
-│   │   │  │       → Enough active nodes must exist              │
+│   │   │  │    3. Query eligibilityAt(address(0),               │
+│   │   │  │         requestBlock - 1) and require               │
+│   │   │  │         threshold[1] <= activeOperatorCount         │
+│   │   │  │       → Count and submissions use one boundary      │
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: seed,                                 │
@@ -113,13 +114,17 @@ Requester calls: Interfold.request({
 │   │   │  │           block.timestamp + sortitionWindow,        │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
-│   │   │  │    5. roots[e3Id] = ciphernodes._root()             │
+│   │   │  │    5. sortitionTicketPrices[e3Id] =                 │
+│   │   │  │         bondingRegistry.ticketPrice()               │
+│   │   │  │       → Freeze ticket capacity for this E3          │
+│   │   │  │    6. roots[e3Id] = ciphernodes._root()             │
 │   │   │  │       → SNAPSHOT the IMT root at this moment        │
 │   │   │  │       → Only nodes in tree at request time eligible │
-│   │   │  │    6. Emit DkgFoldAttestationContextEstablished(    │
+│   │   │  │    7. Emit DkgFoldAttestationContextEstablished(    │
 │   │   │  │              e3Id, registry, foldVerifier)          │
 │   │   │  │       Emit CommitteeRequested(e3Id, seed, threshold,│
-│   │   │  │              requestBlock, committeeDeadline)       │
+│   │   │  │              requestBlock, committeeDeadline,       │
+│   │   │  │              ticketPrice)                           │
 │   │   │  │       BondingRegistry records this request-time      │
 │   │   │  │       registry as the E3's obligation owner          │
 │   │   │  │  }                                                  │
@@ -174,12 +179,13 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 │
 └─ Sortition actor receives E3Requested:
     │
+    ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Calculates buffer = calculate_buffer_size(M, N)
     │
     ├─ ScoreBackend.get_committee():
     │   │
-    │   ├─ Loads eligible nodes from NodeStateStore
-    │   │   (filter: active=true, available tickets > 0)
+    │   ├─ Loads nodes from NodeStateStore at requestBlock - 1
+    │   │   (filter: active then and now, historical tickets > 0)
     │   │
     │   ├─ For EACH eligible node:
     │   │   For EACH ticket t in [1..availableTickets]:
@@ -237,18 +243,20 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │    4. require(!submitted[msg.sender])                   │
     │  │       → Each node submits only once                     │
     │  │    5. require(isEnabled(msg.sender) AND                 │
-    │  │               _bondingFor(e3Id).isActive(msg.sender))   │
+    │  │               _bondingFor(e3Id).isActive(msg.sender) AND│
+    │  │               activeAtRequest)                          │
     │  │       → Uses the request-time bonding registry          │
-    │  │       → Active status fails closed for a retained ban   │
+    │  │       → Historical eligibility is the selection rule    │
+    │  │       → Current activity is an extra liveness check      │
     │  │                                                         │
     │  │    6. _validateNodeEligibility(e3Id, msg.sender,        │
     │  │                                ticketNumber):           │
     │  │       availableTickets =                                │
-    │  │         _bondingFor(e3Id).getTicketBalanceAtBlock(      │
+    │  │         _bondingFor(e3Id).ticketToken().getPastVotes(   │
     │  │           msg.sender, requestBlock - 1                  │
-    │  │         ) / _bondingFor(e3Id).ticketPrice()             │
-    │  │       → Calls ticketToken.getPastVotes() internally     │
-    │  │       → Uses SNAPSHOT from block before request         │
+    │  │         ) / sortitionTicketPrices[e3Id]                 │
+    │  │       → Uses the timepoint before the request            │
+    │  │       → Uses the request-time ticket price               │
     │  │       → Prevents same-block manipulation                │
     │  │       require(ticketNumber >= 1)                        │
     │  │       require(ticketNumber <= availableTickets)          │
@@ -429,8 +437,10 @@ The registry must finalize a ready committee.
    `keccak256(address, ticket, e3Id, seed)`. The on-chain contract verifies what the off-chain node
    computed.
 
-2. **Snapshot-based eligibility**: Ticket balances are checked at `requestBlock - 1`, preventing
-   front-running manipulation.
+2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
+   `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
+   consume those same values, so later activation, collateral, or price changes cannot alter the
+   candidate set.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
@@ -473,11 +483,24 @@ The registry must finalize a ready committee.
 
 ### H-04 — snapshot-based eligibility
 
-`CiphernodeRegistryOwnable._validateNodeEligibility` derives the per-node ticket weight from
-`_bondingFor(e3Id).getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
-`InterfoldTicketToken` ERC20Votes checkpoint history (EIP-6372 timestamp clock). Same-block or
-post-request rebalancing therefore cannot inflate a node's selection weight. `submitTicket` also
-checks the current `isActive` flag in the request-time bonding registry.
+`CiphernodeRegistryOwnable._validateNodeEligibility` derives the per-node ticket weight from the
+`InterfoldTicketToken` ERC20Votes checkpoint history at `committee.requestBlock - 1` (EIP-6372
+timestamp clock). Same-block or post-request rebalancing therefore cannot inflate a node's selection
+weight. `submitTicket` also checks historical eligibility and the current `isActive` flag in the
+request-time bonding registry.
+
+### M-28 — immutable per-E3 sortition state
+
+At request timestamp `T`, `BondingRegistry.eligibilityAt` supplies the active count and individual
+eligibility from `T-1`. `CiphernodeRegistryOwnable` freezes the current ticket price and emits it in
+`CommitteeRequested`. The Rust sortition actor stores that event, reads activity and balances from
+`T-1`, and uses the frozen price. Solidity checks the same historical state and price during ticket
+submission. Current registry membership and activity remain additional liveness checks.
+
+An upgrade with committees still in the `Requested` stage must backfill
+`sortitionTicketPrices[e3Id]` with each E3's request-time price before ticket submission resumes. A
+zero value makes every submission revert with `InvalidTicketNumber()`. Terminal E3s and committees
+requested after the upgrade need no backfill.
 
 ### M-33 — `markE3Failed` grace period
 
@@ -488,9 +511,9 @@ caller can finalize the failure. The default value of `0` preserves the permissi
 
 ### H-26 — timestamp-clock `requestBlock`
 
-`Committee.requestBlock` stores `block.timestamp` (EIP-6372 timestamp mode) so that `getPastVotes` /
-`getTicketBalanceAtBlock` lookups against the `InterfoldTicketToken` resolve consistently across L1
-and L2 clocks. The field name is preserved for storage / event ABI compatibility.
+`Committee.requestBlock` stores `block.timestamp` (EIP-6372 timestamp mode) so that `getPastVotes`
+lookups against the `InterfoldTicketToken` resolve consistently across L1 and L2 clocks. The field
+name is preserved for storage and event ABI compatibility.
 
 ### Committee observability events
 

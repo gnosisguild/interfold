@@ -20,6 +20,35 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 library BondingAssetLib {
     using SafeERC20 for IERC20;
 
+    function availableTickets(
+        address ticketTokenAddress,
+        address operator,
+        uint256 ticketPrice
+    ) external view returns (uint256) {
+        return
+            InterfoldTicketToken(ticketTokenAddress).balanceOf(operator) /
+            ticketPrice;
+    }
+
+    function ticketBalance(
+        address ticketTokenAddress,
+        address operator
+    ) external view returns (uint256) {
+        return InterfoldTicketToken(ticketTokenAddress).balanceOf(operator);
+    }
+
+    function ticketBalanceAt(
+        address ticketTokenAddress,
+        address operator,
+        uint256 timepoint
+    ) external view returns (uint256) {
+        return
+            InterfoldTicketToken(ticketTokenAddress).getPastVotes(
+                operator,
+                timepoint
+            );
+    }
+
     function validateTicketToken(
         address currentAddress,
         address nextAddress
@@ -85,10 +114,17 @@ library BondingAssetLib {
         address tokenAddress,
         address recipient,
         uint256 amount
-    ) external returns (uint256 received) {
+    ) external {
         IERC20 token = IERC20(tokenAddress);
         uint256 beforeBalance = token.balanceOf(recipient);
         token.safeTransfer(recipient, amount);
-        return token.balanceOf(recipient) - beforeBalance;
+        uint256 received = token.balanceOf(recipient) - beforeBalance;
+        if (received != amount) {
+            emit IBondingRegistry.LicenseTransferShortfall(
+                recipient,
+                amount,
+                received
+            );
+        }
     }
 }

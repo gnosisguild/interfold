@@ -79,7 +79,8 @@ interface ICiphernodeRegistry {
         uint256 seed,
         uint32[2] threshold,
         uint256 requestBlock,
-        uint256 committeeDeadline
+        uint256 committeeDeadline,
+        uint256 ticketPrice
     );
 
     /// @notice This event MUST be emitted when a ticket is submitted for sortition

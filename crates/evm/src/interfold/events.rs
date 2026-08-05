@@ -91,6 +91,7 @@ impl E3RequestedWithChainId {
             threshold_m,
             threshold_n,
             seed: self.0.e3.seed.into(),
+            request_block: self.0.e3.requestBlock.to(),
             error_size,
             e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
         })
@@ -573,6 +574,37 @@ mod tests {
             }
             other => panic!("expected PlaintextOutputPublished, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn e3_request_keeps_the_contract_sortition_timepoint() {
+        let event = IInterfold::E3Requested {
+            e3Id: U256::from(19),
+            e3: IInterfold::E3 {
+                seed: U256::ZERO,
+                committeeSize: 0,
+                requestBlock: U256::from(77),
+                inputWindow: [U256::ZERO; 2],
+                encryptionSchemeId: B256::ZERO,
+                e3Program: Address::ZERO,
+                paramSet: 0,
+                customParams: Bytes::new(),
+                decryptionVerifier: Address::ZERO,
+                pkVerifier: Address::ZERO,
+                committeePublicKey: B256::ZERO,
+                ciphertextOutput: B256::ZERO,
+                plaintextOutput: Bytes::new(),
+                requester: Address::ZERO,
+                ciphertextCommitment: B256::ZERO,
+            },
+            e3Program: Address::ZERO,
+        };
+
+        let converted = E3RequestedWithChainId(event, 100)
+            .try_into_e3_requested()
+            .unwrap();
+
+        assert_eq!(converted.request_block, 77);
     }
 
     #[test]

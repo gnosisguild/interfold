@@ -192,7 +192,8 @@ sol! {
             uint256 seed,
             uint32[2] threshold,
             uint256 requestBlock,
-            uint256 committeeDeadline
+            uint256 committeeDeadline,
+            uint256 ticketPrice
         );
 
         event SortitionCommitteeFinalized(

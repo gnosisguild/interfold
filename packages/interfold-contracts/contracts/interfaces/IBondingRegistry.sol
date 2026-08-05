@@ -451,6 +451,18 @@ interface IBondingRegistry {
     function isActive(address operator) external view returns (bool);
 
     /**
+     * @notice Check whether an operator was active at an EIP-6372 timepoint.
+     * @param operator Address of the operator
+     * @param timepoint Timestamp-mode checkpoint to query
+     * @return active True when the operator satisfied the eligibility policy at that timepoint
+     * @return activeOperatorCount Number of operators active at that timepoint
+     */
+    function eligibilityAt(
+        address operator,
+        uint256 timepoint
+    ) external view returns (bool active, uint256 activeOperatorCount);
+
+    /**
      * @notice Get the number of currently active operators
      * @return Number of active operators
      */
@@ -498,15 +510,15 @@ interface IBondingRegistry {
     function exitDelay() external view returns (uint64);
 
     /**
-     * @notice Get operator's ticket balance at a specific timepoint (EIP-6372).
+     * @notice Get an operator's ticket balance at an EIP-6372 timepoint.
      * @dev The ticket token uses {block.timestamp} for its voting clock.
      * @param operator Address of the operator
-     * @param blockNumber Timepoint (block.timestamp) to query
+     * @param timepoint Timestamp-mode checkpoint to query
      * @return Ticket balance at the specified timepoint
      */
     function getTicketBalanceAtBlock(
         address operator,
-        uint256 blockNumber
+        uint256 timepoint
     ) external view returns (uint256);
 
     /**
