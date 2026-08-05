@@ -7,7 +7,9 @@
 pub mod etherscan;
 pub mod hashes;
 pub mod merkle_tree;
+pub mod requester_census;
 
 pub use etherscan::*;
 pub use hashes::*;
 pub use merkle_tree::*;
+pub use requester_census::*;

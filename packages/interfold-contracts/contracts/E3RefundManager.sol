@@ -18,6 +18,7 @@ import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IInterfold } from "./interfaces/IInterfold.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
+import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
 
 /**
  * @title E3RefundManager
@@ -62,7 +63,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     mapping(address treasury => mapping(IERC20 token => uint256 amount))
         internal _pendingTreasury;
     /// @notice Tracks honest-node reward claims independently from requester claims
-    mapping(uint256 e3Id => mapping(address claimer => bool hasClaimed))
+    mapping(uint256 e3Id => mapping(address operator => bool hasClaimed))
         internal _honestNodeClaimed;
     /// @notice Per-E3 settlement economics frozen at request time.
     mapping(uint256 e3Id => E3PolicySnapshot snapshot)
@@ -236,6 +237,22 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             finalDist.perNodeAmount =
                 finalDist.honestNodeAmount /
                 honestNodes.length;
+            if (
+                finalDist.perNodeAmount == 0 && finalDist.honestNodeAmount > 0
+            ) {
+                uint256 unclaimableAmount = finalDist.honestNodeAmount;
+                finalDist.honestNodeAmount = 0;
+                finalDist.protocolAmount += unclaimableAmount;
+                address policyTreasury = _treasuryFor(e3Id);
+                _pendingTreasury[policyTreasury][
+                    paymentToken
+                ] += unclaimableAmount;
+                emit TreasurySlashedCredited(
+                    policyTreasury,
+                    paymentToken,
+                    unclaimableAmount
+                );
+            }
         }
 
         if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
@@ -282,29 +299,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function getFailurePayer(
         IInterfold.FailureReason reason
     ) public pure returns (FailurePayer payer) {
-        if (
-            reason == IInterfold.FailureReason.NoInputsReceived ||
-            reason == IInterfold.FailureReason.ComputeTimeout ||
-            reason == IInterfold.FailureReason.ComputeProviderExpired ||
-            reason == IInterfold.FailureReason.ComputeProviderFailed ||
-            reason == IInterfold.FailureReason.RequesterCancelled
-        ) {
-            return FailurePayer.Requester;
-        }
-
-        if (
-            reason == IInterfold.FailureReason.CommitteeFormationTimeout ||
-            reason == IInterfold.FailureReason.InsufficientCommitteeMembers ||
-            reason == IInterfold.FailureReason.DKGTimeout ||
-            reason == IInterfold.FailureReason.DKGInvalidShares ||
-            reason == IInterfold.FailureReason.DecryptionTimeout ||
-            reason == IInterfold.FailureReason.DecryptionInvalidShares ||
-            reason == IInterfold.FailureReason.VerificationFailed
-        ) {
-            return FailurePayer.Ciphernodes;
-        }
-
-        revert InvalidFailureReason(reason);
+        return FailurePayerLib.getFailurePayer(reason);
     }
 
     /// @notice Get the stage at which a requester-attributable E3 failed.
@@ -416,7 +411,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @inheritdoc IE3RefundManager
     function claimHonestNodeReward(
-        uint256 e3Id
+        uint256 e3Id,
+        address operator
     ) external returns (uint256 amount) {
         RefundDistribution storage dist = _distributions[e3Id];
         require(dist.calculated, RefundNotCalculated(e3Id));
@@ -428,17 +424,23 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         );
 
         require(
-            !_honestNodeClaimed[e3Id][msg.sender],
-            AlreadyClaimed(e3Id, msg.sender)
+            !_honestNodeClaimed[e3Id][operator],
+            AlreadyClaimed(e3Id, operator)
         );
 
-        // Check if caller is honest node
+        // Check that the supplied operator is an honest node.
         address[] memory nodes = _honestNodes[e3Id];
         bool isHonest = false;
         for (uint256 i = 0; i < nodes.length && !isHonest; i++) {
-            isHonest = (nodes[i] == msg.sender);
+            isHonest = (nodes[i] == operator);
         }
-        require(isHonest, NotHonestNode(e3Id, msg.sender));
+        require(isHonest, NotHonestNode(e3Id, operator));
+
+        address recipient = IBondingRegistry(
+            _e3PolicySnapshots[e3Id].bondingRegistry
+        ).bondOwnerOf(operator);
+        if (recipient == address(0)) recipient = operator;
+        require(msg.sender == recipient, Unauthorized());
 
         require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
         // Read the snapshot taken at `calculateRefund` time — immutable for the
@@ -470,15 +472,15 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
         _totalHonestNodePaid[e3Id] += amount;
 
-        _honestNodeClaimed[e3Id][msg.sender] = true;
+        _honestNodeClaimed[e3Id][operator] = true;
         _claimCount[e3Id]++;
 
-        // Direct transfer to the honest node (refund path; bypasses BondingRegistry
-        // distributor authorization and operator-registered checks).
+        // Direct transfer to the bond owner (refund path; bypasses BondingRegistry
+        // distributor authorization and operator-registration checks).
         IERC20 token = dist.feeToken;
-        _transferPreservingSlashedLiability(token, msg.sender, amount);
+        _transferPreservingSlashedLiability(token, recipient, amount);
 
-        emit RefundClaimed(e3Id, msg.sender, amount, "HONEST_NODE");
+        emit RefundClaimed(e3Id, recipient, amount, "HONEST_NODE");
     }
 
     /// @inheritdoc IE3RefundManager
@@ -585,13 +587,18 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 amount
     ) internal {
         if (amount == 0) return;
+        IBondingRegistry e3BondingRegistry = IBondingRegistry(
+            _e3PolicySnapshots[e3Id].bondingRegistry
+        );
         uint256 perNode = amount / nodes.length;
         uint256 distributed;
         for (uint256 i = 0; i < nodes.length; i++) {
             uint256 nodeAmount = i == nodes.length - 1
                 ? amount - distributed
                 : perNode;
-            _creditSlashedClaim(e3Id, token, nodes[i], nodeAmount);
+            address recipient = e3BondingRegistry.bondOwnerOf(nodes[i]);
+            if (recipient == address(0)) recipient = nodes[i];
+            _creditSlashedClaim(e3Id, token, recipient, nodeAmount);
             distributed += nodeAmount;
         }
     }
@@ -663,9 +670,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @inheritdoc IE3RefundManager
     function hasHonestNodeClaimed(
         uint256 e3Id,
-        address claimant
+        address operator
     ) external view returns (bool) {
-        return _honestNodeClaimed[e3Id][claimant];
+        return _honestNodeClaimed[e3Id][operator];
     }
 
     /// @inheritdoc IE3RefundManager
@@ -697,6 +704,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         snapshot.treasury = treasury;
         snapshot.interfold = msg.sender;
         snapshot.registry = registry;
+        snapshot.bondingRegistry = address(
+            IInterfold(msg.sender).bondingRegistry()
+        );
         snapshot.version = policyVersion;
         snapshot.initialized = true;
         emit E3PolicySnapshotted(
@@ -705,6 +715,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             treasury,
             msg.sender,
             registry,
+            snapshot.bondingRegistry,
             _workAllocation
         );
     }

@@ -256,12 +256,19 @@ describe("E3 Pricing", function () {
       expect(feeAfter).to.be.gt(feeBefore);
     });
 
-    it("reverts if margin exceeds the 50% cap", async function () {
+    it("enforces the public margin cap", async function () {
       const { interfold } = await loadFixture(setup);
+      const cap = await interfold.MAX_MARGIN_BPS();
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          marginBps: 5001,
+          marginBps: cap,
+        }),
+      ).to.not.be.revert(ethers);
+      await expect(
+        interfold.setPricingConfig({
+          ...defaultPricingConfig,
+          marginBps: cap + 1n,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -276,12 +283,22 @@ describe("E3 Pricing", function () {
       expect(pc.marginBps).to.equal(0);
     });
 
-    it("reverts if protocolShareBps exceeds the 50% cap", async function () {
-      const { interfold } = await loadFixture(setup);
+    it("enforces the public protocol-share cap", async function () {
+      const { interfold, treasury } = await loadFixture(setup);
+      const cap = await interfold.MAX_PROTOCOL_SHARE_BPS();
+      const protocolTreasury = await treasury.getAddress();
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          protocolShareBps: 5001,
+          protocolTreasury,
+          protocolShareBps: cap,
+        }),
+      ).to.not.be.revert(ethers);
+      await expect(
+        interfold.setPricingConfig({
+          ...defaultPricingConfig,
+          protocolTreasury,
+          protocolShareBps: cap + 1n,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -299,6 +316,7 @@ describe("E3 Pricing", function () {
 
     it("enforces bounds on setCommitteeThresholds", async function () {
       const { interfold } = await loadFixture(setup);
+      const cap = await interfold.MAX_COMMITTEE_SIZE();
 
       // Set minimum bounds via pricing config
       await interfold.setPricingConfig({
@@ -321,6 +339,14 @@ describe("E3 Pricing", function () {
       await expect(
         interfold.setCommitteeThresholds(0, [3, 5]),
       ).to.not.be.revert(ethers);
+
+      await expect(
+        interfold.setCommitteeThresholds(0, [3, cap]),
+      ).to.not.be.revert(ethers);
+
+      await expect(
+        interfold.setCommitteeThresholds(0, [3, cap + 1n]),
+      ).to.be.revertedWithCustomError(interfold, "InvalidThresholdValues");
     });
   });
 
@@ -334,6 +360,7 @@ describe("E3 Pricing", function () {
         interfold,
         usdcToken,
         ciphernodeRegistryContract,
+        owner,
         operator1,
         operator2,
         operator3,
@@ -367,11 +394,6 @@ describe("E3 Pricing", function () {
       const fee = await interfold.e3Payments(e3Id);
 
       // Setup committee
-      const nodes = [
-        await operator1.getAddress(),
-        await operator2.getAddress(),
-        await operator3.getAddress(),
-      ];
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,
         e3Id,
@@ -388,27 +410,18 @@ describe("E3 Pricing", function () {
         proof,
       );
 
-      // Record operator balances before distribution
-      const op1Before = await usdcToken.balanceOf(nodes[0]);
-      const op2Before = await usdcToken.balanceOf(nodes[1]);
-      const op3Before = await usdcToken.balanceOf(nodes[2]);
+      const bondOwner = await owner.getAddress();
+      const ownerBefore = await usdcToken.balanceOf(bondOwner);
 
       // Publish plaintext (triggers _distributeRewards)
       await interfold.publishPlaintextOutput(e3Id, data, proof);
 
-      // Pull-payment: each operator claims their reward.
-      for (const op of [operator1, operator2, operator3]) {
-        await interfold.connect(op).claimReward(e3Id);
-      }
+      // The shared bond owner receives all three operator credits.
+      expect(await interfold.pendingReward(e3Id, bondOwner)).to.equal(fee);
+      await interfold.connect(owner).claimReward(e3Id);
+      const ownerAfter = await usdcToken.balanceOf(bondOwner);
 
-      const op1After = await usdcToken.balanceOf(nodes[0]);
-      const op2After = await usdcToken.balanceOf(nodes[1]);
-      const op3After = await usdcToken.balanceOf(nodes[2]);
-
-      // All fee distributed to operators (100%, no protocol share)
-      const totalDistributed =
-        op1After - op1Before + (op2After - op2Before) + (op3After - op3Before);
-      expect(totalDistributed).to.equal(fee);
+      expect(ownerAfter - ownerBefore).to.equal(fee);
     });
 
     it("splits fee between CNs and treasury when protocolShareBps > 0", async function () {
@@ -416,6 +429,7 @@ describe("E3 Pricing", function () {
         interfold,
         usdcToken,
         ciphernodeRegistryContract,
+        owner,
         treasury,
         operator1,
         operator2,
@@ -458,11 +472,6 @@ describe("E3 Pricing", function () {
       const fee = await interfold.e3Payments(e3Id);
 
       // Setup committee
-      const nodes = [
-        await operator1.getAddress(),
-        await operator2.getAddress(),
-        await operator3.getAddress(),
-      ];
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,
         e3Id,
@@ -480,32 +489,25 @@ describe("E3 Pricing", function () {
       );
 
       const treasuryBefore = await usdcToken.balanceOf(treasuryAddr);
-      const op1Before = await usdcToken.balanceOf(nodes[0]);
-      const op2Before = await usdcToken.balanceOf(nodes[1]);
-      const op3Before = await usdcToken.balanceOf(nodes[2]);
+      const bondOwner = await owner.getAddress();
+      const ownerBefore = await usdcToken.balanceOf(bondOwner);
 
       await interfold.publishPlaintextOutput(e3Id, data, proof);
 
-      // Pull-payment: treasury & operators claim.
+      // Pull-payment: treasury and the shared bond owner claim.
       await interfold
         .connect(treasury)
         .treasuryClaim(await usdcToken.getAddress());
-      for (const op of [operator1, operator2, operator3]) {
-        await interfold.connect(op).claimReward(e3Id);
-      }
+      await interfold.connect(owner).claimReward(e3Id);
 
       const treasuryAfter = await usdcToken.balanceOf(treasuryAddr);
-      const op1After = await usdcToken.balanceOf(nodes[0]);
-      const op2After = await usdcToken.balanceOf(nodes[1]);
-      const op3After = await usdcToken.balanceOf(nodes[2]);
+      const ownerAfter = await usdcToken.balanceOf(bondOwner);
 
       const expectedProtocol = (fee * 182n) / 10000n;
       const expectedCN = fee - expectedProtocol;
-      const totalOpDistributed =
-        op1After - op1Before + (op2After - op2Before) + (op3After - op3Before);
 
       expect(treasuryAfter - treasuryBefore).to.equal(expectedProtocol);
-      expect(totalOpDistributed).to.equal(expectedCN);
+      expect(ownerAfter - ownerBefore).to.equal(expectedCN);
     });
   });
 

@@ -223,12 +223,11 @@ impl NodeProofAggregator {
                         "NodeFold public party_id does not match sortition party_id"
                     );
                     None
-                } else if let Some(verifying_contract) =
-                    self.dkg_fold_attestation_verifier_for(&e3_id)
-                {
+                } else if let Some(context) = self.dkg_fold_attestation_context_for(&e3_id) {
                     let payload = DkgFoldAttestationPayload {
                         e3_id: e3_id.clone(),
-                        verifying_contract,
+                        verifying_contract: context.verifying_contract,
+                        registry: context.registry,
                         party_id,
                         agg_commits: commits,
                     };

@@ -12,6 +12,7 @@ export default buildModule("Interfold", (m) => {
   const bondingRegistry = m.getParameter("bondingRegistry");
   const e3RefundManager = m.getParameter("e3RefundManager");
   const feeToken = m.getParameter("feeToken");
+  const initialE3Program = m.getParameter("initialE3Program");
   const timeoutConfig = m.getParameter("timeoutConfig", {
     dkgWindow: 7200,
     computeWindow: 86400,
@@ -35,12 +36,15 @@ export default buildModule("Interfold", (m) => {
     minThreshold: 0,
   });
 
-  // Pure pricing math is delegated to the InterfoldPricing external library
-  // (DELEGATECALL link) so the deployed Interfold runtime stays under the
-  // EIP-170 24,576-byte cap.
+  // External libraries keep pricing and lifecycle helpers out of the
+  // size-constrained Interfold runtime.
+  const interfoldLifecycle = m.library("InterfoldLifecycle");
   const interfoldPricing = m.library("InterfoldPricing");
   const interfoldImpl = m.contract("Interfold", [], {
-    libraries: { InterfoldPricing: interfoldPricing },
+    libraries: {
+      InterfoldLifecycle: interfoldLifecycle,
+      InterfoldPricing: interfoldPricing,
+    },
   });
 
   const initData = m.encodeFunctionCall(interfoldImpl, "initialize", [
@@ -52,6 +56,7 @@ export default buildModule("Interfold", (m) => {
     maxDuration,
     timeoutConfig,
     pricingConfig,
+    initialE3Program,
   ]);
 
   const interfold = m.contract("TransparentUpgradeableProxy", [
@@ -60,5 +65,5 @@ export default buildModule("Interfold", (m) => {
     initData,
   ]);
 
-  return { interfold };
+  return { interfold, interfoldLifecycle, interfoldPricing };
 }) as any;

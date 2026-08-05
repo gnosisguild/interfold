@@ -19,6 +19,7 @@ import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { InterfoldLifecycle } from "./lib/InterfoldLifecycle.sol";
 import { InterfoldPricing } from "./lib/InterfoldPricing.sol";
 
 /**
@@ -145,6 +146,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @notice Basis points denominator
     uint16 internal constant BPS_BASE = 10000;
 
+    // Selectors for E3ProgramNotAllowed(address) and
+    // ModuleAlreadyEnabled(address). Registration tests verify both values.
+    uint256 private constant E3_PROGRAM_NOT_ALLOWED_SELECTOR = 0x52b4d4de;
+    uint256 private constant MODULE_ALREADY_ENABLED_SELECTOR = 0xb29d4595;
+
     /// @notice Allow-list of ERC20 tokens that may be used as the contract fee token.
     /// @dev Owner-managed. `request()` reverts if the active `feeToken` is not allow-listed.
     mapping(IERC20 token => bool allowed) internal _feeTokenAllowed;
@@ -163,6 +169,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ICiphernodeRegistry registry;
         IE3RefundManager refundManager;
         ISlashingManager slashManager;
+        IBondingRegistry bonding;
     }
 
     /// @notice Grace window (seconds) after a stage deadline during which only
@@ -204,6 +211,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @param _feeToken The address of the ERC20 token used for E3 fees.
     /// @param _maxDuration The maximum duration of a computation in seconds.
     /// @param config Initial timeout configuration for E3 lifecycle stages.
+    /// @param initialE3Program The E3 Program to allow before ownership transfers.
     function initialize(
         address _owner,
         ICiphernodeRegistry _ciphernodeRegistry,
@@ -212,7 +220,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 _feeToken,
         uint256 _maxDuration,
         E3TimeoutConfig calldata config,
-        PricingConfig calldata pricingConfig
+        PricingConfig calldata pricingConfig,
+        IE3Program initialE3Program
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
         __Ownable_init(msg.sender);
@@ -224,6 +233,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         _setTimeoutConfig(config);
 
         _setPricingConfig(pricingConfig);
+
+        registerE3Program(initialE3Program);
 
         if (_owner != owner()) _transferOwnership(_owner);
     }
@@ -255,14 +266,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ];
 
         // Input-window / duration gates are enforced by
-        // {InterfoldPricing.validateRequest} (external library link, EIP-170 cap).
+        // {InterfoldLifecycle.validateRequest} (external library link, EIP-170 cap).
         require(
             e3Programs[requestParams.e3Program],
             E3ProgramNotAllowed(requestParams.e3Program)
         );
 
         uint256 e3Fee = getE3Quote(requestParams);
-        InterfoldPricing.validateRequest(
+        InterfoldLifecycle.validateRequest(
             requestParams.inputWindow,
             block.timestamp,
             _timeoutConfig.computeWindow,
@@ -270,12 +281,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             maxDuration
         );
 
-        e3Id = nexte3Id;
-        nexte3Id++;
+        e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         dependencies.registry = ciphernodeRegistry;
         dependencies.refundManager = e3RefundManager;
         dependencies.slashManager = slashingManager;
+        dependencies.bonding = bondingRegistry;
         dependencies.refundManager.snapshotE3Policy(
             e3Id,
             address(dependencies.registry)
@@ -366,11 +377,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         E3Stage current = _e3Stages[e3Id];
         E3Deadlines memory deadlines = _e3Deadlines[e3Id];
-        // Validation gates are delegated to {InterfoldPricing} (external
+        // Validation gates are delegated to {InterfoldLifecycle} (external
         // library link) to keep the deployed Interfold runtime bytecode under
         // the EIP-170 24,576-byte cap. Revert selectors are preserved via
         // shared {IInterfold} error declarations.
-        InterfoldPricing.validatePublishCiphertext(
+        InterfoldLifecycle.validatePublishCiphertext(
             e3Id,
             uint8(current),
             deadlines.computeDeadline,
@@ -387,7 +398,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             block.timestamp +
             _timeoutConfig.decryptionWindow;
 
-        (success) = e3.e3Program.verify(e3Id, ciphertextOutputHash, proof);
+        (success) = e3.e3Program.verify(
+            e3Id,
+            ciphertextOutputHash,
+            ciphertextCommitment,
+            proof
+        );
         require(success, InvalidOutput(ciphertextOutput));
 
         emit CiphertextOutputPublished(
@@ -447,7 +463,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes calldata proof
     ) internal view {
         E3 storage e3 = e3s[e3Id];
-        InterfoldPricing.verifyPlaintext(
+        InterfoldLifecycle.verifyPlaintext(
             address(e3.decryptionVerifier),
             address(_registryFor(e3Id)),
             e3Id,
@@ -500,7 +516,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         }
 
         // Split between protocol treasury and CN rewards
-        uint256 protocolAmount = 0;
+        uint256 protocolAmount;
         uint16 _protocolShareBps = _e3ProtocolShareBps[e3Id];
         address _protocolTreasury = _e3ProtocolTreasury[e3Id];
         if (_protocolShareBps > 0 && _protocolTreasury != address(0)) {
@@ -522,34 +538,19 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
         uint256 cnAmount = totalAmount - protocolAmount;
 
-        uint256[] memory amounts = InterfoldPricing.computeNodeAmounts(
+        // Split the ciphernode share and credit each node owner's pull balance.
+        uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
+            _pendingRewards,
+            _e3Dependencies[e3Id].bonding,
             cnAmount,
-            activeLength,
-            e3Id
+            e3Id,
+            activeNodes,
+            paymentToken
         );
-
-        // Credit each node's pull-payment balance (instead of pushing via bondingRegistry)
-        _creditRewards(e3Id, activeNodes, amounts, paymentToken);
 
         emit RewardsDistributed(e3Id, activeNodes, amounts);
 
         refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
-    }
-
-    /// @notice Credits per-node reward balances and emits `RewardCredited`.
-    function _creditRewards(
-        uint256 e3Id,
-        address[] memory nodes,
-        uint256[] memory amounts,
-        IERC20 token
-    ) private {
-        uint256 n = nodes.length;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 a = amounts[i];
-            if (a == 0) continue;
-            _pendingRewards[e3Id][nodes[i]] += a;
-            emit RewardCredited(e3Id, nodes[i], token, a);
-        }
     }
 
     /// @notice Retrieves the honest committee nodes for a given E3.
@@ -634,12 +635,27 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IInterfold
-    function registerE3Program(IE3Program e3Program) external {
-        require(
-            !e3Programs[e3Program],
-            ModuleAlreadyEnabled(address(e3Program))
-        );
-        e3Programs[e3Program] = true;
+    function registerE3Program(IE3Program e3Program) public onlyOwner {
+        // Use one storage lookup and compact error encoding. This keeps the
+        // runtime below the release budget without changing either error.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if iszero(extcodesize(e3Program)) {
+                mstore(0x00, E3_PROGRAM_NOT_ALLOWED_SELECTOR)
+                mstore(0x20, e3Program)
+                revert(0x1c, 0x24)
+            }
+
+            mstore(0x00, e3Program)
+            mstore(0x20, e3Programs.slot)
+            let programSlot := keccak256(0x00, 0x40)
+            if sload(programSlot) {
+                mstore(0x00, MODULE_ALREADY_ENABLED_SELECTOR)
+                mstore(0x20, e3Program)
+                revert(0x1c, 0x24)
+            }
+            sstore(programSlot, 1)
+        }
         emit E3ProgramRegistered(e3Program);
     }
 
@@ -700,7 +716,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         require(encodedParams.length > 0, "Empty params");
         bytes memory previous = paramSetRegistry[paramSet];
         paramSetRegistry[paramSet] = encodedParams;
-        InterfoldPricing.emitParamSetChange(paramSet, previous, encodedParams);
+        if (previous.length == 0) {
+            emit ParamSetRegistered(paramSet, encodedParams);
+        } else {
+            emit ParamSetUpdated(paramSet, previous, encodedParams);
+        }
     }
 
     /// @notice Sets the E3 Refund Manager contract address
@@ -735,10 +755,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         require(payment > 0, NoPaymentToRefund(e3Id));
         e3Payments[e3Id] = 0; // Prevent double processing
 
-        address[] memory honestNodes = InterfoldPricing.honestNodes(
+        address[] memory honestNodes = InterfoldLifecycle.honestNodes(
             address(_registryFor(e3Id)),
-            e3Id,
-            uint8(_e3FailureReasons[e3Id])
+            e3Id
         );
 
         IERC20 paymentToken = _e3FeeTokens[e3Id];
@@ -756,7 +775,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 token,
         uint256 amount
     ) external {
-        InterfoldPricing.validateSlashCaller(
+        InterfoldLifecycle.validateSlashCaller(
             msg.sender,
             address(_slashingManagerFor(e3Id))
         );
@@ -766,7 +785,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function onCommitteeFinalized(uint256 e3Id) external {
-        InterfoldPricing.validateRegistryCaller(
+        InterfoldLifecycle.validateRegistryCaller(
             msg.sender,
             address(_registryFor(e3Id))
         );
@@ -793,15 +812,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         bytes32 committeePublicKey
     ) external {
-        InterfoldPricing.validateRegistryCaller(
+        InterfoldLifecycle.validateCommitteePublication(
             msg.sender,
-            address(_registryFor(e3Id))
+            address(_registryFor(e3Id)),
+            e3Id,
+            uint8(_e3Stages[e3Id]),
+            _e3Deadlines[e3Id].dkgDeadline
         );
         E3 storage e3 = e3s[e3Id];
-        E3Stage current = _e3Stages[e3Id];
-        if (current != E3Stage.CommitteeFinalized) {
-            revert InvalidStage(e3Id, E3Stage.CommitteeFinalized, current);
-        }
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;
@@ -816,17 +834,15 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function onE3Failed(uint256 e3Id, uint8 reason) external {
-        InterfoldPricing.validateRegistryOrSlashCaller(
+        E3Stage current = _e3Stages[e3Id];
+        InterfoldLifecycle.validateReportedFailure(
             msg.sender,
             address(_registryFor(e3Id)),
-            address(_slashingManagerFor(e3Id))
+            address(_slashingManagerFor(e3Id)),
+            e3Id,
+            uint8(current),
+            reason
         );
-        require(
-            reason > 0 && reason <= uint8(FailureReason._MAX_FAILURE_REASON),
-            "Invalid failure reason"
-        );
-        E3Stage current = _e3Stages[e3Id];
-        InterfoldPricing.validateMarkFailedStage(e3Id, uint8(current));
         _markE3FailedWithReason(e3Id, current, FailureReason(reason));
     }
 
@@ -848,14 +864,14 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ) external returns (FailureReason reason) {
         E3Stage current = _e3Stages[e3Id];
 
-        InterfoldPricing.validateMarkFailedStage(e3Id, uint8(current));
+        InterfoldLifecycle.validateMarkFailedStage(e3Id, uint8(current));
 
         bool canFail;
         uint256 deadline;
         (canFail, reason, deadline) = _checkFailureCondition(e3Id, current);
         if (!canFail) revert FailureConditionNotMet(e3Id);
 
-        InterfoldPricing.validateMarkFailedCaller(
+        InterfoldLifecycle.validateMarkFailedCaller(
             e3Id,
             deadline,
             markFailedGracePeriod,
@@ -908,30 +924,24 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         view
         returns (bool canFail, FailureReason reason, uint256 deadline)
     {
-        (deadline, reason) = _stageDeadlineAndReason(e3Id, stage);
-        canFail = deadline != 0 && block.timestamp > deadline;
-        if (!canFail) reason = FailureReason.None;
-    }
+        uint8 rawReason;
+        (deadline, rawReason) = InterfoldLifecycle.stageDeadlineAndReason(
+            address(_registryFor(e3Id)),
+            e3Id,
+            uint8(stage),
+            _e3Deadlines[e3Id]
+        );
+        reason = FailureReason(rawReason);
 
-    /// @dev Returns the deadline and matching failure reason for `stage`.
-    ///      A `deadline == 0` (unknown stage) signals "no failure possible".
-    function _stageDeadlineAndReason(
-        uint256 e3Id,
-        E3Stage stage
-    ) private view returns (uint256 deadline, FailureReason reason) {
-        if (stage == E3Stage.Requested)
-            return (
-                _registryFor(e3Id).getCommitteeDeadline(e3Id),
-                FailureReason.CommitteeFormationTimeout
-            );
-        E3Deadlines memory d = _e3Deadlines[e3Id];
-        if (stage == E3Stage.CommitteeFinalized)
-            return (d.dkgDeadline, FailureReason.DKGTimeout);
-        if (stage == E3Stage.KeyPublished)
-            return (d.computeDeadline, FailureReason.ComputeTimeout);
-        if (stage == E3Stage.CiphertextReady)
-            return (d.decryptionDeadline, FailureReason.DecryptionTimeout);
-        return (0, FailureReason.None);
+        canFail = deadline != 0 && block.timestamp > deadline;
+        if (
+            canFail &&
+            stage == E3Stage.Requested &&
+            _registryFor(e3Id).committeeThresholdMet(e3Id)
+        ) {
+            return (false, FailureReason.None, deadline);
+        }
+        if (!canFail) reason = FailureReason.None;
     }
 
     /// @notice Get current stage of an E3
@@ -988,7 +998,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @notice Internal function to set timeout config
     function _setTimeoutConfig(E3TimeoutConfig calldata config) internal {
-        InterfoldPricing.validateTimeoutConfig(config, MAX_TIMEOUT_WINDOW);
+        InterfoldLifecycle.validateTimeoutConfig(config, MAX_TIMEOUT_WINDOW);
         _timeoutConfig = config;
         emit TimeoutConfigUpdated(config);
     }
@@ -999,10 +1009,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint32[2] calldata threshold
     ) external onlyOwner {
         PricingConfig memory pc = _pricingConfig;
-        InterfoldPricing.validateCommitteeThresholds(
+        InterfoldLifecycle.validateCommitteeThresholds(
             threshold,
             pc.minCommitteeSize,
-            pc.minThreshold
+            pc.minThreshold,
+            MAX_COMMITTEE_SIZE
         );
         committeeThresholds[size] = threshold;
         emit CommitteeThresholdsUpdated(size, threshold);
@@ -1020,7 +1031,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         // (external library link) to keep the deployed Interfold runtime
         // bytecode under the EIP-170 24,576-byte cap. Revert selectors are
         // preserved via shared {IInterfold} error declarations.
-        InterfoldPricing.validatePricingConfig(config);
+        InterfoldPricing.validatePricingConfig(
+            config,
+            MAX_MARGIN_BPS,
+            MAX_PROTOCOL_SHARE_BPS
+        );
         _pricingConfig = config;
         emit PricingConfigUpdated(config);
     }
@@ -1105,11 +1120,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @inheritdoc IInterfold
     function claimRewards(uint256[] calldata e3Ids) external {
         uint256 len = e3Ids.length;
-        uint256 totalClaimed;
+        bool claimed;
         for (uint256 i = 0; i < len; i++) {
-            totalClaimed += _claimReward(e3Ids[i], msg.sender);
+            if (_claimReward(e3Ids[i], msg.sender) != 0) claimed = true;
         }
-        require(totalClaimed > 0, NothingToClaim());
+        require(claimed, NothingToClaim());
     }
 
     /// @notice Internal helper: drains the caller's pull balance for one E3

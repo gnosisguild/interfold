@@ -6,8 +6,8 @@
 
 //! Canonical EVM hashes for DKG / decryption aggregator proofs.
 //! Committee hashing must match `CommitteeHashLib.sol`
-//! (`keccak256(abi.encodePacked(addresses))`). Decryption-domain hashing must
-//! match `InterfoldPricing.decryptionDomain`.
+//! (`keccak256` over ordered raw 20-byte addresses). Decryption-domain hashing
+//! must match `InterfoldPricing.decryptionDomain`.
 
 use alloy::{
     primitives::{keccak256, Address, B256, U256},
@@ -15,7 +15,7 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Hi/lo limbs of `keccak256(abi.encodePacked(addresses))` for Noir public inputs.
+/// Hi/lo limbs of the canonical ordered-address hash for Noir public inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitteeHashLimbs {
     pub hi: B256,
@@ -38,7 +38,7 @@ pub struct DecryptionDomainLimbs {
     pub lo: u128,
 }
 
-/// `keccak256(abi.encodePacked(addresses))` for the ordered on-chain committee.
+/// `keccak256` over the ordered committee's raw 20-byte addresses.
 pub fn hash_committee_addresses(addresses: &[Address]) -> B256 {
     let packed: Vec<u8> = addresses
         .iter()
@@ -140,6 +140,20 @@ mod tests {
         let limbs = split_committee_hash(hash);
         assert_ne!(limbs.hi, B256::ZERO);
         assert_ne!(limbs.lo, B256::ZERO);
+    }
+
+    #[test]
+    fn committee_hash_matches_cross_language_vector() {
+        let nodes = vec![
+            address!("0x0000000000000000000000001234567890abcdef"),
+            address!("0x1111111111111111111111111234567890abcdef"),
+            address!("0xabcdefabcdefabcdefabcdef0123456789abcdef"),
+        ];
+        let expected = "0x47416ae429c0010f46c2f61a7fff4ed80384e64a6b1709b84416f27790ec5f20"
+            .parse::<B256>()
+            .expect("valid hash");
+
+        assert_eq!(hash_committee_addresses(&nodes), expected);
     }
 
     /// Limb bytes32 layout must match `CommitteeHashLib.hi` / `lo`.

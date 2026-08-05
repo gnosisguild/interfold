@@ -68,6 +68,12 @@ describe("Interfold", function () {
     };
   };
 
+  const deployUnregisteredE3Program = async () => {
+    const e3Program = await ethers.deployContract("MockE3Program");
+    await e3Program.waitForDeployment();
+    return e3Program;
+  };
+
   describe("constructor / initialize()", function () {
     it("correctly sets owner", async function () {
       const { interfold, owner } = await loadFixture(setup);
@@ -85,6 +91,15 @@ describe("Interfold", function () {
     it("correctly sets max duration", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
+    });
+
+    it("registers the initial E3 Program", async function () {
+      const {
+        interfold,
+        mocks: { e3Program },
+      } = await loadFixture(setup);
+      expect(await interfold.e3Programs(await e3Program.getAddress())).to.be
+        .true;
     });
   });
 
@@ -343,6 +358,14 @@ describe("Interfold", function () {
   });
 
   describe("registerE3Program()", function () {
+    it("reverts if not called by owner", async function () {
+      const { interfold, notTheOwner } = await loadFixture(setup);
+
+      await expect(interfold.connect(notTheOwner).registerE3Program(AddressTwo))
+        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
+        .withArgs(notTheOwner);
+    });
+
     it("reverts if E3 Program is already registered", async function () {
       const {
         interfold,
@@ -352,16 +375,32 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "ModuleAlreadyEnabled")
         .withArgs(e3Program);
     });
+    it("reverts if E3 Program is the zero address", async function () {
+      const { interfold } = await loadFixture(setup);
+      await expect(interfold.registerE3Program(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(ethers.ZeroAddress);
+    });
+    it("reverts if E3 Program has no deployed code", async function () {
+      const { interfold } = await loadFixture(setup);
+      await expect(interfold.registerE3Program(AddressTwo))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(AddressTwo);
+    });
     it("registers E3 Program correctly", async function () {
       const { interfold } = await loadFixture(setup);
-      await interfold.registerE3Program(AddressTwo);
-      expect(await interfold.e3Programs(AddressTwo)).to.be.true;
+      const e3Program = await deployUnregisteredE3Program();
+      const e3ProgramAddress = await e3Program.getAddress();
+      await interfold.registerE3Program(e3ProgramAddress);
+      expect(await interfold.e3Programs(e3ProgramAddress)).to.be.true;
     });
     it("emits E3ProgramRegistered event", async function () {
       const { interfold } = await loadFixture(setup);
-      await expect(interfold.registerE3Program(AddressTwo))
+      const e3Program = await deployUnregisteredE3Program();
+      const e3ProgramAddress = await e3Program.getAddress();
+      await expect(interfold.registerE3Program(e3ProgramAddress))
         .to.emit(interfold, "E3ProgramRegistered")
-        .withArgs(AddressTwo);
+        .withArgs(e3ProgramAddress);
     });
   });
 
@@ -416,6 +455,26 @@ describe("Interfold", function () {
           customParams: request.customParams,
         }),
       ).to.be.revertedWithCustomError(interfold, "InvalidDuration");
+    });
+    it("allows total duration equal to maxDuration", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      const requestAt = BigInt((await time.latest()) + 10);
+      const maxDuration = await interfold.maxDuration();
+      const inputEnd =
+        requestAt +
+        maxDuration -
+        BigInt(timeoutConfig.computeWindow) -
+        BigInt(timeoutConfig.decryptionWindow);
+      const exactDurationRequest = {
+        ...request,
+        inputWindow: [requestAt, inputEnd] as [bigint, bigint],
+      };
+      const fee = await interfold.getE3Quote(exactDurationRequest);
+      await usdcToken.approve(await interfold.getAddress(), fee);
+      await time.setNextBlockTimestamp(requestAt);
+
+      await interfold.request(exactDurationRequest);
+      expect(await interfold.nexte3Id()).to.equal(1);
     });
     it("rejects a schedule whose compute deadline cannot follow committee finalization", async function () {
       const { interfold, ciphernodeRegistryContract, request, usdcToken } =
@@ -657,6 +716,7 @@ describe("Interfold", function () {
         operator1,
         operator2,
         operator3,
+        mocks,
       } = await loadFixture(setup);
       const e3Id = 0;
 
@@ -671,18 +731,29 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      expect(
-        await interfold.publishCiphertextOutput(
+      await mocks.e3Program.setExpectedCiphertextCommitment(
+        e3Id,
+        ciphertextCommitment,
+      );
+      await expect(
+        interfold.publishCiphertextOutput(
           e3Id,
           data,
-          ciphertextCommitment,
+          ethers.keccak256("0xbad0"),
           proof,
         ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
       );
       const e3 = await interfold.getE3(e3Id);
       expect(e3.ciphertextOutput).to.equal(ethers.keccak256(data));
       expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
+
     it("returns true if output is published successfully", async function () {
       const {
         interfold,
@@ -877,6 +948,7 @@ describe("Interfold", function () {
         e3Id,
         data,
         await ciphernodeRegistryContract.dkgFoldAttestationVerifier(),
+        await ciphernodeRegistryContract.getAddress(),
       );
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,
@@ -899,6 +971,40 @@ describe("Interfold", function () {
       await expect(
         interfold.publishPlaintextOutput(e3Id, data, "0xdeadbeef"),
       ).to.be.revert(ethers);
+    });
+    it("rejects a false decryption verifier result", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await interfold.publishCiphertextOutput(
+        e3Id,
+        data,
+        ciphertextCommitment,
+        proof,
+      );
+
+      await expect(
+        interfold.publishPlaintextOutput(e3Id, data, "0xfafafafa"),
+      ).to.be.revertedWithCustomError(mocks.decryptionVerifier, "InvalidProof");
     });
     it("sets plaintextOutput correctly", async function () {
       const {

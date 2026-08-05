@@ -102,12 +102,18 @@ impl ChainContext {
         self.signer_address
     }
 
-    pub(crate) fn chain_label(&self) -> &str {
-        &self.chain_label
+    pub(crate) fn resolve_operator(&self, operator: Option<&str>) -> Result<Address> {
+        operator
+            .map(parse_address)
+            .unwrap_or(Ok(self.signer_address))
     }
 
     pub(crate) fn bonding_registry(&self) -> Address {
         self.bonding_registry
+    }
+
+    pub(crate) fn chain_label(&self) -> &str {
+        &self.chain_label
     }
 
     pub(crate) async fn license_token_address(&self) -> Result<Address> {
@@ -119,13 +125,13 @@ impl ChainContext {
     }
 
     pub(crate) async fn ticket_underlying_address(&self) -> Result<Address> {
-        let ticket = self.ticket_token_address().await?;
-        Ok(
-            InterfoldTicketTokenContract::new(ticket, self.provider_client())
-                .underlying()
-                .call()
-                .await?,
+        Ok(InterfoldTicketTokenContract::new(
+            self.ticket_token_address().await?,
+            self.provider_client(),
         )
+        .underlying()
+        .call()
+        .await?)
     }
 
     pub(crate) fn erc20(
@@ -149,6 +155,6 @@ fn select_chain<'a>(config: &'a AppConfig, name: Option<&str>) -> Result<&'a Cha
     }
 }
 
-fn parse_address(value: &str) -> Result<Address> {
-    Address::from_str(value).context("Invalid address in configuration")
+pub(crate) fn parse_address(value: &str) -> Result<Address> {
+    Address::from_str(value).context("Invalid EVM address")
 }

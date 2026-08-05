@@ -43,6 +43,7 @@ describe("DkgFoldAttestationVerifier", function () {
         e3Id,
         ethers.id(`pk-${e3Id}`),
         await verifier.getAddress(),
+        await mockRegistry.getAddress(),
       );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -62,6 +63,34 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(esmCommits);
   });
 
+  it("rejects a bundle signed for another registry", async function () {
+    const { mockRegistry, verifier, operators } = await loadFixture(setup);
+    const secondRegistry = await ethers.deployContract(
+      "MockCiphernodeRegistry",
+    );
+    const { ordered, proof, bundle } = await buildMockDkgAttestationFixtureData(
+      operators,
+      e3Id,
+      ethers.id(`pk-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await secondRegistry.setCommitteeNodes(
+      e3Id,
+      ordered.map((o) => o.addr),
+    );
+
+    await expect(
+      verifier.verify(
+        await secondRegistry.getAddress(),
+        31337,
+        e3Id,
+        proof,
+        bundle,
+      ),
+    ).to.be.revertedWithCustomError(secondRegistry, "InvalidFoldAttestation");
+  });
+
   it("reverts on out-of-order attestations", async function () {
     const { owner, mockRegistry, verifier, operators } =
       await loadFixture(setup);
@@ -71,6 +100,7 @@ describe("DkgFoldAttestationVerifier", function () {
         e3Id,
         ethers.id(`pk-${e3Id}`),
         await verifier.getAddress(),
+        await mockRegistry.getAddress(),
       );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -110,6 +140,7 @@ describe("DkgFoldAttestationVerifier", function () {
         e3Id,
         ethers.id(`pk-${e3Id}`),
         await verifier.getAddress(),
+        await mockRegistry.getAddress(),
       );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -146,6 +177,7 @@ describe("DkgFoldAttestationVerifier", function () {
       e3Id,
       ethers.id(`pk-${e3Id}`),
       wrongVerifyingContract,
+      await mockRegistry.getAddress(),
     );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -172,6 +204,7 @@ describe("DkgFoldAttestationVerifier", function () {
         e3Id,
         ethers.id(`pk-${e3Id}`),
         await verifier.getAddress(),
+        await mockRegistry.getAddress(),
       );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -208,6 +241,7 @@ describe("DkgFoldAttestationVerifier", function () {
       e3Id,
       ethers.id(`pk-${e3Id}`),
       await verifier.getAddress(),
+      await mockRegistry.getAddress(),
     );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
@@ -233,6 +267,7 @@ describe("DkgFoldAttestationVerifier", function () {
       e3Id,
       ethers.id(`pk-${e3Id}`),
       await verifier.getAddress(),
+      await mockRegistry.getAddress(),
     );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,

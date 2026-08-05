@@ -34,8 +34,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   eligibility at `requestBlock-1` stays attributable. — `flow-trace/02`
 - `totalBonded(account)` = active FOLD license bond + pending-but-still-slashable exits; FOLD
   `_update` enforces locked-floor accounting. — `flow-trace/02`
-- Bonding-asset rotation only after old-asset balances fully drain; replacement assets must be
-  deployed contracts. — `flow-trace/02`; INDEX concern #23
+- A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
+  plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
+  `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
+- Bonding-asset rotation only after old-asset balances fully drain. Replacement assets must be
+  deployed contracts, and a replacement license token must return a valid value from
+  `lockedBalanceOf`. — `flow-trace/02`; INDEX concern #23
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
@@ -65,6 +69,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
+- **E3 program allowlist:** production initialization registers one deployed E3 program before
+  ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
+  registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
 
 ### Deadlines
 
@@ -213,6 +220,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   deadlines, and undispatched external effects are durable unless a stronger authority can
   deterministically recreate them. An actor-local cache is not durable just because the actor
   outlives the process. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
+  `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
+  `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —
+  `flow-trace/04`; INDEX concern #36
 
 ### Ordering, backpressure, effects
 

@@ -5,7 +5,7 @@
   "bb_checksums": {
     "amd64-linux": "016fa165a5c1b860386b9afa6ef49bf09bcd14246315d7c05cdeddd88349edaf",
     "amd64-darwin": "b4e88c10817990e974d3d8705d83a3e136f993851adbf30e4197a33ca74ac91f",
-    "arm64-linux": "99f69edd4f25b655aec9a76a89b3354cdd07170d24678ddd97b9da049a2aecc5",
+    "arm64-linux": "cdb7cb6d6f6aefd51b9d1e29e368a7e61335c82ce0102b31dd42d1028bb82873",
     "arm64-darwin": "60a238d9d29e85afb9acd4cee87849e81b3be7165a3f967fcaf944050fbd3093"
   },
   "circuits_download_url": "https://github.com/gnosisguild/interfold/releases/download/v{version}/circuits-{version}.tar.gz"

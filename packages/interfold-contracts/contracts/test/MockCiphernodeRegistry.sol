@@ -8,6 +8,9 @@ pragma solidity 0.8.28;
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import {
+    IDkgFoldAttestationVerifier
+} from "../interfaces/IDkgFoldAttestationVerifier.sol";
 
 contract MockCiphernodeRegistry is ICiphernodeRegistry {
     uint256 public override numCiphernodes;
@@ -21,6 +24,15 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     mapping(uint256 e3Id => uint256[] partyIds) private _dkgPartyIds;
     mapping(uint256 e3Id => bytes32[] skAggCommits) private _dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) private _dkgEsmAggCommits;
+    bool private _revertActiveCommitteeNodes;
+
+    error ActiveCommitteeLookupFailed();
+
+    function dkgFoldAttestationVerifierFor(
+        uint256
+    ) external view returns (IDkgFoldAttestationVerifier) {
+        return IDkgFoldAttestationVerifier(address(this));
+    }
 
     /// @notice Set committee members for an E3 (test helper)
     function setCommitteeNodes(
@@ -36,6 +48,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     /// @notice Set the threshold M for an E3 (test helper)
     function setThreshold(uint256 e3Id, uint32 m) external {
         _thresholdM[e3Id] = m;
+    }
+
+    function setRevertActiveCommitteeNodes(bool shouldRevert) external {
+        _revertActiveCommitteeNodes = shouldRevert;
     }
 
     /// @notice Set DKG anchors for an E3 (test helper)
@@ -161,6 +177,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         return true;
     }
 
+    function committeeThresholdMet(uint256) external pure returns (bool) {
+        return false;
+    }
+
     function sortitionSubmissionWindow() external pure returns (uint256) {
         return 0;
     }
@@ -242,7 +262,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 
     function getActiveCommitteeNodes(
         uint256
-    ) external pure returns (address[] memory nodes, uint256[] memory scores) {
+    ) external view returns (address[] memory nodes, uint256[] memory scores) {
+        if (_revertActiveCommitteeNodes) {
+            revert ActiveCommitteeLookupFailed();
+        }
         nodes = new address[](0);
         scores = new uint256[](0);
     }
@@ -257,6 +280,12 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 }
 
 contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
+    function dkgFoldAttestationVerifierFor(
+        uint256
+    ) external view returns (IDkgFoldAttestationVerifier) {
+        return IDkgFoldAttestationVerifier(address(this));
+    }
+
     function numCiphernodes() external pure returns (uint256) {
         return 0;
     }
@@ -375,6 +404,10 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
     // solhint-disable-next-line no-empty-blocks
     function finalizeCommittee(uint256) external pure returns (bool) {
         return true;
+    }
+
+    function committeeThresholdMet(uint256) external pure returns (bool) {
+        return false;
     }
 
     function isOpen(uint256) external pure returns (bool) {

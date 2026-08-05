@@ -271,6 +271,7 @@ export interface DeploymentArgs {
   address: string;
   bytecodeHash?: string;
   constructorArgs?: Record<string, unknown>;
+  libraries?: Record<string, string>;
   proxyRecords?: Record<string, unknown>;
   blockNumber?: number | null;
   skipVerification?: boolean;

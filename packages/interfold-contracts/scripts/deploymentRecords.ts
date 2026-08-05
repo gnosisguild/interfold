@@ -9,6 +9,7 @@ import type {
   ProtocolDeployment,
   ProtocolInterfaces,
 } from "./protocol/types";
+import { pricingConfig } from "./protocol/values";
 import {
   isLocalDeploymentChain,
   storeDeploymentArgs,
@@ -153,6 +154,15 @@ export function syncProtocolDeploymentRecords(
     opts.chain,
   );
 
+  storeDeploymentArgs(
+    {
+      address: deployment.interfoldLifecycle,
+      blockNumber,
+    },
+    "InterfoldLifecycle",
+    opts.chain,
+  );
+
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
     [
@@ -169,6 +179,8 @@ export function syncProtocolDeploymentRecords(
           config.interfold.timeoutConfig.decryptionWindow,
         ),
       },
+      pricingConfig(config.interfold.pricing),
+      config.e3Programs[0],
     ],
   );
   storeDeploymentArgs(
@@ -183,6 +195,12 @@ export function syncProtocolDeploymentRecords(
         feeToken: config.feeToken,
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
+        pricingConfig: JSON.stringify(config.interfold.pricing),
+        initialE3Program: config.e3Programs[0],
+      },
+      libraries: {
+        InterfoldLifecycle: deployment.interfoldLifecycle,
+        InterfoldPricing: deployment.interfoldPricing,
       },
       proxyRecords: {
         initData: interfoldInitData,

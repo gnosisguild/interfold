@@ -24,6 +24,27 @@ contract CRISPProgram is IE3Program, Ownable {
     CUSTOM
   }
 
+  /// @notice Where the eligible voter set for a round comes from.
+  /// @dev Two sources with opposite economics. TOKEN derives the electorate from balances at a
+  /// snapshot: the coordinator enumerates holders, which is expensive and needs an indexer, but it
+  /// is the only way to answer "everyone holding this token". BY_REQUESTER asks the requesting
+  /// contract, which already knows its own membership — a game roster, an allowlisted cohort, a
+  /// committee — so nothing is enumerated and no indexer is involved.
+  ///
+  /// Declared explicitly rather than inferred. A coordinator that probed every requester and
+  /// silently fell back on failure would turn a broken census provider into a token vote with the
+  /// wrong electorate, and nothing would error.
+  ///
+  /// Required, not optional: params must carry it. Making it defaultable would mean a caller that
+  /// forgot it silently got token discovery, which is the same silent-wrong-electorate failure one
+  /// level up.
+  enum CensusMode {
+    /// @notice Derived from token balances by the coordinator. The default.
+    TOKEN,
+    /// @notice Supplied by the requester via `getCensus(uint256 e3Id) returns (address[])`.
+    BY_REQUESTER
+  }
+
   /// @notice Struct to store all data related to a voting round
   struct RoundData {
     uint256 merkleRoot;
@@ -32,6 +53,7 @@ contract CRISPProgram is IE3Program, Ownable {
     LazyIMTData votes;
     uint256 numOptions;
     CreditMode creditMode;
+    CensusMode censusMode;
   }
 
   // Constants
@@ -39,8 +61,15 @@ contract CRISPProgram is IE3Program, Ownable {
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
   /// @notice The depth of the input Merkle tree.
   uint8 public constant TREE_DEPTH = 20;
-  /// @notice Maximum number of bits allocated for vote counts in the plaintext output per option.
-  uint256 constant MAX_VOTE_BITS = 50;
+  /// @notice Number of leading plaintext coefficients that carry the vote payload.
+  /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
+  /// The remaining coefficients up to the BFV degree are zero padding.
+  uint256 constant MAX_MSG_NON_ZERO_COEFFS = 100;
+  /// @notice Maximum number of vote options a round may configure.
+  /// @dev Bounded by the Noir circuit, which asserts `num_options <= MAX_OPTIONS`
+  /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
+  /// vote proof fails. Must stay aligned with the SDK constant of the same name.
+  uint256 constant MAX_VOTE_OPTIONS = 10;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -61,6 +90,10 @@ contract CRISPProgram is IE3Program, Ownable {
   error InvalidMerkleRoot();
   error MerkleRootAlreadySet();
   error InvalidTallyLength();
+  /// @notice A requester-supplied census names who may vote, not how much each vote weighs, so it
+  /// only has meaning when every voter carries the same credits.
+  error CensusModeRequiresConstantCredits();
+  error InvalidCensusMode();
   error SlotIsEmpty();
   error MerkleRootNotSet();
   error InvalidNumOptions();
@@ -143,6 +176,16 @@ contract CRISPProgram is IE3Program, Ownable {
     numberOfVotes = round.votes.numberOfLeaves;
   }
 
+  /// @notice The census source a round was requested with.
+  /// @dev A separate getter rather than a sixth return value on `getRoundData`, whose tuple is
+  /// already consumed by the server and the SDK — widening it would break them for a field most
+  /// callers do not want.
+  /// @param e3Id The E3 to look up.
+  /// @return The census mode recorded at validation.
+  function censusModeOf(uint256 e3Id) external view returns (CensusMode) {
+    return e3Data[e3Id].censusMode;
+  }
+
   /// @inheritdoc IE3Program
   function validate(
     uint256 e3Id,
@@ -154,14 +197,34 @@ contract CRISPProgram is IE3Program, Ownable {
     if (msg.sender != address(interfold) && msg.sender != owner()) revert CallerNotAuthorized();
     if (e3Data[e3Id].paramsHash != bytes32(0)) revert E3AlreadyInitialized();
 
-    // decode custom params to get the number of options
-    (, , uint256 numOptions, CreditMode creditMode, ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256));
-    if (numOptions < 2) revert InvalidNumOptions();
+    // Scoped so the decoded values do not outlive their use: `validate` is close enough to the
+    // stack limit that holding all six of them alongside the parameters exceeds it.
+    {
+      // One decode, every field required. `censusMode` is read as a uint and range-checked rather
+      // than decoded straight into the enum, so an unrecognised value gives a named error instead
+      // of a bare panic.
+      (, , uint256 numOptions, CreditMode creditMode, , uint256 rawCensusMode) = abi.decode(
+        customParams,
+        (address, uint256, uint256, CreditMode, uint256, uint256)
+      );
+      // The circuit asserts `num_options <= MAX_OPTIONS`, so a round configured above it accepts no
+      // ballot at all. Reject at request time rather than stranding a round nobody can vote in.
+      if (numOptions < 2 || numOptions > MAX_VOTE_OPTIONS) revert InvalidNumOptions();
+      if (rawCensusMode > uint256(type(CensusMode).max)) revert InvalidCensusMode();
 
-    // we need to know the number of options for decoding the tally
-    e3Data[e3Id].numOptions = numOptions;
-    // we want to save the credit mode so it can be verified on chain by everyone
-    e3Data[e3Id].creditMode = creditMode;
+      // Rejected here rather than by the coordinator, so a combination that can never work costs
+      // nothing: this reverts in the same transaction that requests the E3, before any fee is paid.
+      if (CensusMode(rawCensusMode) == CensusMode.BY_REQUESTER && creditMode != CreditMode.CONSTANT) {
+        revert CensusModeRequiresConstantCredits();
+      }
+
+      // we need to know the number of options for decoding the tally
+      e3Data[e3Id].numOptions = numOptions;
+      // we want to save the credit mode so it can be verified on chain by everyone
+      e3Data[e3Id].creditMode = creditMode;
+      // recorded so anyone can verify which electorate the round was requested against
+      e3Data[e3Id].censusMode = CensusMode(rawCensusMode);
+    }
 
     e3Data[e3Id].paramsHash = keccak256(e3ProgramParams);
 
@@ -237,20 +300,24 @@ contract CRISPProgram is IE3Program, Ownable {
 
     uint64[] memory tally = _decodeBytesToUint64Array(e3.plaintextOutput);
 
-    uint256 segmentSize = tally.length / numOptions;
-    uint256 effectiveSize = segmentSize > MAX_VOTE_BITS ? MAX_VOTE_BITS : segmentSize;
+    // The payload lives in the first MAX_MSG_NON_ZERO_COEFFS coefficients; the rest of
+    // the polynomial is zero padding and must not be read.
+    if (tally.length < MAX_MSG_NON_ZERO_COEFFS) revert InvalidTallyLength();
+
+    uint256 segmentSize = MAX_MSG_NON_ZERO_COEFFS / numOptions;
+    // More options than payload coefficients leaves nothing to decode.
+    if (segmentSize == 0) return new uint256[](0);
 
     votes = new uint256[](numOptions);
 
     for (uint256 optIdx = 0; optIdx < numOptions; optIdx++) {
       uint256 segmentStart = optIdx * segmentSize;
-      // Read only the last effectiveSize bits (where the value is, MSB first)
-      uint256 readStart = segmentStart + segmentSize - effectiveSize;
       uint256 value = 0;
 
-      for (uint256 i = 0; i < effectiveSize; i++) {
-        uint256 weight = 2 ** (effectiveSize - 1 - i);
-        value += uint256(tally[readStart + i]) * weight;
+      // Each segment holds the count in binary, most significant coefficient first.
+      for (uint256 i = 0; i < segmentSize; i++) {
+        uint256 weight = 2 ** (segmentSize - 1 - i);
+        value += uint256(tally[segmentStart + i]) * weight;
       }
 
       votes[optIdx] = value;
@@ -269,15 +336,21 @@ contract CRISPProgram is IE3Program, Ownable {
   }
 
   /// @inheritdoc IE3Program
-  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external view override returns (bool) {
+  function verify(
+    uint256 e3Id,
+    bytes32 ciphertextOutputHash,
+    bytes32 ciphertextCommitment,
+    bytes memory proof
+  ) external view override returns (bool) {
     bytes32 paramsHash = getParamsHash(e3Id);
 
     bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root(TREE_DEPTH));
-    bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
+    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
 
     _encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    _encodeLengthPrefixAndHash(journal, 132, paramsHash);
-    _encodeLengthPrefixAndHash(journal, 264, inputRoot);
+    _encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
+    _encodeLengthPrefixAndHash(journal, 264, paramsHash);
+    _encodeLengthPrefixAndHash(journal, 396, inputRoot);
 
     risc0Verifier.verify(proof, imageId, sha256(journal));
     return true;

@@ -69,8 +69,58 @@ CN5=$(grep -A 1 'cn5:' interfold.config.yaml | grep 'address:' | sed "s/.*addres
 
 echo "Starting ciphernodes (post-deploy config)..."
 interfold nodes up -v &
+SWARM_PID=$!
 
-sleep 4
+# `cleanup` above only pkills `interfold start` (the child nodes), not this supervisor, and
+# `nodes up` keeps running even when every node under it has exited. Left behind it holds
+# 127.0.0.1:13415 and the next run bails with "Swarm is already running!".
+cleanup_swarm() {
+  kill -TERM "$SWARM_PID" 2>/dev/null || true
+}
+trap cleanup_swarm EXIT
+
+# A node reports `Started` as soon as its process is spawned, which is earlier than the point where
+# it is usable, so a single sample can accept one that is about to die. Require the count to hold
+# across consecutive samples. Match the STATUS column with awk rather than grepping the whole line:
+# node names come from the config, so a name like `not-Started-yet` would pass a substring match.
+# Five nodes, matching the five CN addresses registered below.
+EXPECTED_NODES=5
+REQUIRED_STABLE_SAMPLES=3
+STABLE_SAMPLES=0
+STARTED_NODES=0
+
+for _ in $(seq 1 60); do
+  # `|| true`: this is a poll, so a failing `nodes ps` has to cost a sample rather than abort the
+  # script through `set -e`. Captured first so `set -o pipefail` cannot do the same via the pipe.
+  PS_OUTPUT=$(interfold nodes ps 2>/dev/null || true)
+  STARTED_NODES=$(printf '%s\n' "$PS_OUTPUT" | awk 'NR > 1 && $2 == "Started" { c++ } END { print c + 0 }')
+  if [[ "$STARTED_NODES" -eq "$EXPECTED_NODES" ]]; then
+    STABLE_SAMPLES=$((STABLE_SAMPLES + 1))
+  else
+    STABLE_SAMPLES=0
+  fi
+  if [[ "$STABLE_SAMPLES" -ge "$REQUIRED_STABLE_SAMPLES" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$STABLE_SAMPLES" -lt "$REQUIRED_STABLE_SAMPLES" ]]; then
+  echo "ERROR: only ${STARTED_NODES}/${EXPECTED_NODES} ciphernodes stayed up. Current status:" >&2
+  interfold nodes ps >&2 || true
+  echo "See the node output above for the cause. If it mentions the" >&2
+  echo "'test-only-skip-proof-aggregation' Cargo feature, the installed interfold binary cannot" >&2
+  echo "honour SKIP_PROOF_AGGREGATION:" >&2
+  if template_monorepo_build_available; then
+    echo "  - re-run 'pnpm dev:setup' to reinstall the CLI from ${INTERFOLD_REPO_ROOT}" >&2
+  else
+    echo "  - this is a standalone template, so 'pnpm dev:setup' cannot fix it: released interfold" >&2
+    echo "    binaries are built without that feature. Install the CLI from an interfold checkout" >&2
+    echo "    with '--features test-only-skip-proof-aggregation', or unset the" >&2
+    echo "    E3_NODES__CN*__SKIP_PROOF_AGGREGATION exports and run with proof aggregation on." >&2
+  fi
+  exit 1
+fi
 
 pnpm hardhat ciphernode:admin-add --ciphernode-address $CN1 --network localhost
 pnpm hardhat ciphernode:admin-add --ciphernode-address $CN2 --network localhost

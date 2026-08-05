@@ -24,7 +24,9 @@ use tracing::{info, warn};
 pub struct NodeState {
     /// Current ticket balance for this node.
     pub ticket_balance: U256,
-    /// Number of active E3 jobs this node is currently participating in.
+    /// Local count of active E3 jobs used for voluntary load balancing.
+    ///
+    /// This count does not reserve collateral or change on-chain eligibility.
     pub active_jobs: u64,
     /// Whether this node is active (has met minimum requirements).
     pub active: bool,
@@ -55,10 +57,13 @@ pub struct NodeStateStore {
 }
 
 impl NodeStateStore {
-    /// Get available tickets for a node, accounting for active jobs.
+    /// Get the tickets this node chooses to use after local load balancing.
     ///
     /// The available ticket count is `floor(balance / price) - active_jobs`,
     /// saturating at zero. Inactive nodes and a zero ticket price both yield `0`.
+    ///
+    /// The contract validates the full ticket range from the snapshotted balance.
+    /// Other nodes can ignore this local participation policy.
     pub fn available_tickets(&self, address: &str) -> u64 {
         if self.ticket_price.is_zero() {
             warn!("Ticket price is zero, returning 0 tickets, Please make sure this is the correct behavior");

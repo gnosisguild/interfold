@@ -24,9 +24,9 @@ pub struct ComputeRequest {
     pub callback_url: Option<String>,
 }
 
-/// Tagged-enum webhook payload matching the format expected by CRISP and E3ProgramServer.
-/// Serializes as: `{"status":"completed","e3_id":123,"ciphertext":"0x...","proof":"0x..."}`
-/// or: `{"status":"failed","e3_id":123,"error":"message"}`
+/// Webhook payload for CRISP and `E3ProgramServer`.
+/// A completed payload includes the ciphertext, its journal-bound commitment, and the proof.
+/// A failed payload includes the E3 ID and an error message.
 #[derive(Derivative, Serialize, Deserialize)]
 #[derivative(Debug)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -37,6 +37,10 @@ pub enum WebhookPayload {
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
         ciphertext: Vec<u8>,
+        #[serde(serialize_with = "serialize_as_hex")]
+        #[serde(deserialize_with = "deserialize_hex_string")]
+        #[derivative(Debug = "ignore")]
+        ciphertext_commitment: Vec<u8>,
         #[serde(serialize_with = "serialize_as_hex")]
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
@@ -156,11 +160,15 @@ mod tests {
         let payload = WebhookPayload::Completed {
             e3_id: 12345,
             ciphertext: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
+            ciphertext_commitment: vec![0x11; 32],
             proof: vec![0xde, 0xad, 0xbe, 0xef],
         };
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
-        let expected = r#"{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","proof":"0xdeadbeef"}"#;
+        let expected = format!(
+            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","ciphertext_commitment":"0x{}","proof":"0xdeadbeef"}}"#,
+            "11".repeat(32)
+        );
 
         assert_eq!(json, expected);
     }
@@ -180,18 +188,21 @@ mod tests {
 
     #[test]
     fn test_webhook_deserialize_roundtrip() {
-        // CRISP expects this format
-        let json =
-            r#"{"status":"completed","e3_id":12345,"ciphertext":"0xabcdef","proof":"0x123456"}"#;
-        let payload: WebhookPayload = serde_json::from_str(json).unwrap();
+        let json = format!(
+            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0xabcdef","ciphertext_commitment":"0x{}","proof":"0x123456"}}"#,
+            "22".repeat(32)
+        );
+        let payload: WebhookPayload = serde_json::from_str(&json).unwrap();
         match payload {
             WebhookPayload::Completed {
                 e3_id,
                 ciphertext,
+                ciphertext_commitment,
                 proof,
             } => {
                 assert_eq!(e3_id, 12345);
                 assert_eq!(ciphertext, vec![0xab, 0xcd, 0xef]);
+                assert_eq!(ciphertext_commitment, vec![0x22; 32]);
                 assert_eq!(proof, vec![0x12, 0x34, 0x56]);
             }
             _ => panic!("Expected Completed"),

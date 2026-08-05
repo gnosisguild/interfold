@@ -1,14 +1,94 @@
 {
-  "_format": "interfold-storage-layout-v1",
+  "_format": "interfold-storage-layout-v2",
   "contract": "Interfold",
   "source": "contracts/Interfold.sol",
   "baseline": {
     "buildInfoId": "solc-0_8_28-cbb48f089c866ef144e6f8c2927a419cbfdb1af2",
     "compiler": "0.8.28+commit.7893614a",
+    "compilerInputSha256": "7cecded225f240fe79252a0351457e95d8659b3eaf5a4c9ae6df51b2f6c342fb",
+    "dependencyLockSha256": "cdc2f12050524a199340b6844f553a15e4bc3b1d8ded2f20adff53af86826c7e",
     "evmVersion": "paris",
     "optimizerRuns": 1,
     "sourceCommit": "f4c9ba955f437ae8c607b464c859b7809718be86",
     "sourceSha256": "c47078c161d1661c35246109c4d67e43c9b23bba2df96a81f0bb126afa76ec1a"
+  },
+  "metadata": {
+    "enums": {
+      "IInterfold.CommitteeSize": ["Minimum", "Micro", "Small"],
+      "IInterfold.E3Stage": [
+        "None",
+        "Requested",
+        "CommitteeFinalized",
+        "KeyPublished",
+        "CiphertextReady",
+        "Complete",
+        "Failed"
+      ],
+      "IInterfold.FailureReason": [
+        "None",
+        "CommitteeFormationTimeout",
+        "InsufficientCommitteeMembers",
+        "DKGTimeout",
+        "DKGInvalidShares",
+        "NoInputsReceived",
+        "ComputeTimeout",
+        "ComputeProviderExpired",
+        "ComputeProviderFailed",
+        "RequesterCancelled",
+        "DecryptionTimeout",
+        "DecryptionInvalidShares",
+        "VerificationFailed",
+        "_MAX_FAILURE_REASON"
+      ]
+    },
+    "namespaces": {
+      "erc7201:openzeppelin.storage.Initializable": {
+        "root": "Initializable.InitializableStorage",
+        "types": {
+          "Initializable.InitializableStorage": {
+            "kind": "struct",
+            "members": [
+              {
+                "name": "_initialized",
+                "type": "uint64"
+              },
+              {
+                "name": "_initializing",
+                "type": "bool"
+              }
+            ]
+          }
+        }
+      },
+      "erc7201:openzeppelin.storage.Ownable": {
+        "root": "OwnableUpgradeable.OwnableStorage",
+        "types": {
+          "OwnableUpgradeable.OwnableStorage": {
+            "kind": "struct",
+            "members": [
+              {
+                "name": "_owner",
+                "type": "address"
+              }
+            ]
+          }
+        }
+      },
+      "erc7201:openzeppelin.storage.Ownable2Step": {
+        "root": "Ownable2StepUpgradeable.Ownable2StepStorage",
+        "types": {
+          "Ownable2StepUpgradeable.Ownable2StepStorage": {
+            "kind": "struct",
+            "members": [
+              {
+                "name": "_pendingOwner",
+                "type": "address"
+              }
+            ]
+          }
+        }
+      }
+    }
   },
   "storage": [
     {

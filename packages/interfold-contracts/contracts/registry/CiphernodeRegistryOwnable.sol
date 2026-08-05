@@ -9,6 +9,7 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { E3 } from "../interfaces/IE3.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import {
     Ownable2StepUpgradeable
@@ -172,6 +173,7 @@ contract CiphernodeRegistryOwnable is
         IInterfold interfoldContract;
         IBondingRegistry bonding;
         ISlashingManager slashManager;
+        IDkgFoldAttestationVerifier dkgFoldAttestationVerifier;
     }
 
     /// @notice External contracts frozen for each committee lifecycle.
@@ -187,12 +189,6 @@ contract CiphernodeRegistryOwnable is
     /// @dev Restricts function access to only the Interfold contract
     modifier onlyInterfold() {
         require(msg.sender == address(interfold), OnlyInterfold());
-        _;
-    }
-
-    /// @dev Restricts function access to only the bonding registry
-    modifier onlyBondingRegistry() {
-        require(msg.sender == address(bondingRegistry), OnlyBondingRegistry());
         _;
     }
 
@@ -268,7 +264,17 @@ contract CiphernodeRegistryOwnable is
         dependencies.interfoldContract = IInterfold(msg.sender);
         dependencies.bonding = bondingRegistry;
         dependencies.slashManager = slashingManager;
+        require(
+            address(dkgFoldAttestationVerifier) != address(0),
+            FoldAttestationVerifierNotSet()
+        );
+        dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
+        emit DkgFoldAttestationContextEstablished(
+            e3Id,
+            address(this),
+            address(dependencies.dkgFoldAttestationVerifier)
+        );
 
         uint256 activeCount = bondingRegistry.numActiveOperators();
         require(
@@ -358,14 +364,16 @@ contract CiphernodeRegistryOwnable is
         require(proof.length > 0, DkgProofRequired());
         // Reverts with a typed error on any mismatch; binds to the on-chain
         // committee (sortedNodes = c.topNodes) per audit finding C-08.
-        e3.pkVerifier.verify(
-            e3Id,
-            committeeRoot,
-            sortedNodes,
-            pkCommitment,
-            committeeHash,
-            proof
-        );
+        if (
+            !e3.pkVerifier.verify(
+                e3Id,
+                committeeRoot,
+                sortedNodes,
+                pkCommitment,
+                committeeHash,
+                proof
+            )
+        ) revert IPkVerifier.InvalidProof();
         _verifyAndStoreFoldAttestation(e3Id, proof, dkgAttestationBundle);
     }
 
@@ -376,8 +384,11 @@ contract CiphernodeRegistryOwnable is
         bytes calldata dkgAttestationBundle
     ) internal {
         require(dkgAttestationBundle.length > 0, FoldAttestationsRequired());
+        IDkgFoldAttestationVerifier verifier = _dkgFoldAttestationVerifierFor(
+            e3Id
+        );
         require(
-            address(dkgFoldAttestationVerifier) != address(0),
+            address(verifier) != address(0),
             FoldAttestationVerifierNotSet()
         );
 
@@ -385,7 +396,7 @@ contract CiphernodeRegistryOwnable is
             uint256[] memory partyIds,
             bytes32[] memory skAgg,
             bytes32[] memory esmAgg
-        ) = dkgFoldAttestationVerifier.verify(
+        ) = verifier.verify(
                 address(this),
                 block.chainid,
                 e3Id,
@@ -405,21 +416,8 @@ contract CiphernodeRegistryOwnable is
     ///      the same window before the verifier is active. For the deploy-time
     ///      initial set, see `setInitialDkgFoldAttestationVerifier`.
     ///
-    /// @dev **Node-operator requirement.** Ciphernodes fetch
-    ///      `dkgFoldAttestationVerifier()` from this registry **once at process
-    ///      startup** and use the returned address as the EIP-712 `verifyingContract`
-    ///      for every fold attestation they sign during the process lifetime.
-    ///      After a successful `commitDkgFoldAttestationVerifier`, signatures
-    ///      produced by long-running nodes will be rejected on-chain by the new
-    ///      verifier (different `verifyingContract` → different EIP-712 domain
-    ///      separator → `ECDSA.recover` returns the wrong address).
-    ///
-    ///      Operators MUST restart all ciphernodes within `DKG_FOLD_VERIFIER_TIMELOCK`
-    ///      after this function is called — the 2-day window is sized to give
-    ///      operators time to coordinate a rolling restart before the swap
-    ///      becomes effective. Nodes that miss the window will silently produce
-    ///      invalid fold attestations and be treated as dishonest by aggregators
-    ///      until they restart.
+    /// @dev Each committee keeps the verifier that was active when it was requested.
+    ///      The context-established event tells ciphernodes which verifier to use.
     function proposeDkgFoldAttestationVerifier(
         IDkgFoldAttestationVerifier verifier
     ) external onlyOwner {
@@ -624,12 +622,22 @@ contract CiphernodeRegistryOwnable is
         uint256 len = c.topNodes.length;
         uint256[] memory scores = new uint256[](len);
         for (uint256 i = 0; i < len; ++i) {
-            scores[i] = c.scoreOf[c.topNodes[i]];
+            address node = c.topNodes[i];
+            c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
+            scores[i] = c.scoreOf[node];
         }
 
         _interfoldFor(e3Id).onCommitteeFinalized(e3Id);
         emit SortitionCommitteeFinalized(e3Id, c.topNodes, scores);
         return true;
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function committeeThresholdMet(uint256 e3Id) external view returns (bool) {
+        Committee storage c = committees[e3Id];
+        return
+            c.stage == ICiphernodeRegistry.CommitteeStage.Requested &&
+            c.topNodes.length >= c.threshold[1];
     }
 
     ////////////////////////////////////////////////////////////
@@ -689,14 +697,11 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Update the registry-wide vote validity window used by accusers
     ///         when stamping `AccusationVote.deadline`.
-    /// @dev Ciphernodes fetch this once at startup. After a change, in-flight
-    ///      ciphernode processes continue to use the previous value until
-    ///      restarted — operators should coordinate a restart if the new
-    ///      window is materially shorter than the old one, otherwise stale
-    ///      nodes will produce votes the on-chain verifier rejects.
-    /// @param _accusationVoteValidity New validity window in seconds.
-    ///        Zero is allowed and intentionally disables slashing submission
-    ///        until governance restores a nonzero value.
+    /// @dev Ciphernodes fetch this value at startup. Operators must restart
+    ///      nodes after a change. Otherwise, nodes can create vote deadlines
+    ///      that the on-chain verifier rejects.
+    /// @param _accusationVoteValidity New nonzero validity window in seconds.
+    ///        Use the proposal and commit functions to set a zero value.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -708,8 +713,8 @@ contract CiphernodeRegistryOwnable is
         emit AccusationVoteValiditySet(_accusationVoteValidity);
     }
 
-    /// @notice Propose a new accusation vote validity window (supports zero).
-    /// @dev Zeroing the window is slash-disable behavior and therefore timelocked.
+    /// @notice Propose a new accusation vote validity window. Zero is permitted.
+    /// @dev A zero value disables slash submission after the time delay.
     function proposeAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -779,6 +784,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
+    /// @dev This global view does not predict ticket acceptance for an existing E3.
     function isCiphernodeEligible(address node) public view returns (bool) {
         if (!isEnabled(node)) return false;
 
@@ -914,9 +920,10 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id,
         address node
     ) external view returns (bool) {
+        Committee storage c = committees[e3Id];
         return
-            committees[e3Id].memberStatus[node] ==
-            ICiphernodeRegistry.MemberStatus.Active;
+            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized &&
+            c.memberStatus[node] == ICiphernodeRegistry.MemberStatus.Active;
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -924,9 +931,10 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id,
         address node
     ) external view returns (bool) {
+        Committee storage c = committees[e3Id];
         return
-            committees[e3Id].memberStatus[node] !=
-            ICiphernodeRegistry.MemberStatus.None;
+            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized &&
+            c.memberStatus[node] != ICiphernodeRegistry.MemberStatus.None;
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -954,8 +962,20 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) external view returns (address[] memory nodes, uint256[] memory scores) {
         Committee storage c = committees[e3Id];
+        if (c.stage != ICiphernodeRegistry.CommitteeStage.Finalized) {
+            return (new address[](0), new uint256[](0));
+        }
+
         uint256 total = c.topNodes.length;
-        uint256 actCount = c.activeCount;
+        uint256 actCount = 0;
+        for (uint256 i = 0; i < total; ++i) {
+            if (
+                c.memberStatus[c.topNodes[i]] ==
+                ICiphernodeRegistry.MemberStatus.Active
+            ) {
+                actCount++;
+            }
+        }
 
         nodes = new address[](actCount);
         scores = new uint256[](actCount);
@@ -1036,13 +1056,12 @@ contract CiphernodeRegistryOwnable is
 
         Committee storage c = committees[e3Id];
 
-        // bind ticket weight to the request-time snapshot via the
-        // ticket token's EIP-6372 ERC20Votes checkpoints. The outer
-        // `isCiphernodeEligible(msg.sender)` check in {submitTicket} still
-        // gates on the operator's *current* `isActive` flag, but the score
-        // and selection weight below derive purely from the historical
-        // ticket balance at `c.requestBlock - 1`, so churn between request
-        // time and the ticket submission window cannot inflate weights.
+        // Bind ticket weight to the request-time snapshot through the ticket
+        // token's EIP-6372 ERC20Votes checkpoints. {submitTicket} uses this
+        // E3's saved bonding registry for the current `isActive` check. The
+        // score and selection weight below use only the historical ticket
+        // balance at `c.requestBlock - 1`. Later balance changes cannot
+        // increase the saved weight.
         uint256 ticketBalance = e3Bonding.getTicketBalanceAtBlock(
             node,
             c.requestBlock - 1
@@ -1072,6 +1091,23 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) internal view returns (ISlashingManager e3SlashingManager) {
         return _committeeDependencies[e3Id].slashManager;
+    }
+
+    function _dkgFoldAttestationVerifierFor(
+        uint256 e3Id
+    )
+        internal
+        view
+        returns (IDkgFoldAttestationVerifier e3DkgFoldAttestationVerifier)
+    {
+        return _committeeDependencies[e3Id].dkgFoldAttestationVerifier;
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function dkgFoldAttestationVerifierFor(
+        uint256 e3Id
+    ) external view returns (IDkgFoldAttestationVerifier) {
+        return _dkgFoldAttestationVerifierFor(e3Id);
     }
 
     /// @notice Sort `topNodes` by ascending address before committee finalization.
@@ -1116,7 +1152,6 @@ contract CiphernodeRegistryOwnable is
         if (top.length < cap) {
             top.push(node);
             c.scoreOf[node] = score;
-            c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
             return true;
         }
 
@@ -1132,10 +1167,8 @@ contract CiphernodeRegistryOwnable is
 
         if (score >= worstScore) return false;
 
-        c.memberStatus[top[worstIdx]] = ICiphernodeRegistry.MemberStatus.None;
         top[worstIdx] = node;
         c.scoreOf[node] = score;
-        c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
 
         return true;
     }

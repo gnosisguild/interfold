@@ -14,6 +14,7 @@ import { ethers } from "./connection";
  */
 export async function setupOperatorForSortition(
   operator: Signer,
+  bondOwner: Signer,
   bondingRegistry: any,
   licenseToken: any,
   usdcToken: any,
@@ -21,27 +22,31 @@ export async function setupOperatorForSortition(
   registry: any,
 ): Promise<void> {
   const operatorAddress = await operator.getAddress();
+  const bondOwnerAddress = await bondOwner.getAddress();
 
   await licenseToken.mint(
-    operatorAddress,
+    bondOwnerAddress,
     ethers.parseEther("10000"),
     ethers.encodeBytes32String("Test allocation"),
   );
-  await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
+  await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
+  await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
   await licenseToken
-    .connect(operator)
+    .connect(bondOwner)
     .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
   await bondingRegistry
-    .connect(operator)
-    .bondLicense(ethers.parseEther("1000"));
-  await bondingRegistry.connect(operator).registerOperator();
+    .connect(bondOwner)
+    .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+  await bondingRegistry.connect(bondOwner).registerOperatorFor(operatorAddress);
 
   const ticketAmount = ethers.parseUnits("100", 6);
   await usdcToken
-    .connect(operator)
+    .connect(bondOwner)
     .approve(await ticketToken.getAddress(), ticketAmount);
-  await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+  await bondingRegistry
+    .connect(bondOwner)
+    .addTicketBalanceFor(operatorAddress, ticketAmount);
 
   await registry.addCiphernode(operatorAddress);
 }

@@ -69,6 +69,12 @@ fn encode_input(input: &[u8]) -> Result<Vec<u8>, Error> {
     )?))
 }
 
+fn encode_journal(result: &ComputeResult) -> Result<Vec<u8>, Error> {
+    Ok(bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(
+        result,
+    )?))
+}
+
 /// Dev mode: return fake proof without executing
 fn fake_prove(input: &ComputeInput) -> BoundlessOutput {
     println!("Generating fake proof for dev mode");
@@ -76,8 +82,10 @@ fn fake_prove(input: &ComputeInput) -> BoundlessOutput {
     // Execute the program with the input
     let result = input.process(fhe_processor);
 
-    // Serialize the result as journal bytes
-    let journal_bytes = bincode::serialize(&result).unwrap_or_default();
+    let journal_bytes = match encode_journal(&result) {
+        Ok(bytes) => bytes,
+        Err(error) => return to_output_error(error),
+    };
 
     BoundlessOutput::Success {
         result,
@@ -430,4 +438,53 @@ pub fn run_risc0_compute(
     let output = provider.start();
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use risc0_zkvm::sha::{Impl, Sha256};
+
+    fn risc0_vec32(value: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(132);
+        encoded.extend_from_slice(&32_u32.to_le_bytes());
+        for byte in value {
+            encoded.extend_from_slice(&u32::from(*byte).to_le_bytes());
+        }
+        encoded
+    }
+
+    #[test]
+    fn compute_result_journal_matches_crisp_layout() {
+        let result = ComputeResult {
+            ciphertext_hash: (0_u8..32).collect(),
+            ciphertext_commitment: (32_u8..64).collect(),
+            params_hash: hex::decode(
+                "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            )
+            .unwrap(),
+            merkle_root: hex::decode(
+                "2134e76ac5d21aab186c2be1dd8f84ee880a1e46eaf712f9d371b6df22191f3e",
+            )
+            .unwrap(),
+        };
+
+        let journal = encode_journal(&result).expect("journal encoding failed");
+        let expected = [
+            result.ciphertext_hash.as_slice(),
+            result.ciphertext_commitment.as_slice(),
+            result.params_hash.as_slice(),
+            result.merkle_root.as_slice(),
+        ]
+        .into_iter()
+        .flat_map(risc0_vec32)
+        .collect::<Vec<_>>();
+
+        assert_eq!(journal.len(), 528);
+        assert_eq!(journal, expected);
+        assert_eq!(
+            hex::encode(Impl::hash_bytes(&journal).as_bytes()),
+            "ce9d56ad04f773831f389cf277232ba89722e7e25c83f54022ce056abc9cf5c5"
+        );
+    }
 }

@@ -4,7 +4,7 @@ import { ethers as ethersLib } from "ethers";
 import { connect } from "./cli";
 import { deploymentPath, readJson } from "./files";
 import type { ProtocolDeployment } from "./types";
-import { loadConfig } from "./values";
+import { loadConfig, requireContract } from "./values";
 
 export async function actionValidate(): Promise<void> {
   const { ethers } = await connect();
@@ -39,6 +39,16 @@ export async function actionValidate(): Promise<void> {
     "SlashingManager",
     deployment.slashingManager,
   );
+
+  for (const [label, address] of [
+    ["interfoldLifecycle", deployment.interfoldLifecycle],
+    ["interfoldPricing", deployment.interfoldPricing],
+  ] as const) {
+    if ((await ethers.provider.getCode(address)) === "0x") {
+      throw new Error(`${label}: no contract at ${address}`);
+    }
+    console.log(`  ok ${label}`);
+  }
 
   const checks: Array<[string, Promise<unknown>, unknown]> = [
     ["ticket.owner", ticket.owner(), config.safe],
@@ -110,6 +120,14 @@ export async function actionValidate(): Promise<void> {
       throw new Error(`${label}: expected ${expected}, got ${actual}`);
     }
     console.log(`  ok ${label}`);
+  }
+
+  for (const program of config.e3Programs) {
+    await requireContract(ethers.provider, program, "e3Programs[0]");
+    if (!(await interfold.e3Programs(program))) {
+      throw new Error(`E3 Program is not registered: ${program}`);
+    }
+    console.log(`  ok interfold.e3Programs(${program})`);
   }
 
   const defaultAdmin = ethersLib.ZeroHash;

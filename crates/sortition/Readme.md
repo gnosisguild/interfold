@@ -35,18 +35,19 @@ sequenceDiagram
 
     Note over Operator,BondingRegistry: Phase 1: Operator Setup & Registration
 
-    Operator->>BondingRegistry: bondLicense(amount)
+    Operator->>BondingRegistry: setBondOwner(owner)
+    Operator->>BondingRegistry: bondLicenseFor(operator, amount)
     BondingRegistry->>BondingRegistry: Transfer FOLD tokens
     BondingRegistry->>EventBus: LicenseBondUpdated
 
-    Operator->>BondingRegistry: registerOperator()
+    Operator->>BondingRegistry: registerOperatorFor(operator)
     BondingRegistry->>BondingRegistry: Check isLicensed()
     BondingRegistry->>CiphernodeRegistry: addCiphernode(operator)
     CiphernodeRegistry->>EventBus: CiphernodeAdded(operator, index, numNodes, chainId)
     EventBus->>NodeStateManager: CiphernodeAdded
     NodeStateManager->>NodeStateManager: Register operator in nodes HashMap
 
-    Operator->>BondingRegistry: addTicketBalance(amount)
+    Operator->>BondingRegistry: addTicketBalanceFor(operator, amount)
     BondingRegistry->>BondingRegistry: Mint ticket tokens
     BondingRegistry->>EventBus: TicketBalanceUpdated(operator, delta, newBalance, chainId)
     EventBus->>NodeStateManager: TicketBalanceUpdated
@@ -149,16 +150,17 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Unbonded
-    Unbonded --> Licensed: bondLicense(amount >= requiredBond)
-    Licensed --> Registered: registerOperator()
-    Registered --> Active: addTicketBalance(balance >= minBalance)
-    Active --> Inactive: removeTicketBalance() OR unbondLicense()
-    Inactive --> Active: addTicketBalance() OR bondLicense()
-    Active --> ExitPending: deregisterOperator()
-    Inactive --> ExitPending: deregisterOperator()
-    Registered --> ExitPending: deregisterOperator()
-    ExitPending --> [*]: claimExits() after exitDelay
-    ExitPending --> Registered: registerOperator() (cancels exit)
+    Unbonded --> Unbonded: setBondOwner(owner)
+    Unbonded --> Licensed: bondLicenseFor(operator, amount >= requiredBond)
+    Licensed --> Registered: registerOperatorFor(operator)
+    Registered --> Active: addTicketBalanceFor(operator, balance >= minBalance)
+    Active --> Inactive: removeTicketBalanceFor(...) OR unbondLicenseFor(...)
+    Inactive --> Active: addTicketBalanceFor(...) OR bondLicenseFor(...)
+    Active --> ExitPending: deregisterOperatorFor(operator)
+    Inactive --> ExitPending: deregisterOperatorFor(operator)
+    Registered --> ExitPending: deregisterOperatorFor(operator)
+    ExitPending --> [*]: claimExitsFor(operator, ...) after exitDelay
+    ExitPending --> Registered: registerOperatorFor(operator) (cancels exit)
 ```
 
 ## Sortition Data Flow
@@ -221,13 +223,17 @@ flowchart LR
 - **State Per Node**:
   - `ticket_balance`: Current ticket balance
   - `active`: Whether node is active (has min ticket balance)
-  - `active_jobs`: Number of active E3 jobs
+  - `active_jobs`: Local workload count for voluntary participation limits
 - **Persistence**: State survives node restarts
 - **Events**:
   - `CiphernodeAdded` / `CiphernodeRemoved`
   - `TicketBalanceUpdated`
   - `OperatorActivationChanged`
   - `ConfigurationUpdated` (for ticketPrice)
+
+The active-job adjustment applies only when the current node decides whether to submit. Remote
+operators keep their full on-chain-valid ticket ranges in that decision. This local policy does not
+reserve collateral or reduce the range that Solidity accepts. On-chain candidates are authoritative.
 
 ### 4. Sortition Actor
 

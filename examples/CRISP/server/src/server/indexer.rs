@@ -4,9 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::server::token_holders::{get_mock_token_holders, EtherscanClient};
+use crate::server::token_holders::{
+    get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
+};
 use crate::server::{
-    models::{CreditMode, CurrentRound, CustomParams},
+    models::{CensusMode, CreditMode, CurrentRound, CustomParams, TokenHolder},
     program_server_request::run_compute,
     repo::{CrispE3Repository, CurrentRoundRepository},
     token_holders::{build_tree, compute_token_holder_hashes},
@@ -64,12 +66,23 @@ pub async fn register_e3_requested(
                 .map_err(|e| eyre::eyre!("{}", e))?;
 
                 // Use sol_data types instead of primitives
-                type CustomParamsTuple = (sol_data::Address, sol_data::Uint<256>, sol_data::Uint<256>, sol_data::Uint<256>, sol_data::Uint<256>);
+                type CustomParamsTuple = (
+                    sol_data::Address,
+                    sol_data::Uint<256>,
+                    sol_data::Uint<256>,
+                    sol_data::Uint<256>,
+                    sol_data::Uint<256>,
+                    sol_data::Uint<256>,
+                );
 
                 let decoded = <CustomParamsTuple as SolType>::abi_decode(&event.e3.customParams)
                     .with_context(|| "Failed to decode custom params from E3 event")?;
 
-                let credit_mode = CreditMode::try_from(decoded.3.to::<u64>())?;
+                // `saturating_to` rather than `to`: these fields are attacker-chosen ABI data, and
+                // `to::<u64>()` panics on a value above `u64::MAX`. Clamping lets the `TryFrom`
+                // impls reject it as an unknown mode instead.
+                let credit_mode = CreditMode::try_from(decoded.3.saturating_to::<u64>())?;
+                let census_mode = CensusMode::try_from(decoded.5.saturating_to::<u64>())?;
                 let credits = match credit_mode {
                     CreditMode::Constant => {
                         info!("[e3_id={}] Credit mode: Constant", e3_id);
@@ -89,6 +102,7 @@ pub async fn register_e3_requested(
                     num_options: decoded.2.to_string(),
                     credit_mode,
                     credits,
+                    census_mode,
                 };
 
                 let balance_threshold =
@@ -106,7 +120,56 @@ pub async fn register_e3_requested(
                 let snapshot_block = event.e3.requestBlock.to::<u64>().saturating_sub(1);
 
                 // Get token holders from Etherscan API or mocked data.
-                let token_holders = if matches!(CONFIG.chain_id, 31337 | 1337) {
+                // Asked only when the round declared it. Probing every requester and falling back
+                // on failure would turn a broken census provider into a token vote over the wrong
+                // electorate, silently — the round would run, and nothing would error.
+                //
+                // Checked before the local-network branch because a declared census is exact on any
+                // network, including a devnet where the mock holders would otherwise be substituted.
+                let token_holders = if custom_params.census_mode == CensusMode::ByRequester {
+                    let credits_str = match custom_params.credit_mode {
+                        CreditMode::Constant => credits_clone
+                            .clone()
+                            .expect("credits must be set for Constant mode"),
+                        // A requester-supplied census names *who* may vote, not how much each vote
+                        // weighs, so it only has meaning when every voter carries the same credits.
+                        // `CRISPProgram.validate` rejects this pairing on chain, so reaching it here
+                        // means the round was requested against a different program.
+                        CreditMode::Custom => {
+                            return Err(eyre::eyre!(
+                                "[e3_id={}] CensusMode::ByRequester requires \
+                                 CreditMode::Constant; got Custom",
+                                e3_id
+                            ))
+                        }
+                    };
+
+                    info!(
+                        "[e3_id={}] Census mode: ByRequester; asking {}",
+                        e3_id, e3.requester
+                    );
+
+                    let census =
+                        try_fetch_requester_census(e3.requester, e3_id, &CONFIG.http_rpc_url)
+                            .await
+                            .ok_or_else(|| {
+                                eyre::eyre!(
+                                    "[e3_id={}] Round declared CensusMode::ByRequester but \
+                                     requester {} returned no census. Refusing to fall back to \
+                                     token discovery, which would enfranchise the wrong voters.",
+                                    e3_id,
+                                    e3.requester
+                                )
+                            })?;
+
+                    census
+                        .into_iter()
+                        .map(|address| TokenHolder {
+                            address: address.to_string(),
+                            balance: credits_str.clone(),
+                        })
+                        .collect()
+                } else if matches!(CONFIG.chain_id, 31337 | 1337) {
                     info!(
                         "[e3_id={}] Using mocked token holders for local network (chain_id: {})",
                         e3_id, CONFIG.chain_id
@@ -459,4 +522,68 @@ pub async fn start_indexer(
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");
     Ok(())
+}
+
+#[cfg(test)]
+mod custom_params_decoding_tests {
+    use crate::server::models::CensusMode;
+    use alloy::dyn_abi::SolType;
+    use alloy::primitives::{Address, U256};
+    use alloy::sol_types::sol_data;
+
+    type CustomParamsTuple = (
+        sol_data::Address,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+    );
+
+    fn encode(census_mode: u64) -> Vec<u8> {
+        <CustomParamsTuple as SolType>::abi_encode(&(
+            Address::ZERO,
+            U256::from(0),
+            U256::from(3),
+            U256::from(0),
+            U256::from(1),
+            U256::from(census_mode),
+        ))
+    }
+
+    #[test]
+    fn decodes_the_declared_census_mode() {
+        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(1)).unwrap();
+        assert_eq!(
+            CensusMode::try_from(decoded.5.to::<u64>()).unwrap(),
+            CensusMode::ByRequester
+        );
+    }
+
+    /// Params without the field are not a legacy form to tolerate — they are malformed, and must
+    /// fail rather than be read as a token vote.
+    #[test]
+    fn params_missing_the_field_fail_to_decode() {
+        type Short = (
+            sol_data::Address,
+            sol_data::Uint<256>,
+            sol_data::Uint<256>,
+            sol_data::Uint<256>,
+            sol_data::Uint<256>,
+        );
+        let short = <Short as SolType>::abi_encode(&(
+            Address::ZERO,
+            U256::from(0),
+            U256::from(3),
+            U256::from(0),
+            U256::from(1),
+        ));
+        assert!(<CustomParamsTuple as SolType>::abi_decode(&short).is_err());
+    }
+
+    #[test]
+    fn an_unrecognised_mode_is_an_error() {
+        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(2)).unwrap();
+        assert!(CensusMode::try_from(decoded.5.to::<u64>()).is_err());
+    }
 }

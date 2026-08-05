@@ -28,8 +28,8 @@ Watch for reward events and ensure your wallet can receive the reward token:
 interfold ciphernode status
 ```
 
-> Keep your operator wallet funded with ETH for gas - claiming rewards through automation scripts
-> still requires transaction fees.
+> Keep the bond-owner wallet funded with ETH for gas when it claims rewards or exits. Keep the
+> operator wallet funded for protocol actions and the emergency deregistration path.
 
 ## Slashing
 
@@ -77,10 +77,10 @@ struct SlashPolicy {
    ```bash
    # Using cast (or implement in automation)
    cast send $SLASHING "fileAppeal(uint256,string)" $PROPOSAL_ID "evidence_uri" \
-     --rpc-url $RPC --private-key $OPERATOR_KEY
+     --rpc-url $RPC --private-key $OPERATOR_OR_BOND_OWNER_KEY
    ```
-   Only the accused operator can appeal, and only within the appeal window. Proof-verified slashes
-   cannot be appealed.
+   The accused operator or its bond owner can appeal within the configured window. Proof-verified
+   slashes are appealable only when their policy has a nonzero appeal window.
 
 ### Slashing Penalties
 
@@ -99,10 +99,10 @@ To safely exit the ciphernode registry:
 
 ### Step 1: Deregister
 
-Request deregistration:
+The bond owner or operator emergency key can request deregistration:
 
 ```bash
-interfold ciphernode deregister
+interfold ciphernode deregister --operator 0xOPERATOR
 ```
 
 ### Step 2: Wait for Exit Delay
@@ -124,35 +124,34 @@ Look for "Exit pending" and "Pending exits" fields.
 
 ### Step 3: Claim Exits
 
-After the delay period:
+After the delay period, the bond owner claims both assets:
 
 ```bash
-# Claim all pending exits
-interfold ciphernode license claim
-
-# Or specify maximum amounts
-interfold ciphernode license claim --max-ticket 100 --max-license 50
+interfold --config /path/to/owner.yaml ciphernode license \
+  --operator 0xOPERATOR claim
 ```
 
-### Cancel Exit
+The USDC and FOLD are paid to the bond owner, while the exit queue and any slashing remain keyed to
+the operator.
 
-To cancel an exit and return to active status:
+### Re-register
 
-```bash
-interfold ciphernode register
+After the prior exit has completed, the owner can fund and register the operator again:
+
+```solidity
+bondingRegistry.bondLicenseFor(operator, foldAmount);
+bondingRegistry.registerOperatorFor(operator);
 ```
 
-This clears the exit queue and re-registers you in the registry.
+## Actions Summary
 
-## CLI Commands Summary
-
-| Command                              | Description                        |
-| ------------------------------------ | ---------------------------------- |
-| `interfold ciphernode status`        | Check registration and exit status |
-| `interfold ciphernode deregister`    | Start exit process                 |
-| `interfold ciphernode license claim` | Claim unlocked exits               |
-| `interfold ciphernode register`      | Cancel exit and re-register        |
-| `interfold ciphernode deactivate`    | Withdraw stakes to become inactive |
+| Action                                           | Signer         | Description                        |
+| ------------------------------------------------ | -------------- | ---------------------------------- |
+| `interfold ciphernode status`                    | Operator       | Check registration and exit status |
+| `deregisterOperatorFor(operator)`                | Owner/operator | Start the full exit process        |
+| `removeTicketBalanceFor(operator, amount)`       | Bond owner     | Queue ticket collateral for exit   |
+| `unbondLicenseFor(operator, amount)`             | Bond owner     | Queue FOLD for exit                |
+| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner     | Claim unlocked assets              |
 
 ## Monitoring Checklist
 
@@ -209,7 +208,7 @@ To minimize slashing risk:
 | -------------- | ------------------------------------------- |
 | **Active**     | Monitor rewards, watch for slash proposals  |
 | **Slashing**   | Review policy, file appeal if allowed, wait |
-| **Exit Start** | Call deregister with proof                  |
+| **Exit Start** | Bond owner deregisters the operator         |
 | **Exit Wait**  | Wait 7 days (check `exitUnlocksAt`)         |
 | **Exit Claim** | Claim tickets and license                   |
 | **Post-Exit**  | Purge secrets, revoke access, document      |

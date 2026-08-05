@@ -140,6 +140,7 @@ pub struct CustomParams {
     pub num_options: String,
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
+    pub census_mode: CensusMode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +281,32 @@ pub enum CreditMode {
     Custom = 1,
 }
 
+/// Where a round's eligible voter set comes from. Mirrors `CRISPProgram.CensusMode`.
+///
+/// `Token` reconstructs holders from transfer logs. `ByRequester` asks the requesting contract,
+/// which already knows its own membership.
+///
+/// Required in the params and never inferred: a round that omits it fails to decode rather than
+/// quietly becoming a token vote over the wrong people.
+#[derive(Debug, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum CensusMode {
+    Token = 0,
+    ByRequester = 1,
+}
+
+impl TryFrom<u64> for CensusMode {
+    type Error = eyre::Error;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(CensusMode::Token),
+            1 => Ok(CensusMode::ByRequester),
+            _ => Err(eyre::eyre!("Unknown census mode: {}", value)),
+        }
+    }
+}
+
 impl TryFrom<u64> for CreditMode {
     type Error = eyre::Error;
 
@@ -290,4 +317,24 @@ impl TryFrom<u64> for CreditMode {
             _ => Err(eyre::eyre!("Unknown credit mode: {}", value)),
         }
     }
+}
+
+#[cfg(test)]
+mod census_mode_tests {
+    use super::CensusMode;
+
+    #[test]
+    fn unknown_values_are_rejected_rather_than_defaulted() {
+        // A mode the coordinator does not understand must stop the round, not quietly become a
+        // token vote — which is the failure this enum exists to prevent.
+        assert!(CensusMode::try_from(2u64).is_err());
+        assert!(CensusMode::try_from(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn known_values_round_trip() {
+        assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
+        assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
+    }
+
 }

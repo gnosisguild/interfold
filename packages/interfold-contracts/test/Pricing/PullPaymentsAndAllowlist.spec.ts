@@ -157,33 +157,34 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // H-01 — per-operator pull rewards
+  // H-01 — per-owner pull rewards
   // ─────────────────────────────────────────────────────────────────────────
 
   describe("H-01 — pull rewards", function () {
-    it("each operator can independently claim and double-claim reverts", async function () {
+    it("credits the bond owner rather than the hot operator keys", async function () {
       const ctx = await loadFixture(fixturePlain);
-      const { interfold, feeToken, operator1, operator2, operator3 } = ctx;
+      const { interfold, feeToken, owner } = ctx;
       const { e3Id, nodes } = await runRequestAndPublish(ctx);
+      const ownerAddress = await owner.getAddress();
 
-      for (let i = 0; i < 3; i++) {
-        const op = [operator1, operator2, operator3][i];
-        const pending = await interfold.pendingReward(e3Id, nodes[i]);
-        expect(pending).to.be.gt(0);
-        const before = await feeToken.balanceOf(nodes[i]);
-        await interfold.connect(op).claimReward(e3Id);
-        const after = await feeToken.balanceOf(nodes[i]);
-        expect(after - before).to.equal(pending);
-        expect(await interfold.pendingReward(e3Id, nodes[i])).to.equal(0n);
-        await expect(
-          interfold.connect(op).claimReward(e3Id),
-        ).to.be.revertedWithCustomError(interfold, "NothingToClaim");
+      for (const node of nodes) {
+        expect(await interfold.pendingReward(e3Id, node)).to.equal(0n);
       }
+      const pending = await interfold.pendingReward(e3Id, ownerAddress);
+      expect(pending).to.be.gt(0);
+      const before = await feeToken.balanceOf(ownerAddress);
+      await interfold.connect(owner).claimReward(e3Id);
+      expect((await feeToken.balanceOf(ownerAddress)) - before).to.equal(
+        pending,
+      );
+      await expect(
+        interfold.connect(owner).claimReward(e3Id),
+      ).to.be.revertedWithCustomError(interfold, "NothingToClaim");
     });
 
     it("claimRewards batches across E3 ids", async function () {
       const ctx = await loadFixture(fixturePlain);
-      const { interfold, feeToken, operator1, request } = ctx;
+      const { interfold, feeToken, owner, request } = ctx;
       // Two sequential E3s for the same committee.
       await runRequestAndPublish(ctx);
       const now = await time.latest();
@@ -212,13 +213,13 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
         ethers.concat([proof, ethers.toBeHex(e3Id2, 32)]),
       );
 
-      const op1Addr = await operator1.getAddress();
+      const ownerAddress = await owner.getAddress();
       const expected =
-        (await interfold.pendingReward(0, op1Addr)) +
-        (await interfold.pendingReward(1, op1Addr));
-      const before = await feeToken.balanceOf(op1Addr);
-      await interfold.connect(operator1).claimRewards([0, 1]);
-      const after = await feeToken.balanceOf(op1Addr);
+        (await interfold.pendingReward(0, ownerAddress)) +
+        (await interfold.pendingReward(1, ownerAddress));
+      const before = await feeToken.balanceOf(ownerAddress);
+      await interfold.connect(owner).claimRewards([0, 1]);
+      const after = await feeToken.balanceOf(ownerAddress);
       expect(after - before).to.equal(expected);
     });
   });
@@ -230,22 +231,19 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   describe("M-02 — treasury pull isolates failures", function () {
     it("blacklisting treasury does not brick publishPlaintextOutput; other claimants unaffected", async function () {
       const ctx = await loadFixture(fixtureBlacklist);
-      const { interfold, feeToken, treasury, operator1, operator2, operator3 } =
-        ctx;
+      const { interfold, feeToken, treasury, owner } = ctx;
       const treasuryAddr = await treasury.getAddress();
       // Blacklist treasury BEFORE the run.
       const blacklistToken = feeToken as unknown as MockBlacklistUSDC;
       await blacklistToken.blacklist(treasuryAddr);
 
-      const { e3Id, nodes } = await runRequestAndPublish(ctx);
+      const { e3Id } = await runRequestAndPublish(ctx);
 
-      // Operators can still claim despite treasury being blacklisted.
-      for (let i = 0; i < 3; i++) {
-        const op = [operator1, operator2, operator3][i];
-        const before = await feeToken.balanceOf(nodes[i]);
-        await interfold.connect(op).claimReward(e3Id);
-        expect(await feeToken.balanceOf(nodes[i])).to.be.gt(before);
-      }
+      // The bond owner can still claim despite treasury being blacklisted.
+      const ownerAddress = await owner.getAddress();
+      const ownerBefore = await feeToken.balanceOf(ownerAddress);
+      await interfold.connect(owner).claimReward(e3Id);
+      expect(await feeToken.balanceOf(ownerAddress)).to.be.gt(ownerBefore);
 
       // Treasury has credits but the pull reverts because token blocks the transfer.
       const tokenAddr = await feeToken.getAddress();

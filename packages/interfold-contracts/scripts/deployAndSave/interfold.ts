@@ -29,6 +29,7 @@ export interface InterfoldArgs {
   e3RefundManager?: string;
   feeToken?: string;
   timeoutConfig?: E3TimeoutConfig;
+  initialE3Program: string;
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -45,9 +46,16 @@ export const deployAndSaveInterfold = async ({
   e3RefundManager,
   feeToken,
   timeoutConfig,
+  initialE3Program,
   hre,
 }: InterfoldArgs): Promise<{ interfold: Interfold }> => {
   const { ethers } = await hre.network.connect();
+
+  if ((await ethers.provider.getCode(initialE3Program)) === "0x") {
+    throw new Error(
+      `initialE3Program has no deployed code: ${initialE3Program}`,
+    );
+  }
 
   const [signer] = await ethers.getSigners();
 
@@ -68,7 +76,7 @@ export const deployAndSaveInterfold = async ({
       preDeployedArgs?.constructorArgs?.bondingRegistry === bondingRegistry &&
       preDeployedArgs?.constructorArgs?.e3RefundManager === e3RefundManager &&
       preDeployedArgs?.constructorArgs?.feeToken === feeToken &&
-      true)
+      preDeployedArgs?.constructorArgs?.initialE3Program === initialE3Program)
   ) {
     if (!preDeployedArgs?.address) {
       throw new Error("Interfold address not found, it must be deployed first");
@@ -88,15 +96,37 @@ export const deployAndSaveInterfold = async ({
   await pricingLib.waitForDeployment();
   const pricingLibAddress = await pricingLib.getAddress();
 
+  const lifecycleLibFactory = await ethers.getContractFactory(
+    "InterfoldLifecycle",
+    signer,
+  );
+  const lifecycleLib = await lifecycleLibFactory.deploy();
+  await lifecycleLib.waitForDeployment();
+  const lifecycleLibAddress = await lifecycleLib.getAddress();
+
   const interfoldFactory = await ethers.getContractFactory("Interfold", {
     signer,
-    libraries: { InterfoldPricing: pricingLibAddress },
+    libraries: {
+      InterfoldLifecycle: lifecycleLibAddress,
+      InterfoldPricing: pricingLibAddress,
+    },
   });
 
   const interfold = await interfoldFactory.deploy();
   await interfold.waitForDeployment();
   const blockNumber = await ethers.provider.getBlockNumber();
   const interfoldAddress = await interfold.getAddress();
+
+  storeDeploymentArgs(
+    { address: pricingLibAddress, blockNumber },
+    "InterfoldPricing",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: lifecycleLibAddress, blockNumber },
+    "InterfoldLifecycle",
+    chain,
+  );
 
   const initData = interfoldFactory.interface.encodeFunctionData("initialize", [
     owner,
@@ -123,6 +153,7 @@ export const deployAndSaveInterfold = async ({
       minCommitteeSize: 0,
       minThreshold: 0,
     },
+    initialE3Program,
   ]);
 
   const ProxyCF = await ethers.getContractFactory(
@@ -144,6 +175,11 @@ export const deployAndSaveInterfold = async ({
         feeToken,
         maxDuration,
         timeoutConfig: JSON.stringify(timeoutConfig),
+        initialE3Program,
+      },
+      libraries: {
+        InterfoldLifecycle: lifecycleLibAddress,
+        InterfoldPricing: pricingLibAddress,
       },
       proxyRecords: {
         initData,
@@ -203,15 +239,38 @@ export const upgradeAndSaveInterfold = async ({
   await pricingLib.waitForDeployment();
   const pricingLibAddress = await pricingLib.getAddress();
 
+  const lifecycleLibFactory = await ethers.getContractFactory(
+    "InterfoldLifecycle",
+    signer,
+  );
+  const lifecycleLib = await lifecycleLibFactory.deploy();
+  await lifecycleLib.waitForDeployment();
+  const lifecycleLibAddress = await lifecycleLib.getAddress();
+
   const interfoldFactory = await ethers.getContractFactory("Interfold", {
     signer,
-    libraries: { InterfoldPricing: pricingLibAddress },
+    libraries: {
+      InterfoldLifecycle: lifecycleLibAddress,
+      InterfoldPricing: pricingLibAddress,
+    },
   });
 
   const newImplementation = await interfoldFactory.deploy();
   await newImplementation.waitForDeployment();
   const newImplementationAddress = await newImplementation.getAddress();
   console.log("New Implementation Address:", newImplementationAddress);
+
+  const blockNumber = await ethers.provider.getBlockNumber();
+  storeDeploymentArgs(
+    { address: pricingLibAddress, blockNumber },
+    "InterfoldPricing",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: lifecycleLibAddress, blockNumber },
+    "InterfoldLifecycle",
+    chain,
+  );
 
   const proxyAdmin = await ethers.getContractAt(
     "ProxyAdmin",
@@ -246,7 +305,18 @@ export const upgradeAndSaveInterfold = async ({
     proxyRecords.initData = initData;
   }
 
-  storeDeploymentArgs({ ...preDeployedArgs, proxyRecords }, "Interfold", chain);
+  storeDeploymentArgs(
+    {
+      ...preDeployedArgs,
+      libraries: {
+        InterfoldLifecycle: lifecycleLibAddress,
+        InterfoldPricing: pricingLibAddress,
+      },
+      proxyRecords,
+    },
+    "Interfold",
+    chain,
+  );
 
   const interfoldContract = InterfoldFactory.connect(proxyAddress, signer);
   return {

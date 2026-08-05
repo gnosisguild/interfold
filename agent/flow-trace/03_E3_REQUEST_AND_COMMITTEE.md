@@ -55,11 +55,11 @@ Requester calls: Interfold.request({
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
 │   ├─ Snapshot Interfold dependencies for this E3:
-│   │   registry, refund manager, and slashing manager
+│   │   registry, bonding registry, refund manager, and slashing manager
 │   │   → later global rotations apply only to new requests
 │   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
 │   │   → freezes refund/slash allocation, treasury, policy version,
-│   │     request-time Interfold, and request-time committee registry
+│   │     request-time Interfold, committee registry, and bonding registry
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
 │   │     not relied upon for cryptographic unpredictability.
@@ -91,7 +91,7 @@ Requester calls: Interfold.request({
 │   │   │  │  requestCommittee(e3Id, seed, threshold) {          │
 │   │   │  │    1. require(!committees[e3Id].initialized)        │
 │   │   │  │    2. Snapshot request-time Interfold, bonding,     │
-│   │   │  │       and slashing manager for this committee       │
+│   │   │  │       slashing manager, and fold verifier           │
 │   │   │  │       → ask SlashingManager to snapshot its         │
 │   │   │  │         bonding, registry, Interfold, refund routes │
 │   │   │  │    3. require(threshold[1] <=                       │
@@ -108,7 +108,9 @@ Requester calls: Interfold.request({
 │   │   │  │    5. roots[e3Id] = ciphernodes._root()             │
 │   │   │  │       → SNAPSHOT the IMT root at this moment        │
 │   │   │  │       → Only nodes in tree at request time eligible │
-│   │   │  │    6. Emit CommitteeRequested(e3Id, seed, threshold,│
+│   │   │  │    6. Emit DkgFoldAttestationContextEstablished(    │
+│   │   │  │              e3Id, registry, foldVerifier)          │
+│   │   │  │       Emit CommitteeRequested(e3Id, seed, threshold,│
 │   │   │  │              requestBlock, committeeDeadline)       │
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
@@ -127,11 +129,20 @@ Requester calls: Interfold.request({
 
 ## Step 2: Sortition — Committee Selection (Rust-Side)
 
-When the running ciphernodes detect `E3Requested` and `CommitteeRequested` events from the chain:
+When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and
+`CommitteeRequested` events from the chain:
 
-### 2a. E3Requested Event Processing
+At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
+It gives this data to the proof actors and registry writers before event replay starts. Events after
+the latest snapshot then replay in order and add any newer E3 contexts.
 
-```
+### 2a. Request Event Processing
+
+```text
+CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
+│
+└─ Stores the E3's request-time registry and verifier for signing, validation, and publication
+
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
 ├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
@@ -215,16 +226,17 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │    3. require(block.timestamp <= committeeDeadline)     │
     │  │    4. require(!submitted[msg.sender])                   │
     │  │       → Each node submits only once                     │
-    │  │    5. require(isCiphernodeEligible(msg.sender))         │
-    │  │       → Must be enabled AND bondingRegistry.isActive()  │
+    │  │    5. require(isEnabled(msg.sender) AND                 │
+    │  │               _bondingFor(e3Id).isActive(msg.sender))   │
+    │  │       → Uses the request-time bonding registry          │
     │  │       → Active status fails closed for a retained ban   │
     │  │                                                         │
     │  │    6. _validateNodeEligibility(e3Id, msg.sender,        │
     │  │                                ticketNumber):           │
     │  │       availableTickets =                                │
-    │  │         bondingRegistry.getTicketBalanceAtBlock(         │
+    │  │         _bondingFor(e3Id).getTicketBalanceAtBlock(      │
     │  │           msg.sender, requestBlock - 1                  │
-    │  │         ) / bondingRegistry.ticketPrice()               │
+    │  │         ) / _bondingFor(e3Id).ticketPrice()             │
     │  │       → Calls ticketToken.getPastVotes() internally     │
     │  │       → Uses SNAPSHOT from block before request         │
     │  │       → Prevents same-block manipulation                │
@@ -320,17 +332,22 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       │  │  }                                       │  │
     │  │       │  └──────────────────────────────────────────┘  │
     │  │                                                         │
-    │  │    6. Emit SortitionCommitteeFinalized(e3Id, committee, scores)│
+    │  │    6. Emit SortitionCommitteeFinalized(                 │
+    │  │         e3Id, committee, scores                         │
+    │  │       )                                                 │
     │  │       [ICiphernodeRegistry event]                       │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
 
+Ticket submission changes only the provisional `topNodes` set. Successful finalization grants
+membership and `Active` status to the final address-sorted members. Failed formation grants neither.
+
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
 ```text
-CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
-│  [ICiphernodeRegistry.SortitionCommitteeFinalized — NOT IInterfold.CommitteeFinalized]
+CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
+│  [ICiphernodeRegistry event]
 │
 ├─ Publishes InterfoldEvent::CommitteeFinalized {
 │     e3_id, committee: [addr1, addr2, ..., addrN], scores: [s1, s2, ..., sN], chain_id
@@ -380,7 +397,8 @@ Time ─────────────────────────
 │                │ CommFinalized   │               │
 │                │ ───►DKG starts  │               │
 
-If any deadline is missed → anyone can call markE3Failed()
+If a stage deadline is missed → anyone can call `markE3Failed()`.
+The registry must finalize a ready committee.
 ```
 
 ---
@@ -416,6 +434,15 @@ If any deadline is missed → anyone can call markE3Failed()
    transactions, request-time validation rejects every intermediate state; a requester can only
    freeze the fully old or fully new graph.
 
+8. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
+   `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
+   committee membership, and party IDs never use the bond-owner address.
+
+9. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
+   `Interfold.initialize` registers it before it transfers ownership to the Safe. Every registration
+   rejects an address without runtime code. After initialization, only the owner can append another
+   program.
+
 ---
 
 ## Cluster 7 audit additions (post-fix semantics)
@@ -423,17 +450,17 @@ If any deadline is missed → anyone can call markE3Failed()
 ### H-04 — snapshot-based eligibility
 
 `CiphernodeRegistryOwnable._validateNodeEligibility` derives the per-node ticket weight from
-`bondingRegistry.getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
+`_bondingFor(e3Id).getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
 `InterfoldTicketToken` ERC20Votes checkpoint history (EIP-6372 timestamp clock). Same-block or
-post-request rebalancing therefore cannot inflate a node's selection weight; the outer
-`isCiphernodeEligible(msg.sender)` still gates on the current `isActive` flag for liveness.
+post-request rebalancing therefore cannot inflate a node's selection weight. `submitTicket` also
+checks the current `isActive` flag in the request-time bonding registry.
 
 ### M-33 — `markE3Failed` grace period
 
 When `markFailedGracePeriod > 0` (set via `Interfold.setMarkFailedGracePeriod`), calling
 `markE3Failed` within `deadline … deadline + markFailedGracePeriod` is restricted to
-`{ original requester, contract owner, any committee member }`. After that window any caller may
-finalize the failure. Default `markFailedGracePeriod = 0` preserves the legacy permissionless flow.
+`{ original requester, contract owner, active finalized committee member }`. After that window, any
+caller can finalize the failure. The default value of `0` preserves the permissionless flow.
 
 ### H-26 — timestamp-clock `requestBlock`
 

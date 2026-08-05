@@ -5,6 +5,19 @@
 use super::effects::*;
 use super::*;
 
+fn update_request_registry(
+    registries: &mut HashMap<E3id, Address>,
+    event: &DkgFoldAttestationContextEstablished,
+) -> bool {
+    if event.schema_version != DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION {
+        registries.remove(&event.e3_id);
+        return false;
+    }
+
+    registries.insert(event.e3_id.clone(), event.context.registry);
+    true
+}
+
 impl<P: Provider + WalletProvider + Clone + 'static> Actor for CiphernodeRegistrySolWriter<P> {
     type Context = actix::Context<Self>;
 
@@ -22,6 +35,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
         match msg.into_data() {
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::AggregatorChanged(data) => self.notify_sync(ctx, data),
+            InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
+                if self.provider.chain_id() == data.e3_id.chain_id() {
+                    ctx.notify(data);
+                }
+            }
             InterfoldEventData::PublicKeyAggregated(data) => {
                 // Only publish if the src and destination chains match
                 if self.provider.chain_id() == data.e3_id.chain_id() {
@@ -66,6 +84,27 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
     }
 }
 
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<DkgFoldAttestationContextEstablished>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: DkgFoldAttestationContextEstablished,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        if !update_request_registry(&mut self.request_registries, &msg) {
+            error!(
+                e3_id = %msg.e3_id,
+                schema_version = msg.schema_version,
+                expected_schema_version = DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+                "Rejected DKG attestation context with an unsupported schema version"
+            );
+        }
+    }
+}
+
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     for CiphernodeRegistrySolWriter<P>
 {
@@ -73,6 +112,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
         self.active_aggregators.remove(&msg.e3_id);
+        self.request_registries.remove(&msg.e3_id);
         self.submitting.remove(&msg.e3_id);
     }
 }
@@ -168,6 +208,53 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteeFinalizeRe
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::update_request_registry;
+    use alloy::primitives::Address;
+    use e3_events::{
+        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id,
+        DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn valid_context_records_the_request_time_registry() {
+        let e3_id = E3id::new("7", 1);
+        let registry = Address::repeat_byte(0x11);
+        let event = DkgFoldAttestationContextEstablished {
+            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+            e3_id: e3_id.clone(),
+            context: DkgFoldAttestationContext {
+                registry,
+                verifying_contract: Address::repeat_byte(0x22),
+            },
+        };
+        let mut registries = HashMap::new();
+
+        assert!(update_request_registry(&mut registries, &event));
+        assert_eq!(registries.get(&e3_id), Some(&registry));
+    }
+
+    #[test]
+    fn unsupported_context_removes_the_cached_registry() {
+        let e3_id = E3id::new("8", 1);
+        let registry = Address::repeat_byte(0x33);
+        let event = DkgFoldAttestationContextEstablished {
+            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION + 1,
+            e3_id: e3_id.clone(),
+            context: DkgFoldAttestationContext {
+                registry,
+                verifying_contract: Address::repeat_byte(0x44),
+            },
+        };
+        let mut registries = HashMap::from([(e3_id.clone(), registry)]);
+
+        assert!(!update_request_registry(&mut registries, &event));
+        assert!(!registries.contains_key(&e3_id));
+    }
+}
+
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated>
     for CiphernodeRegistrySolWriter<P>
 {
@@ -178,9 +265,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
             return Box::pin(async {});
         }
 
-        // Don't fire a second on-chain submission for an E3 whose publishCommittee
-        // tx is already in flight (H13). The on-chain preflight below is still the
-        // authoritative idempotency guard across restarts.
+        let Some(contract_address) = self.request_registries.get(&msg.e3_id).copied() else {
+            error!(
+                e3_id = %msg.e3_id,
+                "Cannot publish a committee without its request-time registry"
+            );
+            return Box::pin(async {});
+        };
+
+        // Do not submit a second transaction while publishCommittee is in progress
+        // for this E3. The on-chain preflight prevents duplicates after a restart.
         if !self.submitting.insert(msg.e3_id.clone()) {
             info!(e3_id = %msg.e3_id, "publishCommittee already in flight; skipping duplicate submission");
             return Box::pin(async {});
@@ -191,7 +285,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
         let pk_commitment = msg.pk_commitment;
         let dkg_aggregator_proof = msg.dkg_aggregator_proof.clone();
         let dkg_attestation_bundle = msg.dkg_attestation_bundle.clone();
-        let contract_address = self.contract_address;
         let provider = self.provider.clone();
         let bus = self.bus.clone();
         let self_addr = ctx.address();

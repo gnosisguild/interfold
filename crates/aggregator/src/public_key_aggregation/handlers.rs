@@ -34,6 +34,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::ComputeRequestError(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
+                if data.e3_id == self.e3_id {
+                    self.dkg_fold_attestation_context = Some(data.context);
+                }
+            }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 // Only process raw events from chain (party_id not yet resolved).

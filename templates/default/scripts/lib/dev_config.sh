@@ -27,6 +27,27 @@ template_monorepo_build_available() {
   [[ -f "${INTERFOLD_REPO_ROOT}/scripts/build-circuits.ts" ]]
 }
 
+# Whether the installed `interfold` carries an optional Cargo feature.
+#
+# Features are resolved when the binary is compiled, so the presence of a
+# monorepo checkout proves nothing about the binary on PATH: a stale or
+# release-profile install passes a checkout test and still rejects the feature at
+# startup. Ask the binary instead. `rev --features` needs no config and prints
+# nothing for a release build.
+template_cli_has_feature() {
+  local feature="$1"
+  local compiled
+
+  if ! command -v interfold >/dev/null 2>&1; then
+    return 1
+  fi
+
+  # `|| true`: an older CLI without `--features` exits non-zero, which must read
+  # as "feature absent" rather than abort a `set -e` caller.
+  compiled="$(interfold rev --features 2>/dev/null || true)"
+  printf '%s\n' "${compiled}" | grep -qxF "${feature}"
+}
+
 build_interfold_circuits_at_setup() {
   if ! template_monorepo_build_available; then
     echo "Skipping circuit build (standalone template; use interfold noir setup release artifacts)."

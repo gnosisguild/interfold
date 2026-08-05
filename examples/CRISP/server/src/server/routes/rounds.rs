@@ -202,7 +202,29 @@ pub async fn initialize_crisp_round(
     let balance_threshold = U256::from_str_radix(balance_threshold, 10)?;
 
     // Serialize the custom parameters to bytes.
-    let custom_params_bytes = Bytes::from((token_address, balance_threshold).abi_encode());
+    //
+    // This encoded two fields where every consumer reads six, so rounds requested through this
+    // route could never be indexed — `abi_decode` failed on them and the round was dropped. Fixed
+    // here rather than left, because a route that silently produces unusable rounds is worse than
+    // one that does not exist.
+    //
+    // Two options, constant credits of one and token-derived eligibility are the defaults this
+    // route always implied; it carries no way to express anything else.
+    let num_options = U256::from(2);
+    let credit_mode = U256::from(0); // Constant
+    let credits = U256::from(1);
+    let census_mode = U256::from(0); // Token
+    let custom_params_bytes = Bytes::from(
+        (
+            token_address,
+            balance_threshold,
+            num_options,
+            credit_mode,
+            credits,
+            census_mode,
+        )
+            .abi_encode(),
+    );
 
     info!("Requesting E3...");
     let committee_size = match CONFIG.e3_committee_size {

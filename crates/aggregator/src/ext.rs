@@ -21,13 +21,17 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_data::{AutoPersist, Persistable, RepositoriesFactory};
-use e3_events::{prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id};
+use e3_events::{
+    prelude::*, CiphernodeSelected, CiphertextOutputPublished, DkgFoldAttestationContext, E3id,
+};
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
 use e3_fhe::Fhe;
 use e3_fhe_params::BfvPreset;
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
-use e3_request::{E3Context, E3ContextSnapshot, E3Extension, TypedKey, META_KEY};
+use e3_request::{
+    E3Context, E3ContextSnapshot, E3Extension, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
+};
 use e3_sortition::Sortition;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashMap};
@@ -85,6 +89,9 @@ impl E3Extension for PublicKeyAggregatorExtension {
             params_preset,
             ..
         } = data.clone();
+        let dkg_fold_attestation_context = ctx
+            .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
+            .copied();
         let repo = ctx.repositories().publickey(&e3_id);
         let sync_state = repo.send(Some(PublicKeyAggregatorState::init(
             threshold_n,
@@ -112,6 +119,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             sync_state,
             params_preset,
             committee_size,
+            dkg_fold_attestation_context,
         );
 
         ctx.set_event_recipient("publickey", Some(value));
@@ -165,6 +173,8 @@ impl E3Extension for PublicKeyAggregatorExtension {
             sync_state,
             meta.params_preset,
             committee_size,
+            ctx.get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
+                .copied(),
         );
 
         // send to context
@@ -181,6 +191,7 @@ fn create_publickey_aggregator(
     sync_state: Persistable<PublicKeyAggregatorState>,
     params_preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
+    dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
 ) -> Recipient<InterfoldEvent> {
     KeyshareCreatedFilterBuffer::new(
         PublicKeyAggregator::new(
@@ -190,6 +201,7 @@ fn create_publickey_aggregator(
                 e3_id,
                 params_preset,
                 committee_size,
+                dkg_fold_attestation_context,
             },
             sync_state,
         )

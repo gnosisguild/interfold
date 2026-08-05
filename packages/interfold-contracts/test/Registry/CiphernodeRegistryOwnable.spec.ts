@@ -37,6 +37,14 @@ describe("CiphernodeRegistryOwnable", function () {
       bfvParams: "large",
       committeeThresholds: [[0, [1, 3]]],
     });
+    const request = (signer?: Signer) =>
+      makeRequest(
+        sys.interfold,
+        sys.usdcToken,
+        sys.mocks.e3Program,
+        sys.mocks.decryptionVerifier,
+        signer,
+      );
     return {
       owner: sys.owner,
       notTheOwner: sys.notTheOwner,
@@ -52,6 +60,8 @@ describe("CiphernodeRegistryOwnable", function () {
       usdcToken: sys.usdcToken,
       mockE3Program: sys.mocks.e3Program,
       mockDecryptionVerifier: sys.mocks.decryptionVerifier,
+      mockPkVerifier: sys.mocks.pkVerifier,
+      request,
     };
   }
 
@@ -209,6 +219,15 @@ describe("CiphernodeRegistryOwnable", function () {
       expect(await registry.rootAt(0)).to.not.equal(0);
     });
 
+    it("allows one ticket ID across concurrent E3 requests", async function () {
+      const { registry, operator1, request } = await loadFixture(setup);
+
+      for (let e3Id = 0; e3Id < 2; e3Id++) {
+        await request();
+        await registry.connect(operator1).submitTicket(e3Id, 1);
+      }
+    });
+
     it("AUD-M03: fails closed after governance updates until operators refresh", async function () {
       const {
         registry,
@@ -311,6 +330,67 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("publishCommittee()", function () {
+    it("keeps each E3 on its request-time fold verifier after rotation", async function () {
+      const {
+        owner,
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+      const oldVerifier = await registry.dkgFoldAttestationVerifier();
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
+      const newVerifier = await ethers.deployContract(
+        "MockDkgFoldAttestationVerifier",
+      );
+      await newVerifier.waitForDeployment();
+      await registry
+        .connect(owner)
+        .proposeDkgFoldAttestationVerifier(await newVerifier.getAddress());
+      await networkHelpers.time.increase(
+        Number(await registry.DKG_FOLD_VERIFIER_TIMELOCK()) + 1,
+      );
+      await registry
+        .connect(owner)
+        .commitDkgFoldAttestationVerifier(await newVerifier.getAddress());
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
+      expect(await registry.dkgFoldAttestationVerifierFor(0)).to.equal(
+        oldVerifier,
+      );
+      expect(await registry.dkgFoldAttestationVerifierFor(1)).to.equal(
+        await newVerifier.getAddress(),
+      );
+      const contextEvents = await registry.queryFilter(
+        registry.filters.DkgFoldAttestationContextEstablished(),
+      );
+      expect(contextEvents.map((event) => event.args.e3Id)).to.deep.equal([
+        0n,
+        1n,
+      ]);
+      expect(contextEvents.map((event) => event.args.registry)).to.deep.equal([
+        await registry.getAddress(),
+        await registry.getAddress(),
+      ]);
+      expect(
+        contextEvents.map((event) => event.args.dkgFoldAttestationVerifier),
+      ).to.deep.equal([oldVerifier, await newVerifier.getAddress()]);
+    });
+
     it("AUD-C02: requires a final DKG proof and attestation bundle", async function () {
       const {
         registry,
@@ -345,6 +425,37 @@ describe("CiphernodeRegistryOwnable", function () {
           "0x",
         ),
       ).to.be.revertedWithCustomError(registry, "FoldAttestationsRequired");
+    });
+    it("rejects a false public-key verifier result", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        mockPkVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator2).submitTicket(0, 1);
+      await registry.connect(operator3).submitTicket(0, 1);
+      await finalizeCommitteeAfterWindow(registry, 0);
+
+      const falseProof = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["bytes", "bytes32[]"],
+        ["0xfafafafa", [dataHash]],
+      );
+      await expect(
+        registry.publishCommittee(0, data, dataHash, falseProof, "0x01"),
+      ).to.be.revertedWithCustomError(mockPkVerifier, "InvalidProof");
     });
     it("allows any caller to publish a finalized committee", async function () {
       const {
@@ -475,6 +586,18 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("getActiveCommitteeNodes()", function () {
+    it("does not grant membership to provisional candidates", async function () {
+      const { registry, operator1, request } = await loadFixture(setup);
+      await request();
+
+      await registry.connect(operator1).submitTicket(0, 1);
+      const operator = await operator1.getAddress();
+
+      expect(await registry.isCommitteeMember(0, operator)).to.equal(false);
+      const [nodes] = await registry.getActiveCommitteeNodes(0);
+      expect(nodes).to.deep.equal([]);
+    });
+
     it("returns active committee nodes with their scores", async function () {
       const {
         registry,
@@ -509,6 +632,9 @@ describe("CiphernodeRegistryOwnable", function () {
 
       expect(activeNodes).to.deep.equal(finalizedEvent.args.committee);
       expect(activeScores).to.deep.equal(finalizedEvent.args.scores);
+      for (const node of activeNodes) {
+        expect(await registry.isCommitteeMemberActive(0, node)).to.equal(true);
+      }
     });
   });
 

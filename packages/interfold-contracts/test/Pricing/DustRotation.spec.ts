@@ -58,6 +58,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       operator2: operator2Maybe,
       operator3: operator3Maybe,
       interfold,
+      bondingRegistry,
       ciphernodeRegistry: ciphernodeRegistryContract,
       usdcToken: feeToken,
       mocks: { e3Program, decryptionVerifier },
@@ -68,6 +69,19 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     const [, , , , , treasury] = await ethers.getSigners();
     const treasuryAddress = await treasury.getAddress();
     const ownerAddress = await owner.getAddress();
+    const signers = await ethers.getSigners();
+    const rewardOwners = [signers[7], signers[8], signers[9]];
+    for (let i = 0; i < 3; i++) {
+      const operator = [operator1, operator2, operator3][i];
+      const operatorAddress = await operator.getAddress();
+      const rewardOwnerAddress = await rewardOwners[i].getAddress();
+      await bondingRegistry
+        .connect(owner)
+        .proposeBondOwner(operatorAddress, rewardOwnerAddress);
+      await bondingRegistry
+        .connect(rewardOwners[i])
+        .acceptBondOwner(operatorAddress);
+    }
 
     // Pricing — pick params that yield a per-node cnAmount remainder ≠ 0
     // for committeeSize=3 so the dust rotation is observable. The values
@@ -133,11 +147,12 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       };
       await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await interfold.request(req);
-      // topNodes are sorted by ascending address; operator3 < operator1 < operator2
-      const nodes = [
-        await operator3.getAddress(),
-        await operator1.getAddress(),
-        await operator2.getAddress(),
+      // topNodes are sorted as operator3, operator1, operator2, so map that
+      // order to the corresponding bond-owner reward recipients.
+      const recipients = [
+        await rewardOwners[2].getAddress(),
+        await rewardOwners[0].getAddress(),
+        await rewardOwners[1].getAddress(),
       ];
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,
@@ -154,7 +169,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       );
       const e3Proof = ethers.concat([proof, ethers.toBeHex(e3Id, 32)]);
       await interfold.publishPlaintextOutput(e3Id, data, e3Proof);
-      return nodes;
+      return recipients;
     };
 
     return {

@@ -1,11 +1,13 @@
 # @interfold/dashboard
 
-Interfold / CRISP public observation dashboard. Two tabs:
+Interfold / CRISP public observation dashboard. Three tabs:
 
 - **CRISP** — hero poll card, live 7-stage timeline, expandable history, network pulse footer.
   Observational only (no vote CTA).
 - **E3 inspector** — deep technical record of one E3: request, committee, keygen rounds, input
   window, compute, decryption, publication, fees, on-chain event log.
+- **Run a ciphernode** — interactive operator guide. The only writing page: it connects a wallet and
+  walks the on-chain setup (authorize bond owner → bond the license → register → buy tickets).
 
 ## Run
 
@@ -23,16 +25,43 @@ The dashboard reads live data from the Sepolia deployment of Interfold
 factories in `@interfold/contracts/types` so they cannot drift from the deployed contracts. The
 `E3Stage` enum is mirrored locally in `src/lib/chain.ts` (matching `IInterfold.E3Stage`).
 
-- `Interfold` proxy at `0xB47B267876B60a06138Bc9dfCee7aa3E26907CCB` — `E3Requested`,
-  `PlaintextOutputPublished`, `RewardsDistributed`, plus `getE3` / `getE3Stage` / `e3Payments` view
-  functions.
-- `CiphernodeRegistryOwnable` at `0x497Feea9abB72229aab1584c22b5416ff128926B` — `CommitteeRequested`
-  (threshold + seed), `CommitteeFinalized` (members), `CommitteePublished` (joint PK).
-- `CRISPProgram` at `0xba3B07aBFd0B8cad68aa1E946CC7AF5C1B1c8B5D` — emits `InputPublished` for every
-  ballot. (Interfold's own `InputPublished` is declared but never emitted; inputs live on the
-  program.) A re-vote reuses its Merkle-leaf `index`, so the true ballot count is the number of
-  **distinct** indexes. Inputs are only observable for CRISP; other programs report
-  `inputsTracked: false`.
+Addresses are **not** repeated here — they go stale. The live values are the defaults in
+`src/lib/chain.ts` (`CONTRACTS`), each overridable by its `VITE_*` variable. Cross-check them
+against `packages/interfold-contracts/deployed_contracts.json` for the target network.
+
+- `Interfold` proxy — `E3Requested`, `PlaintextOutputPublished`, `RewardsDistributed`, plus `getE3`
+  / `getE3Stage` / `e3Payments` view functions.
+- `CiphernodeRegistryOwnable` — `CommitteeRequested` (threshold + seed), `CommitteeFinalized`
+  (members), `CommitteePublished` (joint PK).
+- `BondingRegistry` — operator collateral and the write path behind the operator guide (see below).
+- `CRISPProgram` — emits `InputPublished` for every ballot. (Interfold's own `InputPublished` is
+  declared but never emitted; inputs live on the program.) A re-vote reuses its Merkle-leaf `index`,
+  so the true ballot count is the number of **distinct** indexes. Inputs are only observable for
+  CRISP; other programs report `inputsTracked: false`.
+
+### Operator guide (write path)
+
+`src/Operator.tsx` is the only page that sends transactions. It talks to `BondingRegistry` through a
+minimal injected-wallet connector (`src/lib/wallet.ts`) — no wagmi/rainbowkit dependency, since the
+guide needs one provider, one chain, and five writes.
+
+The operator key and the bond owner are separate addresses. The operator key is the hot key the node
+signs with; the bond owner is the wallet that funds and controls the collateral. They may be the
+same wallet. The sequence the guide enforces is:
+
+1. `setBondOwner(bondOwner)` — **sent by the operator key**, authorizing a wallet to stake for it.
+2. `approve` license token to the registry, then `bondLicenseFor(operator, amount)`.
+3. `registerOperatorFor(operator)` — adds the key to the ciphernode registry (requires the bond).
+4. `approve` the ticket underlying to the ticket wrapper, then
+   `addTicketBalanceFor(operator, cost)`.
+
+Steps 2–4 must come from the bond owner; the page detects the connected wallet and disables actions
+it cannot send. Every write is simulated first (`simulateAndWrite`) so the registry's typed reverts
+(for example `NotBondOwner`) surface before the wallet prompt.
+
+Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The license token, ticket wrapper, ticket
+underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from the
+registry, so the guide follows the deployment instead of a hardcoded token list.
 
 CRISP question text + option labels are off-chain (the program doesn't store them); the mapping
 lives in `src/lib/pollMeta.ts`. Unknown E3 ids get a generic "Encrypted poll #N" header with numeric
@@ -47,6 +76,9 @@ Sepolia deployment defined in `src/lib/chain.ts`:
 - `VITE_SEPOLIA_RPC` — RPC endpoint (defaults to a public node; use Alchemy/Infura for production).
 - `VITE_INTERFOLD_ADDRESS`, `VITE_CIPHERNODE_REGISTRY_ADDRESS`, `VITE_CRISP_PROGRAM_ADDRESS` —
   contracts.
+- `VITE_BONDING_REGISTRY_ADDRESS` — bonding registry behind the operator guide.
+- `VITE_FAUCET_ADDRESS` — testnet faucet. Set to the zero address on a non-testnet deployment to
+  hide the "Get test tokens" action.
 - `VITE_DEPLOY_BLOCK` — first block to scan from (the Interfold deploy block).
 
 The fetchers chunk `getLogs` calls to 9_500 blocks per request so they work against the stricter

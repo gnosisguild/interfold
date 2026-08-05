@@ -328,6 +328,10 @@ interface IInterfold {
     /// @notice Thrown when committee selection fails during E3 request or activation.
     error CommitteeSelectionFailed();
 
+    /// @notice Thrown when a dependency reports a value that is not a failure reason.
+    /// @param reason The rejected value.
+    error InvalidFailureReason(uint8 reason);
+
     /// @notice Thrown when an E3 request uses a program that is not enabled.
     /// @param e3Program The E3 program address that is not allowed.
     error E3ProgramNotAllowed(IE3Program e3Program);
@@ -406,6 +410,11 @@ interface IInterfold {
 
     /// @notice Failure condition not yet met
     error FailureConditionNotMet(uint256 e3Id);
+
+    /// @notice Thrown when a committee publishes its key after the DKG deadline.
+    /// @param e3Id The E3 identifier.
+    /// @param deadline The last valid publication timestamp.
+    error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
 
     /// @notice The Input deadline is invalid
     error InvalidInputDeadline(uint256 deadline);
@@ -592,6 +601,7 @@ interface IInterfold {
     function isFeeTokenAllowed(IERC20 token) external view returns (bool);
 
     /// @notice Register an E3 Program. Append-only — programs cannot be deregistered.
+    /// @dev Only the owner can register a program after initialization.
     /// @param e3Program The address of the E3 Program.
     function registerE3Program(IE3Program e3Program) external;
 

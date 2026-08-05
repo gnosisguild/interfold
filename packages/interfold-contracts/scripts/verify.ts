@@ -71,17 +71,28 @@ const findContractPath = (
  * @param address - Contract address
  * @param constructorArgs - Constructor arguments as a record
  * @param network - Network name
+ * @param libraries - Linked library addresses
  */
 const verifyContract = (
   contractName: string,
   address: string,
   constructorArgs: Record<string, unknown> | readonly unknown[] | undefined,
   network: string,
+  libraries?: Record<string, string>,
 ): void => {
-  // Create a temporary args file
   const argsFile = path.join(process.cwd(), `verify-args-${address}.cjs`);
+  const librariesFile = path.join(
+    process.cwd(),
+    `verify-libraries-${address}.cjs`,
+  );
 
   try {
+    const options = [
+      "--build-profile default",
+      `--network ${network}`,
+      `--contract ${contractName}`,
+    ];
+
     if (constructorArgs) {
       const argsArray = Array.isArray(constructorArgs)
         ? constructorArgs
@@ -89,16 +100,19 @@ const verifyContract = (
 
       const fileContent = `module.exports = ${JSON.stringify(argsArray, null, 2)};`;
       fs.writeFileSync(argsFile, fileContent);
-
-      const command = `pnpm hardhat verify --build-profile default --network ${network} --contract ${contractName} ${address} --constructor-args-path ${argsFile}`;
-
-      console.log(`Executing: ${command}`);
-      execSync(command, { stdio: "inherit" });
-      console.log(`✅ Contract verified successfully at ${address}\n`);
-    } else {
-      const command = `pnpm hardhat verify --build-profile default --network ${network} --contract ${contractName} ${address}`;
-      execSync(command, { stdio: "inherit" });
+      options.push(`--constructor-args-path ${argsFile}`);
     }
+
+    if (libraries) {
+      const fileContent = `module.exports = ${JSON.stringify(libraries, null, 2)};`;
+      fs.writeFileSync(librariesFile, fileContent);
+      options.push(`--libraries-path ${librariesFile}`);
+    }
+
+    const command = `pnpm hardhat verify ${options.join(" ")} ${address}`;
+    console.log(`Executing: ${command}`);
+    execSync(command, { stdio: "inherit" });
+    console.log(`✅ Contract verified successfully at ${address}\n`);
   } catch (error: unknown) {
     if ((error as Error).message?.includes("Already Verified")) {
       console.log(`ℹ️  Contract at ${address} is already verified\n`);
@@ -113,6 +127,9 @@ const verifyContract = (
     // ensure that we always clean up even if there was some early failure
     if (fs.existsSync(argsFile)) {
       fs.unlinkSync(argsFile);
+    }
+    if (fs.existsSync(librariesFile)) {
+      fs.unlinkSync(librariesFile);
     }
   }
 };
@@ -211,7 +228,13 @@ export const verifyContracts = (chain: string): void => {
       `  ${isProxy ? "└─" : "  "} Verifying ${isProxy ? "implementation" : "contract"} at ${targetAddress.slice(0, 10)}...`,
     );
 
-    verifyContract(fullyQualifiedName, targetAddress, constructorArgs, chain);
+    verifyContract(
+      fullyQualifiedName,
+      targetAddress,
+      constructorArgs,
+      chain,
+      deployment.libraries,
+    );
 
     console.log(`  ✅ ${contractName} verification complete\n`);
   });
