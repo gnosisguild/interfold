@@ -15,9 +15,9 @@ use e3_crypto::Cipher;
 use e3_events::{
     hlc::HlcTimestamp, prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized,
     ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated,
-    DkgFoldAttestationContextEstablished, E3Requested, E3id, InterfoldEvent,
-    InterfoldEventData, OperatorActivationChanged, PlaintextAggregated, ProofType, Seed,
-    TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    DkgFoldAttestationContextEstablished, E3Requested, E3id, InterfoldEvent, InterfoldEventData,
+    OperatorActivationChanged, PlaintextAggregated, ProofType, Seed, TakeEvents,
+    TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;

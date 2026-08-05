@@ -30,7 +30,7 @@
     },
     {
       "name": "CalculateDecryptionShare",
-      "avg_seconds": 0.021280000,
+      "avg_seconds": 0.02128,
       "runs": 3,
       "total_seconds": 0.063840001
     },
@@ -62,7 +62,7 @@
       "name": "NodeDkgFold/c3a_fold",
       "avg_seconds": 16.199618083,
       "runs": 3,
-      "total_seconds": 48.598854250
+      "total_seconds": 48.59885425
     },
     {
       "name": "NodeDkgFold/c3ab_fold",
@@ -96,9 +96,9 @@
     },
     {
       "name": "ZkDecryptionAggregation",
-      "avg_seconds": 40.222397000,
+      "avg_seconds": 40.222397,
       "runs": 1,
-      "total_seconds": 40.222397000
+      "total_seconds": 40.222397
     },
     {
       "name": "ZkDkgAggregation",
@@ -108,7 +108,7 @@
     },
     {
       "name": "ZkDkgShareDecryption",
-      "avg_seconds": 0.353688430,
+      "avg_seconds": 0.35368843,
       "runs": 6,
       "total_seconds": 2.122130583
     },
@@ -120,9 +120,9 @@
     },
     {
       "name": "ZkNodesFoldStep",
-      "avg_seconds": 4.521009000,
+      "avg_seconds": 4.521009,
       "runs": 2,
-      "total_seconds": 9.042018000
+      "total_seconds": 9.042018
     },
     {
       "name": "ZkPkAggregation",
@@ -134,7 +134,7 @@
       "name": "ZkPkBfv",
       "avg_seconds": 0.126019666,
       "runs": 3,
-      "total_seconds": 0.378059000
+      "total_seconds": 0.378059
     },
     {
       "name": "ZkPkGeneration",
@@ -178,7 +178,7 @@
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -198,7 +198,7 @@
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
-      "seconds": 13.497275000,
+      "seconds": 13.497275,
       "metric": "wall_clock"
     },
     {
@@ -223,7 +223,7 @@
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 41.727727000,
+      "seconds": 41.727727,
       "metric": "wall_clock"
     },
     {

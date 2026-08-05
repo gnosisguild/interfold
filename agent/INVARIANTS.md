@@ -135,8 +135,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### Noir / Barretenberg compatibility
 
 - Treat Nargo, the Rust Noir crates, witness serialization, Barretenberg, circuit release archives,
-  verification keys, and generated Solidity verifiers as one compatibility unit. The current unit
-  is Nargo and Rust Noir `1.0.0-beta.26` with Barretenberg `5.1.0`. — `.github/workflows/ci.yml`;
+  verification keys, and generated Solidity verifiers as one compatibility unit. The current unit is
+  Nargo and Rust Noir `1.0.0-beta.26` with Barretenberg `5.1.0`. — `.github/workflows/ci.yml`;
   `crates/zk-prover/versions.json`; `Cargo.toml`
 - Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
   with `bincode`; Barretenberg 5 accepts the beta.26 MessagePack format markers, not the legacy
