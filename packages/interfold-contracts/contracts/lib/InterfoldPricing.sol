@@ -8,6 +8,9 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 
 /**
@@ -20,6 +23,7 @@ import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
  *         out of the Interfold runtime bytecode.
  */
 library InterfoldPricing {
+    using SafeERC20 for IERC20;
     uint16 internal constant BPS_BASE = 10000;
     event RewardCredited(
         uint256 indexed e3Id,
@@ -80,13 +84,48 @@ library InterfoldPricing {
             if (i == dustIndex) amount += dust;
             amounts[i] = amount;
             if (amount > 0) {
-                address recipient = refundManager.rewardRecipient(
+                _creditReward(
+                    pendingRewards,
+                    refundManager,
                     e3Id,
-                    nodes[i]
+                    nodes[i],
+                    token,
+                    amount
                 );
-                pendingRewards[e3Id][recipient] += amount;
-                emit RewardCredited(e3Id, recipient, token, amount);
             }
+        }
+    }
+
+    function _creditReward(
+        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
+        IE3RefundManager refundManager,
+        uint256 e3Id,
+        address operator,
+        IERC20 token,
+        uint256 amount
+    ) private {
+        (address recipient, bool held) = refundManager.rewardDisposition(
+            e3Id,
+            operator
+        );
+        if (held) {
+            uint256 balanceBefore = token.balanceOf(address(refundManager));
+            token.safeTransfer(address(refundManager), amount);
+            uint256 balanceAfter = token.balanceOf(address(refundManager));
+            uint256 received = balanceAfter > balanceBefore
+                ? balanceAfter - balanceBefore
+                : 0;
+            if (received > 0) {
+                refundManager.holdSuccessReward(
+                    e3Id,
+                    operator,
+                    token,
+                    received
+                );
+            }
+        } else {
+            pendingRewards[e3Id][recipient] += amount;
+            emit RewardCredited(e3Id, recipient, token, amount);
         }
     }
 
@@ -114,18 +153,13 @@ library InterfoldPricing {
         uint256 inputWindowStart,
         uint256 inputWindowEnd
     ) external pure returns (uint256 fee) {
-        if (inputWindowEnd < inputWindowStart)
-            revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
-
-        {
-            uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
-            uint256 committeeDeadline = requestTime + sortitionWindow;
-            if (computeDeadline <= committeeDeadline)
-                revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
-                    computeDeadline,
-                    committeeDeadline
-                );
-        }
+        _validateQuoteWindow(
+            tc,
+            sortitionWindow,
+            requestTime,
+            inputWindowStart,
+            inputWindowEnd
+        );
 
         if (paramSet != ActiveCryptoConfig.PARAM_SET)
             revert IInterfold.UnsupportedCryptoConfig();
@@ -158,6 +192,27 @@ library InterfoldPricing {
             uint256(BPS_BASE);
 
         if (fee == 0) revert IInterfold.PaymentRequired(fee);
+    }
+
+    function _validateQuoteWindow(
+        IInterfold.E3TimeoutConfig calldata tc,
+        uint256 sortitionWindow,
+        uint256 requestTime,
+        uint256 inputWindowStart,
+        uint256 inputWindowEnd
+    ) private pure {
+        if (inputWindowStart < requestTime)
+            revert IInterfold.InvalidInputDeadlineStart(inputWindowStart);
+        if (inputWindowEnd < inputWindowStart)
+            revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
+
+        uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
+        uint256 committeeDeadline = requestTime + sortitionWindow;
+        if (computeDeadline <= committeeDeadline)
+            revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
+                computeDeadline,
+                committeeDeadline
+            );
     }
 
     function _baseFee(

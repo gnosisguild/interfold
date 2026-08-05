@@ -515,6 +515,13 @@ contract SlashingManager is
         p.failureReason = policy.failureReason;
 
         _openProposalCount[operator] += 1;
+        if (p.affectsCommittee) {
+            _dependenciesFor(e3Id).refundManager.openExpulsionProposal(
+                e3Id,
+                proposalId,
+                operator
+            );
+        }
 
         emit SlashProposed(
             proposalId,
@@ -604,6 +611,14 @@ contract SlashingManager is
         p.banNode = policy.banNode;
         p.affectsCommittee = policy.affectsCommittee;
         p.failureReason = policy.failureReason;
+
+        if (p.affectsCommittee) {
+            _dependenciesFor(e3Id).refundManager.openExpulsionProposal(
+                e3Id,
+                proposalId,
+                operator
+            );
+        }
 
         emit SlashProposed(
             proposalId,
@@ -826,6 +841,11 @@ contract SlashingManager is
                     emit RoutingFailed(p.e3Id, 0);
                 }
             }
+            dependencies.refundManager.resolveExpulsionProposal(
+                p.e3Id,
+                proposalId,
+                true
+            );
         }
 
         // Reserve and attempt escrow. Failure leaves both a durable proposal
@@ -838,6 +858,7 @@ contract SlashingManager is
             );
             route.amount = actualTicketSlashed;
             route.pending = true;
+            route.operator = p.operator;
             dependencies.bonding.reserveSlashedTicketFunds(
                 proposalId,
                 p.e3Id,
@@ -893,6 +914,8 @@ contract SlashingManager is
         dependencies.bonding.redirectReservedSlashedTicketFunds(proposalId);
         dependencies.interfoldContract.escrowSlashedFunds(
             route.e3Id,
+            proposalId,
+            route.operator,
             IERC20(route.token),
             route.amount
         );
@@ -966,6 +989,13 @@ contract SlashingManager is
         // An upheld appeal terminates the proposal, so its collateral gate ends.
         if (appealUpheld) {
             _openProposalCount[p.operator] -= 1;
+            if (p.affectsCommittee) {
+                _dependenciesFor(p.e3Id).refundManager.resolveExpulsionProposal(
+                    p.e3Id,
+                    proposalId,
+                    false
+                );
+            }
         }
 
         emit AppealResolved(
@@ -992,6 +1022,13 @@ contract SlashingManager is
         p.resolved = true;
         p.appealUpheld = true;
         _openProposalCount[p.operator] -= 1;
+        if (p.affectsCommittee) {
+            _dependenciesFor(p.e3Id).refundManager.resolveExpulsionProposal(
+                p.e3Id,
+                proposalId,
+                false
+            );
+        }
 
         emit AppealResolved(
             proposalId,

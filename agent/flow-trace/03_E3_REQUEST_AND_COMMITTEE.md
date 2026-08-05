@@ -66,7 +66,8 @@ Requester calls: Interfold.request({
 │   │     BondingRegistry for proposal-scoped ticket-slash routes
 │   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
 │   │   → freezes refund/slash allocation, treasury, policy version,
-│   │     request-time Interfold, committee registry, and bonding registry
+│   │     request-time Interfold, committee registry, bonding registry,
+│   │     and slashing manager
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
 │   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
 │   │     not relied upon for cryptographic unpredictability.

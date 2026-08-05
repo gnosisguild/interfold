@@ -110,6 +110,7 @@ interface ISlashingManager {
         address token;
         uint256 amount;
         bool pending;
+        address operator;
     }
 
     // ======================

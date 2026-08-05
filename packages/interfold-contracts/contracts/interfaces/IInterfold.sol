@@ -10,6 +10,7 @@ import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "./IBondingRegistry.sol";
 import { IDecryptionVerifier } from "./IDecryptionVerifier.sol";
 import { IPkVerifier } from "./IPkVerifier.sol";
+import { ISlashingManager } from "./ISlashingManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IInterfold {
@@ -677,6 +678,9 @@ interface IInterfold {
     /// @notice Returns the BondingRegistry contract.
     function bondingRegistry() external view returns (IBondingRegistry);
 
+    /// @notice Returns the current SlashingManager contract.
+    function slashingManager() external view returns (ISlashingManager);
+
     /// @notice Called by CiphernodeRegistry when committee is finalized (sortition complete).
     /// @dev Updates E3 lifecycle to CommitteeFinalized stage, starts DKG deadline.
     /// @param e3Id ID of the E3.
@@ -700,10 +704,14 @@ interface IInterfold {
     /// @notice Escrow slashed funds for deferred distribution
     /// @dev Called by SlashingManager. Proxies to E3RefundManager.
     /// @param e3Id The E3 ID.
+    /// @param proposalId The proposal that produced the funds.
+    /// @param operator The operator whose collateral was slashed.
     /// @param token Actual ticket-underlying token transferred into escrow.
     /// @param amount Amount of slashed funds to escrow.
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external;

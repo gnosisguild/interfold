@@ -772,6 +772,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @inheritdoc IInterfold
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external {
@@ -779,7 +781,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             msg.sender,
             address(_slashingManagerFor(e3Id))
         );
-        _refundManagerFor(e3Id).escrowSlashedFunds(e3Id, token, amount);
+        _refundManagerFor(e3Id).escrowSlashedFunds(
+            e3Id,
+            proposalId,
+            operator,
+            token,
+            amount
+        );
         emit SlashedFundsEscrowed(e3Id, token, amount);
     }
 

@@ -169,11 +169,17 @@ publishPlaintextOutput() succeeds
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
 │   │   │   → Credits the recipient frozen at committee finalization
+│   │   │   → If expulsion is unresolved, move only the accused share to
+│   │   │     E3RefundManager and keep peer rewards claimable
+│   │   │   → Clear outcome releases the held share; expulsion reallocates it
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
+│   │   │     settle each proposal by its recorded target, token, and amount
 │   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
-│   │   │     nodes portion split by active node, then credited to frozen recipients
+│   │   │     exclude the proposal target from its own penalty proceeds
+│   │   │     hold only shares covered by unresolved expulsions
+│   │   │     credit all other shares to frozen recipients
 │   │   │     remainder sent to protocol treasury
 │   │   │   → If no escrowed funds: no-op
 │   │   └─ Emit RewardsDistributed(e3Id)

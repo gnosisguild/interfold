@@ -1381,6 +1381,16 @@
           "type": "uint256"
         },
         {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "contract IERC20",
           "name": "token",
           "type": "address"
@@ -2427,6 +2437,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "slashingManager",
+      "outputs": [
+        {
+          "internalType": "contract ISlashingManager",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "contract IERC20",
@@ -2452,5 +2475,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-4380efd9123887610385e613739fd2b530bb9f57"
+  "buildInfoId": "solc-0_8_28-29e1fc6c17fa3c77fee79f60ca223b5cbad7a583"
 }

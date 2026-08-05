@@ -169,10 +169,12 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │     }                                                 │
 │     │  │                                                       │
 │     │  │  5. Preserve slashed assets as separate claims:       │
-│     │  │     → New escrows are keyed by (e3Id, actual token)   │
-│     │  │     → A pending entry matching paymentToken may settle│
-│     │  │       now; other tokens remain permissionlessly       │
-│     │  │       settleable without being relabeled              │
+│     │  │     → Each escrow keeps proposalId, target, token,    │
+│     │  │       and amount                                      │
+│     │  │     → Each proposal settles independently after the   │
+│     │  │       E3 reaches a terminal state                     │
+│     │  │     → Tokens remain permissionlessly settleable       │
+│     │  │       without being relabeled                         │
 │     │  │                                                       │
 │     │  │  M-09: snapshot the base fee-token per-node payout:   │
 │     │  │     if honestNodeCount > 0:                           │
@@ -212,7 +214,11 @@ HONEST NODE'S BOND OWNER claims:
 ├─ require(operator is in honestNodes[e3Id])
 ├─ load the recipient frozen when this E3's committee was finalized
 ├─ require(msg.sender == recipient)
-├─ require(!honest-node reward already claimed for this operator)
+├─ If an expelling proposal is unresolved, hold this operator's claim
+│  without blocking other operators
+├─ If the operator is expelled, mark its base share consumed and
+│  reallocate it as later top-up claims for the remaining operators
+├─ Otherwise require either an unclaimed base reward or a new top-up
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements
 ├─ honestNodeAmount exists only for requester-attributable failures
@@ -581,6 +587,7 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │     → Policy values snapshotted at proposal time
 │     → Prevents execution drift if policy changes later
 │     → Increment unresolved financial proposal count for operator
+│     → If affectsCommittee, open an E3 entitlement hold for this operator
 │
 └─ 8. If appealWindow == 0, immediately execute; otherwise leave
       the proposal deferred and appealable until executableAt
@@ -622,6 +629,7 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 │     }
 │     → NOT executed immediately
 │     → Increment the same unresolved financial proposal count
+│     → If affectsCommittee, open an E3 entitlement hold for this operator
 │
 └─ 5. Emit SlashProposed(proposalId, e3Id, operator, reason)
 
@@ -645,12 +653,15 @@ GOVERNANCE_ROLE resolves: SlashingManager.resolveAppeal(
 ├─ require(proposal.appealed && !proposal.resolved)
 ├─ proposal.resolved = true
 ├─ proposal.appealUpheld = upheld
-├─ If upheld: decrement unresolved proposal count
+├─ If upheld:
+│   ├─ decrement unresolved proposal count
+│   └─ clear the E3 entitlement hold and release the accused share
 └─ Emit AppealResolved(proposalId, upheld, resolution)
 
 If governance does not resolve a filed appeal by
 `executableAt + APPEAL_RESOLUTION_GRACE`, anyone may call `expireAppeal`.
 Expiry conclusively upholds the appeal and releases the collateral gate.
+It also clears the E3 entitlement hold.
 
 ─── AFTER APPEAL WINDOW ──────────────────────────────────────
 
@@ -755,6 +766,10 @@ _executeSlash(proposalId):
 │         catch: emit RoutingFailed (E3 may already be failed)
 │         → Slash itself still proceeds regardless
 │
+│     Resolve the E3 entitlement hold as expelled:
+│       → the accused operator cannot claim its held share
+│       → held fee and slash-funded shares move to remaining operators
+│
 │
 ├─ 5. SLASHED FUNDS ESCROWING (if actualTicketSlashed > 0):
 │     │
@@ -766,7 +781,8 @@ _executeSlash(proposalId):
 │     │      proposalId, e3Id, amount
 │     │    )
 │     │    pendingSlashRoutes[proposalId] = {
-│     │      e3Id, token: ticketToken.underlying(), amount, pending: true
+│     │      e3Id, token: ticketToken.underlying(), amount,
+│     │      pending: true, operator
 │     │    }
 │     │    → Reservation belongs only to (slashingManager, proposalId)
 │     │    → Its refund manager was frozen during E3 dependency setup
@@ -799,17 +815,19 @@ _executeSlash(proposalId):
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
 │     │  │  │  Step B: Update escrow accounting                  │
-│     │  │  │    interfold.escrowSlashedFunds(e3Id, token, amount)│
+│     │  │  │    interfold.escrowSlashedFunds(                    │
+│     │  │  │      e3Id, proposalId, operator, token, amount     │
+│     │  │  │    )                                               │
 │     │  │  │    → e3RefundManager.escrowSlashedFunds(            │
-│     │  │  │        e3Id, token, amount)                          │
+│     │  │  │        e3Id, proposalId, operator, token, amount)   │
 │     │  │  │      │                                             │
-│     │  │  │      ├─ If refund distribution NOT yet calculated:  │
-│     │  │  │      │   _pendingSlashedByToken[e3Id][token] += amt │
-│     │  │  │      │   tokenLiability[token] += amount            │
+│     │  │  │      ├─ Record the proposal target, token, and amount│
+│     │  │  │      ├─ _pendingSlashedByToken[e3Id][token] += amt  │
+│     │  │  │      ├─ tokenLiability[token] += amount             │
 │     │  │  │      │   → Require balance >= protected liability   │
 │     │  │  │      │                                             │
 │     │  │  │      └─ If refund distribution IS calculated:       │
-│     │  │  │          settle token-specific pull claims now      │
+│     │  │  │          settle this proposal's pull claims now     │
 │     │  │  │          → Never mutate fee-token refund buckets    │
 │     │  │  │                                                    │
 │     │  │  │  If EITHER step reverts → both revert together     │
@@ -837,18 +855,21 @@ _executeSlash(proposalId):
 > short-pays the treasury. Booking has already been zeroed before the transfer; the event exists for
 > indexer-side reconciliation (audit M-13).
 
-### Token-Aware Slashed Funds Settlement (Failure Path)
+### Proposal-Aware Slashed Funds Settlement (Failure Path)
 
-```
-settleSlashedFunds(e3Id, actualToken):
+```text
+settleSlashedFunds(e3Id, proposalId):
 │
-├─ Read and clear _pendingSlashedByToken[e3Id][actualToken]
+├─ Read and clear the proposal's target, actual token, and exact amount
 │
 ├─ Read current active committee nodes from the request-time registry
 │   → Faulty operators expelled by failure-triggering policies are excluded
 │
 ├─ If active honest nodes exist:
-│   divide the whole actualToken amount among them
+│   divide the proposal amount among them
+│   → exclude this proposal's target from its own penalty proceeds
+│   → hold only a recipient share covered by an unresolved expulsion
+│   → other recipients receive their claims immediately
 │   → deterministic last-node dust assignment
 │
 ├─ Otherwise:
@@ -877,13 +898,15 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 ├─ Called by Interfold._distributeRewards() when E3 completes successfully
 │
 ├─ Mark success settlement ready
-├─ Every explicitly recorded token settles independently via
-│   settleSlashedFunds(e3Id, actualToken)
+├─ Every proposal settles independently via
+│   settleSlashedFunds(e3Id, proposalId)
 │
 ├─ Load the immutable E3PolicySnapshot captured by Interfold.request
 │   (allocation, treasury, Interfold, registry, bonding registry, policy version)
 ├─ Read activeNodes from the request-time registry at settlement time
 │   → Expelled nodes cannot receive a later slash-funded bonus
+│   → The proposal target cannot receive its own penalty proceeds
+│   → An unresolved accused share is held without blocking peer claims
 ├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
 │   toNodes = escrowed * successSlashedNodeBps / 10000
 │   toTreasury = escrowed - toNodes
@@ -944,35 +967,33 @@ depend on it are terminal.
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 
-```
-Slashing always escrows funds in
-_pendingSlashedByToken[e3Id][ticketUnderlying], regardless of the
-current E3 stage. Settlement never substitutes the E3 fee token.
+```text
+Slashing always records a proposal route and its token aggregate, regardless of the current E3
+stage. Settlement never substitutes the E3 fee token.
 
 ── FAILURE PATH ──────────────────────────────────────────────
 
 Case 1: Slash happens BEFORE processE3Failure
   → escrowSlashedFunds sees !dist.calculated
-  → Funds queued under their actual token and liability protected
-  → When processE3Failure → calculateRefund runs:
-     matching fee-token escrows may settle immediately; every other
-     recorded token is permissionlessly settled with settleSlashedFunds
+  → Funds remain on their proposal route with their actual token protected
+  → After processE3Failure, anyone settles that proposal by proposalId
 
 Case 2: Slash happens AFTER processE3Failure
   → escrowSlashedFunds sees dist.calculated
-  → token-specific honest-node/treasury pull credits are created immediately
+  → proposal-specific honest-node/treasury pull credits are created immediately
   → Base refund claims may already have started; ledgers remain independent
 
 Case 3: Multiple slashes on same E3 (failure)
   → Each slash independently escrows funds
-  → Every token retains an independent pending/claim/liability ledger
+  → Every proposal retains its target, token, amount, and independent settlement
+  → Every token retains an independent claim and liability ledger
 
 ── SUCCESS PATH ──────────────────────────────────────────────
 
 Case 4: E3 completes successfully with escrowed slashed funds
   → _distributeRewards calls distributeSlashedFundsOnSuccess
-  → Enables per-token permissionless settlement
-  → Reads active nodes from the request-time registry when each token settles
+  → Enables per-proposal permissionless settlement
+  → Reads active nodes from the request-time registry when each proposal settles
   → Nodes receive successSlashedNodeBps portion (default 50%)
   → Treasury receives the remainder
 ```
@@ -1086,7 +1107,7 @@ Before an upgrade that introduces proposal-scoped reservations, retry every lega
 until `reservedSlashedTicketBalance` is zero. Fresh deployments need no route migration because each
 reservation already records its manager, proposal, amount, and destination.
 
-```
+```text
 STEP 1: ESCROWING (always, at slash time)
   Triggered by: _executeSlash → reserve + routePendingSlashFunds
   When: Any slash with actualTicketSlashed > 0, regardless of E3 stage
@@ -1094,6 +1115,7 @@ STEP 1: ESCROWING (always, at slash time)
     → loads the proposal's frozen refund manager and exact amount
     → ticketToken.payout(refundManager, amount)
     → actual ticket underlying moves to E3RefundManager
+    → preserve (e3Id, proposalId, target, actualToken, amount)
     → _pendingSlashedByToken[e3Id][actualToken] += amount
     → tokenLiability[actualToken] protects the balance
   Effect: slashedTicketBalance goes UP (during slash) then DOWN (during redirect)
@@ -1102,8 +1124,10 @@ STEP 1: ESCROWING (always, at slash time)
 
 STEP 2a: E3 FAILS → Token-specific compensation
   Triggered by: terminal escrow or permissionless settleSlashedFunds
-  Flow: settleSlashedFunds(e3Id, actualToken)
-    → The entire actual-token slash is divided among active honest nodes
+  Flow: settleSlashedFunds(e3Id, proposalId)
+    → The proposal's actual-token slash is divided among active honest nodes
+    → The target is excluded only from its own penalty proceeds
+    → Shares under unresolved expulsion proposals remain held
     → If there are no honest recipients, the slash goes to the
       snapshotted treasury
     → Credits stay in actualToken; fee-token refund buckets are unchanged
@@ -1111,10 +1135,12 @@ STEP 2a: E3 FAILS → Token-specific compensation
 
 STEP 2b: E3 SUCCEEDS → Nodes + Treasury split
   Triggered by: _distributeRewards → distributeSlashedFundsOnSuccess
-  Flow: each actualToken amount split by successSlashedNodeBps
+  Flow: each proposal amount split by successSlashedNodeBps
     → Nodes receive their share evenly (with dust to last)
+    → Proposal targets and expelled operators do not receive slash proceeds
+    → Only an unresolved accused share waits for its outcome
     → Treasury receives the remainder
-  Effect: only _pendingSlashedByToken[e3Id][actualToken] is cleared
+  Effect: the proposal route is cleared and its token aggregate decreases
 
 FALLBACK: RETRY, NOT OWNER RELABELING
   Failed routes remain reserved in BondingRegistry and retryable by anyone.
@@ -1265,3 +1291,6 @@ expulsion handling; the full contract log is also retained by the raw EVM observ
 
 - `SlashingManager` is **non-upgradeable** by design (transparent proxy removed). Migrations require
   redeployment + GOVERNANCE_ROLE rotation on `BondingRegistry`/`Interfold`.
+- Install the entitlement-aware `E3RefundManager` only when no E3 or expelling proposal is in
+  flight. Existing policy snapshots do not contain a slashing-manager address, and existing
+  proposals cannot be backfilled safely. Fresh deployments need no migration.
