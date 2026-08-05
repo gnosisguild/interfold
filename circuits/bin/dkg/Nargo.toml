@@ -5,5 +5,7 @@ members = [
     "share_decryption",
     "sk_share_computation",
     "e_sm_share_computation",
+    "sk_share_computation_base",
+    "e_sm_share_computation_base",
+    "share_computation_chunk",
 ]
-
