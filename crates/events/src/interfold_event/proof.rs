@@ -148,6 +148,18 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
+    /// C2a base proof used by the chunked accumulator.
+    SkShareComputationBase,
+    /// C2b base proof used by the chunked accumulator.
+    ESmShareComputationBase,
+    /// One coefficient-range proof used by the chunked accumulator.
+    ShareComputationChunk,
+    /// Sequential C2 chunk accumulator.
+    C2ChunkFold,
+    /// Bootstrap circuit for [`CircuitName::C2ChunkFold`] genesis proof.
+    C2ChunkFoldKernel,
+    /// Terminal projection from a complete C2 chunk accumulator to C2 layout.
+    C2ChunkFinalize,
 }
 
 impl CircuitName {
@@ -157,6 +169,9 @@ impl CircuitName {
             CircuitName::PkGeneration => "pk_generation",
             CircuitName::SkShareComputation => "sk_share_computation",
             CircuitName::ESmShareComputation => "e_sm_share_computation",
+            CircuitName::SkShareComputationBase => "sk_share_computation_base",
+            CircuitName::ESmShareComputationBase => "e_sm_share_computation_base",
+            CircuitName::ShareComputationChunk => "share_computation_chunk",
             CircuitName::ShareEncryption => "share_encryption",
             CircuitName::DkgShareDecryption => "share_decryption",
             CircuitName::PkAggregation => "pk_aggregation",
@@ -164,6 +179,9 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
+            CircuitName::C2ChunkFold => "c2_chunk_fold",
+            CircuitName::C2ChunkFoldKernel => "c2_chunk_fold_kernel",
+            CircuitName::C2ChunkFinalize => "c2_chunk_finalize",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -182,6 +200,9 @@ impl CircuitName {
             CircuitName::PkBfv => "dkg",
             CircuitName::SkShareComputation => "dkg",
             CircuitName::ESmShareComputation => "dkg",
+            CircuitName::SkShareComputationBase => "dkg",
+            CircuitName::ESmShareComputationBase => "dkg",
+            CircuitName::ShareComputationChunk => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
@@ -190,6 +211,9 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkFold
+            | CircuitName::C2ChunkFoldKernel
+            | CircuitName::C2ChunkFinalize
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -218,9 +242,11 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
-                CircuitOutputLayout::Dynamic
-            }
+            CircuitName::SkShareComputation
+            | CircuitName::ESmShareComputation
+            | CircuitName::SkShareComputationBase
+            | CircuitName::ESmShareComputationBase => CircuitOutputLayout::Dynamic,
+            CircuitName::ShareComputationChunk => CircuitOutputLayout::None,
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
             },
@@ -236,6 +262,9 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkFold
+            | CircuitName::C2ChunkFoldKernel
+            | CircuitName::C2ChunkFinalize
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold

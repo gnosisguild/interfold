@@ -15,8 +15,10 @@ use lib::configs::default::N_PARTIES;
 
 pub global C2_BASE_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD) + SHARE_COMPUTATION_N_CHUNKS;
 pub global C2_CHUNK_PUBLIC_LEN: u32 = 2;
-pub global C2_CHUNK_FOLD_PUBLIC_LEN: u32 =
+pub global C2_CHUNK_FOLD_PREFIX_LEN: u32 = 6;
+pub global C2_CHUNK_FOLD_STATE_LEN: u32 =
     1 + (N_PARTIES * L_THRESHOLD) + (2 * SHARE_COMPUTATION_N_CHUNKS);
+pub global C2_CHUNK_FOLD_PUBLIC_LEN: u32 = C2_CHUNK_FOLD_PREFIX_LEN + C2_CHUNK_FOLD_STATE_LEN;
 
 fn main(
     base_vk: UltraHonkVerificationKey,

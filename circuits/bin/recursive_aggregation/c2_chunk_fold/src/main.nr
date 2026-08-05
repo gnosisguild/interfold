@@ -23,8 +23,14 @@ pub global C2_BASE_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + SHARE_COMPUTATION_N_CHUNKS;
 /// Chunk public fields: commitment and public chunk index.
 pub global C2_CHUNK_PUBLIC_LEN: u32 = 2;
 
-/// Accumulator fields: base commitments, coverage flags, and the final C2 fields.
-pub global C2_CHUNK_FOLD_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + (2 * SHARE_COMPUTATION_N_CHUNKS);
+/// Public parameters exposed by each fold step.
+pub global C2_CHUNK_FOLD_PREFIX_LEN: u32 = 6;
+
+/// Accumulator state: base commitments, coverage flags, and the final C2 fields.
+pub global C2_CHUNK_FOLD_STATE_LEN: u32 = C2_PUBLIC_LEN + (2 * SHARE_COMPUTATION_N_CHUNKS);
+
+/// Full public signal length for a fold proof.
+pub global C2_CHUNK_FOLD_PUBLIC_LEN: u32 = C2_CHUNK_FOLD_PREFIX_LEN + C2_CHUNK_FOLD_STATE_LEN;
 
 pub global C2_CHUNK_FOLD_BASE_OFFSET: u32 = 0;
 pub global C2_CHUNK_FOLD_FLAGS_OFFSET: u32 = SHARE_COMPUTATION_N_CHUNKS;
@@ -76,13 +82,17 @@ fn main(
         }
     } else {
         for chunk in 0..SHARE_COMPUTATION_N_CHUNKS {
-            base_chunks[chunk] = acc_public_inputs[C2_CHUNK_FOLD_BASE_OFFSET + chunk];
-            flags[chunk] = acc_public_inputs[C2_CHUNK_FOLD_FLAGS_OFFSET + chunk];
+            base_chunks[chunk] =
+                acc_public_inputs[C2_CHUNK_FOLD_PREFIX_LEN + C2_CHUNK_FOLD_BASE_OFFSET + chunk];
+            flags[chunk] =
+                acc_public_inputs[C2_CHUNK_FOLD_PREFIX_LEN + C2_CHUNK_FOLD_FLAGS_OFFSET + chunk];
         }
-        expected_secret_commitment = acc_public_inputs[C2_CHUNK_FOLD_C2_OFFSET];
+        expected_secret_commitment =
+            acc_public_inputs[C2_CHUNK_FOLD_PREFIX_LEN + C2_CHUNK_FOLD_C2_OFFSET];
         for party_idx in 0..N_PARTIES {
             for mod_idx in 0..L_THRESHOLD {
-                party_commitments[party_idx][mod_idx] = acc_public_inputs[C2_CHUNK_FOLD_C2_OFFSET
+                party_commitments[party_idx][mod_idx] = acc_public_inputs[C2_CHUNK_FOLD_PREFIX_LEN
+                    + C2_CHUNK_FOLD_C2_OFFSET
                     + 1
                     + party_idx * L_THRESHOLD
                     + mod_idx];
