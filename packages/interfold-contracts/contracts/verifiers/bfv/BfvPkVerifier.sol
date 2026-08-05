@@ -46,7 +46,7 @@ contract BfvPkVerifier is IPkVerifier {
     uint256 internal constant DKG_RETURN_TAIL_LEN = 2;
 
     /// @notice Honest-set size `H` (`party_ids` length); must match the compiled DkgAggregator circuit.
-    uint256 public immutable h;
+    uint256 public immutable override h;
 
     /// @dev `publicInputs` index for `committee_hash_hi` (after VK anchors and `party_ids`).
     uint256 internal immutable committeeHashHiIdx;

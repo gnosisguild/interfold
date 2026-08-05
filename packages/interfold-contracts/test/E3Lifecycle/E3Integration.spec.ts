@@ -67,8 +67,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     ] = await ethers.getSigners();
 
     const sys = await deployInterfoldSystem({
-      bfvParams: "large",
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
       deployCircuitVerifier: true,
       maxDuration: THIRTY_DAYS,
       mintUsdcTo: [],

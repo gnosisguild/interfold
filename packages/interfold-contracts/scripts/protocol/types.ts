@@ -54,7 +54,7 @@ export interface ProtocolConfigFile {
       quorum: string;
       total: string;
     }>;
-    registerDefaultBfvParamSets: boolean;
+    registerActiveBfvParamSet: boolean;
     allowFeeToken: boolean;
   };
   verifiers?: {

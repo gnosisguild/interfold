@@ -56,7 +56,6 @@ import { ethers, ignition, networkHelpers } from "./connection";
 import {
   ADDRESS_ONE,
   BFV_PARAMS_DEFAULT,
-  BFV_PARAMS_LARGE,
   COMMITTEE_SIZE_MINIMUM,
   COMMITTEE_THRESHOLDS_DEFAULT,
   DEFAULT_TIMEOUT_CONFIG,
@@ -82,10 +81,8 @@ export interface TimeoutConfig {
 
 /**
  * `[CommitteeSize enum value, [M, N]]` passed to `Interfold.setCommitteeThresholds`.
- * On-chain: `threshold[0]` = viability quorum M (registry `thresholdM`, pricing `m`);
- * `threshold[1]` = committee size N. See {@link COMMITTEE_THRESHOLDS_DEFAULT}
- * (`[T, N]`, test/pricing default) vs {@link COMMITTEE_THRESHOLDS_ONCHAIN} (`[H, N]`,
- * production deploy).
+ * On-chain: `threshold[0]` = required honest roster H and `threshold[1]` =
+ * committee size N. Pricing resolves the circuit threshold T separately.
  */
 export type CommitteeThreshold = [number, [number, number]];
 
@@ -119,10 +116,7 @@ export interface DeployInterfoldSystemOptions {
   wireSlashingManager?: boolean;
   /**
    * `setCommitteeThresholds` pairs to install before operators are onboarded.
-   * Defaults to {@link COMMITTEE_THRESHOLDS_DEFAULT} — `[T, N]` for pricing /
-   * lifecycle specs. Override with {@link COMMITTEE_THRESHOLDS_ONCHAIN} for
-   * production `[H, N]` viability, or {@link COMMITTEE_THRESHOLDS_FAULT_TOLERANCE}
-   * for slashing expulsion harnesses.
+   * Defaults to the canonical `[H, N]` configurations.
    */
   committeeThresholds?: CommitteeThreshold[];
   /**
@@ -139,12 +133,6 @@ export interface DeployInterfoldSystemOptions {
    * Pass `0` to skip operator onboarding entirely.
    */
   setupOperators?: number;
-  /**
-   * BFV parameter set to register as `paramSet 0`.
-   *  - `"default"` → degree 512 (used by short tests)
-   *  - `"large"`   → degree 2048 (used by integration tests)
-   */
-  bfvParams?: "default" | "large";
   /** Program registered atomically by `Interfold.initialize`. */
   initialE3Program?: string;
   /**
@@ -235,8 +223,6 @@ export async function deployInterfoldSystem(
   const timeoutConfig = opts.timeoutConfig ?? DEFAULT_TIMEOUT_CONFIG;
   const wireSlashingManager = opts.wireSlashingManager ?? true;
   const setupOperators = opts.setupOperators ?? 3;
-  const bfvParams =
-    opts.bfvParams === "large" ? BFV_PARAMS_LARGE : BFV_PARAMS_DEFAULT;
   const committeeThresholds: CommitteeThreshold[] =
     opts.committeeThresholds ??
     (COMMITTEE_THRESHOLDS_DEFAULT.map(
@@ -512,7 +498,7 @@ export async function deployInterfoldSystem(
   if (!(await interfold.e3Programs(await e3Program.getAddress()))) {
     await interfold.registerE3Program(await e3Program.getAddress());
   }
-  await interfold.setParamSet(0, bfvParams);
+  await interfold.setParamSet(0, BFV_PARAMS_DEFAULT);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,
     await decryptionVerifier.getAddress(),

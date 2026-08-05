@@ -8,6 +8,7 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 
 /**
  * @title InterfoldPricing
@@ -26,26 +27,6 @@ library InterfoldPricing {
         IERC20 indexed token,
         uint256 amount
     );
-
-    /// @notice Mirrors the threshold / min-size gates at the top of
-    ///         {Interfold.getE3Quote} (post param-set existence check).
-    /// @param committeeSize  ABI-encoded as `uint8` to avoid qualified enum
-    ///                       names in the library ABI (ethers v6 rejects
-    ///                       `IInterfold.CommitteeSize`).
-    function validateQuoteThresholds(
-        uint32[2] memory threshold,
-        uint8 committeeSize,
-        uint32 minCommitteeSize,
-        uint32 minThreshold
-    ) external pure {
-        IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
-        if (threshold[1] == 0)
-            revert IInterfold.CommitteeSizeNotConfigured(size);
-        if (minCommitteeSize > 0 && threshold[1] < minCommitteeSize)
-            revert IInterfold.CommitteeSizeTooSmall(size);
-        if (minThreshold > 0 && threshold[0] < minThreshold)
-            revert IInterfold.ThresholdTooSmall(threshold[0]);
-    }
 
     /// @notice Mirrors {Interfold.setPricingConfig} validation.
     function validatePricingConfig(
@@ -116,7 +97,9 @@ library InterfoldPricing {
     /// @param pc                  Snapshot of `_pricingConfig`.
     /// @param tc                  Snapshot of `_timeoutConfig`.
     /// @param sortitionWindow     Result of `ciphernodeRegistry.sortitionSubmissionWindow()`.
-    /// @param threshold           `[quorum, total]` resolved from `committeeThresholds`.
+    /// @param paramSet            BFV parameter-set enum value.
+    /// @param committeeSize       Committee-size enum value.
+    /// @param threshold           `[H, N]` resolved from `committeeThresholds`.
     /// @param requestTime         Timestamp used for request validation and pricing.
     /// @param inputWindowStart    `requestParams.inputWindow[0]`.
     /// @param inputWindowEnd      `requestParams.inputWindow[1]`.
@@ -124,6 +107,8 @@ library InterfoldPricing {
         IInterfold.PricingConfig calldata pc,
         IInterfold.E3TimeoutConfig calldata tc,
         uint256 sortitionWindow,
+        uint8 paramSet,
+        uint8 committeeSize,
         uint32[2] calldata threshold,
         uint256 requestTime,
         uint256 inputWindowStart,
@@ -142,8 +127,19 @@ library InterfoldPricing {
                 );
         }
 
-        uint256 n = uint256(threshold[1]); // total committee size
-        uint256 m = uint256(threshold[0]); // quorum/decryption threshold
+        if (paramSet != ActiveCryptoConfig.PARAM_SET)
+            revert IInterfold.UnsupportedCryptoConfig();
+        IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
+        if (threshold[1] == 0)
+            revert IInterfold.CommitteeSizeNotConfigured(size);
+        if (pc.minCommitteeSize > 0 && threshold[1] < pc.minCommitteeSize)
+            revert IInterfold.CommitteeSizeTooSmall(size);
+        if (pc.minThreshold > 0 && threshold[0] < pc.minThreshold)
+            revert IInterfold.ThresholdTooSmall(threshold[0]);
+
+        ActiveCryptoConfig.validateCommittee(committeeSize, threshold);
+        uint256 n = ActiveCryptoConfig.N;
+        uint256 m = ActiveCryptoConfig.T;
 
         uint256 duration = _billableDuration(
             pc,
@@ -154,11 +150,27 @@ library InterfoldPricing {
             inputWindowEnd
         );
 
+        uint256 baseFee = _baseFee(pc, n, m, duration);
+
+        // Apply margin markup
+        fee =
+            (baseFee * (uint256(BPS_BASE) + uint256(pc.marginBps))) /
+            uint256(BPS_BASE);
+
+        if (fee == 0) revert IInterfold.PaymentRequired(fee);
+    }
+
+    function _baseFee(
+        IInterfold.PricingConfig calldata pc,
+        uint256 n,
+        uint256 m,
+        uint256 duration
+    ) private pure returns (uint256 baseFee) {
         // ZK proof count per node: 14 fixed + 4 × (N-1) scaling.
         uint256 proofsPerNode = 14 + 4 * (n - 1);
 
         // Key generation cost: fixed per-node + per-proof (quadratic in n)
-        uint256 baseFee = pc.keyGenFixedPerNode * n;
+        baseFee = pc.keyGenFixedPerNode * n;
         baseFee += pc.keyGenPerEncryptionProof * n * proofsPerNode;
 
         // Key generation coordination cost (quadratic in n)
@@ -181,13 +193,6 @@ library InterfoldPricing {
 
         // Publication base cost
         baseFee += pc.publicationBase;
-
-        // Apply margin markup
-        fee =
-            (baseFee * (uint256(BPS_BASE) + uint256(pc.marginBps))) /
-            uint256(BPS_BASE);
-
-        if (fee == 0) revert IInterfold.PaymentRequired(fee);
     }
 
     function _billableDuration(

@@ -50,7 +50,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
   const setup = async () => {
     const sys = await deployInterfoldSystem({
       mintUsdcTo: [],
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
     });
     const {
       owner,

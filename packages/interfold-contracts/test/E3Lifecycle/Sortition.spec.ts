@@ -62,7 +62,7 @@ async function fundOperator(
 
 async function deployStack() {
   const sys = await deployInterfoldSystem({
-    committeeThresholds: [[0, [1, 3]]],
+    committeeThresholds: [[0, [2, 3]]],
   });
   const {
     owner,

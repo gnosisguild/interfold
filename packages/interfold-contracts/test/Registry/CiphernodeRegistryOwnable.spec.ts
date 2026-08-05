@@ -34,8 +34,7 @@ describe("CiphernodeRegistryOwnable", function () {
   async function setup() {
     const sys = await deployInterfoldSystem({
       submissionWindow: SORTITION_SUBMISSION_WINDOW,
-      bfvParams: "large",
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
     });
     const request = (signer?: Signer) =>
       makeRequest(

@@ -46,7 +46,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   // one using MockBlacklistUSDC as the fee token (blacklist isolation tests).
   const makeFixture = (useBlacklistToken: boolean) => async () => {
     const sys = await deployInterfoldSystem({
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
       useBlacklistFeeToken: useBlacklistToken,
     });
     const {

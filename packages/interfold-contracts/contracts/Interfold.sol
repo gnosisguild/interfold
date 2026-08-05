@@ -21,6 +21,7 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { InterfoldLifecycle } from "./lib/InterfoldLifecycle.sol";
 import { InterfoldPricing } from "./lib/InterfoldPricing.sol";
+import { ActiveCryptoConfig } from "./lib/ActiveCryptoConfig.sol";
 
 /**
  * @title Interfold
@@ -41,7 +42,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     uint256 public constant MAX_TIMEOUT_WINDOW = 30 days;
 
     /// @notice Upper bound on configured committee size.
-    uint32 public constant MAX_COMMITTEE_SIZE = 256;
+    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.N;
 
     /// @notice Cap on {PricingConfig.protocolShareBps}. Protocol share
     ///         is hard-capped at 50% so a compromised owner cannot route an
@@ -664,6 +665,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId,
         IDecryptionVerifier decryptionVerifier
     ) external onlyOwner {
+        InterfoldLifecycle.validateDecryptionVerifier(
+            address(decryptionVerifier)
+        );
         require(
             decryptionVerifier != IDecryptionVerifier(address(0)) &&
                 decryptionVerifiers[encryptionSchemeId] != decryptionVerifier,
@@ -678,6 +682,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId,
         IPkVerifier pkVerifier
     ) external onlyOwner {
+        InterfoldLifecycle.validatePkVerifier(address(pkVerifier));
         require(
             address(pkVerifier) != address(0) &&
                 pkVerifiers[encryptionSchemeId] != pkVerifier,
@@ -702,25 +707,20 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         emit EncryptionSchemeDisabled(encryptionSchemeId);
     }
 
-    /// @notice Registers or updates ABI-encoded BFV parameters for a param
-    ///         set index.
-    /// @dev Owner may overwrite an existing slot. The previous value
-    ///      is emitted via {ParamSetUpdated} so off-chain consumers can
-    ///      reconcile state. Fresh registrations emit {ParamSetRegistered}.
+    /// @notice Registers the parameter set compiled into the active circuits.
     /// @param paramSet The param set index (0 = Insecure512, 1 = Secure8192, ...).
     /// @param encodedParams ABI-encoded BFV parameters (degree, plaintext_modulus, moduli[]).
     function setParamSet(
         uint8 paramSet,
         bytes calldata encodedParams
     ) external onlyOwner {
-        require(encodedParams.length > 0, "Empty params");
-        bytes memory previous = paramSetRegistry[paramSet];
+        InterfoldLifecycle.validateParamSet(
+            paramSet,
+            keccak256(encodedParams),
+            paramSetRegistry[paramSet].length != 0
+        );
         paramSetRegistry[paramSet] = encodedParams;
-        if (previous.length == 0) {
-            emit ParamSetRegistered(paramSet, encodedParams);
-        } else {
-            emit ParamSetUpdated(paramSet, previous, encodedParams);
-        }
+        emit ParamSetRegistered(paramSet, encodedParams);
     }
 
     /// @notice Sets the E3 Refund Manager contract address
@@ -1010,10 +1010,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ) external onlyOwner {
         PricingConfig memory pc = _pricingConfig;
         InterfoldLifecycle.validateCommitteeThresholds(
+            uint8(size),
             threshold,
             pc.minCommitteeSize,
-            pc.minThreshold,
-            MAX_COMMITTEE_SIZE
+            pc.minThreshold
         );
         committeeThresholds[size] = threshold;
         emit CommitteeThresholdsUpdated(size, threshold);
@@ -1070,14 +1070,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint32[2] memory threshold = committeeThresholds[
             requestParams.committeeSize
         ];
-        PricingConfig memory pc = _pricingConfig;
-        InterfoldPricing.validateQuoteThresholds(
-            threshold,
-            uint8(requestParams.committeeSize),
-            pc.minCommitteeSize,
-            pc.minThreshold
-        );
-
         // Pure fee math is delegated to {InterfoldPricing.quote} (external
         // library link) to keep the deployed Interfold runtime bytecode under
         // the EIP-170 24,576-byte cap. Inputs are snapshotted into calldata
@@ -1087,6 +1079,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _pricingConfig,
             _timeoutConfig,
             ciphernodeRegistry.sortitionSubmissionWindow(),
+            requestParams.paramSet,
+            uint8(requestParams.committeeSize),
             threshold,
             block.timestamp,
             requestParams.inputWindow[0],

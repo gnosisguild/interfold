@@ -8,6 +8,8 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
+import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
+import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 
 /**
  * @title InterfoldLifecycle
@@ -224,15 +226,12 @@ library InterfoldLifecycle {
 
     /// @notice Checks the committee threshold configuration.
     function validateCommitteeThresholds(
+        uint8 committeeSize,
         uint32[2] calldata threshold,
         uint32 minCommitteeSize,
-        uint32 minThreshold,
-        uint32 maxCommitteeSize
+        uint32 minThreshold
     ) external pure {
-        if (threshold[0] == 0 || threshold[1] < threshold[0])
-            revert IInterfold.InvalidThresholdValues();
-        if (threshold[1] > maxCommitteeSize)
-            revert IInterfold.InvalidThresholdValues();
+        ActiveCryptoConfig.validateCommittee(committeeSize, threshold);
         if (minCommitteeSize > 0 && threshold[1] < minCommitteeSize)
             revert IInterfold.BelowMinCommitteeSize(
                 threshold[1],
@@ -240,6 +239,41 @@ library InterfoldLifecycle {
             );
         if (minThreshold > 0 && threshold[0] < minThreshold)
             revert IInterfold.BelowMinThreshold(threshold[0], minThreshold);
+    }
+
+    /// @notice Checks an append-only parameter-set registration.
+    function validateParamSet(
+        uint8 paramSet,
+        bytes32 paramSetHash,
+        bool alreadyRegistered
+    ) external pure {
+        if (alreadyRegistered)
+            revert IInterfold.ParamSetAlreadyRegistered(paramSet);
+        ActiveCryptoConfig.validateParamSet(paramSet, paramSetHash);
+    }
+
+    /// @notice Checks that a PK verifier matches the active DKG circuit.
+    function validatePkVerifier(address verifier) external view {
+        if (verifier.code.length == 0)
+            revert IInterfold.InvalidEncryptionScheme(bytes32(0));
+        uint256 actual = IPkVerifier(verifier).h();
+        if (actual != ActiveCryptoConfig.H)
+            revert IInterfold.VerifierThresholdMismatch(
+                actual,
+                ActiveCryptoConfig.H
+            );
+    }
+
+    /// @notice Checks that a decryption verifier matches the active circuit.
+    function validateDecryptionVerifier(address verifier) external view {
+        if (verifier.code.length == 0)
+            revert IInterfold.InvalidEncryptionScheme(bytes32(0));
+        uint256 actual = IDecryptionVerifier(verifier).threshold();
+        if (actual != ActiveCryptoConfig.T)
+            revert IInterfold.VerifierThresholdMismatch(
+                actual,
+                ActiveCryptoConfig.T
+            );
     }
 
     /// @notice Checks the request input window and total duration.

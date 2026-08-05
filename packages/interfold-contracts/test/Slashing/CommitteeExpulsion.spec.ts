@@ -18,9 +18,8 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import {
-  COMMITTEE_SIZE_MICRO,
   COMMITTEE_SIZE_MINIMUM,
-  COMMITTEE_THRESHOLDS_FAULT_TOLERANCE,
+  COMMITTEE_THRESHOLDS_ONCHAIN,
   LARGE_TIMEOUT_CONFIG,
   ONE_DAY,
   SORTITION_SUBMISSION_WINDOW,
@@ -54,9 +53,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     const requesterAddress = await requester.getAddress();
 
     const sys = await deployInterfoldSystem({
-      bfvParams: "large",
       timeoutConfig: LARGE_TIMEOUT_CONFIG,
-      committeeThresholds: COMMITTEE_THRESHOLDS_FAULT_TOLERANCE.map(
+      committeeThresholds: COMMITTEE_THRESHOLDS_ONCHAIN.map(
         ([size, [min, max]]) =>
           [size, [min, max]] as [number, [number, number]],
       ),
@@ -531,77 +529,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     });
   });
 
-  describe("E3 continues above threshold", function () {
-    it("should allow multiple expulsions while staying above threshold", async function () {
-      const {
-        interfold,
-        registry,
-        slashingManager,
-        operator1,
-        operator2,
-        operator3,
-        operator4,
-        setupOperator,
-        makeRequest,
-        finalizeCommitteeWithOperators,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-      await setupOperator(operator4);
-
-      await makeRequest(COMMITTEE_SIZE_MICRO); // M=2, N=4
-      await finalizeCommitteeWithOperators(0, [
-        operator1,
-        operator2,
-        operator3,
-        operator4,
-      ]);
-
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(4);
-
-      // Expel 2 out of 4 — still have 2 >= M=2
-      const evExpel1 = ethers.hexlify(ethers.toUtf8Bytes("expel1"));
-      const proof1 = await signAndEncodeAttestation(
-        [operator2, operator3],
-        0,
-        await operator1.getAddress(),
-        await slashingManager.getAddress(),
-        0,
-        31337,
-        evExpel1,
-      );
-      await slashingManager.proposeSlash(
-        0,
-        await operator1.getAddress(),
-        proof1,
-      );
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(3);
-
-      const evExpel2 = ethers.hexlify(ethers.toUtf8Bytes("expel2"));
-      const proof2 = await signAndEncodeAttestation(
-        [operator3, operator4],
-        0,
-        await operator2.getAddress(),
-        await slashingManager.getAddress(),
-        0,
-        31337,
-        evExpel2,
-      );
-      await slashingManager.proposeSlash(
-        0,
-        await operator2.getAddress(),
-        proof2,
-      );
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(2);
-
-      // E3 should NOT be failed
-      const stage = await interfold.getE3Stage(0);
-      expect(stage).to.not.equal(6);
-    });
-  });
-
   describe("E3 fails below threshold", function () {
     it("should fail E3 exactly at the threshold breach via Lane B", async function () {
       const {
@@ -685,14 +612,13 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       expect(stage).to.equal(6); // Failed
     });
 
-    it("should not fail E3 twice on multiple sub-threshold expulsions", async function () {
+    it("stops proof-based expulsions at the viability threshold", async function () {
       const {
         interfold,
         slashingManager,
         operator1,
         operator2,
         operator3,
-        operator4,
         setupOperator,
         makeRequest,
         finalizeCommitteeWithOperators,
@@ -701,17 +627,15 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator1);
       await setupOperator(operator2);
       await setupOperator(operator3);
-      await setupOperator(operator4);
 
-      await makeRequest(COMMITTEE_SIZE_MICRO); // M=2, N=4
+      await makeRequest(COMMITTEE_SIZE_MINIMUM);
       await finalizeCommitteeWithOperators(0, [
         operator1,
         operator2,
         operator3,
-        operator4,
       ]);
 
-      // Expel operator1 — still viable (3 >= 2)
+      // Expel one member. The two remaining members still meet H=2.
       const evExpelOp1 = ethers.hexlify(ethers.toUtf8Bytes("expel-op1"));
       const proof1 = await signAndEncodeAttestation(
         [operator2, operator3],
@@ -728,44 +652,22 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         proof1,
       );
 
-      // Expel operator2 — still viable (2 >= 2)
-      const evExpelOp2 = ethers.hexlify(ethers.toUtf8Bytes("expel-op2"));
-      const proof2 = await signAndEncodeAttestation(
-        [operator3, operator4],
-        0,
-        await operator2.getAddress(),
-        await slashingManager.getAddress(),
-        0,
-        31337,
-        evExpelOp2,
-      );
-      await slashingManager.proposeSlash(
-        0,
-        await operator2.getAddress(),
-        proof2,
-      );
+      const stage = await interfold.getE3Stage(0);
+      expect(stage).to.not.equal(6);
 
-      let stage = await interfold.getE3Stage(0);
-      expect(stage).to.not.equal(6); // Not failed yet
-
-      // At this point only operator3 and operator4 are active (2 == M=2).
-      // Lane A cannot slash further: to expel operator3, we need M=2 non-accused
-      // active voters, but only operator4 is available (1 < 2).
-      // This proves Lane A naturally stops at M active members.
-      // Lane B (SLASHER_ROLE) is required for the final slash.
-      // TODO: See GitHub issue — "Lane B governance flow for M-threshold slashing"
+      // One non-accused signer cannot authorize another expulsion at H=2.
       await expect(
         slashingManager.proposeSlash(
           0,
-          await operator3.getAddress(),
+          await operator2.getAddress(),
           await signAndEncodeAttestation(
-            [operator4],
+            [operator3],
             0,
-            await operator3.getAddress(),
+            await operator2.getAddress(),
             await slashingManager.getAddress(),
             0,
             31337,
-            ethers.hexlify(ethers.toUtf8Bytes("expel-op3")),
+            ethers.hexlify(ethers.toUtf8Bytes("expel-op2")),
           ),
         ),
       ).to.be.revertedWithCustomError(
@@ -773,7 +675,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         "InsufficientAttestations",
       );
 
-      // E3 stage should still NOT be Failed — only 2 active, which equals M
       const stageAfter = await interfold.getE3Stage(0);
       expect(stageAfter).to.not.equal(6);
     });

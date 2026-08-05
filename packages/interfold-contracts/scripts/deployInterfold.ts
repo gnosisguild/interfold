@@ -23,7 +23,13 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
-import { isLocalDeploymentChain } from "./utils";
+import {
+  ACTIVE_BFV_COMMITTEE_N,
+  ACTIVE_BFV_COMMITTEE_SIZE,
+  ACTIVE_BFV_PARAM_SET,
+  BFV_DKG_H,
+  isLocalDeploymentChain,
+} from "./utils";
 
 // BFV parameter presets — hardcoded from crates/fhe-params/src/constants.rs
 // to avoid a cyclic dependency on @interfold/sdk.
@@ -445,24 +451,21 @@ export const deployInterfold = async (
 
   // E3RefundManager already has correct interfold from deployment
 
-  // Initialize committee size thresholds [quorum, total] (H, N)
-  console.log("Setting committee thresholds...");
-  // Minimum: H=2, N=3 (T=1)
-  await interfold.setCommitteeThresholds(0, [2, 3]);
-  // Micro: H=5, N=9 (T=4)
-  await interfold.setCommitteeThresholds(1, [5, 9]);
-  // Small: H=10, N=19 (T=9)
-  await interfold.setCommitteeThresholds(2, [10, 19]);
+  console.log("Setting the active committee configuration...");
+  await interfold.setCommitteeThresholds(ACTIVE_BFV_COMMITTEE_SIZE, [
+    BFV_DKG_H,
+    ACTIVE_BFV_COMMITTEE_N,
+  ]);
   console.log(
-    "Committee thresholds set (Minimum=[2,3], Micro=[5,9], Small=[10,19])",
+    `Active committee configuration set to [${BFV_DKG_H},${ACTIVE_BFV_COMMITTEE_N}]`,
   );
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  await interfold.setParamSet(0, encodedInsecure); // ParamSet.Insecure512
-  await interfold.setParamSet(1, encodedSecure); // ParamSet.Secure8192
-  console.log("ParamSet.Insecure512 registered");
-  console.log("ParamSet.Secure8192 registered");
+  const activeParams =
+    ACTIVE_BFV_PARAM_SET === 0 ? encodedInsecure : encodedSecure;
+  await interfold.setParamSet(ACTIVE_BFV_PARAM_SET, activeParams);
+  console.log(`Active BFV parameter set ${ACTIVE_BFV_PARAM_SET} registered`);
 
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
 

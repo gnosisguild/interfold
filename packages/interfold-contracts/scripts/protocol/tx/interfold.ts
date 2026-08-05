@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { ACTIVE_BFV_PARAM_SET } from "../../utils";
 import { BFV_PARAMS } from "../constants";
 import { safeTx } from "../safe";
 import type {
@@ -69,20 +70,17 @@ function appendCommitteeAndPricingTxs(
       ),
     );
   }
-  if (config.interfold.registerDefaultBfvParamSets) {
+  if (config.interfold.registerActiveBfvParamSet) {
+    const activeParams =
+      ACTIVE_BFV_PARAM_SET === 0
+        ? BFV_PARAMS.insecure512
+        : BFV_PARAMS.secure8192;
     txs.push(
       safeTx(
         c.interfold,
         i.interfold.encodeFunctionData("setParamSet", [
-          0,
-          encodeBfvParams(BFV_PARAMS.insecure512),
-        ]),
-      ),
-      safeTx(
-        c.interfold,
-        i.interfold.encodeFunctionData("setParamSet", [
-          1,
-          encodeBfvParams(BFV_PARAMS.secure8192),
+          ACTIVE_BFV_PARAM_SET,
+          encodeBfvParams(activeParams),
         ]),
       ),
     );

@@ -94,6 +94,9 @@ export function getRepoRoot(): string {
  */
 export const BFV_DKG_H = 2;
 export const BFV_THRESHOLD_T = 1;
+export const ACTIVE_BFV_PARAM_SET = 0;
+export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
+export const ACTIVE_BFV_COMMITTEE_N = 3;
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {

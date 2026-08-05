@@ -104,7 +104,7 @@ describe("E3 Pricing", function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
 
-      // Get the resolved threshold for Minimum (committeeSize = 0) → [1, 3]
+      // Minimum uses circuit threshold T=1 and committee size N=3.
       const n = 3n; // total committee
       const m = 1n; // quorum
 
@@ -143,23 +143,6 @@ describe("E3 Pricing", function () {
 
       const actualFee = await interfold.getE3Quote(request);
       expect(actualFee).to.equal(expectedFee);
-    });
-
-    it("fee increases with larger committee size", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const minimumFee = await interfold.getE3Quote(request);
-
-      // Build request with Micro committee (larger)
-      const now = await time.latest();
-      const microRequest = {
-        ...request,
-        committeeSize: 1, // Micro → [4, 9]
-        inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
-      };
-      const microFee = await interfold.getE3Quote(microRequest);
-
-      expect(microFee).to.be.gt(minimumFee);
     });
 
     it("fee increases with longer input window", async function () {
@@ -334,39 +317,49 @@ describe("E3 Pricing", function () {
       ).to.be.revertedWithCustomError(interfold, "MinSizeBelowMinThreshold");
     });
 
-    it("enforces bounds on setCommitteeThresholds", async function () {
+    it("accepts only circuit-backed committee configurations", async function () {
       const { interfold } = await loadFixture(setup);
-      const cap = await interfold.MAX_COMMITTEE_SIZE();
 
-      // Set minimum bounds via pricing config
+      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(3);
+      await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
+      await expect(
+        interfold.setCommitteeThresholds(0, [1, 3]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(
+        interfold.setCommitteeThresholds(1, [5, 9]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(
+        interfold.setCommitteeThresholds(2, [10, 19]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+    });
+
+    it("applies pricing minimums to canonical committee configurations", async function () {
+      const { interfold } = await loadFixture(setup);
+
       await interfold.setPricingConfig({
         ...defaultPricingConfig,
         minCommitteeSize: 5,
         minThreshold: 3,
       });
-
-      // Should fail: committee size 4 < min 5
       await expect(
-        interfold.setCommitteeThresholds(0, [3, 4]),
+        interfold.setCommitteeThresholds(0, [2, 3]),
       ).to.be.revertedWithCustomError(interfold, "BelowMinCommitteeSize");
 
-      // Should fail: threshold 2 < min 3
+      await interfold.setPricingConfig({
+        ...defaultPricingConfig,
+        minCommitteeSize: 3,
+        minThreshold: 3,
+      });
       await expect(
-        interfold.setCommitteeThresholds(0, [2, 6]),
+        interfold.setCommitteeThresholds(0, [2, 3]),
       ).to.be.revertedWithCustomError(interfold, "BelowMinThreshold");
 
-      // Should succeed: meets both minimums
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, 5]),
-      ).to.not.be.revert(ethers);
-
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, cap]),
-      ).to.not.be.revert(ethers);
-
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, cap + 1n]),
-      ).to.be.revertedWithCustomError(interfold, "InvalidThresholdValues");
+      await interfold.setPricingConfig({
+        ...defaultPricingConfig,
+        minCommitteeSize: 3,
+        minThreshold: 2,
+      });
+      await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
     });
   });
 

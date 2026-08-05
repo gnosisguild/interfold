@@ -13,6 +13,13 @@ import { IPkVerifier } from "./IPkVerifier.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IInterfold {
+    /// @notice The requested cryptographic configuration is not the active circuit build.
+    error UnsupportedCryptoConfig();
+    /// @notice The active parameter set is append-only.
+    error ParamSetAlreadyRegistered(uint8 paramSet);
+    /// @notice A verifier does not match the active circuit threshold.
+    error VerifierThresholdMismatch(uint256 actual, uint256 expected);
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                         Enums                          //
@@ -235,19 +242,10 @@ interface IInterfold {
     /// @dev Registration is append-only; programs cannot be deregistered.
     event E3ProgramRegistered(IE3Program e3Program);
 
-    /// @notice Emitted when a BFV param set is registered or updated.
+    /// @notice Emitted when the active BFV parameter set is registered.
     /// @param paramSet The param set index.
     /// @param encodedParams ABI-encoded BFV parameters.
     event ParamSetRegistered(uint8 paramSet, bytes encodedParams);
-
-    /// @notice Emitted when an existing param set slot is overwritten by
-    ///         {Interfold.setParamSet}. The new value replaces the
-    ///         previous encoded parameters atomically.
-    event ParamSetUpdated(
-        uint8 paramSet,
-        bytes previousEncodedParams,
-        bytes newEncodedParams
-    );
 
     /// @notice Emitted when E3RefundManager contract is set.
     /// @param e3RefundManager The address of the E3RefundManager contract.

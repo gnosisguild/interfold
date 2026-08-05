@@ -25,7 +25,7 @@ Each transition has a deadline. Missing a deadline allows anyone to call `markE3
 
 ```
 Requester calls: Interfold.request({
-  threshold: [M, N],        // M-of-N threshold
+  committeeSize: <minimum | micro | small>,
   inputWindow: [start, end], // when inputs are accepted
   e3Program: <address>,      // computation program contract
   e3ProgramParams: <bytes>,  // ABI-encoded program parameters
@@ -34,8 +34,9 @@ Requester calls: Interfold.request({
 })
 │
 ├─ VALIDATION:
-│   ├─ threshold[0] > 0 (M > 0)
-│   ├─ threshold[1] >= threshold[0] (N >= M)
+│   ├─ Resolve the build-generated active crypto configuration.
+│   │    The current build is insecure-512 / minimum [H=2, N=3, T=1].
+│   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
 │   ├─ inputWindow[1] + computeWindow >
@@ -46,7 +47,9 @@ Requester calls: Interfold.request({
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
-│   │   → InterfoldPricing quote from committee threshold, time windows,
+│   │   → InterfoldPricing uses the active circuit [T, N].
+│   │   → The quote uses T for decryption work and H for on-chain viability only.
+│   │   → It also uses the time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
 │   │   → availability covers at least request time through input-window end
 │   │   → a later equal-length input window therefore costs more

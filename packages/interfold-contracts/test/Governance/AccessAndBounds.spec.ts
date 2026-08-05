@@ -5,11 +5,10 @@
 // upgradeable contracts and the two ERC20 tokens, public bounds on
 // Interfold / CiphernodeRegistry / BondingRegistry / E3RefundManager /
 // SlashingManager, the BondingRegistry distributor cap, the PkVerifierSet / SlashingManager setter events, the
-// SortitionCommitteeFinalized event rename, and ParamSetUpdated on
-// `setParamSet` overwrites.
+// SortitionCommitteeFinalized event rename, and append-only parameter sets.
 import { expect } from "chai";
 
-import { deployInterfoldSystem, ethers } from "../fixtures";
+import { BFV_PARAMS_DEFAULT, deployInterfoldSystem, ethers } from "../fixtures";
 
 async function deployAll() {
   const sys = await deployInterfoldSystem({
@@ -144,7 +143,7 @@ describe("Governance — access control, bounds & events", function () {
       expect(await interfold.MAX_TIMEOUT_WINDOW()).to.equal(
         30n * 24n * 60n * 60n,
       );
-      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(256n);
+      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(3n);
       expect(await interfold.MAX_MARGIN_BPS()).to.equal(5_000n);
       expect(await interfold.MAX_PROTOCOL_SHARE_BPS()).to.equal(5_000n);
     });
@@ -219,13 +218,52 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("PkVerifierSet event", function () {
     it("emits PkVerifierSet when setPkVerifier is called", async function () {
-      const { interfold } = await deployAll();
-      const schemeId =
-        "0x2c2a814a0495f913a3a312fc4771e37552bc14f8a2d4075a08122d356f0849c6";
-      const verifier = ethers.Wallet.createRandom().address;
+      const { interfold, mocks } = await deployAll();
+      const schemeId = ethers.id("pk-verifier-event");
+      const verifier = await mocks.pkVerifier.getAddress();
       await expect(interfold.setPkVerifier(schemeId, verifier))
         .to.emit(interfold, "PkVerifierSet")
         .withArgs(schemeId, verifier);
+    });
+
+    it("rejects verifiers compiled for another committee", async function () {
+      const { interfold, ciphernodeRegistry } = await deployAll();
+      const circuitVerifier = await ethers.deployContract(
+        "MockCircuitVerifier",
+      );
+      const vkHashA = ethers.id("vk-a");
+      const vkHashB = ethers.id("vk-b");
+      const wrongPkVerifier = await ethers.deployContract("BfvPkVerifier", [
+        await circuitVerifier.getAddress(),
+        vkHashA,
+        vkHashB,
+        5,
+      ]);
+      const wrongDecryptionVerifier = await ethers.deployContract(
+        "BfvDecryptionVerifier",
+        [
+          await circuitVerifier.getAddress(),
+          await ciphernodeRegistry.getAddress(),
+          vkHashA,
+          vkHashB,
+          4,
+        ],
+      );
+      const schemeId = ethers.id("wrong-committee");
+
+      await expect(
+        interfold.setPkVerifier(schemeId, await wrongPkVerifier.getAddress()),
+      )
+        .to.be.revertedWithCustomError(interfold, "VerifierThresholdMismatch")
+        .withArgs(5, 2);
+      await expect(
+        interfold.setDecryptionVerifier(
+          schemeId,
+          await wrongDecryptionVerifier.getAddress(),
+        ),
+      )
+        .to.be.revertedWithCustomError(interfold, "VerifierThresholdMismatch")
+        .withArgs(4, 1);
     });
   });
 
@@ -254,24 +292,12 @@ describe("Governance — access control, bounds & events", function () {
     });
   });
 
-  describe("setParamSet overwrite emits ParamSetUpdated", function () {
-    it("first call emits ParamSetRegistered; second emits ParamSetUpdated", async function () {
+  describe("active parameter set", function () {
+    it("is append-only", async function () {
       const { interfold } = await deployAll();
-      const abi = ethers.AbiCoder.defaultAbiCoder();
-      const a = abi.encode(
-        ["uint256", "uint256", "uint256[]"],
-        [512, 10, [68719403009n, 68719230977n]],
-      );
-      const b = abi.encode(
-        ["uint256", "uint256", "uint256[]"],
-        [1024, 17, [68719403009n]],
-      );
-      await expect(interfold.setParamSet(7, a))
-        .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(7, a);
-      await expect(interfold.setParamSet(7, b))
-        .to.emit(interfold, "ParamSetUpdated")
-        .withArgs(7, a, b);
+      await expect(interfold.setParamSet(0, BFV_PARAMS_DEFAULT))
+        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
+        .withArgs(0);
     });
   });
 });

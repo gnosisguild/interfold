@@ -110,7 +110,6 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("ParamSetRegistered", "ParamSetRegistered(uint8,bytes)", None),
-    EvmEventDefinition::new("ParamSetUpdated", "ParamSetUpdated(uint8,bytes,bytes)", None),
     EvmEventDefinition::new("PkVerifierSet", "PkVerifierSet(bytes32,address)", None),
     EvmEventDefinition::new(
         "PlaintextOutputPublished",

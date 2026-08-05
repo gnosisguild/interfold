@@ -7,7 +7,7 @@ import { expect } from "chai";
 
 import {
   ADDRESS_TWO as AddressTwo,
-  COMMITTEE_THRESHOLDS_DEFAULT,
+  BFV_PARAMS_DEFAULT,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
@@ -21,22 +21,9 @@ import {
 const { loadFixture, time, mine } = networkHelpers;
 
 describe("Interfold", function () {
+  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const newEncryptionSchemeId =
     "0x0000000000000000000000000000000000000000000000000000000000000002";
-
-  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-
-  const polynomial_degree = ethers.toBigInt(512);
-  const plaintext_modulus = ethers.toBigInt(10);
-  const moduli = [
-    ethers.toBigInt("0xffffee001"),
-    ethers.toBigInt("0xffffc4001"),
-  ];
-
-  const encodedE3ProgramParams = abiCoder.encode(
-    ["uint256", "uint256", "uint256[]"],
-    [polynomial_degree, plaintext_modulus, moduli],
-  );
 
   const data = "0xda7a";
   const proof = "0x1337";
@@ -180,34 +167,35 @@ describe("Interfold", function () {
       const { interfold, notTheOwner } = await loadFixture(setup);
 
       await expect(
-        interfold.connect(notTheOwner).setParamSet(0, encodedE3ProgramParams),
+        interfold.connect(notTheOwner).setParamSet(0, BFV_PARAMS_DEFAULT),
       )
         .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
         .withArgs(notTheOwner);
     });
 
-    it("registers param set and emits event", async function () {
+    it("keeps only the active circuit parameter set", async function () {
       const { interfold } = await loadFixture(setup);
 
-      await expect(interfold.setParamSet(1, encodedE3ProgramParams))
-        .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(1, encodedE3ProgramParams);
-
-      expect(await interfold.paramSetRegistry(1)).to.equal(
-        encodedE3ProgramParams,
-      );
+      expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
+      await expect(
+        interfold.setParamSet(1, BFV_PARAMS_DEFAULT),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
 
-    it("reverts with empty params", async function () {
+    it("does not overwrite the active parameter set", async function () {
       const { interfold } = await loadFixture(setup);
 
-      // `debug.revertStrings: "strip"` is enabled in hardhat.config.ts to
-      // keep `Interfold` under the EIP-170 24,576-byte runtime cap, so the
-      // original "Empty params" reason string is removed from bytecode.
-      // Behaviour (revert) is preserved.
-      await expect(interfold.setParamSet(0, "0x")).to.be.revertedWithoutReason(
-        ethers,
-      );
+      await expect(interfold.setParamSet(0, BFV_PARAMS_DEFAULT))
+        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
+        .withArgs(0);
+    });
+
+    it("rejects parameter bytes that do not match the active circuit", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      await expect(
+        interfold.setParamSet(1, "0x"),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
   });
 
@@ -420,11 +408,7 @@ describe("Interfold", function () {
     });
     it("reverts if committee size is not configured", async function () {
       const { interfold, request } = await loadFixture(setup);
-      const configuredSizes = COMMITTEE_THRESHOLDS_DEFAULT.map(
-        ([size]) => size,
-      );
-      const unconfiguredCommitteeSize = configuredSizes.length;
-      expect(unconfiguredCommitteeSize).to.equal(3);
+      const unconfiguredCommitteeSize = 1;
       const unconfiguredParams = {
         committeeSize: unconfiguredCommitteeSize,
         inputWindow: request.inputWindow,
@@ -433,11 +417,9 @@ describe("Interfold", function () {
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
       };
-      // `CommitteeSizeNotConfigured(3)` reverts correctly on-chain; ethers cannot
-      // decode the custom error when the enum arg is not a named variant (0..2).
-      await expect(
-        interfold.getE3Quote.staticCall(unconfiguredParams),
-      ).to.be.revert(ethers);
+      await expect(interfold.getE3Quote.staticCall(unconfiguredParams))
+        .to.be.revertedWithCustomError(interfold, "CommitteeSizeNotConfigured")
+        .withArgs(unconfiguredCommitteeSize);
     });
     it("reverts if total duration is greater than maxDuration", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);

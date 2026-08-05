@@ -8,6 +8,8 @@ pragma solidity 0.8.28;
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 
 contract MockDecryptionVerifier is IDecryptionVerifier {
+    uint256 public constant override threshold = 1;
+
     /// @dev Test-only: proofs whose first 4 bytes are `0xdeadbeef` revert with
     ///      `InvalidProof` so tests can exercise the wrapper failure path
     ///      (production wrapper now reverts instead of returning false).

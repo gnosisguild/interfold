@@ -82,7 +82,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant CIPHERTEXT_COMMITMENT_IDX = 6;
 
     /// @notice BFV threshold `T`; must match the compiled DecryptionAggregator circuit.
-    uint256 public immutable threshold;
+    uint256 public immutable override threshold;
 
     /// @dev `7 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
     uint256 internal immutable expectedPublicInputsLen;

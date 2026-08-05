@@ -30,26 +30,21 @@ export const ENCRYPTION_SCHEME_ID = ethers.id("fhe.rs:BFV");
 export const DATA = "0xda7a";
 export const PROOF = "0x1337";
 
-// ── BFV parameter sets (abi.encode(uint256 degree, uint256 modulus, uint256[] moduli)) ──
+// ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
-/** Small BFV params (degree 512). Used by `Interfold.spec` & `Pricing.spec`. */
+/** The insecure-512 parameter set compiled into the active test circuits. */
 export const BFV_PARAMS_DEFAULT = abiCoder.encode(
-  ["uint256", "uint256", "uint256[]"],
   [
-    ethers.toBigInt(512),
-    ethers.toBigInt(10),
-    [ethers.toBigInt("0xffffee001"), ethers.toBigInt("0xffffc4001")],
+    "tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)",
   ],
-);
-
-/** Production-sized BFV params (degree 2048). Used by `E3Integration.spec`. */
-export const BFV_PARAMS_LARGE = abiCoder.encode(
-  ["uint256", "uint256", "uint256[]"],
   [
-    ethers.toBigInt(2048),
-    ethers.toBigInt(1032193),
-    [ethers.toBigInt("18014398492704769")],
+    [
+      ethers.toBigInt(512),
+      ethers.toBigInt(100),
+      [ethers.toBigInt("0xffffee001"), ethers.toBigInt("0xffffc4001")],
+      "3",
+    ],
   ],
 );
 
@@ -77,20 +72,13 @@ export const COMMITTEE_SIZE_MICRO = 1;
 export const COMMITTEE_SIZE_SMALL = 2;
 
 /**
- * Default thresholds for {@link deployInterfoldSystem} when `committeeThresholds`
- * is not overridden: `[T, N]` (Shamir reconstruction threshold, committee size).
- *
- * Matches what {@link InterfoldPricing.quote} uses as `m` / `n` and what most
- * pricing / sortition / lifecycle specs assert against. **Not** the same as
- * {@link COMMITTEE_THRESHOLDS_ONCHAIN} (production deploy uses `[H, N]`).
+ * Canonical on-chain thresholds: `[H, N]` (required honest roster and committee
+ * size). Pricing resolves the matching circuit threshold `T` from the same
+ * committee-size enum.
  */
 export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
   readonly [number, readonly [number, number]]
-> = [
-  [COMMITTEE_SIZE_MINIMUM, [1, 3]],
-  [COMMITTEE_SIZE_MICRO, [4, 9]],
-  [COMMITTEE_SIZE_SMALL, [9, 19]],
-];
+> = [[COMMITTEE_SIZE_MINIMUM, [2, 3]]];
 
 /**
  * Production `setCommitteeThresholds` values from `scripts/deployInterfold.ts`:
@@ -102,29 +90,12 @@ export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
  */
 export const COMMITTEE_THRESHOLDS_ONCHAIN: ReadonlyArray<
   readonly [number, readonly [number, number]]
-> = [
-  [COMMITTEE_SIZE_MINIMUM, [2, 3]],
-  [COMMITTEE_SIZE_MICRO, [5, 9]],
-  [COMMITTEE_SIZE_SMALL, [10, 19]],
-];
-
-/**
- * Slashing expulsion harness: low M with small N so specs can reach / breach
- * viability without a full Micro/Small committee. Micro uses N=4 (not 9).
- * CommitteeSize `3` and above stay unconfigured for negative-path tests.
- */
-export const COMMITTEE_THRESHOLDS_FAULT_TOLERANCE: ReadonlyArray<
-  readonly [number, readonly [number, number]]
-> = [
-  [COMMITTEE_SIZE_MINIMUM, [2, 3]],
-  [COMMITTEE_SIZE_MICRO, [2, 4]],
-  [COMMITTEE_SIZE_SMALL, [9, 19]],
-];
+> = [[COMMITTEE_SIZE_MINIMUM, [2, 3]]];
 
 /** Single-size fixture used by sortition / pricing smoke tests. */
 export const COMMITTEE_THRESHOLDS_MINIMUM_ONLY: ReadonlyArray<
   readonly [number, readonly [number, number]]
-> = [[COMMITTEE_SIZE_MINIMUM, [1, 3]]];
+> = [[COMMITTEE_SIZE_MINIMUM, [2, 3]]];
 
 // ── Bonding defaults (passed to BondingRegistry constructor) ─────────────────
 /** 10 USDC ticket price (6-decimal stable). */

@@ -43,7 +43,7 @@ interface ICiphernodeRegistry {
     /// @param stage Current lifecycle stage of the committee (replaces former initialized/finalized/failed bools).
     /// @param requestBlock The block number when the committee was requested.
     /// @param committeeDeadline The deadline for committee formation (ticket submission).
-    /// @param threshold The M/N threshold for the committee ([M, N]).
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @param publicKey Hash of the committee's public key.
     /// @param seed The seed for the round.
     /// @param topNodes Sorted top-N nodes selected during sortition.
@@ -69,7 +69,7 @@ interface ICiphernodeRegistry {
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
     /// @param seed Random seed for score computation.
-    /// @param threshold The M/N threshold for the committee.
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).
     event CommitteeRequested(
@@ -406,7 +406,7 @@ interface ICiphernodeRegistry {
     /// @dev This function MUST revert when not called by the Interfold contract.
     /// @param e3Id ID of the E3 for which to select the committee.
     /// @param seed Random seed for score computation.
-    /// @param threshold The M/N threshold for the committee.
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @return success True if committee selection was successfully initiated.
     function requestCommittee(
         uint256 e3Id,

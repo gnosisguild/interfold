@@ -56,7 +56,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### E3 request and committee selection
 
-- Request params: `M > 0`, `N >= M`, `inputWindow.start >= block.timestamp`, `end >= start`;
+- A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
+  `pnpm build:circuits` generates that binding from the active preset. Governance cannot enable a
+  different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
+  contracts. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
   `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
@@ -119,12 +122,14 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### Committee config sync (the `check:committee` gate)
 
-- Committee `(N, T, H)` must be identical across **four** files:
+- Committee `(N, T, H)` must be identical across **five** files:
   `circuits/lib/src/configs/committee/active.nr`, `circuits/bin/.active-preset.json`,
   `packages/interfold-contracts/scripts/utils.ts` (`BFV_DKG_H`/`BFV_THRESHOLD_T`), and
-  `crates/zk-helpers/src/ciphernodes_committee.rs`. Drift means the next build silently produces
-  verifiers/proofs for the wrong committee. Switch only with
-  `pnpm build:circuits --committee <name>`; enforced by `scripts/check-committee.sh`.
+  `crates/zk-helpers/src/ciphernodes_committee.rs`, plus
+  `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The Solidity file also binds
+  the active BFV parameter-set hash. Drift means the next build silently produces verifiers or
+  proofs for the wrong configuration. Switch only with `pnpm build:circuits --committee <name>`;
+  enforced by `scripts/check-committee.sh`.
 - Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
