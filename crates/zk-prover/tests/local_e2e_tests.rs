@@ -622,6 +622,14 @@ async fn test_share_computation_sk_commitment_consistency() {
     );
 
     let fields = public_signals_to_fields(&proof.public_signals);
+    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
+    let expected_fields =
+        1 + CiphernodesCommitteeSize::Minimum.values().n * threshold_preset.metadata().num_moduli;
+    assert_eq!(
+        fields.len(),
+        expected_fields,
+        "C2a public field count must match the active committee and threshold preset"
+    );
     assert!(
         fields.iter().any(|f| !f.is_zero()),
         "inner share computation public signals should not all be zero"
@@ -656,6 +664,14 @@ async fn test_share_computation_e_sm_commitment_consistency() {
     );
 
     let fields = public_signals_to_fields(&proof.public_signals);
+    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
+    let expected_fields =
+        1 + CiphernodesCommitteeSize::Minimum.values().n * threshold_preset.metadata().num_moduli;
+    assert_eq!(
+        fields.len(),
+        expected_fields,
+        "C2b public field count must match the active committee and threshold preset"
+    );
     assert!(
         fields.iter().any(|f| !f.is_zero()),
         "inner share computation public signals should not all be zero"
