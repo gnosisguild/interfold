@@ -141,8 +141,7 @@ mod tests {
         let witness = generator.generate_witness(&circuit, inputs).unwrap();
 
         assert!(witness.len() > 2);
-        assert_eq!(witness[0], 0x1f);
-        assert_eq!(witness[1], 0x8b);
+        WitnessStack::<FieldElement>::deserialize(&witness).unwrap();
     }
 
     #[test]

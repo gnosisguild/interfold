@@ -73,8 +73,8 @@ const getArtifactBytecodeHash = async (
 ): Promise<string> => {
   const { ethers } = await hre.network.connect();
   const artifact = await hre.artifacts.readArtifact(contractName);
-  let bytecode = artifact.deployedBytecode;
-  for (const references of Object.values(artifact.deployedLinkReferences)) {
+  let bytecode = artifact.bytecode;
+  for (const references of Object.values(artifact.linkReferences)) {
     for (const locations of Object.values(references)) {
       for (const { start, length } of locations) {
         const offset = 2 + start * 2;
@@ -271,17 +271,48 @@ export const deployAndSaveAllVerifiers = async (
 
   console.log(`   Found ${contractNames.length} verifier contract(s)`);
 
+  const referenceContract = contractNames[0];
+  const sharedLibraryHashes = new Map<HonkLibrary, string>();
+  for (const libraryName of ["ZKTranscriptLib", "RelationsLib"] as const) {
+    const libraryFqn = await getLibraryArtifactFqn(
+      hre,
+      referenceContract,
+      libraryName,
+    );
+    sharedLibraryHashes.set(
+      libraryName,
+      await getArtifactBytecodeHash(hre, libraryFqn),
+    );
+  }
+
+  for (const contractName of contractNames.slice(1)) {
+    for (const libraryName of ["ZKTranscriptLib", "RelationsLib"] as const) {
+      const libraryFqn = await getLibraryArtifactFqn(
+        hre,
+        contractName,
+        libraryName,
+      );
+      const hash = await getArtifactBytecodeHash(hre, libraryFqn);
+      const referenceHash = sharedLibraryHashes.get(libraryName);
+      if (hash !== referenceHash) {
+        throw new Error(
+          `${libraryName} bytecode differs between ${referenceContract} (${referenceHash}) and ${contractName} (${hash}); refusing shared deployment.`,
+        );
+      }
+    }
+  }
+
   // Deploy each generated library once and reuse it for all verifiers.
   const zkTranscriptLibAddress = await deployHonkLibrary(
     hre,
     chain,
-    contractNames[0],
+    referenceContract,
     "ZKTranscriptLib",
   );
   const relationsLibAddress = await deployHonkLibrary(
     hre,
     chain,
-    contractNames[0],
+    referenceContract,
     "RelationsLib",
   );
 

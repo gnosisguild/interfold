@@ -160,6 +160,7 @@ library Errors {
   error PointAtInfinity();
 
   error ConsistencyCheckFailed();
+  error VerificationKeyConfigurationMismatch();
   error GeminiChallengeInSubgroup();
 }
 
@@ -189,7 +190,7 @@ uint256 constant NUM_SMALL_IPA_TRANSCRIPT_EVALS = 4;
 // Instantiation
 
 library FrLib {
-  bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0xf8d61709;
+  bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0x1f7ec5f0;
 
   function invert(Fr value) internal view returns (Fr) {
     uint256 v = Fr.unwrap(value);
@@ -1953,6 +1954,13 @@ abstract contract BaseZKHonkVerifier is IVerifier {
     $MSMSize = NUMBER_UNSHIFTED_ZK + _logN + LIBRA_COMMITMENTS + 2;
   }
 
+  function validateVerificationKey(Honk.VerificationKey memory vk) internal view {
+    require($N == vk.circuitSize, Errors.VerificationKeyConfigurationMismatch());
+    require($LOG_N == vk.logCircuitSize, Errors.VerificationKeyConfigurationMismatch());
+    require($VK_HASH == VK_HASH, Errors.VerificationKeyConfigurationMismatch());
+    require($NUM_PUBLIC_INPUTS == vk.publicInputsSize, Errors.VerificationKeyConfigurationMismatch());
+  }
+
   function verify(bytes calldata proof, bytes32[] calldata publicInputs) public view override returns (bool verified) {
     // Calculate expected proof size based on $LOG_N
     uint256 expectedProofSize = calculateProofSize($LOG_N);
@@ -2451,7 +2459,7 @@ abstract contract BaseZKHonkVerifier is IVerifier {
   function calculateProofSize(uint256 logN) internal pure returns (uint256) {
     // Witness and Libra commitments
     uint256 proofLength = NUM_WITNESS_ENTITIES * NUM_ELEMENTS_COMM; // witness commitments
-    proofLength += NUM_ELEMENTS_COMM * 3; // Libra concat, grand sum, quotient comms + Gemini masking
+    proofLength += NUM_ELEMENTS_COMM * 3; // Libra concat, grand sum, quotient comms
 
     // Sumcheck
     proofLength += logN * ZK_BATCHED_RELATION_PARTIAL_LENGTH * NUM_ELEMENTS_FR; // sumcheck univariates
@@ -2476,6 +2484,10 @@ abstract contract BaseZKHonkVerifier is IVerifier {
 }
 
 contract HonkVerifier is BaseZKHonkVerifier(N, LOG_N, VK_HASH, NUMBER_OF_PUBLIC_INPUTS) {
+  constructor() {
+    validateVerificationKey(HonkVerificationKey.loadVerificationKey());
+  }
+
   function loadVerificationKey() internal pure override returns (Honk.VerificationKey memory) {
     return HonkVerificationKey.loadVerificationKey();
   }
