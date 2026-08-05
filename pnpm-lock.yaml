@@ -335,14 +335,14 @@ importers:
   examples/CRISP/packages/crisp-sdk:
     dependencies:
       '@aztec/bb.js':
-        specifier: 5.0.0
-        version: 5.0.0
+        specifier: 5.1.0
+        version: 5.1.0
       '@crisp-e3/zk-inputs':
         specifier: workspace:*
         version: link:../crisp-zk-inputs
       '@noir-lang/noir_js':
-        specifier: 1.0.0-beta.22
-        version: 1.0.0-beta.22
+        specifier: 1.0.0-beta.26
+        version: 1.0.0-beta.26
       '@zk-kit/lean-imt':
         specifier: ^2.2.4
         version: 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
@@ -707,8 +707,8 @@ importers:
   packages/interfold-sdk:
     dependencies:
       '@aztec/bb.js':
-        specifier: 5.0.0
-        version: 5.0.0
+        specifier: 5.1.0
+        version: 5.1.0
       '@interfold/contracts':
         specifier: workspace:*
         version: link:../interfold-contracts
@@ -716,8 +716,8 @@ importers:
         specifier: workspace:*
         version: link:../../crates/wasm
       '@noir-lang/noir_js':
-        specifier: 1.0.0-beta.22
-        version: 1.0.0-beta.22
+        specifier: 1.0.0-beta.26
+        version: 1.0.0-beta.26
       comlink:
         specifier: ^4.4.2
         version: 4.4.2
@@ -991,8 +991,8 @@ packages:
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
 
-  '@aztec/bb.js@5.0.0':
-    resolution: {integrity: sha512-O4HDjzrjXMvM44+VbgDG1GaDUztWGEVujbBmwZAEVJh6BHpmJfMxBB2/69h1oi4kX2adgaowlJNFhpzcz1MHSA==}
+  '@aztec/bb.js@5.1.0':
+    resolution: {integrity: sha512-bNpeyTz7baK2jZ9gN5gEn6GsOU8ueuGWbgUML/6kHhvwAgx/SsN9XY4tRS202dZM+8aOadwJ4crn6PIq20J4tw==}
     hasBin: true
 
   '@babel/code-frame@7.27.1':
@@ -2971,17 +2971,17 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@noir-lang/acvm_js@1.0.0-beta.22':
-    resolution: {integrity: sha512-2xXfSKrnskUNmPiG/Kj6yvWi1E6wJBl/1ZsmzVaHEEyJsUBf15xaSRBZR7X1361whUR2vqyG80ck2huLZPb5bA==}
+  '@noir-lang/acvm_js@1.0.0-beta.26':
+    resolution: {integrity: sha512-f9+gLTQrOuZYLjHHdULC9J1ItcLs5237W62Y+CzRBI3MVfD/rhe5trdGoUwuIVvW9ttUObQsR4UkhvN5gcxYnA==}
 
-  '@noir-lang/noir_js@1.0.0-beta.22':
-    resolution: {integrity: sha512-Ts+QI2fN2PsrVjx38CszFSR0TyWpip9TgJ6HM17DIK05Jku4TSKtHMIjrE6lRii4Y+JV0rn70v+TrunJmt/X4w==}
+  '@noir-lang/noir_js@1.0.0-beta.26':
+    resolution: {integrity: sha512-0p3AyhQ+xQDHhE6eNSj79pWXvcPupmpxTsh7zkxf4dJnv3iB6XgzbrJspn6ed0VtSWGuHpFjRJbRY+PZFMeyMg==}
 
-  '@noir-lang/noirc_abi@1.0.0-beta.22':
-    resolution: {integrity: sha512-vpZtWb946eb4ZxERxY32I4Fv62SAAjhAyJpb2YzWYvnDVTyFVIvr/MSVunrM1osUP35nnRPRGuXVTWy4sBQkIg==}
+  '@noir-lang/noirc_abi@1.0.0-beta.26':
+    resolution: {integrity: sha512-w/KjhJx095dAKECPlLb7QY6FovZ8dJboCXzgcZ9k0yZfhawhN4/8SEcC7JCer+GKxKZEBSY3VtlZmW3ch4J83A==}
 
-  '@noir-lang/types@1.0.0-beta.22':
-    resolution: {integrity: sha512-PXD8cmvMT4wybDe1pUPwv2Uz1FYh9B/hdXrY5eOMf1elNVxomj2tHDDYoKI/zNDrJ1JzTL0xhbAX1vBTMMFvBw==}
+  '@noir-lang/types@1.0.0-beta.26':
+    resolution: {integrity: sha512-TFJMafp32koXf3TFVAfPBirwkVdlRHzSTM1nVAkRJDTQQNnI7qoAjvzXWXjgpE65kwjukQyzcmaucOegruawPw==}
 
   '@nomicfoundation/edr-darwin-arm64@0.12.0-next.10':
     resolution: {integrity: sha512-LYXaU0Pk7zA4iAHMdvZ9Gs5QaScs9n5IpclWBNVevSHnL1/uJiFLDF4FYE/NonvaCST6Rd0E4MS3pJltsrBQmA==}
@@ -8288,6 +8288,9 @@ packages:
   pako@2.2.0:
     resolution: {integrity: sha512-zJq6RP/5q+TO2OpFV3FHzlPnFjmkb7Nc99a5SNjJE+uu/PkpChs+NIZSSzbBoD+6kjiISXjfYdwj1ZRQ81dz/w==}
 
+  pako@3.0.1:
+    resolution: {integrity: sha512-GupotUUI0mlhugKjUs4bjOwLt3nrehy9Ys2dxC0GtgVef5cnKggkDMmf2bq2poCCuVXopWPmqsc9VDT2iJUy+w==}
+
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
     engines: {node: '>=6'}
@@ -10698,7 +10701,7 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@aztec/bb.js@5.0.0':
+  '@aztec/bb.js@5.1.0':
     dependencies:
       comlink: 4.4.2
       commander: 12.1.0
@@ -13031,20 +13034,20 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@noir-lang/acvm_js@1.0.0-beta.22': {}
+  '@noir-lang/acvm_js@1.0.0-beta.26': {}
 
-  '@noir-lang/noir_js@1.0.0-beta.22':
+  '@noir-lang/noir_js@1.0.0-beta.26':
     dependencies:
-      '@noir-lang/acvm_js': 1.0.0-beta.22
-      '@noir-lang/noirc_abi': 1.0.0-beta.22
-      '@noir-lang/types': 1.0.0-beta.22
-      pako: 2.2.0
+      '@noir-lang/acvm_js': 1.0.0-beta.26
+      '@noir-lang/noirc_abi': 1.0.0-beta.26
+      '@noir-lang/types': 1.0.0-beta.26
+      pako: 3.0.1
 
-  '@noir-lang/noirc_abi@1.0.0-beta.22':
+  '@noir-lang/noirc_abi@1.0.0-beta.26':
     dependencies:
-      '@noir-lang/types': 1.0.0-beta.22
+      '@noir-lang/types': 1.0.0-beta.26
 
-  '@noir-lang/types@1.0.0-beta.22': {}
+  '@noir-lang/types@1.0.0-beta.26': {}
 
   '@nomicfoundation/edr-darwin-arm64@0.12.0-next.10': {}
 
@@ -21226,6 +21229,8 @@ snapshots:
   pako@1.0.11: {}
 
   pako@2.2.0: {}
+
+  pako@3.0.1: {}
 
   parent-module@1.0.1:
     dependencies:

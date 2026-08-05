@@ -1,6 +1,6 @@
 {
-  "noir_version": "1.0.0-beta.22+c57152f91260ecdb9faad4efc20abb14b6d2ece7",
-  "hash": "9277256917438816876",
+  "noir_version": "1.0.0-beta.26+40d6574f851d926f93e0c3a271bac3e6e82ac905",
+  "hash": "2159294962516643373",
   "abi": {
     "parameters": [
       {
@@ -29,9 +29,9 @@
     "error_types": {}
   },
   "bytecode": "H4sIAAAAAAAA/43MOw5AMACA4ZaLGNmIE4hITGIUiUHCYPBIazH2Bn0kZoPJAYTdRboZLXY9Af75y69zNs51XjWMLB7GJerTErWCCn4Y4D0IfhiojF1ESDqTtcXBSkiSme4ZDnvHfHmLSyHtcwM4gEyjlD5nLlK6rwAAAA==",
-  "debug_symbols": "jZDBCoMwDIbfJWcPTqwHX2UMqTVKIbQltoMhvvui2E0Pg53S5M/3l/wLDNinqbNu9DO09wV6tkR26sgbHa13Ml3WAnLbRUaUEZx0oYJmdBFal4gKeGpK+9IctNtr1CxqWQC6QaoYjpZwe63Fly5/o5W6HXClmg+ubn/zdZ35Rl34h3TaWL5cDKUsrpsdW90THimMyZlTKPEVspJjC+wNDolxs9s1+eAN",
+  "debug_symbols": "jZDBCoMwDIbfJWcPTqwHX2UMqTVKIbQltoMhvvui2E0Pg53S5M/3l/wLDNinqbNu9DO09wV6tkR26sgbHa13Ml3WAnLbRUaUEZx0oYJmdBFal4gKeGpK+9IctNtr1CxqWQC6QaoYjpZwe63Fly5/o5W6HXClmg+uqr/5us58oy78QzptLF8uhlIW182Ore4JjxTG5MwplPgKWcmxBfYGh8S42e2afPAG",
   "file_map": {
-    "51": {
+    "52": {
       "source": "// SPDX-License-Identifier: LGPL-3.0-only\n//\n// This file is provided WITHOUT ANY WARRANTY;\n// without even the implied warranty of MERCHANTABILITY\n// or FITNESS FOR A PARTICULAR PURPOSE.\n\npub fn main(x: Field, y: Field, _sum: pub Field) {\n    assert(x + y == _sum);\n}\n",
       "path": "crates/zk-prover/tests/fixtures/dummy/src/main.nr",
       "function_locations": [

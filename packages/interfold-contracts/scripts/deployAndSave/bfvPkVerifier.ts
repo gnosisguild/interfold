@@ -45,6 +45,16 @@ export const deployAndSaveBfvPkVerifier = async (
       existing.address,
       signer,
     );
+    const onChainCircuitVerifier = await bfvPkVerifier.circuitVerifier();
+    if (
+      onChainCircuitVerifier.toLowerCase() !==
+      circuitVerifierArgs.address.toLowerCase()
+    ) {
+      throw new Error(
+        `BfvPkVerifier at ${existing.address} points to ${onChainCircuitVerifier}, expected ${circuitVerifierArgs.address}. ` +
+          "Redeploy after the circuit verifier changes.",
+      );
+    }
     await assertBfvPkVerifierSubCircuitVkHashes(
       bfvPkVerifier,
       existing.address,

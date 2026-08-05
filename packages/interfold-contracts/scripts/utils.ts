@@ -269,6 +269,7 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
 // Type for deployment arguments
 export interface DeploymentArgs {
   address: string;
+  bytecodeHash?: string;
   constructorArgs?: Record<string, unknown>;
   proxyRecords?: Record<string, unknown>;
   blockNumber?: number | null;
