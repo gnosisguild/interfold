@@ -79,10 +79,13 @@ export async function deployProtocolContracts(
       registryProxy.proxy,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      config.feeToken,
+      {
+        token: config.feeToken,
+        expectedDecimals: config.feeTokenDecimals,
+        pricing: pricingConfig(config.interfold.pricing),
+      },
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
-      pricingConfig(config.interfold.pricing),
       config.e3Programs[0],
     ]),
   );

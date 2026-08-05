@@ -88,8 +88,12 @@ function appendCommitteeAndPricingTxs(
   txs.push(
     safeTx(
       c.interfold,
-      i.interfold.encodeFunctionData("setPricingConfig", [
-        pricingConfig(config.interfold.pricing),
+      i.interfold.encodeFunctionData("setFeeAssetConfig", [
+        {
+          token: config.feeToken,
+          expectedDecimals: config.feeTokenDecimals,
+          pricing: pricingConfig(config.interfold.pricing),
+        },
       ]),
     ),
   );

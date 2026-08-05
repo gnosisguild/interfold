@@ -32,6 +32,7 @@ export interface ProtocolConfigFile {
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   feeToken: string;
+  feeTokenDecimals: number;
   protocolTreasury: string;
   slashedFundsTreasury: string;
   slasher: string;
@@ -39,6 +40,8 @@ export interface ProtocolConfigFile {
   bonding: {
     ticketPrice: string;
     licenseRequiredBond: string;
+    ticketTokenDecimals: number;
+    licenseTokenDecimals: number;
     minTicketBalance: string;
     exitDelay: string;
   };

@@ -13,6 +13,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import {
+    BONDING_SLASHING_STORAGE_SLOT,
     BondingSlashLock,
     BondingSlashingStorage,
     SlashingManagerObligations
@@ -22,10 +23,6 @@ import {
 library BondingSlashingLib {
     uint256 private constant API_VERSION = 1;
     uint256 private constant PROBE_GAS = 100_000;
-
-    // keccak256(abi.encode(uint256(keccak256("interfold.storage.BondingSlashing")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant STORAGE_SLOT =
-        0x1681355f1bd0922b89c3b8bc6b781718ce17614b616c8d2f8b40c2ed56012900;
 
     function openSlashLockCount(
         address operator
@@ -390,7 +387,7 @@ library BondingSlashingLib {
         pure
         returns (BondingSlashingStorage.Layout storage state)
     {
-        bytes32 slot = STORAGE_SLOT;
+        bytes32 slot = BONDING_SLASHING_STORAGE_SLOT;
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             state.slot := slot

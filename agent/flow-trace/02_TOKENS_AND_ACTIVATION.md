@@ -106,14 +106,19 @@ Collateral ownership and operator identity are separate namespaces:
 └───────────────────────────────────────────────────────────┘
 ```
 
+`setBondingAssetConfig()` updates both tokens, their expected decimals, `ticketPrice`, and
+`licenseRequiredBond` in one transaction. Decimal checks confirm the raw-unit scale but do not
+establish either token's economic value.
+
 Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot be configured while
 the old wrapper has issued tickets or a payable balance. The registry tracks `totalLicenseLiability`
 across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
 treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
 distinguishable from operator liabilities and can be sent to `slashedFundsTreasury` with
-`sweepLicenseSurplus()` before rotation. The FOLD license token still cannot change until its raw
-registry balance is zero. Replacement assets must be deployed contracts; the only zero exception is
-the one-time license-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
+`sweepLicenseSurplus()` before rotation. Rotation also waits for every E3 assignment, slash lock,
+and pending slash route to close. Replacement assets must be deployed contracts; the only zero
+exception is the one-time license-token placeholder used to resolve the circular
+FOLD/BondingRegistry deployment.
 
 ---
 

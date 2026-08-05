@@ -961,6 +961,9 @@ Every slash and settlement route resolves the dependency graph frozen when the E
 - `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
   revokes them. Managers write proposal locks and bans into registry-owned aggregates, so user exits
   do not call old managers.
+- Each slash policy records the exact BondingRegistry and bonding-asset configuration version. Asset
+  rotation invalidates every omitted policy. Governance must install the replacement policies before
+  proposals for later E3s can proceed.
 
 Admin setters update the live defaults for future requests only. Each E3 must have a complete
 request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance

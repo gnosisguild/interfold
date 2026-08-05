@@ -27,6 +27,8 @@ export interface BondingRegistryArgs {
   slashedFundsTreasury?: string;
   ticketPrice?: string;
   licenseRequiredBond?: string;
+  ticketTokenDecimals?: number;
+  licenseTokenDecimals?: number;
   minTicketBalance?: number;
   exitDelay?: number;
   hre: HardhatRuntimeEnvironment;
@@ -45,6 +47,8 @@ export const deployAndSaveBondingRegistry = async ({
   slashedFundsTreasury,
   ticketPrice,
   licenseRequiredBond,
+  ticketTokenDecimals = 6,
+  licenseTokenDecimals = 0,
   minTicketBalance,
   exitDelay,
   hre,
@@ -76,6 +80,10 @@ export const deployAndSaveBondingRegistry = async ({
       preDeployedArgs?.constructorArgs?.ticketPrice === ticketPrice &&
       preDeployedArgs?.constructorArgs?.licenseRequiredBond ===
         licenseRequiredBond &&
+      preDeployedArgs?.constructorArgs?.ticketTokenDecimals ===
+        ticketTokenDecimals.toString() &&
+      preDeployedArgs?.constructorArgs?.licenseTokenDecimals ===
+        licenseTokenDecimals.toString() &&
       preDeployedArgs?.constructorArgs?.minTicketBalance ===
         minTicketBalance.toString() &&
       preDeployedArgs?.constructorArgs?.exitDelay === exitDelay.toString())
@@ -130,12 +138,16 @@ export const deployAndSaveBondingRegistry = async ({
     "initialize",
     [
       owner,
-      ticketToken,
-      licenseToken,
+      {
+        ticketToken,
+        licenseToken,
+        ticketPrice,
+        licenseRequiredBond,
+        expectedTicketDecimals: ticketTokenDecimals,
+        expectedLicenseDecimals: licenseTokenDecimals,
+      },
       registry,
       slashedFundsTreasury,
-      ticketPrice,
-      licenseRequiredBond,
       minTicketBalance,
       exitDelay,
     ],
@@ -176,6 +188,8 @@ export const deployAndSaveBondingRegistry = async ({
         slashedFundsTreasury,
         ticketPrice,
         licenseRequiredBond,
+        ticketTokenDecimals: ticketTokenDecimals.toString(),
+        licenseTokenDecimals: licenseTokenDecimals.toString(),
         minTicketBalance: minTicketBalance.toString(),
         exitDelay: exitDelay.toString(),
       },

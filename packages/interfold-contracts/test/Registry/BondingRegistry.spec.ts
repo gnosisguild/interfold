@@ -13,6 +13,7 @@ import {
   deployInterfoldSystem,
   ethers,
   networkHelpers,
+  setBondingAssetConfig,
 } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -1601,18 +1602,14 @@ describe("BondingRegistry", function () {
       });
     });
 
-    describe("setTicketPrice()", function () {
+    describe("setBondingAssetConfig()", function () {
       it("allows owner to set ticket price", async function () {
         const { bondingRegistry } = await loadFixture(setup);
 
         const newPrice = ethers.parseUnits("15", 6);
-        await expect(bondingRegistry.setTicketPrice(newPrice))
-          .to.emit(bondingRegistry, "ConfigurationUpdated")
-          .withArgs(
-            ethers.encodeBytes32String("ticketPrice"),
-            TICKET_PRICE,
-            newPrice,
-          );
+        await expect(
+          setBondingAssetConfig(bondingRegistry, { ticketPrice: newPrice }),
+        ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
 
         expect(await bondingRegistry.ticketPrice()).to.equal(newPrice);
       });
@@ -1621,7 +1618,7 @@ describe("BondingRegistry", function () {
         const { bondingRegistry } = await loadFixture(setup);
 
         await expect(
-          bondingRegistry.setTicketPrice(0),
+          setBondingAssetConfig(bondingRegistry, { ticketPrice: 0 }),
         ).to.be.revertedWithCustomError(
           bondingRegistry,
           "InvalidConfiguration",
@@ -1632,13 +1629,61 @@ describe("BondingRegistry", function () {
         const { bondingRegistry, notTheOwner } = await loadFixture(setup);
 
         await expect(
-          bondingRegistry
-            .connect(notTheOwner)
-            .setTicketPrice(ethers.parseEther("15")),
+          setBondingAssetConfig(bondingRegistry.connect(notTheOwner), {
+            ticketPrice: ethers.parseEther("15"),
+          }),
         ).to.be.revertedWithCustomError(
           bondingRegistry,
           "OwnableUnauthorizedAccount",
         );
+      });
+
+      it("updates ticket decimals and price in one transaction", async function () {
+        const { bondingRegistry, licenseToken, owner } =
+          await loadFixture(setup);
+        const underlying = await (
+          await ethers.getContractFactory("MockLockAwareLicenseToken")
+        ).deploy(0);
+        const replacement = await (
+          await ethers.getContractFactory("InterfoldTicketToken")
+        ).deploy(
+          await underlying.getAddress(),
+          await bondingRegistry.getAddress(),
+          owner.address,
+        );
+        const replacementAddress = await replacement.getAddress();
+        const newPrice = ethers.parseEther("10");
+        const version =
+          await bondingRegistry.bondingAssetConfigurationVersion();
+
+        await expect(
+          bondingRegistry.setBondingAssetConfig({
+            ticketToken: replacementAddress,
+            licenseToken: await licenseToken.getAddress(),
+            ticketPrice: newPrice,
+            licenseRequiredBond: LICENSE_REQUIRED_BOND,
+            expectedTicketDecimals: 6,
+            expectedLicenseDecimals: 18,
+          }),
+        )
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "BondingAssetDecimalsMismatch",
+          )
+          .withArgs(replacementAddress, 6, 18);
+
+        await setBondingAssetConfig(bondingRegistry, {
+          ticketToken: replacementAddress,
+          ticketPrice: newPrice,
+          expectedTicketDecimals: 18,
+        });
+        expect(await bondingRegistry.getTicketToken()).to.equal(
+          replacementAddress,
+        );
+        expect(await bondingRegistry.ticketPrice()).to.equal(newPrice);
+        expect(
+          await bondingRegistry.bondingAssetConfigurationVersion(),
+        ).to.equal(version + 1n);
       });
     });
 
@@ -1688,14 +1733,18 @@ describe("BondingRegistry", function () {
           [9_999n, 1n],
           [1n, 10_000n],
         ]) {
-          await bondingRegistry.setLicenseRequiredBond(requiredBond);
+          await setBondingAssetConfig(bondingRegistry, {
+            licenseRequiredBond: requiredBond,
+          });
           await bondingRegistry.setLicenseActiveBps(activeBps);
           expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
             false,
           );
         }
 
-        await bondingRegistry.setLicenseRequiredBond(ethers.MaxUint256);
+        await setBondingAssetConfig(bondingRegistry, {
+          licenseRequiredBond: ethers.MaxUint256,
+        });
         await bondingRegistry.setLicenseActiveBps(8_000);
         expect(await bondingRegistry.isLicensed(operator1Address)).to.equal(
           false,
@@ -1712,7 +1761,9 @@ describe("BondingRegistry", function () {
         } = await loadFixture(setup);
         const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
 
-        await bondingRegistry.setLicenseRequiredBond(1);
+        await setBondingAssetConfig(bondingRegistry, {
+          licenseRequiredBond: 1,
+        });
         await bondingRegistry.setLicenseActiveBps(8_000);
         await licenseToken
           .connect(operator1)
@@ -1782,7 +1833,9 @@ describe("BondingRegistry", function () {
 
       const initialVersion =
         await bondingRegistry.eligibilityConfigurationVersion();
-      await bondingRegistry.setTicketPrice(TICKET_PRICE * 2n);
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE * 2n,
+      });
 
       expect(await bondingRegistry.eligibilityConfigurationVersion()).to.equal(
         initialVersion + 1n,
@@ -1796,16 +1849,22 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.isActive(operator)).to.equal(false);
       expect(await bondingRegistry.numActiveOperators()).to.equal(0);
 
-      await bondingRegistry.setTicketPrice(TICKET_PRICE);
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE,
+      });
       await bondingRegistry.refreshOperatorStatuses([operator]);
       expect(await bondingRegistry.isActive(operator)).to.equal(true);
       expect(await bondingRegistry.numActiveOperators()).to.equal(1);
 
-      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND * 2n);
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseRequiredBond: LICENSE_REQUIRED_BOND * 2n,
+      });
       await bondingRegistry.refreshOperatorStatus(operator);
       expect(await bondingRegistry.isActive(operator)).to.equal(false);
 
-      await bondingRegistry.setLicenseRequiredBond(LICENSE_REQUIRED_BOND);
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseRequiredBond: LICENSE_REQUIRED_BOND,
+      });
       await bondingRegistry.setLicenseActiveBps(9_000);
       await bondingRegistry.refreshOperatorStatus(operator);
       expect(await bondingRegistry.isActive(operator)).to.equal(true);
@@ -1822,12 +1881,17 @@ describe("BondingRegistry", function () {
       ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
     });
 
-    describe("setLicenseToken()", function () {
+    describe("bonding asset rotation", function () {
       it("requires a valid locked-balance response", async function () {
         const { bondingRegistry, usdcToken } = await loadFixture(setup);
         const plainTokenAddress = await usdcToken.getAddress();
 
-        await expect(bondingRegistry.setLicenseToken(plainTokenAddress))
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            licenseToken: plainTokenAddress,
+            expectedLicenseDecimals: 6,
+          }),
+        )
           .to.be.revertedWithCustomError(
             bondingRegistry,
             "IncompatibleLicenseToken",
@@ -1839,7 +1903,11 @@ describe("BondingRegistry", function () {
         ).deploy(1);
         const tokenAddress = await token.getAddress();
 
-        await expect(bondingRegistry.setLicenseToken(tokenAddress))
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            licenseToken: tokenAddress,
+          }),
+        )
           .to.be.revertedWithCustomError(
             bondingRegistry,
             "IncompatibleLicenseToken",
@@ -1847,7 +1915,11 @@ describe("BondingRegistry", function () {
           .withArgs(tokenAddress);
 
         await token.setResponseMode(2);
-        await expect(bondingRegistry.setLicenseToken(tokenAddress))
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            licenseToken: tokenAddress,
+          }),
+        )
           .to.be.revertedWithCustomError(
             bondingRegistry,
             "IncompatibleLicenseToken",
@@ -1855,9 +1927,11 @@ describe("BondingRegistry", function () {
           .withArgs(tokenAddress);
 
         await token.setResponseMode(0);
-        await expect(bondingRegistry.setLicenseToken(tokenAddress))
-          .to.emit(bondingRegistry, "LicenseTokenSet")
-          .withArgs(tokenAddress);
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            licenseToken: tokenAddress,
+          }),
+        ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
       });
 
       it("reports a lock-aware token that later stops responding", async function () {
@@ -1874,7 +1948,9 @@ describe("BondingRegistry", function () {
         const tokenAddress = await token.getAddress();
         const bondAmount = LICENSE_REQUIRED_BOND;
 
-        await bondingRegistry.setLicenseToken(tokenAddress);
+        await setBondingAssetConfig(bondingRegistry, {
+          licenseToken: tokenAddress,
+        });
         await token.mint(await operator1.getAddress(), bondAmount);
         await token.connect(operator1).getFunction("approve")(
           await bondingRegistry.getAddress(),
@@ -2316,13 +2392,26 @@ describe("BondingRegistry", function () {
         "MockFeeOnTransferToken",
       );
       const fot = await FoTFactory.deploy(100n); // 100 bps = 1%
-      await expect(bondingRegistry.setLicenseToken(ethers.ZeroAddress))
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: ethers.ZeroAddress,
+          expectedLicenseDecimals: 0,
+        }),
+      )
         .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
         .withArgs(ethers.ZeroAddress);
-      await expect(bondingRegistry.setLicenseToken(operator1.address))
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: operator1.address,
+        }),
+      )
         .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
         .withArgs(operator1.address);
-      await expect(bondingRegistry.setLicenseToken(await fot.getAddress()))
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: await fot.getAddress(),
+        }),
+      )
         .to.be.revertedWithCustomError(
           bondingRegistry,
           "OutstandingAssetLiabilities",
@@ -2349,7 +2438,9 @@ describe("BondingRegistry", function () {
         await ethers.getContractFactory("MockLockAwareLicenseToken")
       ).deploy(0);
       await expect(
-        bondingRegistry.setLicenseToken(await replacement.getAddress()),
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: await replacement.getAddress(),
+        }),
       )
         .to.be.revertedWithCustomError(
           bondingRegistry,
@@ -2367,10 +2458,10 @@ describe("BondingRegistry", function () {
       expect(await licenseToken.balanceOf(registryAddress)).to.equal(0);
 
       await expect(
-        bondingRegistry.setLicenseToken(await replacement.getAddress()),
-      )
-        .to.emit(bondingRegistry, "LicenseTokenSet")
-        .withArgs(await replacement.getAddress());
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: await replacement.getAddress(),
+        }),
+      ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
     });
 
     it("AUD-M08: blocks ticket-token rotation until supply and payouts are drained", async function () {
@@ -2410,11 +2501,17 @@ describe("BondingRegistry", function () {
       );
       await replacement.waitForDeployment();
 
-      await expect(bondingRegistry.setTicketToken(ethers.ZeroAddress))
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          ticketToken: ethers.ZeroAddress,
+        }),
+      )
         .to.be.revertedWithCustomError(bondingRegistry, "InvalidBondingAsset")
         .withArgs(ethers.ZeroAddress);
       await expect(
-        bondingRegistry.setTicketToken(await replacement.getAddress()),
+        setBondingAssetConfig(bondingRegistry, {
+          ticketToken: await replacement.getAddress(),
+        }),
       )
         .to.be.revertedWithCustomError(
           bondingRegistry,

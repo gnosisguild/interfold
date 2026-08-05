@@ -213,6 +213,38 @@
       "inputs": [
         {
           "internalType": "contract IERC20",
+          "name": "feeToken",
+          "type": "address"
+        },
+        {
+          "internalType": "uint8",
+          "name": "expected",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint8",
+          "name": "actual",
+          "type": "uint8"
+        }
+      ],
+      "name": "FeeTokenDecimalsMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "feeToken",
+          "type": "address"
+        }
+      ],
+      "name": "FeeTokenDecimalsUnavailable",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
           "name": "token",
           "type": "address"
         }
@@ -862,25 +894,114 @@
         },
         {
           "indexed": false,
-          "internalType": "bool",
-          "name": "allowed",
-          "type": "bool"
+          "internalType": "uint8",
+          "name": "expectedDecimals",
+          "type": "uint8"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "keyGenFixedPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "keyGenPerEncryptionProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "coordinationPerPair",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "availabilityPerNodePerSec",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "publicationBase",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "verificationPerProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "protocolTreasury",
+              "type": "address"
+            },
+            {
+              "internalType": "uint16",
+              "name": "marginBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "protocolShareBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "dkgUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "computeUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "decryptUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minCommitteeSize",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minThreshold",
+              "type": "uint32"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct IInterfold.PricingConfig",
+          "name": "pricing",
+          "type": "tuple"
         }
       ],
-      "name": "FeeTokenAllowed",
+      "name": "FeeAssetConfigUpdated",
       "type": "event"
     },
     {
       "anonymous": false,
       "inputs": [
         {
-          "indexed": false,
-          "internalType": "address",
-          "name": "feeToken",
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
           "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
         }
       ],
-      "name": "FeeTokenSet",
+      "name": "FeeTokenAllowed",
       "type": "event"
     },
     {
@@ -988,96 +1109,6 @@
         }
       ],
       "name": "PlaintextOutputPublished",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint256",
-              "name": "keyGenFixedPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "keyGenPerEncryptionProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "coordinationPerPair",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "availabilityPerNodePerSec",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "decryptionPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "publicationBase",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "verificationPerProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "protocolTreasury",
-              "type": "address"
-            },
-            {
-              "internalType": "uint16",
-              "name": "marginBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "protocolShareBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "dkgUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "computeUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "decryptUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minCommitteeSize",
-              "type": "uint32"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minThreshold",
-              "type": "uint32"
-            }
-          ],
-          "indexed": false,
-          "internalType": "struct IInterfold.PricingConfig",
-          "name": "config",
-          "type": "tuple"
-        }
-      ],
-      "name": "PricingConfigUpdated",
       "type": "event"
     },
     {
@@ -1414,6 +1445,19 @@
           "internalType": "contract IERC20",
           "name": "",
           "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "feeTokenDecimals",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
         }
       ],
       "stateMutability": "view",
@@ -2239,12 +2283,106 @@
     {
       "inputs": [
         {
-          "internalType": "contract IERC20",
-          "name": "_feeToken",
-          "type": "address"
+          "components": [
+            {
+              "internalType": "address",
+              "name": "token",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "expectedDecimals",
+              "type": "uint8"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "keyGenFixedPerNode",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "keyGenPerEncryptionProof",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "coordinationPerPair",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "availabilityPerNodePerSec",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "decryptionPerNode",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "publicationBase",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "verificationPerProof",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "protocolTreasury",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "marginBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "protocolShareBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "dkgUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "computeUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "decryptUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "minCommitteeSize",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "minThreshold",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IInterfold.PricingConfig",
+              "name": "pricing",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct IInterfold.FeeAssetConfig",
+          "name": "config",
+          "type": "tuple"
         }
       ],
-      "name": "setFeeToken",
+      "name": "setFeeAssetConfig",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2322,96 +2460,6 @@
           "components": [
             {
               "internalType": "uint256",
-              "name": "keyGenFixedPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "keyGenPerEncryptionProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "coordinationPerPair",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "availabilityPerNodePerSec",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "decryptionPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "publicationBase",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "verificationPerProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "protocolTreasury",
-              "type": "address"
-            },
-            {
-              "internalType": "uint16",
-              "name": "marginBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "protocolShareBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "dkgUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "computeUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "decryptUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minCommitteeSize",
-              "type": "uint32"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minThreshold",
-              "type": "uint32"
-            }
-          ],
-          "internalType": "struct IInterfold.PricingConfig",
-          "name": "config",
-          "type": "tuple"
-        }
-      ],
-      "name": "setPricingConfig",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint256",
               "name": "dkgWindow",
               "type": "uint256"
             },
@@ -2475,5 +2523,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-724bc38337acae256c519646ab9aa56f7dcd5163"
+  "buildInfoId": "solc-0_8_28-aa9ff483f47a5cff75542a8786244857a77cd24a"
 }

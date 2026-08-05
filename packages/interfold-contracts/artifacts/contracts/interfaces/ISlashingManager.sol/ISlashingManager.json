@@ -144,6 +144,17 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        }
+      ],
+      "name": "SlashPolicyAssetConfigurationMismatch",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "SlashReasonDisabled",
       "type": "error"
@@ -1405,6 +1416,30 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        }
+      ],
+      "name": "slashPolicyAssetContexts",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        },
+        {
+          "internalType": "uint64",
+          "name": "configurationVersion",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -1476,5 +1511,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-724bc38337acae256c519646ab9aa56f7dcd5163"
+  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
 }

@@ -17,6 +17,12 @@ None → Requested → CommitteeFinalized → KeyPublished → CiphertextReady �
 
 Each transition has a deadline. Missing a deadline allows anyone to call `markE3Failed()`.
 
+Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
+`setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
+decimals check confirms the unit scale only; it does not prove that two tokens have the same
+economic value. Each request snapshots the active token, so later fee-asset changes do not alter an
+existing E3's escrow or settlement unit.
+
 ---
 
 ## Step 1: E3 Request (On-Chain)

@@ -107,6 +107,13 @@ interface IInterfold {
         uint32 minThreshold;
     }
 
+    /// @notice Fee asset and every raw-unit price denominated in that asset.
+    struct FeeAssetConfig {
+        address token;
+        uint8 expectedDecimals;
+        PricingConfig pricing;
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                         Events                         //
@@ -164,9 +171,12 @@ interface IInterfold {
     /// @param bondingRegistry The address of the BondingRegistry contract.
     event BondingRegistrySet(address bondingRegistry);
 
-    /// @notice This event MUST be emitted any time the fee token is set.
-    /// @param feeToken The address of the fee token.
-    event FeeTokenSet(address feeToken);
+    /// @notice Emitted when the fee asset and its raw-unit prices are updated.
+    event FeeAssetConfigUpdated(
+        IERC20 indexed token,
+        uint8 expectedDecimals,
+        PricingConfig pricing
+    );
 
     /// @notice This event MUST be emitted when rewards are credited to committee members.
     /// @dev Distribution is pull-based — recipients must call `claimReward(e3Id)`.
@@ -315,9 +325,6 @@ interface IInterfold {
         uint32[2] threshold
     );
 
-    /// @notice Emitted when pricing configuration is updated
-    event PricingConfigUpdated(PricingConfig config);
-
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                        Errors                          //
@@ -397,6 +404,16 @@ interface IInterfold {
     /// @notice Thrown when attempting to set an invalid fee token address.
     /// @param feeToken The invalid fee token address.
     error InvalidFeeToken(IERC20 feeToken);
+
+    /// @notice The fee token does not expose a valid ERC-20 decimals value.
+    error FeeTokenDecimalsUnavailable(IERC20 feeToken);
+
+    /// @notice The fee token decimals do not match the configured unit scale.
+    error FeeTokenDecimalsMismatch(
+        IERC20 feeToken,
+        uint8 expected,
+        uint8 actual
+    );
 
     /// @notice E3 is not in expected stage
     error InvalidStage(uint256 e3Id, E3Stage expected, E3Stage actual);
@@ -584,11 +601,9 @@ interface IInterfold {
     /// @param _bondingRegistry The address of the new Bonding Registry contract.
     function setBondingRegistry(IBondingRegistry _bondingRegistry) external;
 
-    /// @notice Sets the fee token used for E3 payments.
-    /// @dev This function MUST revert if the address is zero or the same as the current fee token.
-    ///      Auto-adds the token to the fee-token allow-list.
-    /// @param _feeToken The address of the new fee token.
-    function setFeeToken(IERC20 _feeToken) external;
+    /// @notice Sets the fee token and every price denominated in its raw units.
+    /// @dev Auto-adds the configured token to the fee-token allow-list.
+    function setFeeAssetConfig(FeeAssetConfig calldata config) external;
 
     /// @notice Add or remove a token from the fee-token allow-list.
     /// @dev Owner-only. The contract `feeToken()` must be on the allow-list for `request()` to succeed.
@@ -631,10 +646,6 @@ interface IInterfold {
     /// @param encodedParams ABI-encoded BFV parameters.
     function setParamSet(uint8 paramSet, bytes calldata encodedParams) external;
 
-    /// @notice Sets the full pricing configuration.
-    /// @param config The new pricing configuration.
-    function setPricingConfig(PricingConfig calldata config) external;
-
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                   Get Functions                        //
@@ -674,6 +685,9 @@ interface IInterfold {
 
     /// @notice Returns the ERC20 token used to pay for E3 fees.
     function feeToken() external view returns (IERC20);
+
+    /// @notice Returns the expected decimals for the active fee token.
+    function feeTokenDecimals() external view returns (uint8);
 
     /// @notice Returns the BondingRegistry contract.
     function bondingRegistry() external view returns (IBondingRegistry);

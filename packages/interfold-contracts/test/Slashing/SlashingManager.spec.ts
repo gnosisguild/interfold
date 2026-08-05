@@ -14,6 +14,7 @@ import {
   ethers,
   ignition,
   networkHelpers,
+  setBondingAssetConfig,
   signAndEncodeAttestation,
 } from "../fixtures";
 
@@ -248,6 +249,100 @@ describe("SlashingManager", function () {
       expect(storedPolicy.licensePenalty).to.equal(policy.licensePenalty);
       expect(storedPolicy.requiresProof).to.equal(policy.requiresProof);
       expect(storedPolicy.enabled).to.equal(policy.enabled);
+    });
+
+    it("blocks asset rotation while E3 assignments are active", async function () {
+      const {
+        bondingRegistry,
+        slashingManager,
+        ticketToken,
+        usdcToken,
+        owner,
+      } = await loadFixture(setup);
+      const replacement = await (
+        await ethers.getContractFactory("InterfoldTicketToken")
+      ).deploy(
+        await usdcToken.getAddress(),
+        await bondingRegistry.getAddress(),
+        owner.address,
+      );
+
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          ticketToken: await replacement.getAddress(),
+        }),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "AssetConfigurationInUse",
+        )
+        .withArgs(await slashingManager.getAddress(), 2, 0, 0);
+      expect(await bondingRegistry.getTicketToken()).to.equal(
+        await ticketToken.getAddress(),
+      );
+    });
+
+    it("requires policies to be refreshed after an asset rotation", async function () {
+      const [owner, slasher, operator] = await ethers.getSigners();
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: true,
+        mintUsdcTo: [],
+      });
+      const {
+        bondingRegistry,
+        interfold,
+        slashingManager,
+        ticketToken,
+        usdcToken,
+      } = sys;
+      await slashingManager.addSlasher(slasher.address);
+      await slashingManager.setSlashPolicy(
+        REASON_INACTIVITY,
+        buildProofPolicy({
+          requiresProof: false,
+          appealWindow: APPEAL_WINDOW,
+        }),
+      );
+
+      const replacement = await (
+        await ethers.getContractFactory("InterfoldTicketToken")
+      ).deploy(
+        await usdcToken.getAddress(),
+        await bondingRegistry.getAddress(),
+        owner.address,
+      );
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketToken: await replacement.getAddress(),
+      });
+
+      const interfoldAddress = await interfold.getAddress();
+      await networkHelpers.setBalance(interfoldAddress, ethers.parseEther("1"));
+      await networkHelpers.impersonateAccount(interfoldAddress);
+      await slashingManager
+        .connect(await ethers.getSigner(interfoldAddress))
+        .snapshotE3Dependencies(42);
+      await networkHelpers.stopImpersonatingAccount(interfoldAddress);
+
+      await expect(
+        slashingManager
+          .connect(slasher)
+          .proposeSlashEvidence(
+            42,
+            operator.address,
+            REASON_INACTIVITY,
+            "0x12",
+          ),
+      )
+        .to.be.revertedWithCustomError(
+          slashingManager,
+          "SlashPolicyAssetConfigurationMismatch",
+        )
+        .withArgs(REASON_INACTIVITY);
+      expect(await bondingRegistry.getTicketToken()).to.not.equal(
+        await ticketToken.getAddress(),
+      );
     });
 
     it("should set an evidence-based policy (no proof required)", async function () {
@@ -1261,7 +1356,9 @@ describe("SlashingManager", function () {
       const actualLicense = ethers.parseEther("10");
       const ownerAddress = await owner.getAddress();
 
-      await bondingRegistry.setLicenseRequiredBond(actualLicense);
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseRequiredBond: actualLicense,
+      });
       await bondingRegistry.connect(operator).setBondOwner(ownerAddress);
       await interfoldToken
         .connect(owner)

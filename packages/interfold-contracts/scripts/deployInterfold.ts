@@ -231,7 +231,7 @@ export const deployInterfold = async (
 
   // BondingRegistry is deployed before FOLD so its address can be passed to
   // the token constructor.  The license token is set to address(0) temporarily
-  // and fixed after FOLD is deployed via setLicenseToken().
+  // and fixed after FOLD is deployed with the complete asset configuration.
   console.log("Deploying BondingRegistry...");
   const { bondingRegistry } = await deployAndSaveBondingRegistry({
     owner: ownerAddress,
@@ -241,6 +241,8 @@ export const deployInterfold = async (
     slashedFundsTreasury: ownerAddress,
     ticketPrice: ethers.parseUnits("10", 6).toString(),
     licenseRequiredBond: ethers.parseEther("100").toString(),
+    ticketTokenDecimals: 6,
+    licenseTokenDecimals: 0,
     minTicketBalance: 1,
     exitDelay: 7 * 24 * 60 * 60,
     hre,
@@ -267,7 +269,16 @@ export const deployInterfold = async (
 
   // Fix up BondingRegistry's license token now that FOLD exists.
   console.log("Setting license token in BondingRegistry...");
-  await (await bondingRegistry.setLicenseToken(interfoldTokenAddress)).wait();
+  await (
+    await bondingRegistry.setBondingAssetConfig({
+      ticketToken: interfoldTicketTokenAddress,
+      licenseToken: interfoldTokenAddress,
+      ticketPrice: ethers.parseUnits("10", 6),
+      licenseRequiredBond: ethers.parseEther("100"),
+      expectedTicketDecimals: 6,
+      expectedLicenseDecimals: 18,
+    })
+  ).wait();
 
   if (interfoldTokenAddress.toLowerCase() === feeTokenAddress.toLowerCase()) {
     throw new Error(
@@ -472,22 +483,26 @@ export const deployInterfold = async (
   // Set pricing config with protocol treasury
   const protocolTreasury = process.env.PROTOCOL_TREASURY || ownerAddress;
   console.log("Setting pricing config...");
-  await interfold.setPricingConfig({
-    keyGenFixedPerNode: 100000, // 0.10 USDC
-    keyGenPerEncryptionProof: 50000, // 0.05 USDC
-    coordinationPerPair: 10000, // 0.01 USDC
-    availabilityPerNodePerSec: 50, // 0.00005 USDC
-    decryptionPerNode: 300000, // 0.30 USDC
-    publicationBase: 1000000, // 1.00 USDC
-    verificationPerProof: 5000, // 0.005 USDC
-    protocolTreasury: protocolTreasury,
-    marginBps: 1000, // 10%
-    protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
-    dkgUtilizationBps: 2500, // 25%
-    computeUtilizationBps: 5000, // 50%
-    decryptUtilizationBps: 2500, // 25%
-    minCommitteeSize: 0,
-    minThreshold: 0,
+  await interfold.setFeeAssetConfig({
+    token: feeTokenAddress,
+    expectedDecimals: 6,
+    pricing: {
+      keyGenFixedPerNode: 100000, // 0.10 USDC
+      keyGenPerEncryptionProof: 50000, // 0.05 USDC
+      coordinationPerPair: 10000, // 0.01 USDC
+      availabilityPerNodePerSec: 50, // 0.00005 USDC
+      decryptionPerNode: 300000, // 0.30 USDC
+      publicationBase: 1000000, // 1.00 USDC
+      verificationPerProof: 5000, // 0.005 USDC
+      protocolTreasury: protocolTreasury,
+      marginBps: 1000, // 10%
+      protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
+      dkgUtilizationBps: 2500, // 25%
+      computeUtilizationBps: 5000, // 50%
+      decryptUtilizationBps: 2500, // 25%
+      minCommitteeSize: 0,
+      minThreshold: 0,
+    },
   });
   console.log("Pricing config set (treasury:", protocolTreasury, ")");
 

@@ -32,12 +32,47 @@ library InterfoldPricing {
         uint256 amount
     );
 
-    /// @notice Mirrors {Interfold.setPricingConfig} validation.
-    function validatePricingConfig(
+    /// @notice Validates a fee asset and every raw-unit price tied to it.
+    function validateFeeAssetConfig(
+        IInterfold.FeeAssetConfig calldata config,
+        uint16 maxMarginBps,
+        uint16 maxProtocolShareBps
+    ) external view {
+        IERC20 token = IERC20(config.token);
+        if (address(token).code.length == 0) {
+            revert IInterfold.InvalidFeeToken(token);
+        }
+        (bool success, bytes memory result) = address(token).staticcall(
+            abi.encodeWithSignature("decimals()")
+        );
+        if (!success || result.length != 32) {
+            revert IInterfold.FeeTokenDecimalsUnavailable(token);
+        }
+        uint256 decoded = abi.decode(result, (uint256));
+        if (decoded > type(uint8).max) {
+            revert IInterfold.FeeTokenDecimalsUnavailable(token);
+        }
+        uint8 actualDecimals = uint8(decoded);
+        if (actualDecimals != config.expectedDecimals) {
+            revert IInterfold.FeeTokenDecimalsMismatch(
+                token,
+                config.expectedDecimals,
+                actualDecimals
+            );
+        }
+
+        _validatePricingConfig(
+            config.pricing,
+            maxMarginBps,
+            maxProtocolShareBps
+        );
+    }
+
+    function _validatePricingConfig(
         IInterfold.PricingConfig calldata config,
         uint16 maxMarginBps,
         uint16 maxProtocolShareBps
-    ) external pure {
+    ) private pure {
         if (config.marginBps > maxMarginBps)
             revert IInterfold.BpsExceedsMax(config.marginBps);
         if (config.protocolShareBps > maxProtocolShareBps)

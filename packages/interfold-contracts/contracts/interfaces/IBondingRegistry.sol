@@ -15,6 +15,16 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
  * @notice Interface for the main bonding registry that holds operator balance and license bonds
  */
 interface IBondingRegistry {
+    /// @notice Bonding assets and every raw-unit value denominated in them.
+    struct BondingAssetConfig {
+        address ticketToken;
+        address licenseToken;
+        uint256 ticketPrice;
+        uint256 licenseRequiredBond;
+        uint8 expectedTicketDecimals;
+        uint8 expectedLicenseDecimals;
+    }
+
     // ======================
     // Custom Errors
     // ======================
@@ -41,6 +51,24 @@ interface IBondingRegistry {
 
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
+
+    /// @notice A bonding asset does not expose a valid ERC-20 decimals value.
+    error BondingAssetDecimalsUnavailable(address asset);
+
+    /// @notice A bonding asset decimals value does not match its configuration.
+    error BondingAssetDecimalsMismatch(
+        address asset,
+        uint8 expected,
+        uint8 actual
+    );
+
+    /// @notice Asset rotation is blocked by unfinished work owned by a manager.
+    error AssetConfigurationInUse(
+        address manager,
+        uint256 e3Assignments,
+        uint256 openSlashLocks,
+        uint256 pendingRoutes
+    );
 
     error InvalidConfiguration();
     error NoPendingDeregistration();
@@ -219,17 +247,16 @@ interface IBondingRegistry {
      */
     event SlashedFundsTreasurySet(address indexed treasury);
 
-    /**
-     * @notice Emitted when the ticket token is set
-     * @param ticketToken Address of the ticket token
-     */
-    event TicketTokenSet(address indexed ticketToken);
-
-    /**
-     * @notice Emitted when the license token is set
-     * @param licenseToken Address of the license token
-     */
-    event LicenseTokenSet(address indexed licenseToken);
+    /// @notice Emitted when both bonding asset configurations are updated.
+    event BondingAssetConfigUpdated(
+        InterfoldTicketToken indexed ticketToken,
+        IERC20 indexed licenseToken,
+        uint256 ticketPrice,
+        uint256 licenseRequiredBond,
+        uint8 expectedTicketDecimals,
+        uint8 expectedLicenseDecimals,
+        uint64 indexed configurationVersion
+    );
 
     /**
      * @notice Emitted when governance removes license tokens that are not
@@ -497,6 +524,9 @@ interface IBondingRegistry {
      */
     function licenseRequiredBond() external view returns (uint256);
 
+    /// @notice Returns the current bonding-asset identity version.
+    function bondingAssetConfigurationVersion() external view returns (uint64);
+
     /**
      * @notice Get minimum ticket balance required for activation
      * @return Minimum number of tickets required
@@ -749,19 +779,8 @@ interface IBondingRegistry {
     // Admin Functions
     // ======================
 
-    /**
-     * @notice Set ticket price
-     * @param newTicketPrice New price per ticket
-     * @dev Only callable by contract owner. Invalidates cached operator status.
-     */
-    function setTicketPrice(uint256 newTicketPrice) external;
-
-    /**
-     * @notice Set license bond price required
-     * @param newLicenseRequiredBond New license bond price
-     * @dev Only callable by contract owner. Invalidates cached operator status.
-     */
-    function setLicenseRequiredBond(uint256 newLicenseRequiredBond) external;
+    /// @notice Sets both bonding tokens and their raw-unit values atomically.
+    function setBondingAssetConfig(BondingAssetConfig calldata config) external;
 
     /**
      * @notice Set license active BPS
@@ -783,21 +802,6 @@ interface IBondingRegistry {
      * @dev Only callable by contract owner
      */
     function setExitDelay(uint64 newExitDelay) external;
-
-    /**
-     * @notice Set ticket token
-     * @param newTicketToken New ticket token
-     * @dev Only callable by contract owner
-     */
-    function setTicketToken(InterfoldTicketToken newTicketToken) external;
-
-    /**
-     * @notice Set license token
-     * @param newLicenseToken New license token
-     * @dev Only callable by contract owner. A nonzero token must implement
-     *      `ILockAwareLicenseToken.lockedBalanceOf`.
-     */
-    function setLicenseToken(IERC20 newLicenseToken) external;
 
     /**
      * @notice Send unaccounted license-token surplus to the slashed-funds treasury.

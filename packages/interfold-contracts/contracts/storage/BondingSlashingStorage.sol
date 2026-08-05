@@ -17,6 +17,9 @@ struct BondingSlashLock {
     address operator;
 }
 
+// keccak256(abi.encode(uint256(keccak256("interfold.storage.BondingSlashing")) - 1)) & ~bytes32(uint256(0xff))
+bytes32 constant BONDING_SLASHING_STORAGE_SLOT = 0x1681355f1bd0922b89c3b8bc6b781718ce17614b616c8d2f8b40c2ed56012900;
+
 /// @notice Declares the namespaced manager state used by BondingRegistry.
 abstract contract BondingSlashingStorage {
     /// @custom:storage-location erc7201:interfold.storage.BondingSlashing

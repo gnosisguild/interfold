@@ -143,6 +143,10 @@ contract SlashingManager is
     }
     mapping(address node => PendingBan pending) internal _pendingBans;
 
+    /// @notice Bonding-asset identity frozen when each policy is configured.
+    mapping(bytes32 reason => SlashPolicyAssetContext context)
+        public slashPolicyAssetContexts;
+
     // ======================
     // Constants
     // ======================
@@ -374,7 +378,16 @@ contract SlashingManager is
             InvalidPolicy()
         );
 
+        IBondingRegistry currentBonding = bondingRegistry;
+        require(address(currentBonding) != address(0), InvalidPolicy());
+        uint64 assetVersion = currentBonding.bondingAssetConfigurationVersion();
+        require(assetVersion != 0, InvalidPolicy());
+
         slashPolicies[reason] = policy;
+        slashPolicyAssetContexts[reason] = SlashPolicyAssetContext(
+            address(currentBonding),
+            assetVersion
+        );
         emit SlashPolicyUpdated(reason, policy);
     }
 
@@ -485,8 +498,10 @@ contract SlashingManager is
         require(policy.enabled, SlashReasonDisabled());
         require(policy.requiresProof, InvalidPolicy());
 
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        _requireCurrentPolicyAssetContext(reason, dependencies.bonding);
         require(
-            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            dependencies.registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -577,8 +592,10 @@ contract SlashingManager is
         SlashPolicy memory policy = slashPolicies[reason];
         require(policy.enabled, SlashReasonDisabled());
         require(!policy.requiresProof, InvalidPolicy());
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        _requireCurrentPolicyAssetContext(reason, dependencies.bonding);
         require(
-            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            dependencies.registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -1139,6 +1156,21 @@ contract SlashingManager is
         banned[operator] = status;
         registry.setOperatorBan(operator, status);
         emit NodeBanUpdated(operator, status, reason, updater);
+    }
+
+    function _requireCurrentPolicyAssetContext(
+        bytes32 reason,
+        IBondingRegistry e3Bonding
+    ) private view {
+        SlashPolicyAssetContext memory context = slashPolicyAssetContexts[
+            reason
+        ];
+        if (
+            context.bondingRegistry != address(e3Bonding) ||
+            context.configurationVersion == 0 ||
+            context.configurationVersion !=
+            e3Bonding.bondingAssetConfigurationVersion()
+        ) revert SlashPolicyAssetConfigurationMismatch(reason);
     }
 
     /// @notice ERC-165 interface detection. Advertises {ISlashingManager}

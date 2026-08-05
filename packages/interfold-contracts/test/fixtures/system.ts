@@ -342,6 +342,8 @@ export async function deployInterfoldSystem(
           slashedFundsTreasury: slashedFundsTreasuryAddress,
           ticketPrice: TICKET_PRICE,
           licenseRequiredBond: LICENSE_REQUIRED_BOND,
+          expectedTicketDecimals: 6,
+          expectedLicenseDecimals: 0,
           minTicketBalance: MIN_TICKET_BALANCE,
           exitDelay: SEVEN_DAYS,
         },
@@ -379,7 +381,14 @@ export async function deployInterfoldSystem(
   await (await licenseToken.setClaimSource(claimSource)).wait();
 
   // Fix the BondingRegistry licenseToken placeholder.
-  await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
+  await bondingRegistry.setBondingAssetConfig({
+    ticketToken: await ticketToken.getAddress(),
+    licenseToken: await licenseToken.getAddress(),
+    ticketPrice: TICKET_PRICE,
+    licenseRequiredBond: LICENSE_REQUIRED_BOND,
+    expectedTicketDecimals: 6,
+    expectedLicenseDecimals: 18,
+  });
 
   // Deploy the default program before Interfold so initialization can validate it.
   const { mockE3Program: _mockE3Program } =
@@ -405,6 +414,7 @@ export async function deployInterfoldSystem(
         bondingRegistry: await bondingRegistry.getAddress(),
         e3RefundManager: ADDRESS_ONE, // placeholder — overridden below
         feeToken: await usdcToken.getAddress(),
+        feeTokenDecimals: 6,
         timeoutConfig,
         initialE3Program,
       },

@@ -16,6 +16,7 @@ import {
   encodeMockDkgProof,
   ethers,
   networkHelpers,
+  setBondingAssetConfig,
   setupOperatorForSortition,
 } from "../fixtures";
 
@@ -245,7 +246,9 @@ describe("CiphernodeRegistryOwnable", function () {
       await request();
       expect(await registry.sortitionTicketPrices(0)).to.equal(TICKET_PRICE);
 
-      await bondingRegistry.setTicketPrice(TICKET_PRICE * 2n);
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE * 2n,
+      });
       await bondingRegistry.refreshOperatorStatuses([
         await operator1.getAddress(),
         await operator2.getAddress(),
@@ -253,7 +256,9 @@ describe("CiphernodeRegistryOwnable", function () {
       ]);
       await registry.connect(operator1).submitTicket(0, 10);
 
-      await bondingRegistry.setTicketPrice(TICKET_PRICE / 2n);
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE / 2n,
+      });
       await bondingRegistry.refreshOperatorStatuses([
         await operator1.getAddress(),
         await operator2.getAddress(),

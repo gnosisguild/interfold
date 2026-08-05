@@ -12,6 +12,8 @@ export default buildModule("BondingRegistry", (m) => {
   const slashedFundsTreasury = m.getParameter("slashedFundsTreasury");
   const ticketPrice = m.getParameter("ticketPrice");
   const licenseRequiredBond = m.getParameter("licenseRequiredBond");
+  const expectedTicketDecimals = m.getParameter("expectedTicketDecimals", 6);
+  const expectedLicenseDecimals = m.getParameter("expectedLicenseDecimals", 18);
   const minTicketBalance = m.getParameter("minTicketBalance");
   const exitDelay = m.getParameter("exitDelay");
   const owner = m.getParameter("owner");
@@ -29,12 +31,16 @@ export default buildModule("BondingRegistry", (m) => {
 
   const initData = m.encodeFunctionCall(bondingRegistryImpl, "initialize", [
     owner,
-    ticketToken,
-    licenseToken,
+    {
+      ticketToken,
+      licenseToken,
+      ticketPrice,
+      licenseRequiredBond,
+      expectedTicketDecimals,
+      expectedLicenseDecimals,
+    },
     registry,
     slashedFundsTreasury,
-    ticketPrice,
-    licenseRequiredBond,
     minTicketBalance,
     exitDelay,
   ]);

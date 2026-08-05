@@ -209,7 +209,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @param _ciphernodeRegistry The address of the Ciphernode Registry contract.
     /// @param _bondingRegistry The address of the Bonding Registry contract.
     /// @param _e3RefundManager The address of the E3 Refund Manager contract.
-    /// @param _feeToken The address of the ERC20 token used for E3 fees.
+    /// @param feeAssetConfig Fee token and raw-unit pricing configuration.
     /// @param _maxDuration The maximum duration of a computation in seconds.
     /// @param config Initial timeout configuration for E3 lifecycle stages.
     /// @param initialE3Program The E3 Program to allow before ownership transfers.
@@ -218,10 +218,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ICiphernodeRegistry _ciphernodeRegistry,
         IBondingRegistry _bondingRegistry,
         IE3RefundManager _e3RefundManager,
-        IERC20 _feeToken,
+        FeeAssetConfig calldata feeAssetConfig,
         uint256 _maxDuration,
         E3TimeoutConfig calldata config,
-        PricingConfig calldata pricingConfig,
         IE3Program initialE3Program
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
@@ -230,10 +229,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         setCiphernodeRegistry(_ciphernodeRegistry);
         setBondingRegistry(_bondingRegistry);
         setE3RefundManager(_e3RefundManager);
-        setFeeToken(_feeToken);
+        _setFeeAssetConfig(feeAssetConfig);
         _setTimeoutConfig(config);
-
-        _setPricingConfig(pricingConfig);
 
         registerE3Program(initialE3Program);
 
@@ -602,17 +599,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IInterfold
-    function setFeeToken(IERC20 _feeToken) public onlyOwner {
-        require(
-            address(_feeToken) != address(0) && _feeToken != feeToken,
-            InvalidFeeToken(_feeToken)
-        );
-        feeToken = _feeToken;
-        // Auto allow-list the active fee token so `request()` keeps working
-        // after a rotation. FeeTokenSet provides the rotation receipt; explicit
-        // allow-list changes emit FeeTokenAllowed via setFeeTokenAllowed.
-        _feeTokenAllowed[_feeToken] = true;
-        emit FeeTokenSet(address(_feeToken));
+    function setFeeAssetConfig(
+        FeeAssetConfig calldata config
+    ) external onlyOwner {
+        _setFeeAssetConfig(config);
     }
 
     /// @inheritdoc IInterfold
@@ -1027,25 +1017,26 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         emit CommitteeThresholdsUpdated(size, threshold);
     }
 
-    /// @inheritdoc IInterfold
-    function setPricingConfig(
-        PricingConfig calldata config
-    ) external onlyOwner {
-        _setPricingConfig(config);
-    }
-
-    function _setPricingConfig(PricingConfig calldata config) internal {
-        // Validation is delegated to {InterfoldPricing.validatePricingConfig}
+    function _setFeeAssetConfig(FeeAssetConfig calldata config) internal {
+        // Validation is delegated to {InterfoldPricing.validateFeeAssetConfig}
         // (external library link) to keep the deployed Interfold runtime
         // bytecode under the EIP-170 24,576-byte cap. Revert selectors are
         // preserved via shared {IInterfold} error declarations.
-        InterfoldPricing.validatePricingConfig(
+        InterfoldPricing.validateFeeAssetConfig(
             config,
             MAX_MARGIN_BPS,
             MAX_PROTOCOL_SHARE_BPS
         );
-        _pricingConfig = config;
-        emit PricingConfigUpdated(config);
+        IERC20 token = IERC20(config.token);
+        feeToken = token;
+        feeTokenDecimals = config.expectedDecimals;
+        _pricingConfig = config.pricing;
+        _feeTokenAllowed[token] = true;
+        emit FeeAssetConfigUpdated(
+            token,
+            config.expectedDecimals,
+            config.pricing
+        );
     }
 
     ////////////////////////////////////////////////////////////
@@ -1213,10 +1204,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             interfaceId == 0x01ffc9a7; // IERC165.supportsInterface selector
     }
 
+    /// @notice Expected decimals for the active fee token.
+    uint8 public feeTokenDecimals;
+
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 }

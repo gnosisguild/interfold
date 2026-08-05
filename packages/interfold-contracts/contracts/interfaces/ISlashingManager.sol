@@ -68,6 +68,12 @@ interface ISlashingManager {
         uint8 failureReason;
     }
 
+    /// @notice Bonding-asset identity used when a slash policy was configured.
+    struct SlashPolicyAssetContext {
+        address bondingRegistry;
+        uint64 configurationVersion;
+    }
+
     /**
      * @notice Slash proposal details tracking the full lifecycle of a slash
      * @dev Stores all state needed for proposal, appeal, and execution workflows
@@ -130,6 +136,9 @@ interface ISlashingManager {
 
     /// @notice Thrown when a slash policy configuration is invalid
     error InvalidPolicy();
+
+    /// @notice A policy does not match the E3's bonding-asset configuration.
+    error SlashPolicyAssetConfigurationMismatch(bytes32 reason);
 
     /// @notice Thrown when referencing a proposal ID that doesn't exist or is in invalid state
     error InvalidProposal();
@@ -503,6 +512,11 @@ interface ISlashingManager {
         external
         view
         returns (IBondingRegistry registry);
+
+    /// @notice Returns the bonding-asset identity frozen with a slash policy.
+    function slashPolicyAssetContexts(
+        bytes32 reason
+    ) external view returns (address registry, uint64 configurationVersion);
 
     /**
      * @notice Returns the ciphernode registry contract used for committee checks and DKG anchors

@@ -13,12 +13,14 @@ import {
   MockUSDC__factory as MockUSDCFactory,
 } from "../../types";
 import {
+  currentPricingConfig,
   deployInterfoldSystem,
   encodeMockDkgProof,
   ethers,
   ignition,
   makeRequest,
   networkHelpers,
+  setPricingConfig,
   signAndEncodeAttestation,
 } from "../fixtures";
 
@@ -392,7 +394,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         finalizeReadyCommittee,
       } = await loadFixture(setup);
 
-      await interfold.setPricingConfig({
+      await setPricingConfig(interfold, {
         keyGenFixedPerNode: 0,
         keyGenPerEncryptionProof: 0,
         coordinationPerPair: 0,
@@ -1390,7 +1392,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await requester.getAddress(),
         ethers.parseUnits("10000", 6),
       );
-      await interfold.connect(owner).setFeeToken(await feeToken.getAddress());
+      await interfold.connect(owner).setFeeAssetConfig({
+        token: await feeToken.getAddress(),
+        expectedDecimals: 6,
+        pricing: await currentPricingConfig(interfold),
+      });
 
       await makeRequest(requester, 0, feeToken);
       await registry.connect(operator1).submitTicket(0, 1);

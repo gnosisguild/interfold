@@ -86,7 +86,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("FeeTokenAllowed", "FeeTokenAllowed(address,bool)", None),
-    EvmEventDefinition::new("FeeTokenSet", "FeeTokenSet(address)", None),
+    EvmEventDefinition::new(
+        "FeeAssetConfigUpdated",
+        "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
+        None,
+    ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
         "InputPublished",
@@ -115,11 +119,6 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "PlaintextOutputPublished",
         "PlaintextOutputPublished(uint256,bytes,bytes)",
         Some(1),
-    ),
-    EvmEventDefinition::new(
-        "PricingConfigUpdated",
-        "PricingConfigUpdated((uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
-        None,
     ),
     EvmEventDefinition::new(
         "RewardClaimed",
@@ -170,6 +169,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "AssetsQueuedForExit(address,uint256,uint256,uint64)",
         None,
     ),
+    EvmEventDefinition::new(
+        "BondingAssetConfigUpdated",
+        "BondingAssetConfigUpdated(address,address,uint256,uint256,uint8,uint8,uint64)",
+        None,
+    ),
     EvmEventDefinition::new("BondOwnerSet", "BondOwnerSet(address,address)", None),
     EvmEventDefinition::new(
         "BondOwnerTransferProposed",
@@ -202,7 +206,6 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "LicenseBondUpdated(address,int256,uint256,bytes32)",
         None,
     ),
-    EvmEventDefinition::new("LicenseTokenSet", "LicenseTokenSet(address)", None),
     EvmEventDefinition::new(
         "LicenseSurplusSwept",
         "LicenseSurplusSwept(address,address,uint256)",
@@ -294,7 +297,6 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "TicketBalanceUpdated(address,int256,uint256,bytes32)",
         None,
     ),
-    EvmEventDefinition::new("TicketTokenSet", "TicketTokenSet(address)", None),
 ];
 
 const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[

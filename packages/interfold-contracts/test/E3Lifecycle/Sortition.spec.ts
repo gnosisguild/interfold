@@ -12,7 +12,12 @@
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
-import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
+import {
+  deployInterfoldSystem,
+  ethers,
+  networkHelpers,
+  setPricingConfig,
+} from "../fixtures";
 
 const { loadFixture, time, mine } = networkHelpers;
 
@@ -81,7 +86,7 @@ async function deployStack() {
   const treasuryAddress = await treasury.getAddress();
   const interfoldAddress = await interfold.getAddress();
 
-  await interfold.setPricingConfig({
+  await setPricingConfig(interfold, {
     keyGenFixedPerNode: 0n,
     keyGenPerEncryptionProof: 0n,
     coordinationPerPair: 0n,

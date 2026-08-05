@@ -251,33 +251,24 @@ contract BondingRegistry is
 
     /// @notice Initializes the bonding registry contract
     /// @param _owner Address that will own the contract
-    /// @param _ticketToken Ticket token contract for collateral
-    /// @param _licenseToken License token contract for bonding
+    /// @param assetConfig Bonding tokens and their raw-unit values
     /// @param _registry Ciphernode registry contract
     /// @param _slashedFundsTreasury Address to receive slashed funds
-    /// @param _ticketPrice Initial price per ticket
-    /// @param _licenseRequiredBond Initial required license bond for registration
     /// @param _minTicketBalance Initial minimum ticket balance for activation
     /// @param _exitDelay Initial exit delay period in seconds
     function initialize(
         address _owner,
-        InterfoldTicketToken _ticketToken,
-        IERC20 _licenseToken,
+        BondingAssetConfig calldata assetConfig,
         ICiphernodeRegistry _registry,
         address _slashedFundsTreasury,
-        uint256 _ticketPrice,
-        uint256 _licenseRequiredBond,
         uint256 _minTicketBalance,
         uint64 _exitDelay
     ) public initializer {
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
-        setTicketToken(_ticketToken);
-        setLicenseToken(_licenseToken);
+        _setBondingAssetConfig(assetConfig);
         setRegistry(_registry);
         setSlashedFundsTreasury(_slashedFundsTreasury);
-        setTicketPrice(_ticketPrice);
-        setLicenseRequiredBond(_licenseRequiredBond);
         setMinTicketBalance(_minTicketBalance);
         setExitDelay(_exitDelay);
         setLicenseActiveBps(8_000);
@@ -1057,33 +1048,35 @@ contract BondingRegistry is
     // ======================
 
     /// @inheritdoc IBondingRegistry
-    function setTicketPrice(uint256 newTicketPrice) public onlyOwner {
-        require(newTicketPrice != 0, InvalidConfiguration());
-
-        uint256 oldValue = ticketPrice;
-        if (oldValue == newTicketPrice) return;
-        ticketPrice = newTicketPrice;
-        _invalidateEligibilityStatuses();
-
-        emit ConfigurationUpdated("ticketPrice", oldValue, newTicketPrice);
+    function setBondingAssetConfig(
+        BondingAssetConfig calldata config
+    ) external onlyOwner {
+        _setBondingAssetConfig(config);
     }
 
-    /// @inheritdoc IBondingRegistry
-    function setLicenseRequiredBond(
-        uint256 newLicenseRequiredBond
-    ) public onlyOwner {
-        require(newLicenseRequiredBond != 0, InvalidConfiguration());
-
-        uint256 oldValue = licenseRequiredBond;
-        if (oldValue == newLicenseRequiredBond) return;
-        licenseRequiredBond = newLicenseRequiredBond;
-        _invalidateEligibilityStatuses();
-
-        emit ConfigurationUpdated(
-            "licenseRequiredBond",
-            oldValue,
-            newLicenseRequiredBond
+    function _setBondingAssetConfig(
+        BondingAssetConfig calldata config
+    ) internal {
+        bool assetChanged = BondingAssetLib.validateBondingAssetConfig(
+            address(ticketToken),
+            address(licenseToken),
+            _ticketTokenDecimals,
+            _licenseTokenDecimals,
+            bondingAssetConfigurationVersion,
+            address(this),
+            config,
+            _authorizedSlashingManagers,
+            _pendingSlashRouteCount
         );
+
+        ticketToken = InterfoldTicketToken(config.ticketToken);
+        licenseToken = IERC20(config.licenseToken);
+        ticketPrice = config.ticketPrice;
+        licenseRequiredBond = config.licenseRequiredBond;
+        _ticketTokenDecimals = config.expectedTicketDecimals;
+        _licenseTokenDecimals = config.expectedLicenseDecimals;
+        if (assetChanged) bondingAssetConfigurationVersion++;
+        _invalidateEligibilityStatuses();
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1135,31 +1128,6 @@ contract BondingRegistry is
         require(newSlashedFundsTreasury != address(0), ZeroAddress());
         slashedFundsTreasury = newSlashedFundsTreasury;
         emit SlashedFundsTreasurySet(newSlashedFundsTreasury);
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function setTicketToken(
-        InterfoldTicketToken newTicketToken
-    ) public onlyOwner {
-        BondingAssetLib.validateTicketToken(
-            address(ticketToken),
-            address(newTicketToken)
-        );
-        ticketToken = newTicketToken;
-        emit TicketTokenSet(address(newTicketToken));
-    }
-
-    /// @inheritdoc IBondingRegistry
-    function setLicenseToken(IERC20 newLicenseToken) public onlyOwner {
-        // BondingRegistry is deployed before FOLD because FOLD stores the
-        // registry address immutably. Permit only that initial zero placeholder.
-        BondingAssetLib.validateLicenseToken(
-            address(licenseToken),
-            address(newLicenseToken),
-            address(this)
-        );
-        licenseToken = newLicenseToken;
-        emit LicenseTokenSet(address(newLicenseToken));
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1377,7 +1345,7 @@ contract BondingRegistry is
     ///      the call site, so a shortfall emits {LicenseTransferShortfall} rather than
     ///      reverting (a revert would brick claims if the token starts taking fees);
     ///      governance must pause new bonding and drain every liability before
-    ///      rotating the token via {setLicenseToken}.
+    ///      rotating the token via {setBondingAssetConfig}.
     function _safeTransferLicenseWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
@@ -1426,7 +1394,16 @@ contract BondingRegistry is
     /// @dev Number of proposal-scoped reservations owned by each manager.
     mapping(address manager => uint256 count) private _pendingSlashRouteCount;
 
+    /// @notice Version shared by the ticket and license asset identities.
+    uint64 public bondingAssetConfigurationVersion;
+
+    /// @notice Expected decimals for the active ticket token.
+    uint8 private _ticketTokenDecimals;
+
+    /// @notice Expected decimals for the active license token.
+    uint8 private _licenseTokenDecimals;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[41] private __gap;
+    uint256[40] private __gap;
 }

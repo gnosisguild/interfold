@@ -12,6 +12,7 @@ export default buildModule("Interfold", (m) => {
   const bondingRegistry = m.getParameter("bondingRegistry");
   const e3RefundManager = m.getParameter("e3RefundManager");
   const feeToken = m.getParameter("feeToken");
+  const feeTokenDecimals = m.getParameter("feeTokenDecimals", 6);
   const initialE3Program = m.getParameter("initialE3Program");
   const timeoutConfig = m.getParameter("timeoutConfig", {
     dkgWindow: 7200,
@@ -52,10 +53,13 @@ export default buildModule("Interfold", (m) => {
     registry,
     bondingRegistry,
     e3RefundManager,
-    feeToken,
+    {
+      token: feeToken,
+      expectedDecimals: feeTokenDecimals,
+      pricing: pricingConfig,
+    },
     maxDuration,
     timeoutConfig,
-    pricingConfig,
     initialE3Program,
   ]);
 

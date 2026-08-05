@@ -186,7 +186,11 @@ export function syncProtocolDeploymentRecords(
       deployment.ciphernodeRegistry,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      config.feeToken,
+      {
+        token: config.feeToken,
+        expectedDecimals: config.feeTokenDecimals,
+        pricing: pricingConfig(config.interfold.pricing),
+      },
       BigInt(config.interfold.maxDuration),
       {
         dkgWindow: BigInt(config.interfold.timeoutConfig.dkgWindow),
@@ -195,7 +199,6 @@ export function syncProtocolDeploymentRecords(
           config.interfold.timeoutConfig.decryptionWindow,
         ),
       },
-      pricingConfig(config.interfold.pricing),
       config.e3Programs[0],
     ],
   );
@@ -209,6 +212,7 @@ export function syncProtocolDeploymentRecords(
         bondingRegistry: config.bondingRegistryProxy,
         e3RefundManager: ADDRESS_ONE,
         feeToken: config.feeToken,
+        feeTokenDecimals: config.feeTokenDecimals,
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
         pricingConfig: JSON.stringify(config.interfold.pricing),
@@ -257,12 +261,16 @@ export function syncProtocolDeploymentRecords(
 
   const bondingInitData = interfaces.bonding.encodeFunctionData("initialize", [
     config.safe,
-    deployment.ticketToken,
-    config.fold,
+    {
+      ticketToken: deployment.ticketToken,
+      licenseToken: config.fold,
+      ticketPrice: BigInt(config.bonding.ticketPrice),
+      licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+      expectedTicketDecimals: config.bonding.ticketTokenDecimals,
+      expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+    },
     deployment.ciphernodeRegistry,
     config.slashedFundsTreasury,
-    BigInt(config.bonding.ticketPrice),
-    BigInt(config.bonding.licenseRequiredBond),
     BigInt(config.bonding.minTicketBalance),
     BigInt(config.bonding.exitDelay),
   ]);
@@ -278,6 +286,8 @@ export function syncProtocolDeploymentRecords(
         slashedFundsTreasury: config.slashedFundsTreasury,
         ticketPrice: config.bonding.ticketPrice,
         licenseRequiredBond: config.bonding.licenseRequiredBond,
+        ticketTokenDecimals: config.bonding.ticketTokenDecimals,
+        licenseTokenDecimals: config.bonding.licenseTokenDecimals,
         minTicketBalance: config.bonding.minTicketBalance,
         exitDelay: config.bonding.exitDelay,
       },
