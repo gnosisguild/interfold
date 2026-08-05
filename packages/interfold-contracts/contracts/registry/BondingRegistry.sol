@@ -44,6 +44,12 @@ contract BondingRegistry is
     using SafeERC20 for IERC20;
     using ExitQueueLib for ExitQueueLib.ExitQueueState;
 
+    struct SlashedTicketReservation {
+        uint256 e3Id;
+        address refundManager;
+        uint256 amount;
+    }
+
     // ======================
     // Constants
     // ======================
@@ -418,6 +424,33 @@ contract BondingRegistry is
         uint256 index
     ) external view returns (address) {
         return _authorizedSlashingManagers[index];
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function getSlashedTicketReservation(
+        address manager,
+        uint256 proposalId
+    )
+        external
+        view
+        returns (uint256 e3Id, address refundManager, uint256 amount)
+    {
+        SlashedTicketReservation
+            storage reservation = _slashedTicketReservations[manager][
+                proposalId
+            ];
+        return (
+            reservation.e3Id,
+            reservation.refundManager,
+            reservation.amount
+        );
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function pendingSlashRouteCount(
+        address manager
+    ) external view returns (uint256) {
+        return _pendingSlashRouteCount[manager];
     }
 
     // ======================
@@ -834,29 +867,76 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
+    function snapshotSlashRouteDestination(
+        uint256 e3Id,
+        address refundManager
+    ) external onlyAuthorizedSlashingManager {
+        require(refundManager != address(0), ZeroAddress());
+        address existing = _slashRouteDestinations[msg.sender][e3Id];
+        if (existing != address(0)) revert InvalidConfiguration();
+        _slashRouteDestinations[msg.sender][e3Id] = refundManager;
+        emit SlashRouteDestinationSnapshotted(msg.sender, e3Id, refundManager);
+    }
+
+    /// @inheritdoc IBondingRegistry
     function reserveSlashedTicketFunds(
+        uint256 proposalId,
+        uint256 e3Id,
         uint256 amount
     ) external onlyAuthorizedSlashingManager {
         require(amount > 0, ZeroAmount());
+        address refundManager = _slashRouteDestinations[msg.sender][e3Id];
+        if (refundManager == address(0)) {
+            revert SlashRouteDestinationNotFound(msg.sender, e3Id);
+        }
+        if (_slashedTicketReservations[msg.sender][proposalId].amount != 0) {
+            revert SlashReservationAlreadyExists(msg.sender, proposalId);
+        }
         require(
             amount <= slashedTicketBalance - reservedSlashedTicketBalance,
             InsufficientBalance()
         );
+        _slashedTicketReservations[msg.sender][
+            proposalId
+        ] = SlashedTicketReservation({
+            e3Id: e3Id,
+            refundManager: refundManager,
+            amount: amount
+        });
+        _pendingSlashRouteCount[msg.sender]++;
         reservedSlashedTicketBalance += amount;
+        emit SlashedTicketFundsReserved(
+            msg.sender,
+            proposalId,
+            e3Id,
+            refundManager,
+            amount
+        );
     }
 
     /// @inheritdoc IBondingRegistry
     function redirectReservedSlashedTicketFunds(
-        address to,
-        uint256 amount
+        uint256 proposalId
     ) external onlyAuthorizedSlashingManager {
-        require(to != address(0), ZeroAddress());
-        require(amount > 0, ZeroAmount());
-        require(amount <= reservedSlashedTicketBalance, InsufficientBalance());
+        SlashedTicketReservation
+            memory reservation = _slashedTicketReservations[msg.sender][
+                proposalId
+            ];
+        if (reservation.amount == 0) {
+            revert SlashReservationNotFound(msg.sender, proposalId);
+        }
 
-        reservedSlashedTicketBalance -= amount;
-        slashedTicketBalance -= amount;
-        ticketToken.payout(to, amount);
+        delete _slashedTicketReservations[msg.sender][proposalId];
+        _pendingSlashRouteCount[msg.sender]--;
+        reservedSlashedTicketBalance -= reservation.amount;
+        slashedTicketBalance -= reservation.amount;
+        ticketToken.payout(reservation.refundManager, reservation.amount);
+        emit ReservedSlashedTicketFundsRouted(
+            msg.sender,
+            proposalId,
+            reservation.refundManager,
+            reservation.amount
+        );
     }
 
     // ======================
@@ -1067,6 +1147,13 @@ contract BondingRegistry is
             oldSlashingManager
         ];
         if (indexPlusOne == 0) revert Unauthorized();
+        uint256 pendingRoutes = _pendingSlashRouteCount[oldSlashingManager];
+        if (pendingRoutes != 0) {
+            revert ManagerHasPendingSlashRoutes(
+                oldSlashingManager,
+                pendingRoutes
+            );
+        }
 
         uint256 index = indexPlusOne - 1;
         uint256 lastIndex = _authorizedSlashingManagers.length - 1;
@@ -1321,7 +1408,18 @@ contract BondingRegistry is
     mapping(address operator => address pendingOwner)
         private _pendingBondOwnerOf;
 
+    /// @dev Refund manager frozen by each slashing manager for each E3.
+    mapping(address manager => mapping(uint256 e3Id => address refundManager))
+        private _slashRouteDestinations;
+
+    /// @dev Proposal-scoped reservations owned by each slashing manager.
+    mapping(address manager => mapping(uint256 proposalId => SlashedTicketReservation reservation))
+        private _slashedTicketReservations;
+
+    /// @dev Number of proposal-scoped reservations owned by each manager.
+    mapping(address manager => uint256 count) private _pendingSlashRouteCount;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[44] private __gap;
+    uint256[41] private __gap;
 }

@@ -230,9 +230,19 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("RegistrySet", "RegistrySet(address)", None),
     EvmEventDefinition::new(
+        "ReservedSlashedTicketFundsRouted",
+        "ReservedSlashedTicketFundsRouted(address,uint256,address,uint256)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "RewardDistributorUpdated",
         "RewardDistributorUpdated(address,bool)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "SlashRouteDestinationSnapshotted",
+        "SlashRouteDestinationSnapshotted(address,uint256,address)",
+        Some(2),
     ),
     EvmEventDefinition::new(
         "SlashedFundsTreasurySet",
@@ -243,6 +253,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "SlashedFundsWithdrawn",
         "SlashedFundsWithdrawn(address,uint256,uint256)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "SlashedTicketFundsReserved",
+        "SlashedTicketFundsReserved(address,uint256,uint256,address,uint256)",
+        Some(3),
     ),
     EvmEventDefinition::new(
         "SlashingManagerAuthorizationUpdated",

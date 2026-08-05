@@ -54,6 +54,18 @@ interface IBondingRegistry {
     ///         reserved for a pending E3 slash route.
     error ReservedSlashedFunds();
 
+    /// @notice The E3 has no frozen slash-fund destination for this manager.
+    error SlashRouteDestinationNotFound(address manager, uint256 e3Id);
+
+    /// @notice A proposal already has a slashed-ticket reservation.
+    error SlashReservationAlreadyExists(address manager, uint256 proposalId);
+
+    /// @notice A proposal has no slashed-ticket reservation.
+    error SlashReservationNotFound(address manager, uint256 proposalId);
+
+    /// @notice A manager still owns slash routes that must finish before revocation.
+    error ManagerHasPendingSlashRoutes(address manager, uint256 count);
+
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
 
@@ -216,6 +228,30 @@ interface IBondingRegistry {
     event SlashingManagerAuthorizationUpdated(
         address indexed slashingManager,
         bool authorized
+    );
+
+    /// @notice Emitted when an E3 freezes its slash-fund destination.
+    event SlashRouteDestinationSnapshotted(
+        address indexed slashingManager,
+        uint256 indexed e3Id,
+        address indexed refundManager
+    );
+
+    /// @notice Emitted when a proposal reserves slashed ticket funds.
+    event SlashedTicketFundsReserved(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address refundManager,
+        uint256 amount
+    );
+
+    /// @notice Emitted when a proposal routes its reserved ticket funds.
+    event ReservedSlashedTicketFundsRouted(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        address indexed refundManager,
+        uint256 amount
     );
 
     /**
@@ -444,6 +480,20 @@ interface IBondingRegistry {
     /// @notice Get slashed ticket funds reserved for retryable E3 routing.
     function reservedSlashedTicketBalance() external view returns (uint256);
 
+    /// @notice Return one proposal-scoped slashed-ticket reservation.
+    function getSlashedTicketReservation(
+        address manager,
+        uint256 proposalId
+    )
+        external
+        view
+        returns (uint256 e3Id, address refundManager, uint256 amount);
+
+    /// @notice Return the number of pending slash routes owned by a manager.
+    function pendingSlashRouteCount(
+        address manager
+    ) external view returns (uint256 count);
+
     /// @notice Get the ticket wrapper whose underlying asset backs ticket slashes.
     function ticketToken() external view returns (InterfoldTicketToken);
 
@@ -553,16 +603,22 @@ interface IBondingRegistry {
         bytes32 reason
     ) external returns (uint256 actualAmount);
 
-    /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
-    /// @dev Only callable by the configured slashing manager.
-    function reserveSlashedTicketFunds(uint256 amount) external;
+    /// @notice Freeze the refund manager used by this manager and E3.
+    /// @dev The authorized slashing manager calls this during E3 setup.
+    function snapshotSlashRouteDestination(
+        uint256 e3Id,
+        address refundManager
+    ) external;
 
-    /// @notice Route and consume previously reserved slashed ticket funds.
-    /// @dev Only callable by the configured slashing manager.
-    function redirectReservedSlashedTicketFunds(
-        address to,
+    /// @notice Reserve slashed ticket funds for one proposal.
+    function reserveSlashedTicketFunds(
+        uint256 proposalId,
+        uint256 e3Id,
         uint256 amount
     ) external;
+
+    /// @notice Route one proposal's full reservation to its frozen refund manager.
+    function redirectReservedSlashedTicketFunds(uint256 proposalId) external;
 
     // ======================
     // Reward Distribution Functions

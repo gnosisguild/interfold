@@ -1181,6 +1181,50 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(await bondingRegistry.slashedTicketBalance()).to.equal(
         pending.amount,
       );
+      const oldManagerAddress = await slashingManager.getAddress();
+      const reservation = await bondingRegistry.getSlashedTicketReservation(
+        oldManagerAddress,
+        0,
+      );
+      expect(reservation.e3Id).to.equal(0);
+      expect(reservation.refundManager).to.equal(refundManagerAddress);
+      expect(reservation.amount).to.equal(pending.amount);
+
+      const newManager = await ethers.deployContract("SlashingManager", [
+        0,
+        await owner.getAddress(),
+      ]);
+      await newManager.setBondingRegistry(await bondingRegistry.getAddress());
+      const newManagerAddress = await newManager.getAddress();
+      await bondingRegistry
+        .connect(owner)
+        .setSlashingManager(newManagerAddress);
+
+      await expect(
+        bondingRegistry.connect(owner).revokeSlashingManager(oldManagerAddress),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "ManagerHasPendingSlashRoutes",
+        )
+        .withArgs(oldManagerAddress, 1);
+
+      await networkHelpers.setBalance(
+        newManagerAddress,
+        ethers.parseEther("1"),
+      );
+      await networkHelpers.impersonateAccount(newManagerAddress);
+      await expect(
+        bondingRegistry
+          .connect(await ethers.getSigner(newManagerAddress))
+          .redirectReservedSlashedTicketFunds(0),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "SlashReservationNotFound",
+        )
+        .withArgs(newManagerAddress, 0);
+      await networkHelpers.stopImpersonatingAccount(newManagerAddress);
 
       await expect(
         bondingRegistry.connect(owner).withdrawSlashedFunds(pending.amount, 0),
@@ -1203,6 +1247,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       expect(await bondingRegistry.reservedSlashedTicketBalance()).to.equal(0);
       expect(await bondingRegistry.slashedTicketBalance()).to.equal(0);
+      expect(
+        await bondingRegistry.pendingSlashRouteCount(oldManagerAddress),
+      ).to.equal(0);
+      await bondingRegistry
+        .connect(owner)
+        .revokeSlashingManager(oldManagerAddress);
       expect(
         await slashingManager.connect(requester).retrySlashRoute.staticCall(0),
       ).to.equal(false);

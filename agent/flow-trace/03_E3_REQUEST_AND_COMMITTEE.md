@@ -62,6 +62,8 @@ Requester calls: Interfold.request({
 │   ├─ Snapshot Interfold dependencies for this E3:
 │   │   registry, bonding registry, refund manager, and slashing manager
 │   │   → later global rotations apply only to new requests
+│   │   → the slashing manager registers this E3's refund destination in
+│   │     BondingRegistry for proposal-scoped ticket-slash routes
 │   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
 │   │   → freezes refund/slash allocation, treasury, policy version,
 │   │     request-time Interfold, committee registry, and bonding registry

@@ -321,6 +321,10 @@ contract SlashingManager is
         dependencies.interfoldContract = interfold;
         dependencies.refundManager = e3RefundManager;
         dependencies.initialized = true;
+        dependencies.bonding.snapshotSlashRouteDestination(
+            e3Id,
+            address(dependencies.refundManager)
+        );
     }
 
     // ======================
@@ -827,7 +831,6 @@ contract SlashingManager is
         // Reserve and attempt escrow. Failure leaves both a durable proposal
         // route and a matching BondingRegistry reservation for permissionless retry.
         if (actualTicketSlashed > 0) {
-            dependencies.bonding.reserveSlashedTicketFunds(actualTicketSlashed);
             PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
             route.e3Id = p.e3Id;
             route.token = address(
@@ -835,6 +838,11 @@ contract SlashingManager is
             );
             route.amount = actualTicketSlashed;
             route.pending = true;
+            dependencies.bonding.reserveSlashedTicketFunds(
+                proposalId,
+                p.e3Id,
+                actualTicketSlashed
+            );
             emit SlashRoutePending(
                 proposalId,
                 p.e3Id,
@@ -882,10 +890,7 @@ contract SlashingManager is
         // twice. Any downstream failure reverts this write together with the
         // transfer and accounting, leaving the route pending for another retry.
         route.pending = false;
-        dependencies.bonding.redirectReservedSlashedTicketFunds(
-            address(dependencies.refundManager),
-            route.amount
-        );
+        dependencies.bonding.redirectReservedSlashedTicketFunds(proposalId);
         dependencies.interfoldContract.escrowSlashedFunds(
             route.e3Id,
             IERC20(route.token),

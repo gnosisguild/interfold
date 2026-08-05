@@ -762,11 +762,15 @@ _executeSlash(proposalId):
 │     │  Destination decided later at terminal state.
 │     │
 │     ├─ Reserve and record BEFORE attempting the route:
-│     │    bondingRegistry.reserveSlashedTicketFunds(amount)
+│     │    bondingRegistry.reserveSlashedTicketFunds(
+│     │      proposalId, e3Id, amount
+│     │    )
 │     │    pendingSlashRoutes[proposalId] = {
 │     │      e3Id, token: ticketToken.underlying(), amount, pending: true
 │     │    }
-│     │    → Generic redirect and treasury withdrawal cannot spend reserve
+│     │    → Reservation belongs only to (slashingManager, proposalId)
+│     │    → Its refund manager was frozen during E3 dependency setup
+│     │    → Other managers and treasury withdrawal cannot spend it
 │     │    → Emit SlashRoutePending
 │     │
 │     │  Bounded self-call for initial atomic attempt:
@@ -782,8 +786,10 @@ _executeSlash(proposalId):
 │     │  │  │                                                    │
 │     │  │  │  Step A: Move USDC from BondingRegistry            │
 │     │  │  │    bondingRegistry.redirectReservedSlashedTicketFunds(
-│     │  │  │      e3RefundManager, amount                       │
+│     │  │  │      proposalId                                    │
 │     │  │  │    )                                               │
+│     │  │  │    ├─ Load the exact amount and frozen destination │
+│     │  │  │    │  for (manager, proposalId)                    │
 │     │  │  │    ├─ reservedSlashedTicketBalance -= amount        │
 │     │  │  │    ├─ slashedTicketBalance -= amount                │
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
@@ -1076,18 +1082,23 @@ Slash Reasons (derived from ProofType for Lane A):
 Slashed ticket funds are always escrowed first. Their final destination depends on the E3's terminal
 state:
 
+Before an upgrade that introduces proposal-scoped reservations, retry every legacy pending route
+until `reservedSlashedTicketBalance` is zero. Fresh deployments need no route migration because each
+reservation already records its manager, proposal, amount, and destination.
+
 ```
 STEP 1: ESCROWING (always, at slash time)
   Triggered by: _executeSlash → reserve + routePendingSlashFunds
   When: Any slash with actualTicketSlashed > 0, regardless of E3 stage
-  Flow: BondingRegistry.redirectReservedSlashedTicketFunds(refundManager, amount)
+  Flow: BondingRegistry.redirectReservedSlashedTicketFunds(proposalId)
+    → loads the proposal's frozen refund manager and exact amount
     → ticketToken.payout(refundManager, amount)
     → actual ticket underlying moves to E3RefundManager
     → _pendingSlashedByToken[e3Id][actualToken] += amount
     → tokenLiability[actualToken] protects the balance
   Effect: slashedTicketBalance goes UP (during slash) then DOWN (during redirect)
   Failure: route stays pending and the same amount remains reserved against
-    generic redirects/treasury withdrawal until permissionless retry succeeds
+    other managers and treasury withdrawal until permissionless retry succeeds
 
 STEP 2a: E3 FAILS → Token-specific compensation
   Triggered by: terminal escrow or permissionless settleSlashedFunds

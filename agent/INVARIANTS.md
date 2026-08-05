@@ -103,8 +103,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Committee finalization freezes each operator's reward recipient for that E3. Success rewards,
   failed-E3 work rewards, and slash-funded rewards use that address even if bond ownership changes
   later. — `flow-trace/03`, `flow-trace/05`, `flow-trace/06`
-- Every ticket slash records a durable, proposal-scoped route and reserves the asset against
-  treasury withdrawal **before** escrow; retries are idempotent. — INDEX concern #30
+- Every ticket slash records a durable `(manager, proposalId)` route and reserves the asset against
+  treasury withdrawal **before** escrow. Its E3 refund destination is frozen during dependency
+  setup; retries are idempotent. — `flow-trace/05`
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty; nonzero
   `failureReason < _MAX_FAILURE_REASON` and implies `affectsCommittee = true`; a failure-triggering
   slash expels the faulty operator **before** honest recipients are resolved. — `flow-trace/05`
