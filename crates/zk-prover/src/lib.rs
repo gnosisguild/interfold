@@ -27,6 +27,9 @@ pub use actors::{
 pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
+pub use circuits::aggregation::c2_chunk_accumulator::{
+    finalize_c2_chunk_fold, generate_sequential_c2_chunk_fold,
+};
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::node_dkg_fold::{
