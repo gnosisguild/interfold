@@ -29,5 +29,9 @@ abstract contract BondingSlashingStorage {
         mapping(address manager => mapping(uint256 e3Id => uint256 count)) e3Locks;
         mapping(address manager => mapping(uint256 e3Id => uint256 count)) e3Routes;
         mapping(address manager => mapping(uint256 e3Id => address interfold)) e3Interfold;
+        mapping(uint256 e3Id => address registry) committeeRegistries;
+        mapping(uint256 e3Id => mapping(address operator => bool locked)) committeeObligations;
+        mapping(uint256 e3Id => uint256 count) committeeMemberCounts;
+        mapping(address operator => uint256 count) unresolvedCommittees;
     }
 }

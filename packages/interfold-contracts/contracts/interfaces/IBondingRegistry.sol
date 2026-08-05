@@ -50,6 +50,10 @@ interface IBondingRegistry {
     ///         financial slash proposal against them remains unresolved.
     error OperatorUnderSlash();
 
+    /// @notice Matured collateral remains slashable until every selected
+    ///         committee obligation for the operator reaches a terminal E3.
+    error OperatorInActiveCommittee();
+
     /// @notice Treasury withdrawal or generic routing attempted to consume funds
     ///         reserved for a pending E3 slash route.
     error ReservedSlashedFunds();
@@ -286,6 +290,15 @@ interface IBondingRegistry {
         address indexed slashingManager,
         address indexed operator,
         bool banned
+    );
+
+    /// @notice Emitted when a request-time registry snapshots, opens, or
+    ///         releases committee collateral obligations.
+    event CommitteeObligationUpdated(
+        uint256 indexed e3Id,
+        address indexed registry,
+        address indexed operator,
+        bool active
     );
 
     /// @notice Emitted when a proposal reserves slashed ticket funds.
@@ -621,6 +634,15 @@ interface IBondingRegistry {
         address operator,
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
+    ) external;
+
+    /// @notice Snapshot, open, or release an E3's committee obligations.
+    /// @dev The current registry snapshots ownership with a zero-address active update.
+    ///      Only that request-time registry may make later updates for the E3.
+    function setCommitteeObligation(
+        uint256 e3Id,
+        address operator,
+        bool active
     ) external;
 
     // ======================

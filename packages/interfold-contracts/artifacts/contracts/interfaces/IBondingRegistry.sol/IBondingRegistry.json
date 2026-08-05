@@ -258,6 +258,11 @@
     },
     {
       "inputs": [],
+      "name": "OperatorInActiveCommittee",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "OperatorUnderSlash",
       "type": "error"
     },
@@ -459,6 +464,37 @@
         }
       ],
       "name": "CiphernodeDeregistrationRequested",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "active",
+          "type": "bool"
+        }
+      ],
+      "name": "CommitteeObligationUpdated",
       "type": "event"
     },
     {
@@ -1716,6 +1752,29 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "active",
+          "type": "bool"
+        }
+      ],
+      "name": "setCommitteeObligation",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint64",
           "name": "newExitDelay",
           "type": "uint64"
@@ -2108,5 +2167,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-e96fe9f4f4fa573ab59c2bd363036b1b6054df80"
+  "buildInfoId": "solc-0_8_28-13f03f1d861b56a0cd8a63cf347faa5a3e174176"
 }

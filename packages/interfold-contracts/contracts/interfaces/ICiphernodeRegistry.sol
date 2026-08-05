@@ -51,6 +51,7 @@ interface ICiphernodeRegistry {
     /// @param submitted Mapping of nodes to their submission status.
     /// @param scoreOf Mapping of nodes to their scores.
     /// @param memberStatus Tri-state membership tracking (None / Active / Expelled).
+    /// @param obligationsReleased Whether terminal cleanup released member collateral.
     struct Committee {
         CommitteeStage stage;
         uint256 seed;
@@ -64,6 +65,7 @@ interface ICiphernodeRegistry {
         mapping(address node => uint256 score) scoreOf;
         mapping(address node => MemberStatus) memberStatus;
         uint256 activeCount;
+        bool obligationsReleased;
     }
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
@@ -270,6 +272,12 @@ interface ICiphernodeRegistry {
     /// @notice Committee has not been finalized yet for this E3
     error CommitteeNotFinalized();
 
+    /// @notice The E3 has not reached a terminal lifecycle stage.
+    error E3NotTerminal(uint256 e3Id);
+
+    /// @notice The E3's committee collateral obligations were already released.
+    error CommitteeObligationsAlreadyReleased(uint256 e3Id);
+
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();
 
@@ -432,6 +440,10 @@ interface ICiphernodeRegistry {
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) external;
+
+    /// @notice Release committee collateral after the E3 completes or fails.
+    /// @dev Permissionless and bound to the request-time Interfold and bonding registry.
+    function releaseCommittee(uint256 e3Id) external;
 
     /// @notice Returns DKG anchor commitments stored at publication (empty if not yet published).
     /// @param e3Id ID of the E3

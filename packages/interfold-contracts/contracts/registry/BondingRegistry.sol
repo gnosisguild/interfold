@@ -717,13 +717,23 @@ contract BondingRegistry is
         address operator,
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
-    )
-        external
-        nonReentrant
-        noOpenSlashProposal(operator)
-        onlyBondOwner(operator)
-    {
+    ) external nonReentrant onlyBondOwner(operator) {
+        BondingSlashingLib.validateExitClaim(operator);
         _claimExits(operator, maxTicketAmount, maxLicenseAmount);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function setCommitteeObligation(
+        uint256 e3Id,
+        address operator,
+        bool active
+    ) external {
+        BondingSlashingLib.setCommitteeObligation(
+            address(registry),
+            e3Id,
+            operator,
+            active
+        );
     }
 
     function _claimExits(

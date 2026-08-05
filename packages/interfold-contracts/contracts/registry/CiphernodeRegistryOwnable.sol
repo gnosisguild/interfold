@@ -270,6 +270,7 @@ contract CiphernodeRegistryOwnable is
         );
         dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
+        dependencies.bonding.setCommitteeObligation(e3Id, address(0), true);
         emit DkgFoldAttestationContextEstablished(
             e3Id,
             address(this),
@@ -611,6 +612,8 @@ contract CiphernodeRegistryOwnable is
                 e3Id,
                 uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
             );
+            c.obligationsReleased = true;
+            _setCommitteeObligations(e3Id, c, false);
             return false;
         }
 
@@ -627,9 +630,49 @@ contract CiphernodeRegistryOwnable is
             scores[i] = c.scoreOf[node];
         }
 
+        _setCommitteeObligations(e3Id, c, true);
+
         _interfoldFor(e3Id).onCommitteeFinalized(e3Id);
         emit SortitionCommitteeFinalized(e3Id, c.topNodes, scores);
+        emit CommitteeActivationChanged(e3Id, true);
         return true;
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function releaseCommittee(uint256 e3Id) external {
+        Committee storage c = committees[e3Id];
+        require(
+            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
+            CommitteeNotFinalized()
+        );
+        if (c.obligationsReleased) {
+            revert CommitteeObligationsAlreadyReleased(e3Id);
+        }
+
+        IInterfold.E3Stage stage = _interfoldFor(e3Id).getE3Stage(e3Id);
+        if (
+            stage != IInterfold.E3Stage.Complete &&
+            stage != IInterfold.E3Stage.Failed
+        ) revert E3NotTerminal(e3Id);
+
+        c.obligationsReleased = true;
+        _setCommitteeObligations(e3Id, c, false);
+        emit CommitteeActivationChanged(e3Id, false);
+    }
+
+    function _setCommitteeObligations(
+        uint256 e3Id,
+        Committee storage c,
+        bool active
+    ) internal {
+        IBondingRegistry e3Bonding = _bondingFor(e3Id);
+        uint256 length = c.topNodes.length;
+        for (uint256 i = 0; i < length; ++i) {
+            e3Bonding.setCommitteeObligation(e3Id, c.topNodes[i], active);
+        }
+        if (!active) {
+            e3Bonding.setCommitteeObligation(e3Id, address(0), false);
+        }
     }
 
     /// @inheritdoc ICiphernodeRegistry

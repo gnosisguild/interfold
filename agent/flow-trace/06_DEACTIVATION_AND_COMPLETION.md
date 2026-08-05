@@ -148,6 +148,12 @@ Bond owner or operator submits deregisterOperatorFor(operator)
 Underlying USDC and FOLD are both paid to the bond owner. The queue and slash target remain keyed by
 the operator until the claim completes.
 
+Deregistration remains an emergency stop for future selection, even when the operator belongs to a
+finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
+delay, `claimExitsFor` still reverts with `OperatorInActiveCommittee` while any selected committee
+is nonterminal. Anyone can call `releaseCommittee` on the request-time registry after the E3 becomes
+`Complete` or `Failed`; the next claim can then pay the matured assets.
+
 ## E3 Completion (Happy Path)
 
 When an E3 completes successfully:
@@ -475,6 +481,10 @@ Time ─────────────────────────
 IMPORTANT: Even during the exit delay, slashing can still
 reach into the exit queue and take locked assets. There is
 no safe harbor for misbehaving operators.
+
+If the operator belongs to a nonterminal committee, the
+assets remain in this slashable queue after the delay. They
+cannot be paid out until every committee obligation ends.
 ```
 
 ### Exit Queue Internals (audit hardening)
@@ -527,6 +537,14 @@ GOVERNANCE lifts ban:
   local aggregate and revert `OperatorUnderSlash()` without calling a manager. After rotation,
   governance retains the old manager until its E3 assignments, locks, bans, and routes are clear.
   `closeE3` releases a terminal E3 assignment after its locks and routes have drained.
+
+- **Finalized committees hold collateral through their E3** (Zenith #4). A request snapshots the
+  registry that may manage its obligations. Finalization increments a local count for every member,
+  and exit claims read that count without calling the registry. The operator may still deregister,
+  but the queued assets remain slashable. After a terminal E3, anyone can ask the request-time
+  registry to release all members atomically. A fresh deployment starts with no obligations; an
+  upgrade with live committees must backfill them or wait until those E3s terminate before enabling
+  claims under the new implementation.
 
 - **Two-step ban** (M-14, M-15): bans now require `proposeBan` → `confirmBan` from a **distinct**
   signer holding `GOVERNANCE_ROLE`. `cancelBan` rescinds an unconfirmed proposal. Legacy direct-set

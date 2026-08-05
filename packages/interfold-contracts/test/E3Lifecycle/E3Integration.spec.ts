@@ -294,6 +294,58 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(storedRequester).to.equal(await requester.getAddress());
     });
 
+    it("keeps a selected operator's queued collateral slashable until the E3 ends", async function () {
+      const {
+        interfold,
+        bondingRegistry,
+        registry,
+        operator1,
+        computeProvider,
+        finalizeReadyCommittee,
+      } = await loadFixture(setup);
+
+      await finalizeReadyCommittee();
+      const operatorAddress = await operator1.getAddress();
+
+      await expect(
+        bondingRegistry
+          .connect(computeProvider)
+          .setCommitteeObligation(0, operatorAddress, false),
+      ).to.be.revertedWithCustomError(bondingRegistry, "Unauthorized");
+      await expect(registry.releaseCommittee(0))
+        .to.be.revertedWithCustomError(registry, "E3NotTerminal")
+        .withArgs(0);
+
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operatorAddress);
+      expect(await registry.isCommitteeMemberActive(0, operatorAddress)).to.be
+        .true;
+
+      await time.increase((await bondingRegistry.exitDelay()) + 1n);
+      await expect(
+        bondingRegistry
+          .connect(computeProvider)
+          .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "OperatorInActiveCommittee",
+      );
+
+      await interfold.markE3Failed(0);
+      await expect(registry.releaseCommittee(0))
+        .to.emit(registry, "CommitteeActivationChanged")
+        .withArgs(0, false);
+
+      await bondingRegistry
+        .connect(computeProvider)
+        .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256);
+      const [pendingTickets, pendingLicense] =
+        await bondingRegistry.pendingExits(operatorAddress);
+      expect(pendingTickets).to.equal(0);
+      expect(pendingLicense).to.equal(0);
+    });
+
     it("classifies every supported failure reason by economic responsibility", async function () {
       const { e3RefundManager } = await loadFixture(setup);
 
@@ -531,6 +583,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await registry.connect(owner).setInterfold(rotatedRegistry);
       await registry.connect(owner).setBondingRegistry(rotatedBonding);
       await registry.connect(owner).setSlashingManager(rotatedSlashingManager);
+      await bondingRegistry.connect(owner).setRegistry(rotatedRegistry);
       await bondingRegistry
         .connect(owner)
         .setSlashingManager(rotatedSlashingManager);
@@ -600,6 +653,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
 
       expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
+      await expect(registry.releaseCommittee(0))
+        .to.emit(registry, "CommitteeActivationChanged")
+        .withArgs(0, false);
     });
   });
 

@@ -102,8 +102,30 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeObligationsAlreadyReleased",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "DkgProofRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3NotTerminal",
       "type": "error"
     },
     {
@@ -1229,6 +1251,19 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "releaseCommittee",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "address",
           "name": "node",
           "type": "address"
@@ -1403,5 +1438,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-4380efd9123887610385e613739fd2b530bb9f57"
+  "buildInfoId": "solc-0_8_28-13f03f1d861b56a0cd8a63cf347faa5a3e174176"
 }

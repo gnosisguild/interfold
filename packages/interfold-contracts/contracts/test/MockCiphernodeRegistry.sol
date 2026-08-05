@@ -119,6 +119,9 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         bytes calldata
     ) external pure {} // solhint-disable-line no-empty-blocks
 
+    // solhint-disable-next-line no-empty-blocks
+    function releaseCommittee(uint256) external pure {}
+
     function getCommitteeNodes(
         uint256 e3Id
     ) external view returns (address[] memory) {
@@ -327,6 +330,9 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
         bytes calldata,
         bytes calldata
     ) external pure {} // solhint-disable-line no-empty-blocks
+
+    // solhint-disable-next-line no-empty-blocks
+    function releaseCommittee(uint256) external pure {}
 
     function getCommitteeNodes(
         uint256

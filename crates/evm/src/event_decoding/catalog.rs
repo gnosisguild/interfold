@@ -182,6 +182,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new(
+        "CommitteeObligationUpdated",
+        "CommitteeObligationUpdated(uint256,address,address,bool)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "ConfigurationUpdated",
         "ConfigurationUpdated(bytes32,uint256,uint256)",
         None,

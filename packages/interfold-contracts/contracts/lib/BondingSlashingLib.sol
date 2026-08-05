@@ -37,6 +37,85 @@ library BondingSlashingLib {
         return _layout().activeBans[operator];
     }
 
+    function validateExitClaim(address operator) external view {
+        BondingSlashingStorage.Layout storage state = _layout();
+        if (state.openSlashLocks[operator] != 0) {
+            revert IBondingRegistry.OperatorUnderSlash();
+        }
+        if (state.unresolvedCommittees[operator] != 0) {
+            revert IBondingRegistry.OperatorInActiveCommittee();
+        }
+    }
+
+    function setCommitteeObligation(
+        address currentRegistry,
+        uint256 e3Id,
+        address operator,
+        bool active
+    ) external {
+        BondingSlashingStorage.Layout storage state = _layout();
+        if (active) {
+            _openCommitteeObligation(state, currentRegistry, e3Id, operator);
+        } else {
+            _releaseCommitteeObligation(state, e3Id, operator);
+        }
+
+        emit IBondingRegistry.CommitteeObligationUpdated(
+            e3Id,
+            msg.sender,
+            operator,
+            active
+        );
+    }
+
+    function _openCommitteeObligation(
+        BondingSlashingStorage.Layout storage state,
+        address currentRegistry,
+        uint256 e3Id,
+        address operator
+    ) private {
+        address assignedRegistry = state.committeeRegistries[e3Id];
+        if (assignedRegistry == address(0)) {
+            if (
+                currentRegistry == address(0) || msg.sender != currentRegistry
+            ) {
+                revert IBondingRegistry.Unauthorized();
+            }
+            state.committeeRegistries[e3Id] = msg.sender;
+        } else if (msg.sender != assignedRegistry) {
+            revert IBondingRegistry.Unauthorized();
+        }
+
+        if (
+            operator == address(0) || state.committeeObligations[e3Id][operator]
+        ) return;
+        state.committeeObligations[e3Id][operator] = true;
+        state.committeeMemberCounts[e3Id]++;
+        state.unresolvedCommittees[operator]++;
+    }
+
+    function _releaseCommitteeObligation(
+        BondingSlashingStorage.Layout storage state,
+        uint256 e3Id,
+        address operator
+    ) private {
+        address assignedRegistry = state.committeeRegistries[e3Id];
+        if (assignedRegistry == address(0) || msg.sender != assignedRegistry) {
+            revert IBondingRegistry.Unauthorized();
+        }
+
+        if (operator == address(0)) {
+            if (state.committeeMemberCounts[e3Id] != 0) {
+                revert IBondingRegistry.InvalidConfiguration();
+            }
+            delete state.committeeRegistries[e3Id];
+        } else if (state.committeeObligations[e3Id][operator]) {
+            delete state.committeeObligations[e3Id][operator];
+            state.committeeMemberCounts[e3Id]--;
+            state.unresolvedCommittees[operator]--;
+        }
+    }
+
     function snapshotE3(
         address manager,
         uint256 e3Id,

@@ -120,6 +120,8 @@ Requester calls: Interfold.request({
 │   │   │  │              e3Id, registry, foldVerifier)          │
 │   │   │  │       Emit CommitteeRequested(e3Id, seed, threshold,│
 │   │   │  │              requestBlock, committeeDeadline)       │
+│   │   │  │       BondingRegistry records this request-time      │
+│   │   │  │       registry as the E3's obligation owner          │
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
 │   │
@@ -328,7 +330,10 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       activeCount = committee.length                    │
     │  │       finalized = true                                  │
     │  │                                                         │
-    │  │    5. interfold.onCommitteeFinalized(e3Id)                │
+    │  │    5. Record one unresolved collateral obligation        │
+    │  │       for each finalized member in BondingRegistry       │
+    │  │                                                         │
+    │  │    6. interfold.onCommitteeFinalized(e3Id)                │
     │  │       │                                                 │
     │  │       │  ┌─ Interfold.sol ────────────────────────────┐  │
     │  │       │  │  onCommitteeFinalized(e3Id) {            │  │
@@ -342,7 +347,7 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       │  │  }                                       │  │
     │  │       │  └──────────────────────────────────────────┘  │
     │  │                                                         │
-    │  │    6. Emit SortitionCommitteeFinalized(                 │
+    │  │    7. Emit SortitionCommitteeFinalized(                 │
     │  │         e3Id, committee, scores                         │
     │  │       )                                                 │
     │  │       [ICiphernodeRegistry event]                       │
@@ -353,7 +358,10 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
 Ticket submission changes only the provisional `topNodes` set. Successful finalization grants
 membership and `Active` status to the final address-sorted members. Failed formation grants neither.
 Finalization also freezes each member's current bond owner as its reward recipient for this E3.
-Later bond-owner transfers apply to later committees, not to payments earned by this committee.
+Later bond-owner transfers apply to later committees, not to payments earned by this committee. It
+also locks each member's queued collateral against withdrawal. Once Interfold reports `Complete` or
+`Failed`, anyone can call `releaseCommittee(e3Id)` on the request-time registry to release all
+member obligations atomically.
 
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
@@ -446,14 +454,18 @@ The registry must finalize a ready committee.
    transactions, request-time validation rejects every intermediate state; a requester can only
    freeze the fully old or fully new graph.
 
-8. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
+8. **Committee collateral follows the E3**: The request-time registry owns the E3's collateral
+   obligations. Successful finalization locks every member. A later registry rotation cannot open,
+   release, or strand those obligations through the replacement registry.
+
+9. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
    `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
    committee membership, and party IDs never use the bond-owner address.
 
-9. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
-   `Interfold.initialize` registers it before it transfers ownership to the Safe. Every registration
-   rejects an address without runtime code. After initialization, only the owner can append another
-   program.
+10. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
+    `Interfold.initialize` registers it before it transfers ownership to the Safe. Every
+    registration rejects an address without runtime code. After initialization, only the owner can
+    append another program.
 
 ---
 
