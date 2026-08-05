@@ -6,7 +6,7 @@
 
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult};
 use e3_compute_provider::FHEInputs;
-use e3_support_types::{ComputeRequest, WebhookPayload};
+use e3_support_types::{ComputeDomain, ComputeRequest, WebhookPayload};
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
@@ -65,10 +65,12 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
 
 async fn run_computation_async(
     fhe_inputs: FHEInputs,
+    domain: ComputeDomain,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     println!("running computation...");
     let result =
-        tokio::task::spawn_blocking(move || e3_support_host::run_compute(fhe_inputs)).await?;
+        tokio::task::spawn_blocking(move || e3_support_host::run_compute(fhe_inputs, domain))
+            .await?;
 
     match result {
         Ok((boundless_output, ciphertext)) => match boundless_output {
@@ -83,7 +85,9 @@ async fn run_computation_async(
                     ciphertext.len(),
                     result.ciphertext_commitment.len()
                 );
-                Ok((seal, ciphertext, result.ciphertext_commitment))
+                let proof = e3_support_host::encode_compute_proof(&seal, &result)
+                    .map_err(|error| anyhow::anyhow!("invalid compute proof: {error:?}"))?;
+                Ok((proof, ciphertext, result.ciphertext_commitment))
             }
             e3_support_host::BoundlessOutput::Error { error } => {
                 Err(anyhow::anyhow!("Boundless request failed: {}", error))
@@ -102,8 +106,9 @@ async fn process_computation_background(
     e3_id: u64,
     callback_url: &str,
     fhe_inputs: FHEInputs,
+    domain: ComputeDomain,
 ) -> anyhow::Result<()> {
-    match run_computation_async(fhe_inputs).await {
+    match run_computation_async(fhe_inputs, domain).await {
         Ok((proof, ciphertext, ciphertext_commitment)) => {
             println!("computation finished!");
             println!("handling webhook delivery...");
@@ -145,6 +150,14 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
     };
+    let domain = ComputeDomain::new(
+        req.chain_id,
+        &req.interfold_address,
+        e3_id,
+        &req.encryption_scheme_id,
+        &req.committee_public_key_hash,
+    )
+    .map_err(actix_web::error::ErrorBadRequest)?;
 
     println!("fhe_inputs.params = {:?}", fhe_inputs.params);
     let callback_url = callback_url
@@ -153,7 +166,9 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
 
     // Process computation in background
     tokio::spawn(async move {
-        if let Err(e) = process_computation_background(e3_id, &callback_url, fhe_inputs).await {
+        if let Err(e) =
+            process_computation_background(e3_id, &callback_url, fhe_inputs, domain).await
+        {
             eprintln!("✗ Background computation failed for E3 {}: {:?}", e3_id, e);
         }
     });

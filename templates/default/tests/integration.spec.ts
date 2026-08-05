@@ -273,11 +273,14 @@ describe('Integration', () => {
     console.log('ENCRYPTING NUMBERS')
     const enc1 = await sdk.encryptNumber(num1, publicKeyBytes)
     const enc2 = await sdk.encryptNumber(num2, publicKeyBytes)
+    const commitment1 = await sdk.computeCiphertextCommitment(enc1)
+    const commitment2 = await sdk.computeCiphertextCommitment(enc2)
 
     let txHash = await publishInput(
       walletClient,
       state.e3Id,
       `0x${Array.from(enc1, (b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`,
+      `0x${Array.from(commitment1, (b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`,
       account.address,
       contracts.e3Program,
     )
@@ -286,6 +289,7 @@ describe('Integration', () => {
       walletClient,
       state.e3Id,
       `0x${Array.from(enc2, (b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`,
+      `0x${Array.from(commitment2, (b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`,
       account.address,
       contracts.e3Program,
     )

@@ -42,11 +42,10 @@ graph TD
   `/health` (GET/HEAD).
 - **`host/`** — Boundless SDK integration. Builds the client, submits proof requests, waits for
   fulfillment.
-- **`types/`** — Shared types: `ComputeRequest` (what the server receives) and `WebhookPayload`
-  (tagged enum sent back).
+- **`types/`** — Shared request, webhook, proof-domain, guest-input, and journal types.
 - **`methods/`** — RISC Zero build crate. Compiles the guest program.
 - **`guest/`** — The RISC Zero zkVM guest program. Runs `fhe_processor` (homomorphic ciphertext
-  summation) and commits the `ComputeResult`.
+  summation) and commits the domain-bound `ComputeJournal`.
 - **`program/`** — The FHE processor (`fhe_processor`): sums BFV ciphertexts homomorphically.
 
 ## Webhook Payload Format
@@ -181,6 +180,10 @@ curl -X POST http://localhost:13151/run_compute \
   -H "Content-Type: application/json" \
   -d '{
     "e3_id": 1,
+    "chain_id": 31337,
+    "interfold_address": "0x1111111111111111111111111111111111111111",
+    "encryption_scheme_id": "0x...",
+    "committee_public_key": "0x...",
     "params": "0x...",
     "ciphertext_inputs": [["0x...", 0], ["0x...", 1]],
     "callback_url": "http://host.local:4000/state/add-result"
@@ -204,7 +207,9 @@ The callback server (e.g., CRISP) receives the webhook and calls:
 interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof);
 ```
 
-This transitions the E3 stage to `CiphertextReady`.
+The proof binds the chain, Interfold contract, E3, encryption scheme, committee key, output, and
+SAFE commitment. The protocol verifier checks these fields before the application verifier. Both
+checks must pass before the E3 can remain in `CiphertextReady`.
 
 ### Step 9: Decryption & Completion
 

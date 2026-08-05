@@ -614,6 +614,25 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract ICiphertextVerifier",
+          "name": "ciphertextVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "CiphertextVerifierSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -1466,6 +1485,25 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getCiphertextVerifier",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -2247,6 +2285,24 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "contract ICiphertextVerifier",
+          "name": "ciphertextVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "setCiphertextVerifier",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "enum IInterfold.CommitteeSize",
           "name": "size",
           "type": "uint8"
@@ -2523,5 +2579,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-aa9ff483f47a5cff75542a8786244857a77cd24a"
+  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
 }

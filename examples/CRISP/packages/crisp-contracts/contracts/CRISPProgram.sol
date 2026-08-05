@@ -10,6 +10,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
 import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
+import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 import { HonkVerifier } from "./CRISPVerifier.sol";
 
@@ -100,6 +101,7 @@ contract CRISPProgram is IE3Program, Ownable {
   error InputDeadlinePassed(uint256 e3Id, uint256 deadline);
   error KeyNotPublished(uint256 e3Id);
   error E3NotAcceptingInputs(uint256 e3Id);
+  error InvalidComputeContext();
 
   // Events
   event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
@@ -172,7 +174,7 @@ contract CRISPProgram is IE3Program, Ownable {
     paramsHash = round.paramsHash;
     numOptions = round.numOptions;
     creditMode = round.creditMode;
-    inputRoot = round.votes._root(TREE_DEPTH);
+    inputRoot = round.votes._root();
     numberOfVotes = round.votes.numberOfLeaves;
   }
 
@@ -342,17 +344,25 @@ contract CRISPProgram is IE3Program, Ownable {
     bytes32 ciphertextCommitment,
     bytes memory proof
   ) external view override returns (bool) {
+    E3 memory e3 = interfold.getE3(e3Id);
     bytes32 paramsHash = getParamsHash(e3Id);
+    bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root());
+    Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+    if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot) revert InvalidComputeContext();
 
-    bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root(TREE_DEPTH));
-    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
+    bytes memory journal = Risc0ComputeProof.journal(
+      bytes32(block.chainid),
+      bytes32(uint256(uint160(address(interfold)))),
+      bytes32(e3Id),
+      e3.encryptionSchemeId,
+      e3.committeePublicKey,
+      ciphertextOutputHash,
+      ciphertextCommitment,
+      paramsHash,
+      inputRoot
+    );
 
-    _encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    _encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
-    _encodeLengthPrefixAndHash(journal, 264, paramsHash);
-    _encodeLengthPrefixAndHash(journal, 396, inputRoot);
-
-    risc0Verifier.verify(proof, imageId, sha256(journal));
+    risc0Verifier.verify(computeProof.seal, imageId, sha256(journal));
     return true;
   }
 
@@ -378,19 +388,6 @@ contract CRISPProgram is IE3Program, Ownable {
       voteIndex = storedIndexPlusOne - 1;
       previousEncryptedVoteCommitment = bytes32(e3Data[e3Id].votes.elements[voteIndex]);
       e3Data[e3Id].votes._update(uint256(encryptedVoteCommitment), voteIndex);
-    }
-  }
-
-  /// @notice Encode length prefix and hash
-  /// @param journal The journal to encode into
-  /// @param startIndex The start index in the journal
-  /// @param hashVal The hash value to encode
-  function _encodeLengthPrefixAndHash(bytes memory journal, uint256 startIndex, bytes32 hashVal) internal pure {
-    journal[startIndex] = 0x20;
-    startIndex += 4;
-
-    for (uint256 i = 0; i < 32; i++) {
-      journal[startIndex + i * 4] = hashVal[i];
     }
   }
 

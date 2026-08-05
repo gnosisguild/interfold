@@ -54,6 +54,10 @@ export const deployTemplate = async () => {
   )
 
   const programId = await imageId.PROGRAM_ID()
+  const ciphertextVerifier = await ethers.deployContract('Risc0BfvCiphertextVerifier', [await verifier.getAddress(), programId])
+  await ciphertextVerifier.waitForDeployment()
+  const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
+  await (await interfold.setCiphertextVerifier(encryptionSchemeId, await ciphertextVerifier.getAddress())).wait()
 
   const e3ProgramFactory = await ethers.getContractFactory(
     MyProgramFactory.abi,

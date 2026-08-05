@@ -9,8 +9,9 @@ import { IRiscZeroVerifier } from "risc0/IRiscZeroVerifier.sol";
 import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
 import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
+import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { LazyIMTData, InternalLazyIMT, PoseidonT3 } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
+import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 
 contract MyProgram is IE3Program, Ownable {
   using InternalLazyIMT for LazyIMTData;
@@ -37,6 +38,7 @@ contract MyProgram is IE3Program, Ownable {
   error AlreadyRegistered();
   error EmptyInputData();
   error InputDeadlineReached();
+  error InvalidComputeContext();
 
   event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
 
@@ -66,57 +68,58 @@ contract MyProgram is IE3Program, Ownable {
 
   /// @notice Validates input
   /// @param e3Id The e3 id for which to publish input
-  /// @param data The input to be verified.
-  function publishInput(uint256 e3Id, bytes memory data) external {
+  /// @param data The ABI-encoded ciphertext and its SAFE commitment.
+  function publishInput(uint256 e3Id, bytes memory data) external override {
     E3 memory e3 = interfold.getE3(e3Id);
 
     if (block.timestamp > e3.inputWindow[1]) {
       revert InputDeadlineReached();
     }
 
-    if (data.length == 0) revert EmptyInputData();
+    (bytes memory ciphertext, bytes32 ciphertextCommitment) = abi.decode(data, (bytes, bytes32));
+    if (ciphertext.length == 0) revert EmptyInputData();
 
-    // You can add your own validation logic here.
+    // This minimal template does not prove that the serialized ciphertext matches its SAFE
+    // commitment. Production programs must verify that binding before insertion. Otherwise, an
+    // invalid input can prevent the E3 from completing.
     // EXAMPLE: https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
 
     uint256 index = inputs[e3Id].numberOfLeaves;
-    inputs[e3Id]._insert(PoseidonT3.hash([uint256(keccak256(data)), index]));
+    inputs[e3Id]._insert(uint256(ciphertextCommitment));
 
-    emit InputPublished(e3Id, data, index);
+    emit InputPublished(e3Id, ciphertext, index);
   }
 
   /// @notice Verify the proof
   /// @param e3Id The E3 program ID
   /// @param ciphertextOutputHash The hash of the ciphertext output
+  /// @param ciphertextCommitment The proof-derived SAFE commitment
   /// @param proof The proof to verify
   function verify(
     uint256 e3Id,
     bytes32 ciphertextOutputHash,
     bytes32 ciphertextCommitment,
     bytes memory proof
-  ) external override returns (bool) {
+  ) external view override returns (bool) {
     require(paramsHashes[e3Id] != bytes32(0), E3DoesNotExist());
+    E3 memory e3 = interfold.getE3(e3Id);
+    bytes32 paramsHash = paramsHashes[e3Id];
     bytes32 inputRoot = bytes32(inputs[e3Id]._root());
-    bytes memory journal = new bytes(528); // (32 + 1) * 4 * 4
+    Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+    if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot) revert InvalidComputeContext();
+    bytes memory journal = Risc0ComputeProof.journal(
+      bytes32(block.chainid),
+      bytes32(uint256(uint160(address(interfold)))),
+      bytes32(e3Id),
+      e3.encryptionSchemeId,
+      e3.committeePublicKey,
+      ciphertextOutputHash,
+      ciphertextCommitment,
+      paramsHash,
+      inputRoot
+    );
 
-    encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-    encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
-    encodeLengthPrefixAndHash(journal, 264, paramsHashes[e3Id]);
-    encodeLengthPrefixAndHash(journal, 396, inputRoot);
-
-    verifier.verify(proof, imageId, sha256(journal));
+    verifier.verify(computeProof.seal, imageId, sha256(journal));
     return true;
-  }
-
-  /// @notice Encode length prefix and hash
-  /// @param journal The journal to encode into
-  /// @param startIndex The start index in the journal
-  /// @param hashVal The hash value to encode
-  function encodeLengthPrefixAndHash(bytes memory journal, uint256 startIndex, bytes32 hashVal) internal pure {
-    journal[startIndex] = 0x20;
-    startIndex += 4;
-    for (uint256 i = 0; i < 32; i++) {
-      journal[startIndex + i * 4] = hashVal[i];
-    }
   }
 }

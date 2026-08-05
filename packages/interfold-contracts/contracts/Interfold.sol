@@ -12,6 +12,7 @@ import { ISlashingManager } from "./interfaces/ISlashingManager.sol";
 import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IDecryptionVerifier } from "./interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "./interfaces/IPkVerifier.sol";
+import { ICiphertextVerifier } from "./interfaces/ICiphertextVerifier.sol";
 import {
     Ownable2StepUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
@@ -129,7 +130,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @notice Maps E3 ID to the fee token used at request time
     mapping(uint256 e3Id => IERC20 token) internal _e3FeeTokens;
 
-    /// @notice Maps committee size to threshold values [quorum, total]
+    /// @notice Maps committee size to viability threshold and total members [H, N].
     mapping(CommitteeSize => uint32[2] threshold) public committeeThresholds;
 
     /// @notice Maps E3 ID to the protocol share BPS snapshotted at request time
@@ -270,13 +271,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             E3ProgramNotAllowed(requestParams.e3Program)
         );
 
-        InterfoldLifecycle.validateRequest(
-            requestParams.inputWindow,
-            block.timestamp,
-            _timeoutConfig.computeWindow,
-            _timeoutConfig.decryptionWindow,
-            maxDuration
-        );
         uint256 e3Fee = getE3Quote(requestParams);
 
         e3Id = nexte3Id++;
@@ -345,6 +339,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             address(pkVerifier) != address(0),
             InvalidEncryptionScheme(encryptionSchemeId)
         );
+        InterfoldLifecycle.snapshotCiphertextVerifier(
+            e3Id,
+            encryptionSchemeId,
+            keccak256(e3ProgramParams)
+        );
 
         e3.encryptionSchemeId = encryptionSchemeId;
         e3.decryptionVerifier = decryptionVerifier;
@@ -371,50 +370,18 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external returns (bool success) {
-        E3 memory e3 = getE3(e3Id);
-
-        E3Stage current = _e3Stages[e3Id];
-        E3Deadlines memory deadlines = _e3Deadlines[e3Id];
-        // Validation gates are delegated to {InterfoldLifecycle} (external
-        // library link) to keep the deployed Interfold runtime bytecode under
-        // the EIP-170 24,576-byte cap. Revert selectors are preserved via
-        // shared {IInterfold} error declarations.
-        InterfoldLifecycle.validatePublishCiphertext(
-            address(_registryFor(e3Id)),
-            e3Id,
-            uint8(current),
-            deadlines.computeDeadline,
-            e3.inputWindow[1],
-            e3.ciphertextOutput,
-            block.timestamp
-        );
-
-        bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
-        e3s[e3Id].ciphertextOutput = ciphertextOutputHash;
-        e3s[e3Id].ciphertextCommitment = ciphertextCommitment;
-        _e3Stages[e3Id] = E3Stage.CiphertextReady;
-        _e3Deadlines[e3Id].decryptionDeadline =
-            block.timestamp +
-            _timeoutConfig.decryptionWindow;
-
-        (success) = e3.e3Program.verify(
-            e3Id,
-            ciphertextOutputHash,
-            ciphertextCommitment,
-            proof
-        );
-        require(success, InvalidOutput(ciphertextOutput));
-
-        emit CiphertextOutputPublished(
-            e3Id,
-            ciphertextOutput,
-            ciphertextCommitment
-        );
-        emit E3StageChanged(
-            e3Id,
-            E3Stage.KeyPublished,
-            E3Stage.CiphertextReady
-        );
+        return
+            InterfoldLifecycle.publishCiphertext(
+                e3s,
+                _e3Stages,
+                _e3Deadlines,
+                address(_registryFor(e3Id)),
+                e3Id,
+                _timeoutConfig.decryptionWindow,
+                ciphertextOutput,
+                ciphertextCommitment,
+                proof
+            );
     }
 
     /// @inheritdoc IInterfold
@@ -681,6 +648,18 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         );
         pkVerifiers[encryptionSchemeId] = pkVerifier;
         emit PkVerifierSet(encryptionSchemeId, pkVerifier);
+    }
+
+    /// @inheritdoc IInterfold
+    function setCiphertextVerifier(
+        bytes32 encryptionSchemeId,
+        ICiphertextVerifier ciphertextVerifier
+    ) external onlyOwner {
+        InterfoldLifecycle.setCiphertextVerifier(
+            encryptionSchemeId,
+            ciphertextVerifier
+        );
+        emit CiphertextVerifierSet(encryptionSchemeId, ciphertextVerifier);
     }
 
     /// @inheritdoc IInterfold
@@ -1104,6 +1083,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId
     ) external view returns (IPkVerifier) {
         return pkVerifiers[encryptionSchemeId];
+    }
+
+    /// @inheritdoc IInterfold
+    function getCiphertextVerifier(
+        bytes32 encryptionSchemeId
+    ) external view returns (address) {
+        return InterfoldLifecycle.getCiphertextVerifier(encryptionSchemeId);
     }
 
     ////////////////////////////////////////////////////////////

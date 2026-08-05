@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_bfv_client::client::{
-    bfv_encrypt, bfv_verifiable_encrypt, compute_pk_commitment as _compute_pk_commitment,
-    generate_public_key as _generate_public_key,
+    bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment as _compute_ct_commitment,
+    compute_pk_commitment as _compute_pk_commitment, generate_public_key as _generate_public_key,
 };
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,19 @@ pub fn compute_pk_commitment(
     moduli: Vec<u64>,
 ) -> Result<Vec<u8>, JsValue> {
     let commitment = _compute_pk_commitment(public_key, degree, plaintext_modulus, moduli)
+        .map_err(|e| JsValue::from_str(&format!("{}", e)))?;
+    Ok(commitment.to_vec())
+}
+
+/// Compute the SAFE commitment for serialized BFV ciphertext bytes.
+#[wasm_bindgen]
+pub fn compute_ct_commitment(
+    ciphertext: Vec<u8>,
+    degree: usize,
+    plaintext_modulus: u64,
+    moduli: Vec<u64>,
+) -> Result<Vec<u8>, JsValue> {
+    let commitment = _compute_ct_commitment(ciphertext, degree, plaintext_modulus, moduli)
         .map_err(|e| JsValue::from_str(&format!("{}", e)))?;
     Ok(commitment.to_vec())
 }

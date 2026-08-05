@@ -109,7 +109,17 @@ async function runProgram(e3Id: bigint): Promise<void> {
   try {
     inFlight.add(key)
     console.log(`🔄 Calling FHE runner for E3 ${e3Id}...`)
-    await callFheRunner(e3Id, e3ProgramParams, ciphertextInputs)
+    await callFheRunner(
+      e3Id,
+      {
+        chainId: await publicClient.getChainId(),
+        interfoldAddress: INTERFOLD_CONTRACT,
+        encryptionSchemeId: e3.encryptionSchemeId,
+        committeePublicKeyHash: e3.committeePublicKey,
+      },
+      e3ProgramParams,
+      ciphertextInputs,
+    )
     console.log(`✅ E3 ${e3Id} sent to FHE runner - awaiting callback`)
   } catch (error) {
     // Allow a later retry if the runner submission failed.

@@ -83,13 +83,16 @@ const EnterInputs: React.FC = () => {
         throw new Error('Failed to encrypt inputs')
       }
 
+      const commitment1 = await sdk.sdk.computeCiphertextCommitment(encryptedInput1)
+      const commitment2 = await sdk.sdk.computeCiphertextCommitment(encryptedInput2)
+
       const toHex = (bytes: Uint8Array): `0x${string}` => `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`
 
       // Publish first input
-      await publishInput(walletClient, e3State.id, toHex(encryptedInput1), address, contracts.e3Program)
+      await publishInput(walletClient, e3State.id, toHex(encryptedInput1), toHex(commitment1), address, contracts.e3Program)
 
       // Publish second input
-      const hash2 = await publishInput(walletClient, e3State.id, toHex(encryptedInput2), address, contracts.e3Program)
+      const hash2 = await publishInput(walletClient, e3State.id, toHex(encryptedInput2), toHex(commitment2), address, contracts.e3Program)
 
       setLastTransactionHash(hash2)
       setInputPublishSuccess(true)

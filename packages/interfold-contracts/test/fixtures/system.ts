@@ -15,6 +15,7 @@ import InterfoldModule from "../../ignition/modules/interfold";
 import InterfoldTicketTokenModule from "../../ignition/modules/interfoldTicketToken";
 import InterfoldTokenModule from "../../ignition/modules/interfoldToken";
 import MockCiphernodeRegistryModule from "../../ignition/modules/mockCiphernodeRegistry";
+import MockCiphertextVerifierModule from "../../ignition/modules/mockCiphertextVerifier";
 import mockComputeProviderModule from "../../ignition/modules/mockComputeProvider";
 import MockDecryptionVerifierModule from "../../ignition/modules/mockDecryptionVerifier";
 import MockE3ProgramModule from "../../ignition/modules/mockE3Program";
@@ -31,6 +32,7 @@ import {
   InterfoldToken__factory as InterfoldTokenFactory,
   MockBlacklistUSDC__factory as MockBlacklistUSDCFactory,
   MockCiphernodeRegistry__factory as MockCiphernodeRegistryFactory,
+  MockCiphertextVerifier__factory as MockCiphertextVerifierFactory,
   MockCircuitVerifier__factory as MockCircuitVerifierFactory,
   MockDecryptionVerifier__factory as MockDecryptionVerifierFactory,
   MockE3Program__factory as MockE3ProgramFactory,
@@ -44,6 +46,7 @@ import type { BondingRegistry } from "../../types/contracts/registry/BondingRegi
 import type { CiphernodeRegistryOwnable } from "../../types/contracts/registry/CiphernodeRegistryOwnable";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry";
+import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
 import type { MockE3Program } from "../../types/contracts/test/MockE3Program";
@@ -164,6 +167,7 @@ export interface DeployInterfoldSystemOptions {
 export interface InterfoldSystemMocks {
   e3Program: MockE3Program;
   decryptionVerifier: MockDecryptionVerifier;
+  ciphertextVerifier: MockCiphertextVerifier;
   pkVerifier: MockPkVerifier;
   mockComputeProvider: MockComputeProvider;
   /** Only populated when `deployCircuitVerifier: true`. */
@@ -487,6 +491,13 @@ export async function deployInterfoldSystem(
     owner,
   );
 
+  const { mockCiphertextVerifier: _mockCiphertextVerifier } =
+    await ignition.deploy(MockCiphertextVerifierModule);
+  const ciphertextVerifier = MockCiphertextVerifierFactory.connect(
+    await _mockCiphertextVerifier.getAddress(),
+    owner,
+  );
+
   const { mockPkVerifier: _mockPkVerifier } =
     await ignition.deploy(MockPkVerifierModule);
   const pkVerifier = MockPkVerifierFactory.connect(
@@ -516,6 +527,10 @@ export async function deployInterfoldSystem(
   await interfold.setPkVerifier(
     ENCRYPTION_SCHEME_ID,
     await pkVerifier.getAddress(),
+  );
+  await interfold.setCiphertextVerifier(
+    ENCRYPTION_SCHEME_ID,
+    await ciphertextVerifier.getAddress(),
   );
   if (
     !mockCiphernodeRegistry &&
@@ -594,6 +609,7 @@ export async function deployInterfoldSystem(
     mocks: {
       e3Program,
       decryptionVerifier,
+      ciphertextVerifier,
       pkVerifier,
       mockComputeProvider,
       circuitVerifier,

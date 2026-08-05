@@ -10,6 +10,7 @@ import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "./IBondingRegistry.sol";
 import { IDecryptionVerifier } from "./IDecryptionVerifier.sol";
 import { IPkVerifier } from "./IPkVerifier.sol";
+import { ICiphertextVerifier } from "./ICiphertextVerifier.sol";
 import { ISlashingManager } from "./ISlashingManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -300,6 +301,12 @@ interface IInterfold {
         IPkVerifier indexed pkVerifier
     );
 
+    /// @notice Emitted when future requests for a scheme receive a new ciphertext verifier.
+    event CiphertextVerifierSet(
+        bytes32 indexed encryptionSchemeId,
+        ICiphertextVerifier indexed ciphertextVerifier
+    );
+
     /// @notice Emitted when E3 stage changes
     event E3StageChanged(
         uint256 indexed e3Id,
@@ -522,7 +529,7 @@ interface IInterfold {
     ////////////////////////////////////////////////////////////
 
     /// @notice This struct contains the parameters to submit a request to Interfold.
-    /// @param committeeSize The M/N threshold and honest parties for the committee.
+    /// @param committeeSize The configured committee size.
     /// @param inputWindow When the program will start and stop accepting inputs.
     /// @param e3Program The address of the E3 Program.
     /// @param paramSet The BFV encryption parameter set to use.
@@ -635,6 +642,17 @@ interface IInterfold {
         bytes32 encryptionSchemeId,
         IPkVerifier pkVerifier
     ) external;
+
+    /// @notice Sets the protocol ciphertext verifier for future requests using a scheme.
+    function setCiphertextVerifier(
+        bytes32 encryptionSchemeId,
+        ICiphertextVerifier ciphertextVerifier
+    ) external;
+
+    /// @notice Returns the ciphertext verifier configured for future requests.
+    function getCiphertextVerifier(
+        bytes32 encryptionSchemeId
+    ) external view returns (address);
 
     /// @notice Disables a previously enabled encryption scheme.
     /// @dev This function MUST revert if the encryption scheme is not currently enabled.
@@ -793,7 +811,7 @@ interface IInterfold {
 
     /// @notice Set the threshold values for a committee size
     /// @param size The committee size enum value
-    /// @param threshold The M/N threshold values [quorum, total]
+    /// @param threshold The viability threshold and total member count [H, N].
     function setCommitteeThresholds(
         CommitteeSize size,
         uint32[2] calldata threshold

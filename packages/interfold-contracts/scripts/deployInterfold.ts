@@ -509,6 +509,7 @@ export const deployInterfold = async (
   if (mockDeployments) {
     const {
       decryptionVerifierAddress: mockDecryptionVerifierAddress,
+      ciphertextVerifierAddress: mockCiphertextVerifierAddress,
       pkVerifierAddress: mockPkVerifierAddress,
       e3ProgramAddress,
     } = mockDeployments;
@@ -544,6 +545,23 @@ export const deployInterfold = async (
         );
         await tx.wait();
         console.log(`Successfully set MockPkVerifier in Interfold contract`);
+      }
+    }
+
+    if (!shouldHaveZKVerification && mockCiphertextVerifierAddress) {
+      const deployedCiphertextVerifier =
+        await interfold.getCiphertextVerifier(encryptionSchemeId);
+      if (deployedCiphertextVerifier === mockCiphertextVerifierAddress) {
+        console.log("CiphertextVerifier already set in Interfold contract");
+      } else {
+        const tx = await interfold.setCiphertextVerifier(
+          encryptionSchemeId,
+          mockCiphertextVerifierAddress,
+        );
+        await tx.wait();
+        console.log(
+          "Successfully set MockCiphertextVerifier in Interfold contract",
+        );
       }
     }
 

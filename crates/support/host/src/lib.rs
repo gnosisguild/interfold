@@ -4,8 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy_primitives::utils::{parse_ether, parse_units};
+use alloy_primitives::{
+    utils::{parse_ether, parse_units},
+    Bytes, B256,
+};
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use anyhow::{Context, Error, Result};
 use bincode::serialize;
 use boundless_market::{
@@ -15,9 +19,8 @@ use boundless_market::{
     storage::storage_provider_from_env,
     Client,
 };
-use e3_compute_provider::{
-    ComputeInput, ComputeManager, ComputeProvider, ComputeResult, FHEInputs,
-};
+use e3_compute_provider::{ComputeInput, ComputeManager, ComputeProvider, FHEInputs};
+use e3_support_types::{ComputeDomain, ComputeGuestInput, ComputeJournal};
 use e3_user_program::fhe_processor;
 use methods::PROGRAM_ELF;
 use risc0_ethereum_contracts::groth16;
@@ -26,12 +29,14 @@ use std::error::Error as _;
 use std::time::{Duration, Instant};
 use url::Url;
 
-pub struct BoundlessProvider;
+pub struct BoundlessProvider {
+    domain: ComputeDomain,
+}
 
 #[derive(Debug, Clone)]
 pub enum BoundlessOutput {
     Success {
-        result: ComputeResult,
+        result: ComputeJournal,
         bytes: Vec<u8>,
         seal: Vec<u8>,
     },
@@ -55,10 +60,10 @@ impl ComputeProvider for BoundlessProvider {
 
         if is_dev_mode {
             println!("Dev mode: Using fake proof");
-            fake_prove(input)
+            fake_prove(input, &self.domain)
         } else {
             println!("Using Boundless for proving");
-            tokio::runtime::Handle::current().block_on(boundless_prove(input))
+            tokio::runtime::Handle::current().block_on(boundless_prove(input, &self.domain))
         }
     }
 }
@@ -69,18 +74,21 @@ fn encode_input(input: &[u8]) -> Result<Vec<u8>, Error> {
     )?))
 }
 
-fn encode_journal(result: &ComputeResult) -> Result<Vec<u8>, Error> {
+fn encode_journal(result: &ComputeJournal) -> Result<Vec<u8>, Error> {
     Ok(bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(
         result,
     )?))
 }
 
 /// Dev mode: return fake proof without executing
-fn fake_prove(input: &ComputeInput) -> BoundlessOutput {
+fn fake_prove(input: &ComputeInput, domain: &ComputeDomain) -> BoundlessOutput {
     println!("Generating fake proof for dev mode");
 
     // Execute the program with the input
-    let result = input.process(fhe_processor);
+    let result = match ComputeJournal::new(domain.clone(), input.process(fhe_processor)) {
+        Ok(result) => result,
+        Err(error) => return to_output_error(error),
+    };
 
     let journal_bytes = match encode_journal(&result) {
         Ok(bytes) => bytes,
@@ -114,7 +122,10 @@ fn env_opt_secs(key: &str) -> Option<u64> {
 fn build_offer() -> Result<OfferParams> {
     let min_price = if let Some(v) = env_opt_f64("BOUNDLESS_MIN_PRICE_ETH") {
         if v.is_sign_negative() || v.is_nan() {
-            anyhow::bail!("BOUNDLESS_MIN_PRICE_ETH must be a non-negative number, got: {}", v);
+            anyhow::bail!(
+                "BOUNDLESS_MIN_PRICE_ETH must be a non-negative number, got: {}",
+                v
+            );
         }
         parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MIN_PRICE_ETH")?
     } else {
@@ -122,7 +133,10 @@ fn build_offer() -> Result<OfferParams> {
     };
     let max_price = if let Some(v) = env_opt_f64("BOUNDLESS_MAX_PRICE_ETH") {
         if v.is_sign_negative() || v.is_nan() {
-            anyhow::bail!("BOUNDLESS_MAX_PRICE_ETH must be a non-negative number, got: {}", v);
+            anyhow::bail!(
+                "BOUNDLESS_MAX_PRICE_ETH must be a non-negative number, got: {}",
+                v
+            );
         }
         parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MAX_PRICE_ETH")?
     } else {
@@ -139,10 +153,14 @@ fn build_offer() -> Result<OfferParams> {
         .unwrap_or(1 * 60);
     let zkc = env_opt_f64("BOUNDLESS_LOCK_COLLATERAL_ZKC").unwrap_or(2.0);
     if zkc.is_sign_negative() || zkc.is_nan() {
-        anyhow::bail!("BOUNDLESS_LOCK_COLLATERAL_ZKC must be a non-negative number, got: {}", zkc);
+        anyhow::bail!(
+            "BOUNDLESS_LOCK_COLLATERAL_ZKC must be a non-negative number, got: {}",
+            zkc
+        );
     }
-    let collateral: alloy_primitives::U256 =
-        parse_units(&format!("{}", zkc), 18).context("Invalid BOUNDLESS_LOCK_COLLATERAL_ZKC")?.into();
+    let collateral: alloy_primitives::U256 = parse_units(&format!("{}", zkc), 18)
+        .context("Invalid BOUNDLESS_LOCK_COLLATERAL_ZKC")?
+        .into();
 
     Ok(OfferParams::builder()
         .min_price(min_price)
@@ -154,8 +172,8 @@ fn build_offer() -> Result<OfferParams> {
         .into())
 }
 
-async fn boundless_prove(input: &ComputeInput) -> BoundlessOutput {
-    match boundless_prove_inner(input).await {
+async fn boundless_prove(input: &ComputeInput, domain: &ComputeDomain) -> BoundlessOutput {
+    match boundless_prove_inner(input, domain).await {
         Ok(output) => output,
         Err(e) => {
             // Print the full error chain so the root cause is visible in logs.
@@ -171,7 +189,10 @@ async fn boundless_prove(input: &ComputeInput) -> BoundlessOutput {
     }
 }
 
-async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> {
+async fn boundless_prove_inner(
+    input: &ComputeInput,
+    domain: &ComputeDomain,
+) -> Result<BoundlessOutput> {
     println!("Submitting proof request to Boundless...");
 
     let rpc_url = std::env::var("RPC_URL")
@@ -207,7 +228,12 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
         .await
         .context("Failed to build Boundless client")?;
 
-    let input_bytes = encode_input(&serialize(input).unwrap()).context("Failed to encode input")?;
+    let guest_input = ComputeGuestInput {
+        domain: domain.clone(),
+        input: input.clone(),
+    };
+    let serialized_input = serialize(&guest_input).context("Failed to serialize guest input")?;
+    let input_bytes = encode_input(&serialized_input).context("Failed to encode input")?;
 
     let program_url = std::env::var("PROGRAM_URL").ok();
     let stdin_size = input_bytes.len();
@@ -328,7 +354,7 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
         }
     };
 
-    let decoded_journal: ComputeResult = risc0_zkvm::serde::from_slice(&journal)
+    let decoded_journal: ComputeJournal = risc0_zkvm::serde::from_slice(&journal)
         .map_err(|e| anyhow::anyhow!("Failed to decode journal: {}", e))?;
 
     Ok(BoundlessOutput::Success {
@@ -338,11 +364,13 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
     })
 }
 
-pub struct Risc0Provider;
+pub struct Risc0Provider {
+    domain: ComputeDomain,
+}
 
 #[derive(Debug, Clone)]
 pub struct Risc0Output {
-    pub result: ComputeResult,
+    pub result: ComputeJournal,
     pub bytes: Vec<u8>,
     pub seal: Vec<u8>,
 }
@@ -351,7 +379,11 @@ impl ComputeProvider for Risc0Provider {
     type Output = Risc0Output;
 
     fn prove(&self, input: &ComputeInput) -> Self::Output {
-        let encoded_input = encode_input(&serialize(input).unwrap()).unwrap();
+        let guest_input = ComputeGuestInput {
+            domain: self.domain.clone(),
+            input: input.clone(),
+        };
+        let encoded_input = encode_input(&serialize(&guest_input).unwrap()).unwrap();
         let env = ExecutorEnv::builder()
             .write_slice(&encoded_input)
             .build()
@@ -367,7 +399,7 @@ impl ComputeProvider for Risc0Provider {
             .unwrap()
             .receipt;
 
-        let decoded_journal = receipt.journal.decode().unwrap();
+        let decoded_journal: ComputeJournal = receipt.journal.decode().unwrap();
 
         // Check if RISC0_DEV_MODE is set to "1" (dev mode)
         // If dev mode: return empty seal (fake proof)
@@ -392,8 +424,9 @@ impl ComputeProvider for Risc0Provider {
 
 pub fn run_compute(
     params: FHEInputs,
+    domain: ComputeDomain,
 ) -> std::result::Result<(BoundlessOutput, Vec<u8>), ComputeError> {
-    let boundless_provider = BoundlessProvider;
+    let boundless_provider = BoundlessProvider { domain };
 
     let mut provider = ComputeManager::new(
         boundless_provider,
@@ -429,8 +462,9 @@ pub fn run_compute(
 
 pub fn run_risc0_compute(
     params: FHEInputs,
+    domain: ComputeDomain,
 ) -> std::result::Result<(Risc0Output, Vec<u8>), ComputeError> {
-    let risc0_provider = Risc0Provider;
+    let risc0_provider = Risc0Provider { domain };
 
     let mut provider =
         ComputeManager::new(risc0_provider, params.clone(), fhe_processor, false, None);
@@ -438,6 +472,23 @@ pub fn run_risc0_compute(
     let output = provider.start();
 
     Ok(output)
+}
+
+pub fn encode_compute_proof(
+    seal: &[u8],
+    result: &ComputeJournal,
+) -> std::result::Result<Vec<u8>, ComputeError> {
+    if result.params_hash.len() != 32 || result.merkle_root.len() != 32 {
+        return Err(ComputeError::Other(
+            "Compute journal context must contain two 32-byte values".to_string(),
+        ));
+    }
+    Ok((
+        Bytes::copy_from_slice(seal),
+        B256::from_slice(&result.params_hash),
+        B256::from_slice(&result.merkle_root),
+    )
+        .abi_encode_params())
 }
 
 #[cfg(test)]
@@ -456,21 +507,38 @@ mod tests {
 
     #[test]
     fn compute_result_journal_matches_crisp_layout() {
-        let result = ComputeResult {
-            ciphertext_hash: (0_u8..32).collect(),
-            ciphertext_commitment: (32_u8..64).collect(),
-            params_hash: hex::decode(
-                "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-            )
-            .unwrap(),
-            merkle_root: hex::decode(
-                "2134e76ac5d21aab186c2be1dd8f84ee880a1e46eaf712f9d371b6df22191f3e",
-            )
-            .unwrap(),
-        };
+        let domain = ComputeDomain::new(
+            31_337,
+            "0x1111111111111111111111111111111111111111",
+            7,
+            &[0x22; 32],
+            &[0x33; 32],
+        )
+        .unwrap();
+        let result = ComputeJournal::new(
+            domain,
+            e3_compute_provider::ComputeResult {
+                ciphertext_hash: (0_u8..32).collect(),
+                ciphertext_commitment: (32_u8..64).collect(),
+                params_hash: hex::decode(
+                    "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+                )
+                .unwrap(),
+                merkle_root: hex::decode(
+                    "2134e76ac5d21aab186c2be1dd8f84ee880a1e46eaf712f9d371b6df22191f3e",
+                )
+                .unwrap(),
+            },
+        )
+        .unwrap();
 
         let journal = encode_journal(&result).expect("journal encoding failed");
         let expected = [
+            result.chain_id.as_slice(),
+            result.verifying_contract.as_slice(),
+            result.e3_id.as_slice(),
+            result.encryption_scheme_id.as_slice(),
+            result.committee_public_key_hash.as_slice(),
             result.ciphertext_hash.as_slice(),
             result.ciphertext_commitment.as_slice(),
             result.params_hash.as_slice(),
@@ -480,11 +548,34 @@ mod tests {
         .flat_map(risc0_vec32)
         .collect::<Vec<_>>();
 
-        assert_eq!(journal.len(), 528);
+        assert_eq!(journal.len(), 1188);
         assert_eq!(journal, expected);
         assert_eq!(
             hex::encode(Impl::hash_bytes(&journal).as_bytes()),
-            "ce9d56ad04f773831f389cf277232ba89722e7e25c83f54022ce056abc9cf5c5"
+            "4403934eb9404372d77f23454aeb4bb7f21bbe856c5c51fc3243f5e05cc2c702"
         );
+    }
+
+    #[test]
+    fn compute_proof_uses_solidity_parameter_encoding() {
+        let result = ComputeJournal {
+            chain_id: vec![0; 32],
+            verifying_contract: vec![0; 32],
+            e3_id: vec![0; 32],
+            encryption_scheme_id: vec![0; 32],
+            committee_public_key_hash: vec![0; 32],
+            ciphertext_hash: vec![0; 32],
+            ciphertext_commitment: vec![0; 32],
+            params_hash: vec![0x22; 32],
+            merkle_root: vec![0x33; 32],
+        };
+
+        let encoded = encode_compute_proof(&[0x11; 4], &result).unwrap();
+        let (seal, params_hash, input_root) =
+            <(Bytes, B256, B256)>::abi_decode_params(&encoded).unwrap();
+
+        assert_eq!(seal.as_ref(), &[0x11; 4]);
+        assert_eq!(params_hash, B256::repeat_byte(0x22));
+        assert_eq!(input_root, B256::repeat_byte(0x33));
     }
 }

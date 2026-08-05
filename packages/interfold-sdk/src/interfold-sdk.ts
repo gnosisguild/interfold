@@ -23,6 +23,7 @@ import { EventListener } from './events/event-listener'
 import {
   getThresholdBfvParamsSet,
   generatePublicKey,
+  computeCiphertextCommitment,
   computePublicKeyCommitment,
   encryptNumber,
   encryptVector,
@@ -101,6 +102,10 @@ export class InterfoldSDK {
 
   public async computePublicKeyCommitment(publicKey: Uint8Array): Promise<Uint8Array> {
     return computePublicKeyCommitment(publicKey, this.thresholdBfvParamsPresetName)
+  }
+
+  public async computeCiphertextCommitment(ciphertext: Uint8Array): Promise<Uint8Array> {
+    return computeCiphertextCommitment(ciphertext, this.thresholdBfvParamsPresetName)
   }
 
   /**

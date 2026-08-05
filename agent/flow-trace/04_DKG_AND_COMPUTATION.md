@@ -739,15 +739,15 @@ E3 ID and committee.
 
 The serialized `publicKey` event field is a transport hint, not on-chain authority. Proof-backed
 committee publication does not accept it. A separate permissionless function emits bounded key
-candidates and remains usable after an invalid candidate, so a front-run transaction cannot
-consume the only transport slot. Before
-`e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
-circuit's public-key commitment using the request's parameter set, and requires equality with the
-event's on-chain `pkCommitment`. TypeScript event consumers receive the same `pkCommitment` and use
-`InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes; the default application
-does this before advancing to encryption. Malformed bytes or bytes for a different key fail closed
-and never reach first-party encryption clients. Production verifies the C5-backed final DKG proof
-on-chain; the explicit test/CI skip mode works only with mock verifiers that trust its placeholder.
+candidates and remains usable after an invalid candidate, so a front-run transaction cannot consume
+the only transport slot. Before `e3-indexer` stores it in `E3.committee_public_key`, it decodes the
+BFV key, recomputes the circuit's public-key commitment using the request's parameter set, and
+requires equality with the event's on-chain `pkCommitment`. TypeScript event consumers receive the
+same `pkCommitment` and use `InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes;
+the default application does this before advancing to encryption. Malformed bytes or bytes for a
+different key fail closed and never reach first-party encryption clients. Production verifies the
+C5-backed final DKG proof on-chain; the explicit test/CI skip mode works only with mock verifiers
+that trust its placeholder.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
@@ -788,9 +788,17 @@ Data providers submit encrypted inputs:
 
 ### Ciphertext Output Publication
 
-The RISC Zero guest commits the output hash, SAFE commitment, parameter hash, and input root in that
-order. Boundless returns this journal to the support app. The app forwards the journal's commitment
-in the callback. CRISP reconstructs the same 528-byte serialization before it verifies the receipt.
+The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
+encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
+root. RISC Zero serializes these fields as a 1,188-byte journal. The support app returns the seal,
+parameter hash, and input root in one ABI-encoded proof.
+
+The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
+program reconstructs the application fields from its state. Both contracts verify the same receipt.
+An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
+The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
+commitments, with a minimum depth of one. The compute provider and E3 program must use this same
+leaf value, order, zero value, and depth rule.
 
 ```
 Compute provider runs computation on encrypted data:
@@ -808,15 +816,17 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
     │  │    5. require(activeCount >= threshold[0])              │
     │  │       → The request-time committee is still viable      │
-│  │    6. e3.ciphertextOutput = keccak256(output)           │
-│  │       e3.ciphertextCommitment = commitment               │
-│  │    7. e3Program.verify(e3Id, hash, commitment, proof)   │
-    │  │       → Program binds the output and SAFE commitment    │
-    │  │       → Must return true                                │
-    │  │    8. stage = CiphertextReady                           │
-    │  │    9. decryptionDeadline = now + decryptionWindow       │
-│  │   10. Emit CiphertextOutputPublished(e3Id, output, commitment) │
-    │  │   11. Emit E3StageChanged(CiphertextReady)              │
+│  │    6. Save output hash and SAFE commitment               │
+│  │       Set stage and decryption deadline                  │
+│  │       → A later revert restores all prior state          │
+│  │    7. schemeVerifier.verify(...)                         │
+│  │       → Checks the protocol fields in the compute receipt│
+│  │       → Must return true                                 │
+│  │    8. e3Program.verify(...)                              │
+│  │       → Checks the application fields in the same receipt│
+│  │       → Must return true                                 │
+│  │    9. Emit CiphertextOutputPublished(...)                │
+│  │   10. Emit E3StageChanged(CiphertextReady)               │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```

@@ -48,6 +48,7 @@ describe("Interfold", function () {
       slashingManager: sys.slashingManager,
       request: sys.request,
       mocks: {
+        ciphertextVerifier: sys.mocks.ciphertextVerifier,
         decryptionVerifier: sys.mocks.decryptionVerifier,
         e3Program: sys.mocks.e3Program,
         mockComputeProvider: sys.mocks.mockComputeProvider,
@@ -306,6 +307,44 @@ describe("Interfold", function () {
       )
         .to.emit(interfold, "EncryptionSchemeEnabled")
         .withArgs(newEncryptionSchemeId);
+    });
+  });
+
+  describe("setCiphertextVerifier()", function () {
+    it("allows only the owner to set a verifier", async function () {
+      const { interfold, mocks, notTheOwner } = await loadFixture(setup);
+
+      await expect(
+        interfold
+          .connect(notTheOwner)
+          .setCiphertextVerifier(
+            newEncryptionSchemeId,
+            await mocks.ciphertextVerifier.getAddress(),
+          ),
+      )
+        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
+        .withArgs(notTheOwner);
+    });
+
+    it("rejects an address without verifier code", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      await expect(
+        interfold.setCiphertextVerifier(newEncryptionSchemeId, AddressTwo),
+      )
+        .to.be.revertedWithCustomError(interfold, "InvalidEncryptionScheme")
+        .withArgs(newEncryptionSchemeId);
+    });
+
+    it("emits the verifier selected for future requests", async function () {
+      const { interfold, mocks } = await loadFixture(setup);
+      const verifier = await mocks.ciphertextVerifier.getAddress();
+
+      await expect(
+        interfold.setCiphertextVerifier(newEncryptionSchemeId, verifier),
+      )
+        .to.emit(interfold, "CiphertextVerifierSet")
+        .withArgs(newEncryptionSchemeId, verifier);
     });
   });
 
@@ -687,6 +726,94 @@ describe("Interfold", function () {
       await expect(
         interfold.publishCiphertextOutput(e3Id, "0x", ethers.ZeroHash, "0x"),
       ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+    });
+    it("does not assign an unverified ciphertext to the committee", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await mocks.ciphertextVerifier.setResult(false);
+
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      expect(await interfold.getE3Stage(e3Id)).to.equal(3);
+      const e3 = await interfold.getE3(e3Id);
+      expect(e3.ciphertextOutput).to.equal(ethers.ZeroHash);
+      expect(e3.ciphertextCommitment).to.equal(ethers.ZeroHash);
+    });
+    it("keeps the request-time verifier after verifier rotation", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const replacement = await ethers.deployContract("MockCiphertextVerifier");
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await interfold.setCiphertextVerifier(
+        encryptionSchemeId,
+        await replacement.getAddress(),
+      );
+      await mocks.ciphertextVerifier.setResult(false);
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+
+      await mocks.ciphertextVerifier.setResult(true);
+      await replacement.setResult(false);
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.emit(interfold, "CiphertextOutputPublished");
     });
     it("sets ciphertextOutput correctly", async function () {
       const {

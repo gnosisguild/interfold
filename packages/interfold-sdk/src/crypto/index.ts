@@ -7,6 +7,7 @@
 export {
   getThresholdBfvParamsSet,
   generatePublicKey,
+  computeCiphertextCommitment,
   computePublicKeyCommitment,
   encryptNumber,
   encryptVector,

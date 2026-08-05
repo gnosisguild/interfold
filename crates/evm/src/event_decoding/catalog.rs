@@ -54,6 +54,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "CiphertextOutputPublished(uint256,bytes,bytes32)",
         Some(1),
     ),
+    EvmEventDefinition::new(
+        "CiphertextVerifierSet",
+        "CiphertextVerifierSet(bytes32,address)",
+        None,
+    ),
     EvmEventDefinition::new("CommitteeFinalized", "CommitteeFinalized(uint256)", Some(1)),
     EvmEventDefinition::new("CommitteeFormed", "CommitteeFormed(uint256)", Some(1)),
     EvmEventDefinition::new(

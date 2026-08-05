@@ -195,6 +195,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   stored at ciphertext publication, propagated as a final-proof public input, and compared on-chain
   (no BFV decoding/Poseidon2 in Solidity); C3/C6 commitments are checked against their ciphertext
   witnesses. — INDEX IF-004
+- **Ciphertext-duty proof (Zenith #15):** each E3 snapshots the protocol verifier for its encryption
+  scheme at request time. Before `CiphertextReady`, this verifier checks a RISC Zero receipt that
+  binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
+  output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
+  create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
 - **Client PK commitment binding (C-01):** serialized PK event bytes are an untrusted transport
   hint; indexers store the decoded key only when its recomputed commitment equals the on-chain
   (C5-proven) value. Proof-backed committee publication never accepts key bytes. Public-key

@@ -12,6 +12,7 @@ import { IDecryptionVerifier } from "@interfold/contracts/contracts/interfaces/I
 import { IPkVerifier } from "@interfold/contracts/contracts/interfaces/IPkVerifier.sol";
 
 contract MockInterfold {
+  bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
   bytes public plaintextOutput;
   bytes32 public committeePublicKey;
 
@@ -35,7 +36,7 @@ contract MockInterfold {
       committeeSize: IInterfold.CommitteeSize.Minimum,
       requestBlock: 0,
       inputWindow: [uint256(0), uint256(0)],
-      encryptionSchemeId: bytes32(0),
+      encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: IE3Program(address(0)),
       paramSet: 0, // Insecure512
       customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0),
@@ -72,7 +73,7 @@ contract MockInterfold {
         committeeSize: IInterfold.CommitteeSize.Minimum,
         requestBlock: 0,
         inputWindow: [uint256(0), block.timestamp + 100],
-        encryptionSchemeId: bytes32(0),
+        encryptionSchemeId: ENCRYPTION_SCHEME_ID,
         e3Program: IE3Program(address(0)),
         paramSet: 0, // Insecure512
         customParams: abi.encode(address(0), 0, 2, 0, 0, 0),

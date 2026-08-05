@@ -6,11 +6,27 @@
 
 import { getProgramRunnerConfig } from './utils'
 
-export async function callFheRunner(e3Id: bigint, params: string, ciphertextInputs: Array<[string, number]>): Promise<void> {
+export interface ComputeDomain {
+  chainId: number
+  interfoldAddress: string
+  encryptionSchemeId: string
+  committeePublicKeyHash: string
+}
+
+export async function callFheRunner(
+  e3Id: bigint,
+  domain: ComputeDomain,
+  params: string,
+  ciphertextInputs: Array<[string, number]>,
+): Promise<void> {
   const { PROGRAM_RUNNER_URL, CALLBACK_URL } = getProgramRunnerConfig()
 
   const payload = {
     e3_id: Number(e3Id),
+    chain_id: domain.chainId,
+    interfold_address: domain.interfoldAddress,
+    encryption_scheme_id: domain.encryptionSchemeId,
+    committee_public_key_hash: domain.committeePublicKeyHash,
     params,
     ciphertext_inputs: ciphertextInputs,
     callback_url: CALLBACK_URL,

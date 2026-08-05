@@ -110,8 +110,8 @@ describe('CRISP Contracts', function () {
   })
 
   describe('get round data', () => {
-    // Root of an empty LazyIMT of depth TREE_DEPTH (InternalLazyIMT.Z_20)
-    const EMPTY_TREE_ROOT = 15019797232609675441998260052101280400536945603062888308240081994073687793470n
+    // The dynamic input tree has a minimum depth of one (InternalLazyIMT.Z_1).
+    const EMPTY_TREE_ROOT = 14744269619966411208579211824598458697587494354926760081771325075741142829156n
     // MockInterfold calls validate with empty e3ProgramParams
     const EMPTY_PARAMS_HASH = ethers.keccak256('0x')
 
