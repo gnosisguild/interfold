@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "author": {
     "name": "gnosisguild",
     "url": "https://github.com/gnosisguild"
