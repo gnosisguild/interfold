@@ -447,9 +447,9 @@ export async function deployInterfoldSystem(
     await bondingRegistry.getAddress(),
   );
   await ticketToken.setRegistry(await bondingRegistry.getAddress());
+  await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
   await bondingRegistry.setSlashingManager(await slashingManager.getAddress());
   await bondingRegistry.setRewardDistributor(interfoldAddress);
-  await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
 
   if (wireSlashingManager) {
     await interfold.setSlashingManager(await slashingManager.getAddress());

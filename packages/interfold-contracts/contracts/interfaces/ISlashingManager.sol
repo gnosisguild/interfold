@@ -18,6 +18,10 @@ import { IE3RefundManager } from "./IE3RefundManager.sol";
  *      Lane B (evidence-based): SLASHER_ROLE required, appeal window
  */
 interface ISlashingManager {
+    /// @notice API version required by BondingRegistry manager authorization.
+    // solhint-disable-next-line func-name-mixedcase
+    function SLASHING_MANAGER_API_VERSION() external view returns (uint256);
+
     // ======================
     // Enums
     // ======================
@@ -381,6 +385,9 @@ interface ISlashingManager {
         uint256 amount
     );
 
+    /// @notice Emitted after a terminal E3 releases its frozen dependencies.
+    event E3DependenciesReleased(uint256 indexed e3Id);
+
     /**
      * @notice Emitted when the bonding registry is set
      * @param bondingRegistry Address of the bonding registry
@@ -443,7 +450,7 @@ interface ISlashingManager {
 
     /**
      * @notice Returns true if the operator has at least one unresolved financial slash proposal.
-     * @dev Used by BondingRegistry to block collateral withdrawals and exit claims.
+     * @dev Kept for manager observability. BondingRegistry uses its local lock count.
      * @param operator Operator address to check
      */
     function hasOpenSlashProposal(
@@ -453,6 +460,9 @@ interface ISlashingManager {
     /// @notice Freeze all contracts used to validate and execute slashes for an E3.
     /// @dev Called exactly once by the configured Interfold during E3 creation.
     function snapshotE3Dependencies(uint256 e3Id) external;
+
+    /// @notice Release the frozen dependencies for one terminal E3.
+    function closeE3(uint256 e3Id) external;
 
     /// @notice Return the contracts frozen for an E3's slashing lifecycle.
     function getE3Dependencies(

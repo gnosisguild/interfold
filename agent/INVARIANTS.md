@@ -120,10 +120,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters ranked by ascending address, rank N waits `N × skew`
   (default 30 s); restarts must not reset the fallback delay. — `flow-trace/05`
-- **Deferred-slash collateral gate:** one unresolved-proposal counter covers both slashing lanes;
-  ticket withdrawal, license unbonding, deregistration, and exit claims stay blocked until
-  resolution. Every current or retained historical slashing manager participates in the exit gate. —
-  INDEX concerns #1, #26; `flow-trace/06`
+- **Deferred-slash collateral gate:** every manager atomically records proposal locks in
+  `BondingRegistry`. Ticket withdrawal, license unbonding, deregistration, and exit claims read the
+  registry's aggregate lock count and stay blocked until resolution. User exits must not call a
+  slashing manager. A retained manager cannot be revoked until its E3 assignments, locks, bans, and
+  fund routes are clear. — INDEX concerns #1, #26, Z-44; `flow-trace/06`
 - Exit queue caps explicit non-empty tranche count; drained single-asset tranches release capacity.
   — INDEX concern #18
 

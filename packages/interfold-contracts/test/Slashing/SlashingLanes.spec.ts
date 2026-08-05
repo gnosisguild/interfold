@@ -248,7 +248,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         .false;
     });
 
-    it("retains an old manager's collateral authority and exit gate across rotation", async function () {
+    it("retains an old manager's E3 authority and exit gate across rotation", async function () {
       const ctx = await loadFixture(setup);
       const {
         owner,
@@ -273,6 +273,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         DEFAULT_ADMIN_DELAY,
         await owner.getAddress(),
       ]);
+      await replacement.setBondingRegistry(await bondingRegistry.getAddress());
       await bondingRegistry.setSlashingManager(await replacement.getAddress());
 
       expect(
@@ -290,6 +291,17 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       );
 
       await expect(
+        bondingRegistry.revokeSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "ManagerHasOpenSlashLocks",
+        )
+        .withArgs(await slashingManager.getAddress(), 1);
+
+      await expect(
         bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
@@ -301,16 +313,23 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       );
       await bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1);
 
-      await bondingRegistry.revokeSlashingManager(
-        await slashingManager.getAddress(),
-      );
+      await expect(
+        bondingRegistry.revokeSlashingManager(
+          await slashingManager.getAddress(),
+        ),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "ManagerHasE3Assignments",
+        )
+        .withArgs(await slashingManager.getAddress(), 1);
       expect(
         await bondingRegistry.isAuthorizedSlashingManager(
           await slashingManager.getAddress(),
         ),
-      ).to.equal(false);
+      ).to.equal(true);
       expect(await bondingRegistry.authorizedSlashingManagerCount()).to.equal(
-        1,
+        2,
       );
     });
 

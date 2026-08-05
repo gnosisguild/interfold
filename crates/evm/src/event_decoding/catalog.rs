@@ -209,6 +209,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new(
+        "ManagerBanUpdated",
+        "ManagerBanUpdated(address,address,bool)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "OperatorActivationChanged",
         "OperatorActivationChanged(address,bool)",
         None,
@@ -238,6 +243,16 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "RewardDistributorUpdated",
         "RewardDistributorUpdated(address,bool)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "SlashLockUpdated",
+        "SlashLockUpdated(address,uint256,address,bool)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "SlashRouteDestinationReleased",
+        "SlashRouteDestinationReleased(address,uint256)",
+        Some(2),
     ),
     EvmEventDefinition::new(
         "SlashRouteDestinationSnapshotted",
@@ -439,6 +454,11 @@ const SLASHING_MANAGER: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
+    EvmEventDefinition::new(
+        "E3DependenciesReleased",
+        "E3DependenciesReleased(uint256)",
+        Some(1),
+    ),
     EvmEventDefinition::new(
         "E3RefundManagerUpdated",
         "E3RefundManagerUpdated(address,address)",

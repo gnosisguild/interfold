@@ -503,6 +503,7 @@ no safe harbor for misbehaving operators.
 ```
 SLASHING → operator banned:
   banned[operator] = true
+    → SlashingManager records its manager-scoped ban in BondingRegistry
     → BondingRegistry refreshes registered operator status
     → active = false and numActiveOperators decreases
     → Cannot submit tickets for new committee selection
@@ -512,6 +513,7 @@ SLASHING → operator banned:
 GOVERNANCE lifts ban:
     SlashingManager.unbanNode(operator, keccak256("reason"))
   → banned[operator] = false
+  → SlashingManager clears its manager-scoped ban in BondingRegistry
   → BondingRegistry refreshes registered operator status
   → Operator can re-register
 ```
@@ -520,18 +522,22 @@ GOVERNANCE lifts ban:
 
 ## Cluster 6 Audit Addendum (deregistration & bans)
 
-- **Collateral exit is blocked while a slash is open** (H-05, AUD H-03). `BondingRegistry` checks
-  `hasOpenSlashProposal(operator)` on every authorized current or retained historical manager and
-  reverts `OperatorUnderSlash()` from ticket withdrawal, license unbonding, deregistration, and exit
-  claims. Execution, an upheld appeal, or permissionless appeal expiry unwinds the counter. After
-  manager rotation, governance must retain the old manager until every E3 and proposal that depends
-  on it is terminal, then explicitly revoke it.
+- **Collateral exit is blocked while a slash is open** (H-05, AUD H-03, Zenith #44).
+  `SlashingManager` opens and closes proposal-scoped locks in `BondingRegistry`. Exit paths read one
+  local aggregate and revert `OperatorUnderSlash()` without calling a manager. After rotation,
+  governance retains the old manager until its E3 assignments, locks, bans, and routes are clear.
+  `closeE3` releases a terminal E3 assignment after its locks and routes have drained.
 
 - **Two-step ban** (M-14, M-15): bans now require `proposeBan` → `confirmBan` from a **distinct**
   signer holding `GOVERNANCE_ROLE`. `cancelBan` rescinds an unconfirmed proposal. Legacy direct-set
   via `updateBanStatus(_, true, _)` reverts `BanRequiresConfirmation()`. Unban is single-step
-  (`unbanNode`). Ban and unban completion refresh the registered operator in `BondingRegistry`. A
-  ban therefore removes the operator from active counts and blocks later ticket submissions.
+  (`unbanNode`). Each completed change also updates a manager-scoped registry ban. The registry
+  aggregates bans without calling managers, refreshes active status, and blocks later registration.
+
+- **Manager authorization is versioned** (Zenith #44). Before authorization, the registry checks
+  deployed code, API version, ERC-165 support, and the manager's registry binding with bounded
+  calls. These calls occur during governance configuration, not during operator registration or
+  exit.
 
 - **DEFAULT_ADMIN handover** (M-17): operator-onboarding ops that depend on `DEFAULT_ADMIN_ROLE`
   rotation must use the `AccessControlDefaultAdminRules` two-step flow (`beginDefaultAdminTransfer`

@@ -102,7 +102,24 @@ export async function deployProtocolContracts(
     ]),
   );
 
-  const bondingFactory = await ethers.getContractFactory("BondingRegistry");
+  const bondingAssetFactory =
+    await ethers.getContractFactory("BondingAssetLib");
+  const bondingAsset = await bondingAssetFactory.deploy();
+  await bondingAsset.waitForDeployment();
+  const bondingAssetLib = await deployedAddress(bondingAsset);
+
+  const bondingSlashingFactory =
+    await ethers.getContractFactory("BondingSlashingLib");
+  const bondingSlashing = await bondingSlashingFactory.deploy();
+  await bondingSlashing.waitForDeployment();
+  const bondingSlashingLib = await deployedAddress(bondingSlashing);
+
+  const bondingFactory = await ethers.getContractFactory("BondingRegistry", {
+    libraries: {
+      BondingAssetLib: bondingAssetLib,
+      BondingSlashingLib: bondingSlashingLib,
+    },
+  });
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
 
@@ -122,7 +139,9 @@ export async function deployProtocolContracts(
       e3RefundManager: refundProxy.proxy,
       e3RefundManagerImplementation,
       e3RefundManagerProxyAdmin: refundProxy.proxyAdmin,
+      bondingAssetLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),
+      bondingSlashingLib,
     },
     interfaces: {
       ticket: ticketFactory.interface,

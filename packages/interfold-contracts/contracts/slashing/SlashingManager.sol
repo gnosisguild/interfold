@@ -40,6 +40,9 @@ contract SlashingManager is
     /// @notice Role identifier for accounts authorized to propose evidence-based slashes
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
 
+    /// @inheritdoc ISlashingManager
+    uint256 public constant SLASHING_MANAGER_API_VERSION = 1;
+
     /// @notice Role identifier for governance accounts that can configure policies, resolve appeals, and manage bans
     bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
 
@@ -323,8 +326,17 @@ contract SlashingManager is
         dependencies.initialized = true;
         dependencies.bonding.snapshotSlashRouteDestination(
             e3Id,
-            address(dependencies.refundManager)
+            address(dependencies.refundManager),
+            address(dependencies.interfoldContract)
         );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function closeE3(uint256 e3Id) external onlyGovernance {
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        dependencies.bonding.releaseSlashRouteDestination(e3Id);
+        delete _e3Dependencies[e3Id];
+        emit E3DependenciesReleased(e3Id);
     }
 
     // ======================
@@ -514,14 +526,7 @@ contract SlashingManager is
         p.affectsCommittee = policy.affectsCommittee;
         p.failureReason = policy.failureReason;
 
-        _openProposalCount[operator] += 1;
-        if (p.affectsCommittee) {
-            _dependenciesFor(e3Id).refundManager.openExpulsionProposal(
-                e3Id,
-                proposalId,
-                operator
-            );
-        }
+        _openProposal(p, proposalId);
 
         emit SlashProposed(
             proposalId,
@@ -591,10 +596,6 @@ contract SlashingManager is
         proposalId = totalProposals;
         totalProposals = proposalId + 1;
 
-        // Track the unresolved proposal so collateral remains slashable until
-        // successful execution or terminal appeal resolution.
-        _openProposalCount[operator] += 1;
-
         uint256 executableAt = block.timestamp + policy.appealWindow;
         SlashProposal storage p = _proposals[proposalId];
         p.e3Id = e3Id;
@@ -612,13 +613,7 @@ contract SlashingManager is
         p.affectsCommittee = policy.affectsCommittee;
         p.failureReason = policy.failureReason;
 
-        if (p.affectsCommittee) {
-            _dependenciesFor(e3Id).refundManager.openExpulsionProposal(
-                e3Id,
-                proposalId,
-                operator
-            );
-        }
+        _openProposal(p, proposalId);
 
         emit SlashProposed(
             proposalId,
@@ -648,9 +643,8 @@ contract SlashingManager is
         }
 
         Lane lane = p.proofVerified ? Lane.LaneA : Lane.LaneB;
-        // Decrement BEFORE `_executeSlash` so a reentrant operator action triggered
-        // by slash side-effects is not gated on this proposal. Other open proposals
-        // keep the gate raised. A downstream revert restores the count atomically.
+        // Keep the registry lock until every slash side effect has completed.
+        // This local count is only the manager's observable proposal state.
         _openProposalCount[p.operator] -= 1;
 
         _executeSlash(proposalId, lane);
@@ -659,6 +653,26 @@ contract SlashingManager is
     // ======================
     // Internal Execution
     // ======================
+
+    function _openProposal(
+        SlashProposal storage proposal,
+        uint256 proposalId
+    ) internal {
+        E3Dependencies memory dependencies = _dependenciesFor(proposal.e3Id);
+        _openProposalCount[proposal.operator]++;
+        dependencies.bonding.openSlashLock(
+            proposal.e3Id,
+            proposalId,
+            proposal.operator
+        );
+        if (proposal.affectsCommittee) {
+            dependencies.refundManager.openExpulsionProposal(
+                proposal.e3Id,
+                proposalId,
+                proposal.operator
+            );
+        }
+    }
 
     /// @dev Verifies Lane A attestation evidence: decodes, checks quorum (>= M), verifies
     ///      each EIP-712 `AccusationVote` signature, confirms voters are active committee
@@ -813,9 +827,13 @@ contract SlashingManager is
 
         // Ban node if snapshotted policy requires it
         if (p.banNode) {
-            banned[p.operator] = true;
-            emit NodeBanUpdated(p.operator, true, p.reason, address(this));
-            _refreshOperatorEligibility(dependencies.bonding, p.operator);
+            _setBan(
+                dependencies.bonding,
+                p.operator,
+                true,
+                p.reason,
+                address(this)
+            );
         }
 
         // Committee expulsion for E3-scoped slashes (uses snapshotted behavioral flags)
@@ -885,6 +903,8 @@ contract SlashingManager is
                 emit RoutingFailed(p.e3Id, actualTicketSlashed);
             }
         }
+
+        dependencies.bonding.closeSlashLock(proposalId, p.operator);
 
         emit SlashExecuted(
             proposalId,
@@ -988,14 +1008,16 @@ contract SlashingManager is
 
         // An upheld appeal terminates the proposal, so its collateral gate ends.
         if (appealUpheld) {
-            _openProposalCount[p.operator] -= 1;
+            E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
             if (p.affectsCommittee) {
-                _dependenciesFor(p.e3Id).refundManager.resolveExpulsionProposal(
+                dependencies.refundManager.resolveExpulsionProposal(
                     p.e3Id,
                     proposalId,
                     false
                 );
             }
+            _openProposalCount[p.operator] -= 1;
+            dependencies.bonding.closeSlashLock(proposalId, p.operator);
         }
 
         emit AppealResolved(
@@ -1021,14 +1043,16 @@ contract SlashingManager is
 
         p.resolved = true;
         p.appealUpheld = true;
-        _openProposalCount[p.operator] -= 1;
+        E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
         if (p.affectsCommittee) {
-            _dependenciesFor(p.e3Id).refundManager.resolveExpulsionProposal(
+            dependencies.refundManager.resolveExpulsionProposal(
                 p.e3Id,
                 proposalId,
                 false
             );
         }
+        _openProposalCount[p.operator] -= 1;
+        dependencies.bonding.closeSlashLock(proposalId, p.operator);
 
         emit AppealResolved(
             proposalId,
@@ -1066,10 +1090,7 @@ contract SlashingManager is
         require(pending.proposer != msg.sender, BanRequiresConfirmation());
 
         delete _pendingBans[node];
-        banned[node] = true;
-
-        emit NodeBanUpdated(node, true, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, true, reason, msg.sender);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1082,13 +1103,11 @@ contract SlashingManager is
     /// @inheritdoc ISlashingManager
     function unbanNode(address node, bytes32 reason) external onlyGovernance {
         require(node != address(0), ZeroAddress());
-        banned[node] = false;
         if (_pendingBans[node].proposer != address(0)) {
             delete _pendingBans[node];
             emit BanCancelled(node, msg.sender);
         }
-        emit NodeBanUpdated(node, false, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, false, reason, msg.sender);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1100,25 +1119,24 @@ contract SlashingManager is
         require(node != address(0), ZeroAddress());
         // bans must use the two-step `proposeBan` / `confirmBan` flow.
         require(!status, BanRequiresConfirmation());
-        banned[node] = false;
         if (_pendingBans[node].proposer != address(0)) {
             delete _pendingBans[node];
             emit BanCancelled(node, msg.sender);
         }
-        emit NodeBanUpdated(node, false, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, false, reason, msg.sender);
     }
 
-    /// @dev Synchronizes the BondingRegistry active count after a ban changes.
-    ///      An unset test or deployment dependency cannot block ban state.
-    function _refreshOperatorEligibility(
+    /// @dev Mirror manager ban state into the registry that owns exit eligibility.
+    function _setBan(
         IBondingRegistry registry,
-        address operator
-    ) private {
-        if (address(registry).code.length == 0) return;
-        if (registry.isRegistered(operator)) {
-            registry.refreshOperatorStatus(operator);
-        }
+        address operator,
+        bool status,
+        bytes32 reason,
+        address updater
+    ) internal {
+        banned[operator] = status;
+        registry.setOperatorBan(operator, status);
+        emit NodeBanUpdated(operator, status, reason, updater);
     }
 
     /// @notice ERC-165 interface detection. Advertises {ISlashingManager}

@@ -75,6 +75,8 @@ export interface ProtocolDeployment {
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   bondingRegistryImplementation: string;
+  bondingAssetLib: string;
+  bondingSlashingLib: string;
   ticketToken: string;
   slashingManager: string;
   poseidonT3: string;
@@ -129,6 +131,8 @@ export interface ProtocolContracts {
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
   bondingRegistryImplementation: string;
+  bondingAssetLib: string;
+  bondingSlashingLib: string;
 }
 
 export interface ProtocolInterfaces {

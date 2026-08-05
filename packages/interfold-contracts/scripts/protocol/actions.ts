@@ -108,6 +108,8 @@ Protocol contracts deployed
   interfoldLifecycle:     ${deployment.interfoldLifecycle}
   interfoldPricing:       ${deployment.interfoldPricing}
   e3RefundManager:        ${deployment.e3RefundManager}
+  bondingAssetLib:        ${deployment.bondingAssetLib}
+  bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
 
 Safe batch required

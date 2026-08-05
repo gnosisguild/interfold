@@ -110,6 +110,15 @@ describe("BondingRegistry", function () {
       treasuryAddress,
     };
   }
+
+  async function impersonateSlashingManager(
+    slashingManager: Awaited<ReturnType<typeof setup>>["slashingManager"],
+  ) {
+    const managerAddress = await slashingManager.getAddress();
+    await networkHelpers.setBalance(managerAddress, ethers.parseEther("1"));
+    await networkHelpers.impersonateAccount(managerAddress);
+    return ethers.getSigner(managerAddress);
+  }
   describe("constructor / initialize()", function () {
     it("correctly sets initial parameters", async function () {
       const { bondingRegistry, ticketToken, licenseToken, treasuryAddress } =
@@ -400,7 +409,7 @@ describe("BondingRegistry", function () {
         bondingRegistry,
         licenseToken,
         owner,
-        notTheOwner,
+        slashingManager,
         ownerAddress,
       } = await loadFixture(setup);
       const signers = await ethers.getSigners();
@@ -427,14 +436,17 @@ describe("BondingRegistry", function () {
         bondAmount * 2n,
       );
 
-      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+      const slashSigner = await impersonateSlashingManager(slashingManager);
       await bondingRegistry
-        .connect(notTheOwner)
+        .connect(slashSigner)
         .slashLicenseBond(
           operator1Address,
           slashAmount,
           ethers.encodeBytes32String("TEST_SLASH"),
         );
+      await networkHelpers.stopImpersonatingAccount(
+        await slashingManager.getAddress(),
+      );
 
       expect(await bondingRegistry.totalBonded(ownerAddress)).to.equal(
         bondAmount * 2n - slashAmount,
@@ -679,7 +691,7 @@ describe("BondingRegistry", function () {
     });
 
     it("slashes active and pending license bond from totalBonded", async function () {
-      const { bondingRegistry, licenseToken, operator1, notTheOwner } =
+      const { bondingRegistry, licenseToken, operator1, slashingManager } =
         await loadFixture(setup);
       const operatorAddress = operator1Address;
       const slashReason = ethers.encodeBytes32String("TEST_SLASH");
@@ -697,15 +709,18 @@ describe("BondingRegistry", function () {
       await bondingRegistry
         .connect(operator1)
         .unbondLicenseFor(operator1Address, unbondAmount);
-      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+      const slashSigner = await impersonateSlashingManager(slashingManager);
 
       await expect(
         bondingRegistry
-          .connect(notTheOwner)
+          .connect(slashSigner)
           .slashLicenseBond(operatorAddress, slashAmount, slashReason),
       )
         .to.emit(bondingRegistry, "LicenseBondUpdated")
         .withArgs(operatorAddress, -slashAmount, 0, slashReason);
+      await networkHelpers.stopImpersonatingAccount(
+        await slashingManager.getAddress(),
+      );
 
       const [, pendingLicense] =
         await bondingRegistry.pendingExits(operatorAddress);
@@ -1228,7 +1243,7 @@ describe("BondingRegistry", function () {
         usdcToken,
         ticketToken,
         operator1,
-        notTheOwner,
+        slashingManager,
       } = await loadFixture(setup);
       const bondAmount = LICENSE_REQUIRED_BOND;
       const ticketAmount = ethers.parseUnits("100", 6);
@@ -1252,11 +1267,11 @@ describe("BondingRegistry", function () {
       await bondingRegistry
         .connect(operator1)
         .removeTicketBalanceFor(operator1Address, ticketAmount);
-      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+      const slashSigner = await impersonateSlashingManager(slashingManager);
 
       expect(
         await bondingRegistry
-          .connect(notTheOwner)
+          .connect(slashSigner)
           .slashTicketBalance.staticCall(
             operator1Address,
             ticketAmount,
@@ -1264,8 +1279,11 @@ describe("BondingRegistry", function () {
           ),
       ).to.equal(ticketAmount);
       await bondingRegistry
-        .connect(notTheOwner)
+        .connect(slashSigner)
         .slashTicketBalance(operator1Address, ticketAmount, slashReason);
+      await networkHelpers.stopImpersonatingAccount(
+        await slashingManager.getAddress(),
+      );
 
       const [pendingTickets] =
         await bondingRegistry.pendingExits(operator1Address);
@@ -1494,6 +1512,95 @@ describe("BondingRegistry", function () {
   });
 
   describe("Admin Functions", function () {
+    describe("setSlashingManager()", function () {
+      it("rejects managers without the required code and registry binding", async function () {
+        const { bondingRegistry, notTheOwner, owner } =
+          await loadFixture(setup);
+        const eoa = await notTheOwner.getAddress();
+
+        await expect(bondingRegistry.setSlashingManager(eoa))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "IncompatibleSlashingManager",
+          )
+          .withArgs(eoa);
+
+        const candidate = await ethers.deployContract("SlashingManager", [
+          0,
+          await owner.getAddress(),
+        ]);
+        const candidateAddress = await candidate.getAddress();
+        await expect(bondingRegistry.setSlashingManager(candidateAddress))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "SlashingManagerBondingMismatch",
+          )
+          .withArgs(candidateAddress, ethers.ZeroAddress);
+      });
+
+      it("does not call the manager while an operator registers or exits", async function () {
+        const { bondingRegistry, licenseToken, operator1, slashingManager } =
+          await loadFixture(setup);
+        const bondAmount = LICENSE_REQUIRED_BOND;
+
+        await licenseToken
+          .connect(operator1)
+          .approve(await bondingRegistry.getAddress(), bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, bondAmount);
+        await ethers.provider.send("hardhat_setCode", [
+          await slashingManager.getAddress(),
+          "0x",
+        ]);
+
+        await bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address);
+        await bondingRegistry
+          .connect(operator1)
+          .deregisterOperatorFor(operator1Address);
+        expect(await bondingRegistry.isRegistered(operator1Address)).to.be
+          .false;
+      });
+
+      it("keeps a retained manager authorized until its bans are cleared", async function () {
+        const { bondingRegistry, owner, slashingManager } =
+          await loadFixture(setup);
+        const oldManager = await slashingManager.getAddress();
+        const slashSigner = await impersonateSlashingManager(slashingManager);
+        await bondingRegistry
+          .connect(slashSigner)
+          .setOperatorBan(operator1Address, true);
+        await networkHelpers.stopImpersonatingAccount(oldManager);
+
+        const replacement = await ethers.deployContract("SlashingManager", [
+          0,
+          await owner.getAddress(),
+        ]);
+        await replacement.setBondingRegistry(
+          await bondingRegistry.getAddress(),
+        );
+        await bondingRegistry.setSlashingManager(
+          await replacement.getAddress(),
+        );
+
+        await expect(bondingRegistry.revokeSlashingManager(oldManager))
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "ManagerHasActiveBans",
+          )
+          .withArgs(oldManager, 1);
+
+        await bondingRegistry
+          .connect(owner)
+          .clearSlashingManagerBan(oldManager, operator1Address);
+        await bondingRegistry.revokeSlashingManager(oldManager);
+        expect(await bondingRegistry.isAuthorizedSlashingManager(oldManager)).to
+          .be.false;
+      });
+    });
+
     describe("setTicketPrice()", function () {
       it("allows owner to set ticket price", async function () {
         const { bondingRegistry } = await loadFixture(setup);

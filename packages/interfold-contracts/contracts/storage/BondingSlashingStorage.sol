@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+pragma solidity 0.8.28;
+
+struct SlashingManagerObligations {
+    uint256 e3Assignments;
+    uint256 openSlashLocks;
+    uint256 activeBans;
+}
+
+struct BondingSlashLock {
+    uint256 e3Id;
+    address operator;
+}
+
+/// @notice Declares the namespaced manager state used by BondingRegistry.
+abstract contract BondingSlashingStorage {
+    /// @custom:storage-location erc7201:interfold.storage.BondingSlashing
+    struct Layout {
+        mapping(address operator => uint256 count) openSlashLocks;
+        mapping(address operator => uint256 count) activeBans;
+        mapping(address manager => SlashingManagerObligations obligations) managers;
+        mapping(address manager => mapping(uint256 proposalId => BondingSlashLock lock)) slashLocks;
+        mapping(address manager => mapping(address operator => bool banned)) managerBans;
+        mapping(address manager => mapping(uint256 e3Id => uint256 count)) e3Locks;
+        mapping(address manager => mapping(uint256 e3Id => uint256 count)) e3Routes;
+        mapping(address manager => mapping(uint256 e3Id => address interfold)) e3Interfold;
+    }
+}

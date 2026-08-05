@@ -94,8 +94,25 @@ export const deployAndSaveBondingRegistry = async ({
 
   const blockNumber = await ethers.provider.getBlockNumber();
 
-  const bondingRegistryFactory =
-    await ethers.getContractFactory("BondingRegistry");
+  const assetFactory = await ethers.getContractFactory("BondingAssetLib");
+  const assetLibrary = await assetFactory.deploy();
+  await assetLibrary.waitForDeployment();
+  const assetLibraryAddress = await assetLibrary.getAddress();
+
+  const slashingFactory = await ethers.getContractFactory("BondingSlashingLib");
+  const slashingLibrary = await slashingFactory.deploy();
+  await slashingLibrary.waitForDeployment();
+  const slashingLibraryAddress = await slashingLibrary.getAddress();
+
+  const bondingRegistryFactory = await ethers.getContractFactory(
+    "BondingRegistry",
+    {
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
+    },
+  );
 
   const bondingRegistry = await bondingRegistryFactory.deploy();
   await bondingRegistry.waitForDeployment();
@@ -126,6 +143,17 @@ export const deployAndSaveBondingRegistry = async ({
   const proxyAdminAddress = await getProxyAdmin(ethers.provider, proxyAddress);
 
   storeDeploymentArgs(
+    { address: assetLibraryAddress, blockNumber },
+    "BondingAssetLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: slashingLibraryAddress, blockNumber },
+    "BondingSlashingLib",
+    chain,
+  );
+
+  storeDeploymentArgs(
     {
       constructorArgs: {
         owner,
@@ -137,6 +165,10 @@ export const deployAndSaveBondingRegistry = async ({
         licenseRequiredBond,
         minTicketBalance: minTicketBalance.toString(),
         exitDelay: exitDelay.toString(),
+      },
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
       },
       proxyRecords: {
         initData,
@@ -194,9 +226,31 @@ export const upgradeAndSaveBondingRegistry = async ({
   );
   console.log("Auto-deployed ProxyAdmin address:", autoProxyAdminAddress);
 
+  const assetFactory = await ethers.getContractFactory(
+    "BondingAssetLib",
+    signer,
+  );
+  const assetLibrary = await assetFactory.deploy();
+  await assetLibrary.waitForDeployment();
+  const assetLibraryAddress = await assetLibrary.getAddress();
+
+  const slashingFactory = await ethers.getContractFactory(
+    "BondingSlashingLib",
+    signer,
+  );
+  const slashingLibrary = await slashingFactory.deploy();
+  await slashingLibrary.waitForDeployment();
+  const slashingLibraryAddress = await slashingLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
-    signer,
+    {
+      signer,
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
+    },
   );
 
   const newImplementation = await bondingRegistryFactory.deploy();
@@ -240,6 +294,10 @@ export const upgradeAndSaveBondingRegistry = async ({
   storeDeploymentArgs(
     {
       ...preDeployedArgs,
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
       proxyRecords,
     },
     "BondingRegistry",

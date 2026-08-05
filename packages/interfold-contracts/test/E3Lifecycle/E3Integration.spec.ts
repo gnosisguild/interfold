@@ -515,11 +515,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const rotatedRegistry = await requester.getAddress();
       const rotatedBonding = await computeProvider.getAddress();
       const rotatedRefundManager = await treasury.getAddress();
-      const rotatedSlashingManager = await owner.getAddress();
+      const rotatedManager = await ethers.deployContract("SlashingManager", [
+        0,
+        await owner.getAddress(),
+      ]);
+      await rotatedManager.setBondingRegistry(bondingAddress);
+      const rotatedSlashingManager = await rotatedManager.getAddress();
 
-      // Rotate every global dependency after the E3 has been requested. EOAs are
-      // deliberate canaries: any accidental read through a live global pointer
-      // will fail instead of silently succeeding through another deployment.
+      // Rotate every global dependency after the E3 has been requested. The
+      // replacement manager is deliberately not wired beyond its registry bind.
       await interfold.connect(owner).setCiphernodeRegistry(rotatedRegistry);
       await interfold.connect(owner).setBondingRegistry(rotatedBonding);
       await interfold.connect(owner).setE3RefundManager(rotatedRefundManager);
@@ -1292,6 +1296,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(
         await bondingRegistry.pendingSlashRouteCount(oldManagerAddress),
       ).to.equal(0);
+      await slashingManager.connect(owner).closeE3(0);
       await bondingRegistry
         .connect(owner)
         .revokeSlashingManager(oldManagerAddress);

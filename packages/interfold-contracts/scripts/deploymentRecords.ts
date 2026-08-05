@@ -163,6 +163,17 @@ export function syncProtocolDeploymentRecords(
     opts.chain,
   );
 
+  storeDeploymentArgs(
+    { address: deployment.bondingAssetLib, blockNumber },
+    "BondingAssetLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    { address: deployment.bondingSlashingLib, blockNumber },
+    "BondingSlashingLib",
+    opts.chain,
+  );
+
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
     [
@@ -264,6 +275,10 @@ export function syncProtocolDeploymentRecords(
         licenseRequiredBond: config.bonding.licenseRequiredBond,
         minTicketBalance: config.bonding.minTicketBalance,
         exitDelay: config.bonding.exitDelay,
+      },
+      libraries: {
+        BondingAssetLib: deployment.bondingAssetLib,
+        BondingSlashingLib: deployment.bondingSlashingLib,
       },
       proxyRecords: {
         initData: bondingInitData,

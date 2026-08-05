@@ -16,7 +16,14 @@ export default buildModule("BondingRegistry", (m) => {
   const exitDelay = m.getParameter("exitDelay");
   const owner = m.getParameter("owner");
 
-  const bondingRegistryImpl = m.contract("BondingRegistry", []);
+  const bondingAssetLib = m.library("BondingAssetLib");
+  const bondingSlashingLib = m.library("BondingSlashingLib");
+  const bondingRegistryImpl = m.contract("BondingRegistry", [], {
+    libraries: {
+      BondingAssetLib: bondingAssetLib,
+      BondingSlashingLib: bondingSlashingLib,
+    },
+  });
 
   const initData = m.encodeFunctionCall(bondingRegistryImpl, "initialize", [
     owner,
@@ -36,5 +43,5 @@ export default buildModule("BondingRegistry", (m) => {
     initData,
   ]);
 
-  return { bondingRegistry };
+  return { bondingAssetLib, bondingRegistry, bondingSlashingLib };
 }) as any;

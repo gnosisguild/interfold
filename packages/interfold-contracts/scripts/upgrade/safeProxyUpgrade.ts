@@ -35,6 +35,8 @@ interface UpgradePlan {
   proxy: string;
   proxyAdmin: string;
   implementation: string;
+  assetLibrary?: string;
+  slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   operator: string;
@@ -97,6 +99,8 @@ export async function proposeProxyUpgrade(
     proxy,
     proxyAdmin,
     implementation: deployed.implementation,
+    assetLibrary: deployed.assetLibrary,
+    slashingLibrary: deployed.slashingLibrary,
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     operator: operatorAddress,
@@ -119,6 +123,8 @@ async function deployImplementation(
   deployment: ProtocolDeployment,
 ): Promise<{
   implementation: string;
+  assetLibrary?: string;
+  slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
 }> {
@@ -163,9 +169,34 @@ async function deployImplementation(
     return { implementation: await deployedAddress(implementation) };
   }
 
-  const contractName =
-    target === "bondingRegistry" ? "BondingRegistry" : "E3RefundManager";
-  const factory = await ethers.getContractFactory(contractName);
+  if (target === "bondingRegistry") {
+    const assetFactory = await ethers.getContractFactory("BondingAssetLib");
+    const asset = await assetFactory.deploy();
+    await asset.waitForDeployment();
+    const assetLibrary = await deployedAddress(asset);
+
+    const slashingFactory =
+      await ethers.getContractFactory("BondingSlashingLib");
+    const slashing = await slashingFactory.deploy();
+    await slashing.waitForDeployment();
+    const slashingLibrary = await deployedAddress(slashing);
+
+    const factory = await ethers.getContractFactory("BondingRegistry", {
+      libraries: {
+        BondingAssetLib: assetLibrary,
+        BondingSlashingLib: slashingLibrary,
+      },
+    });
+    const implementation = await factory.deploy();
+    await implementation.waitForDeployment();
+    return {
+      implementation: await deployedAddress(implementation),
+      assetLibrary,
+      slashingLibrary,
+    };
+  }
+
+  const factory = await ethers.getContractFactory("E3RefundManager");
   const implementation = await factory.deploy();
   await implementation.waitForDeployment();
   return { implementation: await deployedAddress(implementation) };
@@ -215,6 +246,8 @@ Protocol upgrade prepared
   proxy:           ${plan.proxy}
   proxyAdmin:      ${plan.proxyAdmin}
   implementation:  ${plan.implementation}
+  assetLibrary:    ${plan.assetLibrary ?? "(not applicable)"}
+  slashingLibrary: ${plan.slashingLibrary ?? "(not applicable)"}
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}

@@ -957,13 +957,15 @@ Every slash and settlement route resolves the dependency graph frozen when the E
 - At committee finalization, `E3RefundManager` resolves each member's bond owner through the
   request-time bonding registry and freezes that reward recipient for the E3.
 - `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
-  revokes them, so an old manager can finish snapshotted penalties and remains part of the exit
-  gate.
+  revokes them. Managers write proposal locks and bans into registry-owned aggregates, so user exits
+  do not call old managers.
 
 Admin setters update the live defaults for future requests only. Each E3 must have a complete
 request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance
-must revoke a replaced slashing manager only after all E3s, proposals, and pending slash routes that
-depend on it are terminal.
+must revoke a replaced slashing manager only after its E3 assignments, proposal locks, bans, and
+pending slash routes are clear. Governance closes each terminal E3 through
+`SlashingManager.closeE3`. It can deliberately clear a retained manager's stale ban before
+revocation.
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 
@@ -1248,9 +1250,9 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 
 ### Unified open-proposal collateral gate (H-05, AUD H-03)
 
-- `SlashingManager` tracks `_openProposalCount[operator]` for both Lane A and Lane B. Proposal
-  creation increments it; successful execution, an upheld appeal, or terminal appeal expiry
-  decrements it. `hasOpenSlashProposal` exposes the unified semantics.
+- `SlashingManager` tracks `_openProposalCount[operator]` for observability. It also opens one
+  proposal-scoped lock in `BondingRegistry`. Successful execution, an upheld appeal, or terminal
+  appeal expiry closes both records atomically.
 - `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
@@ -1258,12 +1260,17 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
   Proposals, bans, evidence signatures, and slash execution remain keyed by the hot operator
   address; a license slash reduces the authorized owner's aggregate `totalBonded` credit. Separating
   keys therefore protects withdrawal authority but does not create a slashing escape hatch.
-- That check covers every authorized current or retained historical slashing manager. Rotation
-  therefore cannot release collateral for an old manager's in-flight proposal. Governance revokes an
-  old manager only after its E3s, proposals, and pending routes are terminal.
+- The registry checks one local aggregate. It does not call current or retained managers during an
+  exit. Rotation therefore cannot release collateral for an old manager's in-flight proposal, and a
+  broken manager cannot freeze unrelated operators. Governance revokes an old manager only after its
+  E3 assignments, proposal locks, bans, and pending routes are clear.
 - A filed appeal cannot freeze collateral indefinitely: after the policy appeal window plus the
   seven-day governance resolution grace, `expireAppeal` permissionlessly upholds it and clears its
   gate.
+
+Fresh deployments authorize only API-versioned managers that are already bound to the registry.
+Before upgrading an existing deployment, drain or explicitly migrate every legacy proposal and ban;
+an empty registry-owned aggregate must not replace live callback-only state.
 
 ### Pull-payment slashed funds (H-01, H-07, H-09)
 

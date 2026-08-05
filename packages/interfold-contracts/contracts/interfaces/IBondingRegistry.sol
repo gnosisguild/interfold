@@ -66,6 +66,36 @@ interface IBondingRegistry {
     /// @notice A manager still owns slash routes that must finish before revocation.
     error ManagerHasPendingSlashRoutes(address manager, uint256 count);
 
+    /// @notice A manager still owns E3 assignments that must be closed before revocation.
+    error ManagerHasE3Assignments(address manager, uint256 count);
+
+    /// @notice A manager still owns proposal locks that must finish before revocation.
+    error ManagerHasOpenSlashLocks(address manager, uint256 count);
+
+    /// @notice A manager still owns bans that must be migrated or cleared before revocation.
+    error ManagerHasActiveBans(address manager, uint256 count);
+
+    /// @notice A manager does not implement the required immutable API.
+    error IncompatibleSlashingManager(address manager);
+
+    /// @notice A manager is configured for a different bonding registry.
+    error SlashingManagerBondingMismatch(
+        address manager,
+        address configuredBondingRegistry
+    );
+
+    /// @notice A manager already recorded this proposal lock.
+    error SlashLockAlreadyExists(address manager, uint256 proposalId);
+
+    /// @notice A manager does not own the expected proposal lock.
+    error SlashLockNotFound(address manager, uint256 proposalId);
+
+    /// @notice An E3 slash assignment does not exist for this manager.
+    error E3AssignmentNotFound(address manager, uint256 e3Id);
+
+    /// @notice An E3 assignment cannot close before its lifecycle is terminal.
+    error E3AssignmentNotTerminal(uint256 e3Id);
+
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
 
@@ -235,6 +265,27 @@ interface IBondingRegistry {
         address indexed slashingManager,
         uint256 indexed e3Id,
         address indexed refundManager
+    );
+
+    /// @notice Emitted when a terminal E3 releases its manager assignment.
+    event SlashRouteDestinationReleased(
+        address indexed slashingManager,
+        uint256 indexed e3Id
+    );
+
+    /// @notice Emitted when a manager opens or closes one proposal lock.
+    event SlashLockUpdated(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        address indexed operator,
+        bool active
+    );
+
+    /// @notice Emitted when a manager changes its ban state for an operator.
+    event ManagerBanUpdated(
+        address indexed slashingManager,
+        address indexed operator,
+        bool banned
     );
 
     /// @notice Emitted when a proposal reserves slashed ticket funds.
@@ -607,7 +658,30 @@ interface IBondingRegistry {
     /// @dev The authorized slashing manager calls this during E3 setup.
     function snapshotSlashRouteDestination(
         uint256 e3Id,
-        address refundManager
+        address refundManager,
+        address interfold
+    ) external;
+
+    /// @notice Release one terminal E3 assignment from its manager.
+    function releaseSlashRouteDestination(uint256 e3Id) external;
+
+    /// @notice Record one proposal-scoped collateral lock.
+    function openSlashLock(
+        uint256 e3Id,
+        uint256 proposalId,
+        address operator
+    ) external;
+
+    /// @notice Close one proposal-scoped collateral lock.
+    function closeSlashLock(uint256 proposalId, address operator) external;
+
+    /// @notice Set this manager's ban state for an operator.
+    function setOperatorBan(address operator, bool banned) external;
+
+    /// @notice Deliberately clear one retained manager's ban.
+    function clearSlashingManagerBan(
+        address manager,
+        address operator
     ) external;
 
     /// @notice Reserve slashed ticket funds for one proposal.
