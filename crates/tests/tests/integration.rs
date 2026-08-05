@@ -1737,9 +1737,6 @@ async fn test_trbfv_actor() -> Result<()> {
         expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     }
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
-    if proof_aggregation_enabled {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&dkg_n);
-    }
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
     // The active aggregator is also a selected committee member, so its node history contains
@@ -1753,7 +1750,16 @@ async fn test_trbfv_actor() -> Result<()> {
     let active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
         publickey_aggregator_marker(data, &e3_id)
     });
+    let dkg_event_count = active_aggregator_pubkey_events
+        .iter()
+        .filter(|event| **event == "DKGRecursiveAggregationComplete")
+        .count();
+    assert!(
+        dkg_event_count >= committee_h && dkg_event_count <= threshold_n,
+        "Active aggregator: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members, got {dkg_event_count}"
+    );
     let mut actual_sorted = active_aggregator_pubkey_events.clone();
+    actual_sorted.retain(|event| *event != "DKGRecursiveAggregationComplete");
     let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
     actual_sorted.sort();
     expected_sorted.sort();

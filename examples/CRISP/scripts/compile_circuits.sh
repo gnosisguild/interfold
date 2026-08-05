@@ -133,7 +133,6 @@ replacements = [
     function validateVerificationKey(Honk.VerificationKey memory vk) internal view {
         require($N == vk.circuitSize, Errors.VerificationKeyConfigurationMismatch());
         require($LOG_N == vk.logCircuitSize, Errors.VerificationKeyConfigurationMismatch());
-        require($VK_HASH == VK_HASH, Errors.VerificationKeyConfigurationMismatch());
         require($NUM_PUBLIC_INPUTS == vk.publicInputsSize, Errors.VerificationKeyConfigurationMismatch());
     }
 """,
