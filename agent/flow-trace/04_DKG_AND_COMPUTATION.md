@@ -267,9 +267,11 @@ ProofRequestActor receives ThresholdSharePending
 │     ├─ C2a: ComputeRequest::zk(ZkRequest::ShareComputation { kind: SK })
 │     ├─ C2b: ComputeRequest::zk(ZkRequest::ShareComputation { kind: ESM })
 │     ├─ C3a[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { recipient, row })
-│     │   → One per recipient party × modulus row
+│     │   → One per recipient party × threshold-secret modulus row; the paired DKG parameters
+│     │     define the ciphertext CRT limbs
 │     └─ C3b[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { esi_idx, recipient, row })
-│         → One per ESI × recipient party × modulus row
+│         → One per ESI × recipient party × threshold-secret modulus row; the paired DKG
+│           parameters define the ciphertext CRT limbs
 │
 ├─ 3. ZkActor generates proofs via bb binary (in parallel via multithread):
 │     → Each proof takes 1-10 seconds depending on circuit complexity
