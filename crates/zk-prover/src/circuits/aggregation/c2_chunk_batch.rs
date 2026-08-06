@@ -6,6 +6,9 @@
 
 //! Batch C2 chunk proofs and root finalization.
 
+use crate::circuits::aggregation::c2_chunk_config::{
+    chunks_per_batch, compiled_batch_count, compiled_chunk_count,
+};
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk;
 use crate::error::ZkError;
@@ -15,8 +18,6 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use serde::Serialize;
 
 const BATCH_PUBLIC_PREFIX_LEN: usize = 2;
-const DEFAULT_CHUNKS_PER_BATCH: usize = 4;
-
 #[derive(Serialize)]
 struct C2ChunkBatchInput {
     chunk_vk: Vec<String>,
@@ -32,14 +33,6 @@ struct C2ChunkBatchFinalizeInput {
     batch_proofs: Vec<Vec<String>>,
     batch_public_inputs: Vec<Vec<String>>,
     batch_key_hash: String,
-}
-
-fn chunks_per_batch(degree: usize) -> usize {
-    if degree <= 512 {
-        1
-    } else {
-        DEFAULT_CHUNKS_PER_BATCH
-    }
 }
 
 fn public_fields(proof: &Proof, context: &str) -> Result<Vec<String>, ZkError> {
@@ -63,10 +56,23 @@ pub fn generate_c2_chunk_batches(
             chunk_proofs.len()
         )));
     }
+    let expected_chunk_count = compiled_chunk_count(degree);
+    if chunk_count != expected_chunk_count {
+        return Err(ZkError::InvalidInput(format!(
+            "C2 chunk count {chunk_count} does not match compiled artifact count {expected_chunk_count}"
+        )));
+    }
     let per_batch = chunks_per_batch(degree);
     if chunk_count % per_batch != 0 {
         return Err(ZkError::InvalidInput(format!(
             "C2 chunk count {chunk_count} is not divisible by batch size {per_batch}"
+        )));
+    }
+    let batch_count = chunk_count / per_batch;
+    let expected_batch_count = compiled_batch_count(degree);
+    if batch_count != expected_batch_count {
+        return Err(ZkError::InvalidInput(format!(
+            "C2 batch count {batch_count} does not match compiled artifact count {expected_batch_count}"
         )));
     }
 

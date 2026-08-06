@@ -7,6 +7,9 @@
 use crate::circuits::aggregation::c2_chunk_batch::{
     finalize_c2_chunk_batches, generate_c2_chunk_batches,
 };
+use crate::circuits::aggregation::c2_chunk_config::{
+    chunks_per_batch, compiled_batch_count, compiled_chunk_count,
+};
 use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
@@ -19,14 +22,37 @@ use e3_zk_helpers::dkg::share_computation::{
 };
 use serde_json::Value;
 
-pub const DEFAULT_C2_CHUNK_SIZE: usize = 512;
+pub use crate::circuits::aggregation::c2_chunk_config::DEFAULT_C2_CHUNK_SIZE;
+
+fn validate_c2_chunk_layout(degree: usize, chunk_size: usize) -> Result<(usize, usize), ZkError> {
+    if chunk_size == 0 || degree == 0 || degree % chunk_size != 0 {
+        return Err(ZkError::InvalidInput(format!(
+            "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
+        )));
+    }
+    let chunk_count = degree / chunk_size;
+    let expected_chunk_count = compiled_chunk_count(degree);
+    if chunk_count != expected_chunk_count {
+        return Err(ZkError::InvalidInput(format!(
+            "C2 chunk size {chunk_size} produces {chunk_count} chunks, but the selected artifacts require {expected_chunk_count}"
+        )));
+    }
+    let batch_count = chunk_count / chunks_per_batch(degree);
+    let expected_batch_count = compiled_batch_count(degree);
+    if batch_count != expected_batch_count {
+        return Err(ZkError::InvalidInput(format!(
+            "C2 chunk size {chunk_size} produces {batch_count} batches, but the selected artifacts require {expected_batch_count}"
+        )));
+    }
+    Ok((chunk_count, batch_count))
+}
 
 pub struct ChunkedShareComputationProofs {
     pub proof: e3_events::Proof,
     pub chunk_count: usize,
 }
 
-/// Generate the terminal C2 proof from one base proof and all deterministic coefficient chunks.
+/// Generate the terminal C2 proof from all deterministic coefficient chunks.
 pub fn prove_chunked_share_computation(
     prover: &ZkProver,
     preset: BfvPreset,
@@ -52,22 +78,17 @@ pub fn prove_chunked_share_computation_with_chunk_size(
     artifacts_dir: &str,
     chunk_size: usize,
 ) -> Result<ChunkedShareComputationProofs, ZkError> {
-    let inputs = Inputs::compute(preset, data)
-        .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
-    let base_json = inputs
-        .to_json()
-        .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let degree = preset
         .threshold_counterpart()
         .unwrap_or(preset)
         .metadata()
         .degree;
-    if chunk_size == 0 || degree == 0 || degree % chunk_size != 0 {
-        return Err(ZkError::InvalidInput(format!(
-            "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
-        )));
-    }
-    let chunk_count = degree / chunk_size;
+    let (chunk_count, _batch_count) = validate_c2_chunk_layout(degree, chunk_size)?;
+    let inputs = Inputs::compute(preset, data)
+        .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+    let base_json = inputs
+        .to_json()
+        .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let chunk_circuit = match data.dkg_input_type {
         DkgInputType::SecretKey => CircuitName::SkShareComputationChunk,
         DkgInputType::SmudgingNoise => CircuitName::ESmShareComputationChunk,
@@ -181,6 +202,16 @@ pub fn prove_chunked_share_computation_with_chunk_size(
     let proof =
         finalize_c2_chunk_batches(prover, &batches, finalizer_circuit, e3_id, artifacts_dir)?;
     Ok(ChunkedShareComputationProofs { proof, chunk_count })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_c2_chunk_layout;
+
+    #[test]
+    fn rejects_chunk_size_with_a_different_compiled_chunk_count() {
+        assert!(validate_c2_chunk_layout(8192, 256).is_err());
+    }
 }
 
 impl Provable for ShareComputationCircuit {

@@ -8,6 +8,7 @@
 
 pub mod c2_chunk_accumulator;
 pub mod c2_chunk_batch;
+pub(crate) mod c2_chunk_config;
 pub mod c3_accumulator;
 pub mod c6_accumulator;
 pub mod helpers;

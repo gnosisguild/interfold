@@ -935,7 +935,8 @@ fn handle_share_computation_proof(
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Base C2 proof, chunk proofs, and terminal C2 projection.
+    // 7. Chunk proofs and terminal C2 projection. The production path uses the compiled default
+    // chunk size; the `zk_cli --chunk-size` option does not reach this handler.
     let proof = prove_chunked_share_computation(
         prover,
         req.params_preset,
