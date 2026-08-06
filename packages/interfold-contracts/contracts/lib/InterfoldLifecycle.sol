@@ -27,7 +27,8 @@ library InterfoldLifecycle {
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
-    // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextPublication")) - 1)) & ~bytes32(uint256(0xff))
+    // ERC-7201 slot for "interfold.storage.CiphertextPublication".
+    // keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_PUBLICATION_STORAGE_SLOT =
         0x8cf8f319e286c91067df5865ff01615e7f3fced906e24ea85acdc2dfd6704200;
 
