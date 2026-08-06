@@ -26,7 +26,7 @@ fn main(
     c2b_public: [Field; C2_PUBLIC_LEN],
     c2a_key_hash: pub Field,
     c2b_key_hash: pub Field,
-     ) -> pub (Field, Field, Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
+    ) -> pub (Field, Field, Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
     verify_honk_proof(c2a_vk, c2a_proof, c2a_public, c2a_key_hash);
     verify_honk_proof(c2b_vk, c2b_proof, c2b_public, c2b_key_hash);
 
@@ -49,13 +49,5 @@ fn main(
         }
     }
 
-    (
-        key_hash,
-        c2a_key_hash,
-        c2b_key_hash,
-        c2a_expected,
-        c2a_shares,
-        c2b_expected,
-        c2b_shares,
-    )
+    (key_hash, c2a_key_hash, c2b_key_hash, c2a_expected, c2a_shares, c2b_expected, c2b_shares)
 }

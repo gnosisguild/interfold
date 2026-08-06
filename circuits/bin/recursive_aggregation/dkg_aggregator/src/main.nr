@@ -64,7 +64,7 @@ fn main(
     committee_members: [Field; N_PARTIES],
     committee_hash_hi: pub Field,
     committee_hash_lo: pub Field,
- ) -> pub (Field, Field, Field, [Field; H], [Field; H], Field) {
+) -> pub (Field, Field, Field, [Field; H], [Field; H], Field) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
@@ -78,15 +78,13 @@ fn main(
             nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                 + i * NODE_FOLD_PUBLIC_LEN
                 + NF_C2A_CHUNK_HASH_IDX]
-                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                    + NF_C2A_CHUNK_HASH_IDX],
+                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
         );
         assert(
             nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                 + i * NODE_FOLD_PUBLIC_LEN
                 + NF_C2B_CHUNK_HASH_IDX]
-                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                    + NF_C2B_CHUNK_HASH_IDX],
+                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX],
         );
     }
 
@@ -202,11 +200,8 @@ fn main(
     let aggregated_pk_commit = c5_public[H];
 
     (
-        key_hash,
-        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
-        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX],
-        sk_agg_commits,
-        esm_agg_commits,
-        aggregated_pk_commit,
+        key_hash, nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
+        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX], sk_agg_commits,
+        esm_agg_commits, aggregated_pk_commit,
     )
 }
