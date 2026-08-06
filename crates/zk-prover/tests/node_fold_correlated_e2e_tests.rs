@@ -35,7 +35,9 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
-use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
+use e3_zk_prover::{
+    generate_sequential_c3_fold, CircuitVariant, NodeDkgFoldInput, Provable, ZkProver,
+};
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
 use node_fold_witness::{
     pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
@@ -164,23 +166,23 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         "pk",
         "sk_share_computation",
         "e_sm_share_computation",
+        "sk_share_computation_base",
+        "e_sm_share_computation_base",
+        "share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ] {
-        let name = match g {
-            "pk" => "pk",
-            "sk_share_computation" => "sk_share_computation",
-            "e_sm_share_computation" => "e_sm_share_computation",
-            "share_encryption" => "share_encryption",
-            "share_decryption" => "share_decryption",
-            _ => unreachable!(),
-        };
-        setup_compiled_circuit(&backend, "dkg", name).await;
+        setup_compiled_circuit(&backend, "dkg", g).await;
     }
     setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
 
     for c in [
         CircuitName::C2abFold,
+        CircuitName::C2ChunkFold,
+        CircuitName::C2ChunkFoldKernel,
+        CircuitName::SkC2ChunkFinalize,
+        CircuitName::ESmC2ChunkFinalize,
+        CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
         CircuitName::C3abFold,
@@ -583,6 +585,58 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         .verify_fold_proof(&nf_proof, "e3-nf-node", 0, &artifacts_dir)
         .expect("verify node_fold");
     assert!(ok, "node_fold should verify");
+
+    let c2a_chunked = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_sk,
+        "e3-nf-c2a-chunked",
+        &artifacts_dir,
+    )
+    .expect("chunked C2a proof");
+    let c2b_chunked = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_esm,
+        "e3-nf-c2b-chunked",
+        &artifacts_dir,
+    )
+    .expect("chunked C2b proof");
+    assert_eq!(c2a_chunked.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(c2b_chunked.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+
+    let chunked_node = e3_zk_prover::prove_node_dkg_fold(
+        &prover,
+        &NodeDkgFoldInput {
+            c0_proof: &c0_proof,
+            c1_proof: &c1_proof,
+            c2a_proof: &c2a_chunked.proof,
+            c2b_proof: &c2b_chunked.proof,
+            c3a_inner_proofs: &c3a_inners,
+            c3b_inner_proofs: &c3b_inners,
+            c3_slot_indices_a: &slot_indices,
+            c3_slot_indices_b: &slot_indices,
+            c3_total_slots: total_slots,
+            c4a_proof: &c4a_proof,
+            c4b_proof: &c4b_proof,
+            party_id: own_party_id as u64,
+        },
+        "e3-nf-node-chunked",
+        &artifacts_dir,
+    )
+    .expect("chunked node fold proof");
+    assert!(chunked_node
+        .step_timings
+        .iter()
+        .any(|step| step.step == CircuitName::C2abChunkFold.as_str()));
+    assert!(prover
+        .verify_fold_proof(
+            &chunked_node.proof,
+            "e3-nf-node-chunked-nodefold",
+            0,
+            &artifacts_dir,
+        )
+        .expect("verify chunked node_fold"));
 
     drop(temp);
 }
