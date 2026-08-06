@@ -52,6 +52,29 @@ pub struct ChunkedShareComputationProofs {
     pub chunk_count: usize,
 }
 
+fn slice_coefficients(
+    values: &[Value],
+    start: usize,
+    chunk_size: usize,
+    context: &str,
+) -> Result<Vec<Value>, ZkError> {
+    let end = start.checked_add(chunk_size).ok_or_else(|| {
+        ZkError::InvalidInput(format!(
+            "{context} coefficient range overflows: start={start}, chunk_size={chunk_size}"
+        ))
+    })?;
+    values
+        .get(start..end)
+        .map(<[Value]>::to_vec)
+        .ok_or_else(|| {
+            ZkError::InvalidInput(format!(
+                "{context} has {} coefficients, need at least {}",
+                values.len(),
+                end
+            ))
+        })
+}
+
 /// Generate the terminal C2 proof from all deterministic coefficient chunks.
 pub fn prove_chunked_share_computation(
     prover: &ZkProver,
@@ -125,7 +148,12 @@ pub fn prove_chunked_share_computation_with_chunk_size(
             Value::Object(
                 [(
                     "coefficients".into(),
-                    Value::Array(coefficients[start..start + chunk_size].to_vec()),
+                    Value::Array(slice_coefficients(
+                        coefficients,
+                        start,
+                        chunk_size,
+                        "SK secret",
+                    )?),
                 )]
                 .into_iter()
                 .collect(),
@@ -138,24 +166,28 @@ pub fn prove_chunked_share_computation_with_chunk_size(
                 limbs
                     .iter()
                     .map(|limb| {
-                        limb.as_object()
+                        let values = limb
+                            .as_object()
                             .and_then(|object| object.get("coefficients"))
                             .and_then(Value::as_array)
-                            .map(|values| {
-                                Value::Object(
-                                    [(
-                                        "coefficients".into(),
-                                        Value::Array(values[start..start + chunk_size].to_vec()),
-                                    )]
-                                    .into_iter()
-                                    .collect(),
-                                )
-                            })
                             .ok_or_else(|| {
                                 ZkError::SerializationError(
                                     "ESM secret JSON must contain CRT limbs".into(),
                                 )
-                            })
+                            })?;
+                        Ok::<Value, ZkError>(Value::Object(
+                            [(
+                                "coefficients".into(),
+                                Value::Array(slice_coefficients(
+                                    values,
+                                    start,
+                                    chunk_size,
+                                    "ESM secret limb",
+                                )?),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ))
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             )

@@ -66,9 +66,9 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
         if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
-            || (target_public_signals.len() >= 2 * FIELD_BYTE_LEN
-                && target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0])
+        let start = FIELD_BYTE_LEN;
+        target_public_signals.len() >= start + FIELD_BYTE_LEN
+            && target_public_signals[start..start + FIELD_BYTE_LEN] == source_values[0]
     }
 }
 
@@ -106,9 +106,9 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
         if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
-            || (target_public_signals.len() >= 2 * FIELD_BYTE_LEN
-                && target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0])
+        let start = FIELD_BYTE_LEN;
+        target_public_signals.len() >= start + FIELD_BYTE_LEN
+            && target_public_signals[start..start + FIELD_BYTE_LEN] == source_values[0]
     }
 }
 
@@ -131,9 +131,10 @@ mod tests {
         v
     }
 
-    /// C2 inner public signals: [expected_secret_commitment] + share commitments...
+    /// C2 terminal public signals: [child_vk_hash, expected_secret_commitment] + share commitments...
     fn c2_signals(secret_commitment: [u8; 32], share_commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(32 + share_commitments.len() * 32);
+        let mut v = Vec::with_capacity(64 + share_commitments.len() * 32);
+        v.extend_from_slice(&make_field(0xFE));
         v.extend_from_slice(&secret_commitment);
         for c in share_commitments {
             v.extend_from_slice(c);
@@ -165,6 +166,16 @@ mod tests {
         let link = C1ToC2aSkCommitmentLink;
         let c2 = c2_signals(make_field(99), &[make_field(10)]);
         assert!(!link.check_signals(&[make_field(42)], &c2));
+    }
+
+    #[test]
+    fn c2a_does_not_match_the_child_vk_field() {
+        let link = C1ToC2aSkCommitmentLink;
+        let sk = make_field(42);
+        let mut c2 = Vec::new();
+        c2.extend_from_slice(&sk);
+        c2.extend_from_slice(&make_field(99));
+        assert!(!link.check_signals(&[sk], &c2));
     }
 
     #[test]

@@ -22,18 +22,19 @@
 //! commitments for the C4 recipient do not exactly match the corresponding
 //! row in C4's `expected_commitments`.
 //!
-//! ## C2 inner-circuit public signals layout
+//! ## C2 terminal public signals layout
 //!
 //! ```text
+//! [child_vk_hash (32 B, skip)]
 //! [expected_secret_commitment (32 B, skip)]
 //! [party_0_mod_0 (32 B)] [party_0_mod_1] ... [party_0_mod_{L-1}]
 //! [party_1_mod_0] ...
 //! [party_{N-1}_mod_{L-1}]
 //! ```
 //!
-//! The first field is the `expected_secret_commitment` public input and is
-//! skipped. The remaining N_PARTIES × L fields are share commitments output
-//! by `commit_to_party_shares`, indexed in row-major order (party first, then
+//! The first two fields are the child VK hash and `expected_secret_commitment`.
+//! The remaining N_PARTIES × L fields are share commitments output by
+//! `commit_to_party_shares`, indexed in row-major order (party first, then
 //! modulus).
 //!
 //! ## C4 public signals layout
@@ -71,6 +72,8 @@ pub struct C2aToC4aShareCommitmentLink {
     /// Number of threshold CRT moduli (L). Determines the block size in both
     /// C2 and C4 public signals.
     pub l: usize,
+    /// Number of non-commitment fields at the start of the C2 terminal proof.
+    pub source_prefix_fields: usize,
 }
 
 impl CommitmentLink for C2aToC4aShareCommitmentLink {
@@ -91,7 +94,7 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals)
+        extract_share_commitments(public_signals, self.source_prefix_fields)
     }
 
     fn check_consistency(
@@ -115,6 +118,8 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
 pub struct C2bToC4bShareCommitmentLink {
     /// Number of threshold CRT moduli (L).
     pub l: usize,
+    /// Number of non-commitment fields at the start of the C2 terminal proof.
+    pub source_prefix_fields: usize,
 }
 
 impl CommitmentLink for C2bToC4bShareCommitmentLink {
@@ -135,7 +140,7 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals)
+        extract_share_commitments(public_signals, self.source_prefix_fields)
     }
 
     fn check_consistency(
@@ -155,22 +160,16 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 }
 
-/// Extract all share commitments from C2's public signals.
-///
-/// C2 inner-circuit public signals:
-///   - legacy: field 0 is `expected_secret_commitment` (skipped)
-///   - chunked: field 0 is the child VK hash and field 1 is
-///     `expected_secret_commitment` (both skipped)
-///   - remaining fields: `commit_to_party_shares[party_idx][mod_idx]` outputs,
-///     row-major (party first, modulus second)
-///
-/// Returns every 32-byte chunk after the legacy prefix. The consistency check
-/// removes the extra child-VK field for chunked layouts.
-fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
-    if public_signals.len() < 2 * FIELD_BYTE_LEN {
+/// Extract all share commitments after the explicit C2 terminal prefix.
+fn extract_share_commitments(
+    public_signals: &[u8],
+    source_prefix_fields: usize,
+) -> Vec<FieldValue> {
+    let prefix_bytes = source_prefix_fields.saturating_mul(FIELD_BYTE_LEN);
+    if source_prefix_fields == 0 || public_signals.len() < prefix_bytes {
         return vec![];
     }
-    public_signals[FIELD_BYTE_LEN..]
+    public_signals[prefix_bytes..]
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
@@ -210,18 +209,17 @@ fn check_exact_l_commitments(
     let tgt_idx = tgt_party_id as usize;
     let src_idx = src_party_id as usize;
 
-    let chunked_prefix = [3usize, 9, 19]
-        .iter()
-        .any(|&n| source_values.len() == (n * l) + 1);
-    let share_offset = usize::from(chunked_prefix);
-    let share_count = source_values.len().saturating_sub(share_offset);
-    if share_count == 0 || share_count % l != 0 {
+    if source_values.len() % l != 0 {
         return false;
     }
 
     // Slice L commits from C2 at slot tgt_idx (the C4 recipient's position).
-    let c2_start = share_offset + tgt_idx * l;
-    let c2_end = c2_start + l;
+    let Some(c2_start) = tgt_idx.checked_mul(l) else {
+        return false;
+    };
+    let Some(c2_end) = c2_start.checked_add(l) else {
+        return false;
+    };
     if source_values.len() < c2_end {
         return false;
     }
@@ -229,8 +227,18 @@ fn check_exact_l_commitments(
 
     // C4 row for src_idx (the C2 sender): bytes [X*L*32 .. (X+1)*L*32].
     // C4 must also have the aggregated output as the last field.
-    let c4_row_start = src_idx * l * FIELD_BYTE_LEN;
-    let c4_row_end = c4_row_start + l * FIELD_BYTE_LEN;
+    let Some(c4_row_start) = src_idx
+        .checked_mul(l)
+        .and_then(|offset| offset.checked_mul(FIELD_BYTE_LEN))
+    else {
+        return false;
+    };
+    let Some(c4_row_len) = l.checked_mul(FIELD_BYTE_LEN) else {
+        return false;
+    };
+    let Some(c4_row_end) = c4_row_start.checked_add(c4_row_len) else {
+        return false;
+    };
     if target_public_signals.len() < c4_row_end + FIELD_BYTE_LEN {
         return false;
     }

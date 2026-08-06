@@ -330,7 +330,7 @@ async function main() {
     dkgPublicInputs[6 + BFV_DKG_H] !== expectedESmC2ChunkKeyHash
   ) {
     throw new Error(
-      "DKG aggregator proof publicInputs[0..1] do not match nodes_fold / pk_aggregation .vk_recursive_hash artifacts",
+      "DKG aggregator proof public inputs do not match nodes_fold, pk_aggregation, sk_share_computation_chunk, or esm_share_computation_chunk .vk_recursive_hash artifacts",
     );
   }
   if (
