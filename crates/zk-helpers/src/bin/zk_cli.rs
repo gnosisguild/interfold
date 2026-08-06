@@ -28,6 +28,8 @@ use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::circuits::dkg::share_computation::circuit::{
     ShareComputationCircuit, ShareComputationCircuitData,
 };
+use e3_zk_helpers::circuits::dkg::share_computation::codegen::generate_configs_with_chunk_size;
+use e3_zk_helpers::circuits::CircuitComputation;
 use e3_zk_helpers::codegen::{write_artifacts, write_toml, CircuitCodegen};
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_decryption::{
@@ -188,6 +190,9 @@ struct Cli {
     /// When used with --toml: do not write configs.nr (e.g. for benchmarks where circuits use lib configs).
     #[arg(long, default_value = "false")]
     no_configs: bool,
+    /// C2 coefficient chunk size. Must divide the preset polynomial degree.
+    #[arg(long, default_value_t = 512)]
+    chunk_size: usize,
 }
 
 fn main() -> Result<()> {
@@ -298,6 +303,8 @@ fn main() -> Result<()> {
 
     run_with_spinner(|| {
         let committee = committee_size.values();
+        let committee_n = committee.n;
+        let committee_threshold = committee.threshold;
         let artifacts = match circuit_name {
             name if name == <PkCircuit as Circuit>::NAME => {
                 let sample = PkCircuitData::generate_sample(preset)?;
@@ -313,7 +320,16 @@ fn main() -> Result<()> {
                 )?;
 
                 let circuit = ShareComputationCircuit;
-                circuit.codegen(preset, &sample)?
+                let mut artifacts = circuit.codegen(preset, &sample)?;
+                let output = ShareComputationCircuit::compute(preset, &sample)?;
+                artifacts.configs = generate_configs_with_chunk_size(
+                    preset,
+                    &output.bits,
+                    committee_n,
+                    committee_threshold,
+                    args.chunk_size,
+                )?;
+                artifacts
             }
             name if name == <ShareEncryptionCircuit as Circuit>::NAME => {
                 let sd = preset.search_defaults().unwrap();

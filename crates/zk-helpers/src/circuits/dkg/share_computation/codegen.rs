@@ -56,8 +56,30 @@ pub fn generate_configs(
     n_parties: usize,
     threshold: usize,
 ) -> Result<CodegenConfigs, CircuitsErrors> {
+    generate_configs_with_chunk_size(preset, bits, n_parties, threshold, 512)
+}
+
+pub fn generate_configs_with_chunk_size(
+    preset: BfvPreset,
+    bits: &Bits,
+    n_parties: usize,
+    threshold: usize,
+    chunk_size: usize,
+) -> Result<CodegenConfigs, CircuitsErrors> {
     let (threshold_params, _) =
         build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+    if chunk_size == 0 {
+        return Err(CircuitsErrors::Sample(
+            "C2 chunk size must be greater than zero".into(),
+        ));
+    }
+    let degree = threshold_params.degree();
+    if degree % chunk_size != 0 {
+        return Err(CircuitsErrors::Sample(format!(
+            "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
+        )));
+    }
+    let chunk_count = degree / chunk_size;
     let config_name = preset.metadata().security.as_config_str();
     let parity_matrix_str = parity_matrix_constant_string(&threshold_params, n_parties, threshold)?;
     let prefix = <ShareComputationCircuit as Circuit>::PREFIX;
@@ -66,6 +88,8 @@ pub fn generate_configs(
 pub use crate::configs::{}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}};
 
 pub global N: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 
 {}
 /************************************
@@ -96,7 +120,9 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
 "#,
         config_name,
-        preset.metadata().degree,
+        degree,
+        chunk_size,
+        chunk_count,
         parity_matrix_str,
         prefix,
         bits.bit_share,
@@ -185,5 +211,56 @@ mod tests {
         assert!(configs_content.contains(
             format!("{}_E_SM_BIT_SECRET: u32 = {}", prefix, bits.bit_e_sm_secret).as_str()
         ));
+    }
+
+    #[test]
+    fn test_chunk_size_is_written_to_configs() {
+        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let n_parties = committee.n;
+        let threshold = committee.threshold;
+        let sample = ShareComputationCircuitData::generate_sample(
+            BfvPreset::InsecureThreshold512,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let configs = generate_configs_with_chunk_size(
+            BfvPreset::InsecureThreshold512,
+            &bits,
+            n_parties,
+            threshold,
+            256,
+        )
+        .unwrap();
+
+        assert!(configs.contains("SHARE_COMPUTATION_CHUNK_SIZE: u32 = 256"));
+        assert!(configs.contains("SHARE_COMPUTATION_N_CHUNKS: u32 = 2"));
+    }
+
+    #[test]
+    fn test_chunk_size_must_divide_degree() {
+        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let n_parties = committee.n;
+        let threshold = committee.threshold;
+        let sample = ShareComputationCircuitData::generate_sample(
+            BfvPreset::InsecureThreshold512,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let error = generate_configs_with_chunk_size(
+            BfvPreset::InsecureThreshold512,
+            &bits,
+            n_parties,
+            threshold,
+            255,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must divide polynomial degree"));
     }
 }
