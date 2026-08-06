@@ -76,6 +76,7 @@ struct C2ChunkFinalizeInput {
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
     acc_key_hash: String,
+    variant: bool,
 }
 
 fn base_circuit_for(proof: &Proof) -> Result<CircuitName, ZkError> {
@@ -449,6 +450,7 @@ pub fn finalize_c2_chunk_fold(
         acc_proof: bytes_to_field_strings(&accumulator.data)?,
         acc_public_inputs,
         acc_key_hash: acc_vk.key_hash,
+        variant: finalizer_circuit != CircuitName::SkC2ChunkFinalize,
     };
     let circuit_path = prover
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
@@ -467,11 +469,11 @@ pub fn finalize_c2_chunk_fold(
         artifacts_dir,
     )?;
     let output_fields = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if output_fields.len() != c2_public_len + 1 {
+    if output_fields.len() != c2_public_len {
         return Err(ZkError::InvalidInput(format!(
             "C2 chunk finalizer has {} public fields, expected {}",
             output_fields.len(),
-            c2_public_len + 1
+            c2_public_len
         )));
     }
     Ok(proof)
