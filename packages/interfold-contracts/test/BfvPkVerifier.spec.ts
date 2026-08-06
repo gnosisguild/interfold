@@ -23,8 +23,6 @@ const EXPECTED_SK_C2_CHUNK_KEY_HASH = ethers.id("sk_c2_chunk");
 const EXPECTED_ESM_C2_CHUNK_KEY_HASH = ethers.id("esm_c2_chunk");
 /** Must match `BfvPkVerifier.h` / default circuit `H`. */
 const H = BFV_DKG_H;
-/** Aggregator return slots after committee hash: `2*H + 1` padding + `pkCommitment`. */
-const DKG_RETURN_FIELD_COUNT = 2 * H + 4;
 
 /** Exact `publicInputs.length` for the configured H. */
 const EXPECTED_PUBLIC_INPUTS_LEN = bfvPkExpectedPublicInputsLen(H);

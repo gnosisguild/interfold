@@ -72,7 +72,7 @@ fn main(
     c2ab_key_hash: pub Field,
     c3ab_key_hash: pub Field,
     c4ab_key_hash: pub Field,
-) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field) {
+    ) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field) {
     verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);
     verify_honk_proof(c1_vk, c1_proof, c1_public, c1_key_hash);
     verify_honk_proof_non_zk(c2ab_vk, c2ab_proof, c2ab_public, c2ab_key_hash);
@@ -152,17 +152,7 @@ fn main(
     let esm_agg = c4ab_public[ESM_AGG_INDEX];
 
     (
-        key_hash,
-        c2ab_public[3],
-        c2ab_public[4],
-        c0_pk,
-        c1_pk,
-        c3_pk,
-        c2a,
-        c2b,
-        c4a_exp,
-        c4b_exp,
-        sk_agg,
-        esm_agg,
+        key_hash, c2ab_public[3], c2ab_public[4], c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp,
+        sk_agg, esm_agg,
     )
 }

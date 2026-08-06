@@ -5,9 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE,
-    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS,
-    SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_SK_CONFIGS,
+    L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
+    SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_SK_CONFIGS,
 };
 use lib::configs::default::{N_PARTIES, T};
 use lib::core::dkg::share_computation::check_range_bounds;
@@ -43,7 +42,8 @@ fn main(
     );
 
     let mut out: [Field; CHUNK_PUBLIC_LEN] = [0; CHUNK_PUBLIC_LEN];
-    let mut reversed_secret: [Field; SHARE_COMPUTATION_CHUNK_SIZE] = [0; SHARE_COMPUTATION_CHUNK_SIZE];
+    let mut reversed_secret: [Field; SHARE_COMPUTATION_CHUNK_SIZE] =
+        [0; SHARE_COMPUTATION_CHUNK_SIZE];
     for i in 0..SHARE_COMPUTATION_CHUNK_SIZE {
         reversed_secret[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] = secret_chunk.coefficients[i];
     }
@@ -62,11 +62,13 @@ fn main(
                 reversed_share[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] =
                     y_chunk[i][mod_idx][party_idx + 1];
             }
-            out[1 + party_idx * L_THRESHOLD + mod_idx] =
-                compute_sc_party_share_chunk_commitment::<
-                    SHARE_COMPUTATION_CHUNK_SIZE,
-                    SHARE_COMPUTATION_BIT_SHARE,
-                >(party_idx, mod_idx, chunk_idx, N, Polynomial::new(reversed_share));
+            out[1 + party_idx * L_THRESHOLD + mod_idx] = compute_sc_party_share_chunk_commitment::<SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_BIT_SHARE>(
+                party_idx,
+                mod_idx,
+                chunk_idx,
+                N,
+                Polynomial::new(reversed_share),
+            );
         }
     }
 

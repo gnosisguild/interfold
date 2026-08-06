@@ -35,9 +35,9 @@ The current recursive path consumes this interface through:
 The secure-minimum benchmark reports:
 
 | Circuit | Constraints | Prove time |
-| --- | ---: | ---: |
-| C2a | 1,446,348 | 5.16 s |
-| C2b | 2,889,001 | 9.65 s |
+| ------- | ----------: | ---------: |
+| C2a     |   1,446,348 |     5.16 s |
+| C2b     |   2,889,001 |     9.65 s |
 
 ### Current Compatibility Baseline
 
@@ -52,28 +52,28 @@ The following measurements were collected on 2026-08-05 with the current compati
 
 Each circuit compiled, executed, proved, and verified successfully.
 
-| Circuit | ACIR opcodes | Constraints | Prove time | Proof size |
-| --- | ---: | ---: | ---: | ---: |
-| C2a | 426,360 | 1,446,311 | 6.181560 s | 14,656 bytes |
-| C2b | 827,414 | 2,888,964 | 11.829518 s | 14,656 bytes |
+| Circuit | ACIR opcodes | Constraints |  Prove time |   Proof size |
+| ------- | -----------: | ----------: | ----------: | -----------: |
+| C2a     |      426,360 |   1,446,311 |  6.181560 s | 14,656 bytes |
+| C2b     |      827,414 |   2,888,964 | 11.829518 s | 14,656 bytes |
 
 The benchmark JSON files are:
 
 - `circuits/benchmarks/results_secure_minimum/raw/dkg_sk_share_computation_default.json`
 - `circuits/benchmarks/results_secure_minimum/raw/dkg_e_sm_share_computation_default.json`
 
-The older values in the table above were generated with Nargo beta.16 and Barretenberg 3.0.0. Do
-not use them as the comparison target for the chunked implementation. Use the current compatibility
+The older values in the table above were generated with Nargo beta.16 and Barretenberg 3.0.0. Do not
+use them as the comparison target for the chunked implementation. Use the current compatibility
 baseline in this section.
 
 ### Current Public-Signal Layouts
 
 The public-signal counts are derived from the current Noir circuit formulas:
 
-| Preset and committee | C2a/C2b | C2abFold | NodeFold |
-| --- | ---: | ---: | ---: |
-| insecure-512 / minimum (`N=3`, `H=2`, `L=1`) | 4 | 11 | 24 |
-| secure-8192 / minimum (`N=3`, `H=2`, `L=3`) | 10 | 23 | 44 |
+| Preset and committee                         | C2a/C2b | C2abFold | NodeFold |
+| -------------------------------------------- | ------: | -------: | -------: |
+| insecure-512 / minimum (`N=3`, `H=2`, `L=1`) |       4 |       11 |       24 |
+| secure-8192 / minimum (`N=3`, `H=2`, `L=3`)  |      10 |       23 |       44 |
 
 The formulas are:
 
@@ -83,8 +83,8 @@ C2AB_FOLD_PUBLIC_LEN = 3 + 2 * C2_PUBLIC_LEN
 NODE_FOLD_PUBLIC_LEN = 11 + N_PARTIES + 2 * (N_PARTIES + H) * L_THRESHOLD
 ```
 
-The current secure C2 benchmark public-input files contain 10 fields, or 320 bytes. These counts
-are compatibility targets for the final chunk accumulator proof.
+The current secure C2 benchmark public-input files contain 10 fields, or 320 bytes. These counts are
+compatibility targets for the final chunk accumulator proof.
 
 ## Upstream Design Review
 
@@ -100,8 +100,8 @@ It splits each C2 branch into two parts:
 The secure preset uses `CHUNK_SIZE = 512` and `N_CHUNKS = 16` for `N = 8192`.
 
 The branch is not a complete implementation. It does not update Rust witness generation, proof
-requests, signed proof handling, peer verification, `NodeFold`, or the current commitment links.
-Its `share_computation_chunk` package also contains only `CHUNK_IDX = 0`, so it cannot produce all
+requests, signed proof handling, peer verification, `NodeFold`, or the current commitment links. Its
+`share_computation_chunk` package also contains only `CHUNK_IDX = 0`, so it cannot produce all
 secure-preset chunks without additional circuit generation and artifact management.
 
 The upstream party commitment code also uses an older commitment layout. It is not compatible with
@@ -222,8 +222,7 @@ reduction. The result must be measured, not inferred from the removal of loops.
 
 ### Phase 2: Implement the recursive accumulator
 
-1. Add `c2_fold` and `c2_fold_kernel` under
-   `circuits/bin/recursive_aggregation/`.
+1. Add `c2_fold` and `c2_fold_kernel` under `circuits/bin/recursive_aggregation/`.
 2. Define fixed public layouts for each active preset and committee size.
 3. Implement the genesis and subsequent accumulator transitions.
 4. Prove a complete C2a chain and a complete C2b chain.
