@@ -233,9 +233,8 @@ async fn setup_share_computation_sk_test() -> Option<(
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation_base").await;
-    setup_compiled_circuit(&backend, "dkg", "share_computation_chunk").await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFold).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFoldKernel).await;
+    setup_compiled_circuit(&backend, "dkg", "sk_share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::SkC2ChunkFinalize).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 
@@ -273,9 +272,8 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation_base").await;
-    setup_compiled_circuit(&backend, "dkg", "share_computation_chunk").await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFold).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFoldKernel).await;
+    setup_compiled_circuit(&backend, "dkg", "esm_share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::ESmC2ChunkFinalize).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 

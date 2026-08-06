@@ -316,15 +316,14 @@ for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then
 The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
 
-The chunked C2 path keeps the same signed proof multiplicity and terminal public layout. For each
-C2a/C2b request, Rust generates one recursive base proof, one recursive proof per 512-coefficient
-chunk, and a recursive terminal projection after the chunk accumulator proves complete coverage.
-The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
-`ESmC2ChunkFinalize` proof. Its public fields remain the existing secret commitment followed by
-party share commitments. The distinct terminal VKs bind the C2a/C2b proof type, and
-`C2abChunkFold` returns the existing `C2abFold` public layout, so C1→C2, C2→C3/C4, and `NodeFold`
-keep their terminal layout. The accumulator rejects duplicate, missing, or out-of-range chunk
-indices before it starts proving.
+The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
+generates one type-bound recursive proof per 512-coefficient chunk, groups the chunk proofs into
+fixed recursive batches, and verifies all batches in a type-bound terminal circuit. The terminal
+circuits reconstruct a root commitment for the secret and for each recipient share. The signed
+response contains only the type-bound terminal `SkC2ChunkFinalize` or `ESmC2ChunkFinalize` proof.
+`C2ChunkBatch` binds the ordered chunk indices and chunk commitments. The downstream C1, C3, C4,
+and `NodeFold` commitment links must use the same root commitment scheme before this path can
+replace the legacy end-to-end DKG links.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),

@@ -168,7 +168,8 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         "e_sm_share_computation",
         "sk_share_computation_base",
         "e_sm_share_computation_base",
-        "share_computation_chunk",
+        "sk_share_computation_chunk",
+        "esm_share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ] {
@@ -178,8 +179,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     for c in [
         CircuitName::C2abFold,
-        CircuitName::C2ChunkFold,
-        CircuitName::C2ChunkFoldKernel,
+        CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
         CircuitName::ESmC2ChunkFinalize,
         CircuitName::C2abChunkFold,
