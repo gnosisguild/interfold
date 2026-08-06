@@ -21,7 +21,7 @@ use e3_zk_helpers::dkg::share_computation::{
 };
 use serde_json::Value;
 
-const C2_CHUNK_SIZE: usize = 512;
+pub const DEFAULT_C2_CHUNK_SIZE: usize = 512;
 
 pub struct ChunkedShareComputationProofs {
     pub proof: e3_events::Proof,
@@ -36,6 +36,24 @@ pub fn prove_chunked_share_computation(
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<ChunkedShareComputationProofs, ZkError> {
+    prove_chunked_share_computation_with_chunk_size(
+        prover,
+        preset,
+        data,
+        e3_id,
+        artifacts_dir,
+        DEFAULT_C2_CHUNK_SIZE,
+    )
+}
+
+pub fn prove_chunked_share_computation_with_chunk_size(
+    prover: &ZkProver,
+    preset: BfvPreset,
+    data: &ShareComputationCircuitData,
+    e3_id: &str,
+    artifacts_dir: &str,
+    chunk_size: usize,
+) -> Result<ChunkedShareComputationProofs, ZkError> {
     let inputs = Inputs::compute(preset, data)
         .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
     let base_json = inputs
@@ -46,12 +64,12 @@ pub fn prove_chunked_share_computation(
         .unwrap_or(preset)
         .metadata()
         .degree;
-    if degree == 0 || degree % C2_CHUNK_SIZE != 0 {
+    if chunk_size == 0 || degree == 0 || degree % chunk_size != 0 {
         return Err(ZkError::InvalidInput(format!(
-            "C2 degree {degree} is not divisible by chunk size {C2_CHUNK_SIZE}"
+            "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
         )));
     }
-    let chunk_count = degree / C2_CHUNK_SIZE;
+    let chunk_count = degree / chunk_size;
     let base_circuit = match data.dkg_input_type {
         DkgInputType::SecretKey => CircuitName::SkShareComputationBase,
         DkgInputType::SmudgingNoise => CircuitName::ESmShareComputationBase,
@@ -85,7 +103,7 @@ pub fn prove_chunked_share_computation(
     let mut chunks = Vec::with_capacity(chunk_count);
     let mut indices = Vec::with_capacity(chunk_count);
     for chunk_idx in 0..chunk_count {
-        let start = chunk_idx * C2_CHUNK_SIZE;
+        let start = chunk_idx * chunk_size;
         let mut chunk_json = serde_json::Map::new();
         chunk_json.insert(
             "chunk_commitment".into(),
@@ -94,7 +112,7 @@ pub fn prove_chunked_share_computation(
         chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
         chunk_json.insert(
             "y_chunk".into(),
-            Value::Array(y[start..start + C2_CHUNK_SIZE].to_vec()),
+            Value::Array(y[start..start + chunk_size].to_vec()),
         );
         let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
         let circuit_path = prover
