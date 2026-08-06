@@ -54,6 +54,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "CiphertextOutputPublished(uint256,bytes,bytes32)",
         Some(1),
     ),
+    EvmEventDefinition::new(
+        "CiphertextVerifierSet",
+        "CiphertextVerifierSet(bytes32,address)",
+        None,
+    ),
     EvmEventDefinition::new("CommitteeFinalized", "CommitteeFinalized(uint256)", Some(1)),
     EvmEventDefinition::new("CommitteeFormed", "CommitteeFormed(uint256)", Some(1)),
     EvmEventDefinition::new(
@@ -86,7 +91,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("FeeTokenAllowed", "FeeTokenAllowed(address,bool)", None),
-    EvmEventDefinition::new("FeeTokenSet", "FeeTokenSet(address)", None),
+    EvmEventDefinition::new(
+        "FeeAssetConfigUpdated",
+        "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
+        None,
+    ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
         "InputPublished",
@@ -110,17 +119,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("ParamSetRegistered", "ParamSetRegistered(uint8,bytes)", None),
-    EvmEventDefinition::new("ParamSetUpdated", "ParamSetUpdated(uint8,bytes,bytes)", None),
     EvmEventDefinition::new("PkVerifierSet", "PkVerifierSet(bytes32,address)", None),
     EvmEventDefinition::new(
         "PlaintextOutputPublished",
         "PlaintextOutputPublished(uint256,bytes,bytes)",
         Some(1),
-    ),
-    EvmEventDefinition::new(
-        "PricingConfigUpdated",
-        "PricingConfigUpdated((uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
-        None,
     ),
     EvmEventDefinition::new(
         "RewardClaimed",
@@ -171,6 +174,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "AssetsQueuedForExit(address,uint256,uint256,uint64)",
         None,
     ),
+    EvmEventDefinition::new(
+        "BondingAssetConfigUpdated",
+        "BondingAssetConfigUpdated(address,address,uint256,uint256,uint8,uint8,uint64)",
+        None,
+    ),
     EvmEventDefinition::new("BondOwnerSet", "BondOwnerSet(address,address)", None),
     EvmEventDefinition::new(
         "BondOwnerTransferProposed",
@@ -181,6 +189,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "CiphernodeDeregistrationRequested",
         "CiphernodeDeregistrationRequested(address,uint64)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "CommitteeObligationUpdated",
+        "CommitteeObligationUpdated(uint256,address,address,bool)",
+        Some(1),
     ),
     EvmEventDefinition::new(
         "ConfigurationUpdated",
@@ -198,7 +211,6 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "LicenseBondUpdated(address,int256,uint256,bytes32)",
         None,
     ),
-    EvmEventDefinition::new("LicenseTokenSet", "LicenseTokenSet(address)", None),
     EvmEventDefinition::new(
         "LicenseSurplusSwept",
         "LicenseSurplusSwept(address,address,uint256)",
@@ -207,6 +219,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "LicenseTransferShortfall",
         "LicenseTransferShortfall(address,uint256,uint256)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "ManagerBanUpdated",
+        "ManagerBanUpdated(address,address,bool)",
         None,
     ),
     EvmEventDefinition::new(
@@ -231,9 +248,29 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("RegistrySet", "RegistrySet(address)", None),
     EvmEventDefinition::new(
+        "ReservedSlashedTicketFundsRouted",
+        "ReservedSlashedTicketFundsRouted(address,uint256,address,uint256)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "RewardDistributorUpdated",
         "RewardDistributorUpdated(address,bool)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "SlashLockUpdated",
+        "SlashLockUpdated(address,uint256,address,bool)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "SlashRouteDestinationReleased",
+        "SlashRouteDestinationReleased(address,uint256)",
+        Some(2),
+    ),
+    EvmEventDefinition::new(
+        "SlashRouteDestinationSnapshotted",
+        "SlashRouteDestinationSnapshotted(address,uint256,address)",
+        Some(2),
     ),
     EvmEventDefinition::new(
         "SlashedFundsTreasurySet",
@@ -244,6 +281,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "SlashedFundsWithdrawn",
         "SlashedFundsWithdrawn(address,uint256,uint256)",
         None,
+    ),
+    EvmEventDefinition::new(
+        "SlashedTicketFundsReserved",
+        "SlashedTicketFundsReserved(address,uint256,uint256,address,uint256)",
+        Some(3),
     ),
     EvmEventDefinition::new(
         "SlashingManagerAuthorizationUpdated",
@@ -260,7 +302,6 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "TicketBalanceUpdated(address,int256,uint256,bytes32)",
         None,
     ),
-    EvmEventDefinition::new("TicketTokenSet", "TicketTokenSet(address)", None),
 ];
 
 const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
@@ -306,13 +347,18 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "CommitteeProofPublished",
+        "CommitteeProofPublished(uint256,address[],bytes32,bytes)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "CommitteePublished",
         "CommitteePublished(uint256,address[],bytes,bytes32,bytes)",
         Some(1),
     ),
     EvmEventDefinition::new(
         "CommitteeRequested",
-        "CommitteeRequested(uint256,uint256,uint32[2],uint256,uint256)",
+        "CommitteeRequested(uint256,uint256,uint32[2],uint256,uint256,uint256)",
         Some(1),
     ),
     EvmEventDefinition::new(
@@ -425,6 +471,11 @@ const SLASHING_MANAGER: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
+    EvmEventDefinition::new(
+        "E3DependenciesReleased",
+        "E3DependenciesReleased(uint256)",
+        Some(1),
+    ),
     EvmEventDefinition::new(
         "E3RefundManagerUpdated",
         "E3RefundManagerUpdated(address,address)",

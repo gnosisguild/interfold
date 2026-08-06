@@ -6,6 +6,7 @@
 
 use crate::{E3id, Seed};
 use actix::Message;
+use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
@@ -17,6 +18,7 @@ pub struct CommitteeRequested {
     pub threshold: [usize; 2],
     pub request_block: u64,
     pub committee_deadline: u64,
+    pub ticket_price: U256,
     pub chain_id: u64,
 }
 
@@ -24,8 +26,8 @@ impl Display for CommitteeRequested {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "e3_id: {}, seed: {:?}, threshold: [{}, {}], request_block: {}, committee_deadline: {}, chain_id: {}",
-            self.e3_id, self.seed, self.threshold[0], self.threshold[1], self.request_block, self.committee_deadline, self.chain_id
+            "e3_id: {}, seed: {:?}, threshold: [{}, {}], request_block: {}, committee_deadline: {}, ticket_price: {}, chain_id: {}",
+            self.e3_id, self.seed, self.threshold[0], self.threshold[1], self.request_block, self.committee_deadline, self.ticket_price, self.chain_id
         )
     }
 }

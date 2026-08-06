@@ -381,6 +381,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 ciphertext_output: vec![],
                 ciphertext_commitment: vec![],
                 committee_public_key: e.publicKey.to_vec(),
+                committee_public_key_hash: e.pkCommitment.to_vec(),
                 custom_params: e3.customParams.to_vec(),
                 e3_params: e3_params.to_vec(),
                 interfold_address,

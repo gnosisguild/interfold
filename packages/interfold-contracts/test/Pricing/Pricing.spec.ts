@@ -11,6 +11,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  setPricingConfig,
   setupAndPublishCommittee,
 } from "../fixtures";
 
@@ -104,7 +105,7 @@ describe("E3 Pricing", function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
 
-      // Get the resolved threshold for Minimum (committeeSize = 0) → [1, 3]
+      // Minimum uses circuit threshold T=1 and committee size N=3.
       const n = 3n; // total committee
       const m = 1n; // quorum
 
@@ -145,23 +146,6 @@ describe("E3 Pricing", function () {
       expect(actualFee).to.equal(expectedFee);
     });
 
-    it("fee increases with larger committee size", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const minimumFee = await interfold.getE3Quote(request);
-
-      // Build request with Micro committee (larger)
-      const now = await time.latest();
-      const microRequest = {
-        ...request,
-        committeeSize: 1, // Micro → [4, 9]
-        inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
-      };
-      const microFee = await interfold.getE3Quote(microRequest);
-
-      expect(microFee).to.be.gt(minimumFee);
-    });
-
     it("fee increases with longer input window", async function () {
       const { interfold, request } = await loadFixture(setup);
 
@@ -177,6 +161,26 @@ describe("E3 Pricing", function () {
       expect(longFee).to.be.gt(shortFee);
     });
 
+    it("charges for an equal-length input window scheduled later", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      const now = await time.latest();
+      const windowLength = 300;
+
+      const nearFee = await interfold.getE3Quote({
+        ...request,
+        inputWindow: [now + 10, now + 10 + windowLength] as [number, number],
+      });
+      const delayedFee = await interfold.getE3Quote({
+        ...request,
+        inputWindow: [now + 7200, now + 7200 + windowLength] as [
+          number,
+          number,
+        ],
+      });
+
+      expect(delayedFee).to.be.gt(nearFee);
+    });
+
     it("fee reflects margin changes", async function () {
       const { interfold, request } = await loadFixture(setup);
 
@@ -184,14 +188,14 @@ describe("E3 Pricing", function () {
 
       // Set margin to 20%
       const pc = toPlainConfig(await interfold.getPricingConfig());
-      await interfold.setPricingConfig({ ...pc, marginBps: 2000 });
+      await setPricingConfig(interfold, { ...pc, marginBps: 2000 });
       const fee20Pct = await interfold.getE3Quote(request);
 
       expect(fee20Pct).to.be.gt(fee10Pct);
 
       // Set margin to 0%
       const pc2 = toPlainConfig(await interfold.getPricingConfig());
-      await interfold.setPricingConfig({ ...pc2, marginBps: 0 });
+      await setPricingConfig(interfold, { ...pc2, marginBps: 0 });
       const feeZero = await interfold.getE3Quote(request);
 
       expect(feeZero).to.be.lt(fee10Pct);
@@ -199,14 +203,14 @@ describe("E3 Pricing", function () {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  //  setPricingConfig() — Governance
+  //  Fee asset configuration — Governance
   // ──────────────────────────────────────────────────────────────────────────
 
-  describe("setPricingConfig()", function () {
+  describe("setFeeAssetConfig()", function () {
     it("reverts if not called by owner", async function () {
       const { interfold, notTheOwner } = await loadFixture(setup);
       await expect(
-        interfold.connect(notTheOwner).setPricingConfig(defaultPricingConfig),
+        setPricingConfig(interfold.connect(notTheOwner), defaultPricingConfig),
       ).to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount");
     });
 
@@ -222,9 +226,9 @@ describe("E3 Pricing", function () {
         publicationBase: 1000000n,
       };
 
-      await expect(interfold.setPricingConfig(newConfig)).to.emit(
+      await expect(setPricingConfig(interfold, newConfig)).to.emit(
         interfold,
-        "PricingConfigUpdated",
+        "FeeAssetConfigUpdated",
       );
 
       const stored = await interfold.getPricingConfig();
@@ -236,13 +240,46 @@ describe("E3 Pricing", function () {
       expect(stored.publicationBase).to.equal(1000000n);
     });
 
+    it("updates the token scale and raw-unit prices together", async function () {
+      const { interfold } = await loadFixture(setup);
+      const token = await (
+        await ethers.getContractFactory("MockLockAwareLicenseToken")
+      ).deploy(0);
+      const tokenAddress = await token.getAddress();
+      const pricing = {
+        ...defaultPricingConfig,
+        publicationBase: ethers.parseEther("1"),
+      };
+
+      await expect(
+        interfold.setFeeAssetConfig({
+          token: tokenAddress,
+          expectedDecimals: 6,
+          pricing,
+        }),
+      )
+        .to.be.revertedWithCustomError(interfold, "FeeTokenDecimalsMismatch")
+        .withArgs(tokenAddress, 6, 18);
+
+      await interfold.setFeeAssetConfig({
+        token: tokenAddress,
+        expectedDecimals: 18,
+        pricing,
+      });
+      expect(await interfold.feeToken()).to.equal(tokenAddress);
+      expect(await interfold.feeTokenDecimals()).to.equal(18);
+      expect((await interfold.getPricingConfig()).publicationBase).to.equal(
+        ethers.parseEther("1"),
+      );
+    });
+
     it("changes the fee returned by getE3Quote", async function () {
       const { interfold, request } = await loadFixture(setup);
 
       const feeBefore = await interfold.getE3Quote(request);
 
       // Double base costs
-      await interfold.setPricingConfig({
+      await setPricingConfig(interfold, {
         ...defaultPricingConfig,
         keyGenFixedPerNode: 200000n,
         keyGenPerEncryptionProof: 100000n,
@@ -260,13 +297,13 @@ describe("E3 Pricing", function () {
       const { interfold } = await loadFixture(setup);
       const cap = await interfold.MAX_MARGIN_BPS();
       await expect(
-        interfold.setPricingConfig({
+        setPricingConfig(interfold, {
           ...defaultPricingConfig,
           marginBps: cap,
         }),
       ).to.not.be.revert(ethers);
       await expect(
-        interfold.setPricingConfig({
+        setPricingConfig(interfold, {
           ...defaultPricingConfig,
           marginBps: cap + 1n,
         }),
@@ -275,7 +312,7 @@ describe("E3 Pricing", function () {
 
     it("allows setting margin to 0", async function () {
       const { interfold } = await loadFixture(setup);
-      await interfold.setPricingConfig({
+      await setPricingConfig(interfold, {
         ...defaultPricingConfig,
         marginBps: 0,
       });
@@ -288,14 +325,14 @@ describe("E3 Pricing", function () {
       const cap = await interfold.MAX_PROTOCOL_SHARE_BPS();
       const protocolTreasury = await treasury.getAddress();
       await expect(
-        interfold.setPricingConfig({
+        setPricingConfig(interfold, {
           ...defaultPricingConfig,
           protocolTreasury,
           protocolShareBps: cap,
         }),
       ).to.not.be.revert(ethers);
       await expect(
-        interfold.setPricingConfig({
+        setPricingConfig(interfold, {
           ...defaultPricingConfig,
           protocolTreasury,
           protocolShareBps: cap + 1n,
@@ -306,7 +343,7 @@ describe("E3 Pricing", function () {
     it("reverts if minCommitteeSize < minThreshold", async function () {
       const { interfold } = await loadFixture(setup);
       await expect(
-        interfold.setPricingConfig({
+        setPricingConfig(interfold, {
           ...defaultPricingConfig,
           minCommitteeSize: 2,
           minThreshold: 5,
@@ -314,39 +351,49 @@ describe("E3 Pricing", function () {
       ).to.be.revertedWithCustomError(interfold, "MinSizeBelowMinThreshold");
     });
 
-    it("enforces bounds on setCommitteeThresholds", async function () {
+    it("accepts only circuit-backed committee configurations", async function () {
       const { interfold } = await loadFixture(setup);
-      const cap = await interfold.MAX_COMMITTEE_SIZE();
 
-      // Set minimum bounds via pricing config
-      await interfold.setPricingConfig({
+      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(3);
+      await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
+      await expect(
+        interfold.setCommitteeThresholds(0, [1, 3]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(
+        interfold.setCommitteeThresholds(1, [5, 9]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(
+        interfold.setCommitteeThresholds(2, [10, 19]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+    });
+
+    it("applies pricing minimums to canonical committee configurations", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      await setPricingConfig(interfold, {
         ...defaultPricingConfig,
         minCommitteeSize: 5,
         minThreshold: 3,
       });
-
-      // Should fail: committee size 4 < min 5
       await expect(
-        interfold.setCommitteeThresholds(0, [3, 4]),
+        interfold.setCommitteeThresholds(0, [2, 3]),
       ).to.be.revertedWithCustomError(interfold, "BelowMinCommitteeSize");
 
-      // Should fail: threshold 2 < min 3
+      await setPricingConfig(interfold, {
+        ...defaultPricingConfig,
+        minCommitteeSize: 3,
+        minThreshold: 3,
+      });
       await expect(
-        interfold.setCommitteeThresholds(0, [2, 6]),
+        interfold.setCommitteeThresholds(0, [2, 3]),
       ).to.be.revertedWithCustomError(interfold, "BelowMinThreshold");
 
-      // Should succeed: meets both minimums
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, 5]),
-      ).to.not.be.revert(ethers);
-
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, cap]),
-      ).to.not.be.revert(ethers);
-
-      await expect(
-        interfold.setCommitteeThresholds(0, [3, cap + 1n]),
-      ).to.be.revertedWithCustomError(interfold, "InvalidThresholdValues");
+      await setPricingConfig(interfold, {
+        ...defaultPricingConfig,
+        minCommitteeSize: 3,
+        minThreshold: 2,
+      });
+      await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
     });
   });
 
@@ -360,7 +407,9 @@ describe("E3 Pricing", function () {
         interfold,
         usdcToken,
         ciphernodeRegistryContract,
+        bondingRegistry,
         owner,
+        notTheOwner,
         operator1,
         operator2,
         operator3,
@@ -401,6 +450,15 @@ describe("E3 Pricing", function () {
         [operator1, operator2, operator3],
       );
 
+      const operator1Address = await operator1.getAddress();
+      const newOwnerAddress = await notTheOwner.getAddress();
+      await bondingRegistry
+        .connect(owner)
+        .proposeBondOwner(operator1Address, newOwnerAddress);
+      await bondingRegistry
+        .connect(notTheOwner)
+        .acceptBondOwner(operator1Address);
+
       // Publish ciphertext
       await time.increase(inputWindowDuration + 200);
       await interfold.publishCiphertextOutput(
@@ -418,6 +476,7 @@ describe("E3 Pricing", function () {
 
       // The shared bond owner receives all three operator credits.
       expect(await interfold.pendingReward(e3Id, bondOwner)).to.equal(fee);
+      expect(await interfold.pendingReward(e3Id, newOwnerAddress)).to.equal(0);
       await interfold.connect(owner).claimReward(e3Id);
       const ownerAfter = await usdcToken.balanceOf(bondOwner);
 
@@ -439,7 +498,7 @@ describe("E3 Pricing", function () {
 
       // Launch split: 1.82% gross share approximates 20% of the 10% margin.
       const treasuryAddr = await treasury.getAddress();
-      await interfold.setPricingConfig({
+      await setPricingConfig(interfold, {
         ...defaultPricingConfig,
         protocolTreasury: treasuryAddr,
         protocolShareBps: 182,
@@ -593,7 +652,7 @@ describe("E3 Pricing", function () {
       });
 
       const pc = await interfold.getPricingConfig();
-      await interfold.connect(owner).setPricingConfig({
+      await setPricingConfig(interfold.connect(owner), {
         ...toPlainConfig(pc),
         dkgUtilizationBps: 3000,
         computeUtilizationBps: 3000,

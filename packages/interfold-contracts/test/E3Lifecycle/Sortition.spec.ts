@@ -6,14 +6,18 @@
 //     requester / owner / committee members; permissionless afterwards.
 //   * `Committee.requestBlock` stores `block.timestamp` so it
 //     resolves consistently against the ticket-token EIP-6372 clock.
-//   * `_validateNodeEligibility` derives weight from the
-//     `getTicketBalanceAtBlock(operator, requestBlock - 1)` snapshot, so
-//     operators cannot top up tickets after `requestCommittee` to inflate
-//     their selection weight.
+//   * `_validateNodeEligibility` derives weight from voting power at
+//     `requestBlock - 1`, so operators cannot top up tickets after
+//     `requestCommittee` to inflate their selection weight.
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
-import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
+import {
+  deployInterfoldSystem,
+  ethers,
+  networkHelpers,
+  setPricingConfig,
+} from "../fixtures";
 
 const { loadFixture, time, mine } = networkHelpers;
 
@@ -62,7 +66,7 @@ async function fundOperator(
 
 async function deployStack() {
   const sys = await deployInterfoldSystem({
-    committeeThresholds: [[0, [1, 3]]],
+    committeeThresholds: [[0, [2, 3]]],
   });
   const {
     owner,
@@ -82,7 +86,7 @@ async function deployStack() {
   const treasuryAddress = await treasury.getAddress();
   const interfoldAddress = await interfold.getAddress();
 
-  await interfold.setPricingConfig({
+  await setPricingConfig(interfold, {
     keyGenFixedPerNode: 0n,
     keyGenPerEncryptionProof: 0n,
     coordinationPerPair: 0n,
@@ -324,7 +328,7 @@ describe("Sortition & E3 lifecycle", function () {
         .addTicketBalanceFor(latecomerAddress, ticketAmount);
 
       // Confirm snapshot returns zero at requestBlock - 1.
-      const snapshot = await bondingRegistry.getTicketBalanceAtBlock(
+      const snapshot = await ticketToken.getPastVotes(
         latecomerAddress,
         requestBlock - 1n,
       );

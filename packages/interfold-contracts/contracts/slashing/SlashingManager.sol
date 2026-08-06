@@ -17,7 +17,6 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
-import { FailurePayerLib } from "../lib/FailurePayerLib.sol";
 
 /**
  * @title SlashingManager
@@ -39,6 +38,9 @@ contract SlashingManager is
 
     /// @notice Role identifier for accounts authorized to propose evidence-based slashes
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
+
+    /// @inheritdoc ISlashingManager
+    uint256 public constant SLASHING_MANAGER_API_VERSION = 1;
 
     /// @notice Role identifier for governance accounts that can configure policies, resolve appeals, and manage bans
     bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
@@ -140,6 +142,10 @@ contract SlashingManager is
         uint256 proposedAt;
     }
     mapping(address node => PendingBan pending) internal _pendingBans;
+
+    /// @notice Bonding-asset identity frozen when each policy is configured.
+    mapping(bytes32 reason => SlashPolicyAssetContext context)
+        public slashPolicyAssetContexts;
 
     // ======================
     // Constants
@@ -321,6 +327,19 @@ contract SlashingManager is
         dependencies.interfoldContract = interfold;
         dependencies.refundManager = e3RefundManager;
         dependencies.initialized = true;
+        dependencies.bonding.snapshotSlashRouteDestination(
+            e3Id,
+            address(dependencies.refundManager),
+            address(dependencies.interfoldContract)
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function closeE3(uint256 e3Id) external onlyGovernance {
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        dependencies.bonding.releaseSlashRouteDestination(e3Id);
+        delete _e3Dependencies[e3Id];
+        emit E3DependenciesReleased(e3Id);
     }
 
     // ======================
@@ -347,24 +366,28 @@ contract SlashingManager is
         }
         // Cap the appeal window so governance cannot indefinitely delay slashing.
         require(policy.appealWindow <= MAX_APPEAL_WINDOW, InvalidPolicy());
-        if (policy.failureReason > 0) {
-            // A policy that can fail an E3 must also remove the proven-faulty
-            // operator before the refund manager snapshots honest recipients.
-            require(policy.affectsCommittee, InvalidPolicy());
-            require(
-                policy.failureReason <
-                    uint8(IInterfold.FailureReason._MAX_FAILURE_REASON),
-                InvalidPolicy()
-            );
-            require(
-                FailurePayerLib.getFailurePayer(
-                    IInterfold.FailureReason(policy.failureReason)
-                ) == IE3RefundManager.FailurePayer.Ciphernodes,
-                InvalidPolicy()
-            );
-        }
+        // Threshold loss uses the existing supplier-paid insufficient-members
+        // reason. The field remains in the policy struct for ABI and storage compatibility.
+        require(
+            policy.failureReason == 0 ||
+                (policy.affectsCommittee &&
+                    policy.failureReason ==
+                    uint8(
+                        IInterfold.FailureReason.InsufficientCommitteeMembers
+                    )),
+            InvalidPolicy()
+        );
+
+        IBondingRegistry currentBonding = bondingRegistry;
+        require(address(currentBonding) != address(0), InvalidPolicy());
+        uint64 assetVersion = currentBonding.bondingAssetConfigurationVersion();
+        require(assetVersion != 0, InvalidPolicy());
 
         slashPolicies[reason] = policy;
+        slashPolicyAssetContexts[reason] = SlashPolicyAssetContext(
+            address(currentBonding),
+            assetVersion
+        );
         emit SlashPolicyUpdated(reason, policy);
     }
 
@@ -475,8 +498,10 @@ contract SlashingManager is
         require(policy.enabled, SlashReasonDisabled());
         require(policy.requiresProof, InvalidPolicy());
 
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        _requireCurrentPolicyAssetContext(reason, dependencies.bonding);
         require(
-            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            dependencies.registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -508,9 +533,11 @@ contract SlashingManager is
         p.proofVerified = true;
         p.banNode = policy.banNode;
         p.affectsCommittee = policy.affectsCommittee;
-        p.failureReason = policy.failureReason;
+        p.failureReason = policy.affectsCommittee
+            ? uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+            : 0;
 
-        _openProposalCount[operator] += 1;
+        _openProposal(p, proposalId);
 
         emit SlashProposed(
             proposalId,
@@ -565,8 +592,10 @@ contract SlashingManager is
         SlashPolicy memory policy = slashPolicies[reason];
         require(policy.enabled, SlashReasonDisabled());
         require(!policy.requiresProof, InvalidPolicy());
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        _requireCurrentPolicyAssetContext(reason, dependencies.bonding);
         require(
-            _dependenciesFor(e3Id).registry.isCommitteeMember(e3Id, operator),
+            dependencies.registry.isCommitteeMember(e3Id, operator),
             OperatorNotInCommittee()
         );
 
@@ -579,10 +608,6 @@ contract SlashingManager is
 
         proposalId = totalProposals;
         totalProposals = proposalId + 1;
-
-        // Track the unresolved proposal so collateral remains slashable until
-        // successful execution or terminal appeal resolution.
-        _openProposalCount[operator] += 1;
 
         uint256 executableAt = block.timestamp + policy.appealWindow;
         SlashProposal storage p = _proposals[proposalId];
@@ -599,7 +624,11 @@ contract SlashingManager is
         // to prevent execution drift if policy is modified during appeal window
         p.banNode = policy.banNode;
         p.affectsCommittee = policy.affectsCommittee;
-        p.failureReason = policy.failureReason;
+        p.failureReason = policy.affectsCommittee
+            ? uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+            : 0;
+
+        _openProposal(p, proposalId);
 
         emit SlashProposed(
             proposalId,
@@ -629,9 +658,8 @@ contract SlashingManager is
         }
 
         Lane lane = p.proofVerified ? Lane.LaneA : Lane.LaneB;
-        // Decrement BEFORE `_executeSlash` so a reentrant operator action triggered
-        // by slash side-effects is not gated on this proposal. Other open proposals
-        // keep the gate raised. A downstream revert restores the count atomically.
+        // Keep the registry lock until every slash side effect has completed.
+        // This local count is only the manager's observable proposal state.
         _openProposalCount[p.operator] -= 1;
 
         _executeSlash(proposalId, lane);
@@ -640,6 +668,26 @@ contract SlashingManager is
     // ======================
     // Internal Execution
     // ======================
+
+    function _openProposal(
+        SlashProposal storage proposal,
+        uint256 proposalId
+    ) internal {
+        E3Dependencies memory dependencies = _dependenciesFor(proposal.e3Id);
+        _openProposalCount[proposal.operator]++;
+        dependencies.bonding.openSlashLock(
+            proposal.e3Id,
+            proposalId,
+            proposal.operator
+        );
+        if (proposal.affectsCommittee) {
+            dependencies.refundManager.openExpulsionProposal(
+                proposal.e3Id,
+                proposalId,
+                proposal.operator
+            );
+        }
+    }
 
     /// @dev Verifies Lane A attestation evidence: decodes, checks quorum (>= M), verifies
     ///      each EIP-712 `AccusationVote` signature, confirms voters are active committee
@@ -794,9 +842,13 @@ contract SlashingManager is
 
         // Ban node if snapshotted policy requires it
         if (p.banNode) {
-            banned[p.operator] = true;
-            emit NodeBanUpdated(p.operator, true, p.reason, address(this));
-            _refreshOperatorEligibility(dependencies.bonding, p.operator);
+            _setBan(
+                dependencies.bonding,
+                p.operator,
+                true,
+                p.reason,
+                address(this)
+            );
         }
 
         // Committee expulsion for E3-scoped slashes (uses snapshotted behavioral flags)
@@ -806,28 +858,36 @@ contract SlashingManager is
                 .registry
                 .expelCommitteeMember(p.e3Id, p.operator, p.reason);
 
-            // If active count drops below M, fail the E3
-            if (activeCount < thresholdM && p.failureReason > 0) {
-                // NOTE: catch block must not be empty (solc optimizer bug, see below)
-                // solhint-disable-next-line no-empty-blocks
-                try
+            if (activeCount < thresholdM) {
+                IInterfold.E3Stage stage = dependencies
+                    .interfoldContract
+                    .getE3Stage(p.e3Id);
+                if (
+                    stage != IInterfold.E3Stage.Complete &&
+                    stage != IInterfold.E3Stage.Failed
+                ) {
+                    // This call must succeed with the expulsion. A revert rolls
+                    // back the penalties, ban, and committee membership change.
                     dependencies.interfoldContract.onE3Failed(
                         p.e3Id,
-                        p.failureReason
-                    )
-                {
-                    // Side effects occur in the external call
-                } catch {
-                    // E3 already failed or other error — slash still proceeds
-                    emit RoutingFailed(p.e3Id, 0);
+                        uint8(
+                            IInterfold
+                                .FailureReason
+                                .InsufficientCommitteeMembers
+                        )
+                    );
                 }
             }
+            dependencies.refundManager.resolveExpulsionProposal(
+                p.e3Id,
+                proposalId,
+                true
+            );
         }
 
         // Reserve and attempt escrow. Failure leaves both a durable proposal
         // route and a matching BondingRegistry reservation for permissionless retry.
         if (actualTicketSlashed > 0) {
-            dependencies.bonding.reserveSlashedTicketFunds(actualTicketSlashed);
             PendingSlashRoute storage route = _pendingSlashRoutes[proposalId];
             route.e3Id = p.e3Id;
             route.token = address(
@@ -835,6 +895,12 @@ contract SlashingManager is
             );
             route.amount = actualTicketSlashed;
             route.pending = true;
+            route.operator = p.operator;
+            dependencies.bonding.reserveSlashedTicketFunds(
+                proposalId,
+                p.e3Id,
+                actualTicketSlashed
+            );
             emit SlashRoutePending(
                 proposalId,
                 p.e3Id,
@@ -856,6 +922,8 @@ contract SlashingManager is
                 emit RoutingFailed(p.e3Id, actualTicketSlashed);
             }
         }
+
+        dependencies.bonding.closeSlashLock(proposalId, p.operator);
 
         emit SlashExecuted(
             proposalId,
@@ -882,12 +950,11 @@ contract SlashingManager is
         // twice. Any downstream failure reverts this write together with the
         // transfer and accounting, leaving the route pending for another retry.
         route.pending = false;
-        dependencies.bonding.redirectReservedSlashedTicketFunds(
-            address(dependencies.refundManager),
-            route.amount
-        );
+        dependencies.bonding.redirectReservedSlashedTicketFunds(proposalId);
         dependencies.interfoldContract.escrowSlashedFunds(
             route.e3Id,
+            proposalId,
+            route.operator,
             IERC20(route.token),
             route.amount
         );
@@ -960,7 +1027,16 @@ contract SlashingManager is
 
         // An upheld appeal terminates the proposal, so its collateral gate ends.
         if (appealUpheld) {
+            E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
+            if (p.affectsCommittee) {
+                dependencies.refundManager.resolveExpulsionProposal(
+                    p.e3Id,
+                    proposalId,
+                    false
+                );
+            }
             _openProposalCount[p.operator] -= 1;
+            dependencies.bonding.closeSlashLock(proposalId, p.operator);
         }
 
         emit AppealResolved(
@@ -986,7 +1062,16 @@ contract SlashingManager is
 
         p.resolved = true;
         p.appealUpheld = true;
+        E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
+        if (p.affectsCommittee) {
+            dependencies.refundManager.resolveExpulsionProposal(
+                p.e3Id,
+                proposalId,
+                false
+            );
+        }
         _openProposalCount[p.operator] -= 1;
+        dependencies.bonding.closeSlashLock(proposalId, p.operator);
 
         emit AppealResolved(
             proposalId,
@@ -1024,10 +1109,7 @@ contract SlashingManager is
         require(pending.proposer != msg.sender, BanRequiresConfirmation());
 
         delete _pendingBans[node];
-        banned[node] = true;
-
-        emit NodeBanUpdated(node, true, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, true, reason, msg.sender);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1040,13 +1122,11 @@ contract SlashingManager is
     /// @inheritdoc ISlashingManager
     function unbanNode(address node, bytes32 reason) external onlyGovernance {
         require(node != address(0), ZeroAddress());
-        banned[node] = false;
         if (_pendingBans[node].proposer != address(0)) {
             delete _pendingBans[node];
             emit BanCancelled(node, msg.sender);
         }
-        emit NodeBanUpdated(node, false, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, false, reason, msg.sender);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1058,25 +1138,39 @@ contract SlashingManager is
         require(node != address(0), ZeroAddress());
         // bans must use the two-step `proposeBan` / `confirmBan` flow.
         require(!status, BanRequiresConfirmation());
-        banned[node] = false;
         if (_pendingBans[node].proposer != address(0)) {
             delete _pendingBans[node];
             emit BanCancelled(node, msg.sender);
         }
-        emit NodeBanUpdated(node, false, reason, msg.sender);
-        _refreshOperatorEligibility(bondingRegistry, node);
+        _setBan(bondingRegistry, node, false, reason, msg.sender);
     }
 
-    /// @dev Synchronizes the BondingRegistry active count after a ban changes.
-    ///      An unset test or deployment dependency cannot block ban state.
-    function _refreshOperatorEligibility(
+    /// @dev Mirror manager ban state into the registry that owns exit eligibility.
+    function _setBan(
         IBondingRegistry registry,
-        address operator
-    ) private {
-        if (address(registry).code.length == 0) return;
-        if (registry.isRegistered(operator)) {
-            registry.refreshOperatorStatus(operator);
-        }
+        address operator,
+        bool status,
+        bytes32 reason,
+        address updater
+    ) internal {
+        banned[operator] = status;
+        registry.setOperatorBan(operator, status);
+        emit NodeBanUpdated(operator, status, reason, updater);
+    }
+
+    function _requireCurrentPolicyAssetContext(
+        bytes32 reason,
+        IBondingRegistry e3Bonding
+    ) private view {
+        SlashPolicyAssetContext memory context = slashPolicyAssetContexts[
+            reason
+        ];
+        if (
+            context.bondingRegistry != address(e3Bonding) ||
+            context.configurationVersion == 0 ||
+            context.configurationVersion !=
+            e3Bonding.bondingAssetConfigurationVersion()
+        ) revert SlashPolicyAssetConfigurationMismatch(reason);
     }
 
     /// @notice ERC-165 interface detection. Advertises {ISlashingManager}

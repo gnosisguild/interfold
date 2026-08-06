@@ -8,6 +8,8 @@ pragma solidity 0.8.28;
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 
 contract MockPkVerifier is IPkVerifier {
+    uint256 public constant override h = 2;
+
     bytes4 private constant _RETURN_FALSE_MAGIC = 0xfafafafa;
 
     /// @dev Permissive test mock: only enforces the pk-commitment slot the

@@ -334,6 +334,10 @@ async fn handle_e3_input_deadline_expiration(
 
         let (id, status) = run_compute(
             e3_id,
+            e3.chain_id,
+            e3.interfold_address,
+            e3.encryption_scheme_id,
+            e3.committee_public_key_hash,
             e3.e3_params,
             votes,
             format!(

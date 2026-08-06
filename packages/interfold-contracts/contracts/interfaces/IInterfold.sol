@@ -10,9 +10,18 @@ import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "./IBondingRegistry.sol";
 import { IDecryptionVerifier } from "./IDecryptionVerifier.sol";
 import { IPkVerifier } from "./IPkVerifier.sol";
+import { ICiphertextVerifier } from "./ICiphertextVerifier.sol";
+import { ISlashingManager } from "./ISlashingManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IInterfold {
+    /// @notice The requested cryptographic configuration is not the active circuit build.
+    error UnsupportedCryptoConfig();
+    /// @notice The active parameter set is append-only.
+    error ParamSetAlreadyRegistered(uint8 paramSet);
+    /// @notice A verifier does not match the active circuit threshold.
+    error VerifierThresholdMismatch(uint256 actual, uint256 expected);
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                         Enums                          //
@@ -99,6 +108,13 @@ interface IInterfold {
         uint32 minThreshold;
     }
 
+    /// @notice Fee asset and every raw-unit price denominated in that asset.
+    struct FeeAssetConfig {
+        address token;
+        uint8 expectedDecimals;
+        PricingConfig pricing;
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                         Events                         //
@@ -156,9 +172,12 @@ interface IInterfold {
     /// @param bondingRegistry The address of the BondingRegistry contract.
     event BondingRegistrySet(address bondingRegistry);
 
-    /// @notice This event MUST be emitted any time the fee token is set.
-    /// @param feeToken The address of the fee token.
-    event FeeTokenSet(address feeToken);
+    /// @notice Emitted when the fee asset and its raw-unit prices are updated.
+    event FeeAssetConfigUpdated(
+        IERC20 indexed token,
+        uint8 expectedDecimals,
+        PricingConfig pricing
+    );
 
     /// @notice This event MUST be emitted when rewards are credited to committee members.
     /// @dev Distribution is pull-based — recipients must call `claimReward(e3Id)`.
@@ -235,19 +254,10 @@ interface IInterfold {
     /// @dev Registration is append-only; programs cannot be deregistered.
     event E3ProgramRegistered(IE3Program e3Program);
 
-    /// @notice Emitted when a BFV param set is registered or updated.
+    /// @notice Emitted when the active BFV parameter set is registered.
     /// @param paramSet The param set index.
     /// @param encodedParams ABI-encoded BFV parameters.
     event ParamSetRegistered(uint8 paramSet, bytes encodedParams);
-
-    /// @notice Emitted when an existing param set slot is overwritten by
-    ///         {Interfold.setParamSet}. The new value replaces the
-    ///         previous encoded parameters atomically.
-    event ParamSetUpdated(
-        uint8 paramSet,
-        bytes previousEncodedParams,
-        bytes newEncodedParams
-    );
 
     /// @notice Emitted when E3RefundManager contract is set.
     /// @param e3RefundManager The address of the E3RefundManager contract.
@@ -291,6 +301,12 @@ interface IInterfold {
         IPkVerifier indexed pkVerifier
     );
 
+    /// @notice Emitted when future requests for a scheme receive a new ciphertext verifier.
+    event CiphertextVerifierSet(
+        bytes32 indexed encryptionSchemeId,
+        ICiphertextVerifier indexed ciphertextVerifier
+    );
+
     /// @notice Emitted when E3 stage changes
     event E3StageChanged(
         uint256 indexed e3Id,
@@ -315,9 +331,6 @@ interface IInterfold {
         CommitteeSize indexed size,
         uint32[2] threshold
     );
-
-    /// @notice Emitted when pricing configuration is updated
-    event PricingConfigUpdated(PricingConfig config);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -398,6 +411,16 @@ interface IInterfold {
     /// @notice Thrown when attempting to set an invalid fee token address.
     /// @param feeToken The invalid fee token address.
     error InvalidFeeToken(IERC20 feeToken);
+
+    /// @notice The fee token does not expose a valid ERC-20 decimals value.
+    error FeeTokenDecimalsUnavailable(IERC20 feeToken);
+
+    /// @notice The fee token decimals do not match the configured unit scale.
+    error FeeTokenDecimalsMismatch(
+        IERC20 feeToken,
+        uint8 expected,
+        uint8 actual
+    );
 
     /// @notice E3 is not in expected stage
     error InvalidStage(uint256 e3Id, E3Stage expected, E3Stage actual);
@@ -506,7 +529,7 @@ interface IInterfold {
     ////////////////////////////////////////////////////////////
 
     /// @notice This struct contains the parameters to submit a request to Interfold.
-    /// @param committeeSize The M/N threshold and honest parties for the committee.
+    /// @param committeeSize The configured committee size.
     /// @param inputWindow When the program will start and stop accepting inputs.
     /// @param e3Program The address of the E3 Program.
     /// @param paramSet The BFV encryption parameter set to use.
@@ -585,11 +608,9 @@ interface IInterfold {
     /// @param _bondingRegistry The address of the new Bonding Registry contract.
     function setBondingRegistry(IBondingRegistry _bondingRegistry) external;
 
-    /// @notice Sets the fee token used for E3 payments.
-    /// @dev This function MUST revert if the address is zero or the same as the current fee token.
-    ///      Auto-adds the token to the fee-token allow-list.
-    /// @param _feeToken The address of the new fee token.
-    function setFeeToken(IERC20 _feeToken) external;
+    /// @notice Sets the fee token and every price denominated in its raw units.
+    /// @dev Auto-adds the configured token to the fee-token allow-list.
+    function setFeeAssetConfig(FeeAssetConfig calldata config) external;
 
     /// @notice Add or remove a token from the fee-token allow-list.
     /// @dev Owner-only. The contract `feeToken()` must be on the allow-list for `request()` to succeed.
@@ -622,6 +643,17 @@ interface IInterfold {
         IPkVerifier pkVerifier
     ) external;
 
+    /// @notice Sets the protocol ciphertext verifier for future requests using a scheme.
+    function setCiphertextVerifier(
+        bytes32 encryptionSchemeId,
+        ICiphertextVerifier ciphertextVerifier
+    ) external;
+
+    /// @notice Returns the ciphertext verifier configured for future requests.
+    function getCiphertextVerifier(
+        bytes32 encryptionSchemeId
+    ) external view returns (address);
+
     /// @notice Disables a previously enabled encryption scheme.
     /// @dev This function MUST revert if the encryption scheme is not currently enabled.
     /// @param encryptionSchemeId The unique identifier for the encryption scheme to disable.
@@ -631,10 +663,6 @@ interface IInterfold {
     /// @param paramSet The param set index to register.
     /// @param encodedParams ABI-encoded BFV parameters.
     function setParamSet(uint8 paramSet, bytes calldata encodedParams) external;
-
-    /// @notice Sets the full pricing configuration.
-    /// @param config The new pricing configuration.
-    function setPricingConfig(PricingConfig calldata config) external;
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -676,8 +704,14 @@ interface IInterfold {
     /// @notice Returns the ERC20 token used to pay for E3 fees.
     function feeToken() external view returns (IERC20);
 
+    /// @notice Returns the expected decimals for the active fee token.
+    function feeTokenDecimals() external view returns (uint8);
+
     /// @notice Returns the BondingRegistry contract.
     function bondingRegistry() external view returns (IBondingRegistry);
+
+    /// @notice Returns the current SlashingManager contract.
+    function slashingManager() external view returns (ISlashingManager);
 
     /// @notice Called by CiphernodeRegistry when committee is finalized (sortition complete).
     /// @dev Updates E3 lifecycle to CommitteeFinalized stage, starts DKG deadline.
@@ -702,10 +736,14 @@ interface IInterfold {
     /// @notice Escrow slashed funds for deferred distribution
     /// @dev Called by SlashingManager. Proxies to E3RefundManager.
     /// @param e3Id The E3 ID.
+    /// @param proposalId The proposal that produced the funds.
+    /// @param operator The operator whose collateral was slashed.
     /// @param token Actual ticket-underlying token transferred into escrow.
     /// @param amount Amount of slashed funds to escrow.
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external;
@@ -773,7 +811,7 @@ interface IInterfold {
 
     /// @notice Set the threshold values for a committee size
     /// @param size The committee size enum value
-    /// @param threshold The M/N threshold values [quorum, total]
+    /// @param threshold The viability threshold and total member count [H, N].
     function setCommitteeThresholds(
         CommitteeSize size,
         uint32[2] calldata threshold

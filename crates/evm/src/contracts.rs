@@ -139,11 +139,12 @@ sol! {
 
         function publishCommittee(
             uint256 e3Id,
-            bytes calldata publicKey,
             bytes32 pkCommitment,
             bytes calldata proof,
             bytes calldata dkgAttestationBundle
         ) external;
+
+        function publishCommitteePublicKey(uint256 e3Id, bytes calldata publicKey) external;
 
         // ── View functions ──────────────────────────────────────────────────
         function isOpen(uint256 e3Id) external view returns (bool);
@@ -192,7 +193,8 @@ sol! {
             uint256 seed,
             uint32[2] threshold,
             uint256 requestBlock,
-            uint256 committeeDeadline
+            uint256 committeeDeadline,
+            uint256 ticketPrice
         );
 
         event SortitionCommitteeFinalized(
@@ -211,6 +213,13 @@ sol! {
             uint256 indexed e3Id,
             uint256 nodesSubmitted,
             uint256 thresholdRequired
+        );
+
+        event CommitteeProofPublished(
+            uint256 indexed e3Id,
+            address[] nodes,
+            bytes32 pkCommitment,
+            bytes proof
         );
 
         event CommitteePublished(

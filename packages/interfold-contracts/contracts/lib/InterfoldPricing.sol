@@ -6,8 +6,12 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
-import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 
 /**
  * @title InterfoldPricing
@@ -19,6 +23,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *         out of the Interfold runtime bytecode.
  */
 library InterfoldPricing {
+    using SafeERC20 for IERC20;
     uint16 internal constant BPS_BASE = 10000;
     event RewardCredited(
         uint256 indexed e3Id,
@@ -27,32 +32,47 @@ library InterfoldPricing {
         uint256 amount
     );
 
-    /// @notice Mirrors the threshold / min-size gates at the top of
-    ///         {Interfold.getE3Quote} (post param-set existence check).
-    /// @param committeeSize  ABI-encoded as `uint8` to avoid qualified enum
-    ///                       names in the library ABI (ethers v6 rejects
-    ///                       `IInterfold.CommitteeSize`).
-    function validateQuoteThresholds(
-        uint32[2] memory threshold,
-        uint8 committeeSize,
-        uint32 minCommitteeSize,
-        uint32 minThreshold
-    ) external pure {
-        IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
-        if (threshold[1] == 0)
-            revert IInterfold.CommitteeSizeNotConfigured(size);
-        if (minCommitteeSize > 0 && threshold[1] < minCommitteeSize)
-            revert IInterfold.CommitteeSizeTooSmall(size);
-        if (minThreshold > 0 && threshold[0] < minThreshold)
-            revert IInterfold.ThresholdTooSmall(threshold[0]);
+    /// @notice Validates a fee asset and every raw-unit price tied to it.
+    function validateFeeAssetConfig(
+        IInterfold.FeeAssetConfig calldata config,
+        uint16 maxMarginBps,
+        uint16 maxProtocolShareBps
+    ) external view {
+        IERC20 token = IERC20(config.token);
+        if (address(token).code.length == 0) {
+            revert IInterfold.InvalidFeeToken(token);
+        }
+        (bool success, bytes memory result) = address(token).staticcall(
+            abi.encodeWithSignature("decimals()")
+        );
+        if (!success || result.length != 32) {
+            revert IInterfold.FeeTokenDecimalsUnavailable(token);
+        }
+        uint256 decoded = abi.decode(result, (uint256));
+        if (decoded > type(uint8).max) {
+            revert IInterfold.FeeTokenDecimalsUnavailable(token);
+        }
+        uint8 actualDecimals = uint8(decoded);
+        if (actualDecimals != config.expectedDecimals) {
+            revert IInterfold.FeeTokenDecimalsMismatch(
+                token,
+                config.expectedDecimals,
+                actualDecimals
+            );
+        }
+
+        _validatePricingConfig(
+            config.pricing,
+            maxMarginBps,
+            maxProtocolShareBps
+        );
     }
 
-    /// @notice Mirrors {Interfold.setPricingConfig} validation.
-    function validatePricingConfig(
+    function _validatePricingConfig(
         IInterfold.PricingConfig calldata config,
         uint16 maxMarginBps,
         uint16 maxProtocolShareBps
-    ) external pure {
+    ) private pure {
         if (config.marginBps > maxMarginBps)
             revert IInterfold.BpsExceedsMax(config.marginBps);
         if (config.protocolShareBps > maxProtocolShareBps)
@@ -77,14 +97,13 @@ library InterfoldPricing {
             revert IInterfold.MinSizeBelowMinThreshold();
     }
 
-    /// @notice Splits and credits committee rewards to each operator's bond
-    ///         owner, sweeping integer-division dust into a slot selected by
-    ///         `e3Id % n`.
+    /// @notice Splits and credits committee rewards to each frozen recipient.
+    /// @dev Integer-division dust goes to the slot selected by `e3Id % n`.
     /// @dev Runs through a linked library call to keep the accounting loop out
     ///      of Interfold's size-constrained runtime bytecode.
     function computeAndCreditRewards(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
-        IBondingRegistry bonding,
+        IE3RefundManager refundManager,
         uint256 cnAmount,
         uint256 e3Id,
         address[] memory nodes,
@@ -100,12 +119,48 @@ library InterfoldPricing {
             if (i == dustIndex) amount += dust;
             amounts[i] = amount;
             if (amount > 0) {
-                address operator = nodes[i];
-                address recipient = bonding.bondOwnerOf(operator);
-                if (recipient == address(0)) recipient = operator;
-                pendingRewards[e3Id][recipient] += amount;
-                emit RewardCredited(e3Id, recipient, token, amount);
+                _creditReward(
+                    pendingRewards,
+                    refundManager,
+                    e3Id,
+                    nodes[i],
+                    token,
+                    amount
+                );
             }
+        }
+    }
+
+    function _creditReward(
+        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
+        IE3RefundManager refundManager,
+        uint256 e3Id,
+        address operator,
+        IERC20 token,
+        uint256 amount
+    ) private {
+        (address recipient, bool held) = refundManager.rewardDisposition(
+            e3Id,
+            operator
+        );
+        if (held) {
+            uint256 balanceBefore = token.balanceOf(address(refundManager));
+            token.safeTransfer(address(refundManager), amount);
+            uint256 balanceAfter = token.balanceOf(address(refundManager));
+            uint256 received = balanceAfter > balanceBefore
+                ? balanceAfter - balanceBefore
+                : 0;
+            if (received > 0) {
+                refundManager.holdSuccessReward(
+                    e3Id,
+                    operator,
+                    token,
+                    received
+                );
+            }
+        } else {
+            pendingRewards[e3Id][recipient] += amount;
+            emit RewardCredited(e3Id, recipient, token, amount);
         }
     }
 
@@ -116,55 +171,96 @@ library InterfoldPricing {
     /// @param pc                  Snapshot of `_pricingConfig`.
     /// @param tc                  Snapshot of `_timeoutConfig`.
     /// @param sortitionWindow     Result of `ciphernodeRegistry.sortitionSubmissionWindow()`.
-    /// @param threshold           `[quorum, total]` resolved from `committeeThresholds`.
+    /// @param paramSet            BFV parameter-set enum value.
+    /// @param committeeSize       Committee-size enum value.
+    /// @param threshold           `[H, N]` resolved from `committeeThresholds`.
+    /// @param requestTime         Timestamp used for request validation and pricing.
     /// @param inputWindowStart    `requestParams.inputWindow[0]`.
     /// @param inputWindowEnd      `requestParams.inputWindow[1]`.
     function quote(
         IInterfold.PricingConfig calldata pc,
         IInterfold.E3TimeoutConfig calldata tc,
         uint256 sortitionWindow,
+        uint8 paramSet,
+        uint8 committeeSize,
         uint32[2] calldata threshold,
+        uint256 requestTime,
         uint256 inputWindowStart,
         uint256 inputWindowEnd
-    ) external view returns (uint256 fee) {
+    ) external pure returns (uint256 fee) {
+        _validateQuoteWindow(
+            tc,
+            sortitionWindow,
+            requestTime,
+            inputWindowStart,
+            inputWindowEnd
+        );
+
+        if (paramSet != ActiveCryptoConfig.PARAM_SET)
+            revert IInterfold.UnsupportedCryptoConfig();
+        IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
+        if (threshold[1] == 0)
+            revert IInterfold.CommitteeSizeNotConfigured(size);
+        if (pc.minCommitteeSize > 0 && threshold[1] < pc.minCommitteeSize)
+            revert IInterfold.CommitteeSizeTooSmall(size);
+        if (pc.minThreshold > 0 && threshold[0] < pc.minThreshold)
+            revert IInterfold.ThresholdTooSmall(threshold[0]);
+
+        ActiveCryptoConfig.validateCommittee(committeeSize, threshold);
+        uint256 n = ActiveCryptoConfig.N;
+        uint256 m = ActiveCryptoConfig.T;
+
+        uint256 duration = _billableDuration(
+            pc,
+            tc,
+            sortitionWindow,
+            requestTime,
+            inputWindowStart,
+            inputWindowEnd
+        );
+
+        uint256 baseFee = _baseFee(pc, n, m, duration);
+
+        // Apply margin markup
+        fee =
+            (baseFee * (uint256(BPS_BASE) + uint256(pc.marginBps))) /
+            uint256(BPS_BASE);
+
+        if (fee == 0) revert IInterfold.PaymentRequired(fee);
+    }
+
+    function _validateQuoteWindow(
+        IInterfold.E3TimeoutConfig calldata tc,
+        uint256 sortitionWindow,
+        uint256 requestTime,
+        uint256 inputWindowStart,
+        uint256 inputWindowEnd
+    ) private pure {
+        if (inputWindowStart < requestTime)
+            revert IInterfold.InvalidInputDeadlineStart(inputWindowStart);
         if (inputWindowEnd < inputWindowStart)
             revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
 
-        {
-            uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
-            uint256 committeeDeadline = block.timestamp + sortitionWindow;
-            if (computeDeadline <= committeeDeadline)
-                revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
-                    computeDeadline,
-                    committeeDeadline
-                );
-        }
+        uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
+        uint256 committeeDeadline = requestTime + sortitionWindow;
+        if (computeDeadline <= committeeDeadline)
+            revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
+                computeDeadline,
+                committeeDeadline
+            );
+    }
 
-        uint256 n = uint256(threshold[1]); // total committee size
-        uint256 m = uint256(threshold[0]); // quorum/decryption threshold
-
-        // Duration covers the full availability period, using expected-case
-        // utilization fractions for protocol-controlled timeout windows.
-        // Sum the BPS-weighted windows first then divide once so the
-        // duration does not lose up to ~3 seconds of weight to per-term
-        // integer-division truncation.
-        uint256 weightedTimeoutsBps = tc.dkgWindow *
-            uint256(pc.dkgUtilizationBps) +
-            tc.computeWindow *
-            uint256(pc.computeUtilizationBps) +
-            tc.decryptionWindow *
-            uint256(pc.decryptUtilizationBps);
-        uint256 duration = sortitionWindow +
-            inputWindowEnd -
-            inputWindowStart +
-            weightedTimeoutsBps /
-            uint256(BPS_BASE);
-
+    function _baseFee(
+        IInterfold.PricingConfig calldata pc,
+        uint256 n,
+        uint256 m,
+        uint256 duration
+    ) private pure returns (uint256 baseFee) {
         // ZK proof count per node: 14 fixed + 4 × (N-1) scaling.
         uint256 proofsPerNode = 14 + 4 * (n - 1);
 
         // Key generation cost: fixed per-node + per-proof (quadratic in n)
-        uint256 baseFee = pc.keyGenFixedPerNode * n;
+        baseFee = pc.keyGenFixedPerNode * n;
         baseFee += pc.keyGenPerEncryptionProof * n * proofsPerNode;
 
         // Key generation coordination cost (quadratic in n)
@@ -187,12 +283,36 @@ library InterfoldPricing {
 
         // Publication base cost
         baseFee += pc.publicationBase;
+    }
 
-        // Apply margin markup
-        fee =
-            (baseFee * (uint256(BPS_BASE) + uint256(pc.marginBps))) /
-            uint256(BPS_BASE);
+    function _billableDuration(
+        IInterfold.PricingConfig calldata pc,
+        IInterfold.E3TimeoutConfig calldata tc,
+        uint256 sortitionWindow,
+        uint256 requestTime,
+        uint256 inputWindowStart,
+        uint256 inputWindowEnd
+    ) private pure returns (uint256) {
+        // Charge at least the complete request-to-input-end reservation. For
+        // near-term requests, preserve the existing weighted DKG estimate.
+        uint256 inputWindowLength = inputWindowEnd - inputWindowStart;
+        uint256 weightedPreComputeBps = (sortitionWindow + inputWindowLength) *
+            BPS_BASE +
+            tc.dkgWindow *
+            uint256(pc.dkgUtilizationBps);
+        uint256 reservedThroughInputEndBps = (inputWindowEnd - requestTime) *
+            BPS_BASE;
+        uint256 preComputeBps = weightedPreComputeBps >
+            reservedThroughInputEndBps
+            ? weightedPreComputeBps
+            : reservedThroughInputEndBps;
 
-        if (fee == 0) revert IInterfold.PaymentRequired(fee);
+        // Sum all weighted terms before division to avoid per-term rounding.
+        uint256 durationBps = preComputeBps +
+            tc.computeWindow *
+            uint256(pc.computeUtilizationBps) +
+            tc.decryptionWindow *
+            uint256(pc.decryptUtilizationBps);
+        return durationBps / uint256(BPS_BASE);
     }
 }

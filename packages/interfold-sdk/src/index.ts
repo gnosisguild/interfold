@@ -17,6 +17,7 @@ export type { EventListenerOptions } from './events/event-listener'
 export {
   getThresholdBfvParamsSet,
   generatePublicKey,
+  computeCiphertextCommitment,
   computePublicKeyCommitment,
   encryptNumber,
   encryptVector,

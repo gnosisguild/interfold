@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import hre from "hardhat";
 
+import { deployAndSaveMockCiphertextVerifier } from "./deployAndSave/mockCiphertextVerifier";
 import { deployAndSaveMockComputeProvider } from "./deployAndSave/mockComputeProvider";
 import { deployAndSaveMockDecryptionVerifier } from "./deployAndSave/mockDecryptionVerifier";
 import { deployAndSaveMockPkVerifier } from "./deployAndSave/mockPkVerifier";
@@ -14,6 +15,7 @@ export interface MockDeployments {
   computeProviderAddress: string;
   /** Mock verifier addresses; deployment args are always saved for tooling (e.g. `committee:new` default `computeProviderParams`). */
   decryptionVerifierAddress: string;
+  ciphertextVerifierAddress: string;
   pkVerifierAddress: string;
   e3ProgramAddress: string;
 }
@@ -33,6 +35,9 @@ export const deployMocks = async (): Promise<MockDeployments> => {
   console.log("Deploying Mock Decryption Verifier");
   const { decryptionVerifier } = await deployAndSaveMockDecryptionVerifier(hre);
   const decryptionVerifierAddress = await decryptionVerifier.getAddress();
+  console.log("Deploying Mock Ciphertext Verifier");
+  const { ciphertextVerifier } = await deployAndSaveMockCiphertextVerifier(hre);
+  const ciphertextVerifierAddress = await ciphertextVerifier.getAddress();
   console.log("Deploying Mock Pk Verifier");
   const { pkVerifier } = await deployAndSaveMockPkVerifier(hre);
   const pkVerifierAddress = await pkVerifier.getAddress();
@@ -49,6 +54,7 @@ export const deployMocks = async (): Promise<MockDeployments> => {
         ----------------------------------------------------------------------
         MockComputeProvider:${computeProviderAddress}
         MockDecryptionVerifier:${decryptionVerifierAddress}
+        MockCiphertextVerifier:${ciphertextVerifierAddress}
         MockPkVerifier:${pkVerifierAddress}
         MockE3Program:${e3ProgramAddress}
         `);
@@ -56,6 +62,7 @@ export const deployMocks = async (): Promise<MockDeployments> => {
   return {
     computeProviderAddress,
     decryptionVerifierAddress,
+    ciphertextVerifierAddress,
     pkVerifierAddress,
     e3ProgramAddress,
   };

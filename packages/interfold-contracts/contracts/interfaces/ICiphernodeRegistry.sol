@@ -43,7 +43,7 @@ interface ICiphernodeRegistry {
     /// @param stage Current lifecycle stage of the committee (replaces former initialized/finalized/failed bools).
     /// @param requestBlock The block number when the committee was requested.
     /// @param committeeDeadline The deadline for committee formation (ticket submission).
-    /// @param threshold The M/N threshold for the committee ([M, N]).
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @param publicKey Hash of the committee's public key.
     /// @param seed The seed for the round.
     /// @param topNodes Sorted top-N nodes selected during sortition.
@@ -51,6 +51,7 @@ interface ICiphernodeRegistry {
     /// @param submitted Mapping of nodes to their submission status.
     /// @param scoreOf Mapping of nodes to their scores.
     /// @param memberStatus Tri-state membership tracking (None / Active / Expelled).
+    /// @param obligationsReleased Whether terminal cleanup released member collateral.
     struct Committee {
         CommitteeStage stage;
         uint256 seed;
@@ -64,12 +65,13 @@ interface ICiphernodeRegistry {
         mapping(address node => uint256 score) scoreOf;
         mapping(address node => MemberStatus) memberStatus;
         uint256 activeCount;
+        bool obligationsReleased;
     }
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
     /// @param seed Random seed for score computation.
-    /// @param threshold The M/N threshold for the committee.
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).
     event CommitteeRequested(
@@ -77,7 +79,8 @@ interface ICiphernodeRegistry {
         uint256 seed,
         uint32[2] threshold,
         uint256 requestBlock,
-        uint256 committeeDeadline
+        uint256 committeeDeadline,
+        uint256 ticketPrice
     );
 
     /// @notice This event MUST be emitted when a ticket is submitted for sortition
@@ -128,14 +131,27 @@ interface ICiphernodeRegistry {
         uint256 thresholdRequired
     );
 
-    /// @notice This event MUST be emitted when a committee is selected for an E3.
+    /// @notice Emitted after the committee proof and DKG anchors are accepted.
+    /// @param e3Id ID of the E3 for which the committee proof was accepted.
+    /// @param nodes Canonical committee members.
+    /// @param pkCommitment Hash-based aggregated PK commitment for the committee.
+    /// @param proof Non-empty DkgAggregator (EVM) proof bytes verified prior to publication.
+    event CommitteeProofPublished(
+        uint256 indexed e3Id,
+        address[] nodes,
+        bytes32 pkCommitment,
+        bytes proof
+    );
+
+    /// @notice Emitted for each distinct serialized public-key candidate.
     /// @param e3Id ID of the E3 for which the committee was selected.
     /// @param publicKey Serialized public-key transport hint. Consumers MUST
     ///        deserialize it and recompute `pkCommitment` before using it for
     ///        encryption. The commitment is proven by the mandatory final DKG
     ///        proof; test-only mock verifiers may accept placeholder payloads.
     /// @param pkCommitment Hash-based aggregated PK commitment for the committee.
-    /// @param proof Non-empty DkgAggregator (EVM) proof bytes verified prior to publication.
+    /// @param proof Reserved for event compatibility and always empty. The verified
+    ///        proof is emitted by {CommitteeProofPublished}.
     event CommitteePublished(
         uint256 indexed e3Id,
         address[] nodes,
@@ -249,6 +265,9 @@ interface ICiphernodeRegistry {
     /// @notice Committee has already been published for this E3
     error CommitteeAlreadyPublished();
 
+    /// @notice Serialized public-key candidate has an unsupported length.
+    error InvalidPublicKeyLength(uint256 supplied, uint256 maximum);
+
     /// @notice Committee has not been published yet for this E3
     error CommitteeNotPublished();
 
@@ -269,6 +288,12 @@ interface ICiphernodeRegistry {
 
     /// @notice Committee has not been finalized yet for this E3
     error CommitteeNotFinalized();
+
+    /// @notice The E3 has not reached a terminal lifecycle stage.
+    error E3NotTerminal(uint256 e3Id);
+
+    /// @notice The E3's committee collateral obligations were already released.
+    error CommitteeObligationsAlreadyReleased(uint256 e3Id);
 
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();
@@ -406,7 +431,7 @@ interface ICiphernodeRegistry {
     /// @dev This function MUST revert when not called by the Interfold contract.
     /// @param e3Id ID of the E3 for which to select the committee.
     /// @param seed Random seed for score computation.
-    /// @param threshold The M/N threshold for the committee.
+    /// @param threshold The viability threshold and total member count [H, N].
     /// @return success True if committee selection was successfully initiated.
     function requestCommittee(
         uint256 e3Id,
@@ -414,11 +439,10 @@ interface ICiphernodeRegistry {
         uint32[2] calldata threshold
     ) external returns (bool success);
 
-    /// @notice Publishes the public key resulting from the committee selection process.
+    /// @notice Publishes the proof-backed committee commitment and DKG anchors.
     /// @dev Permissionless once the committee is finalized.
     ///      The `proof` is verified against `pkCommitment` via the E3's pk verifier.
     /// @param e3Id ID of the E3 for which to select the committee.
-    /// @param publicKey The public key generated by the given committee.
     /// @param pkCommitment Hash-based aggregated PK commitment for the committee.
     /// @param proof DkgAggregator (EVM) proof ABI-encoded `(bytes rawProof, bytes32[] publicInputs)`,
     ///              as accepted by the configured public-key verifier.
@@ -427,11 +451,24 @@ interface ICiphernodeRegistry {
     ///        Required and non-empty for every committee publication.
     function publishCommittee(
         uint256 e3Id,
-        bytes calldata publicKey,
         bytes32 pkCommitment,
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) external;
+
+    /// @notice Publishes a serialized public-key candidate for a proven committee.
+    /// @dev Permissionless and repeatable. Consumers MUST validate the candidate
+    ///      against the event's proven `pkCommitment`.
+    /// @param e3Id ID of the E3 whose committee proof has been published.
+    /// @param publicKey Non-empty serialized public-key candidate.
+    function publishCommitteePublicKey(
+        uint256 e3Id,
+        bytes calldata publicKey
+    ) external;
+
+    /// @notice Release committee collateral after the E3 completes or fails.
+    /// @dev Permissionless and bound to the request-time Interfold and bonding registry.
+    function releaseCommittee(uint256 e3Id) external;
 
     /// @notice Returns DKG anchor commitments stored at publication (empty if not yet published).
     /// @param e3Id ID of the E3

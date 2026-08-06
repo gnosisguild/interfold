@@ -17,6 +17,7 @@ pub struct E3 {
     #[serde(default)]
     pub ciphertext_commitment: Vec<u8>,
     pub committee_public_key: Vec<u8>,
+    pub committee_public_key_hash: Vec<u8>,
     pub e3_params: Vec<u8>,
     pub custom_params: Vec<u8>,
     pub interfold_address: String,

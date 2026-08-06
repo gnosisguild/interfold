@@ -18,6 +18,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  setPricingConfig,
 } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -40,7 +41,6 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
       e3Id,
-      publicKey,
       pkCommitment,
       encodeMockDkgProof(pkCommitment),
       "0x01",
@@ -50,7 +50,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
   const setup = async () => {
     const sys = await deployInterfoldSystem({
       mintUsdcTo: [],
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
     });
     const {
       owner,
@@ -88,7 +88,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     // here were chosen empirically: stripping `protocolShareBps=0` and
     // setting `keyGenFixedPerNode=1` causes the fee to land on a value
     // whose `cnAmount % 3 != 0`.
-    await interfold.setPricingConfig({
+    await setPricingConfig(interfold, {
       keyGenFixedPerNode: 1n,
       keyGenPerEncryptionProof: 0n,
       coordinationPerPair: 0n,

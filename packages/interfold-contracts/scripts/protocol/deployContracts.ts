@@ -79,10 +79,13 @@ export async function deployProtocolContracts(
       registryProxy.proxy,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      config.feeToken,
+      {
+        token: config.feeToken,
+        expectedDecimals: config.feeTokenDecimals,
+        pricing: pricingConfig(config.interfold.pricing),
+      },
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
-      pricingConfig(config.interfold.pricing),
       config.e3Programs[0],
     ]),
   );
@@ -102,7 +105,32 @@ export async function deployProtocolContracts(
     ]),
   );
 
-  const bondingFactory = await ethers.getContractFactory("BondingRegistry");
+  const bondingAssetFactory =
+    await ethers.getContractFactory("BondingAssetLib");
+  const bondingAsset = await bondingAssetFactory.deploy();
+  await bondingAsset.waitForDeployment();
+  const bondingAssetLib = await deployedAddress(bondingAsset);
+
+  const bondingEligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+  );
+  const bondingEligibility = await bondingEligibilityFactory.deploy();
+  await bondingEligibility.waitForDeployment();
+  const bondingEligibilityLib = await deployedAddress(bondingEligibility);
+
+  const bondingSlashingFactory =
+    await ethers.getContractFactory("BondingSlashingLib");
+  const bondingSlashing = await bondingSlashingFactory.deploy();
+  await bondingSlashing.waitForDeployment();
+  const bondingSlashingLib = await deployedAddress(bondingSlashing);
+
+  const bondingFactory = await ethers.getContractFactory("BondingRegistry", {
+    libraries: {
+      BondingAssetLib: bondingAssetLib,
+      BondingEligibilityLib: bondingEligibilityLib,
+      BondingSlashingLib: bondingSlashingLib,
+    },
+  });
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
 
@@ -122,7 +150,10 @@ export async function deployProtocolContracts(
       e3RefundManager: refundProxy.proxy,
       e3RefundManagerImplementation,
       e3RefundManagerProxyAdmin: refundProxy.proxyAdmin,
+      bondingAssetLib,
+      bondingEligibilityLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),
+      bondingSlashingLib,
     },
     interfaces: {
       ticket: ticketFactory.interface,

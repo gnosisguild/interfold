@@ -18,6 +18,10 @@ import { IE3RefundManager } from "./IE3RefundManager.sol";
  *      Lane B (evidence-based): SLASHER_ROLE required, appeal window
  */
 interface ISlashingManager {
+    /// @notice API version required by BondingRegistry manager authorization.
+    // solhint-disable-next-line func-name-mixedcase
+    function SLASHING_MANAGER_API_VERSION() external view returns (uint256);
+
     // ======================
     // Enums
     // ======================
@@ -49,7 +53,8 @@ interface ISlashingManager {
      * @param appealWindow Time window in seconds for operators to appeal (0 = immediate execution, no appeals)
      * @param enabled Whether this slash type is currently active and can be proposed
      * @param affectsCommittee Whether executing this slash triggers committee expulsion for the target E3
-     * @param failureReason The FailureReason enum value to use when committee drops below threshold (0 = no E3 failure)
+     * @param failureReason Reserved for storage and ABI compatibility. New policies use 0 or
+     *        InsufficientCommitteeMembers.
      */
     struct SlashPolicy {
         uint256 ticketPenalty;
@@ -61,6 +66,12 @@ interface ISlashingManager {
         bool enabled;
         bool affectsCommittee;
         uint8 failureReason;
+    }
+
+    /// @notice Bonding-asset identity used when a slash policy was configured.
+    struct SlashPolicyAssetContext {
+        address bondingRegistry;
+        uint64 configurationVersion;
     }
 
     /**
@@ -100,7 +111,7 @@ interface ISlashingManager {
         bool banNode;
         /// @dev Snapshotted from SlashPolicy at proposal time to prevent execution drift
         bool affectsCommittee;
-        /// @dev Snapshotted from SlashPolicy at proposal time to prevent execution drift
+        /// @dev Reserved for storage and ABI compatibility. Committee viability loss uses a fixed reason.
         uint8 failureReason;
     }
 
@@ -110,6 +121,7 @@ interface ISlashingManager {
         address token;
         uint256 amount;
         bool pending;
+        address operator;
     }
 
     // ======================
@@ -124,6 +136,9 @@ interface ISlashingManager {
 
     /// @notice Thrown when a slash policy configuration is invalid
     error InvalidPolicy();
+
+    /// @notice A policy does not match the E3's bonding-asset configuration.
+    error SlashPolicyAssetConfigurationMismatch(bytes32 reason);
 
     /// @notice Thrown when referencing a proposal ID that doesn't exist or is in invalid state
     error InvalidProposal();
@@ -380,6 +395,9 @@ interface ISlashingManager {
         uint256 amount
     );
 
+    /// @notice Emitted after a terminal E3 releases its frozen dependencies.
+    event E3DependenciesReleased(uint256 indexed e3Id);
+
     /**
      * @notice Emitted when the bonding registry is set
      * @param bondingRegistry Address of the bonding registry
@@ -442,7 +460,7 @@ interface ISlashingManager {
 
     /**
      * @notice Returns true if the operator has at least one unresolved financial slash proposal.
-     * @dev Used by BondingRegistry to block collateral withdrawals and exit claims.
+     * @dev Kept for manager observability. BondingRegistry uses its local lock count.
      * @param operator Operator address to check
      */
     function hasOpenSlashProposal(
@@ -452,6 +470,9 @@ interface ISlashingManager {
     /// @notice Freeze all contracts used to validate and execute slashes for an E3.
     /// @dev Called exactly once by the configured Interfold during E3 creation.
     function snapshotE3Dependencies(uint256 e3Id) external;
+
+    /// @notice Release the frozen dependencies for one terminal E3.
+    function closeE3(uint256 e3Id) external;
 
     /// @notice Return the contracts frozen for an E3's slashing lifecycle.
     function getE3Dependencies(
@@ -491,6 +512,11 @@ interface ISlashingManager {
         external
         view
         returns (IBondingRegistry registry);
+
+    /// @notice Returns the bonding-asset identity frozen with a slash policy.
+    function slashPolicyAssetContexts(
+        bytes32 reason
+    ) external view returns (address registry, uint64 configurationVersion);
 
     /**
      * @notice Returns the ciphernode registry contract used for committee checks and DKG anchors

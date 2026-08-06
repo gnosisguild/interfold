@@ -106,14 +106,19 @@ Collateral ownership and operator identity are separate namespaces:
 └───────────────────────────────────────────────────────────┘
 ```
 
+`setBondingAssetConfig()` updates both tokens, their expected decimals, `ticketPrice`, and
+`licenseRequiredBond` in one transaction. Decimal checks confirm the raw-unit scale but do not
+establish either token's economic value.
+
 Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot be configured while
 the old wrapper has issued tickets or a payable balance. The registry tracks `totalLicenseLiability`
 across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
 treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
 distinguishable from operator liabilities and can be sent to `slashedFundsTreasury` with
-`sweepLicenseSurplus()` before rotation. The FOLD license token still cannot change until its raw
-registry balance is zero. Replacement assets must be deployed contracts; the only zero exception is
-the one-time license-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
+`sweepLicenseSurplus()` before rotation. Rotation also waits for every E3 assignment, slash lock,
+and pending slash route to close. Replacement assets must be deployed contracts; the only zero
+exception is the one-time license-token placeholder used to resolve the circular
+FOLD/BondingRegistry deployment.
 
 ---
 
@@ -517,11 +522,10 @@ enforcement based on immutable policy curves. Key changes:
 
 ### Registry coordination
 
-- `CiphernodeRegistryOwnable.requestBlock` now stores `block.timestamp` (the storage slot and event
-  field names are preserved for backwards compatibility). All callers — including
-  `BondingRegistry.getTicketBalanceAtBlock(node, c.requestBlock - 1)` — pass the value through
-  unchanged; the parameter is now a timepoint per EIP-6372 rather than a block number, which is
-  required for the tFOLD timestamp clock to be valid.
+- `CiphernodeRegistryOwnable.requestBlock` stores `block.timestamp` (the storage slot and event
+  field names remain unchanged for compatibility). Sortition reads tFOLD voting power at
+  `requestBlock - 1`. The value is an EIP-6372 timepoint, not a block number, as required by the
+  tFOLD timestamp clock.
 
 ### Node-operator event projection
 

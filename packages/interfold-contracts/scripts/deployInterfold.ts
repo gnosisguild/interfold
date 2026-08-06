@@ -23,7 +23,13 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
-import { isLocalDeploymentChain } from "./utils";
+import {
+  ACTIVE_BFV_COMMITTEE_N,
+  ACTIVE_BFV_COMMITTEE_SIZE,
+  ACTIVE_BFV_PARAM_SET,
+  BFV_DKG_H,
+  isLocalDeploymentChain,
+} from "./utils";
 
 // BFV parameter presets — hardcoded from crates/fhe-params/src/constants.rs
 // to avoid a cyclic dependency on @interfold/sdk.
@@ -225,7 +231,7 @@ export const deployInterfold = async (
 
   // BondingRegistry is deployed before FOLD so its address can be passed to
   // the token constructor.  The license token is set to address(0) temporarily
-  // and fixed after FOLD is deployed via setLicenseToken().
+  // and fixed after FOLD is deployed with the complete asset configuration.
   console.log("Deploying BondingRegistry...");
   const { bondingRegistry } = await deployAndSaveBondingRegistry({
     owner: ownerAddress,
@@ -235,6 +241,8 @@ export const deployInterfold = async (
     slashedFundsTreasury: ownerAddress,
     ticketPrice: ethers.parseUnits("10", 6).toString(),
     licenseRequiredBond: ethers.parseEther("100").toString(),
+    ticketTokenDecimals: 6,
+    licenseTokenDecimals: 0,
     minTicketBalance: 1,
     exitDelay: 7 * 24 * 60 * 60,
     hre,
@@ -261,7 +269,16 @@ export const deployInterfold = async (
 
   // Fix up BondingRegistry's license token now that FOLD exists.
   console.log("Setting license token in BondingRegistry...");
-  await (await bondingRegistry.setLicenseToken(interfoldTokenAddress)).wait();
+  await (
+    await bondingRegistry.setBondingAssetConfig({
+      ticketToken: interfoldTicketTokenAddress,
+      licenseToken: interfoldTokenAddress,
+      ticketPrice: ethers.parseUnits("10", 6),
+      licenseRequiredBond: ethers.parseEther("100"),
+      expectedTicketDecimals: 6,
+      expectedLicenseDecimals: 18,
+    })
+  ).wait();
 
   if (interfoldTokenAddress.toLowerCase() === feeTokenAddress.toLowerCase()) {
     throw new Error(
@@ -445,52 +462,54 @@ export const deployInterfold = async (
 
   // E3RefundManager already has correct interfold from deployment
 
-  // Initialize committee size thresholds [quorum, total] (H, N)
-  console.log("Setting committee thresholds...");
-  // Minimum: H=2, N=3 (T=1)
-  await interfold.setCommitteeThresholds(0, [2, 3]);
-  // Micro: H=5, N=9 (T=4)
-  await interfold.setCommitteeThresholds(1, [5, 9]);
-  // Small: H=10, N=19 (T=9)
-  await interfold.setCommitteeThresholds(2, [10, 19]);
+  console.log("Setting the active committee configuration...");
+  await interfold.setCommitteeThresholds(ACTIVE_BFV_COMMITTEE_SIZE, [
+    BFV_DKG_H,
+    ACTIVE_BFV_COMMITTEE_N,
+  ]);
   console.log(
-    "Committee thresholds set (Minimum=[2,3], Micro=[5,9], Small=[10,19])",
+    `Active committee configuration set to [${BFV_DKG_H},${ACTIVE_BFV_COMMITTEE_N}]`,
   );
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  await interfold.setParamSet(0, encodedInsecure); // ParamSet.Insecure512
-  await interfold.setParamSet(1, encodedSecure); // ParamSet.Secure8192
-  console.log("ParamSet.Insecure512 registered");
-  console.log("ParamSet.Secure8192 registered");
+  const activeParams =
+    ACTIVE_BFV_PARAM_SET === 0 ? encodedInsecure : encodedSecure;
+  await interfold.setParamSet(ACTIVE_BFV_PARAM_SET, activeParams);
+  console.log(`Active BFV parameter set ${ACTIVE_BFV_PARAM_SET} registered`);
 
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
 
   // Set pricing config with protocol treasury
   const protocolTreasury = process.env.PROTOCOL_TREASURY || ownerAddress;
   console.log("Setting pricing config...");
-  await interfold.setPricingConfig({
-    keyGenFixedPerNode: 100000, // 0.10 USDC
-    keyGenPerEncryptionProof: 50000, // 0.05 USDC
-    coordinationPerPair: 10000, // 0.01 USDC
-    availabilityPerNodePerSec: 50, // 0.00005 USDC
-    decryptionPerNode: 300000, // 0.30 USDC
-    publicationBase: 1000000, // 1.00 USDC
-    verificationPerProof: 5000, // 0.005 USDC
-    protocolTreasury: protocolTreasury,
-    marginBps: 1000, // 10%
-    protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
-    dkgUtilizationBps: 2500, // 25%
-    computeUtilizationBps: 5000, // 50%
-    decryptUtilizationBps: 2500, // 25%
-    minCommitteeSize: 0,
-    minThreshold: 0,
+  await interfold.setFeeAssetConfig({
+    token: feeTokenAddress,
+    expectedDecimals: 6,
+    pricing: {
+      keyGenFixedPerNode: 100000, // 0.10 USDC
+      keyGenPerEncryptionProof: 50000, // 0.05 USDC
+      coordinationPerPair: 10000, // 0.01 USDC
+      availabilityPerNodePerSec: 50, // 0.00005 USDC
+      decryptionPerNode: 300000, // 0.30 USDC
+      publicationBase: 1000000, // 1.00 USDC
+      verificationPerProof: 5000, // 0.005 USDC
+      protocolTreasury: protocolTreasury,
+      marginBps: 1000, // 10%
+      protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
+      dkgUtilizationBps: 2500, // 25%
+      computeUtilizationBps: 5000, // 50%
+      decryptUtilizationBps: 2500, // 25%
+      minCommitteeSize: 0,
+      minThreshold: 0,
+    },
   });
   console.log("Pricing config set (treasury:", protocolTreasury, ")");
 
   if (mockDeployments) {
     const {
       decryptionVerifierAddress: mockDecryptionVerifierAddress,
+      ciphertextVerifierAddress: mockCiphertextVerifierAddress,
       pkVerifierAddress: mockPkVerifierAddress,
       e3ProgramAddress,
     } = mockDeployments;
@@ -526,6 +545,23 @@ export const deployInterfold = async (
         );
         await tx.wait();
         console.log(`Successfully set MockPkVerifier in Interfold contract`);
+      }
+    }
+
+    if (!shouldHaveZKVerification && mockCiphertextVerifierAddress) {
+      const deployedCiphertextVerifier =
+        await interfold.getCiphertextVerifier(encryptionSchemeId);
+      if (deployedCiphertextVerifier === mockCiphertextVerifierAddress) {
+        console.log("CiphertextVerifier already set in Interfold contract");
+      } else {
+        const tx = await interfold.setCiphertextVerifier(
+          encryptionSchemeId,
+          mockCiphertextVerifierAddress,
+        );
+        await tx.wait();
+        console.log(
+          "Successfully set MockCiphertextVerifier in Interfold contract",
+        );
       }
     }
 

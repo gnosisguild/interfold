@@ -14,9 +14,9 @@ use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_events::{
     hlc::HlcTimestamp, prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized,
-    ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated, E3Requested, E3id,
-    InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated, ProofType,
-    Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    CommitteeRequested, ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated, E3Requested,
+    E3id, InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated,
+    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -42,7 +42,7 @@ use num_bigint::BigUint;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf, sync::Arc};
 use tokio::{
     sync::{broadcast, mpsc},
@@ -1539,6 +1539,7 @@ async fn test_trbfv_actor() -> Result<()> {
     let e3_requested_timer = Instant::now();
     // Trigger actor DKG
     let e3_id = E3id::new("0", 1);
+    let request_block = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 1;
 
     println!(
         "Benchmark trbfv: proof_aggregation={proof_aggregation_enabled}, preset={}, pool_threads={pool_threads}, max_concurrent_jobs={concurrent_jobs}",
@@ -1550,11 +1551,21 @@ async fn test_trbfv_actor() -> Result<()> {
         threshold_m,
         threshold_n,
         seed,
+        request_block,
         error_size,
         params_preset: benchmark_params.bfv_preset,
         params,
     };
 
+    bus.publish_without_context(CommitteeRequested {
+        e3_id: e3_id.clone(),
+        seed,
+        threshold: [threshold_m, threshold_n],
+        request_block,
+        committee_deadline: request_block + 30,
+        ticket_price: U256::from(10_000_000u64),
+        chain_id,
+    })?;
     bus.publish_without_context(e3_requested)?;
 
     sleep(Duration::from_millis(500)).await;
@@ -1583,7 +1594,9 @@ async fn test_trbfv_actor() -> Result<()> {
         active_aggregator_index, active_aggregator_addr
     );
 
-    nodes.expect_events(&["E3Requested"]).await?;
+    nodes
+        .expect_events(&["CommitteeRequested", "E3Requested"])
+        .await?;
 
     bus.publish_without_context(CommitteeFinalized {
         e3_id: e3_id.clone(),

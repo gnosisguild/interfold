@@ -28,6 +28,7 @@ export interface InterfoldArgs {
   bondingRegistry?: string;
   e3RefundManager?: string;
   feeToken?: string;
+  feeTokenDecimals?: number;
   timeoutConfig?: E3TimeoutConfig;
   initialE3Program: string;
   hre: HardhatRuntimeEnvironment;
@@ -45,6 +46,7 @@ export const deployAndSaveInterfold = async ({
   bondingRegistry,
   e3RefundManager,
   feeToken,
+  feeTokenDecimals = 6,
   timeoutConfig,
   initialE3Program,
   hre,
@@ -76,6 +78,8 @@ export const deployAndSaveInterfold = async ({
       preDeployedArgs?.constructorArgs?.bondingRegistry === bondingRegistry &&
       preDeployedArgs?.constructorArgs?.e3RefundManager === e3RefundManager &&
       preDeployedArgs?.constructorArgs?.feeToken === feeToken &&
+      preDeployedArgs?.constructorArgs?.feeTokenDecimals ===
+        feeTokenDecimals.toString() &&
       preDeployedArgs?.constructorArgs?.initialE3Program === initialE3Program)
   ) {
     if (!preDeployedArgs?.address) {
@@ -133,26 +137,29 @@ export const deployAndSaveInterfold = async ({
     registry,
     bondingRegistry,
     e3RefundManager,
-    feeToken,
+    {
+      token: feeToken,
+      expectedDecimals: feeTokenDecimals,
+      pricing: {
+        keyGenFixedPerNode: 100000,
+        keyGenPerEncryptionProof: 50000,
+        coordinationPerPair: 10000,
+        availabilityPerNodePerSec: 50,
+        decryptionPerNode: 300000,
+        publicationBase: 1000000,
+        verificationPerProof: 5000,
+        protocolTreasury: "0x0000000000000000000000000000000000000000",
+        marginBps: 1000,
+        protocolShareBps: 0,
+        dkgUtilizationBps: 2500,
+        computeUtilizationBps: 5000,
+        decryptUtilizationBps: 2500,
+        minCommitteeSize: 0,
+        minThreshold: 0,
+      },
+    },
     maxDuration,
     timeoutConfig,
-    {
-      keyGenFixedPerNode: 100000,
-      keyGenPerEncryptionProof: 50000,
-      coordinationPerPair: 10000,
-      availabilityPerNodePerSec: 50,
-      decryptionPerNode: 300000,
-      publicationBase: 1000000,
-      verificationPerProof: 5000,
-      protocolTreasury: "0x0000000000000000000000000000000000000000",
-      marginBps: 1000,
-      protocolShareBps: 0,
-      dkgUtilizationBps: 2500,
-      computeUtilizationBps: 5000,
-      decryptUtilizationBps: 2500,
-      minCommitteeSize: 0,
-      minThreshold: 0,
-    },
     initialE3Program,
   ]);
 
@@ -173,6 +180,7 @@ export const deployAndSaveInterfold = async ({
         bondingRegistry,
         e3RefundManager,
         feeToken,
+        feeTokenDecimals: feeTokenDecimals.toString(),
         maxDuration,
         timeoutConfig: JSON.stringify(timeoutConfig),
         initialE3Program,

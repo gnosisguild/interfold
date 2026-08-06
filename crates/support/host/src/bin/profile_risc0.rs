@@ -7,6 +7,7 @@
 use e3_compute_provider::FHEInputs;
 use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params, BfvPreset};
 use e3_support_host::run_risc0_compute;
+use e3_support_types::ComputeDomain;
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_traits::{FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
@@ -76,7 +77,15 @@ fn main() {
     println!("Calling run_risc0_compute...");
 
     // Call run_risc0_compute
-    match run_risc0_compute(fhe_inputs) {
+    let domain = ComputeDomain::new(
+        31_337,
+        "0x1111111111111111111111111111111111111111",
+        0,
+        &[0x22; 32],
+        &[0x33; 32],
+    )
+    .expect("invalid compute domain");
+    match run_risc0_compute(fhe_inputs, domain) {
         Ok((output, ciphertext)) => {
             println!("Success! RISC0 computation completed");
             println!("Output result: {:?}", output.result);

@@ -31,6 +31,27 @@ import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
 // solhint-disable-next-line max-states-count
 contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
+
+    struct PendingSlashedRoute {
+        IERC20 token;
+        address operator;
+        uint256 amount;
+    }
+
+    struct PendingExpulsion {
+        address operator;
+        bool pending;
+        bool holdsBaseReward;
+    }
+
+    struct OperatorEntitlement {
+        uint256 pendingExpulsions;
+        uint256 baseTopUp;
+        uint256 heldSlash;
+        uint256 heldSuccess;
+        uint256 baseRiskExpulsions;
+        bool excluded;
+    }
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                 Storage Variables                      //
@@ -83,6 +104,25 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     mapping(IERC20 token => uint256 amount) internal _tokenLiability;
     /// @notice Whether successful completion enabled slash settlement for this E3.
     mapping(uint256 e3Id => bool ready) internal _successSettlementReady;
+    /// @notice Reward recipient frozen for each finalized committee member.
+    mapping(uint256 e3Id => mapping(address operator => address recipient))
+        internal _rewardRecipients;
+    /// @notice Proposal-scoped slashed funds waiting for terminal settlement.
+    mapping(uint256 e3Id => mapping(uint256 proposalId => PendingSlashedRoute route))
+        internal _pendingSlashedRoutes;
+    /// @notice Expelling proposals tracked until execution or clearance.
+    mapping(uint256 e3Id => mapping(uint256 proposalId => PendingExpulsion proposal))
+        internal _pendingExpulsions;
+    /// @notice Per-operator reward eligibility and held entitlements.
+    mapping(uint256 e3Id => mapping(address operator => OperatorEntitlement entitlement))
+        internal _operatorEntitlements;
+    /// @notice Ticket-underlying token frozen by the first slash route for an E3.
+    mapping(uint256 e3Id => IERC20 token) internal _e3SlashTokens;
+    /// @notice Fee token used for successful-E3 rewards held by this manager.
+    mapping(uint256 e3Id => IERC20 token) internal _e3SuccessTokens;
+    /// @notice Released or reallocated successful-E3 rewards by account.
+    mapping(uint256 e3Id => mapping(address account => uint256 amount))
+        internal _pendingHeldSuccessClaims;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -98,6 +138,15 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     modifier onlyE3Interfold(uint256 e3Id) {
         E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
         if (!policy.initialized || msg.sender != policy.interfold) {
+            revert Unauthorized();
+        }
+        _;
+    }
+
+    /// @dev Authorizes the slashing manager frozen for an existing E3.
+    modifier onlyE3SlashingManager(uint256 e3Id) {
+        E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
+        if (!policy.initialized || msg.sender != policy.slashingManager) {
             revert Unauthorized();
         }
         _;
@@ -199,8 +248,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             honestNodeAmount = 0;
         }
 
-        // Store distribution. `perNodeAmount` is snapshotted below, AFTER any pending
-        // slashed funds are folded in.
+        // Store the base fee distribution. Slash proceeds stay in a separate ledger.
         _distributions[e3Id] = RefundDistribution({
             requesterAmount: requesterAmount,
             honestNodeAmount: honestNodeAmount,
@@ -253,10 +301,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
                     unclaimableAmount
                 );
             }
-        }
-
-        if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
-            _settleSlashedFunds(e3Id, paymentToken);
         }
 
         emit RefundDistributionCalculated(
@@ -423,11 +467,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             "feeToken not initialized"
         );
 
-        require(
-            !_honestNodeClaimed[e3Id][operator],
-            AlreadyClaimed(e3Id, operator)
-        );
-
         // Check that the supplied operator is an honest node.
         address[] memory nodes = _honestNodes[e3Id];
         bool isHonest = false;
@@ -436,43 +475,38 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
         require(isHonest, NotHonestNode(e3Id, operator));
 
-        address recipient = IBondingRegistry(
-            _e3PolicySnapshots[e3Id].bondingRegistry
-        ).bondOwnerOf(operator);
-        if (recipient == address(0)) recipient = operator;
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        if (entitlement.pendingExpulsions != 0) {
+            revert RewardPendingExpulsion(e3Id, operator);
+        }
+        bool baseClaimable = !_honestNodeClaimed[e3Id][operator] &&
+            !entitlement.excluded;
+        uint256 topUp = entitlement.baseTopUp;
+        if (!baseClaimable && topUp == 0) {
+            revert AlreadyClaimed(e3Id, operator);
+        }
+
+        address recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
         require(msg.sender == recipient, Unauthorized());
 
-        require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
-        // Read the snapshot taken at `calculateRefund` time — immutable for the
-        // distribution's lifetime; post-claim slashed funds remain in the
-        // token-specific slash ledger and never mutate `dist.honestNodeAmount`.
-        uint256 perNodeAmount = dist.perNodeAmount;
-        require(perNodeAmount > 0, NoRefundAvailable(e3Id));
-
-        amount = perNodeAmount;
-        _honestNodeClaimCount[e3Id]++;
-        if (_honestNodeClaimCount[e3Id] == dist.honestNodeCount) {
-            // Route rounding dust to treasury via pull-payment so a reverting/blacklisted
-            // treasury cannot brick the last honest claim. Computed from the snapshot so
-            // the final claim is deterministic.
-            uint256 paidIncludingThis = _totalHonestNodePaid[e3Id] +
-                perNodeAmount;
-            uint256 dust = dist.honestNodeAmount > paidIncludingThis
-                ? dist.honestNodeAmount - paidIncludingThis
-                : 0;
-            if (dust > 0) {
-                address policyTreasury = _treasuryFor(e3Id);
-                _pendingTreasury[policyTreasury][dist.feeToken] += dust;
-                emit TreasurySlashedCredited(
-                    policyTreasury,
-                    dist.feeToken,
-                    dust
-                );
-            }
+        if (baseClaimable) {
+            require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
+            uint256 perNodeAmount = dist.perNodeAmount;
+            require(perNodeAmount > 0, NoRefundAvailable(e3Id));
+            _honestNodeClaimed[e3Id][operator] = true;
+            _consumeBaseReward(e3Id, perNodeAmount);
+            amount = perNodeAmount;
         }
-        _totalHonestNodePaid[e3Id] += amount;
+        if (topUp > 0) {
+            entitlement.baseTopUp = 0;
+            amount += topUp;
+        }
 
-        _honestNodeClaimed[e3Id][operator] = true;
         _claimCount[e3Id]++;
 
         // Direct transfer to the bond owner (refund path; bypasses BondingRegistry
@@ -483,33 +517,69 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit RefundClaimed(e3Id, recipient, amount, "HONEST_NODE");
     }
 
+    function _consumeBaseReward(uint256 e3Id, uint256 amount) internal {
+        RefundDistribution storage dist = _distributions[e3Id];
+        _honestNodeClaimCount[e3Id]++;
+        _totalHonestNodePaid[e3Id] += amount;
+        if (_honestNodeClaimCount[e3Id] != dist.honestNodeCount) return;
+
+        uint256 paid = _totalHonestNodePaid[e3Id];
+        uint256 dust = dist.honestNodeAmount > paid
+            ? dist.honestNodeAmount - paid
+            : 0;
+        if (dust == 0) return;
+        address policyTreasury = _treasuryFor(e3Id);
+        _pendingTreasury[policyTreasury][dist.feeToken] += dust;
+        emit TreasurySlashedCredited(policyTreasury, dist.feeToken, dust);
+    }
+
     /// @inheritdoc IE3RefundManager
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external onlyE3Interfold(e3Id) {
         require(amount > 0, "Zero amount");
+        require(operator != address(0), "Invalid operator");
         require(address(token) != address(0), "Invalid slash token");
+        PendingSlashedRoute storage route = _pendingSlashedRoutes[e3Id][
+            proposalId
+        ];
+        require(route.amount == 0, "Route already escrowed");
 
+        IERC20 expectedToken = _e3SlashTokens[e3Id];
+        if (address(expectedToken) == address(0)) {
+            _e3SlashTokens[e3Id] = token;
+        } else if (expectedToken != token) {
+            revert SlashTokenMismatch(expectedToken, token);
+        }
+
+        route.token = token;
+        route.operator = operator;
+        route.amount = amount;
         _pendingSlashedByToken[e3Id][token] += amount;
         _increaseTokenLiability(token, amount);
 
         if (_distributions[e3Id].calculated || _successSettlementReady[e3Id]) {
-            _settleSlashedFunds(e3Id, token);
+            _settleSlashedFunds(e3Id, proposalId);
         }
 
         emit SlashedFundsEscrowed(e3Id, token, amount);
     }
 
     /// @inheritdoc IE3RefundManager
-    function settleSlashedFunds(uint256 e3Id, IERC20 token) external {
-        require(_pendingSlashedByToken[e3Id][token] > 0, NothingToClaim());
+    function settleSlashedFunds(uint256 e3Id, uint256 proposalId) external {
+        require(
+            _pendingSlashedRoutes[e3Id][proposalId].amount > 0,
+            NothingToClaim()
+        );
         require(
             _distributions[e3Id].calculated || _successSettlementReady[e3Id],
             "E3 not settled"
         );
-        _settleSlashedFunds(e3Id, token);
+        _settleSlashedFunds(e3Id, proposalId);
     }
 
     /// @inheritdoc IE3RefundManager
@@ -520,23 +590,34 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(address(paymentToken) != address(0), "Invalid fee token");
         require(!_successSettlementReady[e3Id], "Already initialized");
         _successSettlementReady[e3Id] = true;
-
-        if (_pendingSlashedByToken[e3Id][paymentToken] > 0) {
-            _settleSlashedFunds(e3Id, paymentToken);
-        }
     }
 
-    function _settleSlashedFunds(uint256 e3Id, IERC20 token) internal {
-        uint256 amount = _pendingSlashedByToken[e3Id][token];
-        _pendingSlashedByToken[e3Id][token] = 0;
+    function _settleSlashedFunds(uint256 e3Id, uint256 proposalId) internal {
+        PendingSlashedRoute memory route = _pendingSlashedRoutes[e3Id][
+            proposalId
+        ];
+        delete _pendingSlashedRoutes[e3Id][proposalId];
+        _pendingSlashedByToken[e3Id][route.token] -= route.amount;
         (address[] memory nodes, ) = ICiphernodeRegistry(
             _e3PolicySnapshots[e3Id].registry
         ).getActiveCommitteeNodes(e3Id);
 
         if (_distributions[e3Id].calculated) {
-            _settleFailedE3Slash(e3Id, token, amount, nodes);
+            _settleFailedE3Slash(
+                e3Id,
+                route.token,
+                route.amount,
+                nodes,
+                route.operator
+            );
         } else {
-            _settleSuccessfulE3Slash(e3Id, token, amount, nodes);
+            _settleSuccessfulE3Slash(
+                e3Id,
+                route.token,
+                route.amount,
+                nodes,
+                route.operator
+            );
         }
     }
 
@@ -544,12 +625,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         IERC20 token,
         uint256 amount,
-        address[] memory nodes
+        address[] memory nodes,
+        address excludedOperator
     ) internal {
         RefundDistribution storage dist = _distributions[e3Id];
         uint256 toHonestNodes = amount;
         uint256 toProtocol;
-        if (nodes.length == 0) {
+        if (_eligibleNodeCount(e3Id, nodes, excludedOperator) == 0) {
             // There is no honest service-provider recipient. Do not turn a
             // punitive slash into requester over-compensation.
             toProtocol = amount;
@@ -557,7 +639,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
         if (token == dist.feeToken) dist.totalSlashed += amount;
 
-        _creditNodeSlashedClaims(e3Id, token, nodes, toHonestNodes);
+        _creditNodeSlashedClaims(
+            e3Id,
+            token,
+            nodes,
+            toHonestNodes,
+            excludedOperator
+        );
         _creditTrackedTreasury(_treasuryFor(e3Id), token, toProtocol);
         emit SlashedFundsApplied(e3Id, token, 0, toHonestNodes);
     }
@@ -566,16 +654,17 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         IERC20 token,
         uint256 amount,
-        address[] memory nodes
+        address[] memory nodes,
+        address excludedOperator
     ) internal {
         uint256 toNodes = (amount * _successSlashedNodeBpsFor(e3Id)) / BPS_BASE;
         uint256 toProtocol = amount - toNodes;
-        if (nodes.length == 0) {
+        if (_eligibleNodeCount(e3Id, nodes, excludedOperator) == 0) {
             toProtocol += toNodes;
             toNodes = 0;
         }
 
-        _creditNodeSlashedClaims(e3Id, token, nodes, toNodes);
+        _creditNodeSlashedClaims(e3Id, token, nodes, toNodes, excludedOperator);
         _creditTrackedTreasury(_treasuryFor(e3Id), token, toProtocol);
         emit SlashedFundsDistributedOnSuccess(e3Id, token, toNodes, toProtocol);
     }
@@ -584,22 +673,45 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         IERC20 token,
         address[] memory nodes,
-        uint256 amount
+        uint256 amount,
+        address excludedOperator
     ) internal {
         if (amount == 0) return;
-        IBondingRegistry e3BondingRegistry = IBondingRegistry(
-            _e3PolicySnapshots[e3Id].bondingRegistry
-        );
-        uint256 perNode = amount / nodes.length;
+        uint256 eligible = _eligibleNodeCount(e3Id, nodes, excludedOperator);
+        uint256 perNode = amount / eligible;
         uint256 distributed;
         for (uint256 i = 0; i < nodes.length; i++) {
-            uint256 nodeAmount = i == nodes.length - 1
-                ? amount - distributed
-                : perNode;
-            address recipient = e3BondingRegistry.bondOwnerOf(nodes[i]);
-            if (recipient == address(0)) recipient = nodes[i];
-            _creditSlashedClaim(e3Id, token, recipient, nodeAmount);
+            address operator = nodes[i];
+            OperatorEntitlement storage entitlement = _operatorEntitlements[
+                e3Id
+            ][operator];
+            if (operator == excludedOperator || entitlement.excluded) continue;
+            eligible--;
+            uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
+            if (entitlement.pendingExpulsions != 0) {
+                entitlement.heldSlash += nodeAmount;
+            } else {
+                address recipient = _rewardRecipients[e3Id][operator];
+                if (recipient == address(0)) {
+                    revert RewardRecipientNotSnapshotted(e3Id, operator);
+                }
+                _creditSlashedClaim(e3Id, token, recipient, nodeAmount);
+            }
             distributed += nodeAmount;
+        }
+    }
+
+    function _eligibleNodeCount(
+        uint256 e3Id,
+        address[] memory nodes,
+        address excludedOperator
+    ) internal view returns (uint256 count) {
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address operator = nodes[i];
+            if (
+                operator != excludedOperator &&
+                !_operatorEntitlements[e3Id][operator].excluded
+            ) count++;
         }
     }
 
@@ -623,6 +735,187 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         _pendingTreasury[account][token] += amount;
         _pendingTrackedTreasury[account][token] += amount;
         emit TreasurySlashedCredited(account, token, amount);
+    }
+
+    function _resolveExpulsionOutcome(
+        uint256 e3Id,
+        address operator,
+        bool expelled,
+        bool baseAtRisk
+    ) internal {
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        if (expelled && !entitlement.excluded) {
+            entitlement.excluded = true;
+            if (baseAtRisk || entitlement.baseTopUp != 0) {
+                _redistributeForfeitedBaseReward(e3Id, operator, baseAtRisk);
+            }
+
+            uint256 heldSlash = entitlement.heldSlash;
+            if (heldSlash > 0) {
+                entitlement.heldSlash = 0;
+                _redistributeHeldSlash(e3Id, operator, heldSlash);
+            }
+
+            uint256 heldSuccess = entitlement.heldSuccess;
+            if (heldSuccess > 0) {
+                entitlement.heldSuccess = 0;
+                _redistributeHeldSuccess(e3Id, operator, heldSuccess);
+            }
+            return;
+        }
+
+        if (
+            !expelled &&
+            !entitlement.excluded &&
+            entitlement.pendingExpulsions == 0
+        ) {
+            address recipient = _rewardRecipients[e3Id][operator];
+            uint256 heldSlash = entitlement.heldSlash;
+            if (heldSlash > 0) {
+                entitlement.heldSlash = 0;
+                _creditSlashedClaim(
+                    e3Id,
+                    _e3SlashTokens[e3Id],
+                    recipient,
+                    heldSlash
+                );
+            }
+
+            uint256 heldSuccess = entitlement.heldSuccess;
+            if (heldSuccess > 0) {
+                entitlement.heldSuccess = 0;
+                _pendingHeldSuccessClaims[e3Id][recipient] += heldSuccess;
+            }
+        }
+    }
+
+    function _redistributeForfeitedBaseReward(
+        uint256 e3Id,
+        address operator,
+        bool includeBaseReward
+    ) internal {
+        uint256 amount = _takeForfeitedBaseReward(
+            e3Id,
+            operator,
+            includeBaseReward
+        );
+        if (amount == 0) return;
+        _creditBaseTopUps(
+            e3Id,
+            operator,
+            _distributions[e3Id].feeToken,
+            amount
+        );
+    }
+
+    function _takeForfeitedBaseReward(
+        uint256 e3Id,
+        address operator,
+        bool includeBaseReward
+    ) internal returns (uint256 amount) {
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        amount = entitlement.baseTopUp;
+        entitlement.baseTopUp = 0;
+        RefundDistribution storage dist = _distributions[e3Id];
+        if (!dist.calculated) return amount;
+        if (!includeBaseReward || _honestNodeClaimed[e3Id][operator]) {
+            return amount;
+        }
+
+        address[] storage nodes = _honestNodes[e3Id];
+        for (uint256 i = 0; i < nodes.length; i++) {
+            if (nodes[i] != operator) continue;
+            _honestNodeClaimed[e3Id][operator] = true;
+            amount += dist.perNodeAmount;
+            _consumeBaseReward(e3Id, dist.perNodeAmount);
+            break;
+        }
+    }
+
+    function _creditBaseTopUps(
+        uint256 e3Id,
+        address operator,
+        IERC20 token,
+        uint256 amount
+    ) internal {
+        address[] memory nodes = _honestNodes[e3Id];
+        uint256 eligible = _eligibleNodeCount(e3Id, nodes, operator);
+        if (eligible == 0) {
+            address treasuryAddress = _treasuryFor(e3Id);
+            _pendingTreasury[treasuryAddress][token] += amount;
+            emit TreasurySlashedCredited(treasuryAddress, token, amount);
+            return;
+        }
+
+        uint256 perNode = amount / eligible;
+        uint256 distributed;
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address node = nodes[i];
+            OperatorEntitlement storage nodeEntitlement = _operatorEntitlements[
+                e3Id
+            ][node];
+            if (node == operator || nodeEntitlement.excluded) continue;
+            eligible--;
+            uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
+            nodeEntitlement.baseTopUp += nodeAmount;
+            distributed += nodeAmount;
+        }
+    }
+
+    function _redistributeHeldSlash(
+        uint256 e3Id,
+        address operator,
+        uint256 amount
+    ) internal {
+        IERC20 token = _e3SlashTokens[e3Id];
+        (address[] memory nodes, ) = ICiphernodeRegistry(
+            _e3PolicySnapshots[e3Id].registry
+        ).getActiveCommitteeNodes(e3Id);
+        if (_eligibleNodeCount(e3Id, nodes, operator) == 0) {
+            _creditTrackedTreasury(_treasuryFor(e3Id), token, amount);
+            return;
+        }
+        _creditNodeSlashedClaims(e3Id, token, nodes, amount, operator);
+    }
+
+    function _redistributeHeldSuccess(
+        uint256 e3Id,
+        address operator,
+        uint256 amount
+    ) internal {
+        IERC20 token = _e3SuccessTokens[e3Id];
+        (address[] memory nodes, ) = ICiphernodeRegistry(
+            _e3PolicySnapshots[e3Id].registry
+        ).getActiveCommitteeNodes(e3Id);
+        uint256 eligible = _eligibleNodeCount(e3Id, nodes, operator);
+        if (eligible == 0) {
+            address treasuryAddress = _treasuryFor(e3Id);
+            _pendingTreasury[treasuryAddress][token] += amount;
+            return;
+        }
+
+        uint256 perNode = amount / eligible;
+        uint256 distributed;
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address node = nodes[i];
+            OperatorEntitlement storage entitlement = _operatorEntitlements[
+                e3Id
+            ][node];
+            if (node == operator || entitlement.excluded) continue;
+            eligible--;
+            uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
+            if (entitlement.pendingExpulsions != 0) {
+                entitlement.heldSuccess += nodeAmount;
+            } else {
+                address recipient = _rewardRecipients[e3Id][node];
+                _pendingHeldSuccessClaims[e3Id][recipient] += nodeAmount;
+            }
+            distributed += nodeAmount;
+        }
     }
 
     ////////////////////////////////////////////////////////////
@@ -707,6 +1000,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         snapshot.bondingRegistry = address(
             IInterfold(msg.sender).bondingRegistry()
         );
+        snapshot.slashingManager = address(
+            IInterfold(msg.sender).slashingManager()
+        );
+        require(
+            snapshot.slashingManager != address(0),
+            InvalidSlashingManager()
+        );
         snapshot.version = policyVersion;
         snapshot.initialized = true;
         emit E3PolicySnapshotted(
@@ -716,8 +1016,160 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             msg.sender,
             registry,
             snapshot.bondingRegistry,
+            snapshot.slashingManager,
             _workAllocation
         );
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function snapshotRewardRecipients(
+        uint256 e3Id,
+        address[] calldata operators
+    ) external onlyE3Interfold(e3Id) {
+        IBondingRegistry e3BondingRegistry = IBondingRegistry(
+            _e3PolicySnapshots[e3Id].bondingRegistry
+        );
+        for (uint256 i = 0; i < operators.length; i++) {
+            address operator = operators[i];
+            if (_rewardRecipients[e3Id][operator] != address(0)) {
+                revert RewardRecipientAlreadySnapshotted(e3Id, operator);
+            }
+            address recipient = e3BondingRegistry.bondOwnerOf(operator);
+            if (recipient == address(0)) recipient = operator;
+            _rewardRecipients[e3Id][operator] = recipient;
+            emit RewardRecipientSnapshotted(e3Id, operator, recipient);
+        }
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function rewardRecipient(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient) {
+        recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function rewardDisposition(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient, bool held) {
+        recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        held = entitlement.pendingExpulsions != 0;
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function openExpulsionProposal(
+        uint256 e3Id,
+        uint256 proposalId,
+        address operator
+    ) external onlyE3SlashingManager(e3Id) {
+        require(operator != address(0), "Invalid operator");
+        PendingExpulsion storage proposal = _pendingExpulsions[e3Id][
+            proposalId
+        ];
+        require(!proposal.pending, "Proposal already pending");
+        if (_rewardRecipients[e3Id][operator] == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
+        proposal.operator = operator;
+        proposal.pending = true;
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        proposal.holdsBaseReward = !_distributions[e3Id].calculated;
+        entitlement.pendingExpulsions++;
+        if (proposal.holdsBaseReward) entitlement.baseRiskExpulsions++;
+        emit ExpulsionProposalStatusChanged(
+            e3Id,
+            proposalId,
+            operator,
+            true,
+            false
+        );
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function resolveExpulsionProposal(
+        uint256 e3Id,
+        uint256 proposalId,
+        bool expelled
+    ) external onlyE3SlashingManager(e3Id) {
+        PendingExpulsion storage proposal = _pendingExpulsions[e3Id][
+            proposalId
+        ];
+        if (!proposal.pending) {
+            revert ExpulsionProposalNotPending(e3Id, proposalId);
+        }
+        address operator = proposal.operator;
+        proposal.pending = false;
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        bool baseAtRisk = entitlement.baseRiskExpulsions != 0;
+        entitlement.pendingExpulsions--;
+        if (proposal.holdsBaseReward) entitlement.baseRiskExpulsions--;
+        _resolveExpulsionOutcome(e3Id, operator, expelled, baseAtRisk);
+        emit ExpulsionProposalStatusChanged(
+            e3Id,
+            proposalId,
+            operator,
+            false,
+            expelled
+        );
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function holdSuccessReward(
+        uint256 e3Id,
+        address operator,
+        IERC20 token,
+        uint256 amount
+    ) external onlyE3Interfold(e3Id) {
+        require(amount > 0, "No reward");
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        if (entitlement.pendingExpulsions == 0 || entitlement.excluded) {
+            revert RewardPendingExpulsion(e3Id, operator);
+        }
+        IERC20 expected = _e3SuccessTokens[e3Id];
+        if (address(expected) == address(0)) {
+            _e3SuccessTokens[e3Id] = token;
+        } else if (expected != token) {
+            revert RewardTokenMismatch(expected, token);
+        }
+        entitlement.heldSuccess += amount;
+        emit SuccessRewardHeld(e3Id, operator, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function claimHeldSuccessReward(
+        uint256 e3Id
+    ) external returns (uint256 amount) {
+        amount = _pendingHeldSuccessClaims[e3Id][msg.sender];
+        require(amount > 0, NothingToClaim());
+        _pendingHeldSuccessClaims[e3Id][msg.sender] = 0;
+        IERC20 token = _e3SuccessTokens[e3Id];
+        _transferPreservingSlashedLiability(token, msg.sender, amount);
+        emit HeldSuccessRewardClaimed(e3Id, msg.sender, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function pendingHeldSuccessReward(
+        uint256 e3Id,
+        address account
+    ) external view returns (uint256 amount) {
+        return _pendingHeldSuccessClaims[e3Id][account];
     }
 
     function _treasuryFor(uint256 e3Id) internal view returns (address) {
@@ -876,5 +1328,5 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[50] private __gap;
+    uint256[43] private __gap;
 }

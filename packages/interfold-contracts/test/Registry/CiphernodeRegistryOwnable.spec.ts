@@ -10,10 +10,14 @@ import { CiphernodeRegistryOwnable__factory as CiphernodeRegistryFactory } from 
 import {
   ADDRESS_ONE as AddressOne,
   ADDRESS_TWO as AddressTwo,
+  SEVEN_DAYS,
+  TICKET_PRICE,
   deployInterfoldSystem,
   encodeMockDkgProof,
   ethers,
   networkHelpers,
+  setBondingAssetConfig,
+  setupOperatorForSortition,
 } from "../fixtures";
 
 const { loadFixture } = networkHelpers;
@@ -34,8 +38,7 @@ describe("CiphernodeRegistryOwnable", function () {
   async function setup() {
     const sys = await deployInterfoldSystem({
       submissionWindow: SORTITION_SUBMISSION_WINDOW,
-      bfvParams: "large",
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
     });
     const request = (signer?: Signer) =>
       makeRequest(
@@ -228,6 +231,104 @@ describe("CiphernodeRegistryOwnable", function () {
       }
     });
 
+    it("uses one ticket price for the full submission window", async function () {
+      const {
+        owner,
+        registry,
+        bondingRegistry,
+        operator1,
+        operator2,
+        operator3,
+        request,
+      } = await loadFixture(setup);
+
+      await registry.connect(owner).setSortitionSubmissionWindow(30);
+      await request();
+      expect(await registry.sortitionTicketPrices(0)).to.equal(TICKET_PRICE);
+
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE * 2n,
+      });
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+      await registry.connect(operator1).submitTicket(0, 10);
+
+      await setBondingAssetConfig(bondingRegistry, {
+        ticketPrice: TICKET_PRICE / 2n,
+      });
+      await bondingRegistry.refreshOperatorStatuses([
+        await operator1.getAddress(),
+        await operator2.getAddress(),
+        await operator3.getAddress(),
+      ]);
+
+      await expect(
+        registry.connect(operator2).submitTicket.staticCall(0, 11),
+      ).to.be.revertedWithCustomError(registry, "InvalidTicketNumber");
+      await registry.connect(operator2).submitTicket(0, 10);
+    });
+
+    it("does not admit an operator activated after the seed is known", async function () {
+      const {
+        owner,
+        registry,
+        bondingRegistry,
+        licenseToken,
+        ticketToken,
+        usdcToken,
+        request,
+      } = await loadFixture(setup);
+      const signers = await ethers.getSigners();
+      const lateOperator = signers[5];
+      const lateOperatorAddress = await lateOperator.getAddress();
+
+      await setupOperatorForSortition(
+        lateOperator,
+        owner,
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        registry,
+      );
+      await bondingRegistry
+        .connect(owner)
+        .unbondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+      await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+      const tx = await request();
+      const receipt = await tx.wait();
+      const event = receipt!.logs
+        .map((log: any) => {
+          try {
+            return registry.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((log: any) => log?.name === "CommitteeRequested");
+      const requestBlock = event!.args.requestBlock as bigint;
+
+      await bondingRegistry
+        .connect(owner)
+        .bondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+      expect(await bondingRegistry.isActive(lateOperatorAddress)).to.equal(
+        true,
+      );
+      const [activeAtRequest] = await bondingRegistry.eligibilityAt(
+        lateOperatorAddress,
+        requestBlock - 1n,
+      );
+      expect(activeAtRequest).to.equal(false);
+
+      await expect(
+        registry.connect(lateOperator).submitTicket(0, 1),
+      ).to.be.revertedWithCustomError(registry, "NodeNotEligible");
+    });
+
     it("AUD-M03: fails closed after governance updates until operators refresh", async function () {
       const {
         registry,
@@ -414,12 +515,11 @@ describe("CiphernodeRegistryOwnable", function () {
       await finalizeCommitteeAfterWindow(registry, 0);
 
       await expect(
-        registry.publishCommittee(0, data, dataHash, "0x", "0x"),
+        registry.publishCommittee(0, dataHash, "0x", "0x"),
       ).to.be.revertedWithCustomError(registry, "DkgProofRequired");
       await expect(
         registry.publishCommittee(
           0,
-          data,
           dataHash,
           encodeMockDkgProof(dataHash),
           "0x",
@@ -454,10 +554,10 @@ describe("CiphernodeRegistryOwnable", function () {
         ["0xfafafafa", [dataHash]],
       );
       await expect(
-        registry.publishCommittee(0, data, dataHash, falseProof, "0x01"),
+        registry.publishCommittee(0, dataHash, falseProof, "0x01"),
       ).to.be.revertedWithCustomError(mockPkVerifier, "InvalidProof");
     });
-    it("allows any caller to publish a finalized committee", async function () {
+    it("allows any caller to publish a finalized committee proof", async function () {
       const {
         registry,
         interfold,
@@ -484,15 +584,9 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(
         registry
           .connect(notTheOwner)
-          .publishCommittee(
-            0,
-            data,
-            dataHash,
-            encodeMockDkgProof(dataHash),
-            "0x01",
-          ),
+          .publishCommittee(0, dataHash, encodeMockDkgProof(dataHash), "0x01"),
       )
-        .to.emit(registry, "CommitteePublished")
+        .to.emit(registry, "CommitteeProofPublished")
         .withArgs(
           0,
           [
@@ -500,7 +594,6 @@ describe("CiphernodeRegistryOwnable", function () {
             await operator1.getAddress(),
             await operator2.getAddress(),
           ],
-          data,
           dataHash,
           encodeMockDkgProof(dataHash),
         );
@@ -530,14 +623,13 @@ describe("CiphernodeRegistryOwnable", function () {
 
       await registry.publishCommittee(
         0,
-        data,
         dataHash,
         encodeMockDkgProof(dataHash),
         "0x01",
       );
       expect(await registry.committeePublicKey(0)).to.equal(dataHash);
     });
-    it("emits a CommitteePublished event", async function () {
+    it("lets a valid public-key candidate follow an invalid one", async function () {
       const {
         registry,
         interfold,
@@ -547,6 +639,7 @@ describe("CiphernodeRegistryOwnable", function () {
         operator1,
         operator2,
         operator3,
+        notTheOwner,
       } = await loadFixture(setup);
       await makeRequest(
         interfold,
@@ -561,15 +654,41 @@ describe("CiphernodeRegistryOwnable", function () {
       await registry.connect(operator3).submitTicket(0, 1);
       await finalizeCommitteeAfterWindow(registry, 0);
 
+      await registry.publishCommittee(
+        0,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
+
+      const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
+      await expect(registry.publishCommitteePublicKey(0, "0x"))
+        .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
+        .withArgs(0, maxLength);
+      const oversizedKey = ethers.hexlify(
+        new Uint8Array(Number(maxLength) + 1),
+      );
+      await expect(registry.publishCommitteePublicKey(0, oversizedKey))
+        .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
+        .withArgs(maxLength + 1n, maxLength);
+
       await expect(
-        await registry.publishCommittee(
-          0,
-          data,
-          dataHash,
-          encodeMockDkgProof(dataHash),
-          "0x01",
-        ),
+        registry.connect(notTheOwner).publishCommitteePublicKey(0, "0xdead"),
       )
+        .to.emit(registry, "CommitteePublished")
+        .withArgs(
+          0,
+          [
+            await operator3.getAddress(),
+            await operator1.getAddress(),
+            await operator2.getAddress(),
+          ],
+          "0xdead",
+          dataHash,
+          "0x",
+        );
+
+      await expect(registry.publishCommitteePublicKey(0, data))
         .to.emit(registry, "CommitteePublished")
         .withArgs(
           0,
@@ -580,7 +699,7 @@ describe("CiphernodeRegistryOwnable", function () {
           ],
           data,
           dataHash,
-          encodeMockDkgProof(dataHash),
+          "0x",
         );
     });
   });
@@ -757,7 +876,6 @@ describe("CiphernodeRegistryOwnable", function () {
 
       await registry.publishCommittee(
         e3Id,
-        data,
         dataHash,
         encodeMockDkgProof(dataHash),
         "0x01",

@@ -665,25 +665,29 @@ phase.
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
-  ├─ Reads chain state to confirm committee public key is still unset
+  ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishCommittee(
-       e3_id, publicKey, pkCommitment, proof, dkgAttestationBundle
-     )
+  ├─ Calls contract.publishCommittee(
+  │    e3_id, pkCommitment, proof, dkgAttestationBundle
+  │  ) when the commitment is unset
+  └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
+     commitment is available, including after restart
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
         │  │  publishCommittee(                                  │
-        │  │    e3Id, publicKey, pkCommitment, proof, attestations│
+        │  │    e3Id, pkCommitment, proof, attestations          │
         │  │  ) {                                                │
         │  │    1. require(stage == Finalized)                   │
-        │  │    2. require(c.publicKey == 0) — publish once      │
-        │  │    3. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
+        │  │    2. require(activeCount >= threshold[0])          │
+        │  │       → A non-viable committee cannot publish a key │
+        │  │    3. require(c.publicKey == 0) — publish once      │
+        │  │    4. committeeHash = keccak256(abi.encodePacked(c.topNodes)) │
         │  │       c.committeeHash = committeeHash               │
-        │  │    4. require(proof.length > 0)                    │
+        │  │    5. require(proof.length > 0)                    │
         │  │       require(e3.pkVerifier.verify(                │
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
@@ -696,9 +700,9 @@ phase.
         │  │         • last PI == pkCommitment                   │
         │  │         • M-35: revert on failure (no `bool false`) │
         │  │       and verify/store per-node fold attestations   │
-        │  │    5. c.publicKey = pkCommitment                    │
+        │  │    6. c.publicKey = pkCommitment                    │
         │  │       publicKeyHashes[e3Id] = pkCommitment          │
-        │  │    6. interfold.onCommitteePublished(e3Id, pkCommitment) │
+        │  │    7. interfold.onCommitteePublished(e3Id, pkCommitment) │
         │  │       │                                             │
         │  │       │  ┌─ Interfold.sol ────────────────────────┐  │
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
@@ -709,8 +713,15 @@ phase.
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
-        │  │    7. Emit CommitteePublished(                    │
-        │  │         e3Id, c.topNodes, publicKey, pkCommitment, proof) │
+        │  │    8. Emit CommitteeProofPublished(                │
+        │  │         e3Id, c.topNodes, pkCommitment, proof)     │
+        │  │                                                     │
+        │  │  publishCommitteePublicKey(e3Id, publicKey) {      │
+        │  │    1. require the proven commitment                │
+        │  │    2. require 0 < publicKey.length <= 256 KiB      │
+        │  │    3. Emit CommitteePublished with the candidate,  │
+        │  │       stored commitment, and empty compatibility   │
+        │  │       proof field                                  │
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
 ```
@@ -726,14 +737,17 @@ an attestation. The registry uses the same frozen verifier when the committee pu
 attestation from another registry or verifier therefore fails even when both registries use the same
 E3 ID and committee.
 
-The serialized `publicKey` event field is a transport hint, not on-chain authority. Before
-`e3-indexer` stores it in `E3.committee_public_key`, it decodes the BFV key, recomputes the
-circuit's public-key commitment using the request's parameter set, and requires equality with the
-event's on-chain `pkCommitment`. TypeScript event consumers receive the same `pkCommitment` and use
-`InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes; the default application
-does this before advancing to encryption. Malformed bytes or bytes for a different key fail closed
-and never reach first-party encryption clients. Production verifies the C5-backed final DKG proof
-on-chain; the explicit test/CI skip mode works only with mock verifiers that trust its placeholder.
+The serialized `publicKey` event field is a transport hint, not on-chain authority. Proof-backed
+committee publication does not accept it. A separate permissionless function emits bounded key
+candidates and remains usable after an invalid candidate, so a front-run transaction cannot consume
+the only transport slot. Before `e3-indexer` stores it in `E3.committee_public_key`, it decodes the
+BFV key, recomputes the circuit's public-key commitment using the request's parameter set, and
+requires equality with the event's on-chain `pkCommitment`. TypeScript event consumers receive the
+same `pkCommitment` and use `InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes;
+the default application does this before advancing to encryption. Malformed bytes or bytes for a
+different key fail closed and never reach first-party encryption clients. Production verifies the
+C5-backed final DKG proof on-chain; the explicit test/CI skip mode works only with mock verifiers
+that trust its placeholder.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
@@ -774,9 +788,17 @@ Data providers submit encrypted inputs:
 
 ### Ciphertext Output Publication
 
-The RISC Zero guest commits the output hash, SAFE commitment, parameter hash, and input root in that
-order. Boundless returns this journal to the support app. The app forwards the journal's commitment
-in the callback. CRISP reconstructs the same 528-byte serialization before it verifies the receipt.
+The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
+encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
+root. RISC Zero serializes these fields as a 1,188-byte journal. The support app returns the seal,
+parameter hash, and input root in one ABI-encoded proof.
+
+The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
+program reconstructs the application fields from its state. Both contracts verify the same receipt.
+An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
+The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
+commitments, with a minimum depth of one. The compute provider and E3 program must use this same
+leaf value, order, zero value, and depth rule.
 
 ```
 Compute provider runs computation on encrypted data:
@@ -792,15 +814,19 @@ Compute provider runs computation on encrypted data:
     │  │       → Input window must have closed                   │
     │  │    4. require(e3.ciphertextOutput == 0)                │
     │  │       → Can only publish once                           │
-│  │    5. e3.ciphertextOutput = keccak256(output)           │
-│  │       e3.ciphertextCommitment = commitment               │
-│  │    6. e3Program.verify(e3Id, hash, commitment, proof)   │
-    │  │       → Program binds the output and SAFE commitment    │
-    │  │       → Must return true                                │
-    │  │    7. stage = CiphertextReady                           │
-    │  │    8. decryptionDeadline = now + decryptionWindow       │
-│  │    9. Emit CiphertextOutputPublished(e3Id, output, commitment) │
-    │  │   10. Emit E3StageChanged(CiphertextReady)              │
+    │  │    5. require(activeCount >= threshold[0])              │
+    │  │       → The request-time committee is still viable      │
+│  │    6. Save output hash and SAFE commitment               │
+│  │       Set stage and decryption deadline                  │
+│  │       → A later revert restores all prior state          │
+│  │    7. schemeVerifier.verify(...)                         │
+│  │       → Checks the protocol fields in the compute receipt│
+│  │       → Must return true                                 │
+│  │    8. e3Program.verify(...)                              │
+│  │       → Checks the application fields in the same receipt│
+│  │       → Must return true                                 │
+│  │    9. Emit CiphertextOutputPublished(...)                │
+│  │   10. Emit E3StageChanged(CiphertextReady)               │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
@@ -988,7 +1014,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
         │  │    2. require(now <= decryptionDeadline)            │
-        │  │    3. require(proof.length > 0), recompute          │
+        │  │    3. require(activeCount >= threshold[0])          │
+        │  │       → The request-time committee is still viable  │
+        │  │    4. require(proof.length > 0), recompute          │
         │  │       decryptionDomain = keccak256(abi.encode(      │
         │  │         chainId, address(this), e3Id,               │
         │  │         committeeHash, ciphertextOutput,            │
@@ -1003,8 +1031,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
          │  │       │  proof party IDs and SK/ESM commitments match.│
          │  │       → M-34: c6Fold / C7 VK hashes are immutable.  │
         │  │       → M-35: revert path only (no `bool false`).   │
-        │  │    4. stage = Complete                              │
-        │  │    5. _distributeRewards(e3Id)                      │
+        │  │    5. stage = Complete                              │
+        │  │    6. _distributeRewards(e3Id)                      │
         │  │       │                                             │
         │  │       │  ┌─ Reward Distribution (pull, H-01/M-02) ┐  │
         │  │       │  │  1. Get active committee nodes:        │  │
@@ -1024,9 +1052,10 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │       │  │     _pendingTreasury[treasury][token]  │  │
         │  │       │  │       += protocolAmount                │  │
         │  │       │  │     Emit TreasuryCredited(...)         │  │
-        │  │       │  │  5. Resolve each node's bond owner,    │  │
-        │  │       │  │     then credit it (no push):          │  │
-        │  │       │  │     _pendingRewards[e3Id][bondOwner]   │  │
+        │  │       │  │  5. Load each node's recipient frozen │  │
+        │  │       │  │     at committee finalization, then    │  │
+        │  │       │  │     credit it (no push):               │  │
+        │  │       │  │     _pendingRewards[e3Id][recipient]   │  │
         │  │       │  │       += perNode                       │  │
         │  │       │  │     Emit RewardCredited(...)           │  │
         │  │       │  │  6. Emit RewardsDistributed (compat)   │  │

@@ -13,6 +13,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  setPricingConfig,
 } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -35,7 +36,6 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
       e3Id,
-      publicKey,
       pkCommitment,
       encodeMockDkgProof(pkCommitment),
       "0x01",
@@ -46,7 +46,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   // one using MockBlacklistUSDC as the fee token (blacklist isolation tests).
   const makeFixture = (useBlacklistToken: boolean) => async () => {
     const sys = await deployInterfoldSystem({
-      committeeThresholds: [[0, [1, 3]]],
+      committeeThresholds: [[0, [2, 3]]],
       useBlacklistFeeToken: useBlacklistToken,
     });
     const {
@@ -69,7 +69,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     const treasuryAddress = await treasury.getAddress();
 
     // Configure protocol share so treasury actually receives credits
-    await interfold.setPricingConfig({
+    await setPricingConfig(interfold, {
       keyGenFixedPerNode: 100000n,
       keyGenPerEncryptionProof: 50000n,
       coordinationPerPair: 10000n,

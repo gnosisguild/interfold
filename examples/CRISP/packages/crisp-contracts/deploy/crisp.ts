@@ -35,6 +35,21 @@ export const deployCRISPContracts = async () => {
     throw new Error('Interfold address not found, it must be deployed first')
   }
   const interfold = InterfoldFactory.connect(interfoldAddress, owner)
+  const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
+
+  const ciphertextVerifier = await ethers.deployContract('Risc0BfvCiphertextVerifier', [verifier, IMAGE_ID])
+  await ciphertextVerifier.waitForDeployment()
+  const ciphertextVerifierAddress = await ciphertextVerifier.getAddress()
+  storeDeploymentArgs(
+    {
+      address: ciphertextVerifierAddress,
+      blockNumber: await ethers.provider.getBlockNumber(),
+      constructorArgs: { verifier, imageId: IMAGE_ID },
+    },
+    'Risc0BfvCiphertextVerifier',
+    chain,
+  )
+  await (await interfold.setCiphertextVerifier(encryptionSchemeId, ciphertextVerifierAddress)).wait()
 
   const poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
   if (!poseidonT3Address) {
@@ -113,6 +128,7 @@ export const deployCRISPContracts = async () => {
       ----------------------------------------------------------------------
       Interfold: ${interfoldAddress}
       Risc0Verifier: ${verifier}
+      Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}

@@ -73,11 +73,11 @@ export const setupAndPublishCommittee = async (
   }
   await registry.publishCommittee(
     e3Id,
-    publicKey,
     pkCommitment,
     committeeProof,
     dkgAttestationBundle,
   );
+  await registry.publishCommitteePublicKey(e3Id, publicKey);
 };
 
 /**

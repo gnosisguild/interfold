@@ -22,6 +22,8 @@ pub struct E3Requested {
     pub threshold_n: usize,
     /// Shared per-E3 seed for deterministic ticket scoring.
     pub seed: Seed,
+    /// Timestamp-mode checkpoint recorded when the E3 was requested.
+    pub request_block: u64,
     /// The error size for the FHE computation. This can be calculated for the E3 program based on
     /// the size of the ciphertext and the depth of the program [tbd add link]
     pub error_size: ArcBytes,
@@ -41,6 +43,7 @@ impl Default for E3Requested {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::from_bytes(&[]),
             seed: Seed([0u8; 32]),
+            request_block: 0,
             threshold_m: 0,
             threshold_n: 0,
         }

@@ -14,6 +14,11 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
         let threshold_n = msg.threshold_n;
         let buffer = ticket_sortition::calculate_buffer_size(threshold_m, threshold_n);
         let total_selection_size = threshold_n + buffer;
+        let snapshot = self.node_state.get().and_then(|state| {
+            state
+                .get(&chain_id)
+                .and_then(|state| state.sortition_snapshot(&e3_id))
+        });
 
         info!(
             e3_id = %e3_id,
@@ -24,7 +29,46 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
             "Performing Sortition with buffer"
         );
 
-        let node_index = self.get_node_index(e3_id.clone(), seed, total_selection_size, chain_id);
+        let node_index = match snapshot {
+            Some(snapshot)
+                if snapshot.request_block == msg.request_block
+                    && !snapshot.ticket_price.is_zero() =>
+            {
+                self.get_node_index(
+                    e3_id.clone(),
+                    seed,
+                    total_selection_size,
+                    chain_id,
+                    snapshot,
+                )
+            }
+            Some(snapshot) if snapshot.request_block != msg.request_block => {
+                self.bus.err(
+                    EType::Sortition,
+                    anyhow!(
+                        "E3 {} has inconsistent sortition context: request block {} != {}",
+                        e3_id,
+                        msg.request_block,
+                        snapshot.request_block
+                    ),
+                );
+                None
+            }
+            Some(_) => {
+                self.bus.err(
+                    EType::Sortition,
+                    anyhow!("E3 {} has a zero request-time ticket price", e3_id),
+                );
+                None
+            }
+            None => {
+                self.bus.err(
+                    EType::Sortition,
+                    anyhow!("E3 {} has no request-time sortition snapshot", e3_id),
+                );
+                None
+            }
+        };
 
         match &node_index {
             Some((index, ticket_id)) => {

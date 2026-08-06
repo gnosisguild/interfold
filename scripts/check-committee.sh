@@ -5,13 +5,14 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Asserts that the committee selection is internally consistent across the four files
+# Asserts that the committee selection is internally consistent across the five files
 # that encode it independently:
 #
 #   1. circuits/lib/src/configs/committee/active.nr  (Noir-side active committee)
 #   2. circuits/bin/.active-preset.json              (last `pnpm build:circuits` stamp)
 #   3. packages/interfold-contracts/scripts/utils.ts   (BFV_DKG_H / BFV_THRESHOLD_T)
 #   4. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values, single source)
+#   5. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
 #
 # A drift between any two means the next `pnpm build:circuits` would silently produce
 # verifiers / proofs against the wrong committee. Run from .husky/pre-push (or CI).
@@ -28,6 +29,7 @@ ACTIVE_NR="circuits/lib/src/configs/committee/active.nr"
 STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 COMMITTEE_RS="crates/zk-helpers/src/ciphernodes_committee.rs"
+ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
 RAN_STAMP_CHECK=false
 RAN_PARITY_CHECK=false
 
@@ -65,8 +67,9 @@ if [[ ! -f "$COMMITTEE_MOD" ]]; then
 fi
 EXPECTED_H=$(grep -E 'pub global H: u32 = [0-9]+' "$COMMITTEE_MOD" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
 EXPECTED_T=$(grep -E 'pub global T: u32 = [0-9]+' "$COMMITTEE_MOD" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-if [[ -z "${EXPECTED_H:-}" || -z "${EXPECTED_T:-}" ]]; then
-  fail "could not parse H / T from $COMMITTEE_MOD"
+EXPECTED_N=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$COMMITTEE_MOD" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+if [[ -z "${EXPECTED_H:-}" || -z "${EXPECTED_T:-}" || -z "${EXPECTED_N:-}" ]]; then
+  fail "could not parse H / T / N from $COMMITTEE_MOD"
 fi
 
 if [[ "$UTILS_H" != "$EXPECTED_H" || "$UTILS_T" != "$EXPECTED_T" ]]; then
@@ -75,7 +78,22 @@ but $UTILS_TS has BFV_DKG_H=$UTILS_H, BFV_THRESHOLD_T=$UTILS_T. \
 Run: pnpm build:circuits --committee $ACTIVE_COMMITTEE"
 fi
 
-# 4. Optional stamp cross-check (when circuits have been built locally).
+# 4. The Solidity constants must select the same active circuit shape.
+[[ -f "$ACTIVE_SOL" ]] || fail "missing $ACTIVE_SOL"
+SOL_H=$(grep -E 'uint32 internal constant H = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+SOL_T=$(grep -E 'uint32 internal constant T = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+SOL_N=$(grep -E 'uint32 internal constant N = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+SOL_SIZE=$(grep -E 'uint8 internal constant COMMITTEE_SIZE = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+case "$ACTIVE_COMMITTEE" in
+  minimum) EXPECTED_SIZE=0 ;;
+  micro) EXPECTED_SIZE=1 ;;
+  small) EXPECTED_SIZE=2 ;;
+esac
+if [[ "$SOL_H" != "$EXPECTED_H" || "$SOL_T" != "$EXPECTED_T" || "$SOL_N" != "$EXPECTED_N" || "$SOL_SIZE" != "$EXPECTED_SIZE" ]]; then
+  fail "drift: $ACTIVE_SOL has (size=$SOL_SIZE, N=$SOL_N, T=$SOL_T, H=$SOL_H), expected (size=$EXPECTED_SIZE, N=$EXPECTED_N, T=$EXPECTED_T, H=$EXPECTED_H)"
+fi
+
+# 5. Optional stamp cross-check (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
   # Older stamps (written before build-circuits.ts learned about committees) lack the field;
   # treat that as "no cross-check" rather than failing the whole script.
@@ -89,7 +107,7 @@ Either rebuild circuits with the current selection or revert active.nr to match 
   fi
 fi
 
-# 5. Check every Rust enum row against its Noir committee module.
+# 6. Check every Rust enum row against its Noir committee module.
 if [[ ! -f "$COMMITTEE_RS" ]]; then
   fail "missing $COMMITTEE_RS"
 fi
@@ -121,7 +139,7 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 6. Parity matrices for every committee must match what `generate_parity_matrices` would
+# 7. Parity matrices for every committee must match what `generate_parity_matrices` would
 #    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
 #    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
 #    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
@@ -214,4 +232,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

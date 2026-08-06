@@ -144,6 +144,17 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        }
+      ],
+      "name": "SlashPolicyAssetConfigurationMismatch",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "SlashReasonDisabled",
       "type": "error"
@@ -324,6 +335,19 @@
         }
       ],
       "name": "CiphernodeRegistrySet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3DependenciesReleased",
       "type": "event"
     },
     {
@@ -672,6 +696,19 @@
       "type": "event"
     },
     {
+      "inputs": [],
+      "name": "SLASHING_MANAGER_API_VERSION",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -734,6 +771,19 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "closeE3",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -863,6 +913,11 @@
               "internalType": "bool",
               "name": "pending",
               "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "operator",
+              "type": "address"
             }
           ],
           "internalType": "struct ISlashingManager.PendingSlashRoute",
@@ -1361,6 +1416,30 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        }
+      ],
+      "name": "slashPolicyAssetContexts",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        },
+        {
+          "internalType": "uint64",
+          "name": "configurationVersion",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -1432,5 +1511,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-4380efd9123887610385e613739fd2b530bb9f57"
+  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
 }

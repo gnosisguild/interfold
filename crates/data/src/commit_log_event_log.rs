@@ -581,6 +581,7 @@ mod tests {
                     threshold: [2, 3],
                     request_block: 0,
                     committee_deadline: 0,
+                    ticket_price: alloy_primitives::U256::ZERO,
                     chain_id: 1,
                 }
                 .into(),

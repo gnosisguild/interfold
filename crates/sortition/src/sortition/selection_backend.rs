@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::domain::node_registry::NodeStateStore;
+use crate::domain::node_registry::{NodeStateStore, SortitionSnapshot};
 use crate::domain::ticket::{RegisteredNode, Ticket};
 use crate::domain::ticket_sortition::ScoreSortition;
 use alloy::primitives::Address;
@@ -30,6 +30,7 @@ pub trait SortitionList<T> {
         address: T,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> anyhow::Result<bool>;
 
     /// Return an index if `address` appears in the committee under `seed`.
@@ -44,6 +45,7 @@ pub trait SortitionList<T> {
         address: String,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> Result<Option<(u64, Option<u64>)>>;
 
     /// Add a node to the backend. Backends should be idempotent on duplicates.
@@ -74,6 +76,7 @@ impl ScoreBackend {
         chain_id: u64,
         node_state: &NodeStateStore,
         local_address: Address,
+        snapshot: SortitionSnapshot,
     ) -> Vec<RegisteredNode> {
         info!(
             chain_id = chain_id,
@@ -81,6 +84,10 @@ impl ScoreBackend {
             node_state_count = node_state.nodes.len(),
             "Building nodes from state for score sortition"
         );
+
+        let Some(timepoint) = snapshot.request_block.checked_sub(1) else {
+            return Vec::new();
+        };
 
         self.registered
             .iter()
@@ -94,7 +101,7 @@ impl ScoreBackend {
                     );
                     return None;
                 };
-                if !ns.active {
+                if !ns.active_at(timepoint) {
                     info!(
                         address = %addr_str,
                         "Node is not active"
@@ -102,15 +109,16 @@ impl ScoreBackend {
                     return None;
                 }
 
-                let total_tickets = if node_state.ticket_price.is_zero() {
+                let ticket_balance = ns.ticket_balance_at(timepoint);
+                let total_tickets = if snapshot.ticket_price.is_zero() {
                     0u64
                 } else {
-                    (ns.ticket_balance / node_state.ticket_price)
+                    (ticket_balance / snapshot.ticket_price)
                         .try_into()
                         .unwrap_or(0u64)
                 };
                 let count = if n.address == local_address {
-                    node_state.available_tickets(&addr_str)
+                    total_tickets.saturating_sub(ns.active_jobs)
                 } else {
                     total_tickets
                 };
@@ -118,8 +126,8 @@ impl ScoreBackend {
                 if count == 0 {
                     info!(
                         address = %addr_str,
-                        ticket_balance = ?ns.ticket_balance,
-                        ticket_price = ?node_state.ticket_price,
+                        ticket_balance = ?ticket_balance,
+                        ticket_price = ?snapshot.ticket_price,
                         total_tickets = total_tickets,
                         active_jobs = ns.active_jobs,
                         is_local = n.address == local_address,
@@ -150,13 +158,14 @@ impl SortitionList<String> for ScoreBackend {
         address: String,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> anyhow::Result<bool> {
         if size == 0 {
             return Ok(false);
         }
 
         let want: Address = address.parse()?;
-        let nodes = self.build_nodes_from_state(chain_id, node_state, want);
+        let nodes = self.build_nodes_from_state(chain_id, node_state, want, snapshot);
         if nodes.is_empty() {
             return Ok(false);
         }
@@ -190,13 +199,15 @@ impl SortitionList<String> for ScoreBackend {
         address: String,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> anyhow::Result<Option<(u64, Option<u64>)>> {
         if size == 0 {
             return Ok(None);
         }
 
         let want: alloy::primitives::Address = address.parse()?;
-        let nodes: Vec<RegisteredNode> = self.build_nodes_from_state(chain_id, node_state, want);
+        let nodes: Vec<RegisteredNode> =
+            self.build_nodes_from_state(chain_id, node_state, want, snapshot);
 
         if nodes.is_empty() {
             return Ok(None);
@@ -265,7 +276,7 @@ impl SortitionList<String> for ScoreBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::node_registry::NodeState;
+    use crate::domain::node_registry::{NodeState, StateCheckpoint};
     use alloy::primitives::U256;
 
     fn ticket_count(nodes: &[RegisteredNode], address: Address) -> Option<usize> {
@@ -293,6 +304,14 @@ mod tests {
                 ticket_balance: U256::from(30),
                 active_jobs: 2,
                 active: true,
+                ticket_balance_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: U256::from(30),
+                }],
+                active_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: true,
+                }],
             },
         );
         state.nodes.insert(
@@ -301,16 +320,155 @@ mod tests {
                 ticket_balance: U256::from(30),
                 active_jobs: 3,
                 active: true,
+                ticket_balance_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: U256::from(30),
+                }],
+                active_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: true,
+                }],
             },
         );
 
-        let local_view = backend.build_nodes_from_state(1, &state, local);
+        let snapshot = SortitionSnapshot {
+            request_block: 2,
+            ticket_price: U256::from(10),
+        };
+
+        let local_view = backend.build_nodes_from_state(1, &state, local, snapshot);
         assert_eq!(ticket_count(&local_view, local), Some(1));
         assert_eq!(ticket_count(&local_view, remote), Some(3));
 
-        let remote_view = backend.build_nodes_from_state(1, &state, remote);
+        let remote_view = backend.build_nodes_from_state(1, &state, remote, snapshot);
         assert_eq!(ticket_count(&remote_view, local), Some(3));
         assert_eq!(ticket_count(&remote_view, remote), None);
+    }
+
+    #[test]
+    fn uses_the_request_boundary_instead_of_same_timestamp_state() {
+        let address = Address::from([0x33; 20]);
+        let mut backend = ScoreBackend::default();
+        backend.add(address.to_string());
+
+        let mut state = NodeStateStore {
+            ticket_price: U256::from(1),
+            ..Default::default()
+        };
+        state.nodes.insert(
+            address.to_string(),
+            NodeState {
+                ticket_balance: U256::from(100),
+                active_jobs: 0,
+                active: true,
+                ticket_balance_history: vec![
+                    StateCheckpoint {
+                        timepoint: 9,
+                        value: U256::from(30),
+                    },
+                    StateCheckpoint {
+                        timepoint: 10,
+                        value: U256::from(100),
+                    },
+                ],
+                active_history: vec![StateCheckpoint {
+                    timepoint: 9,
+                    value: true,
+                }],
+            },
+        );
+
+        let nodes = backend.build_nodes_from_state(
+            1,
+            &state,
+            address,
+            SortitionSnapshot {
+                request_block: 10,
+                ticket_price: U256::from(10),
+            },
+        );
+
+        assert_eq!(ticket_count(&nodes, address), Some(3));
+    }
+
+    #[test]
+    fn excludes_activation_at_the_request_timestamp() {
+        let address = Address::from([0x44; 20]);
+        let mut backend = ScoreBackend::default();
+        backend.add(address.to_string());
+
+        let mut state = NodeStateStore::default();
+        state.nodes.insert(
+            address.to_string(),
+            NodeState {
+                ticket_balance: U256::from(100),
+                active_jobs: 0,
+                active: true,
+                ticket_balance_history: vec![StateCheckpoint {
+                    timepoint: 9,
+                    value: U256::from(100),
+                }],
+                active_history: vec![StateCheckpoint {
+                    timepoint: 10,
+                    value: true,
+                }],
+            },
+        );
+
+        let nodes = backend.build_nodes_from_state(
+            1,
+            &state,
+            address,
+            SortitionSnapshot {
+                request_block: 10,
+                ticket_price: U256::from(10),
+            },
+        );
+
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn keeps_nodes_that_were_active_at_the_request_boundary() {
+        let address = Address::from([0x55; 20]);
+        let mut backend = ScoreBackend::default();
+        backend.add(address.to_string());
+
+        let mut state = NodeStateStore::default();
+        state.nodes.insert(
+            address.to_string(),
+            NodeState {
+                ticket_balance: U256::from(100),
+                active_jobs: 0,
+                active: false,
+                ticket_balance_history: vec![StateCheckpoint {
+                    timepoint: 9,
+                    value: U256::from(100),
+                }],
+                active_history: vec![
+                    StateCheckpoint {
+                        timepoint: 9,
+                        value: true,
+                    },
+                    StateCheckpoint {
+                        timepoint: 11,
+                        value: false,
+                    },
+                ],
+            },
+        );
+
+        let nodes = backend.build_nodes_from_state(
+            1,
+            &state,
+            address,
+            SortitionSnapshot {
+                request_block: 10,
+                ticket_price: U256::from(10),
+            },
+        );
+
+        assert_eq!(ticket_count(&nodes, address), Some(10));
     }
 }
 
@@ -344,10 +502,11 @@ impl SortitionList<String> for SortitionBackend {
         address: String,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> anyhow::Result<bool> {
         match self {
             SortitionBackend::Score(b) => {
-                b.contains(e3_id, seed, size, address, chain_id, node_state)
+                b.contains(e3_id, seed, size, address, chain_id, node_state, snapshot)
             }
         }
     }
@@ -360,10 +519,11 @@ impl SortitionList<String> for SortitionBackend {
         address: String,
         chain_id: u64,
         node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
     ) -> anyhow::Result<Option<(u64, Option<u64>)>> {
         match self {
             SortitionBackend::Score(b) => {
-                b.get_index(e3_id, seed, size, address, chain_id, node_state)
+                b.get_index(e3_id, seed, size, address, chain_id, node_state, snapshot)
             }
         }
     }

@@ -27,6 +27,8 @@ export interface BondingRegistryArgs {
   slashedFundsTreasury?: string;
   ticketPrice?: string;
   licenseRequiredBond?: string;
+  ticketTokenDecimals?: number;
+  licenseTokenDecimals?: number;
   minTicketBalance?: number;
   exitDelay?: number;
   hre: HardhatRuntimeEnvironment;
@@ -45,6 +47,8 @@ export const deployAndSaveBondingRegistry = async ({
   slashedFundsTreasury,
   ticketPrice,
   licenseRequiredBond,
+  ticketTokenDecimals = 6,
+  licenseTokenDecimals = 0,
   minTicketBalance,
   exitDelay,
   hre,
@@ -76,6 +80,10 @@ export const deployAndSaveBondingRegistry = async ({
       preDeployedArgs?.constructorArgs?.ticketPrice === ticketPrice &&
       preDeployedArgs?.constructorArgs?.licenseRequiredBond ===
         licenseRequiredBond &&
+      preDeployedArgs?.constructorArgs?.ticketTokenDecimals ===
+        ticketTokenDecimals.toString() &&
+      preDeployedArgs?.constructorArgs?.licenseTokenDecimals ===
+        licenseTokenDecimals.toString() &&
       preDeployedArgs?.constructorArgs?.minTicketBalance ===
         minTicketBalance.toString() &&
       preDeployedArgs?.constructorArgs?.exitDelay === exitDelay.toString())
@@ -94,8 +102,33 @@ export const deployAndSaveBondingRegistry = async ({
 
   const blockNumber = await ethers.provider.getBlockNumber();
 
-  const bondingRegistryFactory =
-    await ethers.getContractFactory("BondingRegistry");
+  const assetFactory = await ethers.getContractFactory("BondingAssetLib");
+  const assetLibrary = await assetFactory.deploy();
+  await assetLibrary.waitForDeployment();
+  const assetLibraryAddress = await assetLibrary.getAddress();
+
+  const eligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+  );
+  const eligibilityLibrary = await eligibilityFactory.deploy();
+  await eligibilityLibrary.waitForDeployment();
+  const eligibilityLibraryAddress = await eligibilityLibrary.getAddress();
+
+  const slashingFactory = await ethers.getContractFactory("BondingSlashingLib");
+  const slashingLibrary = await slashingFactory.deploy();
+  await slashingLibrary.waitForDeployment();
+  const slashingLibraryAddress = await slashingLibrary.getAddress();
+
+  const bondingRegistryFactory = await ethers.getContractFactory(
+    "BondingRegistry",
+    {
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
+    },
+  );
 
   const bondingRegistry = await bondingRegistryFactory.deploy();
   await bondingRegistry.waitForDeployment();
@@ -105,12 +138,16 @@ export const deployAndSaveBondingRegistry = async ({
     "initialize",
     [
       owner,
-      ticketToken,
-      licenseToken,
+      {
+        ticketToken,
+        licenseToken,
+        ticketPrice,
+        licenseRequiredBond,
+        expectedTicketDecimals: ticketTokenDecimals,
+        expectedLicenseDecimals: licenseTokenDecimals,
+      },
       registry,
       slashedFundsTreasury,
-      ticketPrice,
-      licenseRequiredBond,
       minTicketBalance,
       exitDelay,
     ],
@@ -126,6 +163,22 @@ export const deployAndSaveBondingRegistry = async ({
   const proxyAdminAddress = await getProxyAdmin(ethers.provider, proxyAddress);
 
   storeDeploymentArgs(
+    { address: assetLibraryAddress, blockNumber },
+    "BondingAssetLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: eligibilityLibraryAddress, blockNumber },
+    "BondingEligibilityLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: slashingLibraryAddress, blockNumber },
+    "BondingSlashingLib",
+    chain,
+  );
+
+  storeDeploymentArgs(
     {
       constructorArgs: {
         owner,
@@ -135,8 +188,15 @@ export const deployAndSaveBondingRegistry = async ({
         slashedFundsTreasury,
         ticketPrice,
         licenseRequiredBond,
+        ticketTokenDecimals: ticketTokenDecimals.toString(),
+        licenseTokenDecimals: licenseTokenDecimals.toString(),
         minTicketBalance: minTicketBalance.toString(),
         exitDelay: exitDelay.toString(),
+      },
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
       },
       proxyRecords: {
         initData,
@@ -194,9 +254,40 @@ export const upgradeAndSaveBondingRegistry = async ({
   );
   console.log("Auto-deployed ProxyAdmin address:", autoProxyAdminAddress);
 
+  const assetFactory = await ethers.getContractFactory(
+    "BondingAssetLib",
+    signer,
+  );
+  const assetLibrary = await assetFactory.deploy();
+  await assetLibrary.waitForDeployment();
+  const assetLibraryAddress = await assetLibrary.getAddress();
+
+  const eligibilityFactory = await ethers.getContractFactory(
+    "BondingEligibilityLib",
+    signer,
+  );
+  const eligibilityLibrary = await eligibilityFactory.deploy();
+  await eligibilityLibrary.waitForDeployment();
+  const eligibilityLibraryAddress = await eligibilityLibrary.getAddress();
+
+  const slashingFactory = await ethers.getContractFactory(
+    "BondingSlashingLib",
+    signer,
+  );
+  const slashingLibrary = await slashingFactory.deploy();
+  await slashingLibrary.waitForDeployment();
+  const slashingLibraryAddress = await slashingLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
-    signer,
+    {
+      signer,
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
+    },
   );
 
   const newImplementation = await bondingRegistryFactory.deploy();
@@ -240,6 +331,11 @@ export const upgradeAndSaveBondingRegistry = async ({
   storeDeploymentArgs(
     {
       ...preDeployedArgs,
+      libraries: {
+        BondingAssetLib: assetLibraryAddress,
+        BondingEligibilityLib: eligibilityLibraryAddress,
+        BondingSlashingLib: slashingLibraryAddress,
+      },
       proxyRecords,
     },
     "BondingRegistry",

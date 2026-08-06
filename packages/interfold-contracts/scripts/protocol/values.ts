@@ -96,6 +96,17 @@ export function pricingConfig(config: PricingConfig) {
 
 export function loadConfig(file = configPath()): ProtocolConfigFile {
   const config = readJson<ProtocolConfigFile>(file);
+  if (
+    !config.interfold ||
+    typeof config.interfold.registerActiveBfvParamSet !== "boolean"
+  ) {
+    throw new Error(
+      "interfold.registerActiveBfvParamSet is required and must be a boolean",
+    );
+  }
+  if (typeof config.feeTokenDecimals !== "number") {
+    throw new Error("feeTokenDecimals is required and must be a number");
+  }
   applyAddressOverride(config, "safe", "safe", "SAFE_ADDRESS");
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
   applyAddressOverride(

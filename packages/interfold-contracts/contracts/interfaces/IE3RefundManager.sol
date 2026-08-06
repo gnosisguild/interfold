@@ -13,6 +13,9 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev Handles refund calculation and claiming for failed E3s
  */
 interface IE3RefundManager {
+    /// @notice The E3 request does not have a configured slashing manager.
+    error InvalidSlashingManager();
+
     /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
     enum FailurePayer {
         None,
@@ -42,6 +45,7 @@ interface IE3RefundManager {
         uint64 version;
         bool initialized;
         address bondingRegistry;
+        address slashingManager;
     }
     /// @notice Refund distribution for a failed E3
     struct RefundDistribution {
@@ -133,7 +137,36 @@ interface IE3RefundManager {
         address interfold,
         address registry,
         address bondingRegistry,
+        address slashingManager,
         WorkValueAllocation allocation
+    );
+    /// @notice Emitted when an expelling proposal starts or reaches a final outcome.
+    event ExpulsionProposalStatusChanged(
+        uint256 indexed e3Id,
+        uint256 indexed proposalId,
+        address indexed operator,
+        bool pending,
+        bool expelled
+    );
+    /// @notice Emitted when a successful E3 holds an accused operator's reward.
+    event SuccessRewardHeld(
+        uint256 indexed e3Id,
+        address indexed operator,
+        IERC20 indexed token,
+        uint256 amount
+    );
+    /// @notice Emitted when an account claims a released or reallocated reward.
+    event HeldSuccessRewardClaimed(
+        uint256 indexed e3Id,
+        address indexed account,
+        IERC20 indexed token,
+        uint256 amount
+    );
+    /// @notice Emitted when an E3 freezes an operator's reward recipient.
+    event RewardRecipientSnapshotted(
+        uint256 indexed e3Id,
+        address indexed operator,
+        address indexed recipient
     );
     /// @notice Emitted when the Interfold address is set
     event InterfoldSet(address indexed interfold);
@@ -164,6 +197,18 @@ interface IE3RefundManager {
     error InsolventToken(IERC20 token, uint256 liability, uint256 balance);
     /// @notice Failure reason has no configured economic responsibility.
     error InvalidFailureReason(IInterfold.FailureReason reason);
+    /// @notice The operator already has a reward recipient for this E3.
+    error RewardRecipientAlreadySnapshotted(uint256 e3Id, address operator);
+    /// @notice The operator has no reward recipient for this E3.
+    error RewardRecipientNotSnapshotted(uint256 e3Id, address operator);
+    /// @notice The proposal is not pending in this E3's entitlement ledger.
+    error ExpulsionProposalNotPending(uint256 e3Id, uint256 proposalId);
+    /// @notice The operator's reward remains held by an unresolved proposal.
+    error RewardPendingExpulsion(uint256 e3Id, address operator);
+    /// @notice A proposal tried to settle a different ticket token for the E3.
+    error SlashTokenMismatch(IERC20 expected, IERC20 actual);
+    /// @notice Held successful rewards for one E3 must use one fee token.
+    error RewardTokenMismatch(IERC20 expected, IERC20 actual);
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -189,9 +234,61 @@ interface IE3RefundManager {
         IInterfold.FailureReason reason
     ) external pure returns (FailurePayer payer);
 
-    /// @notice Freeze the current allocation, treasury, and committee registry for an E3.
+    /// @notice Freeze the current allocation, treasury, and E3 dependencies.
     /// @dev Only Interfold may call this, exactly once, during request creation.
     function snapshotE3Policy(uint256 e3Id, address registry) external;
+
+    /// @notice Freeze reward recipients when an E3 committee is finalized.
+    /// @dev Only the Interfold contract assigned to the E3 may call this once.
+    function snapshotRewardRecipients(
+        uint256 e3Id,
+        address[] calldata operators
+    ) external;
+
+    /// @notice Return an operator's frozen reward recipient for an E3.
+    function rewardRecipient(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient);
+
+    /// @notice Return the frozen recipient and whether its E3 reward is held.
+    function rewardDisposition(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient, bool held);
+
+    /// @notice Record an unresolved proposal that can expel a committee member.
+    function openExpulsionProposal(
+        uint256 e3Id,
+        uint256 proposalId,
+        address operator
+    ) external;
+
+    /// @notice Resolve an expelling proposal and release or reallocate held rewards.
+    function resolveExpulsionProposal(
+        uint256 e3Id,
+        uint256 proposalId,
+        bool expelled
+    ) external;
+
+    /// @notice Hold one successful-E3 reward while expulsion is unresolved.
+    function holdSuccessReward(
+        uint256 e3Id,
+        address operator,
+        IERC20 token,
+        uint256 amount
+    ) external;
+
+    /// @notice Claim a released or reallocated successful-E3 reward.
+    function claimHeldSuccessReward(
+        uint256 e3Id
+    ) external returns (uint256 amount);
+
+    /// @notice Return an account's released successful-E3 reward.
+    function pendingHeldSuccessReward(
+        uint256 e3Id,
+        address account
+    ) external view returns (uint256 amount);
 
     /// @notice Requester claims their refund
     /// @param e3Id The failed E3 ID
@@ -209,18 +306,22 @@ interface IE3RefundManager {
         address operator
     ) external returns (uint256 amount);
 
-    /// @notice Escrow slashed funds — destination decided at terminal state
-    /// @param e3Id The E3 ID
-    /// @param token The actual ticket-underlying token transferred into escrow
-    /// @param amount The slashed amount
+    /// @notice Escrow slashed funds. The destination is decided at terminal state.
+    /// @param e3Id The E3 ID.
+    /// @param proposalId The proposal that produced the funds.
+    /// @param operator The operator whose collateral was slashed.
+    /// @param token The actual ticket-underlying token transferred into escrow.
+    /// @param amount The slashed amount.
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external;
 
-    /// @notice Settle one recorded token after the E3 reaches a terminal state.
-    function settleSlashedFunds(uint256 e3Id, IERC20 token) external;
+    /// @notice Settle one proposal after the E3 reaches a terminal state.
+    function settleSlashedFunds(uint256 e3Id, uint256 proposalId) external;
 
     /// @notice Pull a token-specific slashed-fund entitlement.
     function claimSlashedFunds(

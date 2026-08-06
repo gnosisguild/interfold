@@ -12,6 +12,7 @@ import { ISlashingManager } from "./interfaces/ISlashingManager.sol";
 import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IDecryptionVerifier } from "./interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "./interfaces/IPkVerifier.sol";
+import { ICiphertextVerifier } from "./interfaces/ICiphertextVerifier.sol";
 import {
     Ownable2StepUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
@@ -21,6 +22,7 @@ import {
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { InterfoldLifecycle } from "./lib/InterfoldLifecycle.sol";
 import { InterfoldPricing } from "./lib/InterfoldPricing.sol";
+import { ActiveCryptoConfig } from "./lib/ActiveCryptoConfig.sol";
 
 /**
  * @title Interfold
@@ -41,7 +43,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     uint256 public constant MAX_TIMEOUT_WINDOW = 30 days;
 
     /// @notice Upper bound on configured committee size.
-    uint32 public constant MAX_COMMITTEE_SIZE = 256;
+    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.N;
 
     /// @notice Cap on {PricingConfig.protocolShareBps}. Protocol share
     ///         is hard-capped at 50% so a compromised owner cannot route an
@@ -128,7 +130,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @notice Maps E3 ID to the fee token used at request time
     mapping(uint256 e3Id => IERC20 token) internal _e3FeeTokens;
 
-    /// @notice Maps committee size to threshold values [quorum, total]
+    /// @notice Maps committee size to viability threshold and total members [H, N].
     mapping(CommitteeSize => uint32[2] threshold) public committeeThresholds;
 
     /// @notice Maps E3 ID to the protocol share BPS snapshotted at request time
@@ -208,7 +210,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @param _ciphernodeRegistry The address of the Ciphernode Registry contract.
     /// @param _bondingRegistry The address of the Bonding Registry contract.
     /// @param _e3RefundManager The address of the E3 Refund Manager contract.
-    /// @param _feeToken The address of the ERC20 token used for E3 fees.
+    /// @param feeAssetConfig Fee token and raw-unit pricing configuration.
     /// @param _maxDuration The maximum duration of a computation in seconds.
     /// @param config Initial timeout configuration for E3 lifecycle stages.
     /// @param initialE3Program The E3 Program to allow before ownership transfers.
@@ -217,10 +219,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         ICiphernodeRegistry _ciphernodeRegistry,
         IBondingRegistry _bondingRegistry,
         IE3RefundManager _e3RefundManager,
-        IERC20 _feeToken,
+        FeeAssetConfig calldata feeAssetConfig,
         uint256 _maxDuration,
         E3TimeoutConfig calldata config,
-        PricingConfig calldata pricingConfig,
         IE3Program initialE3Program
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
@@ -229,10 +230,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         setCiphernodeRegistry(_ciphernodeRegistry);
         setBondingRegistry(_bondingRegistry);
         setE3RefundManager(_e3RefundManager);
-        setFeeToken(_feeToken);
+        _setFeeAssetConfig(feeAssetConfig);
         _setTimeoutConfig(config);
-
-        _setPricingConfig(pricingConfig);
 
         registerE3Program(initialE3Program);
 
@@ -273,13 +272,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         );
 
         uint256 e3Fee = getE3Quote(requestParams);
-        InterfoldLifecycle.validateRequest(
-            requestParams.inputWindow,
-            block.timestamp,
-            _timeoutConfig.computeWindow,
-            _timeoutConfig.decryptionWindow,
-            maxDuration
-        );
 
         e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
@@ -347,6 +339,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             address(pkVerifier) != address(0),
             InvalidEncryptionScheme(encryptionSchemeId)
         );
+        InterfoldLifecycle.snapshotCiphertextVerifier(
+            e3Id,
+            encryptionSchemeId,
+            keccak256(e3ProgramParams)
+        );
 
         e3.encryptionSchemeId = encryptionSchemeId;
         e3.decryptionVerifier = decryptionVerifier;
@@ -373,49 +370,18 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external returns (bool success) {
-        E3 memory e3 = getE3(e3Id);
-
-        E3Stage current = _e3Stages[e3Id];
-        E3Deadlines memory deadlines = _e3Deadlines[e3Id];
-        // Validation gates are delegated to {InterfoldLifecycle} (external
-        // library link) to keep the deployed Interfold runtime bytecode under
-        // the EIP-170 24,576-byte cap. Revert selectors are preserved via
-        // shared {IInterfold} error declarations.
-        InterfoldLifecycle.validatePublishCiphertext(
-            e3Id,
-            uint8(current),
-            deadlines.computeDeadline,
-            e3.inputWindow[1],
-            e3.ciphertextOutput,
-            block.timestamp
-        );
-
-        bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
-        e3s[e3Id].ciphertextOutput = ciphertextOutputHash;
-        e3s[e3Id].ciphertextCommitment = ciphertextCommitment;
-        _e3Stages[e3Id] = E3Stage.CiphertextReady;
-        _e3Deadlines[e3Id].decryptionDeadline =
-            block.timestamp +
-            _timeoutConfig.decryptionWindow;
-
-        (success) = e3.e3Program.verify(
-            e3Id,
-            ciphertextOutputHash,
-            ciphertextCommitment,
-            proof
-        );
-        require(success, InvalidOutput(ciphertextOutput));
-
-        emit CiphertextOutputPublished(
-            e3Id,
-            ciphertextOutput,
-            ciphertextCommitment
-        );
-        emit E3StageChanged(
-            e3Id,
-            E3Stage.KeyPublished,
-            E3Stage.CiphertextReady
-        );
+        return
+            InterfoldLifecycle.publishCiphertext(
+                e3s,
+                _e3Stages,
+                _e3Deadlines,
+                address(_registryFor(e3Id)),
+                e3Id,
+                _timeoutConfig.decryptionWindow,
+                ciphertextOutput,
+                ciphertextCommitment,
+                proof
+            );
     }
 
     /// @inheritdoc IInterfold
@@ -541,7 +507,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         // Split the ciphernode share and credit each node owner's pull balance.
         uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
             _pendingRewards,
-            _e3Dependencies[e3Id].bonding,
+            refundManager,
             cnAmount,
             e3Id,
             activeNodes,
@@ -600,17 +566,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IInterfold
-    function setFeeToken(IERC20 _feeToken) public onlyOwner {
-        require(
-            address(_feeToken) != address(0) && _feeToken != feeToken,
-            InvalidFeeToken(_feeToken)
-        );
-        feeToken = _feeToken;
-        // Auto allow-list the active fee token so `request()` keeps working
-        // after a rotation. FeeTokenSet provides the rotation receipt; explicit
-        // allow-list changes emit FeeTokenAllowed via setFeeTokenAllowed.
-        _feeTokenAllowed[_feeToken] = true;
-        emit FeeTokenSet(address(_feeToken));
+    function setFeeAssetConfig(
+        FeeAssetConfig calldata config
+    ) external onlyOwner {
+        _setFeeAssetConfig(config);
     }
 
     /// @inheritdoc IInterfold
@@ -664,6 +623,9 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId,
         IDecryptionVerifier decryptionVerifier
     ) external onlyOwner {
+        InterfoldLifecycle.validateDecryptionVerifier(
+            address(decryptionVerifier)
+        );
         require(
             decryptionVerifier != IDecryptionVerifier(address(0)) &&
                 decryptionVerifiers[encryptionSchemeId] != decryptionVerifier,
@@ -678,6 +640,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId,
         IPkVerifier pkVerifier
     ) external onlyOwner {
+        InterfoldLifecycle.validatePkVerifier(address(pkVerifier));
         require(
             address(pkVerifier) != address(0) &&
                 pkVerifiers[encryptionSchemeId] != pkVerifier,
@@ -685,6 +648,18 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         );
         pkVerifiers[encryptionSchemeId] = pkVerifier;
         emit PkVerifierSet(encryptionSchemeId, pkVerifier);
+    }
+
+    /// @inheritdoc IInterfold
+    function setCiphertextVerifier(
+        bytes32 encryptionSchemeId,
+        ICiphertextVerifier ciphertextVerifier
+    ) external onlyOwner {
+        InterfoldLifecycle.setCiphertextVerifier(
+            encryptionSchemeId,
+            ciphertextVerifier
+        );
+        emit CiphertextVerifierSet(encryptionSchemeId, ciphertextVerifier);
     }
 
     /// @inheritdoc IInterfold
@@ -702,25 +677,20 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         emit EncryptionSchemeDisabled(encryptionSchemeId);
     }
 
-    /// @notice Registers or updates ABI-encoded BFV parameters for a param
-    ///         set index.
-    /// @dev Owner may overwrite an existing slot. The previous value
-    ///      is emitted via {ParamSetUpdated} so off-chain consumers can
-    ///      reconcile state. Fresh registrations emit {ParamSetRegistered}.
+    /// @notice Registers the parameter set compiled into the active circuits.
     /// @param paramSet The param set index (0 = Insecure512, 1 = Secure8192, ...).
     /// @param encodedParams ABI-encoded BFV parameters (degree, plaintext_modulus, moduli[]).
     function setParamSet(
         uint8 paramSet,
         bytes calldata encodedParams
     ) external onlyOwner {
-        require(encodedParams.length > 0, "Empty params");
-        bytes memory previous = paramSetRegistry[paramSet];
+        InterfoldLifecycle.validateParamSet(
+            paramSet,
+            keccak256(encodedParams),
+            paramSetRegistry[paramSet].length != 0
+        );
         paramSetRegistry[paramSet] = encodedParams;
-        if (previous.length == 0) {
-            emit ParamSetRegistered(paramSet, encodedParams);
-        } else {
-            emit ParamSetUpdated(paramSet, previous, encodedParams);
-        }
+        emit ParamSetRegistered(paramSet, encodedParams);
     }
 
     /// @notice Sets the E3 Refund Manager contract address
@@ -772,6 +742,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     /// @inheritdoc IInterfold
     function escrowSlashedFunds(
         uint256 e3Id,
+        uint256 proposalId,
+        address operator,
         IERC20 token,
         uint256 amount
     ) external {
@@ -779,21 +751,26 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             msg.sender,
             address(_slashingManagerFor(e3Id))
         );
-        _refundManagerFor(e3Id).escrowSlashedFunds(e3Id, token, amount);
+        _refundManagerFor(e3Id).escrowSlashedFunds(
+            e3Id,
+            proposalId,
+            operator,
+            token,
+            amount
+        );
         emit SlashedFundsEscrowed(e3Id, token, amount);
     }
 
     /// @inheritdoc IInterfold
     function onCommitteeFinalized(uint256 e3Id) external {
-        InterfoldLifecycle.validateRegistryCaller(
+        InterfoldLifecycle.validateAndSnapshotCommitteeFinalization(
             msg.sender,
-            address(_registryFor(e3Id))
+            address(_registryFor(e3Id)),
+            address(_refundManagerFor(e3Id)),
+            e3Id,
+            uint8(_e3Stages[e3Id])
         );
         // Update E3 lifecycle stage - committee finalized, DKG starting
-        E3Stage current = _e3Stages[e3Id];
-        if (current != E3Stage.Requested) {
-            revert InvalidStage(e3Id, E3Stage.Requested, current);
-        }
         _e3Stages[e3Id] = E3Stage.CommitteeFinalized;
         _e3Deadlines[e3Id].dkgDeadline =
             block.timestamp +
@@ -1010,34 +987,35 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ) external onlyOwner {
         PricingConfig memory pc = _pricingConfig;
         InterfoldLifecycle.validateCommitteeThresholds(
+            uint8(size),
             threshold,
             pc.minCommitteeSize,
-            pc.minThreshold,
-            MAX_COMMITTEE_SIZE
+            pc.minThreshold
         );
         committeeThresholds[size] = threshold;
         emit CommitteeThresholdsUpdated(size, threshold);
     }
 
-    /// @inheritdoc IInterfold
-    function setPricingConfig(
-        PricingConfig calldata config
-    ) external onlyOwner {
-        _setPricingConfig(config);
-    }
-
-    function _setPricingConfig(PricingConfig calldata config) internal {
-        // Validation is delegated to {InterfoldPricing.validatePricingConfig}
+    function _setFeeAssetConfig(FeeAssetConfig calldata config) internal {
+        // Validation is delegated to {InterfoldPricing.validateFeeAssetConfig}
         // (external library link) to keep the deployed Interfold runtime
         // bytecode under the EIP-170 24,576-byte cap. Revert selectors are
         // preserved via shared {IInterfold} error declarations.
-        InterfoldPricing.validatePricingConfig(
+        InterfoldPricing.validateFeeAssetConfig(
             config,
             MAX_MARGIN_BPS,
             MAX_PROTOCOL_SHARE_BPS
         );
-        _pricingConfig = config;
-        emit PricingConfigUpdated(config);
+        IERC20 token = IERC20(config.token);
+        feeToken = token;
+        feeTokenDecimals = config.expectedDecimals;
+        _pricingConfig = config.pricing;
+        _feeTokenAllowed[token] = true;
+        emit FeeAssetConfigUpdated(
+            token,
+            config.expectedDecimals,
+            config.pricing
+        );
     }
 
     ////////////////////////////////////////////////////////////
@@ -1056,6 +1034,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     function getE3Quote(
         E3RequestParams calldata requestParams
     ) public view returns (uint256 fee) {
+        InterfoldLifecycle.validateRequest(
+            requestParams.inputWindow,
+            block.timestamp,
+            _timeoutConfig.computeWindow,
+            _timeoutConfig.decryptionWindow,
+            maxDuration
+        );
         require(
             paramSetRegistry[requestParams.paramSet].length > 0,
             "BFV param set not registered"
@@ -1063,14 +1048,6 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint32[2] memory threshold = committeeThresholds[
             requestParams.committeeSize
         ];
-        PricingConfig memory pc = _pricingConfig;
-        InterfoldPricing.validateQuoteThresholds(
-            threshold,
-            uint8(requestParams.committeeSize),
-            pc.minCommitteeSize,
-            pc.minThreshold
-        );
-
         // Pure fee math is delegated to {InterfoldPricing.quote} (external
         // library link) to keep the deployed Interfold runtime bytecode under
         // the EIP-170 24,576-byte cap. Inputs are snapshotted into calldata
@@ -1080,7 +1057,10 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             _pricingConfig,
             _timeoutConfig,
             ciphernodeRegistry.sortitionSubmissionWindow(),
+            requestParams.paramSet,
+            uint8(requestParams.committeeSize),
             threshold,
+            block.timestamp,
             requestParams.inputWindow[0],
             requestParams.inputWindow[1]
         );
@@ -1103,6 +1083,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes32 encryptionSchemeId
     ) external view returns (IPkVerifier) {
         return pkVerifiers[encryptionSchemeId];
+    }
+
+    /// @inheritdoc IInterfold
+    function getCiphertextVerifier(
+        bytes32 encryptionSchemeId
+    ) external view returns (address) {
+        return InterfoldLifecycle.getCiphertextVerifier(encryptionSchemeId);
     }
 
     ////////////////////////////////////////////////////////////
@@ -1203,10 +1190,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             interfaceId == 0x01ffc9a7; // IERC165.supportsInterface selector
     }
 
+    /// @notice Expected decimals for the active fee token.
+    uint8 public feeTokenDecimals;
+
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 }

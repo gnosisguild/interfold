@@ -1165,6 +1165,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-support-types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derivative",
+ "e3-compute-provider",
+ "hex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "e3-user-program"
 version = "0.1.0"
 dependencies = [
@@ -1573,6 +1585,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "e3-compute-provider",
+ "e3-support-types",
  "e3-user-program",
  "risc0-zkvm",
 ]

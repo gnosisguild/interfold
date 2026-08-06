@@ -19,6 +19,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StateCheckpoint<T> {
+    pub timepoint: u64,
+    pub value: T,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SortitionSnapshot {
+    pub request_block: u64,
+    pub ticket_price: U256,
+}
+
 /// State for a single ciphernode.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeState {
@@ -30,6 +42,10 @@ pub struct NodeState {
     pub active_jobs: u64,
     /// Whether this node is active (has met minimum requirements).
     pub active: bool,
+    /// Ticket balances indexed by the EIP-6372 timestamp used on-chain.
+    pub ticket_balance_history: Vec<StateCheckpoint<U256>>,
+    /// Eligibility changes indexed by the EIP-6372 timestamp used on-chain.
+    pub active_history: Vec<StateCheckpoint<bool>>,
 }
 
 impl Default for NodeState {
@@ -38,8 +54,36 @@ impl Default for NodeState {
             ticket_balance: U256::ZERO,
             active_jobs: 0,
             active: false,
+            ticket_balance_history: Vec::new(),
+            active_history: Vec::new(),
         }
     }
+}
+
+impl NodeState {
+    pub fn ticket_balance_at(&self, timepoint: u64) -> U256 {
+        checkpoint_value(&self.ticket_balance_history, timepoint).unwrap_or(U256::ZERO)
+    }
+
+    pub fn active_at(&self, timepoint: u64) -> bool {
+        checkpoint_value(&self.active_history, timepoint).unwrap_or(false)
+    }
+}
+
+fn checkpoint_value<T: Copy>(history: &[StateCheckpoint<T>], timepoint: u64) -> Option<T> {
+    let index = history.partition_point(|checkpoint| checkpoint.timepoint <= timepoint);
+    index.checked_sub(1).map(|index| history[index].value)
+}
+
+fn push_checkpoint<T>(history: &mut Vec<StateCheckpoint<T>>, timepoint: u64, value: T) {
+    if let Some(last) = history.last_mut() {
+        if last.timepoint == timepoint {
+            last.value = value;
+            return;
+        }
+        debug_assert!(last.timepoint < timepoint);
+    }
+    history.push(StateCheckpoint { timepoint, value });
 }
 
 /// Unified state for all nodes across all chains.
@@ -54,6 +98,8 @@ pub struct NodeStateStore {
     /// Tracks which nodes are participating in which E3 jobs so that active-job
     /// counters can be released when the E3 completes or fails.
     pub e3_committees: HashMap<String, Vec<String>>,
+    /// Request-boundary price and timepoint for each E3.
+    pub sortition_snapshots: HashMap<String, SortitionSnapshot>,
 }
 
 impl NodeStateStore {
@@ -88,6 +134,10 @@ impl NodeStateStore {
             .map(|(addr, _)| (addr.clone(), self.available_tickets(addr)))
             .filter(|(_, tickets)| *tickets > 0)
             .collect()
+    }
+
+    pub fn sortition_snapshot(&self, e3_id: &E3id) -> Option<SortitionSnapshot> {
+        self.sortition_snapshots.get(&committee_key(e3_id)).copied()
     }
 }
 
@@ -129,10 +179,12 @@ impl NodeRegistry {
         chain_id: u64,
         operator: String,
         new_balance: U256,
+        timepoint: u64,
     ) {
         let chain_state = store.entry(chain_id).or_default();
         let node = chain_state.nodes.entry(operator.clone()).or_default();
         node.ticket_balance = new_balance;
+        push_checkpoint(&mut node.ticket_balance_history, timepoint, new_balance);
         info!(
             operator = %operator,
             chain_id = chain_id,
@@ -147,10 +199,12 @@ impl NodeRegistry {
         chain_id: u64,
         operator: String,
         active: bool,
+        timepoint: u64,
     ) {
         let chain_state = store.entry(chain_id).or_default();
         let node = chain_state.nodes.entry(operator.clone()).or_default();
         node.active = active;
+        push_checkpoint(&mut node.active_history, timepoint, active);
         info!(
             operator = %operator,
             chain_id = chain_id,
@@ -177,14 +231,35 @@ impl NodeRegistry {
     /// Mark every operator on one chain inactive after an eligibility-policy
     /// update. On-chain status also fails closed until each operator refreshes
     /// against the new policy version.
-    pub fn invalidate_operator_activity(store: &mut HashMap<u64, NodeStateStore>, chain_id: u64) {
+    pub fn invalidate_operator_activity(
+        store: &mut HashMap<u64, NodeStateStore>,
+        chain_id: u64,
+        timepoint: u64,
+    ) {
         let chain_state = store.entry(chain_id).or_default();
         for node in chain_state.nodes.values_mut() {
             node.active = false;
+            push_checkpoint(&mut node.active_history, timepoint, false);
         }
         info!(
             chain_id = chain_id,
             "Invalidated operator activity after eligibility-policy update"
+        );
+    }
+
+    pub fn record_sortition_snapshot(
+        store: &mut HashMap<u64, NodeStateStore>,
+        e3_id: &E3id,
+        request_block: u64,
+        ticket_price: U256,
+    ) {
+        let chain_state = store.entry(e3_id.chain_id()).or_default();
+        chain_state.sortition_snapshots.insert(
+            committee_key(e3_id),
+            SortitionSnapshot {
+                request_block,
+                ticket_price,
+            },
         );
     }
 
@@ -230,6 +305,7 @@ impl NodeRegistry {
         let Some(chain_state) = store.get_mut(&chain_id) else {
             return;
         };
+        chain_state.sortition_snapshots.remove(&key);
 
         let Some(committee_nodes) = chain_state.e3_committees.remove(&key) else {
             info!(

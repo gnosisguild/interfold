@@ -17,6 +17,7 @@ risc0-ethereum-contracts = { workspace = true }
 risc0-zkvm = { workspace = true }
 tokio = { workspace = true }
 e3-compute-provider = { workspace = true }
+e3-support-types = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
 fhe-util = { workspace = true }

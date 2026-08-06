@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 export { VOTE_TYPEHASH, signAndEncodeAttestation } from "./attestation";
+export * from "./assetConfig";
 export { connection, ethers, ignition, networkHelpers } from "./connection";
 export * from "./dkgAttestation";
 export * from "./constants";

@@ -12,20 +12,35 @@ export default buildModule("BondingRegistry", (m) => {
   const slashedFundsTreasury = m.getParameter("slashedFundsTreasury");
   const ticketPrice = m.getParameter("ticketPrice");
   const licenseRequiredBond = m.getParameter("licenseRequiredBond");
+  const expectedTicketDecimals = m.getParameter("expectedTicketDecimals", 6);
+  const expectedLicenseDecimals = m.getParameter("expectedLicenseDecimals", 18);
   const minTicketBalance = m.getParameter("minTicketBalance");
   const exitDelay = m.getParameter("exitDelay");
   const owner = m.getParameter("owner");
 
-  const bondingRegistryImpl = m.contract("BondingRegistry", []);
+  const bondingAssetLib = m.library("BondingAssetLib");
+  const bondingEligibilityLib = m.library("BondingEligibilityLib");
+  const bondingSlashingLib = m.library("BondingSlashingLib");
+  const bondingRegistryImpl = m.contract("BondingRegistry", [], {
+    libraries: {
+      BondingAssetLib: bondingAssetLib,
+      BondingEligibilityLib: bondingEligibilityLib,
+      BondingSlashingLib: bondingSlashingLib,
+    },
+  });
 
   const initData = m.encodeFunctionCall(bondingRegistryImpl, "initialize", [
     owner,
-    ticketToken,
-    licenseToken,
+    {
+      ticketToken,
+      licenseToken,
+      ticketPrice,
+      licenseRequiredBond,
+      expectedTicketDecimals,
+      expectedLicenseDecimals,
+    },
     registry,
     slashedFundsTreasury,
-    ticketPrice,
-    licenseRequiredBond,
     minTicketBalance,
     exitDelay,
   ]);
@@ -36,5 +51,10 @@ export default buildModule("BondingRegistry", (m) => {
     initData,
   ]);
 
-  return { bondingRegistry };
+  return {
+    bondingAssetLib,
+    bondingEligibilityLib,
+    bondingRegistry,
+    bondingSlashingLib,
+  };
 }) as any;

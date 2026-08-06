@@ -18,6 +18,9 @@ pragma solidity 0.8.28;
  *      and reverts on any mismatch.
  */
 interface IPkVerifier {
+    /// @notice Required honest-party count compiled into the verifier.
+    function h() external view returns (uint256);
+
     /// @notice Proof was structurally well-formed but the underlying honk
     ///         verifier rejected it. Used in place of a `bool false` return.
     error InvalidProof();

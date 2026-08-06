@@ -213,6 +213,38 @@
       "inputs": [
         {
           "internalType": "contract IERC20",
+          "name": "feeToken",
+          "type": "address"
+        },
+        {
+          "internalType": "uint8",
+          "name": "expected",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint8",
+          "name": "actual",
+          "type": "uint8"
+        }
+      ],
+      "name": "FeeTokenDecimalsMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "feeToken",
+          "type": "address"
+        }
+      ],
+      "name": "FeeTokenDecimalsUnavailable",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
           "name": "token",
           "type": "address"
         }
@@ -443,6 +475,17 @@
     {
       "inputs": [
         {
+          "internalType": "uint8",
+          "name": "paramSet",
+          "type": "uint8"
+        }
+      ],
+      "name": "ParamSetAlreadyRegistered",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "value",
           "type": "uint256"
@@ -484,6 +527,11 @@
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "UnsupportedCryptoConfig",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -492,6 +540,22 @@
         }
       ],
       "name": "UtilizationBpsExceedsMax",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "actual",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expected",
+          "type": "uint256"
+        }
+      ],
+      "name": "VerifierThresholdMismatch",
       "type": "error"
     },
     {
@@ -543,6 +607,25 @@
         }
       ],
       "name": "CiphertextOutputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract ICiphertextVerifier",
+          "name": "ciphertextVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "CiphertextVerifierSet",
       "type": "event"
     },
     {
@@ -830,162 +913,10 @@
         },
         {
           "indexed": false,
-          "internalType": "bool",
-          "name": "allowed",
-          "type": "bool"
-        }
-      ],
-      "name": "FeeTokenAllowed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "feeToken",
-          "type": "address"
-        }
-      ],
-      "name": "FeeTokenSet",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "data",
-          "type": "bytes"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "inputHash",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "index",
-          "type": "uint256"
-        }
-      ],
-      "name": "InputPublished",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "maxDuration",
-          "type": "uint256"
-        }
-      ],
-      "name": "MaxDurationSet",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
           "internalType": "uint8",
-          "name": "paramSet",
+          "name": "expectedDecimals",
           "type": "uint8"
         },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "encodedParams",
-          "type": "bytes"
-        }
-      ],
-      "name": "ParamSetRegistered",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "uint8",
-          "name": "paramSet",
-          "type": "uint8"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "previousEncodedParams",
-          "type": "bytes"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "newEncodedParams",
-          "type": "bytes"
-        }
-      ],
-      "name": "ParamSetUpdated",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "encryptionSchemeId",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "contract IPkVerifier",
-          "name": "pkVerifier",
-          "type": "address"
-        }
-      ],
-      "name": "PkVerifierSet",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "plaintextOutput",
-          "type": "bytes"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "proof",
-          "type": "bytes"
-        }
-      ],
-      "name": "PlaintextOutputPublished",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
         {
           "components": [
             {
@@ -1066,11 +997,137 @@
           ],
           "indexed": false,
           "internalType": "struct IInterfold.PricingConfig",
-          "name": "config",
+          "name": "pricing",
           "type": "tuple"
         }
       ],
-      "name": "PricingConfigUpdated",
+      "name": "FeeAssetConfigUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "FeeTokenAllowed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "inputHash",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "maxDuration",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxDurationSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "paramSet",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "encodedParams",
+          "type": "bytes"
+        }
+      ],
+      "name": "ParamSetRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IPkVerifier",
+          "name": "pkVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "PkVerifierSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "plaintextOutput",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "PlaintextOutputPublished",
       "type": "event"
     },
     {
@@ -1374,6 +1431,16 @@
           "type": "uint256"
         },
         {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "internalType": "contract IERC20",
           "name": "token",
           "type": "address"
@@ -1395,6 +1462,38 @@
       "outputs": [
         {
           "internalType": "contract IERC20",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "feeTokenDecimals",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getCiphertextVerifier",
+      "outputs": [
+        {
+          "internalType": "address",
           "name": "",
           "type": "address"
         }
@@ -2186,6 +2285,24 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "contract ICiphertextVerifier",
+          "name": "ciphertextVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "setCiphertextVerifier",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "enum IInterfold.CommitteeSize",
           "name": "size",
           "type": "uint8"
@@ -2222,12 +2339,106 @@
     {
       "inputs": [
         {
-          "internalType": "contract IERC20",
-          "name": "_feeToken",
-          "type": "address"
+          "components": [
+            {
+              "internalType": "address",
+              "name": "token",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "expectedDecimals",
+              "type": "uint8"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "keyGenFixedPerNode",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "keyGenPerEncryptionProof",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "coordinationPerPair",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "availabilityPerNodePerSec",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "decryptionPerNode",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "publicationBase",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "verificationPerProof",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "protocolTreasury",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "marginBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "protocolShareBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "dkgUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "computeUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "decryptUtilizationBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "minCommitteeSize",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "minThreshold",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IInterfold.PricingConfig",
+              "name": "pricing",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct IInterfold.FeeAssetConfig",
+          "name": "config",
+          "type": "tuple"
         }
       ],
-      "name": "setFeeToken",
+      "name": "setFeeAssetConfig",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2305,96 +2516,6 @@
           "components": [
             {
               "internalType": "uint256",
-              "name": "keyGenFixedPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "keyGenPerEncryptionProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "coordinationPerPair",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "availabilityPerNodePerSec",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "decryptionPerNode",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "publicationBase",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "verificationPerProof",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "protocolTreasury",
-              "type": "address"
-            },
-            {
-              "internalType": "uint16",
-              "name": "marginBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "protocolShareBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "dkgUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "computeUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint16",
-              "name": "decryptUtilizationBps",
-              "type": "uint16"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minCommitteeSize",
-              "type": "uint32"
-            },
-            {
-              "internalType": "uint32",
-              "name": "minThreshold",
-              "type": "uint32"
-            }
-          ],
-          "internalType": "struct IInterfold.PricingConfig",
-          "name": "config",
-          "type": "tuple"
-        }
-      ],
-      "name": "setPricingConfig",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint256",
               "name": "dkgWindow",
               "type": "uint256"
             },
@@ -2417,6 +2538,19 @@
       "name": "setTimeoutConfig",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "slashingManager",
+      "outputs": [
+        {
+          "internalType": "contract ISlashingManager",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -2445,5 +2579,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-4380efd9123887610385e613739fd2b530bb9f57"
+  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
 }

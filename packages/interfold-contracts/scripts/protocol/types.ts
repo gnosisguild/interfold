@@ -32,6 +32,7 @@ export interface ProtocolConfigFile {
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   feeToken: string;
+  feeTokenDecimals: number;
   protocolTreasury: string;
   slashedFundsTreasury: string;
   slasher: string;
@@ -39,6 +40,8 @@ export interface ProtocolConfigFile {
   bonding: {
     ticketPrice: string;
     licenseRequiredBond: string;
+    ticketTokenDecimals: number;
+    licenseTokenDecimals: number;
     minTicketBalance: string;
     exitDelay: string;
   };
@@ -54,7 +57,7 @@ export interface ProtocolConfigFile {
       quorum: string;
       total: string;
     }>;
-    registerDefaultBfvParamSets: boolean;
+    registerActiveBfvParamSet: boolean;
     allowFeeToken: boolean;
   };
   verifiers?: {
@@ -75,6 +78,9 @@ export interface ProtocolDeployment {
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   bondingRegistryImplementation: string;
+  bondingAssetLib: string;
+  bondingEligibilityLib: string;
+  bondingSlashingLib: string;
   ticketToken: string;
   slashingManager: string;
   poseidonT3: string;
@@ -129,6 +135,9 @@ export interface ProtocolContracts {
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
   bondingRegistryImplementation: string;
+  bondingAssetLib: string;
+  bondingEligibilityLib: string;
+  bondingSlashingLib: string;
 }
 
 export interface ProtocolInterfaces {

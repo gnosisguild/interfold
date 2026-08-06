@@ -62,6 +62,15 @@ describe('encryptNumber', () => {
       expect(await sdk.validatePublicKeyCommitment(publicKey, new Uint8Array(31))).to.equal(false)
     })
 
+    it('should compute a SAFE commitment for encrypted data', async () => {
+      const publicKey = await sdk.generatePublicKey()
+      const ciphertext = await sdk.encryptNumber(10n, publicKey)
+      const commitment = await sdk.computeCiphertextCommitment(ciphertext)
+
+      expect(commitment).to.be.an.instanceof(Uint8Array)
+      expect(commitment.length).to.equal(32)
+    })
+
     it('should encrypt a vector and generate a proof without crashing in a node environent', async () => {
       const publicKey = await sdk.generatePublicKey()
 

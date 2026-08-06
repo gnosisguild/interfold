@@ -15,6 +15,16 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
  * @notice Interface for the main bonding registry that holds operator balance and license bonds
  */
 interface IBondingRegistry {
+    /// @notice Bonding assets and every raw-unit value denominated in them.
+    struct BondingAssetConfig {
+        address ticketToken;
+        address licenseToken;
+        uint256 ticketPrice;
+        uint256 licenseRequiredBond;
+        uint8 expectedTicketDecimals;
+        uint8 expectedLicenseDecimals;
+    }
+
     // ======================
     // Custom Errors
     // ======================
@@ -42,6 +52,24 @@ interface IBondingRegistry {
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
 
+    /// @notice A bonding asset does not expose a valid ERC-20 decimals value.
+    error BondingAssetDecimalsUnavailable(address asset);
+
+    /// @notice A bonding asset decimals value does not match its configuration.
+    error BondingAssetDecimalsMismatch(
+        address asset,
+        uint8 expected,
+        uint8 actual
+    );
+
+    /// @notice Asset rotation is blocked by unfinished work owned by a manager.
+    error AssetConfigurationInUse(
+        address manager,
+        uint256 e3Assignments,
+        uint256 openSlashLocks,
+        uint256 pendingRoutes
+    );
+
     error InvalidConfiguration();
     error NoPendingDeregistration();
     error OnlyRewardDistributor();
@@ -50,9 +78,55 @@ interface IBondingRegistry {
     ///         financial slash proposal against them remains unresolved.
     error OperatorUnderSlash();
 
+    /// @notice Matured collateral remains slashable until every selected
+    ///         committee obligation for the operator reaches a terminal E3.
+    error OperatorInActiveCommittee();
+
     /// @notice Treasury withdrawal or generic routing attempted to consume funds
     ///         reserved for a pending E3 slash route.
     error ReservedSlashedFunds();
+
+    /// @notice The E3 has no frozen slash-fund destination for this manager.
+    error SlashRouteDestinationNotFound(address manager, uint256 e3Id);
+
+    /// @notice A proposal already has a slashed-ticket reservation.
+    error SlashReservationAlreadyExists(address manager, uint256 proposalId);
+
+    /// @notice A proposal has no slashed-ticket reservation.
+    error SlashReservationNotFound(address manager, uint256 proposalId);
+
+    /// @notice A manager still owns slash routes that must finish before revocation.
+    error ManagerHasPendingSlashRoutes(address manager, uint256 count);
+
+    /// @notice A manager still owns E3 assignments that must be closed before revocation.
+    error ManagerHasE3Assignments(address manager, uint256 count);
+
+    /// @notice A manager still owns proposal locks that must finish before revocation.
+    error ManagerHasOpenSlashLocks(address manager, uint256 count);
+
+    /// @notice A manager still owns bans that must be migrated or cleared before revocation.
+    error ManagerHasActiveBans(address manager, uint256 count);
+
+    /// @notice A manager does not implement the required immutable API.
+    error IncompatibleSlashingManager(address manager);
+
+    /// @notice A manager is configured for a different bonding registry.
+    error SlashingManagerBondingMismatch(
+        address manager,
+        address configuredBondingRegistry
+    );
+
+    /// @notice A manager already recorded this proposal lock.
+    error SlashLockAlreadyExists(address manager, uint256 proposalId);
+
+    /// @notice A manager does not own the expected proposal lock.
+    error SlashLockNotFound(address manager, uint256 proposalId);
+
+    /// @notice An E3 slash assignment does not exist for this manager.
+    error E3AssignmentNotFound(address manager, uint256 e3Id);
+
+    /// @notice An E3 assignment cannot close before its lifecycle is terminal.
+    error E3AssignmentNotTerminal(uint256 e3Id);
 
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
@@ -173,17 +247,16 @@ interface IBondingRegistry {
      */
     event SlashedFundsTreasurySet(address indexed treasury);
 
-    /**
-     * @notice Emitted when the ticket token is set
-     * @param ticketToken Address of the ticket token
-     */
-    event TicketTokenSet(address indexed ticketToken);
-
-    /**
-     * @notice Emitted when the license token is set
-     * @param licenseToken Address of the license token
-     */
-    event LicenseTokenSet(address indexed licenseToken);
+    /// @notice Emitted when both bonding asset configurations are updated.
+    event BondingAssetConfigUpdated(
+        InterfoldTicketToken indexed ticketToken,
+        IERC20 indexed licenseToken,
+        uint256 ticketPrice,
+        uint256 licenseRequiredBond,
+        uint8 expectedTicketDecimals,
+        uint8 expectedLicenseDecimals,
+        uint64 indexed configurationVersion
+    );
 
     /**
      * @notice Emitted when governance removes license tokens that are not
@@ -216,6 +289,60 @@ interface IBondingRegistry {
     event SlashingManagerAuthorizationUpdated(
         address indexed slashingManager,
         bool authorized
+    );
+
+    /// @notice Emitted when an E3 freezes its slash-fund destination.
+    event SlashRouteDestinationSnapshotted(
+        address indexed slashingManager,
+        uint256 indexed e3Id,
+        address indexed refundManager
+    );
+
+    /// @notice Emitted when a terminal E3 releases its manager assignment.
+    event SlashRouteDestinationReleased(
+        address indexed slashingManager,
+        uint256 indexed e3Id
+    );
+
+    /// @notice Emitted when a manager opens or closes one proposal lock.
+    event SlashLockUpdated(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        address indexed operator,
+        bool active
+    );
+
+    /// @notice Emitted when a manager changes its ban state for an operator.
+    event ManagerBanUpdated(
+        address indexed slashingManager,
+        address indexed operator,
+        bool banned
+    );
+
+    /// @notice Emitted when a request-time registry snapshots, opens, or
+    ///         releases committee collateral obligations.
+    event CommitteeObligationUpdated(
+        uint256 indexed e3Id,
+        address indexed registry,
+        address indexed operator,
+        bool active
+    );
+
+    /// @notice Emitted when a proposal reserves slashed ticket funds.
+    event SlashedTicketFundsReserved(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        uint256 indexed e3Id,
+        address refundManager,
+        uint256 amount
+    );
+
+    /// @notice Emitted when a proposal routes its reserved ticket funds.
+    event ReservedSlashedTicketFundsRouted(
+        address indexed slashingManager,
+        uint256 indexed proposalId,
+        address indexed refundManager,
+        uint256 amount
     );
 
     /**
@@ -351,6 +478,18 @@ interface IBondingRegistry {
     function isActive(address operator) external view returns (bool);
 
     /**
+     * @notice Check whether an operator was active at an EIP-6372 timepoint.
+     * @param operator Address of the operator
+     * @param timepoint Timestamp-mode checkpoint to query
+     * @return active True when the operator satisfied the eligibility policy at that timepoint
+     * @return activeOperatorCount Number of operators active at that timepoint
+     */
+    function eligibilityAt(
+        address operator,
+        uint256 timepoint
+    ) external view returns (bool active, uint256 activeOperatorCount);
+
+    /**
      * @notice Get the number of currently active operators
      * @return Number of active operators
      */
@@ -385,6 +524,9 @@ interface IBondingRegistry {
      */
     function licenseRequiredBond() external view returns (uint256);
 
+    /// @notice Returns the current bonding-asset identity version.
+    function bondingAssetConfigurationVersion() external view returns (uint64);
+
     /**
      * @notice Get minimum ticket balance required for activation
      * @return Minimum number of tickets required
@@ -398,15 +540,15 @@ interface IBondingRegistry {
     function exitDelay() external view returns (uint64);
 
     /**
-     * @notice Get operator's ticket balance at a specific timepoint (EIP-6372).
+     * @notice Get an operator's ticket balance at an EIP-6372 timepoint.
      * @dev The ticket token uses {block.timestamp} for its voting clock.
      * @param operator Address of the operator
-     * @param blockNumber Timepoint (block.timestamp) to query
+     * @param timepoint Timestamp-mode checkpoint to query
      * @return Ticket balance at the specified timepoint
      */
     function getTicketBalanceAtBlock(
         address operator,
-        uint256 blockNumber
+        uint256 timepoint
     ) external view returns (uint256);
 
     /**
@@ -443,6 +585,20 @@ interface IBondingRegistry {
 
     /// @notice Get slashed ticket funds reserved for retryable E3 routing.
     function reservedSlashedTicketBalance() external view returns (uint256);
+
+    /// @notice Return one proposal-scoped slashed-ticket reservation.
+    function getSlashedTicketReservation(
+        address manager,
+        uint256 proposalId
+    )
+        external
+        view
+        returns (uint256 e3Id, address refundManager, uint256 amount);
+
+    /// @notice Return the number of pending slash routes owned by a manager.
+    function pendingSlashRouteCount(
+        address manager
+    ) external view returns (uint256 count);
 
     /// @notice Get the ticket wrapper whose underlying asset backs ticket slashes.
     function ticketToken() external view returns (InterfoldTicketToken);
@@ -522,6 +678,15 @@ interface IBondingRegistry {
         uint256 maxLicenseAmount
     ) external;
 
+    /// @notice Snapshot, open, or release an E3's committee obligations.
+    /// @dev The current registry snapshots ownership with a zero-address active update.
+    ///      Only that request-time registry may make later updates for the E3.
+    function setCommitteeObligation(
+        uint256 e3Id,
+        address operator,
+        bool active
+    ) external;
+
     // ======================
     // Slashing Functions
     // ======================
@@ -553,16 +718,45 @@ interface IBondingRegistry {
         bytes32 reason
     ) external returns (uint256 actualAmount);
 
-    /// @notice Reserve slashed ticket funds so treasury cannot withdraw them.
-    /// @dev Only callable by the configured slashing manager.
-    function reserveSlashedTicketFunds(uint256 amount) external;
+    /// @notice Freeze the refund manager used by this manager and E3.
+    /// @dev The authorized slashing manager calls this during E3 setup.
+    function snapshotSlashRouteDestination(
+        uint256 e3Id,
+        address refundManager,
+        address interfold
+    ) external;
 
-    /// @notice Route and consume previously reserved slashed ticket funds.
-    /// @dev Only callable by the configured slashing manager.
-    function redirectReservedSlashedTicketFunds(
-        address to,
+    /// @notice Release one terminal E3 assignment from its manager.
+    function releaseSlashRouteDestination(uint256 e3Id) external;
+
+    /// @notice Record one proposal-scoped collateral lock.
+    function openSlashLock(
+        uint256 e3Id,
+        uint256 proposalId,
+        address operator
+    ) external;
+
+    /// @notice Close one proposal-scoped collateral lock.
+    function closeSlashLock(uint256 proposalId, address operator) external;
+
+    /// @notice Set this manager's ban state for an operator.
+    function setOperatorBan(address operator, bool banned) external;
+
+    /// @notice Deliberately clear one retained manager's ban.
+    function clearSlashingManagerBan(
+        address manager,
+        address operator
+    ) external;
+
+    /// @notice Reserve slashed ticket funds for one proposal.
+    function reserveSlashedTicketFunds(
+        uint256 proposalId,
+        uint256 e3Id,
         uint256 amount
     ) external;
+
+    /// @notice Route one proposal's full reservation to its frozen refund manager.
+    function redirectReservedSlashedTicketFunds(uint256 proposalId) external;
 
     // ======================
     // Reward Distribution Functions
@@ -585,19 +779,8 @@ interface IBondingRegistry {
     // Admin Functions
     // ======================
 
-    /**
-     * @notice Set ticket price
-     * @param newTicketPrice New price per ticket
-     * @dev Only callable by contract owner. Invalidates cached operator status.
-     */
-    function setTicketPrice(uint256 newTicketPrice) external;
-
-    /**
-     * @notice Set license bond price required
-     * @param newLicenseRequiredBond New license bond price
-     * @dev Only callable by contract owner. Invalidates cached operator status.
-     */
-    function setLicenseRequiredBond(uint256 newLicenseRequiredBond) external;
+    /// @notice Sets both bonding tokens and their raw-unit values atomically.
+    function setBondingAssetConfig(BondingAssetConfig calldata config) external;
 
     /**
      * @notice Set license active BPS
@@ -619,21 +802,6 @@ interface IBondingRegistry {
      * @dev Only callable by contract owner
      */
     function setExitDelay(uint64 newExitDelay) external;
-
-    /**
-     * @notice Set ticket token
-     * @param newTicketToken New ticket token
-     * @dev Only callable by contract owner
-     */
-    function setTicketToken(InterfoldTicketToken newTicketToken) external;
-
-    /**
-     * @notice Set license token
-     * @param newLicenseToken New license token
-     * @dev Only callable by contract owner. A nonzero token must implement
-     *      `ILockAwareLicenseToken.lockedBalanceOf`.
-     */
-    function setLicenseToken(IERC20 newLicenseToken) external;
 
     /**
      * @notice Send unaccounted license-token surplus to the slashed-funds treasury.

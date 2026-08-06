@@ -15,6 +15,7 @@ import InterfoldModule from "../../ignition/modules/interfold";
 import InterfoldTicketTokenModule from "../../ignition/modules/interfoldTicketToken";
 import InterfoldTokenModule from "../../ignition/modules/interfoldToken";
 import MockCiphernodeRegistryModule from "../../ignition/modules/mockCiphernodeRegistry";
+import MockCiphertextVerifierModule from "../../ignition/modules/mockCiphertextVerifier";
 import mockComputeProviderModule from "../../ignition/modules/mockComputeProvider";
 import MockDecryptionVerifierModule from "../../ignition/modules/mockDecryptionVerifier";
 import MockE3ProgramModule from "../../ignition/modules/mockE3Program";
@@ -31,6 +32,7 @@ import {
   InterfoldToken__factory as InterfoldTokenFactory,
   MockBlacklistUSDC__factory as MockBlacklistUSDCFactory,
   MockCiphernodeRegistry__factory as MockCiphernodeRegistryFactory,
+  MockCiphertextVerifier__factory as MockCiphertextVerifierFactory,
   MockCircuitVerifier__factory as MockCircuitVerifierFactory,
   MockDecryptionVerifier__factory as MockDecryptionVerifierFactory,
   MockE3Program__factory as MockE3ProgramFactory,
@@ -44,6 +46,7 @@ import type { BondingRegistry } from "../../types/contracts/registry/BondingRegi
 import type { CiphernodeRegistryOwnable } from "../../types/contracts/registry/CiphernodeRegistryOwnable";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry";
+import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
 import type { MockE3Program } from "../../types/contracts/test/MockE3Program";
@@ -56,7 +59,6 @@ import { ethers, ignition, networkHelpers } from "./connection";
 import {
   ADDRESS_ONE,
   BFV_PARAMS_DEFAULT,
-  BFV_PARAMS_LARGE,
   COMMITTEE_SIZE_MINIMUM,
   COMMITTEE_THRESHOLDS_DEFAULT,
   DEFAULT_TIMEOUT_CONFIG,
@@ -82,10 +84,8 @@ export interface TimeoutConfig {
 
 /**
  * `[CommitteeSize enum value, [M, N]]` passed to `Interfold.setCommitteeThresholds`.
- * On-chain: `threshold[0]` = viability quorum M (registry `thresholdM`, pricing `m`);
- * `threshold[1]` = committee size N. See {@link COMMITTEE_THRESHOLDS_DEFAULT}
- * (`[T, N]`, test/pricing default) vs {@link COMMITTEE_THRESHOLDS_ONCHAIN} (`[H, N]`,
- * production deploy).
+ * On-chain: `threshold[0]` = required honest roster H and `threshold[1]` =
+ * committee size N. Pricing resolves the circuit threshold T separately.
  */
 export type CommitteeThreshold = [number, [number, number]];
 
@@ -119,10 +119,7 @@ export interface DeployInterfoldSystemOptions {
   wireSlashingManager?: boolean;
   /**
    * `setCommitteeThresholds` pairs to install before operators are onboarded.
-   * Defaults to {@link COMMITTEE_THRESHOLDS_DEFAULT} — `[T, N]` for pricing /
-   * lifecycle specs. Override with {@link COMMITTEE_THRESHOLDS_ONCHAIN} for
-   * production `[H, N]` viability, or {@link COMMITTEE_THRESHOLDS_FAULT_TOLERANCE}
-   * for slashing expulsion harnesses.
+   * Defaults to the canonical `[H, N]` configurations.
    */
   committeeThresholds?: CommitteeThreshold[];
   /**
@@ -139,12 +136,6 @@ export interface DeployInterfoldSystemOptions {
    * Pass `0` to skip operator onboarding entirely.
    */
   setupOperators?: number;
-  /**
-   * BFV parameter set to register as `paramSet 0`.
-   *  - `"default"` → degree 512 (used by short tests)
-   *  - `"large"`   → degree 2048 (used by integration tests)
-   */
-  bfvParams?: "default" | "large";
   /** Program registered atomically by `Interfold.initialize`. */
   initialE3Program?: string;
   /**
@@ -176,6 +167,7 @@ export interface DeployInterfoldSystemOptions {
 export interface InterfoldSystemMocks {
   e3Program: MockE3Program;
   decryptionVerifier: MockDecryptionVerifier;
+  ciphertextVerifier: MockCiphertextVerifier;
   pkVerifier: MockPkVerifier;
   mockComputeProvider: MockComputeProvider;
   /** Only populated when `deployCircuitVerifier: true`. */
@@ -235,8 +227,6 @@ export async function deployInterfoldSystem(
   const timeoutConfig = opts.timeoutConfig ?? DEFAULT_TIMEOUT_CONFIG;
   const wireSlashingManager = opts.wireSlashingManager ?? true;
   const setupOperators = opts.setupOperators ?? 3;
-  const bfvParams =
-    opts.bfvParams === "large" ? BFV_PARAMS_LARGE : BFV_PARAMS_DEFAULT;
   const committeeThresholds: CommitteeThreshold[] =
     opts.committeeThresholds ??
     (COMMITTEE_THRESHOLDS_DEFAULT.map(
@@ -356,6 +346,8 @@ export async function deployInterfoldSystem(
           slashedFundsTreasury: slashedFundsTreasuryAddress,
           ticketPrice: TICKET_PRICE,
           licenseRequiredBond: LICENSE_REQUIRED_BOND,
+          expectedTicketDecimals: 6,
+          expectedLicenseDecimals: 0,
           minTicketBalance: MIN_TICKET_BALANCE,
           exitDelay: SEVEN_DAYS,
         },
@@ -393,7 +385,14 @@ export async function deployInterfoldSystem(
   await (await licenseToken.setClaimSource(claimSource)).wait();
 
   // Fix the BondingRegistry licenseToken placeholder.
-  await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
+  await bondingRegistry.setBondingAssetConfig({
+    ticketToken: await ticketToken.getAddress(),
+    licenseToken: await licenseToken.getAddress(),
+    ticketPrice: TICKET_PRICE,
+    licenseRequiredBond: LICENSE_REQUIRED_BOND,
+    expectedTicketDecimals: 6,
+    expectedLicenseDecimals: 18,
+  });
 
   // Deploy the default program before Interfold so initialization can validate it.
   const { mockE3Program: _mockE3Program } =
@@ -419,6 +418,7 @@ export async function deployInterfoldSystem(
         bondingRegistry: await bondingRegistry.getAddress(),
         e3RefundManager: ADDRESS_ONE, // placeholder — overridden below
         feeToken: await usdcToken.getAddress(),
+        feeTokenDecimals: 6,
         timeoutConfig,
         initialE3Program,
       },
@@ -461,9 +461,9 @@ export async function deployInterfoldSystem(
     await bondingRegistry.getAddress(),
   );
   await ticketToken.setRegistry(await bondingRegistry.getAddress());
+  await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
   await bondingRegistry.setSlashingManager(await slashingManager.getAddress());
   await bondingRegistry.setRewardDistributor(interfoldAddress);
-  await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
 
   if (wireSlashingManager) {
     await interfold.setSlashingManager(await slashingManager.getAddress());
@@ -491,6 +491,13 @@ export async function deployInterfoldSystem(
     owner,
   );
 
+  const { mockCiphertextVerifier: _mockCiphertextVerifier } =
+    await ignition.deploy(MockCiphertextVerifierModule);
+  const ciphertextVerifier = MockCiphertextVerifierFactory.connect(
+    await _mockCiphertextVerifier.getAddress(),
+    owner,
+  );
+
   const { mockPkVerifier: _mockPkVerifier } =
     await ignition.deploy(MockPkVerifierModule);
   const pkVerifier = MockPkVerifierFactory.connect(
@@ -512,7 +519,7 @@ export async function deployInterfoldSystem(
   if (!(await interfold.e3Programs(await e3Program.getAddress()))) {
     await interfold.registerE3Program(await e3Program.getAddress());
   }
-  await interfold.setParamSet(0, bfvParams);
+  await interfold.setParamSet(0, BFV_PARAMS_DEFAULT);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,
     await decryptionVerifier.getAddress(),
@@ -520,6 +527,10 @@ export async function deployInterfoldSystem(
   await interfold.setPkVerifier(
     ENCRYPTION_SCHEME_ID,
     await pkVerifier.getAddress(),
+  );
+  await interfold.setCiphertextVerifier(
+    ENCRYPTION_SCHEME_ID,
+    await ciphertextVerifier.getAddress(),
   );
   if (
     !mockCiphernodeRegistry &&
@@ -598,6 +609,7 @@ export async function deployInterfoldSystem(
     mocks: {
       e3Program,
       decryptionVerifier,
+      ciphertextVerifier,
       pkVerifier,
       mockComputeProvider,
       circuitVerifier,

@@ -35,6 +35,9 @@ interface UpgradePlan {
   proxy: string;
   proxyAdmin: string;
   implementation: string;
+  assetLibrary?: string;
+  eligibilityLibrary?: string;
+  slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   operator: string;
@@ -97,6 +100,9 @@ export async function proposeProxyUpgrade(
     proxy,
     proxyAdmin,
     implementation: deployed.implementation,
+    assetLibrary: deployed.assetLibrary,
+    eligibilityLibrary: deployed.eligibilityLibrary,
+    slashingLibrary: deployed.slashingLibrary,
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     operator: operatorAddress,
@@ -119,6 +125,9 @@ async function deployImplementation(
   deployment: ProtocolDeployment,
 ): Promise<{
   implementation: string;
+  assetLibrary?: string;
+  eligibilityLibrary?: string;
+  slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
 }> {
@@ -163,9 +172,43 @@ async function deployImplementation(
     return { implementation: await deployedAddress(implementation) };
   }
 
-  const contractName =
-    target === "bondingRegistry" ? "BondingRegistry" : "E3RefundManager";
-  const factory = await ethers.getContractFactory(contractName);
+  if (target === "bondingRegistry") {
+    const assetFactory = await ethers.getContractFactory("BondingAssetLib");
+    const asset = await assetFactory.deploy();
+    await asset.waitForDeployment();
+    const assetLibrary = await deployedAddress(asset);
+
+    const eligibilityFactory = await ethers.getContractFactory(
+      "BondingEligibilityLib",
+    );
+    const eligibility = await eligibilityFactory.deploy();
+    await eligibility.waitForDeployment();
+    const eligibilityLibrary = await deployedAddress(eligibility);
+
+    const slashingFactory =
+      await ethers.getContractFactory("BondingSlashingLib");
+    const slashing = await slashingFactory.deploy();
+    await slashing.waitForDeployment();
+    const slashingLibrary = await deployedAddress(slashing);
+
+    const factory = await ethers.getContractFactory("BondingRegistry", {
+      libraries: {
+        BondingAssetLib: assetLibrary,
+        BondingEligibilityLib: eligibilityLibrary,
+        BondingSlashingLib: slashingLibrary,
+      },
+    });
+    const implementation = await factory.deploy();
+    await implementation.waitForDeployment();
+    return {
+      implementation: await deployedAddress(implementation),
+      assetLibrary,
+      eligibilityLibrary,
+      slashingLibrary,
+    };
+  }
+
+  const factory = await ethers.getContractFactory("E3RefundManager");
   const implementation = await factory.deploy();
   await implementation.waitForDeployment();
   return { implementation: await deployedAddress(implementation) };
@@ -215,6 +258,9 @@ Protocol upgrade prepared
   proxy:           ${plan.proxy}
   proxyAdmin:      ${plan.proxyAdmin}
   implementation:  ${plan.implementation}
+  assetLibrary:    ${plan.assetLibrary ?? "(not applicable)"}
+  eligibilityLibrary: ${plan.eligibilityLibrary ?? "(not applicable)"}
+  slashingLibrary: ${plan.slashingLibrary ?? "(not applicable)"}
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}

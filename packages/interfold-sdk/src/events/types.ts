@@ -89,6 +89,7 @@ export interface CommitteeRequestedData {
   threshold: [bigint, bigint]
   requestBlock: bigint
   committeeDeadline: bigint
+  ticketPrice: bigint
 }
 
 export interface CommitteePublishedData {

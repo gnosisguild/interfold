@@ -113,11 +113,16 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 
     function publishCommittee(
         uint256,
-        bytes calldata,
         bytes32,
         bytes calldata,
         bytes calldata
     ) external pure {} // solhint-disable-line no-empty-blocks
+
+    // solhint-disable-next-line no-empty-blocks
+    function publishCommitteePublicKey(uint256, bytes calldata) external pure {}
+
+    // solhint-disable-next-line no-empty-blocks
+    function releaseCommittee(uint256) external pure {}
 
     function getCommitteeNodes(
         uint256 e3Id
@@ -322,11 +327,16 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
 
     function publishCommittee(
         uint256,
-        bytes calldata,
         bytes32,
         bytes calldata,
         bytes calldata
     ) external pure {} // solhint-disable-line no-empty-blocks
+
+    // solhint-disable-next-line no-empty-blocks
+    function publishCommitteePublicKey(uint256, bytes calldata) external pure {}
+
+    // solhint-disable-next-line no-empty-blocks
+    function releaseCommittee(uint256) external pure {}
 
     function getCommitteeNodes(
         uint256

@@ -55,12 +55,16 @@ function bondingInitData(
 ): string {
   return i.bonding.encodeFunctionData("initialize", [
     config.safe,
-    c.ticketToken,
-    config.fold,
+    {
+      ticketToken: c.ticketToken,
+      licenseToken: config.fold,
+      ticketPrice: BigInt(config.bonding.ticketPrice),
+      licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+      expectedTicketDecimals: config.bonding.ticketTokenDecimals,
+      expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+    },
     c.ciphernodeRegistry,
     config.slashedFundsTreasury,
-    BigInt(config.bonding.ticketPrice),
-    BigInt(config.bonding.licenseRequiredBond),
     BigInt(config.bonding.minTicketBalance),
     BigInt(config.bonding.exitDelay),
   ]);

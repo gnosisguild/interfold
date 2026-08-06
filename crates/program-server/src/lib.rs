@@ -23,7 +23,53 @@ struct ProcessingResponse {
 }
 
 type RunnerResult = Result<(Vec<u8>, Vec<u8>)>;
-type Runner = dyn Fn(FHEInputs) -> Pin<Box<dyn Future<Output = RunnerResult> + Send>> + Send + Sync;
+type Runner =
+    dyn Fn(ComputeJob) -> Pin<Box<dyn Future<Output = RunnerResult> + Send>> + Send + Sync;
+
+#[derive(Clone, Debug)]
+pub struct ComputeDomain {
+    pub chain_id: u64,
+    pub verifying_contract: [u8; 20],
+    pub e3_id: u64,
+    pub encryption_scheme_id: [u8; 32],
+    pub committee_public_key_hash: [u8; 32],
+}
+
+impl ComputeDomain {
+    fn new(
+        chain_id: u64,
+        interfold_address: &str,
+        e3_id: u64,
+        encryption_scheme_id: &[u8],
+        committee_public_key_hash: &[u8],
+    ) -> Result<Self, String> {
+        Ok(Self {
+            chain_id,
+            verifying_contract: fixed(
+                &hex::decode(interfold_address.trim_start_matches("0x"))
+                    .map_err(|error| format!("invalid Interfold address: {error}"))?,
+                "Interfold address",
+            )?,
+            e3_id,
+            encryption_scheme_id: fixed(encryption_scheme_id, "encryption scheme ID")?,
+            committee_public_key_hash: fixed(
+                committee_public_key_hash,
+                "committee public key hash",
+            )?,
+        })
+    }
+}
+
+fn fixed<const N: usize>(value: &[u8], name: &str) -> Result<[u8; N], String> {
+    value
+        .try_into()
+        .map_err(|_| format!("{name} must be {N} bytes"))
+}
+
+pub struct ComputeJob {
+    pub inputs: FHEInputs,
+    pub domain: ComputeDomain,
+}
 
 #[derive(Clone)]
 pub struct E3ProgramServerBuilder {
@@ -38,7 +84,7 @@ impl E3ProgramServerBuilder {
     /// Create a new builder with a computation callback
     pub fn new<F, Fut>(callback: F) -> Self
     where
-        F: Fn(FHEInputs) -> Fut + Send + Sync + 'static,
+        F: Fn(ComputeJob) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = RunnerResult> + Send + 'static,
     {
         Self {
@@ -111,7 +157,7 @@ impl E3ProgramServer {
     /// Create a new builder for E3ProgramServer with a computation callback
     pub fn builder<F, Fut>(callback: F) -> E3ProgramServerBuilder
     where
-        F: Fn(FHEInputs) -> Fut + Send + Sync + 'static,
+        F: Fn(ComputeJob) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = RunnerResult> + Send + 'static,
     {
         E3ProgramServerBuilder::new(callback)
@@ -258,9 +304,10 @@ async fn process_computation_background(
     e3_id: u64,
     webhook_client: reqwest::Client,
     callback_url: reqwest::Url,
-    fhe_inputs: FHEInputs,
+    job: ComputeJob,
 ) -> Result<()> {
-    match runner(fhe_inputs.clone()).await {
+    let fhe_inputs = job.inputs.clone();
+    match runner(job).await {
         Ok((proof, ciphertext)) => {
             println!("computation finished!");
             // Compute the SAFE commitment for the produced ciphertext so the
@@ -319,6 +366,18 @@ async fn handle_compute(
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
     };
+    let domain = ComputeDomain::new(
+        req.chain_id,
+        &req.interfold_address,
+        e3_id,
+        &req.encryption_scheme_id,
+        &req.committee_public_key_hash,
+    )
+    .map_err(actix_web::error::ErrorBadRequest)?;
+    let job = ComputeJob {
+        inputs: fhe_inputs,
+        domain,
+    };
 
     let callback_url = validated_callback_url(&callback_url, config.localhost_rewrite.as_deref())
         .map_err(actix_web::error::ErrorBadRequest)?;
@@ -330,8 +389,7 @@ async fn handle_compute(
     tokio::spawn(async move {
         let _permit = permit;
         if let Err(e) =
-            process_computation_background(runner, e3_id, webhook_client, callback_url, fhe_inputs)
-                .await
+            process_computation_background(runner, e3_id, webhook_client, callback_url, job).await
         {
             eprintln!("✗ Background computation failed for E3 {}: {:?}", e3_id, e);
         }

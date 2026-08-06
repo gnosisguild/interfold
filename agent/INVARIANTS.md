@@ -37,9 +37,15 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
   plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
   `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
-- Bonding-asset rotation only after old-asset balances fully drain. Replacement assets must be
-  deployed contracts, and a replacement license token must return a valid value from
-  `lockedBalanceOf`. — `flow-trace/02`; INDEX concern #23
+- Ticket and license tokens, expected decimals, `ticketPrice`, and `licenseRequiredBond` change as
+  one configuration. Asset identity changes only after old balances, E3 assignments, slash locks,
+  and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
+  replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
+  bound to the exact BondingRegistry and asset-configuration version. — `flow-trace/02`, `05`; INDEX
+  concern #23
+- The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
+  Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
+  does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
@@ -56,19 +62,29 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### E3 request and committee selection
 
-- Request params: `M > 0`, `N >= M`, `inputWindow.start >= block.timestamp`, `end >= start`;
+- A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
+  `pnpm build:circuits` generates that binding from the active preset. Governance cannot enable a
+  different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
+  contracts. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
   `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
   `seed = uint256(keccak256(block.prevrandao, e3Id))`; top-N lowest win. — `flow-trace/03`
-- Eligibility is **snapshot-based**: ticket balances at `requestBlock-1` via
-  `getTicketBalanceAtBlock`; IMT root snapshotted at request time. —
+- **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
+  count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
+  freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
+  activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
 - `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
   successful call locks the canonical on-chain committee order. — `flow-trace/03`
 - **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
+- **Selected-member collateral remains slashable:** committee requests assign their request-time
+  registry in `BondingRegistry`, and successful finalization records one unresolved obligation per
+  member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
+  registry observes a terminal E3 and releases the complete committee. — `flow-trace/03`, `06`;
+  INDEX concern Z-04
 - **E3 program allowlist:** production initialization registers one deployed E3 program before
   ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
   registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
@@ -97,21 +113,37 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   the protected reserve. — `flow-trace/05`
 - Dual-role accounts (requester + honest node) claim via independent ledgers, each once. —
   `flow-trace/05`
-- Every ticket slash records a durable, proposal-scoped route and reserves the asset against
-  treasury withdrawal **before** escrow; retries are idempotent. — INDEX concern #30
-- Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty; nonzero
-  `failureReason < _MAX_FAILURE_REASON` and implies `affectsCommittee = true`; a failure-triggering
-  slash expels the faulty operator **before** honest recipients are resolved. — `flow-trace/05`
+- Committee finalization freezes each operator's reward recipient for that E3. Success rewards,
+  failed-E3 work rewards, and slash-funded rewards use that address even if bond ownership changes
+  later. — `flow-trace/03`, `flow-trace/05`, `flow-trace/06`
+- Every ticket slash records a durable `(manager, proposalId)` route and reserves the asset against
+  treasury withdrawal **before** escrow. The route preserves its E3, target, token, amount, and
+  request-time refund destination; retries are idempotent. — `flow-trace/05`
+- **E3 reward eligibility is order-independent:** an unresolved expelling proposal holds only the
+  accused operator's prospective fee and slash-funded shares. A cleared proposal releases those
+  shares, while execution reallocates them to the remaining operators. Peer claims do not wait. A
+  non-expelling slash excludes its target only from that proposal's penalty proceeds. All paths use
+  the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
+- Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
+  `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
+  attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
+- **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
+  same transaction must fail the affected nonterminal E3 with the supplier-paid
+  `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum
+  layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
+  allow later slashes. Committee key, ciphertext, and plaintext publication all require a currently
+  viable request-time committee. — `flow-trace/04`, `05`; INDEX concern Z-32
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
   Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —
   `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters ranked by ascending address, rank N waits `N × skew`
   (default 30 s); restarts must not reset the fallback delay. — `flow-trace/05`
-- **Deferred-slash collateral gate:** one unresolved-proposal counter covers both slashing lanes;
-  ticket withdrawal, license unbonding, deregistration, and exit claims stay blocked until
-  resolution. Every current or retained historical slashing manager participates in the exit gate. —
-  INDEX concerns #1, #26; `flow-trace/06`
+- **Deferred-slash collateral gate:** every manager atomically records proposal locks in
+  `BondingRegistry`. Ticket withdrawal, license unbonding, deregistration, and exit claims read the
+  registry's aggregate lock count and stay blocked until resolution. User exits must not call a
+  slashing manager. A retained manager cannot be revoked until its E3 assignments, locks, bans, and
+  fund routes are clear. — INDEX concerns #1, #26, Z-44; `flow-trace/06`
 - Exit queue caps explicit non-empty tranche count; drained single-asset tranches release capacity.
   — INDEX concern #18
 
@@ -119,12 +151,14 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### Committee config sync (the `check:committee` gate)
 
-- Committee `(N, T, H)` must be identical across **four** files:
+- Committee `(N, T, H)` must be identical across **five** files:
   `circuits/lib/src/configs/committee/active.nr`, `circuits/bin/.active-preset.json`,
   `packages/interfold-contracts/scripts/utils.ts` (`BFV_DKG_H`/`BFV_THRESHOLD_T`), and
-  `crates/zk-helpers/src/ciphernodes_committee.rs`. Drift means the next build silently produces
-  verifiers/proofs for the wrong committee. Switch only with
-  `pnpm build:circuits --committee <name>`; enforced by `scripts/check-committee.sh`.
+  `crates/zk-helpers/src/ciphernodes_committee.rs`, plus
+  `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The Solidity file also binds
+  the active BFV parameter-set hash. Drift means the next build silently produces verifiers or
+  proofs for the wrong configuration. Switch only with `pnpm build:circuits --committee <name>`;
+  enforced by `scripts/check-committee.sh`.
 - Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
@@ -161,9 +195,16 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   stored at ciphertext publication, propagated as a final-proof public input, and compared on-chain
   (no BFV decoding/Poseidon2 in Solidity); C3/C6 commitments are checked against their ciphertext
   witnesses. — INDEX IF-004
+- **Ciphertext-duty proof (Zenith #15):** each E3 snapshots the protocol verifier for its encryption
+  scheme at request time. Before `CiphertextReady`, this verifier checks a RISC Zero receipt that
+  binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
+  output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
+  create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
 - **Client PK commitment binding (C-01):** serialized PK event bytes are an untrusted transport
   hint; indexers store the decoded key only when its recomputed commitment equals the on-chain
-  (C5-proven) value. — INDEX concern #33
+  (C5-proven) value. Proof-backed committee publication never accepts key bytes. Public-key
+  candidates are bounded, permissionless, and repeatable, so an invalid candidate cannot block a
+  later valid one. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32

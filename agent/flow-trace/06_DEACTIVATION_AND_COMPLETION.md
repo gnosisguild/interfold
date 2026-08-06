@@ -148,6 +148,12 @@ Bond owner or operator submits deregisterOperatorFor(operator)
 Underlying USDC and FOLD are both paid to the bond owner. The queue and slash target remain keyed by
 the operator until the claim completes.
 
+Deregistration remains an emergency stop for future selection, even when the operator belongs to a
+finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
+delay, `claimExitsFor` still reverts with `OperatorInActiveCommittee` while any selected committee
+is nonterminal. Anyone can call `releaseCommittee` on the request-time registry after the E3 becomes
+`Complete` or `Failed`; the next claim can then pay the matured assets.
+
 ## E3 Completion (Happy Path)
 
 When an E3 completes successfully:
@@ -168,12 +174,18 @@ publishPlaintextOutput() succeeds
 │   │   ├─ if protocolAmount > 0:
 │   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
 │   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
-│   │   │   → Resolves bondOwnerOf(node) and credits that owner
+│   │   │   → Credits the recipient frozen at committee finalization
+│   │   │   → If expulsion is unresolved, move only the accused share to
+│   │   │     E3RefundManager and keep peer rewards claimable
+│   │   │   → Clear outcome releases the held share; expulsion reallocates it
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken)
 │   │   │   → If any escrowed slashed funds exist for this E3:
+│   │   │     settle each proposal by its recorded target, token, and amount
 │   │   │     read the currently active committee from the request-time registry
 │   │   │     split by successSlashedNodeBps (default 50%)
-│   │   │     nodes portion split by active node, then credited to bond owners
+│   │   │     exclude the proposal target from its own penalty proceeds
+│   │   │     hold only shares covered by unresolved expulsions
+│   │   │     credit all other shares to frozen recipients
 │   │   │     remainder sent to protocol treasury
 │   │   │   → If no escrowed funds: no-op
 │   │   └─ Emit RewardsDistributed(e3Id)
@@ -469,6 +481,10 @@ Time ─────────────────────────
 IMPORTANT: Even during the exit delay, slashing can still
 reach into the exit queue and take locked assets. There is
 no safe harbor for misbehaving operators.
+
+If the operator belongs to a nonterminal committee, the
+assets remain in this slashable queue after the delay. They
+cannot be paid out until every committee obligation ends.
 ```
 
 ### Exit Queue Internals (audit hardening)
@@ -497,6 +513,7 @@ no safe harbor for misbehaving operators.
 ```
 SLASHING → operator banned:
   banned[operator] = true
+    → SlashingManager records its manager-scoped ban in BondingRegistry
     → BondingRegistry refreshes registered operator status
     → active = false and numActiveOperators decreases
     → Cannot submit tickets for new committee selection
@@ -506,6 +523,7 @@ SLASHING → operator banned:
 GOVERNANCE lifts ban:
     SlashingManager.unbanNode(operator, keccak256("reason"))
   → banned[operator] = false
+  → SlashingManager clears its manager-scoped ban in BondingRegistry
   → BondingRegistry refreshes registered operator status
   → Operator can re-register
 ```
@@ -514,18 +532,30 @@ GOVERNANCE lifts ban:
 
 ## Cluster 6 Audit Addendum (deregistration & bans)
 
-- **Collateral exit is blocked while a slash is open** (H-05, AUD H-03). `BondingRegistry` checks
-  `hasOpenSlashProposal(operator)` on every authorized current or retained historical manager and
-  reverts `OperatorUnderSlash()` from ticket withdrawal, license unbonding, deregistration, and exit
-  claims. Execution, an upheld appeal, or permissionless appeal expiry unwinds the counter. After
-  manager rotation, governance must retain the old manager until every E3 and proposal that depends
-  on it is terminal, then explicitly revoke it.
+- **Collateral exit is blocked while a slash is open** (H-05, AUD H-03, Zenith #44).
+  `SlashingManager` opens and closes proposal-scoped locks in `BondingRegistry`. Exit paths read one
+  local aggregate and revert `OperatorUnderSlash()` without calling a manager. After rotation,
+  governance retains the old manager until its E3 assignments, locks, bans, and routes are clear.
+  `closeE3` releases a terminal E3 assignment after its locks and routes have drained.
+
+- **Finalized committees hold collateral through their E3** (Zenith #4). A request snapshots the
+  registry that may manage its obligations. Finalization increments a local count for every member,
+  and exit claims read that count without calling the registry. The operator may still deregister,
+  but the queued assets remain slashable. After a terminal E3, anyone can ask the request-time
+  registry to release all members atomically. A fresh deployment starts with no obligations; an
+  upgrade with live committees must backfill them or wait until those E3s terminate before enabling
+  claims under the new implementation.
 
 - **Two-step ban** (M-14, M-15): bans now require `proposeBan` → `confirmBan` from a **distinct**
   signer holding `GOVERNANCE_ROLE`. `cancelBan` rescinds an unconfirmed proposal. Legacy direct-set
   via `updateBanStatus(_, true, _)` reverts `BanRequiresConfirmation()`. Unban is single-step
-  (`unbanNode`). Ban and unban completion refresh the registered operator in `BondingRegistry`. A
-  ban therefore removes the operator from active counts and blocks later ticket submissions.
+  (`unbanNode`). Each completed change also updates a manager-scoped registry ban. The registry
+  aggregates bans without calling managers, refreshes active status, and blocks later registration.
+
+- **Manager authorization is versioned** (Zenith #44). Before authorization, the registry checks
+  deployed code, API version, ERC-165 support, and the manager's registry binding with bounded
+  calls. These calls occur during governance configuration, not during operator registration or
+  exit.
 
 - **DEFAULT_ADMIN handover** (M-17): operator-onboarding ops that depend on `DEFAULT_ADMIN_ROLE`
   rotation must use the `AccessControlDefaultAdminRules` two-step flow (`beginDefaultAdminTransfer`

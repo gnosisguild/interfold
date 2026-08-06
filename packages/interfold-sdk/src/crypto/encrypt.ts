@@ -11,6 +11,7 @@ import {
   generate_public_key,
   bfv_verifiable_encrypt_number,
   bfv_verifiable_encrypt_vector,
+  compute_ct_commitment,
   compute_pk_commitment,
   get_bfv_params,
 } from '@interfold/wasm'
@@ -40,6 +41,11 @@ export async function generatePublicKey(presetName: ThresholdBfvParamsPresetName
 export async function computePublicKeyCommitment(pk: Uint8Array, presetName: ThresholdBfvParamsPresetName): Promise<Uint8Array> {
   const params = await resolveParams(presetName)
   return compute_pk_commitment(pk, params.degree, params.plaintextModulus, BigUint64Array.from(params.moduli))
+}
+
+export async function computeCiphertextCommitment(ciphertext: Uint8Array, presetName: ThresholdBfvParamsPresetName): Promise<Uint8Array> {
+  const params = await resolveParams(presetName)
+  return compute_ct_commitment(ciphertext, params.degree, params.plaintextModulus, BigUint64Array.from(params.moduli))
 }
 
 export async function encryptNumber(data: bigint, pk: Uint8Array, presetName: ThresholdBfvParamsPresetName): Promise<Uint8Array> {

@@ -26,7 +26,6 @@ pub enum FailureReason {
     DecryptionInvalidShares,
     VerificationFailed,
 }
-
 impl FailureReason {
     /// Returns true when the failure was caused purely by a deadline expiring rather
     /// than by a node acting maliciously. Timeout failures have no associated
