@@ -7,6 +7,7 @@
 //! Recursive proof aggregation (Noir fold / `recursive_aggregation` binaries).
 
 pub mod c2_chunk_accumulator;
+pub mod c2_chunk_batch;
 pub mod c3_accumulator;
 pub mod c6_accumulator;
 pub mod helpers;

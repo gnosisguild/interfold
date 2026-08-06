@@ -4,41 +4,69 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Projects a complete SK C2 chunk accumulator to the C2 public layout.
+//! Verifies C2 chunk batches and reconstructs the existing SK C2 public layout.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use lib::configs::default::dkg::{L_THRESHOLD, SHARE_COMPUTATION_N_CHUNKS};
+use lib::configs::default::dkg::{
+    L_THRESHOLD, N, SHARE_COMPUTATION_CHUNK_SIZE as CHUNK_SIZE,
+    SHARE_COMPUTATION_CHUNKS_PER_BATCH as CHUNKS_PER_BATCH,
+    SHARE_COMPUTATION_N_BATCHES as N_BATCHES, SHARE_COMPUTATION_N_CHUNKS as N_CHUNKS,
+};
 use lib::configs::default::N_PARTIES;
+use lib::math::commitments::{
+    compute_sc_party_share_chunk_root_commitment, compute_sc_secret_chunk_root_commitment,
+};
 
+pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global BATCH_RETURN_LEN: u32 = 2 + (CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN);
+pub global BATCH_PUBLIC_LEN: u32 = 2 + BATCH_RETURN_LEN;
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2_CHUNK_FOLD_PREFIX_LEN: u32 = 6;
-pub global C2_CHUNK_FOLD_PUBLIC_LEN: u32 =
-    C2_CHUNK_FOLD_PREFIX_LEN + C2_PUBLIC_LEN + (2 * SHARE_COMPUTATION_N_CHUNKS);
-pub global C2_CHUNK_FOLD_C2_OFFSET: u32 =
-    C2_CHUNK_FOLD_PREFIX_LEN + (2 * SHARE_COMPUTATION_N_CHUNKS);
 
 fn main(
-    acc_vk: UltraHonkVerificationKey,
-    acc_proof: UltraHonkProof,
-    acc_public_inputs: [Field; C2_CHUNK_FOLD_PUBLIC_LEN],
-    acc_key_hash: Field,
-    // Circuit variant: false for SK and true for ESM.
-    variant: bool,
-) -> pub (Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
-    assert(!variant);
-    verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
-    for chunk in 0..SHARE_COMPUTATION_N_CHUNKS {
-        assert(
-            acc_public_inputs[C2_CHUNK_FOLD_PREFIX_LEN + SHARE_COMPUTATION_N_CHUNKS + chunk] == 1,
+    batch_vk: UltraHonkVerificationKey,
+    batch_proofs: [UltraHonkProof; N_BATCHES],
+    batch_public_inputs: [[Field; BATCH_PUBLIC_LEN]; N_BATCHES],
+    batch_key_hash: Field,
+) -> pub [Field; C2_PUBLIC_LEN] {
+    assert(N_BATCHES * CHUNKS_PER_BATCH == N_CHUNKS);
+
+    let mut secret_chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    let mut share_chunks: [[Field; N_CHUNKS]; N_PARTIES * L_THRESHOLD] =
+        [[0; N_CHUNKS]; N_PARTIES * L_THRESHOLD];
+
+    for batch_idx in 0..N_BATCHES {
+        verify_honk_proof_non_zk(
+            batch_vk,
+            batch_proofs[batch_idx],
+            batch_public_inputs[batch_idx],
+            batch_key_hash,
         );
-    }
-    let expected_secret_commitment = acc_public_inputs[C2_CHUNK_FOLD_C2_OFFSET];
-    let mut party_commitments: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
-    for party_idx in 0..N_PARTIES {
-        for mod_idx in 0..L_THRESHOLD {
-            party_commitments[party_idx][mod_idx] =
-                acc_public_inputs[C2_CHUNK_FOLD_C2_OFFSET + 1 + party_idx * L_THRESHOLD + mod_idx];
+        assert(batch_public_inputs[batch_idx][1] == batch_idx as Field);
+        assert(batch_public_inputs[batch_idx][2] == batch_idx as Field);
+
+        for chunk_in_batch in 0..CHUNKS_PER_BATCH {
+            let chunk_idx = batch_idx * CHUNKS_PER_BATCH + chunk_in_batch;
+            let start = 4 + chunk_in_batch * CHUNK_COMMITMENT_LEN;
+            secret_chunks[chunk_idx] = batch_public_inputs[batch_idx][start];
+            for slot in 0..(N_PARTIES * L_THRESHOLD) {
+                share_chunks[slot][chunk_idx] = batch_public_inputs[batch_idx][start + 1 + slot];
+            }
         }
     }
-    (expected_secret_commitment, party_commitments)
+
+    let mut output: [Field; C2_PUBLIC_LEN] = [0; C2_PUBLIC_LEN];
+    output[0] = compute_sc_secret_chunk_root_commitment(0, N, CHUNK_SIZE, secret_chunks);
+    for party_idx in 0..N_PARTIES {
+        for mod_idx in 0..L_THRESHOLD {
+            let slot = party_idx * L_THRESHOLD + mod_idx;
+            output[1 + slot] = compute_sc_party_share_chunk_root_commitment(
+                party_idx,
+                mod_idx,
+                N,
+                CHUNK_SIZE,
+                share_chunks[slot],
+            );
+        }
+    }
+    output
 }

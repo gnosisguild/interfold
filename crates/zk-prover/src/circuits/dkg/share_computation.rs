@@ -4,12 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::circuits::aggregation::c2_chunk_accumulator::{
-    finalize_c2_chunk_fold, generate_sequential_c2_chunk_fold,
+use crate::circuits::aggregation::c2_chunk_batch::{
+    finalize_c2_chunk_batches, generate_c2_chunk_batches,
 };
-use crate::circuits::utils::{
-    bytes_to_field_strings, inputs_json_to_input_map, prove_recursive_circuit,
-};
+use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::traits::Provable;
@@ -70,25 +68,10 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         )));
     }
     let chunk_count = degree / chunk_size;
-    let base_circuit = match data.dkg_input_type {
-        DkgInputType::SecretKey => CircuitName::SkShareComputationBase,
-        DkgInputType::SmudgingNoise => CircuitName::ESmShareComputationBase,
+    let chunk_circuit = match data.dkg_input_type {
+        DkgInputType::SecretKey => CircuitName::SkShareComputationChunk,
+        DkgInputType::SmudgingNoise => CircuitName::ESmShareComputationChunk,
     };
-    let base = prove_recursive_circuit(
-        prover,
-        base_circuit,
-        &base_json,
-        &format!("{e3_id}-c2-base"),
-        artifacts_dir,
-    )?;
-    let base_public = bytes_to_field_strings(base.public_signals.as_ref())?;
-    if base_public.len() < 1 + chunk_count {
-        return Err(ZkError::InvalidInput(format!(
-            "C2 base proof has {} public fields, expected at least {}",
-            base_public.len(),
-            1 + chunk_count
-        )));
-    }
     let y = base_json
         .get("y")
         .and_then(Value::as_array)
@@ -101,15 +84,62 @@ pub fn prove_chunked_share_computation_with_chunk_size(
     }
 
     let mut chunks = Vec::with_capacity(chunk_count);
-    let mut indices = Vec::with_capacity(chunk_count);
     for chunk_idx in 0..chunk_count {
         let start = chunk_idx * chunk_size;
         let mut chunk_json = serde_json::Map::new();
-        chunk_json.insert(
-            "chunk_commitment".into(),
-            Value::String(base_public[1 + chunk_idx].clone()),
-        );
         chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
+        let secret_key = match data.dkg_input_type {
+            DkgInputType::SecretKey => "sk_secret",
+            DkgInputType::SmudgingNoise => "e_sm_secret",
+        };
+        let secret = base_json.get(secret_key).ok_or_else(|| {
+            ZkError::SerializationError(format!("C2 input is missing {secret_key}"))
+        })?;
+        let secret_chunk = if data.dkg_input_type == DkgInputType::SecretKey {
+            let coefficients = secret
+                .as_object()
+                .and_then(|object| object.get("coefficients"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| ZkError::SerializationError("SK secret JSON is malformed".into()))?;
+            Value::Object(
+                [(
+                    "coefficients".into(),
+                    Value::Array(coefficients[start..start + chunk_size].to_vec()),
+                )]
+                .into_iter()
+                .collect(),
+            )
+        } else {
+            let limbs = secret.as_array().ok_or_else(|| {
+                ZkError::SerializationError("ESM secret JSON must contain CRT limbs".into())
+            })?;
+            Value::Array(
+                limbs
+                    .iter()
+                    .map(|limb| {
+                        limb.as_object()
+                            .and_then(|object| object.get("coefficients"))
+                            .and_then(Value::as_array)
+                            .map(|values| {
+                                Value::Object(
+                                    [(
+                                        "coefficients".into(),
+                                        Value::Array(values[start..start + chunk_size].to_vec()),
+                                    )]
+                                    .into_iter()
+                                    .collect(),
+                                )
+                            })
+                            .ok_or_else(|| {
+                                ZkError::SerializationError(
+                                    "ESM secret JSON must contain CRT limbs".into(),
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        };
+        chunk_json.insert("secret_chunk".into(), secret_chunk);
         chunk_json.insert(
             "y_chunk".into(),
             Value::Array(y[start..start + chunk_size].to_vec()),
@@ -117,31 +147,30 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
         let circuit_path = prover
             .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)
-            .join(CircuitName::ShareComputationChunk.dir_path())
-            .join(format!(
-                "{}.json",
-                CircuitName::ShareComputationChunk.as_str()
-            ));
+            .join(chunk_circuit.dir_path())
+            .join(format!("{}.json", chunk_circuit.as_str()));
         let compiled = crate::witness::CompiledCircuit::from_file(&circuit_path)?;
-        let witness =
-            crate::witness::WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+        let witness = crate::witness::WitnessGenerator::new()
+            .generate_witness(&compiled, input_map)
+            .map_err(|error| {
+                ZkError::WitnessGenerationFailed(format!("C2 chunk {chunk_idx} witness: {error}"))
+            })?;
         let proof = prover.generate_proof_with_variant(
-            CircuitName::ShareComputationChunk,
+            chunk_circuit,
             &witness,
             &format!("{e3_id}-c2-chunk-{chunk_idx}"),
             e3_events::CircuitVariant::Recursive,
             artifacts_dir,
         )?;
         chunks.push(proof);
-        indices.push(chunk_idx as u32);
     }
 
-    let accumulator = generate_sequential_c2_chunk_fold(
+    let batches = generate_c2_chunk_batches(
         prover,
-        &base,
+        chunk_circuit,
         &chunks,
-        &indices,
         chunk_count,
+        degree,
         e3_id,
         artifacts_dir,
     )?;
@@ -149,14 +178,8 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         DkgInputType::SecretKey => CircuitName::SkC2ChunkFinalize,
         DkgInputType::SmudgingNoise => CircuitName::ESmC2ChunkFinalize,
     };
-    let proof = finalize_c2_chunk_fold(
-        prover,
-        &accumulator,
-        chunk_count,
-        finalizer_circuit,
-        e3_id,
-        artifacts_dir,
-    )?;
+    let proof =
+        finalize_c2_chunk_batches(prover, &batches, finalizer_circuit, e3_id, artifacts_dir)?;
     Ok(ChunkedShareComputationProofs { proof, chunk_count })
 }
 
