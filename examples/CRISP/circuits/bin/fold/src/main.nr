@@ -11,9 +11,9 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp (or the lib preset).
 /// Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x2e53e3285d47eebd65eb932cf6a57ecaa5e43f90b1673165715c92b78e493a9c;
+    0x265a34e63b1312711dd4e696d5aa2c96a2cb2f6b91fd59f1ba1a8a784e3a5f58;
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x15c663ca84d55d8c794cda86add7073873eec66cbf798e94998f0056b125ba69;
+    0x17c92f1a6fe7e15810f0935423aa2caf95625212836bdfce80d892ca5689b03a;
 
 fn main(
     // User Data Encryption Section.
@@ -62,11 +62,13 @@ fn main(
     // Verify that the k1_commitment from the crisp proof matches the one computed from user data encryption.
     assert(k1_commitment == user_data_encryption_public_inputs[4]);
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(user_data_encryption_key_hash);
-    vk_hashes.push(crisp_key_hash);
-    vk_hashes.push(user_data_encryption_public_inputs[0]); // ct0_key_hash
-    vk_hashes.push(user_data_encryption_public_inputs[1]); // ct1_key_hash
+    let vk_hashes = [
+        user_data_encryption_key_hash,
+        crisp_key_hash,
+        user_data_encryption_public_inputs[0], // ct0_key_hash
+        user_data_encryption_public_inputs[1], // ct1_key_hash
+    ]
+        .as_vector();
 
     let chain_key_hash = compute_vk_hash(vk_hashes);
     assert(

@@ -49,6 +49,13 @@ describe('Utils', () => {
       expect(tree.verifyProof(unpaddedProof)).toBe(true)
     })
 
+    it('Should return path indices in least-significant-bit-first order', () => {
+      const leaves = [1000n, 1001n, 1002n, 1003n, 1004n, hashLeaf(address, balance), 1006n, 1007n]
+      const proof = generateMerkleProof(balance, address, leaves)
+
+      expect(proof.indices.slice(0, proof.length)).toEqual([1, 0, 1])
+    })
+
     it('Should throw if the leaf does not exist in the tree', () => {
       expect(() => generateMerkleProof(balance, address, [])).toThrow('Leaf not found in the tree')
       const leaves = generateTestLeaves([{ address, balance }])

@@ -29,8 +29,7 @@ const getBBApi = async (): Promise<Barretenberg> => {
 
   _bbApiInitPromise = (async () => {
     try {
-      const api = await Barretenberg.new()
-      await api.initSRSChonk(2 ** 21)
+      const api = await Barretenberg.new({ srsSize: 2 ** 21 })
       _bbApi = api
       return api
     } finally {
