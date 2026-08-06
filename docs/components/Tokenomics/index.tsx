@@ -18,27 +18,35 @@ type Group = 'community' | 'other'
 type Slice = {
   key: string
   pct: number
+  // Printed share, when the rounded pct would misstate it or leave the column
+  // short of 100%. The donut geometry always uses the exact pct.
+  displayPct?: number
   color: string
   group: Group
 }
 
+// FOLD sold at the CCA sits inside Investors. FOLD left unsold returns to the
+// Foundation but carries no vest, so it is tracked as its own category.
 // Community = vivid brand greens; Other = dark brand neutrals.
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
-  // Community (54.5%)
-  { key: 'Foundation Treasury', pct: 40.5, color: '#3A7D44', group: 'community' }, // vivid forest
-  { key: 'CCA', pct: 10, color: '#687d71', group: 'community' }, // brand sage
+  // Community (52%)
+  { key: 'Foundation Treasury', pct: 41.4469, displayPct: 41.5, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'Unsold CCA Tokens', pct: 6.3615, displayPct: 6.5, color: '#687d71', group: 'community' }, // brand sage
   { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
-  // Other (45.5%)
+  // Other (48%)
   { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
-  { key: 'Investors (up to)', pct: 16.5, color: '#3A4E42', group: 'other' }, // dark muted forest
+  { key: 'Investors', pct: 19.1916, color: '#3A4E42', group: 'other' }, // dark muted forest
   { key: 'Team and Advisors', pct: 9, color: '#8FAE96', group: 'other' }, // muted sage
 ]
 
+// Ceilings rather than fixed amounts, so their share is shown as "at most".
+const UP_TO = new Set(['Unsold CCA Tokens'])
+
 const communitySlices = ALLOCATION.filter((d) => d.group === 'community')
 const otherSlices = ALLOCATION.filter((d) => d.group === 'other')
-const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 57
-const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 43
+const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 52
+const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48
 
 const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(ALLOCATION.map((s) => [s.key, s.color]))
 
@@ -51,7 +59,16 @@ const GROUP_COLOR: Record<Group, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Percentages display as whole numbers. Exact values are kept in ALLOCATION so
+// the donut geometry stays true; only the printed figures are rounded.
 const fmtPct = (n: number) => `${Math.round(n)}%`
+
+// Slice shares honour displayPct when set. Without one, a ceiling rounds up so
+// the printed figure stays a true bound: 6.3615% shown as "≤ 6%" would be false.
+const fmtShare = (d: Slice) => {
+  const v = d.displayPct ?? (UP_TO.has(d.key) ? Math.ceil(d.pct) : Math.round(d.pct))
+  return `${UP_TO.has(d.key) ? '≤ ' : ''}${Number.isInteger(v) ? v : v.toFixed(1)}%`
+}
 
 function polar(cx: number, cy: number, r: number, angleDeg: number): [number, number] {
   const a = ((angleDeg - 90) * Math.PI) / 180
@@ -80,7 +97,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '≤ 30%' },
+    { label: 'Circulating Supply at TGE', value: '≤ 28%' },
   ]
   return (
     <div className={classes.stats}>
@@ -242,7 +259,7 @@ export function AllocationPie() {
         <tbody>
           <tr className={classes.groupRow}>
             <td colSpan={2} className={classes.groupLabel} style={{ color: GROUP_COLOR.community }}>
-              Community<span className={classes.groupPct}>({COMMUNITY_PCT}%)</span>
+              Community<span className={classes.groupPct}>({fmtPct(COMMUNITY_PCT)})</span>
             </td>
           </tr>
           {communitySlices.map((d) => (
@@ -256,13 +273,13 @@ export function AllocationPie() {
                 <span className={classes.swatch} style={{ background: d.color }} />
                 {d.key}
               </td>
-              <td className={classes.center}>{(d.key === 'CCA' ? '≤' : '') + fmtPct(d.pct)}</td>
+              <td className={classes.center}>{fmtShare(d)}</td>
             </tr>
           ))}
 
           <tr className={classes.groupRow}>
             <td colSpan={2} className={classes.groupLabel} style={{ color: GROUP_COLOR.other }}>
-              Other<span className={classes.groupPct}>({OTHER_PCT}%)</span>
+              Other<span className={classes.groupPct}>({fmtPct(OTHER_PCT)})</span>
             </td>
           </tr>
           {otherSlices.map((d) => (
@@ -276,7 +293,7 @@ export function AllocationPie() {
                 <span className={classes.swatch} style={{ background: d.color }} />
                 {d.key}
               </td>
-              <td className={classes.center}>{(d.key === 'CCA' ? '≤' : '') + fmtPct(d.pct)}</td>
+              <td className={classes.center}>{fmtShare(d)}</td>
             </tr>
           ))}
         </tbody>
@@ -299,23 +316,22 @@ type Vest = {
   key: string
   total: number
   vestMonths: number
-  term: string
 }
 
 // Stacking order: bottom → top. Shorter unlock periods at the base so the
 // chart reads as progressively longer commitments toward the top.
 const VESTING: Vest[] = [
-  { key: 'CCA', total: 120_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
-  { key: 'Investors', total: 168_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
-  { key: 'Airdrop', total: 48_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Team and Advisors', total: 108_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
-  { key: 'Foundation Treasury', total: 516_000_000, vestMonths: 48, term: '48-month linear unlock' },
+  { key: 'Investors', total: 230_299_242, vestMonths: 1 },
+  { key: 'Unsold CCA Tokens', total: 76_338_059, vestMonths: 1 },
+  { key: 'Airdrop', total: 48_000_000, vestMonths: 24 },
+  { key: 'Team and Advisors', total: 108_000_000, vestMonths: 24 },
+  { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48 },
+  { key: 'Foundation Treasury', total: 497_362_699, vestMonths: 48 },
 ]
 
 const VESTING_TERMS = [
   { key: 'Foundation Treasury', schedule: '48 month linear unlock from TGE', group: 'community' as Group },
-  { key: 'CCA', schedule: 'No restrictions from TGE', group: 'community' as Group },
+  { key: 'Unsold CCA Tokens', schedule: 'No restrictions from TGE', group: 'community' as Group },
   { key: 'Airdrop', schedule: '24 month linear unlock from TGE', group: 'community' as Group },
   { key: 'Gnosis Guild', schedule: '48 month linear unlock from TGE', group: 'other' as Group },
   { key: 'Investors', schedule: 'No restrictions from TGE', group: 'other' as Group },
