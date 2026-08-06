@@ -150,6 +150,8 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
     let vk_recursive_hash_path = target_dir.join(format!("{pkg}.vk_recursive_hash"));
     let vk_evm_path = target_dir.join(format!("{pkg}.vk"));
     let vk_evm_hash_path = target_dir.join(format!("{pkg}.vk_hash"));
+    let vk_noir_path = target_dir.join(format!("{pkg}.vk_noir"));
+    let vk_noir_hash_path = target_dir.join(format!("{pkg}.vk_noir_hash"));
 
     assert!(
         json_path.exists(),
@@ -193,6 +195,25 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
             fs::copy(&vk_evm_hash_path, evm_dir.join(format!("{pkg}.vk_hash")))
                 .await
                 .unwrap();
+        }
+    }
+
+    if vk_noir_path.exists() {
+        let recursive_dir = preset_dir.join("recursive").join(circuit.group()).join(pkg);
+        fs::create_dir_all(&recursive_dir).await.unwrap();
+        fs::copy(&json_path, recursive_dir.join(format!("{pkg}.json")))
+            .await
+            .unwrap();
+        fs::copy(&vk_noir_path, recursive_dir.join(format!("{pkg}.vk")))
+            .await
+            .unwrap();
+        if vk_noir_hash_path.exists() {
+            fs::copy(
+                &vk_noir_hash_path,
+                recursive_dir.join(format!("{pkg}.vk_hash")),
+            )
+            .await
+            .unwrap();
         }
     }
 }

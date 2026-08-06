@@ -65,7 +65,7 @@ use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
+use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
@@ -73,9 +73,10 @@ use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
-    generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
-    NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
+    generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
+    prove_dkg_aggregation, prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob,
+    DkgAggregationInput, NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError,
+    ZkProver,
 };
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::PublicKeyShare;
@@ -934,22 +935,21 @@ fn handle_share_computation_proof(
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
-    let circuit = ShareComputationCircuit;
-    let proof = circuit
-        .prove(
-            prover,
-            &req.params_preset,
-            &circuit_data,
-            &inner_job_id,
-            &artifacts_dir,
+    // 7. Base C2 proof, chunk proofs, and terminal C2 projection.
+    let proof = prove_chunked_share_computation(
+        prover,
+        req.params_preset,
+        &circuit_data,
+        &inner_job_id,
+        &artifacts_dir,
+    )
+    .map(|result| result.proof)
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
         )
-        .map_err(|e| {
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-                request.clone(),
-            )
-        })?;
+    })?;
 
     Ok(ComputeResponse::zk(
         ZkResponse::ShareComputation(ShareComputationProofResponse {

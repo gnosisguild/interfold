@@ -22,7 +22,7 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use common::{
     extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
-    setup_compiled_circuit, setup_test_prover,
+    setup_compiled_circuit, setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
@@ -232,6 +232,12 @@ async fn setup_share_computation_sk_test() -> Option<(
 
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(&backend, "dkg", "sk_share_computation_base").await;
+    setup_compiled_circuit(&backend, "dkg", "share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFold).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFoldKernel).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::SkC2ChunkFinalize).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 
     let sample =
         ShareComputationCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
@@ -266,6 +272,12 @@ async fn setup_share_computation_e_sm_test() -> Option<(
 
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
     setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation_base").await;
+    setup_compiled_circuit(&backend, "dkg", "share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFold).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkFoldKernel).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::ESmC2ChunkFinalize).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 
     let sample = ShareComputationCircuitData::generate_sample(
         preset,
@@ -634,6 +646,84 @@ async fn test_share_computation_sk_commitment_consistency() {
         fields.iter().any(|f| !f.is_zero()),
         "inner share computation public signals should not all be zero"
     );
+
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_chunked_share_computation_proof() {
+    let Some((_backend, _temp, prover, _circuit, sample, preset, e3_id)) =
+        setup_share_computation_sk_test().await
+    else {
+        println!("skipping: bb not found");
+        return;
+    };
+
+    let artifacts_dir =
+        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked C2 proof generation should succeed");
+
+    assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let expected_fields =
+        1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(result.proof.public_signals.len() / 32, expected_fields + 1);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked C2 terminal proof verification should succeed"));
+
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_chunked_esm_share_computation_proof() {
+    let Some((_backend, _temp, prover, _circuit, sample, preset, e3_id)) =
+        setup_share_computation_e_sm_test().await
+    else {
+        println!("skipping: bb not found");
+        return;
+    };
+
+    let artifacts_dir =
+        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked ESM C2 proof generation should succeed");
+
+    assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let fields = public_signals_to_fields(&result.proof.public_signals);
+    assert_eq!(fields[0], Fr::from(1));
+    let expected_fields =
+        1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(fields.len(), expected_fields + 1);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked ESM C2 terminal proof verification should succeed"));
 
     prover.cleanup(e3_id).unwrap();
 }

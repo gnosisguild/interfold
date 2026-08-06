@@ -781,8 +781,10 @@ library ActiveCryptoConfig {
   }
 
   private isFoldOrAggregation(circuit: CircuitInfo): boolean {
-    // The C2 terminal projection is a ZK leaf for C2abFold, not a non-ZK accumulator.
-    return circuit.group === CIRCUIT_GROUPS.AGGREGATION && basename(circuit.path) !== 'c2_chunk_finalize'
+    // C2 terminal projections are ZK leaves for C2abFold, not non-ZK accumulators.
+    const name = basename(circuit.path)
+    return circuit.group === CIRCUIT_GROUPS.AGGREGATION &&
+      !['c2_chunk_finalize', 'sk_c2_chunk_finalize', 'esm_c2_chunk_finalize'].includes(name)
   }
 
   /** Aggregation circuits that are also published on-chain as EVM verifiable proofs. */
