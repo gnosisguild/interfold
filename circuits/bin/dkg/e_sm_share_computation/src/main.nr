@@ -6,7 +6,7 @@
 
 use lib::configs::default::dkg::{
     L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_E_SM_BIT_SECRET,
-    SHARE_COMPUTATION_E_SM_CONFIGS,
+    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_N_CHUNKS,
 };
 use lib::configs::default::{N_PARTIES, T};
 use lib::core::dkg::share_computation::SmudgingNoiseShareComputation;
@@ -17,7 +17,7 @@ fn main(
     e_sm_secret: [Polynomial<N>; L_THRESHOLD],
     y: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; N],
 ) -> pub [[Field; L_THRESHOLD]; N_PARTIES] {
-    let share_computation_e_sm: SmudgingNoiseShareComputation<N, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE> = SmudgingNoiseShareComputation::new(
+    let share_computation_e_sm: SmudgingNoiseShareComputation<N, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = SmudgingNoiseShareComputation::new(
         SHARE_COMPUTATION_E_SM_CONFIGS,
         expected_secret_commitment,
         e_sm_secret,

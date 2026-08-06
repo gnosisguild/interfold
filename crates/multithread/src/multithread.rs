@@ -1151,6 +1151,8 @@ fn handle_share_encryption_proof(
         e0_rns,
         e1_rns,
         dkg_input_type: req.dkg_input_type,
+        party_idx: req.recipient_party_id as u32,
+        mod_idx: req.row_index as u32,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
@@ -1211,6 +1213,15 @@ fn handle_dkg_share_decryption_proof(
             format!(
                 "own_plaintext_idx {} out of range (num_honest_parties={})",
                 req.own_plaintext_idx, h
+            ),
+        ));
+    }
+    if req.recipient_party_id >= req.committee_size.values().n as u64 {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee N",
+                req.recipient_party_id
             ),
         ));
     }
@@ -1296,6 +1307,7 @@ fn handle_dkg_share_decryption_proof(
     let circuit_data = ShareDecryptionCircuitData {
         secret_key,
         honest_ciphertexts,
+        recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
     };

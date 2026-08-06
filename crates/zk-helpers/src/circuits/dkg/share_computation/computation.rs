@@ -12,7 +12,7 @@
 
 use crate::bigint_3d_to_json_values;
 use crate::circuits::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
+    compute_sc_esm_secret_root_commitment, compute_sc_sk_secret_root_commitment,
 };
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
@@ -198,11 +198,15 @@ impl Computation for Inputs {
         let mut secret_crt = data.secret.clone();
         let sss = &data.secret_sss;
 
-        if data.dkg_input_type == DkgInputType::SmudgingNoise {
-            // Normalize secret_crt to [0, q_j) per limb so it matches what we put in y and what the circuit expects (e_sm_secret[j][i] == y[i][j][0]).
+        // Normalize both secret types to [0, q_j) so the chunk and normal circuits use the same
+        // field representation before they center values for the root commitment.
+        secret_crt
+            .reduce(moduli)
+            .map_err(|e| CircuitsErrors::Sample(format!("secret_crt reduce: {:?}", e)))?;
+        if data.dkg_input_type == DkgInputType::SecretKey {
             secret_crt
-                .reduce(moduli)
-                .map_err(|e| CircuitsErrors::Sample(format!("secret_crt reduce: {:?}", e)))?;
+                .center(moduli)
+                .map_err(|e| CircuitsErrors::Sample(format!("secret_crt center: {:?}", e)))?;
         }
 
         // y[coeff_idx][mod_idx][0] = secret_crt[mod_idx][coeff_idx] (already in [0, q_j)); y[coeff_idx][mod_idx][1+party] = share in [0, q_j).
@@ -232,7 +236,7 @@ impl Computation for Inputs {
             DkgInputType::SecretKey => {
                 let mut reversed = secret_crt.limb(0).clone();
                 reversed.reverse();
-                compute_share_computation_sk_commitment(&reversed, bits.bit_sk_secret)
+                compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, 512)
             }
             DkgInputType::SmudgingNoise => {
                 let centered_reversed_crt = e3_polynomial::CrtPolynomial::new(
@@ -249,9 +253,10 @@ impl Computation for Inputs {
                         })
                         .collect(),
                 );
-                compute_share_computation_e_sm_commitment(
+                compute_sc_esm_secret_root_commitment(
                     &centered_reversed_crt,
                     bits.bit_e_sm_secret,
+                    512,
                 )
             }
         };

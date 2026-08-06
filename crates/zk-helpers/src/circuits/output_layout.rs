@@ -150,6 +150,8 @@ pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment
 pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("expected_pk_commitment"),
     f("expected_message_commitment"),
+    f("party_idx"),
+    f("mod_idx"),
 ];
 
 /// Describes the public input layout of a circuit.
@@ -441,7 +443,7 @@ mod tests {
                 fields: SHARE_ENCRYPTION_INPUTS
             }
             .field_count(),
-            Some(2)
+            Some(4)
         );
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
     }

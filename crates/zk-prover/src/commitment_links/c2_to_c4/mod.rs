@@ -158,11 +158,14 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
 /// Extract all share commitments from C2's public signals.
 ///
 /// C2 inner-circuit public signals:
-///   - field 0: `expected_secret_commitment` (skipped)
-///   - fields 1..: `commit_to_party_shares[party_idx][mod_idx]` outputs,
+///   - legacy: field 0 is `expected_secret_commitment` (skipped)
+///   - chunked: field 0 is the child VK hash and field 1 is
+///     `expected_secret_commitment` (both skipped)
+///   - remaining fields: `commit_to_party_shares[party_idx][mod_idx]` outputs,
 ///     row-major (party first, modulus second)
 ///
-/// Returns every 32-byte chunk after the first field.
+/// Returns every 32-byte chunk after the legacy prefix. The consistency check
+/// removes the extra child-VK field for chunked layouts.
 fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
     if public_signals.len() < 2 * FIELD_BYTE_LEN {
         return vec![];
@@ -184,7 +187,8 @@ fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
 /// Precise L-way check: verifies that the L share commitments C2_X computed
 /// for recipient R exactly match C4_R's expected_commitments row for sender X.
 ///
-/// - `source_values`: all N_PARTIES × L commits from C2_X (from `extract_share_commitments`)
+/// - `source_values`: C2 commitments after the legacy prefix; chunked layouts
+///   still contain the child-VK field until this function removes it
 /// - `target_public_signals`: C4_R's public signals
 /// - `src_party_id`: C2 sender X (0-based committee index)
 /// - `tgt_party_id`: C4 recipient R (0-based committee index)
@@ -206,8 +210,17 @@ fn check_exact_l_commitments(
     let tgt_idx = tgt_party_id as usize;
     let src_idx = src_party_id as usize;
 
+    let chunked_prefix = [3usize, 9, 19]
+        .iter()
+        .any(|&n| source_values.len() == (n * l) + 1);
+    let share_offset = usize::from(chunked_prefix);
+    let share_count = source_values.len().saturating_sub(share_offset);
+    if share_count == 0 || share_count % l != 0 {
+        return false;
+    }
+
     // Slice L commits from C2 at slot tgt_idx (the C4 recipient's position).
-    let c2_start = tgt_idx * l;
+    let c2_start = share_offset + tgt_idx * l;
     let c2_end = c2_start + l;
     if source_values.len() < c2_end {
         return false;

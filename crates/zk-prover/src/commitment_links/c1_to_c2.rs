@@ -14,9 +14,9 @@
 //! - field 1: `pk_commitment`   (byte offset  32..64)
 //! - field 2: `e_sm_commitment` (byte offset  64..96)
 //!
-//! **C2a/C2b (ShareComputation inner circuit)** takes `expected_secret_commitment`
-//! as its first public input (head, bytes 0..32). The remaining fields are
-//! per-party-per-modulus share commitment outputs from `commit_to_party_shares`.
+//! **C2a/C2b** either exposes `expected_secret_commitment` at field 0 (legacy
+//! inner proof) or exposes the recursive child VK hash at field 0 and the
+//! expected commitment at field 1 (chunk-finalizer proof).
 //!
 //! ## Checks
 //!
@@ -67,6 +67,8 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
             return false;
         }
         target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
+            || (target_public_signals.len() >= 2 * FIELD_BYTE_LEN
+                && target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0])
     }
 }
 
@@ -105,6 +107,8 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
             return false;
         }
         target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
+            || (target_public_signals.len() >= 2 * FIELD_BYTE_LEN
+                && target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0])
     }
 }
 

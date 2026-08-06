@@ -11,7 +11,7 @@
 //! normalized for the ZKP field so the Noir circuit's range checks and commitment checks succeed.
 
 use crate::circuits::commitments::{
-    compute_dkg_pk_commitment, compute_share_encryption_commitment_from_message,
+    compute_dkg_pk_commitment, compute_sc_party_share_root_commitment,
 };
 use crate::dkg::share_encryption::ShareEncryptionCircuit;
 use crate::dkg::share_encryption::ShareEncryptionCircuitData;
@@ -121,6 +121,8 @@ pub struct Bounds {
 /// that the ciphertext and commitments match the public inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inputs {
+    pub party_idx: u32,
+    pub mod_idx: u32,
     /// Public key and ciphertext polynomials in CRT form (per modulus).
     pub pk0is: CrtPolynomial,
     pub pk1is: CrtPolynomial,
@@ -516,9 +518,17 @@ impl Computation for Inputs {
         let pk_bit = compute_modulus_bit(&dkg_params);
         let msg_bit = compute_msg_bit(&dkg_params);
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
-        let msg_commitment = compute_share_encryption_commitment_from_message(&message, msg_bit);
+        let msg_commitment = compute_sc_party_share_root_commitment(
+            data.party_idx as usize,
+            data.mod_idx as usize,
+            &message,
+            msg_bit,
+            512,
+        );
 
         Ok(Inputs {
+            party_idx: data.party_idx,
+            mod_idx: data.mod_idx,
             pk0is,
             pk1is,
             ct0is,
@@ -574,6 +584,8 @@ impl Computation for Inputs {
             "p2is": p2is,
             "expected_pk_commitment": pk_commitment,
             "expected_message_commitment": msg_commitment,
+            "party_idx": self.party_idx,
+            "mod_idx": self.mod_idx,
         });
 
         Ok(json)

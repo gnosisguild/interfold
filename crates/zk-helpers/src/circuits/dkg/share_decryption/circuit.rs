@@ -34,6 +34,8 @@ pub struct ShareDecryptionCircuitData {
     /// party does not self-encrypt during DKG); `Some(cts)` carries one ciphertext per
     /// CRT modulus for an external honest party.
     pub honest_ciphertexts: Vec<Option<Vec<Ciphertext>>>,
+    /// Recipient party ID whose share row is decrypted.
+    pub recipient_party_id: u64,
     /// Own party's plaintext share row per modulus, shape `[L][N]` (length L, each
     /// inner Vec length N). Spliced into the H-sized list at the `None` slot when
     /// computing commitments and decrypted-share inputs.

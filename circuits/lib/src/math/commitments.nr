@@ -302,7 +302,7 @@ pub fn compute_sc_sk_secret_root_from_polynomial<let N: u32, let N_CHUNKS: u32, 
 ) -> Field {
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
-        let start = chunk_idx * CHUNK_SIZE;
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
         let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
         for offset in 0..CHUNK_SIZE {
             coefficients[offset] = sk.coefficients[start + offset];
@@ -323,7 +323,7 @@ pub fn compute_sc_esm_secret_root_from_polynomial<let N: u32, let L: u32, let N_
 ) -> Field {
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
-        let start = chunk_idx * CHUNK_SIZE;
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
         let mut polynomials: [Polynomial<CHUNK_SIZE>; L] = [Polynomial::new([0; CHUNK_SIZE]); L];
         for mod_idx in 0..L {
             let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
