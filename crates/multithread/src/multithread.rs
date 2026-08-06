@@ -1100,7 +1100,7 @@ fn handle_share_encryption_proof(
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // 1. Build DKG params from threshold preset
-    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
+    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
 
     // 2. Decrypt sensitive witness data
@@ -1149,7 +1149,9 @@ fn handle_share_encryption_proof(
             ),
         ));
     }
-    let n_moduli = dkg_params.moduli().len();
+    // C3 encrypts one threshold Shamir row per proof. The ciphertext itself uses DKG parameters,
+    // but row_index belongs to the threshold secret's modulus domain.
+    let n_moduli = threshold_params.moduli().len();
     if req.row_index >= n_moduli {
         return Err(make_zk_error(
             &request,
