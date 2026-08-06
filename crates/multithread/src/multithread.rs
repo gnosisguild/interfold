@@ -1139,6 +1139,31 @@ fn handle_share_encryption_proof(
     let e1_rns = try_poly_ntt_from_bytes(&e1_rns_bytes, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("e1_rns: {}", e)))?;
 
+    let committee_n = req.committee_size.values().n;
+    if req.recipient_party_id >= committee_n {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee size {}",
+                req.recipient_party_id, committee_n
+            ),
+        ));
+    }
+    let n_moduli = dkg_params.moduli().len();
+    if req.row_index >= n_moduli {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "row_index {} is outside modulus count {}",
+                req.row_index, n_moduli
+            ),
+        ));
+    }
+    let party_idx = u32::try_from(req.recipient_party_id)
+        .map_err(|e| make_zk_error(&request, format!("recipient_party_id: {e}")))?;
+    let mod_idx = u32::try_from(req.row_index)
+        .map_err(|e| make_zk_error(&request, format!("row_index: {e}")))?;
+
     // 4. Dummy SecretKey (not used by Inputs::compute)
     let dummy_sk = SecretKey::random(&dkg_params, &mut rand::rng());
 
@@ -1152,8 +1177,8 @@ fn handle_share_encryption_proof(
         e0_rns,
         e1_rns,
         dkg_input_type: req.dkg_input_type,
-        party_idx: req.recipient_party_id as u32,
-        mod_idx: req.row_index as u32,
+        party_idx,
+        mod_idx,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
