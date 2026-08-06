@@ -22,7 +22,10 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; C2_CHUNK_FOLD_PUBLIC_LEN],
     acc_key_hash: Field,
-) -> pub (Field, Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
+    // Circuit variant: false for SK and true for ESM.
+    variant: bool,
+) -> pub (Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
+    assert(!variant);
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
     for chunk in 0..SHARE_COMPUTATION_N_CHUNKS {
         assert(
@@ -37,5 +40,5 @@ fn main(
                 acc_public_inputs[C2_CHUNK_FOLD_C2_OFFSET + 1 + party_idx * L_THRESHOLD + mod_idx];
         }
     }
-    (0, expected_secret_commitment, party_commitments)
+    (expected_secret_commitment, party_commitments)
 }

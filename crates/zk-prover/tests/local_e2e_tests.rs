@@ -674,7 +674,7 @@ async fn test_chunked_share_computation_proof() {
     assert_eq!(result.chunk_count, 1);
     let expected_fields =
         1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
-    assert_eq!(result.proof.public_signals.len() / 32, expected_fields + 1);
+    assert_eq!(result.proof.public_signals.len() / 32, expected_fields);
     assert!(prover
         .verify_proof_with_variant(
             &result.proof,
@@ -711,10 +711,9 @@ async fn test_chunked_esm_share_computation_proof() {
     assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
     assert_eq!(result.chunk_count, 1);
     let fields = public_signals_to_fields(&result.proof.public_signals);
-    assert_eq!(fields[0], Fr::from(1));
     let expected_fields =
         1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
-    assert_eq!(fields.len(), expected_fields + 1);
+    assert_eq!(fields.len(), expected_fields);
     assert!(prover
         .verify_proof_with_variant(
             &result.proof,

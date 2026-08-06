@@ -320,10 +320,11 @@ The chunked C2 path keeps the same signed proof multiplicity and terminal public
 C2a/C2b request, Rust generates one recursive base proof, one recursive proof per 512-coefficient
 chunk, and a recursive terminal projection after the chunk accumulator proves complete coverage.
 The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
-`ESmC2ChunkFinalize` proof. Its public fields contain a type marker followed by the existing secret
-commitment and party share commitments. `C2abChunkFold` checks the marker and returns the existing
-`C2abFold` public layout, so C1→C2, C2→C3/C4, and `NodeFold` keep their terminal layout. The
-accumulator rejects duplicate, missing, or out-of-range chunk indices before it starts proving.
+`ESmC2ChunkFinalize` proof. Its public fields remain the existing secret commitment followed by
+party share commitments. The distinct terminal VKs bind the C2a/C2b proof type, and
+`C2abChunkFold` returns the existing `C2abFold` public layout, so C1→C2, C2→C3/C4, and `NodeFold`
+keep their terminal layout. The accumulator rejects duplicate, missing, or out-of-range chunk
+indices before it starts proving.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),

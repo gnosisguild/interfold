@@ -12,7 +12,7 @@ use lib::configs::default::N_PARTIES;
 use lib::math::commitments::compute_vk_hash;
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + 1;
+pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN;
 pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
 
 fn main(
@@ -27,17 +27,14 @@ fn main(
     ) -> pub (Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
     verify_honk_proof(c2a_vk, c2a_proof, c2a_public, c2a_key_hash);
     verify_honk_proof(c2b_vk, c2b_proof, c2b_public, c2b_key_hash);
-    assert(c2a_public[0] == 0);
-    assert(c2b_public[0] == 1);
-
     let key_hash = compute_vk_hash([c2a_key_hash, c2b_key_hash].as_vector());
     let mut c2a_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     let mut c2b_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     for party_idx in 0..N_PARTIES {
         for mod_idx in 0..L_THRESHOLD {
-            c2a_shares[party_idx][mod_idx] = c2a_public[2 + party_idx * L_THRESHOLD + mod_idx];
-            c2b_shares[party_idx][mod_idx] = c2b_public[2 + party_idx * L_THRESHOLD + mod_idx];
+            c2a_shares[party_idx][mod_idx] = c2a_public[1 + party_idx * L_THRESHOLD + mod_idx];
+            c2b_shares[party_idx][mod_idx] = c2b_public[1 + party_idx * L_THRESHOLD + mod_idx];
         }
     }
-    (key_hash, c2a_public[1], c2a_shares, c2b_public[1], c2b_shares)
+    (key_hash, c2a_public[0], c2a_shares, c2b_public[0], c2b_shares)
 }
