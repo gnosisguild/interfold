@@ -32,7 +32,7 @@ use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
 use e3_zk_helpers::circuits::{
     commitments::{
         compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
-        compute_threshold_decryption_share_commitment,
+        compute_sc_sk_secret_root_commitment, compute_threshold_decryption_share_commitment,
     },
     threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
     CircuitComputation,
@@ -56,10 +56,7 @@ use e3_zk_helpers::threshold::{
     },
 };
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_helpers::{
-    compute_pk_aggregation_commitment, compute_share_computation_sk_commitment,
-    compute_threshold_pk_commitment,
-};
+use e3_zk_helpers::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
 use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
 use fhe::trbfv::TRBFV;
 
@@ -542,9 +539,10 @@ async fn test_pk_generation_commitment_consistency() {
     let pk_commitment_from_proof = extract_field_from_end(&proof.public_signals, 1);
 
     // Recompute commitments from the witness
-    let sk_commitment_expected = compute_share_computation_sk_commitment(
+    let sk_commitment_expected = compute_sc_sk_secret_root_commitment(
         &computation_output.inputs.sk,
         computation_output.bits.sk_bit,
+        512,
     );
     let pk_commitment_expected = compute_threshold_pk_commitment(
         &computation_output.inputs.pk0is,
@@ -670,8 +668,20 @@ async fn test_chunked_share_computation_proof() {
 
     assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
     assert_eq!(result.chunk_count, 1);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::SkShareComputationChunk,
+    )
+    .expect("SK C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
+    );
+    assert_eq!(
+        public_signals_to_fields(&result.proof.public_signals)[0],
+        chunk_key_hash
+    );
     let expected_fields =
-        1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
     assert_eq!(result.proof.public_signals.len() / 32, expected_fields);
     assert!(prover
         .verify_proof_with_variant(
@@ -709,8 +719,17 @@ async fn test_chunked_esm_share_computation_proof() {
     assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
     assert_eq!(result.chunk_count, 1);
     let fields = public_signals_to_fields(&result.proof.public_signals);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::ESmShareComputationChunk,
+    )
+    .expect("ESM C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
+    );
+    assert_eq!(fields[0], chunk_key_hash);
     let expected_fields =
-        1 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
     assert_eq!(fields.len(), expected_fields);
     assert!(prover
         .verify_proof_with_variant(

@@ -45,4 +45,8 @@ pub struct ShareEncryptionCircuitData {
     pub e1_rns: Poly<Ntt>,
     /// Type of DKG input (SecretKey or SmudgingNoise) to determine which circuit variant to use.
     pub dkg_input_type: DkgInputType,
+    /// Zero-based recipient party index used in the share-root commitment.
+    pub party_idx: u32,
+    /// Zero-based CRT modulus index used in the share-root commitment.
+    pub mod_idx: u32,
 }

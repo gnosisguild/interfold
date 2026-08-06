@@ -14,8 +14,8 @@ use lib::math::commitments::compute_vk_hash;
 /// C2 inner public IO: `expected_secret_commitment` + `[[Field; L_THRESHOLD]; N_PARTIES]`.
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 
-/// Two key-hash params + combined key hash + two C2-sized public vectors (a and b).
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+/// Two key-hash params + combined key hash + two child VK hashes + two C2-sized vectors.
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 5 + (2 * C2_PUBLIC_LEN);
 
 fn main(
     c2a_vk: UltraHonkVerificationKey,
@@ -26,7 +26,7 @@ fn main(
     c2b_public: [Field; C2_PUBLIC_LEN],
     c2a_key_hash: pub Field,
     c2b_key_hash: pub Field,
-    ) -> pub (Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
+     ) -> pub (Field, Field, Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES]) {
     verify_honk_proof(c2a_vk, c2a_proof, c2a_public, c2a_key_hash);
     verify_honk_proof(c2b_vk, c2b_proof, c2b_public, c2b_key_hash);
 
@@ -49,5 +49,13 @@ fn main(
         }
     }
 
-    (key_hash, c2a_expected, c2a_shares, c2b_expected, c2b_shares)
+    (
+        key_hash,
+        c2a_key_hash,
+        c2b_key_hash,
+        c2a_expected,
+        c2a_shares,
+        c2b_expected,
+        c2b_shares,
+    )
 }

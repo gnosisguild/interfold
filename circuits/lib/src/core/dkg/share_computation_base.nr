@@ -70,7 +70,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SH
         self.verify_secret_consistency();
         (
             self.compute_chunk_commitments(),
-            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y),
+            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y),
         )
     }
 }
@@ -144,7 +144,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SH
         self.verify_secret_consistency();
         (
             self.compute_chunk_commitments(),
-            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y),
+            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y),
         )
     }
 }

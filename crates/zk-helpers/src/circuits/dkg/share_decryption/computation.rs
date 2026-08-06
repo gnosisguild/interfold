@@ -19,7 +19,7 @@
 //!   aggregate hashing. Emitted as `SHARE_DECRYPTION_BIT_AGG`; the Noir C4 circuit uses it for
 //!   `compute_aggregated_shares_commitment` on the sum (per-share verification still uses `BIT_MSG`).
 
-use crate::circuits::commitments::compute_share_encryption_commitment_from_message;
+use crate::circuits::commitments::compute_sc_party_share_root_commitment;
 use crate::dkg::share_decryption::ShareDecryptionCircuit;
 use crate::dkg::share_decryption::ShareDecryptionCircuitData;
 use crate::math::plaintext_poly_u64;
@@ -102,6 +102,8 @@ pub struct Inputs {
     pub expected_commitments: Vec<Vec<BigInt>>, // [H][L]
     /// Decrypted share coefficients per party and modulus: [party_idx][mod_idx][coeff_idx].
     pub decrypted_shares: Vec<Vec<Vec<BigInt>>>, // [H][L][N]
+    /// Zero-based recipient party index used in the C2 commitment domain.
+    pub recipient_party_idx: u64,
 }
 
 impl Computation for Configs {
@@ -208,9 +210,12 @@ impl Computation for Inputs {
                         // Reverse to match C3's reversed commitment convention.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(compute_share_encryption_commitment_from_message(
+                        party_commitments.push(compute_sc_party_share_root_commitment(
+                            data.recipient_party_id as usize,
+                            mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
                             msg_bit,
+                            512,
                         ));
                         party_shares.push(
                             share_coeffs
@@ -226,9 +231,12 @@ impl Computation for Inputs {
                         // Same reverse-then-commit as the BFV-decrypted branch.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(compute_share_encryption_commitment_from_message(
+                        party_commitments.push(compute_sc_party_share_root_commitment(
+                            data.recipient_party_id as usize,
+                            mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
                             msg_bit,
+                            512,
                         ));
                         party_shares.push(
                             share_coeffs
@@ -247,6 +255,7 @@ impl Computation for Inputs {
         Ok(Inputs {
             expected_commitments,
             decrypted_shares,
+            recipient_party_idx: data.recipient_party_id,
         })
     }
 
@@ -269,6 +278,7 @@ impl Computation for Inputs {
         let json = serde_json::json!({
             "expected_commitments": expected_commitments,
             "decrypted_shares": decrypted_shares,
+            "recipient_party_idx": self.recipient_party_idx,
         });
 
         Ok(json)
@@ -379,9 +389,12 @@ mod tests {
                 // with C2's commit_to_party_shares (highest-degree-first convention).
                 let mut reversed = share_coeffs.clone();
                 reversed.reverse();
-                let direct_commitment = compute_share_encryption_commitment_from_message(
+                let direct_commitment = compute_sc_party_share_root_commitment(
+                    inputs.recipient_party_idx as usize,
+                    mod_idx,
                     &Polynomial::from_u64_vector(reversed),
                     msg_bit,
+                    512,
                 );
                 assert_eq!(
                     inputs.expected_commitments[party_idx][mod_idx], direct_commitment,

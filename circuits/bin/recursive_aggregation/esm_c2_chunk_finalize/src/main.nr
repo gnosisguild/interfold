@@ -21,13 +21,14 @@ pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 pub global BATCH_RETURN_LEN: u32 = 2 + (CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN);
 pub global BATCH_PUBLIC_LEN: u32 = 2 + BATCH_RETURN_LEN;
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + 1;
 
 fn main(
     batch_vk: UltraHonkVerificationKey,
     batch_proofs: [UltraHonkProof; N_BATCHES],
     batch_public_inputs: [[Field; BATCH_PUBLIC_LEN]; N_BATCHES],
     batch_key_hash: Field,
-) -> pub [Field; C2_PUBLIC_LEN] {
+) -> pub [Field; C2_FINALIZED_PUBLIC_LEN] {
     assert(N_BATCHES * CHUNKS_PER_BATCH == N_CHUNKS);
 
     let mut secret_chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
@@ -43,6 +44,7 @@ fn main(
         );
         assert(batch_public_inputs[batch_idx][1] == batch_idx as Field);
         assert(batch_public_inputs[batch_idx][2] == batch_idx as Field);
+        assert(batch_public_inputs[batch_idx][0] == batch_public_inputs[0][0]);
 
         for chunk_in_batch in 0..CHUNKS_PER_BATCH {
             let chunk_idx = batch_idx * CHUNKS_PER_BATCH + chunk_in_batch;
@@ -54,12 +56,13 @@ fn main(
         }
     }
 
-    let mut output: [Field; C2_PUBLIC_LEN] = [0; C2_PUBLIC_LEN];
-    output[0] = compute_sc_secret_chunk_root_commitment(1, N, CHUNK_SIZE, secret_chunks);
+    let mut output: [Field; C2_FINALIZED_PUBLIC_LEN] = [0; C2_FINALIZED_PUBLIC_LEN];
+    output[0] = batch_public_inputs[0][0];
+    output[1] = compute_sc_secret_chunk_root_commitment(1, N, CHUNK_SIZE, secret_chunks);
     for party_idx in 0..N_PARTIES {
         for mod_idx in 0..L_THRESHOLD {
             let slot = party_idx * L_THRESHOLD + mod_idx;
-            output[1 + slot] = compute_sc_party_share_chunk_root_commitment(
+            output[2 + slot] = compute_sc_party_share_chunk_root_commitment(
                 party_idx,
                 mod_idx,
                 N,

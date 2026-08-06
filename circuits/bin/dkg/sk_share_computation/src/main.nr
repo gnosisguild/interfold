@@ -6,7 +6,7 @@
 
 use lib::configs::default::dkg::{
     L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_SK_BIT_SECRET,
-    SHARE_COMPUTATION_SK_CONFIGS,
+    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_SK_CONFIGS,
 };
 use lib::configs::default::{N_PARTIES, T};
 use lib::core::dkg::share_computation::SecretKeyShareComputation;
@@ -17,7 +17,7 @@ fn main(
     sk_secret: Polynomial<N>,
     y: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; N],
 ) -> pub [[Field; L_THRESHOLD]; N_PARTIES] {
-    let sk_share_computation: SecretKeyShareComputation<N, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE> = SecretKeyShareComputation::new(
+    let sk_share_computation: SecretKeyShareComputation<N, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = SecretKeyShareComputation::new(
         SHARE_COMPUTATION_SK_CONFIGS,
         expected_secret_commitment,
         sk_secret,

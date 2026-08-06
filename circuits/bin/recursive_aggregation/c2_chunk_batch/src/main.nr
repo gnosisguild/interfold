@@ -42,7 +42,7 @@ fn main(
 
         batch_payload = batch_payload.push_back(expected_chunk_idx as Field);
         for j in 1..CHUNK_PUBLIC_LEN {
-            output[1 + i * CHUNK_COMMITMENT_LEN + (j - 1)] = chunk_public_inputs[i][j];
+            output[2 + i * CHUNK_COMMITMENT_LEN + (j - 1)] = chunk_public_inputs[i][j];
             batch_payload = batch_payload.push_back(chunk_public_inputs[i][j]);
         }
     }
