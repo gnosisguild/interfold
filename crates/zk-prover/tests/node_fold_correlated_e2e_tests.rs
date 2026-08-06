@@ -17,8 +17,10 @@ mod node_fold_witness;
 use std::path::PathBuf;
 
 use common::{
-    find_bb, require_minimum_circuits, setup_compiled_circuit,
-    setup_recursive_aggregation_fold_circuit, setup_test_prover,
+    active_bin_preset, compiled_circuit_artifacts_available, find_bb,
+    recursive_circuit_artifacts_available, require_minimum_circuits_for_preset,
+    setup_compiled_circuit_for_preset, setup_recursive_aggregation_fold_circuit_for_preset,
+    setup_test_prover,
 };
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
@@ -130,14 +132,13 @@ fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionC
     d
 }
 
-#[tokio::test]
-async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
+async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     let Some(bb) = find_bb().await else {
         println!("skipping: bb not found");
         return;
     };
 
-    if require_minimum_circuits().is_none() {
+    if require_minimum_circuits_for_preset(preset).is_none() {
         return;
     }
 
@@ -155,7 +156,6 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
 
     let (backend, temp) = setup_test_prover(&bb).await;
     let prover = ZkProver::new(&backend);
@@ -173,9 +173,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         "share_encryption",
         "share_decryption",
     ] {
-        setup_compiled_circuit(&backend, "dkg", g).await;
+        setup_compiled_circuit_for_preset(&backend, "dkg", g, preset, "minimum").await;
     }
-    setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
+    setup_compiled_circuit_for_preset(&backend, "threshold", "pk_generation", preset, "minimum")
+        .await;
 
     for c in [
         CircuitName::C2abFold,
@@ -189,7 +190,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         CircuitName::C4abFold,
         CircuitName::NodeFold,
     ] {
-        setup_recursive_aggregation_fold_circuit(&backend, c).await;
+        setup_recursive_aggregation_fold_circuit_for_preset(&backend, c, preset, "minimum").await;
     }
 
     let (pk_gen, esi, pk_secret_key) = pk_generation_sample_with_esi(preset, committee.clone())
@@ -302,7 +303,8 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
-    assert_eq!(total_slots, 6, "Micro / insecure preset uses 3×2 C3 slots");
+    let expected_slots = committee.n * preset.metadata().num_moduli;
+    assert_eq!(total_slots, expected_slots);
     let slots_per_party = total_slots / committee.n;
     let own_party_id = 0usize;
 
@@ -359,7 +361,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         );
         slot_indices.push(slot as u32);
     }
-    assert_eq!(slot_indices, vec![2, 3, 4, 5]);
+    let expected_slot_indices: Vec<u32> = (slots_per_party..total_slots)
+        .map(|slot| slot as u32)
+        .collect();
+    assert_eq!(slot_indices, expected_slot_indices);
 
     let c3a_folded = generate_sequential_c3_fold(
         &prover,
@@ -604,6 +609,9 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     .expect("chunked C2b proof");
     assert_eq!(c2a_chunked.proof.circuit, CircuitName::SkC2ChunkFinalize);
     assert_eq!(c2b_chunked.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    let expected_chunk_count = preset.metadata().degree / 512;
+    assert_eq!(c2a_chunked.chunk_count, expected_chunk_count);
+    assert_eq!(c2b_chunked.chunk_count, expected_chunk_count);
 
     let chunked_node = e3_zk_prover::prove_node_dkg_fold(
         &prover,
@@ -639,4 +647,52 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         .expect("verify chunked node_fold"));
 
     drop(temp);
+}
+
+#[tokio::test]
+async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
+    run_node_fold_correlated_sparse_self_slot(BfvPreset::InsecureThreshold512).await;
+}
+
+#[tokio::test]
+async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
+    if active_bin_preset().as_deref() != Some("secure-8192") {
+        println!("skipping: secure-8192 circuit artifacts are not active");
+        return;
+    }
+    let dkg_circuits = [
+        "pk",
+        "sk_share_computation",
+        "e_sm_share_computation",
+        "sk_share_computation_base",
+        "e_sm_share_computation_base",
+        "sk_share_computation_chunk",
+        "esm_share_computation_chunk",
+        "share_encryption",
+        "share_decryption",
+    ];
+    let recursive_circuits = [
+        CircuitName::C2abFold,
+        CircuitName::C2ChunkBatch,
+        CircuitName::SkC2ChunkFinalize,
+        CircuitName::ESmC2ChunkFinalize,
+        CircuitName::C2abChunkFold,
+        CircuitName::C3Fold,
+        CircuitName::C3FoldKernel,
+        CircuitName::C3abFold,
+        CircuitName::C4abFold,
+        CircuitName::NodeFold,
+    ];
+    if dkg_circuits
+        .iter()
+        .any(|circuit| !compiled_circuit_artifacts_available("dkg", circuit))
+        || !compiled_circuit_artifacts_available("threshold", "pk_generation")
+        || recursive_circuits
+            .iter()
+            .any(|circuit| !recursive_circuit_artifacts_available(*circuit))
+    {
+        println!("skipping: secure-8192 circuit artifacts are not staged");
+        return;
+    }
+    run_node_fold_correlated_sparse_self_slot(BfvPreset::SecureThreshold8192).await;
 }

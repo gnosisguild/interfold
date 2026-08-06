@@ -317,8 +317,11 @@ The per-circuit `wrapper/` Noir step was removed; aggregator response structs no
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
-generates one type-bound recursive proof per 512-coefficient chunk, groups the chunk proofs into
-fixed recursive batches, and verifies all batches in a type-bound terminal circuit. The terminal
+generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients.
+The `--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
+circuit configuration. The production multithread path uses the compiled default chunk size. Rust
+groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
+terminal circuit. The terminal
 circuits reconstruct a root commitment for the secret and for each recipient share. The signed
 response contains only the type-bound terminal `SkC2ChunkFinalize` or `ESmC2ChunkFinalize` proof.
 `C2ChunkBatch` binds the ordered chunk indices and chunk commitments. C1, normal C2, C3, C4
