@@ -394,9 +394,17 @@ pub fn finalize_c2_chunk_fold(
     prover: &ZkProver,
     accumulator: &Proof,
     chunk_count: usize,
+    finalizer_circuit: CircuitName,
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
+    if finalizer_circuit != CircuitName::SkC2ChunkFinalize
+        && finalizer_circuit != CircuitName::ESmC2ChunkFinalize
+    {
+        return Err(ZkError::InvalidInput(format!(
+            "invalid C2 chunk finalizer circuit {finalizer_circuit}"
+        )));
+    }
     if accumulator.circuit != CircuitName::C2ChunkFold
         && accumulator.circuit != CircuitName::C2ChunkFoldKernel
     {
@@ -444,26 +452,26 @@ pub fn finalize_c2_chunk_fold(
     };
     let circuit_path = prover
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
-        .join(CircuitName::C2ChunkFinalize.dir_path())
-        .join(format!("{}.json", CircuitName::C2ChunkFinalize.as_str()));
+        .join(finalizer_circuit.dir_path())
+        .join(format!("{}.json", finalizer_circuit.as_str()));
     let compiled = CompiledCircuit::from_file(&circuit_path)?;
     let json = serde_json::to_value(&full_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
     let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
     let proof = prover.generate_proof_with_variant(
-        CircuitName::C2ChunkFinalize,
+        finalizer_circuit,
         &witness,
         &format!("{e3_id}-c2chunk-finalize"),
         CircuitVariant::Recursive,
         artifacts_dir,
     )?;
     let output_fields = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if output_fields.len() != c2_public_len {
+    if output_fields.len() != c2_public_len + 1 {
         return Err(ZkError::InvalidInput(format!(
             "C2 chunk finalizer has {} public fields, expected {}",
             output_fields.len(),
-            c2_public_len
+            c2_public_len + 1
         )));
     }
     Ok(proof)

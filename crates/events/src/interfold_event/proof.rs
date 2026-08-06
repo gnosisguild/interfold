@@ -160,6 +160,12 @@ pub enum CircuitName {
     C2ChunkFoldKernel,
     /// Terminal projection from a complete C2 chunk accumulator to C2 layout.
     C2ChunkFinalize,
+    /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
+    SkC2ChunkFinalize,
+    /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
+    ESmC2ChunkFinalize,
+    /// Combines type-bound terminal C2a and C2b chunk proofs.
+    C2abChunkFold,
 }
 
 impl CircuitName {
@@ -182,6 +188,9 @@ impl CircuitName {
             CircuitName::C2ChunkFold => "c2_chunk_fold",
             CircuitName::C2ChunkFoldKernel => "c2_chunk_fold_kernel",
             CircuitName::C2ChunkFinalize => "c2_chunk_finalize",
+            CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
+            CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
+            CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -214,6 +223,9 @@ impl CircuitName {
             | CircuitName::C2ChunkFold
             | CircuitName::C2ChunkFoldKernel
             | CircuitName::C2ChunkFinalize
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -265,6 +277,9 @@ impl CircuitName {
             | CircuitName::C2ChunkFold
             | CircuitName::C2ChunkFoldKernel
             | CircuitName::C2ChunkFinalize
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold

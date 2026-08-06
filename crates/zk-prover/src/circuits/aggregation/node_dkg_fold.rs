@@ -175,14 +175,45 @@ pub fn prove_node_dkg_fold(
     artifacts_dir: &str,
 ) -> Result<NodeDkgFoldProveResult, ZkError> {
     let mut step_timings = Vec::with_capacity(6);
+    let c2a_circuit = match input.c2a_proof.circuit {
+        CircuitName::SkShareComputation | CircuitName::SkC2ChunkFinalize => input.c2a_proof.circuit,
+        other => {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C2a proof circuit {other}"
+            )))
+        }
+    };
+    let c2b_circuit = match input.c2b_proof.circuit {
+        CircuitName::ESmShareComputation | CircuitName::ESmC2ChunkFinalize => {
+            input.c2b_proof.circuit
+        }
+        other => {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C2b proof circuit {other}"
+            )))
+        }
+    };
     let c2a_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::SkShareComputation,
+        c2a_circuit,
     )?;
     let c2b_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::ESmShareComputation,
+        c2b_circuit,
     )?;
+    let c2ab_circuit = match (c2a_circuit, c2b_circuit) {
+        (CircuitName::SkShareComputation, CircuitName::ESmShareComputation) => {
+            CircuitName::C2abFold
+        }
+        (CircuitName::SkC2ChunkFinalize, CircuitName::ESmC2ChunkFinalize) => {
+            CircuitName::C2abChunkFold
+        }
+        _ => {
+            return Err(ZkError::InvalidInput(
+                "C2a and C2b proofs must use the same proof-generation path".into(),
+            ))
+        }
+    };
 
     let c2ab = C2abFoldWitness {
         c2a_vk: c2a_vk.verification_key.clone(),
@@ -203,7 +234,7 @@ pub fn prove_node_dkg_fold(
                 let t = Instant::now();
                 let r = build_and_prove_recursive_bin(
                     prover,
-                    CircuitName::C2abFold,
+                    c2ab_circuit,
                     &c2ab,
                     &format!("{e3_id}-c2ab"),
                     artifacts_dir,
@@ -242,7 +273,7 @@ pub fn prove_node_dkg_fold(
 
     let c2ab_proof = c2ab_result?;
     step_timings.push(FoldProveStepTiming {
-        step: "c2ab_fold".to_string(),
+        step: c2ab_circuit.as_str().to_string(),
         seconds: c2ab_elapsed.as_secs_f64(),
     });
     let c3a_folded = c3a_result?;
@@ -316,7 +347,7 @@ pub fn prove_node_dkg_fold(
     )?;
     let c2ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C2abFold,
+        c2ab_circuit,
     )?;
     let c3ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
