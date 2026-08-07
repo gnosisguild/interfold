@@ -175,7 +175,7 @@ artifact_metrics() {
             calldata=$(jq -r '.verification.calldata_gas_total // 0' "$wrapper")
             total="N/A"
             if [ "$verify_gas" != "N/A" ]; then total=$((verify_gas + calldata)); fi
-            echo "| $name | $(format_kb "$proof_size") KB | $(format_kb "$public_size") KB | $verify_gas | $calldata | $total |" >> "$OUTPUT_FILE"
+            echo "| $name | $(format_kb "$proof_size") KiB | $(format_kb "$public_size") KiB | $verify_gas | $calldata | $total |" >> "$OUTPUT_FILE"
             return
         fi
 
@@ -194,7 +194,7 @@ artifact_metrics() {
             && [ -n "$folded_calldata" ] && [ "$folded_calldata" != "null" ] && [ "$folded_calldata" != "0" ]; then
             local folded_total="N/A"
             if [ "$verify_gas" != "N/A" ]; then folded_total=$((verify_gas + folded_calldata)); fi
-            echo "| $name | $(format_kb "$folded_proof_size") KB | $(format_kb "$folded_public_size") KB | $verify_gas | $folded_calldata | $folded_total |" >> "$OUTPUT_FILE"
+            echo "| $name | $(format_kb "$folded_proof_size") KiB | $(format_kb "$folded_public_size") KiB | $verify_gas | $folded_calldata | $folded_total |" >> "$OUTPUT_FILE"
             return
         fi
     fi
@@ -218,7 +218,7 @@ artifact_metrics() {
                 folded_calldata=$((cdp + cdc))
                 folded_total="N/A"
                 if [ "$verify_gas" != "N/A" ]; then folded_total=$((verify_gas + folded_calldata)); fi
-                echo "| $name | $(format_kb "$pb") KB | $(format_kb "$pubb") KB | $verify_gas | $folded_calldata | $folded_total |" >> "$OUTPUT_FILE"
+                echo "| $name | $(format_kb "$pb") KiB | $(format_kb "$pubb") KiB | $verify_gas | $folded_calldata | $folded_total |" >> "$OUTPUT_FILE"
                 return
             fi
         fi
@@ -236,7 +236,7 @@ artifact_metrics() {
     calldata=$(jq -r '.verification.calldata_gas_total // 0' "$json_file")
     total="N/A"
     if [ "$verify_gas" != "N/A" ]; then total=$((verify_gas + calldata)); fi
-    echo "| $name | $(format_kb "$proof_size") KB | $(format_kb "$public_size") KB | $verify_gas | $calldata | $total |" >> "$OUTPUT_FILE"
+    echo "| $name | $(format_kb "$proof_size") KiB | $(format_kb "$public_size") KiB | $verify_gas | $calldata | $total |" >> "$OUTPUT_FILE"
 }
 
 sum_phase_metrics() {
@@ -259,7 +259,7 @@ sum_phase_metrics() {
         count=$((count + 1))
     done
     if [ "$count" -eq 0 ]; then echo "N/A|N/A|N/A"; return; fi
-    echo "$(format_s "$prove_sum") s|$(format_kb "$proof_sum") KB|$(format_kb "$bandwidth_sum") KB"
+    echo "$(format_s "$prove_sum") s|$(format_kb "$proof_sum") KiB|$(format_kb "$bandwidth_sum") KiB"
 }
 
 integration_phase_seconds() {
@@ -372,7 +372,7 @@ artifact_size_pair_from_gas() {
         if [ -n "$proof" ] && [ "$proof" != "null" ] && [ -n "$public" ] && [ "$public" != "null" ] \
             && [ "$proof" != "0" ] && [ "$public" != "0" ]; then
             bandwidth=$(echo "$proof + $public" | bc)
-            echo "$(format_kb "$proof") KB|$(format_kb "$bandwidth") KB"
+            echo "$(format_kb "$proof") KiB|$(format_kb "$bandwidth") KiB"
             return
         fi
     fi
@@ -393,7 +393,7 @@ artifact_size_pair_from_gas() {
             public=$(hex_len_bytes "$pubh")
             if [ "$proof" != "0" ] || [ "$public" != "0" ]; then
                 bandwidth=$(echo "$proof + $public" | bc)
-                echo "$(format_kb "$proof") KB|$(format_kb "$bandwidth") KB"
+                echo "$(format_kb "$proof") KiB|$(format_kb "$bandwidth") KiB"
                 return
             fi
         fi
@@ -618,7 +618,7 @@ cat >> "$OUTPUT_FILE" <<EOF
 
 Single-circuit \`bb prove\` on the benchmark oracle witness (not the integration actor pipeline).
 
-| Circuit | Constraints | Prove (s) | Verify (ms) | Proof (KB) |
+| Circuit | Constraints | Prove (s) | Verify (ms) | Proof (KiB) |
 |---------|-------------|-----------|-------------|------------|
 EOF
 
@@ -706,8 +706,8 @@ if [ -n "$wrapper_json" ]; then
     p3_proof_bytes=$(jq -r '.proof_generation.proof_size_bytes // 0' "$wrapper_json")
     p3_public_bytes=$(jq -r '.verification.public_inputs_size_bytes // 0' "$wrapper_json")
     p3_bandwidth_bytes=$(echo "$p3_proof_bytes + $p3_public_bytes" | bc)
-    p3s="$(format_kb "$p3_proof_bytes") KB"
-    p3b="$(format_kb "$p3_bandwidth_bytes") KB"
+    p3s="$(format_kb "$p3_proof_bytes") KiB"
+    p3b="$(format_kb "$p3_bandwidth_bytes") KiB"
 fi
 p4a_artifact=$(artifact_size_pair_from_gas "dec")
 if [ -n "$p4a_artifact" ]; then

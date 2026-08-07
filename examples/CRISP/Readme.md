@@ -46,7 +46,7 @@ Before getting started, ensure you have installed:
 - Noir toolchain: [`nargo`](https://noir-lang.org/docs/getting_started/quick_start) and
   [`bb`](https://barretenberg.aztec.network/docs/getting_started). Install the versions CI pins,
   since other versions may not compile the circuits:
-  - `nargo`: `noirup -v v1.0.0-beta.16` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
+  - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
   - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
 
 [RiscZero](https://dev.risczero.com/api/zkvm/install) is **not** required for local development.

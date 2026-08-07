@@ -128,19 +128,26 @@ async function deployHonkAggregator(
   contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
 ): Promise<string> {
   const solSource = honkContractSource(honkDir, contractName);
-  const libKey = `project/${solSource}:ZKTranscriptLib`;
-  const libFactory = await ethersLib.getContractFactory(
+  const libraryPrefix = `project/${solSource}:`;
+  const zkTranscriptLibFactory = await ethersLib.getContractFactory(
     `${solSource}:ZKTranscriptLib`,
   );
-  const lib = await libFactory.deploy();
-  await lib.waitForDeployment();
-  const libAddress = await lib.getAddress();
+  const zkTranscriptLib = await zkTranscriptLibFactory.deploy();
+  await zkTranscriptLib.waitForDeployment();
+  const zkTranscriptLibAddress = await zkTranscriptLib.getAddress();
+  const relationsLibFactory = await ethersLib.getContractFactory(
+    `${solSource}:RelationsLib`,
+  );
+  const relationsLib = await relationsLibFactory.deploy();
+  await relationsLib.waitForDeployment();
+  const relationsLibAddress = await relationsLib.getAddress();
 
   const aggFactory = await ethersLib.getContractFactory(
     `${solSource}:${contractName}`,
     {
       libraries: {
-        [libKey]: libAddress,
+        [`${libraryPrefix}ZKTranscriptLib`]: zkTranscriptLibAddress,
+        [`${libraryPrefix}RelationsLib`]: relationsLibAddress,
       },
     },
   );

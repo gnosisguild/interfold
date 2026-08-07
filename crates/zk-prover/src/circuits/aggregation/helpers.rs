@@ -12,8 +12,8 @@ use crate::error::ZkError;
 use e3_events::{CircuitName, Proof};
 
 /// Field count for `UltraHonkProof` (non-ZK) used as the `acc_proof` parameter in every
-/// recursive fold step. Sourced from `nargo compile` ABI.
-pub const ACC_NONZK_PROOF_FIELDS: usize = 457;
+/// recursive fold step. Sourced from `bb_proof_verification::RECURSIVE_PROOF_LENGTH`.
+pub const ACC_NONZK_PROOF_FIELDS: usize = 410;
 
 /// String keys for inner-circuit public input/output extraction. Centralised so a
 /// rename in the Noir ABI surfaces as a single edit instead of a runtime panic.

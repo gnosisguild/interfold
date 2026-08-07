@@ -183,12 +183,9 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// # Returns
     /// A vector containing commitments and polynomial coefficients in flattened form,
     /// ready for hashing to generate the Fiat-Shamir challenge.
-    fn payload(self) -> Vec<Field> {
-        let mut inputs = Vec::new();
-
+    fn payload(self) -> [Field] {
         // Use commitments instead of full polynomials (saves constraints)
-        inputs.push(self.expected_sk_commitment);
-        inputs.push(self.expected_e_sm_commitment);
+        let mut inputs = [self.expected_sk_commitment, self.expected_e_sm_commitment].as_vector();
 
         // Flatten ciphertext components (witness)
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);

@@ -14,7 +14,7 @@
     flake-utils,
   }: let
     # define the version hashes. everytime we change dependencies these need to change
-    noirHash = "sha256-RoeWaqgFwr8A4HAlu5DzuxrNrexMolIZG14fHQA0KmM=";
+    noirHash = "sha256-O/+h9rVsbu/fmf8GVgrDyip8xwBlj3rSk3uJ5qmgYis=";
     fheHash = "sha256-dS8LcKDI/D9ycsRXbQnMVkUc2ymFBFL8kDrEtRGuHNI=";
     vfsHash = "sha256-+d8RFk7UgOXDCE/LizCTV+UX/Xm/1mYWrR7W0l6mAl8=";
     # bb version + checksums driven from versions.json
@@ -30,7 +30,7 @@
       noirSrc = pkgs.fetchFromGitHub {
         owner = "noir-lang";
         repo = "noir";
-        rev = "v1.0.0-beta.16";
+        rev = "v1.0.0-beta.26";
         hash = noirHash;
       };
       bbPlatform =
@@ -107,27 +107,28 @@
               inherit name;
               value = noirHash;
             }) [
-              "acir-1.0.0-beta.16"
-              "acir_field-1.0.0-beta.16"
-              "acvm-1.0.0-beta.16"
-              "acvm_blackbox_solver-1.0.0-beta.16"
-              "bn254_blackbox_solver-1.0.0-beta.16"
-              "brillig-1.0.0-beta.16"
-              "brillig_vm-1.0.0-beta.16"
-              "fm-1.0.0-beta.16"
-              "iter-extended-1.0.0-beta.16"
-              "nargo-1.0.0-beta.16"
-              "noir_greybox_fuzzer-1.0.0-beta.16"
-              "noir_protobuf-1.0.0-beta.16"
-              "noirc_abi-1.0.0-beta.16"
-              "noirc_arena-1.0.0-beta.16"
-              "noirc_artifacts-1.0.0-beta.16"
-              "noirc_driver-1.0.0-beta.16"
-              "noirc_errors-1.0.0-beta.16"
-              "noirc_evaluator-1.0.0-beta.16"
-              "noirc_frontend-1.0.0-beta.16"
-              "noirc_printable_type-1.0.0-beta.16"
-              "noirc_span-1.0.0-beta.16"
+              "acir-1.0.0-beta.26"
+              "acir_field-1.0.0-beta.26"
+              "acvm-1.0.0-beta.26"
+              "acvm_blackbox_solver-1.0.0-beta.26"
+              "bn254_blackbox_solver-1.0.0-beta.26"
+              "brillig-1.0.0-beta.26"
+              "brillig_vm-1.0.0-beta.26"
+              "fm-1.0.0-beta.26"
+              "iter-extended-1.0.0-beta.26"
+              "msgpack_tagged-1.0.0-beta.26"
+              "msgpack_tagged_derive-1.0.0-beta.26"
+              "nargo-1.0.0-beta.26"
+              "noir_greybox_fuzzer-1.0.0-beta.26"
+              "noirc_abi-1.0.0-beta.26"
+              "noirc_arena-1.0.0-beta.26"
+              "noirc_artifacts-1.0.0-beta.26"
+              "noirc_driver-1.0.0-beta.26"
+              "noirc_errors-1.0.0-beta.26"
+              "noirc_evaluator-1.0.0-beta.26"
+              "noirc_frontend-1.0.0-beta.26"
+              "noirc_printable_type-1.0.0-beta.26"
+              "noirc_span-1.0.0-beta.26"
             ]
             ++ map (name: {
               inherit name;

@@ -66,7 +66,7 @@ fn main(
     // Merkle Tree Section.
     merkle_root: pub Field,
     merkle_proof_length: u32,
-    merkle_proof_indices: [u1; 20],
+    merkle_proof_indices: [bool; 20],
     merkle_proof_siblings: [Field; 20],
     // Other inputs.
     slot_address: pub Field,

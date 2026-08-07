@@ -102,30 +102,8 @@
       "type": "error"
     },
     {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        }
-      ],
-      "name": "CommitteeObligationsAlreadyReleased",
-      "type": "error"
-    },
-    {
       "inputs": [],
       "name": "DkgProofRequired",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        }
-      ],
-      "name": "E3NotTerminal",
       "type": "error"
     },
     {
@@ -167,22 +145,6 @@
     {
       "inputs": [],
       "name": "InvalidFoldAttestation",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "supplied",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "maximum",
-          "type": "uint256"
-        }
-      ],
-      "name": "InvalidPublicKeyLength",
       "type": "error"
     },
     {
@@ -523,37 +485,6 @@
         },
         {
           "indexed": false,
-          "internalType": "bytes32",
-          "name": "pkCommitment",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "proof",
-          "type": "bytes"
-        }
-      ],
-      "name": "CommitteeProofPublished",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "address[]",
-          "name": "nodes",
-          "type": "address[]"
-        },
-        {
-          "indexed": false,
           "internalType": "bytes",
           "name": "publicKey",
           "type": "bytes"
@@ -605,12 +536,6 @@
           "indexed": false,
           "internalType": "uint256",
           "name": "committeeDeadline",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "ticketPrice",
           "type": "uint256"
         }
       ],
@@ -1276,6 +1201,11 @@
           "type": "uint256"
         },
         {
+          "internalType": "bytes",
+          "name": "publicKey",
+          "type": "bytes"
+        },
+        {
           "internalType": "bytes32",
           "name": "pkCommitment",
           "type": "bytes32"
@@ -1292,37 +1222,6 @@
         }
       ],
       "name": "publishCommittee",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        },
-        {
-          "internalType": "bytes",
-          "name": "publicKey",
-          "type": "bytes"
-        }
-      ],
-      "name": "publishCommitteePublicKey",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "e3Id",
-          "type": "uint256"
-        }
-      ],
-      "name": "releaseCommittee",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1504,5 +1403,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-ca77c377ef97433368d5bdac52ec0588fdf90512"
+  "buildInfoId": "solc-0_8_28-cc4ef405e46c0d79d4e49bd03d30b46f575c43f3"
 }

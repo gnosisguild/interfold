@@ -10,7 +10,7 @@ import { generateCircuitInputsImpl } from './circuitInputs'
 import { MASK_SIGNATURE, SIGNATURE_MESSAGE_HASH } from './constants'
 export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } from './encoding'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
 import crispCircuit from '../../../circuits/bin/crisp/target/crisp.json'
 import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
 import userDataEncryptionCt0Circuit from '../../../../../circuits/bin/threshold/target/user_data_encryption_ct0.json'
@@ -29,8 +29,12 @@ const getBBApi = async (): Promise<Barretenberg> => {
 
   _bbApiInitPromise = (async () => {
     try {
-      const api = await Barretenberg.new()
-      await api.initSRSChonk(2 ** 21)
+      // Outside the browser, bb.js prefers its native Unix-socket backend, allows the bb
+      // process only 5s to create the socket, and drops the timeout into an unhandled
+      // rejection — callers then wait forever instead of failing. Pin Node to WASM. The
+      // browser is unaffected: it already selects the (multi-threaded) worker backend.
+      const backend = typeof window === 'undefined' ? { backend: BackendType.Wasm } : {}
+      const api = await Barretenberg.new({ srsSize: 2 ** 21, ...backend })
       _bbApi = api
       return api
     } finally {
