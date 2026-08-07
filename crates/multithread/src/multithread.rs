@@ -661,7 +661,7 @@ fn handle_zk_request(
             handle_pk_generation_proof(&prover, &cipher, req, request.clone())
         }),
         ZkRequest::ShareComputation(req) => timefunc("zk_share_computation", id, || {
-            handle_share_computation_proof(&prover, &cipher, req, request.clone())
+            handle_share_computation_proof(&prover, &cipher, req, request.clone(), report.clone())
         }),
         ZkRequest::ShareEncryption(req) => timefunc("zk_share_encryption", id, || {
             handle_share_encryption_proof(&prover, &cipher, req, request.clone())
@@ -879,6 +879,7 @@ fn handle_share_computation_proof(
     cipher: &Cipher,
     req: ShareComputationProofRequest,
     request: ComputeRequest,
+    report: Option<Addr<MultithreadReport>>,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // 1. Build BFV threshold parameters
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
@@ -939,20 +940,28 @@ fn handle_share_computation_proof(
 
     // 7. Chunk proofs and terminal C2 projection. The production path uses the compiled default
     // chunk size; the `zk_cli --chunk-size` option does not reach this handler.
-    let proof = prove_chunked_share_computation(
+    let result = prove_chunked_share_computation(
         prover,
         req.params_preset,
         &circuit_data,
         &inner_job_id,
         &artifacts_dir,
     )
-    .map(|result| result.proof)
     .map_err(|e| {
         ComputeRequestError::new(
             ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
             request.clone(),
         )
     })?;
+    if let Some(report) = report {
+        for step in result.step_timings {
+            report.do_send(TrackDuration::new(
+                format!("ZkShareComputation/{}", step.step),
+                Duration::from_secs_f64(step.seconds),
+            ));
+        }
+    }
+    let proof = result.proof;
 
     Ok(ComputeResponse::zk(
         ZkResponse::ShareComputation(ShareComputationProofResponse {

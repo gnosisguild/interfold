@@ -12,10 +12,10 @@
 //!
 //! **Share-computation (C2) configs.nr:** set `INTERFOLD_CIRCUITS_ROOT` to the repo `circuits`
 //! directory (or run from the Interfold repo so it is auto-discovered). After `pnpm build:circuits`,
-//! `circuits/bin/dkg/target/` contains `sk_share_computation.vk_recursive_hash` and
-//! `e_sm_share_computation.vk_recursive_hash` for the inner recursive circuits; the aggregation
-//! wrapper emits `share_computation.vk_recursive_hash` under
-//! `circuits/bin/recursive_aggregation/wrapper/dkg/share_computation/target/` (from
+//! the C2 chunk leaf circuits emit `sk_share_computation_chunk.vk_recursive_hash` /
+//! `esm_share_computation_chunk.vk_recursive_hash` under their `target/` dirs; the recursive
+//! aggregation fold emits `c2ab_chunk_fold.vk_recursive_hash` under
+//! `circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/` (from
 //! `scripts/build-circuits.ts`). If `INTERFOLD_CIRCUITS_ROOT` is set and those files are missing,
 //! codegen fails; if unset and artifacts are absent, the C2 literals are omitted from the generated
 //! fragment.
@@ -26,11 +26,13 @@ use e3_fhe_params::{BfvPreset, ParameterType};
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::circuits::dkg::share_computation::circuit::{
-    ShareComputationCircuit, ShareComputationCircuitData,
+    ShareComputationChunkCircuit, ShareComputationCircuit, ShareComputationCircuitData,
 };
-use e3_zk_helpers::circuits::dkg::share_computation::codegen::generate_configs_with_chunk_size;
+use e3_zk_helpers::circuits::dkg::share_computation::codegen::{
+    generate_chunk_toml, generate_configs_with_chunk_size,
+};
 use e3_zk_helpers::circuits::CircuitComputation;
-use e3_zk_helpers::codegen::{write_artifacts, write_toml, CircuitCodegen};
+use e3_zk_helpers::codegen::{write_artifacts, write_toml, Artifacts, CircuitCodegen};
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_decryption::{
     ShareDecryptionCircuit as DkgShareDecryptionCircuit,
@@ -193,6 +195,9 @@ struct Cli {
     /// C2 coefficient chunk size. Must divide the preset polynomial degree.
     #[arg(long, default_value_t = 512)]
     chunk_size: usize,
+    /// Chunk index (0-based) to emit when circuit is `share-computation-chunk`.
+    #[arg(long, default_value_t = 0)]
+    chunk_index: usize,
 }
 
 fn main() -> Result<()> {
@@ -202,6 +207,7 @@ fn main() -> Result<()> {
     let mut registry = CircuitRegistry::new();
     registry.register(Arc::new(PkCircuit));
     registry.register(Arc::new(ShareComputationCircuit));
+    registry.register(Arc::new(ShareComputationChunkCircuit));
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
     registry.register(Arc::new(ShareEncryptionCircuit));
@@ -262,12 +268,18 @@ fn main() -> Result<()> {
     // Some circuits reuse one helper entrypoint for multiple witness families, so `--inputs`
     // selects whether we derive secret-key or smudging-noise sample data.
     let requires_inputs_arg = circuit_name == ShareComputationCircuit::NAME
+        || circuit_name == ShareComputationChunkCircuit::NAME
         || circuit_meta.name() == ShareEncryptionCircuit::NAME
         || circuit_meta.name() == DkgShareDecryptionCircuit::NAME;
 
-    let show_input_type = requires_inputs_arg || circuit_name == ShareComputationCircuit::NAME;
+    let show_input_type = requires_inputs_arg
+        || circuit_name == ShareComputationCircuit::NAME
+        || circuit_name == ShareComputationChunkCircuit::NAME;
 
-    let dkg_input_type = if circuit_name == ShareComputationCircuit::NAME || requires_inputs_arg {
+    let dkg_input_type = if circuit_name == ShareComputationCircuit::NAME
+        || circuit_name == ShareComputationChunkCircuit::NAME
+        || requires_inputs_arg
+    {
         let inputs_str = if !args.toml {
             args.inputs.as_deref().unwrap_or("secret-key")
         } else {
@@ -330,6 +342,36 @@ fn main() -> Result<()> {
                     committee_threshold,
                     sample.chunk_size as usize,
                 )?;
+                artifacts
+            }
+            name if name == <ShareComputationChunkCircuit as Circuit>::NAME => {
+                let mut sample = ShareComputationCircuitData::generate_sample(
+                    preset,
+                    committee,
+                    dkg_input_type,
+                )?;
+                sample.chunk_size = args.chunk_size as u32;
+
+                let output = ShareComputationCircuit::compute(preset, &sample)?;
+                let toml = generate_chunk_toml(
+                    &output.inputs,
+                    sample.chunk_size as usize,
+                    args.chunk_index,
+                )?;
+
+                let mut artifacts = Artifacts {
+                    toml,
+                    configs: String::new(),
+                };
+                if !no_configs {
+                    artifacts.configs = generate_configs_with_chunk_size(
+                        preset,
+                        &output.bits,
+                        committee_n,
+                        committee_threshold,
+                        sample.chunk_size as usize,
+                    )?;
+                }
                 artifacts
             }
             name if name == <ShareEncryptionCircuit as Circuit>::NAME => {

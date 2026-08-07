@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Per-node fold: C0, C1, `c2ab_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
+//! Per-node fold: C0, C1, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -24,7 +24,7 @@ pub global C3AB_PREFIX_LEN: u32 = C3AB_FOLD_PUBLIC_LEN - (6 * C3_SLOTS);
 pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
 pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 
-/// Key-hash prefix length in `c2ab_fold` / `c4ab_fold` flattened public IO.
+/// Key-hash prefix length in `c2ab_chunk_fold` / `c4ab_fold` flattened public IO.
 pub global C2AB_PREFIX_LEN: u32 = C2AB_FOLD_PUBLIC_LEN - (2 * C2_PUBLIC_LEN);
 pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_PUBLIC_LEN);
 
