@@ -16,7 +16,7 @@ env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
-  NOIR_TOOLCHAIN: v1.0.0-beta.16
+  NOIR_TOOLCHAIN: v1.0.0-beta.26
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   ETHERSCAN_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'

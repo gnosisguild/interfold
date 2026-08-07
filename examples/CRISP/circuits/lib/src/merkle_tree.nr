@@ -25,7 +25,7 @@ pub fn get_merkle_root(
     address: Field,
     balance: Field,
     depth: u32,
-    indices: [u1; 20],
+    indices: [bool; 20],
     siblings: [Field; 20],
 ) -> Field {
     let leaf = poseidon([address, balance]);
@@ -41,7 +41,7 @@ fn test_get_merkle_root() {
 
     // Consider a tree with depth 3, leaves are [poseidon([address, balance]), 0, 0].
     let depth = 2;
-    let indices: [u1; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let indices: [bool; 20] = [false; 20];
     let siblings: [Field; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
     let merkle_root = get_merkle_root(address, balance, depth, indices, siblings);
@@ -59,7 +59,7 @@ fn test_get_merkle_root_ts_sdk() {
     let balance = 1000;
 
     let depth = 4;
-    let indices: [u1; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let indices: [bool; 20] = [false; 20];
     let siblings: [Field; 20] = [
         3427403932201889290042771220465494458496044723860771244846412090114641612933,
         142173982782527023041821996079117549632814652929360547003021612347642943458,

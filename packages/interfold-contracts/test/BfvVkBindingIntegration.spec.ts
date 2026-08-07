@@ -159,12 +159,28 @@ describe("BfvVkBindingIntegration", function () {
     await zkTranscriptLib.waitForDeployment();
     const zkTranscriptLibAddress = await zkTranscriptLib.getAddress();
 
+    const dkgRelationsLibFactory = await ethers.getContractFactory(
+      "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+    );
+    const dkgRelationsLib = await dkgRelationsLibFactory.deploy();
+    await dkgRelationsLib.waitForDeployment();
+    const dkgRelationsLibAddress = await dkgRelationsLib.getAddress();
+
+    const decRelationsLibFactory = await ethers.getContractFactory(
+      "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib",
+    );
+    const decRelationsLib = await decRelationsLibFactory.deploy();
+    await decRelationsLib.waitForDeployment();
+    const decRelationsLibAddress = await decRelationsLib.getAddress();
+
     const dkgAggFactory = await ethers.getContractFactory(
       "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
       {
         libraries: {
           "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
             zkTranscriptLibAddress,
+          "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+            dkgRelationsLibAddress,
         },
       },
     );
@@ -177,6 +193,8 @@ describe("BfvVkBindingIntegration", function () {
         libraries: {
           "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:ZKTranscriptLib":
             zkTranscriptLibAddress,
+          "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib":
+            decRelationsLibAddress,
         },
       },
     );
@@ -452,6 +470,11 @@ describe("BfvVkBindingIntegration", function () {
       );
       const zkTranscriptLib = await libFactory.deploy();
       await zkTranscriptLib.waitForDeployment();
+      const relationsLibFactory = await ethers.getContractFactory(
+        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+      );
+      const relationsLib = await relationsLibFactory.deploy();
+      await relationsLib.waitForDeployment();
 
       const dkgAgg = await (
         await ethers.getContractFactory(
@@ -460,6 +483,8 @@ describe("BfvVkBindingIntegration", function () {
             libraries: {
               "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
                 await zkTranscriptLib.getAddress(),
+              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+                await relationsLib.getAddress(),
             },
           },
         )

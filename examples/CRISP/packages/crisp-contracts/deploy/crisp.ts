@@ -59,10 +59,14 @@ export const deployCRISPContracts = async () => {
   const zkTranscriptLib = await ethers.deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
   await zkTranscriptLib.waitForDeployment()
   const zkTranscriptLibAddress = await zkTranscriptLib.getAddress()
+  const relationsLib = await ethers.deployContract('contracts/CRISPVerifier.sol:RelationsLib')
+  await relationsLib.waitForDeployment()
+  const relationsLibAddress = await relationsLib.getAddress()
 
   const honkVerifierFactory = await ethers.getContractFactory('HonkVerifier', {
     libraries: {
       'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': zkTranscriptLibAddress,
+      'project/contracts/CRISPVerifier.sol:RelationsLib': relationsLibAddress,
     },
   })
   const honkVerifier = await honkVerifierFactory.deploy()

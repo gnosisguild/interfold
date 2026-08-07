@@ -92,6 +92,73 @@ TEMP_FILE=$(mktemp)
 } > "$TEMP_FILE"
 mv "$TEMP_FILE" packages/crisp-contracts/contracts/CRISPVerifier.sol
 
+# Apply project-specific checks that the generated verifier does not emit.
+python3 - "packages/crisp-contracts/contracts/CRISPVerifier.sol" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+replacements = [
+    (
+        "bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0xf8d61709;",
+        "bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0x1f7ec5f0;",
+    ),
+    (
+        "    error ConsistencyCheckFailed();",
+        "    error ConsistencyCheckFailed();\n    error VerificationKeyConfigurationMismatch();",
+    ),
+    (
+        "    proofLength += NUM_ELEMENTS_COMM * 3; // Libra concat, grand sum, quotient comms + Gemini masking",
+        "    proofLength += NUM_ELEMENTS_COMM * 3; // Libra concat, grand sum, quotient comms",
+    ),
+    (
+        """    constructor(uint256 _N, uint256 _logN, uint256 _vkHash, uint256 _numPublicInputs) {
+        $N = _N;
+        $LOG_N = _logN;
+        $VK_HASH = _vkHash;
+        $NUM_PUBLIC_INPUTS = _numPublicInputs;
+        $MSMSize = NUMBER_UNSHIFTED_ZK + _logN + LIBRA_COMMITMENTS + 2;
+    }
+""",
+        """    constructor(uint256 _N, uint256 _logN, uint256 _vkHash, uint256 _numPublicInputs) {
+        $N = _N;
+        $LOG_N = _logN;
+        $VK_HASH = _vkHash;
+        $NUM_PUBLIC_INPUTS = _numPublicInputs;
+        $MSMSize = NUMBER_UNSHIFTED_ZK + _logN + LIBRA_COMMITMENTS + 2;
+    }
+
+    function validateVerificationKey(Honk.VerificationKey memory vk) internal view {
+        require($N == vk.circuitSize, Errors.VerificationKeyConfigurationMismatch());
+        require($LOG_N == vk.logCircuitSize, Errors.VerificationKeyConfigurationMismatch());
+        require($NUM_PUBLIC_INPUTS == vk.publicInputsSize, Errors.VerificationKeyConfigurationMismatch());
+    }
+""",
+    ),
+    (
+        """contract HonkVerifier is BaseZKHonkVerifier(N, LOG_N, VK_HASH, NUMBER_OF_PUBLIC_INPUTS) {
+     function loadVerificationKey() internal pure override returns (Honk.VerificationKey memory) {
+""",
+        """contract HonkVerifier is BaseZKHonkVerifier(N, LOG_N, VK_HASH, NUMBER_OF_PUBLIC_INPUTS) {
+    constructor() {
+        validateVerificationKey(HonkVerificationKey.loadVerificationKey());
+    }
+
+    function loadVerificationKey() internal pure override returns (Honk.VerificationKey memory) {
+""",
+    ),
+]
+
+for old, new in replacements:
+    if text.count(old) != 1:
+        raise SystemExit(f"expected one generated verifier match, found {text.count(old)}: {old[:80]}")
+    text = text.replace(old, new)
+
+path.write_text(text)
+PY
+
 echo "Formatting CRISPVerifier.sol with Prettier..."
 if pnpm exec prettier --write packages/crisp-contracts/contracts/CRISPVerifier.sol 2>/dev/null; then
     echo "Prettier formatting complete"

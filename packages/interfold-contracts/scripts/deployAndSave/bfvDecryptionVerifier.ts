@@ -48,6 +48,21 @@ export const deployAndSaveBfvDecryptionVerifier = async (
       existing.address,
       signer,
     );
+    const [onChainCircuitVerifier, onChainRegistry] = await Promise.all([
+      bfvDecryptionVerifier.circuitVerifier(),
+      bfvDecryptionVerifier.ciphernodeRegistry(),
+    ]);
+    if (
+      onChainCircuitVerifier.toLowerCase() !==
+        circuitVerifierArgs.address.toLowerCase() ||
+      onChainRegistry.toLowerCase() !== ciphernodeRegistryAddress.toLowerCase()
+    ) {
+      throw new Error(
+        `BfvDecryptionVerifier at ${existing.address} has stale verifier dependencies. ` +
+          `Expected circuitVerifier=${circuitVerifierArgs.address}, ciphernodeRegistry=${ciphernodeRegistryAddress}. ` +
+          "Redeploy after the verifier dependencies change.",
+      );
+    }
     await assertBfvDecryptionVerifierSubCircuitVkHashes(
       bfvDecryptionVerifier,
       existing.address,

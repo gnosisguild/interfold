@@ -388,6 +388,12 @@ class VerifierGenerator {
     // Replace license header – bb produces Apache-2.0 by default
     solidity = solidity.replace(/\/\/\s*SPDX-License-Identifier:[^\n]*\n(\/\/[^\n]*\n)*/, LICENSE_HEADER)
 
+    // Correct the hardcoded `ModExpFailed()` selector emitted by bb.
+    solidity = this.fixModExpFailedSelector(solidity)
+
+    // Bind the verifier's immutable parameters to the VK emitted by bb.
+    solidity = this.addVerificationKeyValidation(solidity, contractName)
+
     // Clean up intermediate file (always — we don't keep the bb temp output around)
     rmSync(rawSolPath, { force: true })
 
@@ -406,6 +412,65 @@ class VerifierGenerator {
     }
 
     return { content: solidity, outputPath }
+  }
+
+  /**
+   * bb hardcodes 0xf8d61709 for the `ModExpFailed()` revert in `FrLib.invert` / `FrLib.pow`,
+   * but `bytes4(keccak256("ModExpFailed()"))` is 0x1f7ec5f0. Left as emitted, a modexp
+   * precompile failure reverts with a selector no consumer can decode. Throws rather than
+   * silently passing through, so a future bb release that fixes this is not missed.
+   */
+  private fixModExpFailedSelector(solidity: string): string {
+    const emitted = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0xf8d61709;'
+    const corrected = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0x1f7ec5f0;'
+
+    // Count both forms before deciding. Returning early on `corrected` alone would skip
+    // the guard below, so output carrying both declarations would keep the stale one.
+    const emittedCount = solidity.split(emitted).length - 1
+    const correctedCount = solidity.split(corrected).length - 1
+
+    if (emittedCount === 0 && correctedCount === 1) return solidity
+    if (emittedCount !== 1 || correctedCount !== 0) {
+      throw new Error(
+        `Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration ` +
+          `(found ${emittedCount} emitted, ${correctedCount} corrected)`,
+      )
+    }
+
+    return solidity.replace(emitted, corrected)
+  }
+
+  private addVerificationKeyValidation(solidity: string, contractName: string): string {
+    const errorMarker = '    error ConsistencyCheckFailed();'
+    if (solidity.split(errorMarker).length !== 2) {
+      throw new Error('Expected one generated Errors.ConsistencyCheckFailed declaration')
+    }
+    solidity = solidity.replace(
+      errorMarker,
+      `${errorMarker}\n    error VerificationKeyConfigurationMismatch();`,
+    )
+
+    const constructorPattern = /(constructor\(uint256 _N, uint256 _logN, uint256 _vkHash, uint256 _numPublicInputs\)\s*\{[\s\S]*?\n\s*\})(\s*function verify\s*\()/
+    if (!constructorPattern.test(solidity)) {
+      throw new Error('Expected generated Honk verifier base constructor')
+    }
+    solidity = solidity.replace(
+      constructorPattern,
+      `$1\n\n    function validateVerificationKey(Honk.VerificationKey memory vk) internal view {\n` +
+        `        require($N == vk.circuitSize, Errors.VerificationKeyConfigurationMismatch());\n` +
+        `        require($LOG_N == vk.logCircuitSize, Errors.VerificationKeyConfigurationMismatch());\n` +
+        `        require($NUM_PUBLIC_INPUTS == vk.publicInputsSize, Errors.VerificationKeyConfigurationMismatch());\n` +
+        `    }$2`,
+    )
+
+    const contractHeader = `contract ${contractName} is BaseZKHonkVerifier(N, LOG_N, VK_HASH, NUMBER_OF_PUBLIC_INPUTS) {`
+    if (solidity.split(contractHeader).length !== 2) {
+      throw new Error(`Expected one generated ${contractName} contract header`)
+    }
+    return solidity.replace(
+      contractHeader,
+      `${contractHeader}\n    constructor() {\n        validateVerificationKey(HonkVerificationKey.loadVerificationKey());\n    }`,
+    )
   }
 
   /**

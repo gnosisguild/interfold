@@ -193,7 +193,7 @@ impl<let N: u32, let L: u32, let BIT_CT: u32, let BIT_PREV_CT: u32, let BIT_SUM_
     ///
     /// # Returns
     /// Vector of challenge values [gamma_0, gamma_1, ..., gamma_{2L-1}]
-    fn generate_challenge(self) -> Vec<Field> {
+    fn generate_challenge(self) -> [Field] {
         // Domain separator - "CLG_CT_ADD"
         let DS_CLG_CT_ADD: [u8; 64] = [
             0x43, 0x4c, 0x47, 0x5f, 0x43, 0x54, 0x5f, 0x41, 0x44, 0x44, 0x00, 0x00, 0x00, 0x00,
@@ -203,11 +203,8 @@ impl<let N: u32, let L: u32, let BIT_CT: u32, let BIT_PREV_CT: u32, let BIT_SUM_
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        let mut payload = Vec::new();
-
-        payload.push(self.ct_commitment);
-        payload.push(self.prev_ct_commitment);
-        payload.push(self.sum_ct_commitment);
+        let payload =
+            [self.ct_commitment, self.prev_ct_commitment, self.sum_ct_commitment].as_vector();
 
         compute_challenge::<L>(payload, DS_CLG_CT_ADD)
     }
@@ -238,9 +235,9 @@ impl<let N: u32, let L: u32, let BIT_CT: u32, let BIT_PREV_CT: u32, let BIT_SUM_
     ///
     /// # Returns
     /// `true` if the accumulator equals zero (all constraints satisfied), `false` otherwise.
-    fn verify_evaluations(self, gammas: Vec<Field>) -> bool {
+    fn verify_evaluations(self, gammas: [Field]) -> bool {
         // Use the first challenge as the evaluation point for all polynomials
-        let gamma = gammas.get(0);
+        let gamma = gammas[0];
 
         let mut accumulator: Field = 0;
 
@@ -258,7 +255,7 @@ impl<let N: u32, let L: u32, let BIT_CT: u32, let BIT_PREV_CT: u32, let BIT_SUM_
             p = self.sum_ct0is[i].sub(p);
 
             // Weight and accumulate: use gamma_i as the weight (gamma_0 = 1 for i=0)
-            let gamma_i = if i == 0 { 1 } else { gammas.get(i) };
+            let gamma_i = if i == 0 { 1 } else { gammas[i] };
             accumulator += gamma_i * p.eval(gamma);
         }
 
@@ -276,7 +273,7 @@ impl<let N: u32, let L: u32, let BIT_CT: u32, let BIT_PREV_CT: u32, let BIT_SUM_
             p = self.sum_ct1is[i].sub(p);
 
             // Weight and accumulate: use gamma_{L+i} as the weight
-            let gamma_i = gammas.get(L + i);
+            let gamma_i = gammas[L + i];
             accumulator += gamma_i * p.eval(gamma);
         }
 
