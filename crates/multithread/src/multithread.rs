@@ -58,7 +58,6 @@ use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
-use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
     DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
 };
@@ -73,6 +72,7 @@ use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_prover::{
     generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
     prove_dkg_aggregation, prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob,
