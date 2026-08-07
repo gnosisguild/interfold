@@ -32,7 +32,7 @@
       "name": "CalculateDecryptionShare",
       "avg_seconds": 0.022188416,
       "runs": 3,
-      "total_seconds": 0.066565250
+      "total_seconds": 0.06656525
     },
     {
       "name": "CalculateThresholdDecryption",
@@ -96,9 +96,9 @@
     },
     {
       "name": "ZkDecryptionAggregation",
-      "avg_seconds": 38.010951750,
+      "avg_seconds": 38.01095175,
       "runs": 1,
-      "total_seconds": 38.010951750
+      "total_seconds": 38.01095175
     },
     {
       "name": "ZkDkgAggregation",
@@ -156,13 +156,13 @@
     },
     {
       "name": "ZkThresholdShareDecryption",
-      "avg_seconds": 2.633684430,
+      "avg_seconds": 2.63368443,
       "runs": 3,
       "total_seconds": 7.901053291
     },
     {
       "name": "ZkVerifyShareDecryptionProofs",
-      "avg_seconds": 0.037968930,
+      "avg_seconds": 0.03796893,
       "runs": 3,
       "total_seconds": 0.113906792
     },
@@ -178,7 +178,7 @@
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -198,12 +198,12 @@
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
-      "seconds": 112.040988000,
+      "seconds": 112.040988,
       "metric": "wall_clock"
     },
     {
       "label": "ThresholdShares -> PublicKeyAggregated",
-      "seconds": 137.801608750,
+      "seconds": 137.80160875,
       "metric": "wall_clock"
     },
     {
@@ -223,7 +223,7 @@
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 39.485436000,
+      "seconds": 39.485436,
       "metric": "wall_clock"
     },
     {
