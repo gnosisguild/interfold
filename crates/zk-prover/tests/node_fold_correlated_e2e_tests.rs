@@ -323,6 +323,7 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
             &sk_inputs,
             slot,
             DkgInputType::SecretKey,
+            committee.clone(),
         )
         .expect("C3a slot encrypt");
         let db = share_encryption_for_slot(
@@ -332,6 +333,7 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
             &esm_inputs,
             slot,
             DkgInputType::SmudgingNoise,
+            committee.clone(),
         )
         .expect("C3b slot encrypt");
 

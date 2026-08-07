@@ -319,21 +319,30 @@ The per-circuit `wrapper/` Noir step was removed; aggregator response structs no
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
-generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients.
-The `--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
+generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients. The
+`--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
 circuit configuration. The production multithread path uses the compiled default chunk size. Rust
 groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
-terminal circuit. The terminal
-circuits reconstruct a root commitment for the secret and for each recipient share. The signed
-response contains only the type-bound terminal `SkC2ChunkFinalize` or `ESmC2ChunkFinalize` proof.
-`C2ChunkBatch` binds the ordered chunk indices and chunk commitments. C1, normal C2, C3, C4
-per-share checks, and `NodeFold` now use the same root commitment scheme. C3 fold steps bind each
-inner proof's recipient and modulus indices to its accumulator slot, including the first genesis
-step. C4 binds every decrypted row to the recipient party's zero-based C2 commitment domain. C4
-aggregate commitments remain on the legacy aggregate scheme at the C4-to-C6 boundary until that
-boundary is migrated. The terminal C2 proofs surface the canonical SK/ESM chunk VK hashes through
-C2AB, NodeFold, and DkgAggregator; `BfvPkVerifier` compares those hashes with its deployment-time
-immutables before it accepts the final proof.
+terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
+recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
+`ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk indices and chunk commitments.
+
+The chunk size is one value across the DKG pipeline: it threads from the sample into the C2
+(share computation), C3 (share encryption), and C4 (share decryption) witness computation and into
+the generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`),
+so the witness always matches the circuit parameters the artifacts were generated against. The
+generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
+witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512;
+a non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
+recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
+
+C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
+fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
+the first genesis step. C4 binds every decrypted row to the recipient party's zero-based C2
+commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme at the C4-to-C6
+boundary until that boundary is migrated. The terminal C2 proofs surface the canonical SK/ESM chunk
+VK hashes through C2AB, NodeFold, and DkgAggregator; `BfvPkVerifier` compares those hashes with its
+deployment-time immutables before it accepts the final proof.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
@@ -692,9 +701,6 @@ phase.
   ├─ Calls contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
-  │  └─ If that transaction is mined with a failed receipt, the writer reads the
-  │     commitment again. An equal commitment from another aggregator completes
-  │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
         │
@@ -732,9 +738,6 @@ phase.
         │  │       │  │    require(now <= dkgDeadline)       │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
-        │  │       │  │    computeDeadline = max(now,         │  │
-        │  │       │  │      inputWindowEnd) + snapshotted    │  │
-        │  │       │  │      computeWindow                    │  │
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
@@ -821,11 +824,9 @@ parameter hash, and input root in one ABI-encoded proof.
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
 program reconstructs the application fields from its state. Both contracts verify the same receipt.
 An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
-The RISC Zero wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
-cannot satisfy the verifier's void-return call with empty return data. The input root uses the
-smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commitments, with a
-minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
-value, and depth rule.
+The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
+commitments, with a minimum depth of one. The compute provider and E3 program must use this same
+leaf value, order, zero value, and depth rule.
 
 ```
 Compute provider runs computation on encrypted data:
@@ -835,7 +836,6 @@ Compute provider runs computation on encrypted data:
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
 │  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
-    │  │    0. enter the shared publication reentrancy guard      │
     │  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
@@ -844,28 +844,23 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
     │  │    5. require(activeCount >= threshold[0])              │
     │  │       → The request-time committee is still viable      │
-│  │    6. Save output hash and SAFE commitment               │
-│  │       Set stage and decryption deadline                  │
-│  │       → A later revert restores all prior state          │
+│  │    6. Require no ciphertext publication is in progress  │
+│  │       Set the per-E3 publication guard                  │
+│  │       → Reentrant publication attempts revert           │
 │  │    7. schemeVerifier.verify(...)                         │
 │  │       → Checks the protocol fields in the compute receipt│
 │  │       → Must return true                                 │
 │  │    8. e3Program.verify(...)                              │
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
-│  │       → Cannot re-enter ciphertext or plaintext publication│
-│  │    9. Confirm the stage is still CiphertextReady          │
-│  │   10. Emit CiphertextOutputPublished(...)                 │
-│  │   11. Emit E3StageChanged(CiphertextReady)                │
+│  │    9. Save output hash and SAFE commitment               │
+│  │       Set stage and decryption deadline                  │
+│  │       Clear the publication guard                        │
+│  │   10. Emit CiphertextOutputPublished(...)                │
+│  │   11. Emit E3StageChanged(CiphertextReady)               │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
-
-`onCommitteePublished` stores the committee key and starts the compute clock. The compute deadline
-is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key publication does
-not consume the compute provider's allotted window, and publication still waits until the input
-window closes. The request-time timeout snapshot prevents later governance changes from changing an
-active E3's deadlines.
 
 ---
 

@@ -8,6 +8,7 @@
 
 use crate::computation::DkgInputType;
 use crate::registry::Circuit;
+use crate::CiphernodesCommittee;
 use e3_fhe_params::ParameterType;
 use fhe::bfv::Ciphertext;
 use fhe::bfv::SecretKey;
@@ -42,4 +43,8 @@ pub struct ShareDecryptionCircuitData {
     pub own_plaintext_share: Vec<Vec<u64>>,
     /// Which input type (SecretKey or SmudgingNoise) to resolve circuit path.
     pub dkg_input_type: DkgInputType,
+    /// Share-root chunk size (must equal `SHARE_COMPUTATION_CHUNK_SIZE` in Noir).
+    pub chunk_size: u32,
+    /// Committee this data was generated for (validated against the canonical table).
+    pub committee: CiphernodesCommittee,
 }

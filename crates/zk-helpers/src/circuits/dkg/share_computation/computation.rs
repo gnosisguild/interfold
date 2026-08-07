@@ -228,6 +228,20 @@ impl Computation for Inputs {
 
         let bounds = Bounds::compute(preset, data)?;
         let bits = Bits::compute(preset, &bounds)?;
+        let chunk_size = data.chunk_size as usize;
+        let (_, dkg_params) =
+            build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+        let dkg_degree = dkg_params.degree();
+        if chunk_size == 0 {
+            return Err(CircuitsErrors::Sample(
+                "C2 chunk size must be greater than zero".to_string(),
+            ));
+        }
+        if !dkg_degree.is_multiple_of(chunk_size) {
+            return Err(CircuitsErrors::Sample(format!(
+                "C2 chunk size {chunk_size} must divide polynomial degree {dkg_degree}"
+            )));
+        }
         // Reverse+center before committing to match C1 (PkGeneration)'s convention:
         // C1 applies reverse then center to sk/e_sm before computing the commitment.
         // For SK the values are already centered ({-1,0,1}) so centering is a no-op.
@@ -236,7 +250,7 @@ impl Computation for Inputs {
             DkgInputType::SecretKey => {
                 let mut reversed = secret_crt.limb(0).clone();
                 reversed.reverse();
-                compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, 512)
+                compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, chunk_size)
             }
             DkgInputType::SmudgingNoise => {
                 let centered_reversed_crt = e3_polynomial::CrtPolynomial::new(
@@ -256,7 +270,7 @@ impl Computation for Inputs {
                 compute_sc_esm_secret_root_commitment(
                     &centered_reversed_crt,
                     bits.bit_e_sm_secret,
-                    512,
+                    chunk_size,
                 )
             }
         };
