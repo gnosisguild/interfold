@@ -310,15 +310,15 @@ ProofRequestActor receives ThresholdSharePending
 **C2 proofs:** For each C2a/C2b request, the prover builds a **recursive** proof per coefficient
 chunk via `sk_share_computation_chunk` / `esm_share_computation_chunk`. The chunk proofs are batched
 (`C2ChunkBatch`) and verified in the type-bound terminal `SkC2ChunkFinalize` / `ESmC2ChunkFinalize`.
-That terminal `Proof` is what `PendingThresholdProofs`
-stores and what gets ECDSA-signed for gossip (`ProofType::C2aSkShareComputation` /
-`C2bESmShareComputation`). The old generic `recursive_aggregation/wrapper/*` circuits and two-proof
-`recursive_aggregation/fold` were removed; aggregation is done by ad-hoc Noir bins under
-`circuits/bin/recursive_aggregation/` (e.g. `c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
-`nodes_fold`, `dkg_aggregator`, `decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs
-for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK).
-The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
-`wrapped_proof` field — the inner recursive proof itself is what flows between stages.
+That terminal `Proof` is what `PendingThresholdProofs` stores and what gets ECDSA-signed for gossip
+(`ProofType::C2aSkShareComputation` / `C2bESmShareComputation`). The old generic
+`recursive_aggregation/wrapper/*` circuits and two-proof `recursive_aggregation/fold` were removed;
+aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregation/` (e.g.
+`c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`, `nodes_fold`, `dkg_aggregator`,
+`decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs for `dkg_aggregator`;
+`decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK). The per-circuit
+`wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
+field — the inner recursive proof itself is what flows between stages.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
 generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients. The

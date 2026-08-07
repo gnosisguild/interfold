@@ -26,7 +26,7 @@
       "name": "CalculateDecryptionKey",
       "avg_seconds": 0.004100166,
       "runs": 3,
-      "total_seconds": 0.012300500
+      "total_seconds": 0.0123005
     },
     {
       "name": "CalculateDecryptionShare",
@@ -144,7 +144,7 @@
     },
     {
       "name": "ZkShareComputation",
-      "avg_seconds": 22.393700020,
+      "avg_seconds": 22.39370002,
       "runs": 6,
       "total_seconds": 134.362200125
     },
@@ -162,7 +162,7 @@
     },
     {
       "name": "ZkShareComputation/finalize",
-      "avg_seconds": 8.288219590,
+      "avg_seconds": 8.28821959,
       "runs": 6,
       "total_seconds": 49.729317542
     },
@@ -191,12 +191,12 @@
       "total_seconds": 0.624974833
     }
   ],
-  "operation_timings_total_seconds": 1381.491248500,
+  "operation_timings_total_seconds": 1381.4912485,
   "operation_timings_metric": "tracked_job_wall",
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -216,7 +216,7 @@
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
-      "seconds": 121.533931000,
+      "seconds": 121.533931,
       "metric": "wall_clock"
     },
     {
@@ -236,12 +236,12 @@
     },
     {
       "label": "Running FHE Application",
-      "seconds": 0.000062750,
+      "seconds": 0.00006275,
       "metric": "wall_clock"
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 41.797659000,
+      "seconds": 41.797659,
       "metric": "wall_clock"
     },
     {
