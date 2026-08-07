@@ -110,10 +110,6 @@ pub enum CircuitName {
     PkBfv,
     /// TrBFV public key share proof (C1).
     PkGeneration,
-    /// Sk share computation inner proof (C2a, recursive).
-    SkShareComputation,
-    /// E_SM share computation inner proof (C2b, recursive).
-    ESmShareComputation,
     /// Share encryption proof (C3).
     ShareEncryption,
     /// DKG share decryption proof (C4).
@@ -132,8 +128,6 @@ pub enum CircuitName {
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
     C6FoldKernel,
-    /// Ad-hoc recursive aggregation: C2a + C2b.
-    C2abFold,
     /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
@@ -179,8 +173,6 @@ impl CircuitName {
         match self {
             CircuitName::PkBfv => "pk",
             CircuitName::PkGeneration => "pk_generation",
-            CircuitName::SkShareComputation => "sk_share_computation",
-            CircuitName::ESmShareComputation => "e_sm_share_computation",
             CircuitName::SkShareComputationBase => "sk_share_computation_base",
             CircuitName::ESmShareComputationBase => "e_sm_share_computation_base",
             CircuitName::ShareComputationChunk => "share_computation_chunk",
@@ -202,7 +194,6 @@ impl CircuitName {
             CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
-            CircuitName::C2abFold => "c2ab_fold",
             CircuitName::C3abFold => "c3ab_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
@@ -216,8 +207,6 @@ impl CircuitName {
     pub fn group(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputation => "dkg",
-            CircuitName::ESmShareComputation => "dkg",
             CircuitName::SkShareComputationBase => "dkg",
             CircuitName::ESmShareComputationBase => "dkg",
             CircuitName::ShareComputationChunk => "dkg",
@@ -240,7 +229,6 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
-            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -266,9 +254,7 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputation
-            | CircuitName::ESmShareComputation
-            | CircuitName::SkShareComputationBase
+            CircuitName::SkShareComputationBase
             | CircuitName::ESmShareComputationBase => CircuitOutputLayout::Dynamic,
             CircuitName::ShareComputationChunk
             | CircuitName::SkShareComputationChunk
@@ -297,7 +283,6 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
-            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold

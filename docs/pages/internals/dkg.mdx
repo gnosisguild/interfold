@@ -47,8 +47,8 @@ full cryptographic specification, see the
 | ------- | ---------------------------- | ------ | -------------------------------------------------------------------------------------------- | -------------------------- |
 | **C0**  | `PkBfv`                      | P1 DKG | Commits to individual BFV public key (binding for C3)                                        | Each node → all peers      |
 | **C1**  | `PkGeneration`               | P1 DKG | Public key share correctly derived from secret key contribution (Schwartz-Zippel on BFV eq.) | Each node → all peers      |
-| **C2a** | `SkShareComputation`         | P1 DKG | Secret key Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity       | Each node → all peers      |
-| **C2b** | `ESmShareComputation`        | P1 DKG | Smudging noise Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity   | Each node → all peers      |
+| **C2a** | `SkShareComputationChunk`   | P1 DKG | Secret key Shamir shares (chunked) consistent with C1 commitment and satisfy Reed-Solomon parity | Each node → all peers      |
+| **C2b** | `ESmShareComputationChunk`  | P1 DKG | Smudging noise Shamir shares (chunked) consistent with C1 commitment and satisfy Reed-Solomon parity   | Each node → all peers      |
 | **C3a** | `ShareEncryption` (sk)       | P1 DKG | BFV encryption of secret key share uses correct share (C2) and correct recipient pk (C0)     | Per sender → per recipient |
 | **C3b** | `ShareEncryption` (e_sm)     | P1 DKG | BFV encryption of smudging noise share uses correct share (C2) and correct recipient pk (C0) | Per sender → per recipient |
 | **C4a** | `DkgShareDecryption` (sk)    | P1 DKG | Decrypted shares match C2 commitments; aggregated into local secret key share                | Each node → all peers      |

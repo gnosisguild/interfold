@@ -10,17 +10,16 @@ use crate::circuits::aggregation::c2_chunk_batch::{
 use crate::circuits::aggregation::c2_chunk_config::{
     chunks_per_batch, compiled_batch_count, compiled_chunk_count,
 };
+use crate::circuits::aggregation::node_dkg_fold::FoldProveStepTiming;
 use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
-use crate::traits::Provable;
 use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::{Computation, DkgInputType};
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs, ShareComputationCircuit, ShareComputationCircuitData,
-};
+use e3_zk_helpers::dkg::share_computation::{Inputs, ShareComputationCircuitData};
 use serde_json::Value;
+use std::time::Instant;
 
 pub use crate::circuits::aggregation::c2_chunk_config::DEFAULT_C2_CHUNK_SIZE;
 
@@ -50,6 +49,15 @@ fn validate_c2_chunk_layout(degree: usize, chunk_size: usize) -> Result<(usize, 
 pub struct ChunkedShareComputationProofs {
     pub proof: e3_events::Proof,
     pub chunk_count: usize,
+    /// Per-step prove wall time inside [`prove_chunked_share_computation`] (for benchmarks / audit reports).
+    pub step_timings: Vec<FoldProveStepTiming>,
+}
+
+fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instant) {
+    timings.push(FoldProveStepTiming {
+        step: step.to_string(),
+        seconds: started.elapsed().as_secs_f64(),
+    });
 }
 
 fn slice_coefficients(
@@ -128,6 +136,8 @@ pub fn prove_chunked_share_computation_with_chunk_size(
     }
 
     let mut chunks = Vec::with_capacity(chunk_count);
+    let mut step_timings = Vec::new();
+    let t_chunks = Instant::now();
     for chunk_idx in 0..chunk_count {
         let start = chunk_idx * chunk_size;
         let mut chunk_json = serde_json::Map::new();
@@ -217,7 +227,9 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         )?;
         chunks.push(proof);
     }
+    push_step(&mut step_timings, "chunks", t_chunks);
 
+    let t_batches = Instant::now();
     let batches = generate_c2_chunk_batches(
         prover,
         chunk_circuit,
@@ -227,13 +239,20 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         e3_id,
         artifacts_dir,
     )?;
+    push_step(&mut step_timings, "batches", t_batches);
     let finalizer_circuit = match data.dkg_input_type {
         DkgInputType::SecretKey => CircuitName::SkC2ChunkFinalize,
         DkgInputType::SmudgingNoise => CircuitName::ESmC2ChunkFinalize,
     };
+    let t_finalize = Instant::now();
     let proof =
         finalize_c2_chunk_batches(prover, &batches, finalizer_circuit, e3_id, artifacts_dir)?;
-    Ok(ChunkedShareComputationProofs { proof, chunk_count })
+    push_step(&mut step_timings, "finalize", t_finalize);
+    Ok(ChunkedShareComputationProofs {
+        proof,
+        chunk_count,
+        step_timings,
+    })
 }
 
 #[cfg(test)]
@@ -243,29 +262,5 @@ mod tests {
     #[test]
     fn rejects_chunk_size_with_a_different_compiled_chunk_count() {
         assert!(validate_c2_chunk_layout(8192, 256).is_err());
-    }
-}
-
-impl Provable for ShareComputationCircuit {
-    type Params = BfvPreset;
-    type Input = ShareComputationCircuitData;
-    type Inputs = Inputs;
-
-    fn resolve_circuit_name(&self, _params: &Self::Params, input: &Self::Input) -> CircuitName {
-        match input.dkg_input_type {
-            DkgInputType::SecretKey => CircuitName::SkShareComputation,
-            DkgInputType::SmudgingNoise => CircuitName::ESmShareComputation,
-        }
-    }
-
-    fn valid_circuits(&self) -> Vec<CircuitName> {
-        vec![
-            CircuitName::SkShareComputation,
-            CircuitName::ESmShareComputation,
-        ]
-    }
-
-    fn circuit(&self) -> CircuitName {
-        CircuitName::SkShareComputation
     }
 }
