@@ -46,18 +46,19 @@ how phases, commitments, and circuit IDs line up end to end, read
 **C2** uses **chunked** recursive proofs: the `sk_share_computation_chunk` (**C2a**) and
 `esm_share_computation_chunk` (**C2b**) leaves prove one coefficient chunk of the Shamir-share
 computation each. Chunk proofs are grouped by `c2_chunk_batch`, verified in the type-bound terminal
-`sk_c2_chunk_finalize` / `esm_c2_chunk_finalize`, and the two terminals are folded by `c2ab_chunk_fold`.
-Gossip and threshold signing use the terminal recursive proof; folding and aggregation consume it.
+`sk_c2_chunk_finalize` / `esm_c2_chunk_finalize`, and the two terminals are folded by
+`c2ab_chunk_fold`. Gossip and threshold signing use the terminal recursive proof; folding and
+aggregation consume it.
 
 ### DKG (`bin/dkg/`)
 
-| Path                     | ID  | `CircuitName`         | Role                                          |
-| ------------------------ | --- | --------------------- | --------------------------------------------- |
-| `pk`                     | C0  | `PkBfv`                 | Commit to individual BFV public key           |
-| `sk_share_computation_chunk` | C2a | `SkShareComputationChunk` | Secret-key track Shamir shares, one chunk (`y`) |
+| Path                          | ID  | `CircuitName`              | Role                                                |
+| ----------------------------- | --- | -------------------------- | --------------------------------------------------- |
+| `pk`                          | C0  | `PkBfv`                    | Commit to individual BFV public key                 |
+| `sk_share_computation_chunk`  | C2a | `SkShareComputationChunk`  | Secret-key track Shamir shares, one chunk (`y`)     |
 | `esm_share_computation_chunk` | C2b | `ESmShareComputationChunk` | Smudging-noise track Shamir shares, one chunk (`y`) |
-| `share_encryption`       | C3  | `ShareEncryption`     | BFV encryption of shares under recipient keys |
-| `share_decryption`       | C4  | `DkgShareDecryption`  | Decrypt shares; aggregate; commitments for P4 |
+| `share_encryption`            | C3  | `ShareEncryption`          | BFV encryption of shares under recipient keys       |
+| `share_decryption`            | C4  | `DkgShareDecryption`       | Decrypt shares; aggregate; commitments for P4       |
 
 ### Threshold (`bin/threshold/`)
 
@@ -73,18 +74,18 @@ Gossip and threshold signing use the terminal recursive proof; folding and aggre
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
-| Path                           | `CircuitName`       | Role                                                                               |
-| ------------------------------ | ------------------- | ---------------------------------------------------------------------------------- |
-| `c2_chunk_batch`               | `C2ChunkBatch`      | Groups ordered C2 chunk proofs into a fixed-size recursive batch                   |
-| `sk_c2_chunk_finalize`         | `SkC2ChunkFinalize` | Type-bound terminal: verifies all SK chunk batches, reconstructs root commitments  |
-| `esm_c2_chunk_finalize`        | `ESmC2ChunkFinalize`| Type-bound terminal: ESM track equivalent of `sk_c2_chunk_finalize`                |
-| `c2ab_chunk_fold`              | `C2abChunkFold`     | Fold the two C2 terminal proofs (SK + ESM)                                          |
-| `c3_fold`, `c3_fold_kernel`    | —                  | C3 recursive folding / kernel                                                      |
-| `c6_fold`, `c6_fold_kernel`    | —                  | C6 recursive folding / kernel                                                      |
-| `c3ab_fold`, `c4ab_fold`       | —                  | Recursive folds for the C3/C4 and C2-to-C4 chains                                   |
-| `node_fold` / `nodes_fold` (`nodes_fold_kernel`) | — | Fold a node's `node_fold` chain (`H`-deep) before `dkg_aggregator`                 |
-| `dkg_aggregator`               | —                  | Top-level DKG on-chain Honk verifier                                               |
-| `decryption_aggregator`        | —                  | Top-level decryption on-chain Honk verifier                                        |
+| Path                                             | `CircuitName`        | Role                                                                              |
+| ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------- |
+| `c2_chunk_batch`                                 | `C2ChunkBatch`       | Groups ordered C2 chunk proofs into a fixed-size recursive batch                  |
+| `sk_c2_chunk_finalize`                           | `SkC2ChunkFinalize`  | Type-bound terminal: verifies all SK chunk batches, reconstructs root commitments |
+| `esm_c2_chunk_finalize`                          | `ESmC2ChunkFinalize` | Type-bound terminal: ESM track equivalent of `sk_c2_chunk_finalize`               |
+| `c2ab_chunk_fold`                                | `C2abChunkFold`      | Fold the two C2 terminal proofs (SK + ESM)                                        |
+| `c3_fold`, `c3_fold_kernel`                      | —                    | C3 recursive folding / kernel                                                     |
+| `c6_fold`, `c6_fold_kernel`                      | —                    | C6 recursive folding / kernel                                                     |
+| `c3ab_fold`, `c4ab_fold`                         | —                    | Recursive folds for the C3/C4 and C2-to-C4 chains                                 |
+| `node_fold` / `nodes_fold` (`nodes_fold_kernel`) | —                    | Fold a node's `node_fold` chain (`H`-deep) before `dkg_aggregator`                |
+| `dkg_aggregator`                                 | —                    | Top-level DKG on-chain Honk verifier                                              |
+| `decryption_aggregator`                          | —                    | Top-level decryption on-chain Honk verifier                                       |
 
 For the recursive aggregation flow, see
 [`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](../agent/flow-trace/04_DKG_AND_COMPUTATION.md).
