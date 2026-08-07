@@ -36,9 +36,9 @@
     },
     {
       "name": "CalculateThresholdDecryption",
-      "avg_seconds": 0.029794250,
+      "avg_seconds": 0.02979425,
       "runs": 1,
-      "total_seconds": 0.029794250
+      "total_seconds": 0.02979425
     },
     {
       "name": "GenEsiSss",
@@ -48,7 +48,7 @@
     },
     {
       "name": "GenPkShareAndSkSss",
-      "avg_seconds": 0.014833430,
+      "avg_seconds": 0.01483343,
       "runs": 3,
       "total_seconds": 0.044500291
     },
@@ -62,11 +62,11 @@
       "name": "NodeDkgFold/c3a_fold",
       "avg_seconds": 118.019850166,
       "runs": 3,
-      "total_seconds": 354.059550500
+      "total_seconds": 354.0595505
     },
     {
       "name": "NodeDkgFold/c3ab_fold",
-      "avg_seconds": 12.065775360,
+      "avg_seconds": 12.06577536,
       "runs": 3,
       "total_seconds": 36.197326082
     },
@@ -108,7 +108,7 @@
     },
     {
       "name": "ZkDkgShareDecryption",
-      "avg_seconds": 1.183313840,
+      "avg_seconds": 1.18331384,
       "runs": 6,
       "total_seconds": 7.099883041
     },
@@ -178,7 +178,7 @@
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -198,7 +198,7 @@
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
-      "seconds": 189.944065000,
+      "seconds": 189.944065,
       "metric": "wall_clock"
     },
     {
@@ -223,7 +223,7 @@
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 54.503758000,
+      "seconds": 54.503758,
       "metric": "wall_clock"
     },
     {
