@@ -8,8 +8,7 @@
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::dkg::{
-    L_THRESHOLD,
-    SHARE_COMPUTATION_CHUNKS_PER_BATCH as CHUNKS_PER_BATCH,
+    L_THRESHOLD, SHARE_COMPUTATION_CHUNKS_PER_BATCH as CHUNKS_PER_BATCH,
     SHARE_COMPUTATION_N_CHUNKS as N_CHUNKS,
 };
 use lib::configs::default::N_PARTIES;

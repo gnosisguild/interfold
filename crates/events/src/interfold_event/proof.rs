@@ -254,8 +254,9 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputationBase
-            | CircuitName::ESmShareComputationBase => CircuitOutputLayout::Dynamic,
+            CircuitName::SkShareComputationBase | CircuitName::ESmShareComputationBase => {
+                CircuitOutputLayout::Dynamic
+            }
             CircuitName::ShareComputationChunk
             | CircuitName::SkShareComputationChunk
             | CircuitName::ESmShareComputationChunk => CircuitOutputLayout::None,
