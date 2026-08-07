@@ -66,7 +66,7 @@ On-chain verify gas: **complete** (CRISP Π_user + Interfold Π_DKG / Π_dec rep
 
 Single-circuit `bb prove` on the benchmark oracle witness (not the integration actor pipeline).
 
-| Circuit | Constraints | Prove (s) | Verify (ms) | Proof (KB) |
+| Circuit | Constraints | Prove (s) | Verify (ms) | Proof (KiB) |
 |---------|-------------|-----------|-------------|------------|
 | C0 | 6810 | 0.14 | 15.25 | 14.31 |
 | C1 | 53448 | 0.35 | 14.75 | 14.31 |
@@ -85,20 +85,20 @@ Single-circuit `bb prove` on the benchmark oracle witness (not the integration a
 
 | Artifact | Proof size | Public input size | Verify gas | Calldata gas | Total gas |
 |----------|------------|-------------------|------------|--------------|-----------|
-| Π_DKG | 10.44 KB | 0.38 KB | 3125084 | 173456 | 3298540 |
-| Π_user | 14.31 KB | 0.12 KB | 2982310 | 200640 | 3182950 |
-| Π_dec | 10.44 KB | 3.56 KB | 3716480 | 187004 | 3903484 |
+| Π_DKG | 10.44 KiB | 0.38 KiB | 3125084 | 173456 | 3298540 |
+| Π_user | 14.31 KiB | 0.12 KiB | 2982310 | 200640 | 3182950 |
+| Π_dec | 10.44 KiB | 3.56 KiB | 3716480 | 187004 | 3903484 |
 
 ### Role / Phase / Activity
 
 | Role | Phase | Activity | Metric | Duration | Proof size | Bandwidth |
 |------|-------|----------|--------|----------|------------|-----------|
-| Each ciphernode | P1 | one-time DKG participation (test harness) | wall_clock | 206.57 s | 114.50 KB | 115.56 KB |
-| Aggregator | P2 | C5 + Π_DKG fold (aggregator span) | wall_clock | 189.94 s | 10.44 KB | 10.81 KB |
-| User | P3 | per user input | isolated_nargo | 0.69 s | 14.31 KB | 14.44 KB |
-| Each ciphernode | P4 | per computation output (C6) | isolated_nargo | 0.50 s | 14.31 KB | 14.50 KB |
-| Aggregator | P4 | C7 + Π_dec fold (full publish→aggregate) | wall_clock | 58.93 s | 10.44 KB | 14.00 KB |
-| Aggregator | P4 | C7 + fold only (pending→plaintext span) | wall_clock | 54.50 s | 10.44 KB | 14.00 KB |
+| Each ciphernode | P1 | one-time DKG participation (test harness) | wall_clock | 206.57 s | 114.50 KiB | 115.56 KiB |
+| Aggregator | P2 | C5 + Π_DKG fold (aggregator span) | wall_clock | 189.94 s | 10.44 KiB | 10.81 KiB |
+| User | P3 | per user input | isolated_nargo | 0.69 s | 14.31 KiB | 14.44 KiB |
+| Each ciphernode | P4 | per computation output (C6) | isolated_nargo | 0.50 s | 14.31 KiB | 14.50 KiB |
+| Aggregator | P4 | C7 + Π_dec fold (full publish→aggregate) | wall_clock | 58.93 s | 10.44 KiB | 14.00 KiB |
+| Aggregator | P4 | C7 + fold only (pending→plaintext span) | wall_clock | 54.50 s | 10.44 KiB | 14.00 KiB |
 
 _P2 **tracked_job_wall** sum (ZkDkgAggregation + ZkPkAggregation, parallelizable): **5.97 s** — not comparable to P2 wall_clock row above._
 

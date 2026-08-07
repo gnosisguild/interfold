@@ -1018,8 +1018,17 @@ jobs:
       - name: Verify variant output directories
         run: |
           echo "Checking recursive aggregation artifacts:"
-          find circuits/bin/recursive_aggregation -path '*/target/*.json' | head -20
-          find circuits/bin/recursive_aggregation -path '*/target/*.vk' | head -20
+          # Assert on the artifacts downstream jobs consume. Listing alone let this step
+          # pass even when no recursive artifacts had been produced at all.
+          for artifact in \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive
+          do
+            test -f "$artifact" || { echo "Missing required artifact: $artifact"; exit 1; }
+            echo "  ok $artifact"
+          done
 
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1

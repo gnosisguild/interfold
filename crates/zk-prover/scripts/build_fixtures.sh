@@ -11,11 +11,26 @@ if ! command -v nargo &> /dev/null; then
 fi
 
 # In a clean checkout, build the circuit artifacts used by integration tests.
-if ! find ./circuits/bin -name '*.json' -print -quit | grep -q .; then
+# Check every artifact the tests actually open, not merely that some JSON exists:
+# a stale, partial, or different-preset tree would otherwise skip the build and
+# leave the tests reading artifacts that do not match the current toolchain.
+required_artifacts=(
+    ./circuits/bin/.active-preset.json
+    ./circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json
+    ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json
+    ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json
+)
+
+missing_artifacts=()
+for artifact in "${required_artifacts[@]}"; do
+    [[ -f "$artifact" ]] || missing_artifacts+=("$artifact")
+done
+
+if (( ${#missing_artifacts[@]} > 0 )); then
     if ! command -v bb &> /dev/null; then
         exit 0
     fi
-    echo "Building circuits..."
+    echo "Building circuits (missing: ${missing_artifacts[*]})..."
     pnpm install && pnpm build:circuits
 fi
 

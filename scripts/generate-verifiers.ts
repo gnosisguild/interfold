@@ -388,6 +388,9 @@ class VerifierGenerator {
     // Replace license header – bb produces Apache-2.0 by default
     solidity = solidity.replace(/\/\/\s*SPDX-License-Identifier:[^\n]*\n(\/\/[^\n]*\n)*/, LICENSE_HEADER)
 
+    // Correct the hardcoded `ModExpFailed()` selector emitted by bb.
+    solidity = this.fixModExpFailedSelector(solidity)
+
     // Bind the verifier's immutable parameters to the VK emitted by bb.
     solidity = this.addVerificationKeyValidation(solidity, contractName)
 
@@ -409,6 +412,24 @@ class VerifierGenerator {
     }
 
     return { content: solidity, outputPath }
+  }
+
+  /**
+   * bb hardcodes 0xf8d61709 for the `ModExpFailed()` revert in `FrLib.invert` / `FrLib.pow`,
+   * but `bytes4(keccak256("ModExpFailed()"))` is 0x1f7ec5f0. Left as emitted, a modexp
+   * precompile failure reverts with a selector no consumer can decode. Throws rather than
+   * silently passing through, so a future bb release that fixes this is not missed.
+   */
+  private fixModExpFailedSelector(solidity: string): string {
+    const emitted = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0xf8d61709;'
+    const corrected = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0x1f7ec5f0;'
+
+    if (solidity.includes(corrected)) return solidity
+    if (solidity.split(emitted).length !== 2) {
+      throw new Error('Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration')
+    }
+
+    return solidity.replace(emitted, corrected)
   }
 
   private addVerificationKeyValidation(solidity: string, contractName: string): string {
