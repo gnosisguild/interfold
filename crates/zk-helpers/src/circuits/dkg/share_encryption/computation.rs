@@ -350,8 +350,8 @@ impl Computation for Inputs {
     type Error = CircuitsErrors;
 
     fn compute(_preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let (threshold_params, dkg_params) = build_pair_for_preset(_preset)
-            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+        let (threshold_params, dkg_params) =
+            build_pair_for_preset(_preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         // row_index (mod_idx) indexes the threshold secret's modulus domain (one C3 proof per
         // threshold Shamir row); it is not bounded by the DKG moduli count.
         let threshold_l = threshold_params.moduli().len();

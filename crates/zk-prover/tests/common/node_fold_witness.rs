@@ -16,11 +16,11 @@ use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_computation::{
     Inputs as ShareComputationInputs, ShareComputationCircuitData,
 };
-use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuitData;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CircuitsErrors;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
