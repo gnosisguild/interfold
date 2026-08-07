@@ -15,15 +15,93 @@ import {
 } from "../utils";
 
 const BFV_HONK_VERIFIER_DIR = "contracts/verifiers/bfv/honk";
-const NPM_HONK_SOURCE_PREFIX =
-  "@interfold/contracts/contracts/verifiers/bfv/honk";
-// Hardhat uses npm/package@version/ for library linking when built from npm deps (pnpm workspace: @local)
-const NPM_HONK_LIBRARY_LINK_PREFIX =
-  "npm/@interfold/contracts@local/contracts/verifiers/bfv/honk";
 
-/** True when Hardhat artifacts use npm paths (consuming project like CRISP). */
-const isNpmArtifactContext = (): boolean =>
-  !fs.existsSync(path.join(process.cwd(), BFV_HONK_VERIFIER_DIR));
+type HonkLibrary = "ZKTranscriptLib" | "RelationsLib";
+
+const normalizeArtifactFqn = (fqn: string): string =>
+  fqn
+    .replace(/^project\//, "")
+    .replace(/^npm\/@interfold\/contracts@[^/]+\//, "@interfold/contracts/");
+
+const getContractFqn = async (
+  hre: HardhatRuntimeEnvironment,
+  contractName: string,
+): Promise<string> => {
+  const candidates = Array.from(
+    await hre.artifacts.getAllFullyQualifiedNames(),
+  ).filter(
+    (fqn) =>
+      fqn.endsWith(`/${contractName}.sol:${contractName}`) &&
+      !fqn.includes("/.benchmark/"),
+  );
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected one generated artifact for ${contractName}, found ${candidates.length}.`,
+    );
+  }
+  return normalizeArtifactFqn(candidates[0]);
+};
+
+const getLibraryLinkFqn = async (
+  hre: HardhatRuntimeEnvironment,
+  contractName: string,
+  libraryName: HonkLibrary,
+): Promise<string> => {
+  const contractFqn = await getContractFqn(hre, contractName);
+  const artifact = await hre.artifacts.readArtifact(contractFqn);
+  const source = Object.entries(artifact.linkReferences).find(([, libraries]) =>
+    Object.prototype.hasOwnProperty.call(libraries, libraryName),
+  )?.[0];
+  if (!source) {
+    throw new Error(
+      `Missing ${libraryName} link reference in ${contractName} artifact.`,
+    );
+  }
+  return `${source}:${libraryName}`;
+};
+
+const getLibraryArtifactFqn = async (
+  hre: HardhatRuntimeEnvironment,
+  contractName: string,
+  libraryName: HonkLibrary,
+): Promise<string> =>
+  normalizeArtifactFqn(await getLibraryLinkFqn(hre, contractName, libraryName));
+
+const getArtifactBytecodeHash = async (
+  hre: HardhatRuntimeEnvironment,
+  contractName: string,
+): Promise<string> => {
+  const { ethers } = await hre.network.connect();
+  const artifact = await hre.artifacts.readArtifact(contractName);
+  let bytecode = artifact.bytecode;
+  for (const references of Object.values(artifact.linkReferences)) {
+    for (const locations of Object.values(references)) {
+      for (const { start, length } of locations) {
+        const offset = 2 + start * 2;
+        bytecode = `${bytecode.slice(0, offset)}${"0".repeat(length * 2)}${bytecode.slice(offset + length * 2)}`;
+      }
+    }
+  }
+  return ethers.keccak256(bytecode);
+};
+
+const getVerifierBytecodeHash = async (
+  hre: HardhatRuntimeEnvironment,
+  contractName: string,
+): Promise<string> => {
+  const { ethers } = await hre.network.connect();
+  const contractFqn = await getContractFqn(hre, contractName);
+  const dependencyFqns = await Promise.all(
+    (["ZKTranscriptLib", "RelationsLib"] as const).map((libraryName) =>
+      getLibraryArtifactFqn(hre, contractName, libraryName),
+    ),
+  );
+  const hashes = await Promise.all([
+    getArtifactBytecodeHash(hre, contractFqn),
+    ...dependencyFqns.map((fqn) => getArtifactBytecodeHash(hre, fqn)),
+  ]);
+  return ethers.keccak256(ethers.concat(hashes));
+};
 
 /** Package root of interfold-contracts. Used when script runs from another project (e.g. CRISP). */
 const getInterfoldContractsRoot = (): string => {
@@ -43,7 +121,7 @@ const getInterfoldContractsRoot = (): string => {
 
 /**
  * Discovers Honk/BB verifier contracts in contracts/verifiers/bfv/honk/
- * (excluding BfvDecryptionVerifier which lives in bfv/ and does not use ZKTranscriptLib).
+ * (excluding BfvDecryptionVerifier which lives in bfv/).
  * Uses interfold-contracts package root so discovery works when run from consuming projects (e.g. CRISP).
  */
 export const discoverVerifierContracts = (): string[] => {
@@ -59,34 +137,35 @@ export const discoverVerifierContracts = (): string[] => {
 };
 
 /**
- * Deploys ZKTranscriptLib library required by BB-generated verifiers.
+ * Deploys a library required by BB-generated verifiers.
  * Reuses existing deployment if already deployed on the chain.
  *
  * Uses a fully-qualified name (FQN) because Hardhat has multiple ZKTranscriptLib
  * artifacts (one per verifier .sol file). All are identical; we pick one.
  */
-const deployZKTranscriptLib = async (
+const deployHonkLibrary = async (
   hre: HardhatRuntimeEnvironment,
   chain: string,
-  /** Verifier contract whose .sol file contains ZKTranscriptLib; used to form FQN */
+  /** Verifier contract whose .sol file contains the library; used to form FQN */
   referenceContract: string,
+  libraryName: HonkLibrary,
 ): Promise<string> => {
-  const libName = "ZKTranscriptLib";
+  const libFQN = await getLibraryArtifactFqn(
+    hre,
+    referenceContract,
+    libraryName,
+  );
+  const bytecodeHash = await getArtifactBytecodeHash(hre, libFQN);
 
   // Check if library is already deployed
-  const existing = readDeploymentArgs(libName, chain);
-  if (existing?.address) {
-    console.log(`   ${libName} already deployed at ${existing.address}`);
+  const existing = readDeploymentArgs(libraryName, chain);
+  if (existing?.address && existing.bytecodeHash === bytecodeHash) {
+    console.log(`   ${libraryName} already deployed at ${existing.address}`);
     return existing.address;
   }
 
-  // Deploy the library — use FQN to disambiguate multiple ZKTranscriptLib artifacts.
-  // Npm context (CRISP): @interfold/contracts/contracts/verifiers/bfv/honk/X.sol
-  // Project context (interfold-contracts): contracts/verifiers/bfv/honk/X.sol
-  const libFQN = isNpmArtifactContext()
-    ? `${NPM_HONK_SOURCE_PREFIX}/${referenceContract}.sol:ZKTranscriptLib`
-    : `${BFV_HONK_VERIFIER_DIR}/${referenceContract}.sol:ZKTranscriptLib`;
-  console.log(`   Deploying ${libName}...`);
+  // Use an FQN to disambiguate duplicate library artifacts.
+  console.log(`   Deploying ${libraryName}...`);
   const { ethers } = await hre.network.connect();
   const factory = await ethers.getContractFactory(libFQN);
   const contract = await factory.deploy();
@@ -95,15 +174,19 @@ const deployZKTranscriptLib = async (
   const address = await contract.getAddress();
   const blockNumber = await ethers.provider.getBlockNumber();
 
-  storeDeploymentArgs({ blockNumber, address }, libName, chain);
+  storeDeploymentArgs(
+    { blockNumber, address, bytecodeHash },
+    libraryName,
+    chain,
+  );
 
-  console.log(`   ${libName} deployed to: ${address}`);
+  console.log(`   ${libraryName} deployed to: ${address}`);
   return address;
 };
 
 /**
  * Deploys a single verifier contract and saves the deployment record.
- * BB-generated verifiers require ZKTranscriptLib to be linked.
+ * BB-generated verifiers require their generated libraries to be linked.
  * Skips deployment if the contract is already deployed on the target chain.
  *
  * Note: The library FQN (fully-qualified name) uses the pattern:
@@ -113,30 +196,35 @@ const deployZKTranscriptLib = async (
 export const deployAndSaveVerifier = async (
   contractName: string,
   hre: HardhatRuntimeEnvironment,
-  zkTranscriptLibAddress: string,
+  libraryAddresses: {
+    zkTranscriptLibAddress: string;
+    relationsLibAddress: string;
+  },
 ): Promise<{ address: string }> => {
   const { ethers } = await hre.network.connect();
   const chain = getDeploymentChain(hre);
+  const contractFqn = await getContractFqn(hre, contractName);
+  const bytecodeHash = await getVerifierBytecodeHash(hre, contractName);
 
   // Check if already deployed
   const existing = readDeploymentArgs(contractName, chain);
-  if (existing?.address) {
+  if (existing?.address && existing.bytecodeHash === bytecodeHash) {
     console.log(`   ${contractName} already deployed at ${existing.address}`);
     return { address: existing.address };
   }
 
-  // Link ZKTranscriptLib — key must match Hardhat's expected format for library linking.
-  // Npm context: npm/@interfold/contracts@local/contracts/... (pnpm workspace)
-  // Project context: project/contracts/...
-  const libraryFQN = isNpmArtifactContext()
-    ? `${NPM_HONK_LIBRARY_LINK_PREFIX}/${contractName}.sol:ZKTranscriptLib`
-    : `project/${BFV_HONK_VERIFIER_DIR}/${contractName}.sol:ZKTranscriptLib`;
-  const libraries = {
-    [libraryFQN]: zkTranscriptLibAddress,
+  // Link generated libraries. Keys must match the artifact link references.
+  const linkedLibraries = {
+    [await getLibraryLinkFqn(hre, contractName, "ZKTranscriptLib")]:
+      libraryAddresses.zkTranscriptLibAddress,
+    [await getLibraryLinkFqn(hre, contractName, "RelationsLib")]:
+      libraryAddresses.relationsLibAddress,
   };
 
   // Deploy the verifier contract with linked library
-  const factory = await ethers.getContractFactory(contractName, { libraries });
+  const factory = await ethers.getContractFactory(contractFqn, {
+    libraries: linkedLibraries,
+  });
   const contract = await factory.deploy();
   await contract.waitForDeployment();
 
@@ -147,6 +235,7 @@ export const deployAndSaveVerifier = async (
     {
       blockNumber,
       address,
+      bytecodeHash,
     },
     contractName,
     chain,
@@ -182,21 +271,58 @@ export const deployAndSaveAllVerifiers = async (
 
   console.log(`   Found ${contractNames.length} verifier contract(s)`);
 
-  // Deploy ZKTranscriptLib once, reused by all verifiers
-  const zkTranscriptLibAddress = await deployZKTranscriptLib(
+  const referenceContract = contractNames[0];
+  const sharedLibraryHashes = new Map<HonkLibrary, string>();
+  for (const libraryName of ["ZKTranscriptLib", "RelationsLib"] as const) {
+    const libraryFqn = await getLibraryArtifactFqn(
+      hre,
+      referenceContract,
+      libraryName,
+    );
+    sharedLibraryHashes.set(
+      libraryName,
+      await getArtifactBytecodeHash(hre, libraryFqn),
+    );
+  }
+
+  for (const contractName of contractNames.slice(1)) {
+    for (const libraryName of ["ZKTranscriptLib", "RelationsLib"] as const) {
+      const libraryFqn = await getLibraryArtifactFqn(
+        hre,
+        contractName,
+        libraryName,
+      );
+      const hash = await getArtifactBytecodeHash(hre, libraryFqn);
+      const referenceHash = sharedLibraryHashes.get(libraryName);
+      if (hash !== referenceHash) {
+        throw new Error(
+          `${libraryName} bytecode differs between ${referenceContract} (${referenceHash}) and ${contractName} (${hash}); refusing shared deployment.`,
+        );
+      }
+    }
+  }
+
+  // Deploy each generated library once and reuse it for all verifiers.
+  const zkTranscriptLibAddress = await deployHonkLibrary(
     hre,
     chain,
-    contractNames[0],
+    referenceContract,
+    "ZKTranscriptLib",
+  );
+  const relationsLibAddress = await deployHonkLibrary(
+    hre,
+    chain,
+    referenceContract,
+    "RelationsLib",
   );
 
   const deployments: VerifierDeployments = {};
 
   for (const name of contractNames) {
-    const { address } = await deployAndSaveVerifier(
-      name,
-      hre,
+    const { address } = await deployAndSaveVerifier(name, hre, {
       zkTranscriptLibAddress,
-    );
+      relationsLibAddress,
+    });
     deployments[name] = address;
   }
 

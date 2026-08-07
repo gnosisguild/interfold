@@ -17,8 +17,8 @@ env:
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   NODE_VERSION: 22
   RUST_TOOLCHAIN: 1.91.1
-  NOIR_TOOLCHAIN: v1.0.0-beta.16
-  BB_VERSION: 3.0.0-nightly.20260102
+  NOIR_TOOLCHAIN: v1.0.0-beta.26
+  BB_VERSION: 5.1.0
   HARDHAT_VAR_MNEMONIC: 'test test test test test test test test test test test junk'
   HARDHAT_VAR_INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
@@ -470,7 +470,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-integration-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -841,7 +841,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -900,7 +900,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -936,11 +936,10 @@ jobs:
         with:
           name: compiled-circuits
           path: |
+            circuits/bin/.active-preset.json
             circuits/bin/dkg/target/
             circuits/bin/threshold/target/
-            circuits/bin/recursive_aggregation/wrapper/dkg/target/
-            circuits/bin/recursive_aggregation/wrapper/threshold/target/
-            circuits/bin/recursive_aggregation/fold/target/
+            circuits/bin/recursive_aggregation/*/target/
           retention-days: 1
           if-no-files-found: error
 
@@ -982,7 +981,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -1018,15 +1017,18 @@ jobs:
 
       - name: Verify variant output directories
         run: |
-          echo "Checking default/ variant (noir-recursive-no-zk VKs):"
-          find circuits/bin/default -name '*.json' | head -20
-          find circuits/bin/default -name '*.vk' | head -20
-          echo "Checking recursive/ variant (noir-recursive VKs):"
-          find circuits/bin/recursive -name '*.json' | head -20
-          find circuits/bin/recursive -name '*.vk' | head -20
-          echo "Checking evm/ variant (keccak VKs):"
-          find circuits/bin/evm -name '*.json' | head -20
-          find circuits/bin/evm -name '*.vk' | head -20
+          echo "Checking recursive aggregation artifacts:"
+          # Assert on the artifacts downstream jobs consume. Listing alone let this step
+          # pass even when no recursive artifacts had been produced at all.
+          for artifact in \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive
+          do
+            test -f "$artifact" || { echo "Missing required artifact: $artifact"; exit 1; }
+            echo "  ok $artifact"
+          done
 
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
@@ -1133,7 +1135,7 @@ jobs:
             packages/interfold-contracts/types
             crates/wasm/dist
             circuits/bin/.active-preset.json
-            circuits/bin/recursive_aggregation/wrapper/threshold/target
+            circuits/bin/recursive_aggregation/*/target
             circuits/bin/threshold/target
           retention-days: 1
           if-no-files-found: error
@@ -1196,7 +1198,7 @@ jobs:
             examples/CRISP/circuits/bin/crisp/target
             examples/CRISP/circuits/bin/fold/target
             circuits/bin/threshold/target
-            circuits/bin/recursive_aggregation/wrapper/threshold/target
+            circuits/bin/recursive_aggregation/*/target
           retention-days: 1
           if-no-files-found: warn
 
@@ -1272,7 +1274,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb

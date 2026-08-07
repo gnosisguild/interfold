@@ -17,7 +17,7 @@ const FIELD_SIZE: usize = 32;
 
 /// Matches `bb_proof_verification::RECURSIVE_ZK_PROOF_LENGTH` (`UltraHonkZKProof`).
 #[allow(dead_code)]
-pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 508;
+pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 458;
 
 /// Converts raw ZK proof bytes to field strings for `UltraHonkZKProof` witness input.
 ///

@@ -4,7 +4,7 @@
   "committee": "minimum",
   "proof_aggregation": true,
   "multithread_jobs": 13,
-  "verbose": false,
+  "verbose": true,
   "nodes_spawned": 20,
   "committee_size_n": 3,
   "committee_size_h": 2,

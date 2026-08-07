@@ -58,10 +58,12 @@ export async function deployMockRISC0Verifier() {
  */
 export async function deployHonkVerifier() {
   const zkTranscriptLib = await deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
+  const relationsLib = await deployContract('contracts/CRISPVerifier.sol:RelationsLib')
 
   const HonkVerifierFactory = await ethers.getContractFactory('HonkVerifier', {
     libraries: {
       'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
+      'project/contracts/CRISPVerifier.sol:RelationsLib': await relationsLib.getAddress(),
     },
   })
 

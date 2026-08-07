@@ -54,7 +54,7 @@ export const generateCircuitInputsImpl = async (proofInputs: ProofInputs): Promi
   circuitInputs.is_mask_vote = proofInputs.isMaskVote
   circuitInputs.merkle_root = proofInputs.merkleProof.proof.root.toString()
   circuitInputs.merkle_proof_length = proofInputs.merkleProof.length.toString()
-  circuitInputs.merkle_proof_indices = proofInputs.merkleProof.indices.map((i) => i.toString())
+  circuitInputs.merkle_proof_indices = proofInputs.merkleProof.indices.map((i) => i === 1)
   circuitInputs.merkle_proof_siblings = proofInputs.merkleProof.proof.siblings.map((s) => s.toString())
   circuitInputs.num_options = numOptions.toString()
 

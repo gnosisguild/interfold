@@ -14,9 +14,11 @@ use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_events::{
     hlc::HlcTimestamp, prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized,
-    CommitteeRequested, ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated, E3Requested,
-    E3id, InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated,
-    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    CommitteeRequested, ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated,
+    DkgFoldAttestationContextEstablished, E3Requested, E3id, InterfoldEvent, InterfoldEventData,
+    OperatorActivationChanged, PlaintextAggregated, ProofType, Seed, TakeEvents,
+    TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -1568,6 +1570,19 @@ async fn test_trbfv_actor() -> Result<()> {
     })?;
     bus.publish_without_context(e3_requested)?;
 
+    if let Some(verifying_contract) = benchmark_dkg_fold_attestation_verifier_address() {
+        // The benchmark has no live registry event. Seed the request-time signing context so
+        // the public-key aggregator can validate every synthetic NodeFold attestation.
+        bus.publish_without_context(DkgFoldAttestationContextEstablished {
+            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+            e3_id: e3_id.clone(),
+            context: e3_events::DkgFoldAttestationContext {
+                registry: Address::ZERO,
+                verifying_contract,
+            },
+        })?;
+    }
+
     sleep(Duration::from_millis(500)).await;
 
     let (committee, committee_scores, buffer_nodes) = determine_committee(
@@ -1597,6 +1612,13 @@ async fn test_trbfv_actor() -> Result<()> {
     nodes
         .expect_events(&["CommitteeRequested", "E3Requested"])
         .await?;
+
+    if benchmark_dkg_fold_attestation_verifier_address().is_some() {
+        // Consume the synthetic setup event before asserting the next protocol event.
+        nodes
+            .expect_events(&["DkgFoldAttestationContextEstablished"])
+            .await?;
+    }
 
     bus.publish_without_context(CommitteeFinalized {
         e3_id: e3_id.clone(),
@@ -1724,13 +1746,9 @@ async fn test_trbfv_actor() -> Result<()> {
     if proof_aggregation_enabled {
         expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     } else {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&dkg_n);
         expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     }
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
-    if proof_aggregation_enabled {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&dkg_n);
-    }
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
     // The active aggregator is also a selected committee member, so its node history contains
@@ -1745,6 +1763,7 @@ async fn test_trbfv_actor() -> Result<()> {
         publickey_aggregator_marker(data, &e3_id)
     });
     let mut actual_sorted = active_aggregator_pubkey_events.clone();
+    actual_sorted.retain(|event| *event != "DKGRecursiveAggregationComplete");
     let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
     actual_sorted.sort();
     expected_sorted.sort();

@@ -12,13 +12,10 @@ use acir::{
 };
 use base64::engine::{general_purpose, Engine};
 use bn254_blackbox_solver::Bn254BlackBoxSolver;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use nargo::foreign_calls::default::DefaultForeignCallBuilder;
 use nargo::ops::execute_program;
 use noirc_abi::{input_parser::InputValue, Abi, InputMap};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledCircuit {
@@ -69,16 +66,9 @@ fn execute(
 }
 
 fn serialize_witness(witness_stack: &WitnessStack<FieldElement>) -> Result<Vec<u8>, ZkError> {
-    let buf = bincode::serialize(witness_stack)
-        .map_err(|e| ZkError::SerializationError(format!("bincode: {}", e)))?;
-
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(&buf)
-        .map_err(|e| ZkError::SerializationError(format!("gzip: {}", e)))?;
-    encoder
-        .finish()
-        .map_err(|e| ZkError::SerializationError(format!("gzip finish: {}", e)))
+    witness_stack
+        .serialize()
+        .map_err(|e| ZkError::SerializationError(format!("witness stack: {}", e)))
 }
 
 pub struct WitnessGenerator;
@@ -151,8 +141,7 @@ mod tests {
         let witness = generator.generate_witness(&circuit, inputs).unwrap();
 
         assert!(witness.len() > 2);
-        assert_eq!(witness[0], 0x1f);
-        assert_eq!(witness[1], 0x8b);
+        WitnessStack::<FieldElement>::deserialize(&witness).unwrap();
     }
 
     #[test]
