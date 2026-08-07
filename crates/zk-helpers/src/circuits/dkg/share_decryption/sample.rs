@@ -155,6 +155,8 @@ impl ShareDecryptionCircuitData {
             own_plaintext_share,
             secret_key: dkg_secret_key,
             dkg_input_type,
+            chunk_size: 512,
+            committee,
         })
     }
 }

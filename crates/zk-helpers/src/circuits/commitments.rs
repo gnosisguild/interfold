@@ -381,7 +381,7 @@ pub fn compute_sc_sk_secret_root_commitment(
     bit_sk: u32,
     chunk_size: usize,
 ) -> BigInt {
-    assert!(chunk_size > 0 && sk.coefficients().len() % chunk_size == 0);
+    assert!(chunk_size > 0 && sk.coefficients().len().is_multiple_of(chunk_size));
     let chunk_count = sk.coefficients().len() / chunk_size;
     let mut leaves = Vec::with_capacity(chunk_count);
     for chunk_idx in 0..chunk_count {
@@ -413,7 +413,13 @@ pub fn compute_sc_esm_secret_root_commitment(
     chunk_size: usize,
 ) -> BigInt {
     assert!(!e_sm.limbs.is_empty());
-    assert!(chunk_size > 0 && e_sm.limbs[0].coefficients().len() % chunk_size == 0);
+    assert!(
+        chunk_size > 0
+            && e_sm.limbs[0]
+                .coefficients()
+                .len()
+                .is_multiple_of(chunk_size)
+    );
     let degree = e_sm.limbs[0].coefficients().len();
     let chunk_count = degree / chunk_size;
     let mut leaves = Vec::with_capacity(chunk_count);
@@ -451,7 +457,7 @@ pub fn compute_sc_party_share_root_commitment(
     bit_share: u32,
     chunk_size: usize,
 ) -> BigInt {
-    assert!(chunk_size > 0 && message.coefficients().len() % chunk_size == 0);
+    assert!(chunk_size > 0 && message.coefficients().len().is_multiple_of(chunk_size));
     let degree = message.coefficients().len();
     let chunk_count = degree / chunk_size;
     let mut leaves = Vec::with_capacity(chunk_count);

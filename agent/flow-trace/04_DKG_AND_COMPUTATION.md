@@ -326,6 +326,16 @@ groups the chunk proofs into fixed recursive batches and verifies all batches in
 terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
 recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
 `ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk indices and chunk commitments.
+
+The chunk size is one value across the DKG pipeline: it threads from the sample into the C2
+(share computation), C3 (share encryption), and C4 (share decryption) witness computation and into
+the generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`),
+so the witness always matches the circuit parameters the artifacts were generated against. The
+generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
+witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512;
+a non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
+recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
+
 C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
 fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
 the first genesis step. C4 binds every decrypted row to the recipient party's zero-based C2

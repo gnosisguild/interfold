@@ -34,6 +34,7 @@ impl CircuitCodegen for ShareComputationCircuit {
             &bits,
             data.n_parties as usize,
             data.threshold as usize,
+            data.chunk_size as usize,
         )?;
 
         Ok(Artifacts { toml, configs })
@@ -55,8 +56,9 @@ pub fn generate_configs(
     bits: &Bits,
     n_parties: usize,
     threshold: usize,
+    chunk_size: usize,
 ) -> Result<CodegenConfigs, CircuitsErrors> {
-    generate_configs_with_chunk_size(preset, bits, n_parties, threshold, 512)
+    generate_configs_with_chunk_size(preset, bits, n_parties, threshold, chunk_size)
 }
 
 pub fn generate_configs_with_chunk_size(
@@ -73,8 +75,11 @@ pub fn generate_configs_with_chunk_size(
             "C2 chunk size must be greater than zero".into(),
         ));
     }
+    // C2's parity matrix must match a canonical (T, N) committee; reject arbitrary values.
+    crate::ciphernodes_committee::try_canonical_from_t_n(n_parties, threshold)
+        .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
     let degree = threshold_params.degree();
-    if degree % chunk_size != 0 {
+    if !degree.is_multiple_of(chunk_size) {
         return Err(CircuitsErrors::Sample(format!(
             "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
         )));

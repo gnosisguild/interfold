@@ -313,11 +313,12 @@ fn main() -> Result<()> {
                 circuit.codegen(preset, &sample)?
             }
             name if name == <ShareComputationCircuit as Circuit>::NAME => {
-                let sample = ShareComputationCircuitData::generate_sample(
+                let mut sample = ShareComputationCircuitData::generate_sample(
                     preset,
                     committee,
                     dkg_input_type,
                 )?;
+                sample.chunk_size = args.chunk_size as u32;
 
                 let circuit = ShareComputationCircuit;
                 let mut artifacts = circuit.codegen(preset, &sample)?;
@@ -327,18 +328,19 @@ fn main() -> Result<()> {
                     &output.bits,
                     committee_n,
                     committee_threshold,
-                    args.chunk_size,
+                    sample.chunk_size as usize,
                 )?;
                 artifacts
             }
             name if name == <ShareEncryptionCircuit as Circuit>::NAME => {
                 let sd = preset.search_defaults().unwrap();
-                let sample = ShareEncryptionCircuitData::generate_sample(
+                let mut sample = ShareEncryptionCircuitData::generate_sample(
                     preset,
                     committee,
                     dkg_input_type,
                     sd.z,
                 )?;
+                sample.chunk_size = args.chunk_size as u32;
 
                 let circuit = ShareEncryptionCircuit;
                 circuit.codegen(preset, &sample)?
@@ -356,11 +358,12 @@ fn main() -> Result<()> {
                 circuit.codegen(preset, &sample)?
             }
             name if name == <DkgShareDecryptionCircuit as Circuit>::NAME => {
-                let sample = DkgShareDecryptionCircuitData::generate_sample(
+                let mut sample = DkgShareDecryptionCircuitData::generate_sample(
                     preset,
                     committee,
                     dkg_input_type,
                 )?;
+                sample.chunk_size = args.chunk_size as u32;
 
                 let circuit = DkgShareDecryptionCircuit;
                 circuit.codegen(preset, &sample)?

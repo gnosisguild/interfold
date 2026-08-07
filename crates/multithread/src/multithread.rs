@@ -58,6 +58,7 @@ use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
     DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
 };
@@ -928,6 +929,7 @@ fn handle_share_computation_proof(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -1170,6 +1172,7 @@ fn handle_share_encryption_proof(
     let dummy_sk = SecretKey::random(&dkg_params, &mut rand::rng());
 
     // 5. Build circuit data
+    let committee_val = req.committee_size.values();
     let circuit_data = ShareEncryptionCircuitData {
         plaintext,
         ciphertext,
@@ -1181,6 +1184,8 @@ fn handle_share_encryption_proof(
         dkg_input_type: req.dkg_input_type,
         party_idx,
         mod_idx,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: committee_val,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
@@ -1338,6 +1343,8 @@ fn handle_dkg_share_decryption_proof(
         recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: req.committee_size.values(),
     };
 
     let circuit = ShareDecryptionCircuit;

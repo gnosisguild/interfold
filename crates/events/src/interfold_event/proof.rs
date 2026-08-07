@@ -457,7 +457,9 @@ mod tests {
     #[test]
     fn input_layout_share_encryption() {
         let layout = CircuitName::ShareEncryption.input_layout();
-        assert_eq!(layout.field_count(), Some(2));
+        // C3 has 4 public inputs: expected_pk_commitment, expected_message_commitment,
+        // party_idx, mod_idx (matches the Noir main and SHARE_ENCRYPTION_INPUTS).
+        assert_eq!(layout.field_count(), Some(4));
     }
 
     #[test]

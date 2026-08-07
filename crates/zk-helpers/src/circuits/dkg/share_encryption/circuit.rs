@@ -8,6 +8,7 @@
 
 use crate::computation::DkgInputType;
 use crate::registry::Circuit;
+use crate::CiphernodesCommittee;
 use e3_fhe_params::ParameterType;
 use fhe::bfv::Ciphertext;
 use fhe::bfv::Plaintext;
@@ -49,4 +50,8 @@ pub struct ShareEncryptionCircuitData {
     pub party_idx: u32,
     /// Zero-based CRT modulus index used in the share-root commitment.
     pub mod_idx: u32,
+    /// Share-root chunk size (must equal `SHARE_COMPUTATION_CHUNK_SIZE` in Noir).
+    pub chunk_size: u32,
+    /// Committee this data was generated for (validated against the canonical table).
+    pub committee: CiphernodesCommittee,
 }
