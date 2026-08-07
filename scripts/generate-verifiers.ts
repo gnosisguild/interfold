@@ -424,9 +424,17 @@ class VerifierGenerator {
     const emitted = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0xf8d61709;'
     const corrected = 'bytes4 internal constant FRLIB_MODEXP_FAILED_SELECTOR = 0x1f7ec5f0;'
 
-    if (solidity.includes(corrected)) return solidity
-    if (solidity.split(emitted).length !== 2) {
-      throw new Error('Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration')
+    // Count both forms before deciding. Returning early on `corrected` alone would skip
+    // the guard below, so output carrying both declarations would keep the stale one.
+    const emittedCount = solidity.split(emitted).length - 1
+    const correctedCount = solidity.split(corrected).length - 1
+
+    if (emittedCount === 0 && correctedCount === 1) return solidity
+    if (emittedCount !== 1 || correctedCount !== 0) {
+      throw new Error(
+        `Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration ` +
+          `(found ${emittedCount} emitted, ${correctedCount} corrected)`,
+      )
     }
 
     return solidity.replace(emitted, corrected)
