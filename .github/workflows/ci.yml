@@ -1338,10 +1338,12 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BRANCH="${{ github.head_ref }}"
+            TEMPLATE_REPO="${{ github.event.pull_request.head.repo.clone_url }}"
           else
             BRANCH="${{ github.ref_name }}"
+            TEMPLATE_REPO="${{ github.server_url }}/${{ github.repository }}.git"
           fi
-          interfold init mycitest --verbose --template=${{ github.server_url }}/${{ github.repository }}.git#${BRANCH}:templates/default
+          interfold init mycitest --verbose --template=${TEMPLATE_REPO}#${BRANCH}:templates/default
 
   contrib-readme-job:
     timeout-minutes: 10
