@@ -13,7 +13,9 @@ mod package_json;
 mod pkgman;
 
 use anyhow::Result;
-use container_permissions::{container_writable_paths, CONTAINER_WRITABLE_MODE};
+use container_permissions::{
+    container_writable_paths, needs_permission_widening, CONTAINER_WRITABLE_MODE,
+};
 use copy::Filter;
 use file_utils::{
     chmod_recursive, delete_path, move_file, remove_all_files_in_dir, remove_dir_except,
@@ -212,22 +214,24 @@ async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: boo
 
     // The support container runs as a fixed user. The directories that it
     // mounts read-write need permissions that let this user write to them.
-    spinner.update("Restoring permissions...".to_string()).await;
+    if needs_permission_widening(cwd).await? {
+        spinner.update("Restoring permissions...".to_string()).await;
 
-    for path in container_writable_paths(&cwd) {
-        let message = format!(
-            "Setting {} permissions to {}",
-            path.display(),
-            CONTAINER_WRITABLE_MODE
-        );
-        spinner
-            .run(message, || async {
-                chmod_recursive(&path, CONTAINER_WRITABLE_MODE).await
-            })
-            .await?;
+        for path in container_writable_paths(cwd) {
+            let message = format!(
+                "Setting {} permissions to {}",
+                path.display(),
+                CONTAINER_WRITABLE_MODE
+            );
+            spinner
+                .run(message, || async {
+                    chmod_recursive(&path, CONTAINER_WRITABLE_MODE).await
+                })
+                .await?;
+        }
+
+        spinner.complete_task("Permissions restored\n");
     }
-
-    spinner.complete_task("Permissions restored\n");
 
     spinner.update("Setting up submodules...").await;
 

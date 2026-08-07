@@ -13,6 +13,26 @@ use std::path::{Path, PathBuf};
 /// TypeScript sources do not need it.
 pub const CONTAINER_WRITABLE_MODE: &str = "a+rwX";
 
+/// UID of `devuser` in the support container image.
+///
+/// `crates/support/Dockerfile` sets this UID at build time. The CLI pulls the
+/// image prebuilt, so a user cannot rebuild it with a different UID.
+const SUPPORT_CONTAINER_UID: u32 = 1000;
+
+/// Reports whether the project files need wider permissions for the container.
+///
+/// Only Linux keeps host ownership on a bind mount. If the owner is already the
+/// container user, the default modes are sufficient.
+pub async fn needs_permission_widening(cwd: &Path) -> anyhow::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let owner_uid = tokio::fs::metadata(cwd).await?.uid();
+    Ok(widening_needed(cfg!(target_os = "linux"), owner_uid))
+}
+
+fn widening_needed(host_uids_reach_container: bool, owner_uid: u32) -> bool {
+    host_uids_reach_container && owner_uid != SUPPORT_CONTAINER_UID
+}
+
 /// Lists the directories that the support container mounts read-write.
 ///
 /// The RISC Zero build script in `crates/support/methods/build.rs` writes
@@ -49,6 +69,23 @@ mod tests {
         // `ctl/container` nor `support/scripts/dev.sh` mounts it into the
         // container. Wider permissions there give access that nothing needs.
         assert!(!paths.contains(&cwd.join("contracts")));
+    }
+
+    #[test]
+    fn no_widening_when_the_container_user_already_owns_the_files() {
+        assert!(!widening_needed(true, SUPPORT_CONTAINER_UID));
+    }
+
+    #[test]
+    fn widening_when_the_owner_differs_from_the_container_user() {
+        assert!(widening_needed(true, SUPPORT_CONTAINER_UID + 1));
+    }
+
+    #[test]
+    fn no_widening_when_the_platform_maps_ownership() {
+        // Docker Desktop translates ownership in its file-sharing layer. A
+        // different UID never reaches the container.
+        assert!(!widening_needed(false, SUPPORT_CONTAINER_UID + 1));
     }
 
     #[tokio::test]
