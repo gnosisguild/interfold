@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod container_permissions;
 mod copy;
 mod file_utils;
 mod git;
@@ -12,6 +13,7 @@ mod package_json;
 mod pkgman;
 
 use anyhow::Result;
+use container_permissions::container_writable_paths;
 use copy::Filter;
 use file_utils::{
     chmod_recursive, delete_path, move_file, remove_all_files_in_dir, remove_dir_except,
@@ -208,21 +210,16 @@ async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: boo
 
     spinner.complete_task("Support folders set up\n");
 
-    // We need to make these chmod 777 because the dockerfile needs to be able to successfully
-    // write to them. There are better ways to do this but right now this is the most efficient.
-    // PRs/Ideas welcome.
+    // The support container runs as a fixed user. The directories that it
+    // mounts read-write need permissions that let this user write to them.
     spinner.update("Restoring permissions...".to_string()).await;
 
-    spinner
-        .run("Setting contracts folder permissions to 777", || async {
-            chmod_recursive(&cwd.join("contracts"), "777").await
-        })
-        .await?;
-    spinner
-        .run("Setting tests folder permissions to 777", || async {
-            chmod_recursive(&cwd.join("tests"), "777").await
-        })
-        .await?;
+    for path in container_writable_paths(&cwd) {
+        let message = format!("Setting {} permissions to 777", path.display());
+        spinner
+            .run(message, || async { chmod_recursive(&path, "777").await })
+            .await?;
+    }
 
     spinner.complete_task("Permissions restored\n");
 
