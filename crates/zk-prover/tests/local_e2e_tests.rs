@@ -230,7 +230,6 @@ async fn setup_share_computation_sk_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation_base").await;
     setup_compiled_circuit(&backend, "dkg", "sk_share_computation_chunk").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::SkC2ChunkFinalize).await;
@@ -267,7 +266,6 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation_base").await;
     setup_compiled_circuit(&backend, "dkg", "esm_share_computation_chunk").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::ESmC2ChunkFinalize).await;

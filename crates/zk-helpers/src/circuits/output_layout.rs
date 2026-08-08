@@ -28,28 +28,20 @@ pub struct OutputField {
 ///
 /// `fields` lists them in the order they appear in `public_signals`,
 /// which is the same order as the Noir `-> pub (A, B, C)` tuple.
-///
-/// Circuits whose output count depends on runtime parameters (e.g.
-/// `SkShareComputationBase` / `ESmShareComputationBase` whose return is `[[Field; L]; N]`)
-/// use [`CircuitOutputLayout::Dynamic`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CircuitOutputLayout {
     /// Fixed number of `Field`-sized outputs, names known at compile time.
     Fixed { fields: &'static [OutputField] },
     /// The circuit returns no public values (void).
     None,
-    /// Output count depends on runtime parameters — callers must supply the
-    /// element count themselves.
-    Dynamic,
 }
 
 impl CircuitOutputLayout {
-    /// Number of fixed output fields, or `None` for dynamic / void layouts.
+    /// Number of fixed output fields, or `None` for void layouts.
     pub fn field_count(&self) -> Option<usize> {
         match self {
             CircuitOutputLayout::Fixed { fields } => Some(fields.len()),
             CircuitOutputLayout::None => Some(0),
-            CircuitOutputLayout::Dynamic => None,
         }
     }
 
@@ -90,7 +82,6 @@ impl CircuitOutputLayout {
         let fields = match self {
             CircuitOutputLayout::Fixed { fields } => fields,
             CircuitOutputLayout::None => return Some(Vec::new()),
-            CircuitOutputLayout::Dynamic => return None,
         };
         let total_output_bytes = fields.len() * FIELD_BYTE_LEN;
         if public_signals.len() < total_output_bytes {
@@ -271,13 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_from_dynamic_circuit_returns_none() {
-        let layout = CircuitOutputLayout::Dynamic;
-        let signals = vec![0u8; 256];
-        assert!(layout.extract_field(&signals, "anything").is_none());
-    }
-
-    #[test]
     fn signals_too_short_returns_none() {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
@@ -315,7 +299,6 @@ mod tests {
             Some(3)
         );
         assert_eq!(CircuitOutputLayout::None.field_count(), Some(0));
-        assert_eq!(CircuitOutputLayout::Dynamic.field_count(), None);
     }
 
     #[test]

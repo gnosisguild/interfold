@@ -142,24 +142,12 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
-    /// C2a base proof used by the chunked accumulator.
-    SkShareComputationBase,
-    /// C2b base proof used by the chunked accumulator.
-    ESmShareComputationBase,
-    /// One coefficient-range proof used by the chunked accumulator.
-    ShareComputationChunk,
     /// SK coefficient-range proof used by the root-committed chunk pipeline.
     SkShareComputationChunk,
     /// ESM coefficient-range proof used by the root-committed chunk pipeline.
     ESmShareComputationChunk,
     /// Recursive batch of C2 chunk proofs.
     C2ChunkBatch,
-    /// Sequential C2 chunk accumulator.
-    C2ChunkFold,
-    /// Bootstrap circuit for [`CircuitName::C2ChunkFold`] genesis proof.
-    C2ChunkFoldKernel,
-    /// Terminal projection from a complete C2 chunk accumulator to C2 layout.
-    C2ChunkFinalize,
     /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
     SkC2ChunkFinalize,
     /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
@@ -173,9 +161,6 @@ impl CircuitName {
         match self {
             CircuitName::PkBfv => "pk",
             CircuitName::PkGeneration => "pk_generation",
-            CircuitName::SkShareComputationBase => "sk_share_computation_base",
-            CircuitName::ESmShareComputationBase => "e_sm_share_computation_base",
-            CircuitName::ShareComputationChunk => "share_computation_chunk",
             CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
             CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
             CircuitName::C2ChunkBatch => "c2_chunk_batch",
@@ -186,9 +171,6 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
-            CircuitName::C2ChunkFold => "c2_chunk_fold",
-            CircuitName::C2ChunkFoldKernel => "c2_chunk_fold_kernel",
-            CircuitName::C2ChunkFinalize => "c2_chunk_finalize",
             CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
             CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
             CircuitName::C2abChunkFold => "c2ab_chunk_fold",
@@ -207,9 +189,6 @@ impl CircuitName {
     pub fn group(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputationBase => "dkg",
-            CircuitName::ESmShareComputationBase => "dkg",
-            CircuitName::ShareComputationChunk => "dkg",
             CircuitName::SkShareComputationChunk => "dkg",
             CircuitName::ESmShareComputationChunk => "dkg",
             CircuitName::ShareEncryption => "dkg",
@@ -220,10 +199,7 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
-            | CircuitName::C2ChunkFold
-            | CircuitName::C2ChunkFoldKernel
             | CircuitName::C2ChunkBatch
-            | CircuitName::C2ChunkFinalize
             | CircuitName::SkC2ChunkFinalize
             | CircuitName::ESmC2ChunkFinalize
             | CircuitName::C2abChunkFold
@@ -254,12 +230,9 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputationBase | CircuitName::ESmShareComputationBase => {
-                CircuitOutputLayout::Dynamic
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
+                CircuitOutputLayout::None
             }
-            CircuitName::ShareComputationChunk
-            | CircuitName::SkShareComputationChunk
-            | CircuitName::ESmShareComputationChunk => CircuitOutputLayout::None,
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
             },
@@ -275,10 +248,7 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
-            | CircuitName::C2ChunkFold
-            | CircuitName::C2ChunkFoldKernel
             | CircuitName::C2ChunkBatch
-            | CircuitName::C2ChunkFinalize
             | CircuitName::SkC2ChunkFinalize
             | CircuitName::ESmC2ChunkFinalize
             | CircuitName::C2abChunkFold

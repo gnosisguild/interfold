@@ -204,22 +204,6 @@ pub fn compute_share_encryption_commitment_from_message<let N: u32, let BIT_MSG:
     compute_commitment(payload, DS_SHARE_ENCRYPTION)
 }
 
-pub fn compute_share_computation_chunk_commitment<let N_PARTIES: u32, let L: u32, let CHUNK_SIZE: u32>(
-    y_chunk: [[[Field; N_PARTIES + 1]; L]; CHUNK_SIZE],
-    chunk_idx: u32,
-) -> Field {
-    let mut payload = [].as_vector();
-    for coeff_idx in 0..CHUNK_SIZE {
-        for mod_idx in 0..L {
-            for party_idx in 0..(N_PARTIES + 1) {
-                payload = payload.push_back(y_chunk[coeff_idx][mod_idx][party_idx]);
-            }
-        }
-    }
-    payload = payload.push_back(chunk_idx as Field);
-    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
-}
-
 /// Compute a domain-separated commitment for one secret chunk.
 pub fn compute_sc_secret_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
     kind_tag: Field,
