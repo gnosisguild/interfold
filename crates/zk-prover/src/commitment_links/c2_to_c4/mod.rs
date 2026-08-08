@@ -239,7 +239,10 @@ fn check_exact_l_commitments(
     let Some(c4_row_end) = c4_row_start.checked_add(c4_row_len) else {
         return false;
     };
-    if target_public_signals.len() < c4_row_end + FIELD_BYTE_LEN {
+    let Some(c4_row_end_plus_field) = c4_row_end.checked_add(FIELD_BYTE_LEN) else {
+        return false;
+    };
+    if target_public_signals.len() < c4_row_end_plus_field {
         return false;
     }
 
