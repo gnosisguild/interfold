@@ -15,7 +15,6 @@ DIRS=(
   "lib"
   "bin/config"
   "bin/recursive_aggregation/c2_chunk_batch"
-  "bin/recursive_aggregation/c2_chunk_finalize"
   "bin/recursive_aggregation/sk_c2_chunk_finalize"
   "bin/recursive_aggregation/esm_c2_chunk_finalize"
   "bin/recursive_aggregation/c2ab_chunk_fold"

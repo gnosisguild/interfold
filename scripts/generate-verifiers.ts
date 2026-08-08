@@ -432,8 +432,7 @@ class VerifierGenerator {
     if (emittedCount === 0 && correctedCount === 1) return solidity
     if (emittedCount !== 1 || correctedCount !== 0) {
       throw new Error(
-        `Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration ` +
-          `(found ${emittedCount} emitted, ${correctedCount} corrected)`,
+        `Expected one generated FRLIB_MODEXP_FAILED_SELECTOR declaration ` + `(found ${emittedCount} emitted, ${correctedCount} corrected)`,
       )
     }
 

@@ -20,8 +20,9 @@
 //! Fault is attributed to C3 when its `expected_message_commitment` does not
 //! appear anywhere in C2's share commitment section.
 //!
-//! C2a/C3a and C2b/C3b use the same Noir circuits (`ShareComputationChunk` /
-//! `ShareEncryption`) but different [`ProofType`] values, so we register two links.
+//! C2a/C3a and C2b/C3b use the same Noir circuits (`sk_share_computation_chunk` /
+//! `esm_share_computation_chunk`, `ShareEncryption`) but different [`ProofType`]
+//! values, so we register two links.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};

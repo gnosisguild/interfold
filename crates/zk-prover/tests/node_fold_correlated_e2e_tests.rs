@@ -110,8 +110,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
 
     for g in [
         "pk",
-        "sk_share_computation_base",
-        "e_sm_share_computation_base",
         "sk_share_computation_chunk",
         "esm_share_computation_chunk",
         "share_encryption",
@@ -351,8 +349,6 @@ async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
     }
     let dkg_circuits = [
         "pk",
-        "sk_share_computation_base",
-        "e_sm_share_computation_base",
         "sk_share_computation_chunk",
         "esm_share_computation_chunk",
         "share_encryption",

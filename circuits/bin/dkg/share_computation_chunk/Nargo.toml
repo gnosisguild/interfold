@@ -1,7 +1,0 @@
-[package]
-name = "share_computation_chunk"
-type = "bin"
-authors = ["Gnosis Guild / Interfold"]
-
-[dependencies]
-lib = { path = "../../../lib" }

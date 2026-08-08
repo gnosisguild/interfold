@@ -6,7 +6,5 @@
 
 pub mod pk;
 pub mod share_computation;
-pub mod share_computation_base;
-pub mod share_computation_chunk;
 pub mod share_encryption;
 pub mod share_decryption;
