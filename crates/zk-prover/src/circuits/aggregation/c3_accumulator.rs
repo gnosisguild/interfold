@@ -25,11 +25,11 @@ use serde::Serialize;
 
 /// `total_slots` = N_PARTIES * L_THRESHOLD (one slot per party-modulus pair).
 fn c3_fold_public_input_field_count(total_slots: usize) -> usize {
-    4 + 3 * total_slots
+    6 + 3 * total_slots
 }
 
-/// Public-signal layout of `c3_fold`: 4-field prefix, then 3-field-wide per-slot tail.
-const C3_FOLD_PREFIX_LEN: usize = 4;
+/// Public-signal layout of `c3_fold`: 6-field prefix, then 3-field-wide per-slot tail.
+const C3_FOLD_PREFIX_LEN: usize = 6;
 const C3_FOLD_SLOT_WIDTH: usize = 3;
 
 struct C3FoldVks {
@@ -90,9 +90,15 @@ fn generate_c3_fold_kernel_genesis_proof(
         acc_proof: acc_pf,
         acc_public_inputs: acc_pi,
         inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: kernel_vk.key_hash,
+        acc_key_hash: kernel_vk.key_hash.clone(),
         is_first_step: true,
         slot_index,
+        expected_kernel_key_hash: kernel_vk.key_hash.clone(),
+        expected_fold_key_hash: vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3Fold,
+        )?
+        .key_hash,
     };
 
     let circuit_path = prover
@@ -147,6 +153,8 @@ struct C3FoldStepInput {
     acc_key_hash: String,
     is_first_step: bool,
     slot_index: u32,
+    expected_kernel_key_hash: String,
+    expected_fold_key_hash: String,
 }
 
 fn parse_c3_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
@@ -202,7 +210,12 @@ fn generate_c3_fold_step_with_vks(
     } else {
         let p = prior_fold.expect("prior_fold required when is_first_step is false");
         let acc_pi = parse_c3_fold_public_field_strings(p)?;
-        let prior_slots = (acc_pi.len() - 4) / 3;
+        if acc_pi.len() < C3_FOLD_PREFIX_LEN {
+            return Err(ZkError::InvalidInput(
+                "c3_fold proof public inputs are shorter than the prefix".into(),
+            ));
+        }
+        let prior_slots = (acc_pi.len() - C3_FOLD_PREFIX_LEN) / 3;
         if prior_slots == 0 {
             return Err(ZkError::InvalidInput(
                 "c3_fold proof implies zero slots".into(),
@@ -241,6 +254,8 @@ fn generate_c3_fold_step_with_vks(
         acc_key_hash: acc_vk_hash,
         is_first_step,
         slot_index,
+        expected_kernel_key_hash: vks.kernel_vk.key_hash.clone(),
+        expected_fold_key_hash: vks.fold_vk.key_hash.clone(),
     };
 
     let circuit_path = prover

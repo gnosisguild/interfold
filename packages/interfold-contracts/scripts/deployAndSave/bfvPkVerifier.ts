@@ -13,6 +13,7 @@ import {
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readDeploymentArgs,
   readVkRecursiveHash,
   storeDeploymentArgs,
@@ -82,6 +83,8 @@ export const deployAndSaveBfvPkVerifier = async (
   const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
   );
+  const expectedVkBinding =
+    getBfvPkVkBindingHashPaths().map(readVkRecursiveHash);
 
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(
@@ -90,6 +93,7 @@ export const deployAndSaveBfvPkVerifier = async (
     expectedC5KeyHash,
     expectedSkC2ChunkKeyHash,
     expectedESmC2ChunkKeyHash,
+    expectedVkBinding,
     BFV_DKG_H,
   );
 

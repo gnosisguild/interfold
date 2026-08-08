@@ -18,8 +18,8 @@ use lib::configs::default::N_PARTIES;
 /// Total slots: one per (party, threshold-modulus) pair.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
-/// Total public fields for a `c3_fold` proof: 4 pub parameters + 3*C3_SLOTS (pk, msg, ct).
-pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
+/// Total public fields for a `c3_fold` proof: 6 pub parameters + 3*C3_SLOTS (pk, msg, ct).
+pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
 
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 
@@ -34,12 +34,25 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
+    expected_kernel_key_hash: pub Field,
+    expected_fold_key_hash: pub Field,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
     assert(slot_index < C3_SLOTS);
 
     verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);
     assert(c3_public_inputs[2] == (slot_index / L_THRESHOLD) as Field);
     assert(c3_public_inputs[3] == (slot_index % L_THRESHOLD) as Field);
+
+    if is_first_step {
+        assert(acc_key_hash == expected_kernel_key_hash);
+    } else {
+        assert(acc_key_hash == expected_fold_key_hash);
+        if acc_public_inputs[2] == 1 {
+            assert(acc_public_inputs[4] == expected_kernel_key_hash);
+        } else {
+            assert(acc_public_inputs[5] == expected_fold_key_hash);
+        }
+    }
 
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
 

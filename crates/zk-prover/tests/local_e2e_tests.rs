@@ -634,7 +634,7 @@ async fn test_chunked_share_computation_proof() {
         chunk_key_hash
     );
     let expected_fields =
-        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+        3 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
     assert_eq!(result.proof.public_signals.len() / 32, expected_fields);
     assert!(prover
         .verify_proof_with_variant(
@@ -682,7 +682,7 @@ async fn test_chunked_esm_share_computation_proof() {
     );
     assert_eq!(fields[0], chunk_key_hash);
     let expected_fields =
-        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+        3 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
     assert_eq!(fields.len(), expected_fields);
     assert!(prover
         .verify_proof_with_variant(

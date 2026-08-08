@@ -12,14 +12,15 @@ fn make_field(val: u8) -> [u8; 32] {
     f
 }
 
-/// C2 terminal signals: [child VK hash, expected_secret_commitment] + share commitments.
+/// C2 terminal signals: [child VK hash, secret root] + share commitments + batch VK hash.
 fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(&make_field(0xFE)); // child VK hash (skipped)
-    v.extend_from_slice(&make_field(0xFF)); // expected_secret_commitment (skipped)
+    v.extend_from_slice(&make_field(0xFF)); // secret root (skipped)
     for c in share_commits {
         v.extend_from_slice(c);
     }
+    v.extend_from_slice(&make_field(0xFD)); // batch VK hash (skipped)
     v
 }
 
