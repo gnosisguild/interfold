@@ -167,15 +167,27 @@ impl NodeProofAggregator {
                     "NodeProofAggregator: invalid C3 slot metadata for E3 {} party {}: {}",
                     e3_id, party_id, err
                 );
-                self.states.remove(e3_id);
-                let _ = self.bus.publish(
+                // Publish the terminal event before dropping the aggregation state;
+                // only drop the state once the failure was actually published, so a
+                // transient bus failure does not lose the terminal event.
+                match self.bus.publish(
                     E3Failed {
                         e3_id: e3_id.clone(),
                         failed_at_stage: E3Stage::CommitteeFinalized,
                         reason: FailureReason::DKGInvalidShares,
                     },
                     ec,
-                );
+                ) {
+                    Ok(_) => {
+                        self.states.remove(e3_id);
+                    }
+                    Err(err) => {
+                        error!(
+                            "NodeProofAggregator: failed to publish E3Failed for E3 {} — retaining state for retry: {err}",
+                            e3_id
+                        );
+                    }
+                }
                 return;
             }
         };
