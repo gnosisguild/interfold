@@ -24,21 +24,19 @@ fn main(
     c2b_public: [Field; C2_FINALIZED_PUBLIC_LEN],
     c2a_key_hash: pub Field,
     c2b_key_hash: pub Field,
-     ) -> pub (Field, Field, Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES], Field) {
+    ) -> pub (Field, Field, Field, Field, [[Field; L_THRESHOLD]; N_PARTIES], Field, [[Field; L_THRESHOLD]; N_PARTIES], Field) {
     verify_honk_proof(c2a_vk, c2a_proof, c2a_public, c2a_key_hash);
     verify_honk_proof(c2b_vk, c2b_proof, c2b_public, c2b_key_hash);
     let key_hash = compute_vk_hash([c2a_key_hash, c2b_key_hash].as_vector());
-    let vk_manifest = compute_vk_hash(
-        [
-            c2a_key_hash,
-            c2b_key_hash,
-            c2a_public[C2_FINALIZED_PUBLIC_LEN - 1],
-            c2b_public[C2_FINALIZED_PUBLIC_LEN - 1],
-            c2a_public[0],
-            c2b_public[0],
-        ]
-        .as_vector(),
-    );
+    let vk_manifest = compute_vk_hash([
+        c2a_key_hash,
+        c2b_key_hash,
+        c2a_public[C2_FINALIZED_PUBLIC_LEN - 1],
+        c2b_public[C2_FINALIZED_PUBLIC_LEN - 1],
+        c2a_public[0],
+        c2b_public[0],
+    ]
+        .as_vector());
     let mut c2a_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     let mut c2b_shares: [[Field; L_THRESHOLD]; N_PARTIES] = [[0; L_THRESHOLD]; N_PARTIES];
     for party_idx in 0..N_PARTIES {
@@ -48,13 +46,7 @@ fn main(
         }
     }
     (
-        key_hash,
-        c2a_public[0],
-        c2b_public[0],
-        c2a_public[1],
-        c2a_shares,
-        c2b_public[1],
-        c2b_shares,
-        vk_manifest,
+        key_hash, c2a_public[0], c2b_public[0], c2a_public[1], c2a_shares, c2b_public[1],
+        c2b_shares, vk_manifest,
     )
 }

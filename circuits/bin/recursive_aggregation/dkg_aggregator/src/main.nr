@@ -104,48 +104,40 @@ fn main(
     assert(nodes_fold_public[4] == vk_binding[VK_NODES_FOLD_KERNEL]);
     assert(nodes_fold_public[5] == nodes_fold_key_hash);
 
-    let expected_c2_manifest = compute_vk_hash(
-        [
-            vk_binding[VK_C2A_FINALIZE],
-            vk_binding[VK_C2B_FINALIZE],
-            vk_binding[VK_C2_BATCH],
-            vk_binding[VK_C2_BATCH],
-            vk_binding[VK_C2A_CHUNK],
-            vk_binding[VK_C2B_CHUNK],
-        ]
-        .as_vector(),
-    );
-    let expected_c3_manifest = compute_vk_hash(
-        [
-            vk_binding[VK_C3_FOLD],
-            vk_binding[VK_C3_FOLD],
-            vk_binding[VK_SHARE_ENCRYPTION],
-            vk_binding[VK_SHARE_ENCRYPTION],
-            vk_binding[VK_C3_FOLD],
-            vk_binding[VK_C3_FOLD],
-            vk_binding[VK_C3_FOLD_KERNEL],
-            vk_binding[VK_C3_FOLD_KERNEL],
-            vk_binding[VK_C3_FOLD],
-            vk_binding[VK_C3_FOLD],
-        ]
-        .as_vector(),
-    );
-    let expected_c4_manifest = compute_vk_hash(
-        [vk_binding[VK_C4], vk_binding[VK_C4]].as_vector(),
-    );
-    let expected_node_manifest = compute_vk_hash(
-        [
-            vk_binding[VK_C0],
-            vk_binding[VK_C1],
-            vk_binding[VK_C2AB],
-            vk_binding[VK_C3AB],
-            vk_binding[VK_C4AB],
-            expected_c2_manifest,
-            expected_c3_manifest,
-            expected_c4_manifest,
-        ]
-        .as_vector(),
-    );
+    let expected_c2_manifest = compute_vk_hash([
+        vk_binding[VK_C2A_FINALIZE],
+        vk_binding[VK_C2B_FINALIZE],
+        vk_binding[VK_C2_BATCH],
+        vk_binding[VK_C2_BATCH],
+        vk_binding[VK_C2A_CHUNK],
+        vk_binding[VK_C2B_CHUNK],
+    ]
+        .as_vector());
+    let expected_c3_manifest = compute_vk_hash([
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_SHARE_ENCRYPTION],
+        vk_binding[VK_SHARE_ENCRYPTION],
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_FOLD_KERNEL],
+        vk_binding[VK_C3_FOLD_KERNEL],
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_FOLD],
+    ]
+        .as_vector());
+    let expected_c4_manifest = compute_vk_hash([vk_binding[VK_C4], vk_binding[VK_C4]].as_vector());
+    let expected_node_manifest = compute_vk_hash([
+        vk_binding[VK_C0],
+        vk_binding[VK_C1],
+        vk_binding[VK_C2AB],
+        vk_binding[VK_C3AB],
+        vk_binding[VK_C4AB],
+        expected_c2_manifest,
+        expected_c3_manifest,
+        expected_c4_manifest,
+    ]
+        .as_vector());
 
     for i in 0..H {
         let row = NODES_FOLD_PARAM_PUBLIC_LEN + i * NODE_FOLD_PUBLIC_LEN;
@@ -154,9 +146,7 @@ fn main(
         assert(nodes_fold_public[row + 3] == vk_binding[VK_C2AB]);
         assert(nodes_fold_public[row + 4] == vk_binding[VK_C3AB]);
         assert(nodes_fold_public[row + 5] == vk_binding[VK_C4AB]);
-        assert(
-            nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest,
-        );
+        assert(nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest);
     }
 
     for i in 0..H {

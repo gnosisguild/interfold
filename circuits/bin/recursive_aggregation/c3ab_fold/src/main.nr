@@ -31,27 +31,25 @@ fn main(
     c3b_public: [Field; C3_FOLD_PUBLIC_LEN],
     c3a_key_hash: pub Field,
     c3b_key_hash: pub Field,
-     ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], Field) {
+    ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], Field) {
     verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
     verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 
     let vk_hashes = [c3a_key_hash, c3b_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
-    let vk_manifest = compute_vk_hash(
-        [
-            c3a_key_hash,
-            c3b_key_hash,
-            c3a_public[0],
-            c3b_public[0],
-            c3a_public[1],
-            c3b_public[1],
-            c3a_public[4],
-            c3b_public[4],
-            c3a_public[5],
-            c3b_public[5],
-        ]
-        .as_vector(),
-    );
+    let vk_manifest = compute_vk_hash([
+        c3a_key_hash,
+        c3b_key_hash,
+        c3a_public[0],
+        c3b_public[0],
+        c3a_public[1],
+        c3b_public[1],
+        c3a_public[4],
+        c3b_public[4],
+        c3a_public[5],
+        c3b_public[5],
+    ]
+        .as_vector());
 
     let mut pk_a: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut msg_a: [Field; C3_SLOTS] = [0; C3_SLOTS];
