@@ -93,16 +93,16 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Active insecure-512 / minimum committee layout for BFV aggregator verifiers.
+ * Active secure-8192 / micro committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
- * Minimum committee: N=3, T=1, H=2.
+ * Micro committee: N=9, T=4, H=5.
  * </generated-committee-doc>
  */
-export const BFV_DKG_H = 2;
-export const BFV_THRESHOLD_T = 1;
-export const ACTIVE_BFV_PARAM_SET = 0;
-export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
-export const ACTIVE_BFV_COMMITTEE_N = 3;
+export const BFV_DKG_H = 5;
+export const BFV_THRESHOLD_T = 4;
+export const ACTIVE_BFV_PARAM_SET = 1;
+export const ACTIVE_BFV_COMMITTEE_SIZE = 1;
+export const ACTIVE_BFV_COMMITTEE_N = 9;
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {

@@ -15,6 +15,7 @@ use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
+use rayon::prelude::*;
 use serde::Serialize;
 
 const BATCH_PUBLIC_PREFIX_LEN: usize = 2;
@@ -85,42 +86,48 @@ pub fn generate_c2_chunk_batches(
     let compiled = CompiledCircuit::from_file(&batch_circuit_path)?;
 
     let mut batches = Vec::with_capacity(chunk_count / per_batch);
-    for (batch_idx, proofs) in chunk_proofs.chunks(per_batch).enumerate() {
-        let mut chunk_public_inputs = Vec::with_capacity(per_batch);
-        let mut chunk_proof_fields = Vec::with_capacity(per_batch);
-        for proof in proofs {
-            if proof.circuit != chunk_circuit {
-                return Err(ZkError::InvalidInput(format!(
-                    "C2 chunk batch expected {}, got {}",
-                    chunk_circuit, proof.circuit
-                )));
+    batches = chunk_proofs
+        .par_chunks(per_batch)
+        .enumerate()
+        .map(|(batch_idx, proofs)| {
+            let mut chunk_public_inputs = Vec::with_capacity(per_batch);
+            let mut chunk_proof_fields = Vec::with_capacity(per_batch);
+            for proof in proofs {
+                if proof.circuit != chunk_circuit {
+                    return Err(ZkError::InvalidInput(format!(
+                        "C2 chunk batch expected {}, got {}",
+                        chunk_circuit, proof.circuit
+                    )));
+                }
+                chunk_public_inputs.push(public_fields(proof, "C2 chunk")?);
+                chunk_proof_fields.push(bytes_to_field_strings(&proof.data)?);
             }
-            chunk_public_inputs.push(public_fields(proof, "C2 chunk")?);
-            chunk_proof_fields.push(bytes_to_field_strings(&proof.data)?);
-        }
 
-        let input = C2ChunkBatchInput {
-            chunk_vk: chunk_vk.verification_key.clone(),
-            chunk_proofs: chunk_proof_fields,
-            chunk_public_inputs,
-            chunk_key_hash: chunk_vk.key_hash.clone(),
-            batch_idx: batch_idx as u32,
-        };
-        let json = serde_json::to_value(&input)
-            .map_err(|error| ZkError::SerializationError(error.to_string()))?;
-        let input_map = inputs_json_to_input_map(&json)?;
-        let witness = WitnessGenerator::new()
-            .generate_witness(&compiled, input_map)
-            .map_err(|error| {
-                ZkError::WitnessGenerationFailed(format!("C2 batch {batch_idx} witness: {error}"))
-            })?;
-        batches.push(prover.generate_recursive_aggregation_bin_proof(
-            CircuitName::C2ChunkBatch,
-            &witness,
-            &format!("{e3_id}-c2-batch-{batch_idx}"),
-            artifacts_dir,
-        )?);
-    }
+            let input = C2ChunkBatchInput {
+                chunk_vk: chunk_vk.verification_key.clone(),
+                chunk_proofs: chunk_proof_fields,
+                chunk_public_inputs,
+                chunk_key_hash: chunk_vk.key_hash.clone(),
+                batch_idx: batch_idx as u32,
+            };
+            let json = serde_json::to_value(&input)
+                .map_err(|error| ZkError::SerializationError(error.to_string()))?;
+            let input_map = inputs_json_to_input_map(&json)?;
+            let witness = WitnessGenerator::new()
+                .generate_witness(&compiled, input_map)
+                .map_err(|error| {
+                    ZkError::WitnessGenerationFailed(format!(
+                        "C2 batch {batch_idx} witness: {error}"
+                    ))
+                })?;
+            prover.generate_recursive_aggregation_bin_proof(
+                CircuitName::C2ChunkBatch,
+                &witness,
+                &format!("{e3_id}-c2-batch-{batch_idx}"),
+                artifacts_dir,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(batches)
 }
 

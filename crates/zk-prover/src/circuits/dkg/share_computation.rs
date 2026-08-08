@@ -18,6 +18,7 @@ use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::{Computation, DkgInputType};
 use e3_zk_helpers::dkg::share_computation::{Inputs, ShareComputationCircuitData};
+use rayon::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
 
@@ -135,98 +136,104 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         )));
     }
 
-    let mut chunks = Vec::with_capacity(chunk_count);
     let mut step_timings = Vec::new();
     let t_chunks = Instant::now();
-    for chunk_idx in 0..chunk_count {
-        let start = chunk_idx * chunk_size;
-        let mut chunk_json = serde_json::Map::new();
-        chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
-        let secret_key = match data.dkg_input_type {
-            DkgInputType::SecretKey => "sk_secret",
-            DkgInputType::SmudgingNoise => "e_sm_secret",
-        };
-        let secret = base_json.get(secret_key).ok_or_else(|| {
-            ZkError::SerializationError(format!("C2 input is missing {secret_key}"))
-        })?;
-        let secret_chunk = if data.dkg_input_type == DkgInputType::SecretKey {
-            let coefficients = secret
-                .as_object()
-                .and_then(|object| object.get("coefficients"))
-                .and_then(Value::as_array)
-                .ok_or_else(|| ZkError::SerializationError("SK secret JSON is malformed".into()))?;
-            Value::Object(
-                [(
-                    "coefficients".into(),
-                    Value::Array(slice_coefficients(
-                        coefficients,
-                        start,
-                        chunk_size,
-                        "SK secret",
-                    )?),
-                )]
-                .into_iter()
-                .collect(),
-            )
-        } else {
-            let limbs = secret.as_array().ok_or_else(|| {
-                ZkError::SerializationError("ESM secret JSON must contain CRT limbs".into())
+    let chunks: Vec<e3_events::Proof> = (0..chunk_count)
+        .into_par_iter()
+        .map(|chunk_idx| {
+            let start = chunk_idx * chunk_size;
+            let mut chunk_json = serde_json::Map::new();
+            chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
+            let secret_key = match data.dkg_input_type {
+                DkgInputType::SecretKey => "sk_secret",
+                DkgInputType::SmudgingNoise => "e_sm_secret",
+            };
+            let secret = base_json.get(secret_key).ok_or_else(|| {
+                ZkError::SerializationError(format!("C2 input is missing {secret_key}"))
             })?;
-            Value::Array(
-                limbs
-                    .iter()
-                    .map(|limb| {
-                        let values = limb
-                            .as_object()
-                            .and_then(|object| object.get("coefficients"))
-                            .and_then(Value::as_array)
-                            .ok_or_else(|| {
-                                ZkError::SerializationError(
-                                    "ESM secret JSON must contain CRT limbs".into(),
-                                )
-                            })?;
-                        Ok::<Value, ZkError>(Value::Object(
-                            [(
-                                "coefficients".into(),
-                                Value::Array(slice_coefficients(
-                                    values,
-                                    start,
-                                    chunk_size,
-                                    "ESM secret limb",
-                                )?),
-                            )]
-                            .into_iter()
-                            .collect(),
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        };
-        chunk_json.insert("secret_chunk".into(), secret_chunk);
-        chunk_json.insert(
-            "y_chunk".into(),
-            Value::Array(y[start..start + chunk_size].to_vec()),
-        );
-        let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
-        let circuit_path = prover
-            .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)
-            .join(chunk_circuit.dir_path())
-            .join(format!("{}.json", chunk_circuit.as_str()));
-        let compiled = crate::witness::CompiledCircuit::from_file(&circuit_path)?;
-        let witness = crate::witness::WitnessGenerator::new()
-            .generate_witness(&compiled, input_map)
-            .map_err(|error| {
-                ZkError::WitnessGenerationFailed(format!("C2 chunk {chunk_idx} witness: {error}"))
-            })?;
-        let proof = prover.generate_proof_with_variant(
-            chunk_circuit,
-            &witness,
-            &format!("{e3_id}-c2-chunk-{chunk_idx}"),
-            e3_events::CircuitVariant::Recursive,
-            artifacts_dir,
-        )?;
-        chunks.push(proof);
-    }
+            let secret_chunk = if data.dkg_input_type == DkgInputType::SecretKey {
+                let coefficients = secret
+                    .as_object()
+                    .and_then(|object| object.get("coefficients"))
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        ZkError::SerializationError("SK secret JSON is malformed".into())
+                    })?;
+                Value::Object(
+                    [(
+                        "coefficients".into(),
+                        Value::Array(slice_coefficients(
+                            coefficients,
+                            start,
+                            chunk_size,
+                            "SK secret",
+                        )?),
+                    )]
+                    .into_iter()
+                    .collect(),
+                )
+            } else {
+                let limbs = secret.as_array().ok_or_else(|| {
+                    ZkError::SerializationError("ESM secret JSON must contain CRT limbs".into())
+                })?;
+                Value::Array(
+                    limbs
+                        .iter()
+                        .map(|limb| {
+                            let values = limb
+                                .as_object()
+                                .and_then(|object| object.get("coefficients"))
+                                .and_then(Value::as_array)
+                                .ok_or_else(|| {
+                                    ZkError::SerializationError(
+                                        "ESM secret JSON must contain CRT limbs".into(),
+                                    )
+                                })?;
+                            Ok::<Value, ZkError>(Value::Object(
+                                [(
+                                    "coefficients".into(),
+                                    Value::Array(slice_coefficients(
+                                        values,
+                                        start,
+                                        chunk_size,
+                                        "ESM secret limb",
+                                    )?),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            };
+            chunk_json.insert("secret_chunk".into(), secret_chunk);
+            chunk_json.insert(
+                "y_chunk".into(),
+                Value::Array(y[start..start + chunk_size].to_vec()),
+            );
+            let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
+            let circuit_path = prover
+                .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)
+                .join(chunk_circuit.dir_path())
+                .join(format!("{}.json", chunk_circuit.as_str()));
+            let compiled = crate::witness::CompiledCircuit::from_file(&circuit_path)?;
+            let witness = crate::witness::WitnessGenerator::new()
+                .generate_witness(&compiled, input_map)
+                .map_err(|error| {
+                    ZkError::WitnessGenerationFailed(format!(
+                        "C2 chunk {chunk_idx} witness: {error}"
+                    ))
+                })?;
+            let proof = prover.generate_proof_with_variant(
+                chunk_circuit,
+                &witness,
+                &format!("{e3_id}-c2-chunk-{chunk_idx}"),
+                e3_events::CircuitVariant::Recursive,
+                artifacts_dir,
+            )?;
+            Ok::<_, ZkError>(proof)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     push_step(&mut step_timings, "chunks", t_chunks);
 
     let t_batches = Instant::now();
