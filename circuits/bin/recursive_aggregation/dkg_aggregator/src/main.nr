@@ -22,14 +22,14 @@ use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 13 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
 /// Must match `nodes_fold::NODES_FOLD_PUBLIC_LEN` (pub params + flattened `H` node-fold rows).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 6 + (H * NODE_FOLD_PUBLIC_LEN);
 
 /// Flattened `node_fold` return tuple length (key hash + pks + share grids + agg commits).
 pub global NODE_FOLD_RETURN_PUBLIC_LEN: u32 =
-    7 + N_PARTIES + (2 * N_PARTIES * L_THRESHOLD) + (2 * H * L_THRESHOLD);
+    8 + N_PARTIES + (2 * N_PARTIES * L_THRESHOLD) + (2 * H * L_THRESHOLD);
 
 /// Leading `node_fold` public inputs (party id + five key hashes) before the return tuple.
 pub global NODE_FOLD_PARAM_PUBLIC_LEN: u32 = NODE_FOLD_PUBLIC_LEN - NODE_FOLD_RETURN_PUBLIC_LEN;
@@ -50,6 +50,27 @@ pub global NF_C4A_BASE_IDX: u32 = NF_C2B_BASE_IDX + (N_PARTIES * L_THRESHOLD);
 pub global NF_C4B_BASE_IDX: u32 = NF_C4A_BASE_IDX + (H * L_THRESHOLD);
 pub global NF_SK_AGG_IDX: u32 = NF_C4B_BASE_IDX + (H * L_THRESHOLD);
 pub global NF_ESM_AGG_IDX: u32 = NF_SK_AGG_IDX + 1;
+pub global NF_NODE_VK_MANIFEST_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 1;
+
+/// Expected recursive VK hashes, in the order used by the node manifest.
+/// The values are public inputs and the Solidity wrapper anchors them.
+pub global VK_BINDING_LEN: u32 = 16;
+pub global VK_NODE_FOLD: u32 = 0;
+pub global VK_C0: u32 = 1;
+pub global VK_C1: u32 = 2;
+pub global VK_C2AB: u32 = 3;
+pub global VK_C3AB: u32 = 4;
+pub global VK_C4AB: u32 = 5;
+pub global VK_C2A_FINALIZE: u32 = 6;
+pub global VK_C2B_FINALIZE: u32 = 7;
+pub global VK_C2_BATCH: u32 = 8;
+pub global VK_C2A_CHUNK: u32 = 9;
+pub global VK_C2B_CHUNK: u32 = 10;
+pub global VK_C3_FOLD: u32 = 11;
+pub global VK_SHARE_ENCRYPTION: u32 = 12;
+pub global VK_C4: u32 = 13;
+pub global VK_C3_FOLD_KERNEL: u32 = 14;
+pub global VK_NODES_FOLD_KERNEL: u32 = 15;
 
 fn main(
     nodes_fold_vk: UltraHonkVerificationKey,
@@ -64,6 +85,7 @@ fn main(
     committee_members: [Field; N_PARTIES],
     committee_hash_hi: pub Field,
     committee_hash_lo: pub Field,
+    vk_binding: pub [Field; VK_BINDING_LEN],
 ) -> pub (Field, Field, Field, [Field; H], [Field; H], Field) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
@@ -73,6 +95,70 @@ fn main(
     // This makes `committee_members[party_ids[i]]` a well-defined committee slot (today
     // `H == N_PARTIES`; preserves soundness once `H < N_PARTIES`) and is the structural
     // pre-condition for future per-party signer/identity constraints.
+    assert(nodes_fold_public[0] == vk_binding[VK_NODE_FOLD]);
+    if nodes_fold_public[2] == 1 {
+        assert(nodes_fold_public[1] == vk_binding[VK_NODES_FOLD_KERNEL]);
+    } else {
+        assert(nodes_fold_public[1] == nodes_fold_key_hash);
+    }
+    assert(nodes_fold_public[4] == vk_binding[VK_NODES_FOLD_KERNEL]);
+    assert(nodes_fold_public[5] == nodes_fold_key_hash);
+
+    let expected_c2_manifest = compute_vk_hash(
+        [
+            vk_binding[VK_C2A_FINALIZE],
+            vk_binding[VK_C2B_FINALIZE],
+            vk_binding[VK_C2_BATCH],
+            vk_binding[VK_C2_BATCH],
+            vk_binding[VK_C2A_CHUNK],
+            vk_binding[VK_C2B_CHUNK],
+        ]
+        .as_vector(),
+    );
+    let expected_c3_manifest = compute_vk_hash(
+        [
+            vk_binding[VK_C3_FOLD],
+            vk_binding[VK_C3_FOLD],
+            vk_binding[VK_SHARE_ENCRYPTION],
+            vk_binding[VK_SHARE_ENCRYPTION],
+            vk_binding[VK_C3_FOLD],
+            vk_binding[VK_C3_FOLD],
+            vk_binding[VK_C3_FOLD_KERNEL],
+            vk_binding[VK_C3_FOLD_KERNEL],
+            vk_binding[VK_C3_FOLD],
+            vk_binding[VK_C3_FOLD],
+        ]
+        .as_vector(),
+    );
+    let expected_c4_manifest = compute_vk_hash(
+        [vk_binding[VK_C4], vk_binding[VK_C4]].as_vector(),
+    );
+    let expected_node_manifest = compute_vk_hash(
+        [
+            vk_binding[VK_C0],
+            vk_binding[VK_C1],
+            vk_binding[VK_C2AB],
+            vk_binding[VK_C3AB],
+            vk_binding[VK_C4AB],
+            expected_c2_manifest,
+            expected_c3_manifest,
+            expected_c4_manifest,
+        ]
+        .as_vector(),
+    );
+
+    for i in 0..H {
+        let row = NODES_FOLD_PARAM_PUBLIC_LEN + i * NODE_FOLD_PUBLIC_LEN;
+        assert(nodes_fold_public[row + 1] == vk_binding[VK_C0]);
+        assert(nodes_fold_public[row + 2] == vk_binding[VK_C1]);
+        assert(nodes_fold_public[row + 3] == vk_binding[VK_C2AB]);
+        assert(nodes_fold_public[row + 4] == vk_binding[VK_C3AB]);
+        assert(nodes_fold_public[row + 5] == vk_binding[VK_C4AB]);
+        assert(
+            nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest,
+        );
+    }
+
     for i in 0..H {
         assert(
             nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN

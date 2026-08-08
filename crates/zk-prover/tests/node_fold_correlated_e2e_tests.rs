@@ -67,7 +67,7 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c3_fold acc_public_inputs length") as usize;
-    (len - 4) / 3
+    (len - 6) / 3
 }
 
 fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionCircuitData {

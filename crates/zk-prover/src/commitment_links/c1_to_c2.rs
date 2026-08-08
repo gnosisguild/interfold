@@ -14,9 +14,8 @@
 //! - field 1: `pk_commitment`   (byte offset  32..64)
 //! - field 2: `e_sm_commitment` (byte offset  64..96)
 //!
-//! **C2a/C2b** either exposes `expected_secret_commitment` at field 0 (legacy
-//! inner proof) or exposes the recursive child VK hash at field 0 and the
-//! expected commitment at field 1 (chunk-finalizer proof).
+//! **C2a/C2b** expose the recursive child VK hash at field 0 and the
+//! expected secret root commitment at field 1 (chunk-finalizer proof).
 //!
 //! ## Checks
 //!
@@ -63,12 +62,10 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
+        if source_values.is_empty() || target_public_signals.len() < 2 * FIELD_BYTE_LEN {
             return false;
         }
-        let start = FIELD_BYTE_LEN;
-        target_public_signals.len() >= start + FIELD_BYTE_LEN
-            && target_public_signals[start..start + FIELD_BYTE_LEN] == source_values[0]
+        target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0]
     }
 }
 
@@ -103,12 +100,10 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
+        if source_values.is_empty() || target_public_signals.len() < 2 * FIELD_BYTE_LEN {
             return false;
         }
-        let start = FIELD_BYTE_LEN;
-        target_public_signals.len() >= start + FIELD_BYTE_LEN
-            && target_public_signals[start..start + FIELD_BYTE_LEN] == source_values[0]
+        target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0]
     }
 }
 

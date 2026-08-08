@@ -100,7 +100,8 @@ export const ACTIVE_BFV_COMMITTEE_N = 3;
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
-  return 3 * h + 8;
+  // The generated Honk VK includes eight pairing-point slots outside the public-input array.
+  return 3 * h + 24;
 }
 
 /** `publicInputs` indices for `committee_hash_hi` / `committee_hash_lo` (matches `BfvPkVerifier`). */
@@ -170,6 +171,74 @@ export function getBfvPkSubCircuitVkHashPaths() {
   } as const;
 }
 
+/** Recursive VK hashes used to build the DKG pipeline binding manifest. */
+export function getBfvPkVkBindingHashPaths() {
+  const root = getRepoRoot();
+  return [
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/node_fold/target/node_fold.vk_recursive_hash",
+    ),
+    path.join(root, "circuits/bin/dkg/target/pk.vk_recursive_hash"),
+    path.join(
+      root,
+      "circuits/bin/threshold/target/pk_generation.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/c2ab_chunk_fold.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c4ab_fold/target/c4ab_fold.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/sk_c2_chunk_finalize/target/sk_c2_chunk_finalize.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/esm_c2_chunk_finalize/target/esm_c2_chunk_finalize.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c2_chunk_batch/target/c2_chunk_batch.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/dkg/target/share_encryption.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/dkg/target/share_decryption.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      "circuits/bin/recursive_aggregation/nodes_fold_kernel/target/nodes_fold_kernel.vk_recursive_hash",
+    ),
+  ] as const;
+}
+
 /** Recursive VK hashes for `BfvDecryptionVerifier` sub-circuits (from `pnpm compile:circuits`). */
 export function getBfvDecryptionSubCircuitVkHashPaths() {
   const root = getRepoRoot();
@@ -212,6 +281,7 @@ export interface BfvPkVerifierVkReader {
   expectedC5KeyHash(): Promise<string>;
   expectedSkC2ChunkKeyHash(): Promise<string>;
   expectedESmC2ChunkKeyHash(): Promise<string>;
+  expectedVkBinding(index: bigint): Promise<string>;
 }
 
 /** On-chain `BfvDecryptionVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
@@ -238,6 +308,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   const expectedESmC2Chunk = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
   );
+  const expectedVkBinding =
+    getBfvPkVkBindingHashPaths().map(readVkRecursiveHash);
   const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
     await Promise.all([
       verifier.expectedNodesFoldKeyHash(),
@@ -245,12 +317,18 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
       verifier.expectedSkC2ChunkKeyHash(),
       verifier.expectedESmC2ChunkKeyHash(),
     ]);
+  const onChainVkBinding = await Promise.all(
+    expectedVkBinding.map((_, index) =>
+      verifier.expectedVkBinding(BigInt(index)),
+    ),
+  );
 
   if (
     onChainNodesFold === expectedNodesFold &&
     onChainC5 === expectedC5 &&
     onChainSkC2Chunk === expectedSkC2Chunk &&
-    onChainESmC2Chunk === expectedESmC2Chunk
+    onChainESmC2Chunk === expectedESmC2Chunk &&
+    onChainVkBinding.every((value, index) => value === expectedVkBinding[index])
   ) {
     return;
   }
@@ -260,7 +338,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
       `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
       `on-chain c5=${onChainC5} expected=${expectedC5}; ` +
       `on-chain sk_c2_chunk=${onChainSkC2Chunk} expected=${expectedSkC2Chunk}; ` +
-      `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}. ` +
+      `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}; ` +
+      `recursive VK binding mismatch at one or more indices. ` +
       `Redeploy after pnpm compile:circuits or remove the stale entry from deployed_contracts.json.`,
   );
 }

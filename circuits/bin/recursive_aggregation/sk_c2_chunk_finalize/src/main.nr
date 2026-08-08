@@ -21,7 +21,7 @@ pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 pub global BATCH_RETURN_LEN: u32 = 2 + (CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN);
 pub global BATCH_PUBLIC_LEN: u32 = 2 + BATCH_RETURN_LEN;
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + 1;
+pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + 2;
 
 fn main(
     batch_vk: UltraHonkVerificationKey,
@@ -71,5 +71,8 @@ fn main(
             );
         }
     }
+    // Preserve the batch VK hash in the terminal statement. This lets the
+    // parent C2AB fold bind the complete batch -> finalizer chain.
+    output[C2_FINALIZED_PUBLIC_LEN - 1] = batch_key_hash;
     output
 }

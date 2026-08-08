@@ -26,16 +26,17 @@
 //!
 //! ```text
 //! [child_vk_hash (32 B, skip)]
-//! [expected_secret_commitment (32 B, skip)]
+//! [secret_root_commitment (32 B, skip)]
 //! [party_0_mod_0 (32 B)] [party_0_mod_1] ... [party_0_mod_{L-1}]
 //! [party_1_mod_0] ...
 //! [party_{N-1}_mod_{L-1}]
+//! [batch_vk_hash (32 B, skip)]
 //! ```
 //!
-//! The first two fields are the child VK hash and `expected_secret_commitment`.
-//! The remaining N_PARTIES × L fields are share commitments output by
-//! `commit_to_party_shares`, indexed in row-major order (party first, then
-//! modulus).
+//! The first two fields are the child VK hash and secret root commitment. The
+//! final field is the batch VK hash. The remaining N_PARTIES × L fields are
+//! share commitments output by the chunk finalizer, indexed in row-major order
+//! (party first, then modulus).
 //!
 //! ## C4 public signals layout
 //!
@@ -160,16 +161,17 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 }
 
-/// Extract all share commitments after the explicit C2 terminal prefix.
+/// Extract all share commitments between the explicit C2 terminal prefix and
+/// the trailing batch VK hash.
 fn extract_share_commitments(
     public_signals: &[u8],
     source_prefix_fields: usize,
 ) -> Vec<FieldValue> {
     let prefix_bytes = source_prefix_fields.saturating_mul(FIELD_BYTE_LEN);
-    if source_prefix_fields == 0 || public_signals.len() < prefix_bytes {
+    if source_prefix_fields == 0 || public_signals.len() < prefix_bytes + FIELD_BYTE_LEN {
         return vec![];
     }
-    public_signals[prefix_bytes..]
+    public_signals[prefix_bytes..public_signals.len() - FIELD_BYTE_LEN]
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
@@ -186,8 +188,8 @@ fn extract_share_commitments(
 /// Precise L-way check: verifies that the L share commitments C2_X computed
 /// for recipient R exactly match C4_R's expected_commitments row for sender X.
 ///
-/// - `source_values`: C2 commitments after the legacy prefix; chunked layouts
-///   still contain the child-VK field until this function removes it
+/// - `source_values`: C2 commitments after the explicit prefix and before the
+///   trailing batch VK hash
 /// - `target_public_signals`: C4_R's public signals
 /// - `src_party_id`: C2 sender X (0-based committee index)
 /// - `tgt_party_id`: C4 recipient R (0-based committee index)

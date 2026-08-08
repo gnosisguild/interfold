@@ -25,6 +25,7 @@ import {
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
 import type {
@@ -46,6 +47,8 @@ const INSECURE_INTEGRATION_SUMMARY = path.join(
   repoRoot,
   "circuits/benchmarks/results_insecure_minimum/integration_summary.json",
 );
+const readExpectedVkBinding = () =>
+  getBfvPkVkBindingHashPaths().map(readVkRecursiveHash);
 
 type FoldedArtifacts = {
   dkg_aggregator: { proof_hex: string; public_inputs_hex: string };
@@ -81,7 +84,13 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-/** Prefer env override, then fresh insecure benchmark output, then committed fixture. */
+const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean =>
+  hexToBytes32Array(value.dkg_aggregator.public_inputs_hex).length ===
+    bfvPkExpectedPublicInputsLen(BFV_DKG_H) &&
+  hexToBytes32Array(value.decryption_aggregator.public_inputs_hex).length ===
+    bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
+
+/** Prefer env override, then current-layout benchmark output, then the committed fixture. */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const envPath = process.env.BFV_VK_BINDING_FOLDED_ARTIFACTS;
   if (envPath) {
@@ -90,7 +99,7 @@ const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const fromBenchmark = readFoldedArtifactsFromFile(
     INSECURE_INTEGRATION_SUMMARY,
   );
-  if (fromBenchmark !== null) {
+  if (fromBenchmark !== null && hasExpectedFoldedLayout(fromBenchmark)) {
     return fromBenchmark;
   }
   return readFoldedArtifactsFromFile(COMMITTED_FOLDED_ARTIFACTS_FIXTURE);
@@ -213,6 +222,7 @@ describe("BfvVkBindingIntegration", function () {
     const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
       getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
     );
+    const expectedVkBinding = readExpectedVkBinding();
     const expectedC6FoldKeyHash = readVkRecursiveHash(
       getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
     );
@@ -228,6 +238,7 @@ describe("BfvVkBindingIntegration", function () {
       expectedC5KeyHash,
       expectedSkC2ChunkKeyHash,
       expectedESmC2ChunkKeyHash,
+      expectedVkBinding,
       BFV_DKG_H,
     );
     await bfvPk.waitForDeployment();
@@ -255,6 +266,7 @@ describe("BfvVkBindingIntegration", function () {
     it("rejects BfvPkVerifier with stale immutables", async function () {
       const { bfvPk } = await loadFixture(deployHonkAndBfv);
       const address = await bfvPk.getAddress();
+      const expectedVkBinding = readExpectedVkBinding();
       const stale = await (
         await ethers.getContractFactory("BfvPkVerifier")
       ).deploy(
@@ -263,6 +275,7 @@ describe("BfvVkBindingIntegration", function () {
         ethers.id("stale-c5"),
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        expectedVkBinding,
         BFV_DKG_H,
       );
       await stale.waitForDeployment();
@@ -348,6 +361,7 @@ describe("BfvVkBindingIntegration", function () {
       const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
       );
+      const expectedVkBinding = readExpectedVkBinding();
       const expectedC6FoldKeyHash = readVkRecursiveHash(
         getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
       );
@@ -357,8 +371,13 @@ describe("BfvVkBindingIntegration", function () {
 
       expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
       expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
-      expect(dkgPublicInputs[5 + BFV_DKG_H]).to.equal(expectedSkC2ChunkKeyHash);
-      expect(dkgPublicInputs[6 + BFV_DKG_H]).to.equal(
+      expectedVkBinding.forEach((expected, index) => {
+        expect(dkgPublicInputs[4 + BFV_DKG_H + index]).to.equal(expected);
+      });
+       expect(dkgPublicInputs[21 + BFV_DKG_H]).to.equal(
+        expectedSkC2ChunkKeyHash,
+      );
+       expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
         expectedESmC2ChunkKeyHash,
       );
       expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
@@ -525,6 +544,7 @@ describe("BfvVkBindingIntegration", function () {
         expectedC5KeyHash,
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        readExpectedVkBinding(),
         BFV_DKG_H,
       );
       await bfvPk.waitForDeployment();

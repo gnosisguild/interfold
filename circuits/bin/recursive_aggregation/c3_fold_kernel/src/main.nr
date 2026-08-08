@@ -16,7 +16,7 @@ use lib::configs::default::N_PARTIES;
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
-pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
+pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
@@ -29,6 +29,8 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
+    expected_kernel_key_hash: pub Field,
+    expected_fold_key_hash: pub Field,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
     assert(slot_index < C3_SLOTS);
 

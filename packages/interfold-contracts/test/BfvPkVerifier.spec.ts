@@ -21,6 +21,9 @@ const EXPECTED_NODES_FOLD_KEY_HASH = ethers.id("nodes_fold");
 const EXPECTED_C5_KEY_HASH = ethers.id("c5");
 const EXPECTED_SK_C2_CHUNK_KEY_HASH = ethers.id("sk_c2_chunk");
 const EXPECTED_ESM_C2_CHUNK_KEY_HASH = ethers.id("esm_c2_chunk");
+const EXPECTED_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
+  ethers.id(`vk-binding-${index}`),
+);
 /** Must match `BfvPkVerifier.h` / default circuit `H`. */
 const H = BFV_DKG_H;
 
@@ -45,6 +48,7 @@ function minimalDkgPublicInputs(
     ...Array(H).fill(ethers.ZeroHash),
     hi,
     lo,
+    ...EXPECTED_VK_BINDING,
     ethers.ZeroHash,
     EXPECTED_SK_C2_CHUNK_KEY_HASH,
     EXPECTED_ESM_C2_CHUNK_KEY_HASH,
@@ -74,6 +78,7 @@ describe("BfvPkVerifier", function () {
       EXPECTED_C5_KEY_HASH,
       EXPECTED_SK_C2_CHUNK_KEY_HASH,
       EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+      EXPECTED_VK_BINDING,
       H,
     );
 
@@ -104,6 +109,7 @@ describe("BfvPkVerifier", function () {
           EXPECTED_C5_KEY_HASH,
           EXPECTED_SK_C2_CHUNK_KEY_HASH,
           EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+          EXPECTED_VK_BINDING,
           H,
         ),
       )
@@ -116,6 +122,7 @@ describe("BfvPkVerifier", function () {
           EXPECTED_C5_KEY_HASH,
           EXPECTED_SK_C2_CHUNK_KEY_HASH,
           EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+          EXPECTED_VK_BINDING,
           H,
         ),
       )
@@ -130,6 +137,7 @@ describe("BfvPkVerifier", function () {
           EXPECTED_C5_KEY_HASH,
           EXPECTED_SK_C2_CHUNK_KEY_HASH,
           EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+          EXPECTED_VK_BINDING,
           H,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
@@ -140,6 +148,7 @@ describe("BfvPkVerifier", function () {
           ethers.ZeroHash,
           EXPECTED_SK_C2_CHUNK_KEY_HASH,
           EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+          EXPECTED_VK_BINDING,
           H,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
@@ -282,8 +291,28 @@ describe("BfvPkVerifier", function () {
       const { e3Id, root, nodes } = ctx();
       const pkCommitment = ethers.keccak256("0xabcd");
       const publicInputs = minimalDkgPublicInputs(pkCommitment).map((v, i) =>
-        i === 5 + H ? ethers.id("wrong-sk-c2-chunk") : v,
+        i === 21 + H ? ethers.id("wrong-sk-c2-chunk") : v,
       );
+      const proof = encodeProof("0x01", publicInputs);
+
+      await expect(
+        bfvPkVerifier.verify.staticCall(
+          e3Id,
+          root,
+          nodes,
+          pkCommitment,
+          ethers.ZeroHash,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
+    });
+
+    it("reverts VkHashMismatch when a recursive VK manifest field does not match", async function () {
+      const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
+      const { e3Id, root, nodes } = ctx();
+      const pkCommitment = ethers.keccak256("0x1234");
+      const publicInputs = minimalDkgPublicInputs(pkCommitment);
+      publicInputs[4 + H + 3] = ethers.id("wrong-c2ab-vk");
       const proof = encodeProof("0x01", publicInputs);
 
       await expect(
@@ -389,6 +418,7 @@ describe("BfvPkVerifier", function () {
         ethers.id("wrong-c5"),
         EXPECTED_SK_C2_CHUNK_KEY_HASH,
         EXPECTED_ESM_C2_CHUNK_KEY_HASH,
+        EXPECTED_VK_BINDING,
         H,
       );
       await bfvPkVerifier.waitForDeployment();

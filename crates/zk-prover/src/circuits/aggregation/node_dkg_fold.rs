@@ -457,6 +457,7 @@ struct DkgAggregatorWitness {
     committee_members: Vec<String>,
     committee_hash_hi: String,
     committee_hash_lo: String,
+    vk_binding: Vec<String>,
 }
 
 /// [`CircuitName::DkgAggregator`] over sequential [`CircuitName::NodesFold`] + C5, proved with
@@ -499,6 +500,70 @@ pub fn prove_dkg_aggregation(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::PkAggregation,
     )?;
+    let node_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::NodeFold,
+    )?;
+    let c0_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkBfv,
+    )?;
+    let c1_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkGeneration,
+    )?;
+    let c2ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C2abChunkFold,
+    )?;
+    let c3ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3abFold,
+    )?;
+    let c4ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C4abFold,
+    )?;
+    let c2a_finalize_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::SkC2ChunkFinalize,
+    )?;
+    let c2b_finalize_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ESmC2ChunkFinalize,
+    )?;
+    let c2_batch_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C2ChunkBatch,
+    )?;
+    let c2a_chunk_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::SkShareComputationChunk,
+    )?;
+    let c2b_chunk_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ESmShareComputationChunk,
+    )?;
+    let c3_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3Fold,
+    )?;
+    let share_encryption_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ShareEncryption,
+    )?;
+    let c4_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::DkgShareDecryption,
+    )?;
+    let c3_fold_kernel_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3FoldKernel,
+    )?;
+    let nodes_fold_kernel_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::NodesFoldKernel,
+    )?;
 
     let party_id_fields: Vec<String> = input
         .party_ids
@@ -529,6 +594,24 @@ pub fn prove_dkg_aggregation(
         committee_members,
         committee_hash_hi,
         committee_hash_lo,
+        vk_binding: vec![
+            node_fold_vk.key_hash,
+            c0_vk.key_hash,
+            c1_vk.key_hash,
+            c2ab_vk.key_hash,
+            c3ab_vk.key_hash,
+            c4ab_vk.key_hash,
+            c2a_finalize_vk.key_hash,
+            c2b_finalize_vk.key_hash,
+            c2_batch_vk.key_hash,
+            c2a_chunk_vk.key_hash,
+            c2b_chunk_vk.key_hash,
+            c3_fold_vk.key_hash,
+            share_encryption_vk.key_hash,
+            c4_vk.key_hash,
+            c3_fold_kernel_vk.key_hash,
+            nodes_fold_kernel_vk.key_hash,
+        ],
     };
 
     let json =

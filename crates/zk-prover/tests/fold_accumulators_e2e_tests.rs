@@ -66,7 +66,7 @@ const NODE_FOLD_PIPELINE: &[CircuitName] = &[
     CircuitName::NodeFold,
 ];
 
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `4 + 3 * C3_SLOTS`).
+/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `6 + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
     let path = c3_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -89,11 +89,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 4 && (len - 4).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 4 + 3 * slots)",
+        len >= 6 && (len - 6).is_multiple_of(3),
+        "unexpected acc_public_inputs length {} (expected 6 + 3 * slots)",
         len
     );
-    (len - 4) / 3
+    (len - 6) / 3
 }
 
 /// Reads slot count from the compiled `c6_fold` ABI

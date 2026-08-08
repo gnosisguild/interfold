@@ -340,11 +340,14 @@ recompiled against the generated `configs.nr` — the default production path ke
 
 C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
 fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
-the first genesis step. C4 binds every decrypted row to the recipient party's zero-based C2
-commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme at the C4-to-C6
-boundary until that boundary is migrated. The terminal C2 proofs surface the canonical SK/ESM chunk
-VK hashes through C2AB, NodeFold, and DkgAggregator; `BfvPkVerifier` compares those hashes with its
-deployment-time immutables before it accepts the final proof.
+the first genesis step. C3Fold and NodesFold also bind the current accumulator VK and the prior
+step's expected kernel or fold VK hash. C4 binds every decrypted row to the recipient party's
+zero-based C2 commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme
+at the C4-to-C6 boundary until that boundary is migrated. The terminal C2 proofs surface the
+canonical SK/ESM chunk VK hashes through C2AB, NodeFold, and DkgAggregator. Each recursive fold
+also propagates a VK manifest for the child proofs that it verifies. The final DKG proof carries
+the `NodeFold` VK hash and this complete manifest; `BfvPkVerifier` compares them with its
+deployment-time anchors before it accepts the final proof.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
