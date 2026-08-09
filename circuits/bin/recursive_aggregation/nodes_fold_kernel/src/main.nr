@@ -37,8 +37,6 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
-    expected_kernel_key_hash: pub Field,
-    expected_fold_key_hash: pub Field,
 ) -> pub [[Field; NODE_FOLD_PUBLIC_LEN]; H] {
     assert(slot_index < H);
 
