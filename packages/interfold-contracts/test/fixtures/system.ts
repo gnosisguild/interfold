@@ -428,6 +428,7 @@ export async function deployInterfoldSystem(
   const interfold = InterfoldFactory.connect(interfoldAddress, owner);
   const interfoldLifecycle = await _interfoldLifecycle.getAddress();
   const interfoldPricing = await _interfoldPricing.getAddress();
+  await e3Program.setInterfold(interfoldAddress);
 
   const { e3RefundManager: _e3RefundManager } = await ignition.deploy(
     E3RefundManagerModule,

@@ -17,6 +17,9 @@ import {
     Ownable2StepUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {
+    ReentrancyGuardUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -30,7 +33,11 @@ import { ActiveCryptoConfig } from "./lib/ActiveCryptoConfig.sol";
  * @dev Coordinates E3 lifecycle including request, activation, input publishing, and output verification
  */
 // solhint-disable-next-line max-states-count
-contract Interfold is IInterfold, Ownable2StepUpgradeable {
+contract Interfold is
+    IInterfold,
+    Ownable2StepUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     using SafeERC20 for IERC20;
 
     /// @notice Thrown when {renounceOwnership} is called.
@@ -226,6 +233,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
         __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
         setMaxDuration(_maxDuration);
         setCiphernodeRegistry(_ciphernodeRegistry);
         setBondingRegistry(_bondingRegistry);
@@ -369,7 +377,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes calldata ciphertextOutput,
         bytes32 ciphertextCommitment,
         bytes calldata proof
-    ) external returns (bool success) {
+    ) external nonReentrant returns (bool success) {
         return
             InterfoldLifecycle.publishCiphertext(
                 e3s,
@@ -389,7 +397,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         bytes calldata plaintextOutput,
         bytes calldata proof
-    ) external returns (bool success) {
+    ) external nonReentrant returns (bool success) {
         require(
             e3s[e3Id].e3Program != IE3Program(address(0)),
             E3DoesNotExist(e3Id)
