@@ -463,6 +463,9 @@ The token contracts were hardened against the following audit findings. All chan
 
 ### InterfoldTicketToken (tFOLD)
 
+- **Registry binding.** The initial circular deployment can use a placeholder registry only until
+  the token is wired. Governance then repeats the atomic bonding-asset configuration check. Ticket
+  rotation and every operator status update require `ticketToken.registry() == BondingRegistry`.
 - **H-02 — registry initialization.** The constructor now takes
   `(IERC20 baseToken, address registry_, address initialOwner_)` and assigns `registry = registry_`
   directly (emitting `RegistryChanged(0, registry_)`) instead of requiring the deployer to call

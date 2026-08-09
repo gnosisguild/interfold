@@ -6,6 +6,7 @@
 import { expect } from "chai";
 
 import {
+  ADDRESS_TWO as AddressTwo,
   LICENSE_REQUIRED_BOND,
   MIN_TICKET_BALANCE,
   SEVEN_DAYS,
@@ -1684,6 +1685,24 @@ describe("BondingRegistry", function () {
         expect(
           await bondingRegistry.bondingAssetConfigurationVersion(),
         ).to.equal(version + 1n);
+      });
+
+      it("rejects a ticket token assigned to another registry", async function () {
+        const { bondingRegistry, usdcToken, owner } = await loadFixture(setup);
+        const replacement = await (
+          await ethers.getContractFactory("InterfoldTicketToken")
+        ).deploy(await usdcToken.getAddress(), AddressTwo, owner.address);
+
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            ticketToken: await replacement.getAddress(),
+          }),
+        )
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "TicketTokenRegistryMismatch",
+          )
+          .withArgs(AddressTwo, await bondingRegistry.getAddress());
       });
     });
 
