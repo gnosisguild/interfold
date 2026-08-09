@@ -422,6 +422,7 @@ fn validate_dkg_aggregation_shape(
     }
 
     let mut seen = HashSet::with_capacity(party_ids.len());
+    let mut prev: Option<u64> = None;
     for &party_id in party_ids {
         let party_index = usize::try_from(party_id).map_err(|_| {
             ZkError::InvalidInput(format!(
@@ -439,6 +440,16 @@ fn validate_dkg_aggregation_shape(
                 "DkgAggregator party id {party_id} is duplicated"
             )));
         }
+        // The dkg_aggregator circuit requires strictly increasing party ids; reject an
+        // unsorted input here instead of failing later inside the circuit.
+        if let Some(prev_id) = prev {
+            if prev_id >= party_id {
+                return Err(ZkError::InvalidInput(format!(
+                    "DkgAggregator party ids must be strictly increasing, got {party_id} after {prev_id}"
+                )));
+            }
+        }
+        prev = Some(party_id);
     }
     Ok(())
 }
@@ -812,5 +823,13 @@ mod tests {
             validate_dkg_aggregation_shape(2, &[0, 3], 3, CiphernodesCommitteeSize::Minimum)
                 .unwrap_err();
         assert!(out_of_range.to_string().contains("outside committee N=3"));
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_unsorted_party_ids() {
+        let unsorted =
+            validate_dkg_aggregation_shape(2, &[1, 0], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(unsorted.to_string().contains("strictly increasing"));
     }
 }

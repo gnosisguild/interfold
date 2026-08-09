@@ -90,8 +90,9 @@ fn main(
     let c0_pk = c0_public[0];
     let c1_pk = c1_public[1];
 
-    // Same-party C1 to C2: `c2ab_public` lays out two full C2 public vectors after a 3-field
-    // prefix (`C2AB_FOLD_PUBLIC_LEN` = 3 + 2 * `C2_PUBLIC_LEN`). For each inner C2 block, index 0
+    // Same-party C1 to C2: `c2ab_public` lays out two full C2 public vectors after a 5-field
+    // prefix, with a trailing manifest field (`C2AB_FOLD_PUBLIC_LEN` = 6 + 2 * `C2_PUBLIC_LEN`).
+    // For each inner C2 block, index 0
     // is the secret root commitment; these equal C1's sk- and e_sm-side public inputs [0] and [2].
     assert(c1_public[0] == c2ab_public[C2A_INNER_START]);
     assert(c1_public[2] == c2ab_public[C2B_INNER_START]);

@@ -100,7 +100,9 @@ export const ACTIVE_BFV_COMMITTEE_N = 3;
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
-  // The generated Honk VK includes eight pairing-point slots outside the public-input array.
+  // dkg_aggregator public inputs: nodes_fold + c5 key hashes (2), party_ids (h),
+  // committee hash limbs (2), vk_binding (16), returned key hash (1),
+  // C2A/C2B chunk hashes (2), sk/esm agg commits (2h), aggregated pk commit (1).
   return 3 * h + 24;
 }
 

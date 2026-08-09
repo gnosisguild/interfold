@@ -198,6 +198,21 @@ impl Computation for Inputs {
         let mut secret_crt = data.secret.clone();
         let sss = &data.secret_sss;
 
+        // The threshold polynomial degree is authoritative for C2 chunking. The emitted
+        // SHARE_COMPUTATION_CHUNK_SIZE / SHARE_COMPUTATION_N_CHUNKS globals, the y vector, and
+        // the secret root commitments are all derived from it (see codegen.rs). Guard the
+        // secret limb length up front so a mismatched secret fails here instead of panicking
+        // in the commitment helper.
+        if secret_crt
+            .limbs
+            .first()
+            .is_none_or(|limb| limb.coefficients().len() != degree)
+        {
+            return Err(CircuitsErrors::Sample(format!(
+                "C2 secret limb length must equal polynomial degree {degree}"
+            )));
+        }
+
         // Normalize both secret types to [0, q_j) so the chunk and normal circuits use the same
         // field representation before they center values for the root commitment.
         secret_crt
@@ -229,17 +244,17 @@ impl Computation for Inputs {
         let bounds = Bounds::compute(preset, data)?;
         let bits = Bits::compute(preset, &bounds)?;
         let chunk_size = data.chunk_size as usize;
-        let (_, dkg_params) =
-            build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-        let dkg_degree = dkg_params.degree();
         if chunk_size == 0 {
             return Err(CircuitsErrors::Sample(
                 "C2 chunk size must be greater than zero".to_string(),
             ));
         }
-        if !dkg_degree.is_multiple_of(chunk_size) {
+        // Validate against the same authoritative threshold degree used by codegen.rs to emit
+        // SHARE_COMPUTATION_CHUNK_SIZE / SHARE_COMPUTATION_N_CHUNKS, so the runtime chunk size
+        // can never disagree with the compiled chunk count.
+        if !degree.is_multiple_of(chunk_size) {
             return Err(CircuitsErrors::Sample(format!(
-                "C2 chunk size {chunk_size} must divide polynomial degree {dkg_degree}"
+                "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
             )));
         }
         // Reverse+center before committing to match C1 (PkGeneration)'s convention:
