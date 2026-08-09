@@ -7,9 +7,7 @@
 use crate::circuits::aggregation::c2_chunk_batch::{
     finalize_c2_chunk_batches, generate_c2_chunk_batches,
 };
-use crate::circuits::aggregation::c2_chunk_config::{
-    chunks_per_batch, compiled_batch_count, compiled_chunk_count,
-};
+use crate::circuits::aggregation::c2_chunk_layout::C2ChunkLayout;
 use crate::circuits::aggregation::node_dkg_fold::FoldProveStepTiming;
 use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
@@ -25,26 +23,21 @@ use std::time::Instant;
 pub use crate::circuits::aggregation::c2_chunk_config::DEFAULT_C2_CHUNK_SIZE;
 
 fn validate_c2_chunk_layout(degree: usize, chunk_size: usize) -> Result<(usize, usize), ZkError> {
-    if chunk_size == 0 || degree == 0 || degree % chunk_size != 0 {
+    let layout = C2ChunkLayout::from_degree_chunk_size(degree, chunk_size)?;
+    let compiled = C2ChunkLayout::compiled(degree)?;
+    if layout.chunk_count != compiled.chunk_count {
         return Err(ZkError::InvalidInput(format!(
-            "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
+            "C2 chunk size {chunk_size} produces {} chunks, but the selected artifacts require {}",
+            layout.chunk_count, compiled.chunk_count
         )));
     }
-    let chunk_count = degree / chunk_size;
-    let expected_chunk_count = compiled_chunk_count(degree);
-    if chunk_count != expected_chunk_count {
+    if layout.batch_count != compiled.batch_count {
         return Err(ZkError::InvalidInput(format!(
-            "C2 chunk size {chunk_size} produces {chunk_count} chunks, but the selected artifacts require {expected_chunk_count}"
+            "C2 chunk size {chunk_size} produces {} batches, but the selected artifacts require {}",
+            layout.batch_count, compiled.batch_count
         )));
     }
-    let batch_count = chunk_count / chunks_per_batch(degree);
-    let expected_batch_count = compiled_batch_count(degree);
-    if batch_count != expected_batch_count {
-        return Err(ZkError::InvalidInput(format!(
-            "C2 chunk size {chunk_size} produces {batch_count} batches, but the selected artifacts require {expected_batch_count}"
-        )));
-    }
-    Ok((chunk_count, batch_count))
+    Ok((layout.chunk_count, layout.batch_count))
 }
 
 pub struct ChunkedShareComputationProofs {

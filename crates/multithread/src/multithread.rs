@@ -75,9 +75,9 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_prover::{
     generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
-    prove_dkg_aggregation, prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob,
-    DkgAggregationInput, NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError,
-    ZkProver,
+    prove_dkg_aggregation, prove_node_dkg_fold, validate_c2_terminal_proof, C2TerminalAnchors,
+    CircuitVariant, DecryptionAggregationJob, DkgAggregationInput, NodeDkgFoldInput,
+    NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
 };
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::PublicKeyShare;
@@ -1431,6 +1431,38 @@ fn handle_verify_share_proofs(
                         failed_signed_payload: Some(signed_proof.clone()),
                         recovered_address: None,
                     };
+                }
+
+                // 1.5 Bind C2 terminal proofs to their deployment-time VK anchors
+                // before the expensive generic (bb) verification runs. A failure
+                // here marks the signed proof invalid, exactly like a ZK failure.
+                let proof_type = signed_proof.payload.proof_type;
+                if matches!(
+                    proof_type,
+                    e3_events::ProofType::C2aSkShareComputation
+                        | e3_events::ProofType::C2bESmShareComputation
+                ) {
+                    let anchor_result = C2TerminalAnchors::load(prover, proof_type, &artifacts_dir)
+                        .and_then(|anchors| {
+                            validate_c2_terminal_proof(
+                                req.params_preset,
+                                req.committee_size,
+                                proof_type,
+                                &signed_proof.payload.proof,
+                                &anchors,
+                            )
+                        });
+                    if let Err(error) = anchor_result {
+                        info!(
+                            "C2 terminal proof VK binding failed for party {sender} ({proof_type:?}): {error}"
+                        );
+                        return PartyVerificationResult {
+                            sender_party_id: sender,
+                            all_verified: false,
+                            failed_signed_payload: Some(signed_proof.clone()),
+                            recovered_address: None,
+                        };
+                    }
                 }
 
                 // 2. ZK proof verification

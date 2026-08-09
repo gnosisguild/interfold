@@ -5,4 +5,5 @@ members = [
     "share_decryption",
     "sk_share_computation_chunk",
     "esm_share_computation_chunk",
+    "dummy_c3_inner",
 ]

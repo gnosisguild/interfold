@@ -320,10 +320,15 @@ aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregatio
 `wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
 field — the inner recursive proof itself is what flows between stages.
 
+Every `c3_fold`/`nodes_fold` step asserts the accumulator's child-VK hash (`acc_public_inputs[0]`)
+equals the verifying key hash of the inner proof folded that step (IF-005), so a substituted inner
+VK fails witness generation. Fold accumulators start from the canonical leaf/kernel proof, whose VK
+hash is committed by that circuit's public inputs.
+
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
-generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients. The
-`--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
-circuit configuration. The production multithread path uses the compiled default chunk size. Rust
+generates one type-bound recursive proof per chunk. The chunk size is pinned to 512 coefficients;
+the `zk_cli --chunk-size` option rejects any other value. The production multithread path uses the
+compiled default chunk size. Rust
 groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
 terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
 recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
@@ -334,9 +339,16 @@ computation), C3 (share encryption), and C4 (share decryption) witness computati
 generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`), so
 the witness always matches the circuit parameters the artifacts were generated against. The
 generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
-witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512; a
-non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
-recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
+witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512;
+`--chunk-size` accepts only 512, so generated artifacts always match the compiled C2/C3/C4
+circuits. The chunk layout (chunk/batch counts) is derived from a single `C2ChunkLayout` in
+`e3-zk-prover`, never from independent runtime constants.
+
+Before the generic recursive (bb) verification of a received C2 proof, the node validates the
+`SkC2ChunkFinalize`/`ESmC2ChunkFinalize` public signals against the deployment-time anchors
+(IF-006): the child field must equal the canonical chunk-leaf VK hash for that proof type, the final
+field must equal the canonical `C2ChunkBatch` VK hash, the signal length must match the frozen
+committee and preset, and every field must be canonical. A mismatch marks the signed proof invalid.
 
 C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
 fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
