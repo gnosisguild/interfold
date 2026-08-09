@@ -337,3 +337,32 @@ pub fn generate_sequential_c3_fold(
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zero_input() -> C3FoldStepInput {
+        C3FoldStepInput {
+            inner_vk: Vec::new(),
+            inner_proof: Vec::new(),
+            c3_public_inputs: std::array::from_fn(|_| "0".to_string()),
+            acc_vk: Vec::new(),
+            acc_proof: Vec::new(),
+            acc_public_inputs: Vec::new(),
+            inner_key_hash: "0".to_string(),
+            acc_key_hash: "0".to_string(),
+            is_first_step: true,
+            slot_index: 0,
+            expected_kernel_key_hash: "0".to_string(),
+            expected_fold_key_hash: "0".to_string(),
+        }
+    }
+
+    #[test]
+    fn c3_kernel_witness_includes_accumulator_binding_parameters() {
+        let value = serde_json::to_value(zero_input()).unwrap();
+        assert!(value.get("expected_kernel_key_hash").is_some());
+        assert!(value.get("expected_fold_key_hash").is_some());
+    }
+}

@@ -29,6 +29,8 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
+    expected_kernel_key_hash: pub Field,
+    expected_fold_key_hash: pub Field,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
     assert(slot_index < C3_SLOTS);
 
@@ -37,9 +39,10 @@ fn main(
     assert(c3_public_inputs[3] == (slot_index % L_THRESHOLD) as Field);
 
     // Signature parity with `c3_fold`: kernel mints the genesis accumulator, so acc_* is unused.
-    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs);
+    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs, expected_fold_key_hash);
 
     assert(is_first_step);
+    assert(acc_key_hash == expected_kernel_key_hash);
 
     let pk_new = c3_public_inputs[0];
     let msg_new = c3_public_inputs[1];

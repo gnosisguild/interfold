@@ -319,3 +319,29 @@ pub fn generate_sequential_nodes_fold(
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nodes_fold_kernel_witness_includes_accumulator_binding_parameters() {
+        let value = serde_json::to_value(NodesFoldStepInput {
+            inner_vk: Vec::new(),
+            inner_proof: Vec::new(),
+            node_fold_public_inputs: Vec::new(),
+            acc_vk: Vec::new(),
+            acc_proof: Vec::new(),
+            acc_public_inputs: Vec::new(),
+            inner_key_hash: "0".to_string(),
+            acc_key_hash: "0".to_string(),
+            is_first_step: true,
+            slot_index: 0,
+            expected_kernel_key_hash: "0".to_string(),
+            expected_fold_key_hash: "0".to_string(),
+        })
+        .unwrap();
+        assert!(value.get("expected_kernel_key_hash").is_some());
+        assert!(value.get("expected_fold_key_hash").is_some());
+    }
+}

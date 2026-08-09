@@ -374,10 +374,10 @@ describe("BfvVkBindingIntegration", function () {
       expectedVkBinding.forEach((expected, index) => {
         expect(dkgPublicInputs[4 + BFV_DKG_H + index]).to.equal(expected);
       });
-       expect(dkgPublicInputs[21 + BFV_DKG_H]).to.equal(
+      expect(dkgPublicInputs[21 + BFV_DKG_H]).to.equal(
         expectedSkC2ChunkKeyHash,
       );
-       expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
+      expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
         expectedESmC2ChunkKeyHash,
       );
       expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);

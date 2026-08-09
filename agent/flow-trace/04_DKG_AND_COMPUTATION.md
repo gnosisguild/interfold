@@ -323,7 +323,10 @@ field — the inner recursive proof itself is what flows between stages.
 Every `c3_fold`/`nodes_fold` step asserts the accumulator's child-VK hash (`acc_public_inputs[0]`)
 equals the verifying key hash of the inner proof folded that step (IF-005), so a substituted inner
 VK fails witness generation. Fold accumulators start from the canonical leaf/kernel proof, whose VK
-hash is committed by that circuit's public inputs.
+hash is committed by that circuit's public inputs. The C3 and NodesFold genesis kernels expose the
+same six-field accumulator prefix as their corresponding fold circuits, including the expected
+kernel and fold VK hashes. This lets the genesis proof enter the first fold step without a
+public-input shape conversion.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
 generates one type-bound recursive proof per chunk. The chunk size is pinned to 512 coefficients;
