@@ -966,12 +966,13 @@ Every slash and settlement route resolves the dependency graph frozen when the E
   rotation invalidates every omitted policy. Governance must install the replacement policies before
   proposals for later E3s can proceed.
 
-Admin setters update the live defaults for future requests only. Each E3 must have a complete
-request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance
-must revoke a replaced slashing manager only after its E3 assignments, proposal locks, bans, and
-pending slash routes are clear. Governance closes each terminal E3 through
-`SlashingManager.closeE3`. It can deliberately clear a retained manager's stale ban before
-revocation.
+Admin setters update the live defaults for future requests only. Registry generation migration is
+stricter: requests pause and all E3 assignments close before activation, so the runtime never routes
+two registry generations concurrently. Each E3 must have a complete request-time snapshot; lifecycle
+calls fail closed if that invariant is not satisfied. Governance must revoke a replaced slashing
+manager only after its E3 assignments, proposal locks, bans, and pending slash routes are clear.
+Governance closes each terminal E3 through `SlashingManager.closeE3`. It can deliberately clear a
+retained manager's stale ban before revocation.
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 

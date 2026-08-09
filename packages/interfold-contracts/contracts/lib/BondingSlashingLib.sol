@@ -19,6 +19,26 @@ import {
     SlashingManagerObligations
 } from "../storage/BondingSlashingStorage.sol";
 
+interface IRegistryMigrationView {
+    function interfold() external view returns (address);
+
+    function getBondingRegistry() external view returns (address);
+
+    function slashingManager() external view returns (address);
+
+    function dkgFoldAttestationVerifier() external view returns (address);
+
+    function numCiphernodes() external view returns (uint256);
+
+    function root() external view returns (uint256);
+}
+
+interface IInterfoldMigrationView {
+    function feeToken() external view returns (address);
+
+    function isFeeTokenAllowed(address token) external view returns (bool);
+}
+
 /// @notice Stores manager-owned slash locks and bans in BondingRegistry storage.
 library BondingSlashingLib {
     uint256 private constant API_VERSION = 1;
@@ -79,6 +99,7 @@ library BondingSlashingLib {
                 revert IBondingRegistry.Unauthorized();
             }
             state.committeeRegistries[e3Id] = msg.sender;
+            state.activeCommitteeAssignments++;
         } else if (msg.sender != assignedRegistry) {
             revert IBondingRegistry.Unauthorized();
         }
@@ -106,6 +127,7 @@ library BondingSlashingLib {
                 revert IBondingRegistry.InvalidConfiguration();
             }
             delete state.committeeRegistries[e3Id];
+            state.activeCommitteeAssignments--;
         } else if (state.committeeObligations[e3Id][operator]) {
             delete state.committeeObligations[e3Id][operator];
             state.committeeMemberCounts[e3Id]--;
@@ -248,6 +270,96 @@ library BondingSlashingLib {
     ) external {
         if (increase) _layout().e3Routes[manager][e3Id]++;
         else _layout().e3Routes[manager][e3Id]--;
+    }
+
+    function validateRegistryMigration(
+        address currentRegistry,
+        address nextRegistry,
+        address caller,
+        address contractOwner,
+        address manager,
+        address[] storage managers
+    ) external view {
+        if (nextRegistry.code.length == 0) {
+            revert IBondingRegistry.RegistryDependencyMismatch(nextRegistry);
+        }
+        if (currentRegistry == address(0)) {
+            if (caller != contractOwner) revert IBondingRegistry.Unauthorized();
+            return;
+        }
+        IInterfoldMigrationView interfold = IInterfoldMigrationView(caller);
+        if (interfold.isFeeTokenAllowed(interfold.feeToken())) {
+            revert IInterfold.RegistryMigrationRequiresRequestPause();
+        }
+        _validateRegistryDependencies(
+            currentRegistry,
+            nextRegistry,
+            caller,
+            manager
+        );
+        _validateRegistryDrain(managers);
+        _validateRegistryMembership(currentRegistry, nextRegistry);
+    }
+
+    function _validateRegistryDependencies(
+        address currentRegistry,
+        address nextRegistry,
+        address caller,
+        address manager
+    ) private view {
+        IRegistryMigrationView next = IRegistryMigrationView(nextRegistry);
+        if (
+            nextRegistry == currentRegistry ||
+            IRegistryMigrationView(currentRegistry).interfold() != caller ||
+            next.interfold() != caller ||
+            next.getBondingRegistry() != address(this) ||
+            next.slashingManager() != manager ||
+            next.dkgFoldAttestationVerifier() == address(0) ||
+            address(ISlashingManager(manager).ciphernodeRegistry()) !=
+            nextRegistry
+        ) {
+            revert IBondingRegistry.RegistryDependencyMismatch(nextRegistry);
+        }
+    }
+
+    function _validateRegistryDrain(address[] storage managers) private view {
+        BondingSlashingStorage.Layout storage state = _layout();
+        uint256 activeCommittees = state.activeCommitteeAssignments;
+        if (activeCommittees != 0) {
+            revert IBondingRegistry.RegistryHasActiveCommittees(
+                activeCommittees
+            );
+        }
+        for (uint256 i = 0; i < managers.length; ++i) {
+            address candidate = managers[i];
+            uint256 assignments = state.managers[candidate].e3Assignments;
+            if (assignments != 0) {
+                revert IBondingRegistry.ManagerHasE3Assignments(
+                    candidate,
+                    assignments
+                );
+            }
+        }
+    }
+
+    function _validateRegistryMembership(
+        address currentRegistry,
+        address nextRegistry
+    ) private view {
+        uint256 expectedCount = IRegistryMigrationView(currentRegistry)
+            .numCiphernodes();
+        uint256 actualCount = IRegistryMigrationView(nextRegistry)
+            .numCiphernodes();
+        uint256 expectedRoot = IRegistryMigrationView(currentRegistry).root();
+        uint256 actualRoot = IRegistryMigrationView(nextRegistry).root();
+        if (actualCount != expectedCount || actualRoot != expectedRoot) {
+            revert IBondingRegistry.RegistryMembershipMismatch(
+                expectedCount,
+                actualCount,
+                expectedRoot,
+                actualRoot
+            );
+        }
     }
 
     function authorizeManager(

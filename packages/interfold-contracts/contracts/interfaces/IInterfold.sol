@@ -366,6 +366,9 @@ interface IInterfold {
     /// @param ciphernodeRegistry The invalid ciphernode registry address.
     error InvalidCiphernodeRegistry(ICiphernodeRegistry ciphernodeRegistry);
 
+    /// @notice Registry migration requires the active fee token to be disabled first.
+    error RegistryMigrationRequiresRequestPause();
+
     /// @notice Thrown when the requested duration exceeds maxDuration or is zero.
     /// @param duration The invalid duration value.
     error InvalidDuration(uint256 duration);

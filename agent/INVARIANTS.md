@@ -81,6 +81,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
+- **Registry generations never overlap:** requests are paused and every E3 assignment is closed
+  before registry activation. The replacement registry must use the same node count and Merkle root
+  and must be wired to the live Interfold, BondingRegistry, slashing manager, and DKG verifier.
+  Interfold and BondingRegistry switch to it atomically. — `flow-trace/03`; INDEX concern Z-62
 - **Selected-member collateral remains slashable:** committee requests assign their request-time
   registry in `BondingRegistry`, and successful finalization records one unresolved obligation per
   member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that

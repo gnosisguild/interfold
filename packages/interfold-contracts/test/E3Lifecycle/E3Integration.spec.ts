@@ -573,16 +573,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await rotatedManager.setBondingRegistry(bondingAddress);
       const rotatedSlashingManager = await rotatedManager.getAddress();
 
-      // Rotate every global dependency after the E3 has been requested. The
-      // replacement manager is deliberately not wired beyond its registry bind.
-      await interfold.connect(owner).setCiphernodeRegistry(rotatedRegistry);
+      // Rotate the dependencies that support request-time snapshots. Registry
+      // generation changes use the separate pause-and-drain migration path.
       await interfold.connect(owner).setBondingRegistry(rotatedBonding);
       await interfold.connect(owner).setE3RefundManager(rotatedRefundManager);
       await interfold.connect(owner).setSlashingManager(rotatedSlashingManager);
       await registry.connect(owner).setInterfold(rotatedRegistry);
       await registry.connect(owner).setBondingRegistry(rotatedBonding);
       await registry.connect(owner).setSlashingManager(rotatedSlashingManager);
-      await bondingRegistry.connect(owner).setRegistry(rotatedRegistry);
       await bondingRegistry
         .connect(owner)
         .setSlashingManager(rotatedSlashingManager);

@@ -539,11 +539,15 @@ contract Interfold is
 
     /// @inheritdoc IInterfold
     function setMaxDuration(uint256 _maxDuration) public onlyOwner {
-        require(
-            _maxDuration > 0 && _maxDuration <= MAX_DURATION_CAP,
-            InvalidDuration(_maxDuration)
-        );
-        maxDuration = _maxDuration;
+        // Preserve InvalidDuration(uint256) while avoiding generated revert code.
+        assembly ("memory-safe") {
+            if or(iszero(_maxDuration), gt(_maxDuration, 31536000)) {
+                mstore(0x00, shl(224, 0x4ede0ebc))
+                mstore(0x04, _maxDuration)
+                revert(0x00, 0x24)
+            }
+            sstore(maxDuration.slot, _maxDuration)
+        }
         emit MaxDurationSet(_maxDuration);
     }
 
@@ -551,11 +555,27 @@ contract Interfold is
     function setCiphernodeRegistry(
         ICiphernodeRegistry _ciphernodeRegistry
     ) public onlyOwner {
+        ICiphernodeRegistry currentRegistry = ciphernodeRegistry;
         require(
             address(_ciphernodeRegistry) != address(0) &&
-                _ciphernodeRegistry != ciphernodeRegistry,
+                _ciphernodeRegistry != currentRegistry,
             InvalidCiphernodeRegistry(_ciphernodeRegistry)
         );
+        if (address(currentRegistry) != address(0)) {
+            address bonding = address(bondingRegistry);
+            // Call BondingRegistry.setRegistry(address) directly to keep this
+            // size-constrained coordinator below its release bytecode budget.
+            assembly ("memory-safe") {
+                mstore(0x00, shl(224, 0xa91ee0dc))
+                mstore(0x04, _ciphernodeRegistry)
+                let success := call(gas(), bonding, 0, 0x00, 0x24, 0, 0)
+                let size := returndatasize()
+                returndatacopy(0x00, 0, size)
+                if iszero(success) {
+                    revert(0x00, size)
+                }
+            }
+        }
         ciphernodeRegistry = _ciphernodeRegistry;
         emit CiphernodeRegistrySet(address(_ciphernodeRegistry));
     }
@@ -564,12 +584,18 @@ contract Interfold is
     function setBondingRegistry(
         IBondingRegistry _bondingRegistry
     ) public onlyOwner {
-        require(
-            address(_bondingRegistry) != address(0) &&
-                _bondingRegistry != bondingRegistry,
-            InvalidBondingRegistry(_bondingRegistry)
-        );
-        bondingRegistry = _bondingRegistry;
+        // Preserve InvalidBondingRegistry(address) while keeping setter code compact.
+        assembly ("memory-safe") {
+            if or(
+                iszero(_bondingRegistry),
+                eq(_bondingRegistry, sload(bondingRegistry.slot))
+            ) {
+                mstore(0x00, shl(224, 0x20252f0b))
+                mstore(0x04, _bondingRegistry)
+                revert(0x00, 0x24)
+            }
+            sstore(bondingRegistry.slot, _bondingRegistry)
+        }
         emit BondingRegistrySet(address(_bondingRegistry));
     }
 

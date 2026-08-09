@@ -399,9 +399,6 @@ export const deployInterfold = async (
     SORTITION_SUBMISSION_WINDOW,
   );
 
-  console.log("Setting CiphernodeRegistry address in BondingRegistry...");
-  await bondingRegistry.setRegistry(ciphernodeRegistryAddress);
-
   console.log("Setting Interfold address in SlashingManager...");
   await slashingManager.setInterfold(interfoldAddress);
 

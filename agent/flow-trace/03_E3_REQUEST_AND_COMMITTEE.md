@@ -468,23 +468,24 @@ The registry must finalize a ready committee.
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee.
 
-7. **Dependency graph snapshot**: Each E3 drains through its request-time registry, bonding,
-   slashing, refund, and Interfold relationships. Admin rotation changes defaults for later E3s but
-   cannot redirect or brick committee callbacks, proof checks, failure settlement, rewards, or
-   slashed-fund routing for an in-flight E3. A request atomically records the complete graph before
-   committee formation begins. Because applying a new graph requires several governance
-   transactions, request-time validation rejects every intermediate state; a requester can only
-   freeze the fully old or fully new graph.
+7. **Dependency graph snapshot**: Each E3 drains through its request-time bonding, slashing, refund,
+   Interfold, and registry relationships. Changes to non-registry defaults cannot redirect committee
+   callbacks, proof checks, settlement, rewards, or slashed-fund routing.
 
-8. **Committee collateral follows the E3**: The request-time registry owns the E3's collateral
-   obligations. Successful finalization locks every member. A later registry rotation cannot open,
-   release, or strand those obligations through the replacement registry.
+8. **Registry generation migration**: Registry generations do not overlap. Governance disables the
+   active fee token, closes every E3 assignment, wires the replacement registry and slashing
+   manager, and replays the old membership tree. Activation requires the same node count and Merkle
+   root. One transaction then updates both Interfold and BondingRegistry before requests resume.
+   Runtime configuration changes only after the old generation has drained.
 
-9. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
-   `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
-   committee membership, and party IDs never use the bond-owner address.
+9. **Committee collateral follows the E3**: The request-time registry owns the E3's collateral
+   obligations. A registry migration cannot begin until every such obligation is released.
 
-10. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
+10. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
+    `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
+    committee membership, and party IDs never use the bond-owner address.
+
+11. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
     `Interfold.initialize` registers it before it transfers ownership to the Safe. Every
     registration rejects an address without runtime code. After initialization, only the owner can
     append another program.

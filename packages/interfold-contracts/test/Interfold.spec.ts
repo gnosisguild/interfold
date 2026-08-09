@@ -39,6 +39,7 @@ describe("Interfold", function () {
       operator1: sys.operator1!,
       operator2: sys.operator2!,
       operator3: sys.operator3!,
+      operators: sys.operators,
       interfold: sys.interfold,
       ciphernodeRegistryContract: sys.ciphernodeRegistry,
       bondingRegistry: sys.bondingRegistry,
@@ -60,6 +61,48 @@ describe("Interfold", function () {
     const e3Program = await ethers.deployContract("MockE3Program");
     await e3Program.waitForDeployment();
     return e3Program;
+  };
+
+  const deployReplacementRegistry = async (
+    system: Awaited<ReturnType<typeof setup>>,
+    operators = system.operators,
+  ) => {
+    const poseidon = await ethers.deployContract("PoseidonT3");
+    const registryFactory = await ethers.getContractFactory(
+      "CiphernodeRegistryOwnable",
+      {
+        libraries: { PoseidonT3: await poseidon.getAddress() },
+      },
+    );
+    const implementation = await registryFactory.deploy();
+    const initData = registryFactory.interface.encodeFunctionData(
+      "initialize",
+      [await system.owner.getAddress(), 300],
+    );
+    const proxy = await ethers.deployContract("TransparentUpgradeableProxy", [
+      await implementation.getAddress(),
+      await system.owner.getAddress(),
+      initData,
+    ]);
+    const replacement = registryFactory.attach(await proxy.getAddress());
+
+    await replacement.setInterfold(await system.interfold.getAddress());
+    await replacement.setBondingRegistry(
+      await system.bondingRegistry.getAddress(),
+    );
+    await replacement.setSlashingManager(
+      await system.slashingManager.getAddress(),
+    );
+    await replacement.setInitialDkgFoldAttestationVerifier(
+      await system.ciphernodeRegistryContract.dkgFoldAttestationVerifier(),
+    );
+    for (const operator of operators) {
+      await replacement.addCiphernode(await operator.getAddress());
+    }
+    await system.slashingManager.setCiphernodeRegistry(
+      await replacement.getAddress(),
+    );
+    return replacement;
   };
 
   describe("constructor / initialize()", function () {
@@ -146,20 +189,72 @@ describe("Interfold", function () {
         .withArgs(await ciphernodeRegistryContract.getAddress());
     });
 
-    it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await loadFixture(setup);
+    it("activates only a paused and complete registry migration", async function () {
+      const system = await loadFixture(setup);
+      const { interfold, bondingRegistry, usdcToken, request, operators } =
+        system;
+      const replacement = await deployReplacementRegistry(
+        system,
+        operators.slice(0, 2),
+      );
+      const replacementAddress = await replacement.getAddress();
 
-      expect(await interfold.ciphernodeRegistry()).to.not.equal(AddressTwo);
-      await interfold.setCiphernodeRegistry(AddressTwo);
-      expect(await interfold.ciphernodeRegistry()).to.equal(AddressTwo);
+      await expect(
+        interfold.setCiphernodeRegistry(replacementAddress),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "RegistryMigrationRequiresRequestPause",
+      );
+
+      await interfold.setFeeTokenAllowed(await interfold.feeToken(), false);
+      const expectedRoot = await system.ciphernodeRegistryContract.root();
+      const actualRoot = await replacement.root();
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "RegistryMembershipMismatch",
+        )
+        .withArgs(3, 2, expectedRoot, actualRoot);
+
+      await replacement.addCiphernode(await operators[2].getAddress());
+      const tx = interfold.setCiphernodeRegistry(replacementAddress);
+      await expect(tx)
+        .to.emit(interfold, "CiphernodeRegistrySet")
+        .withArgs(replacementAddress);
+      await expect(tx)
+        .to.emit(bondingRegistry, "RegistrySet")
+        .withArgs(replacementAddress);
+      expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
+      expect(await bondingRegistry.registry()).to.equal(replacementAddress);
+
+      await interfold.setFeeTokenAllowed(await interfold.feeToken(), true);
+      const now = await time.latest();
+      await expect(
+        makeRequest(interfold, usdcToken, {
+          ...request,
+          inputWindow: [now + 20, now + 320],
+        }),
+      ).to.emit(replacement, "CommitteeRequested");
     });
 
-    it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await loadFixture(setup);
+    it("rejects registry migration while an E3 is active", async function () {
+      const system = await loadFixture(setup);
+      const { interfold, bondingRegistry, usdcToken, request } = system;
+      await makeRequest(interfold, usdcToken, request);
+      const replacement = await deployReplacementRegistry(system);
+      await interfold.setFeeTokenAllowed(await interfold.feeToken(), false);
 
-      await expect(interfold.setCiphernodeRegistry(AddressTwo))
-        .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(AddressTwo);
+      await expect(
+        interfold.setCiphernodeRegistry(await replacement.getAddress()),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "RegistryHasActiveCommittees",
+        )
+        .withArgs(1);
+      expect(await interfold.ciphernodeRegistry()).to.equal(
+        await system.ciphernodeRegistryContract.getAddress(),
+      );
     });
   });
 

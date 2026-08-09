@@ -65,6 +65,20 @@ interface IBondingRegistry {
     /// @notice The ticket token authorizes a different collateral registry.
     error TicketTokenRegistryMismatch(address configured, address expected);
 
+    /// @notice A replacement registry does not contain the complete operator set.
+    error RegistryMembershipMismatch(
+        uint256 expectedCount,
+        uint256 actualCount,
+        uint256 expectedRoot,
+        uint256 actualRoot
+    );
+
+    /// @notice A replacement registry is not wired to the live protocol graph.
+    error RegistryDependencyMismatch(address registry);
+
+    /// @notice Committee assignments must drain before registry migration.
+    error RegistryHasActiveCommittees(uint256 count);
+
     /// @notice Asset rotation is blocked by unfinished work owned by a manager.
     error AssetConfigurationInUse(
         address manager,
@@ -822,9 +836,10 @@ interface IBondingRegistry {
     function setSlashedFundsTreasury(address newSlashedFundsTreasury) external;
 
     /**
-     * @notice Set registry address
+     * @notice Set the initial registry or activate a fully migrated replacement.
      * @param newRegistry New registry contract address
-     * @dev Only callable by contract owner
+     * @dev Initial setup is owner-only. A later activation must come from the
+     *      current Interfold contract after requests and E3 assignments drain.
      */
     function setRegistry(ICiphernodeRegistry newRegistry) external;
 

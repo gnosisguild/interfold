@@ -1108,15 +1108,17 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setExitDelay(uint64 newExitDelay) public onlyOwner {
-        // bound the configurable exit delay so a malicious owner cannot
-        // instantly drain operator stake (delay too short) or permanently
-        // freeze withdrawals (delay too long).
-        require(
-            newExitDelay >= MIN_EXIT_DELAY && newExitDelay <= MAX_EXIT_DELAY,
-            ExitDelayOutOfBounds(newExitDelay)
-        );
-        uint256 oldValue = uint256(exitDelay);
-        exitDelay = newExitDelay;
+        // These bounds prevent immediate drains and impractically long withdrawal freezes.
+        uint256 oldValue;
+        assembly ("memory-safe") {
+            if or(lt(newExitDelay, 86400), gt(newExitDelay, 7776000)) {
+                mstore(0x00, shl(224, 0x2b4d9a8c))
+                mstore(0x04, newExitDelay)
+                revert(0x00, 0x24)
+            }
+            oldValue := sload(exitDelay.slot)
+            sstore(exitDelay.slot, newExitDelay)
+        }
 
         emit ConfigurationUpdated("exitDelay", oldValue, uint256(newExitDelay));
     }
@@ -1125,8 +1127,14 @@ contract BondingRegistry is
     function setSlashedFundsTreasury(
         address newSlashedFundsTreasury
     ) public onlyOwner {
-        require(newSlashedFundsTreasury != address(0), ZeroAddress());
-        slashedFundsTreasury = newSlashedFundsTreasury;
+        // Preserve ZeroAddress() while avoiding generated revert code.
+        assembly ("memory-safe") {
+            if iszero(newSlashedFundsTreasury) {
+                mstore(0x00, shl(224, 0xd92e233d))
+                revert(0x00, 0x04)
+            }
+            sstore(slashedFundsTreasury.slot, newSlashedFundsTreasury)
+        }
         emit SlashedFundsTreasurySet(newSlashedFundsTreasury);
     }
 
@@ -1144,7 +1152,15 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function setRegistry(ICiphernodeRegistry newRegistry) public onlyOwner {
+    function setRegistry(ICiphernodeRegistry newRegistry) public {
+        BondingSlashingLib.validateRegistryMigration(
+            address(registry),
+            address(newRegistry),
+            msg.sender,
+            owner(),
+            slashingManager,
+            _authorizedSlashingManagers
+        );
         registry = newRegistry;
         emit RegistrySet(address(newRegistry));
     }
