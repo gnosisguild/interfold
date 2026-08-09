@@ -328,11 +328,11 @@ hash is committed by that circuit's public inputs.
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
 generates one type-bound recursive proof per chunk. The chunk size is pinned to 512 coefficients;
 the `zk_cli --chunk-size` option rejects any other value. The production multithread path uses the
-compiled default chunk size. Rust
-groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
-terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
-recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
-`ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk indices and chunk commitments.
+compiled default chunk size. Rust groups the chunk proofs into fixed recursive batches and verifies
+all batches in a type-bound terminal circuit. The terminal circuits reconstruct a root commitment
+for the secret and for each recipient share. The signed response contains only the type-bound
+terminal `SkC2ChunkFinalize` or `ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk
+indices and chunk commitments.
 
 The chunk size is one value across the DKG pipeline: it threads from the sample into the C2 (share
 computation), C3 (share encryption), and C4 (share decryption) witness computation and into the
@@ -340,9 +340,13 @@ generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATI
 the witness always matches the circuit parameters the artifacts were generated against. The
 generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
 witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512;
-`--chunk-size` accepts only 512, so generated artifacts always match the compiled C2/C3/C4
-circuits. The chunk layout (chunk/batch counts) is derived from a single `C2ChunkLayout` in
-`e3-zk-prover`, never from independent runtime constants.
+`--chunk-size` accepts only 512, so generated artifacts always match the compiled C2/C3/C4 circuits.
+The chunk layout (chunk/batch counts) is derived from a single `C2ChunkLayout` in `e3-zk-prover`,
+never from independent runtime constants.
+
+C1 and C2b import their smudging-noise bit width from the active committee's generated
+`smudging.nr`. C1 also imports the matching bound. The build uses the same Rust calculation as
+witness generation, so a committee change cannot leave either circuit on another committee's range.
 
 Before the generic recursive (bb) verification of a received C2 proof, the node validates the
 `SkC2ChunkFinalize`/`ESmC2ChunkFinalize` public signals against the deployment-time anchors
@@ -354,11 +358,11 @@ C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root com
 fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
 the first genesis step. C3Fold and NodesFold also bind the current accumulator VK and the prior
 step's expected kernel or fold VK hash. C4 binds every decrypted row to the recipient party's
-zero-based C2 commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme
-at the C4-to-C6 boundary until that boundary is migrated. The terminal C2 proofs surface the
-canonical SK/ESM chunk VK hashes through C2AB, NodeFold, and DkgAggregator. Each recursive fold
-also propagates a VK manifest for the child proofs that it verifies. The final DKG proof carries
-the `NodeFold` VK hash and this complete manifest; `BfvPkVerifier` compares them with its
+zero-based C2 commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme at
+the C4-to-C6 boundary until that boundary is migrated. The terminal C2 proofs surface the canonical
+SK/ESM chunk VK hashes through C2AB, NodeFold, and DkgAggregator. Each recursive fold also
+propagates a VK manifest for the child proofs that it verifies. The final DKG proof carries the
+`NodeFold` VK hash and this complete manifest; `BfvPkVerifier` compares them with its
 deployment-time anchors before it accepts the final proof.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
