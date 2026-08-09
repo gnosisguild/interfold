@@ -269,6 +269,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   public-input layout and must be redeployed on committee change.
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
+- Smudging constants (`smudging.nr`) are derived artifacts regenerated from the BFV preset and
+  committee size. C1 and C2b use the same generated bit width.
 
 ### Noir / Barretenberg compatibility
 
@@ -331,9 +333,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **Complete DKG recursive VK binding:** the DKG proof carries the canonical `NodeFold` VK hash and
   a recursive VK manifest. The manifest binds the C0/C1, C2 chunk/batch/finalizer/C2AB, C3
   leaf/fold/kernel/C3AB, C4 leaf/C4AB, and NodesFold kernel VK hashes. NodesFold and C3Fold bind
-  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash,
-  and every fold step asserts the accumulator's child-VK hash equals the inner proof's VK hash
-  (IF-005); a substituted inner VK fails witness generation. C2 terminal proofs
+  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash, and
+  every fold step asserts the accumulator's child-VK hash equals the inner proof's VK hash (IF-005);
+  a substituted inner VK fails witness generation. C2 terminal proofs
   (`SkC2ChunkFinalize`/`ESmC2ChunkFinalize`) are bound to the deployment-time chunk-leaf and
   `C2ChunkBatch` VK anchors before generic verification (IF-006). `BfvPkVerifier` checks these
   values against deployment-time anchors before it calls the Honk verifier. — `dkg_aggregator`,

@@ -351,6 +351,31 @@ mod tests {
     }
 
     #[test]
+    fn insecure_smudging_ranges_match_pk_generation() {
+        let preset = BfvPreset::InsecureThreshold512;
+        for (size, expected_bits) in [
+            (CiphernodesCommitteeSize::Minimum, 28),
+            (CiphernodesCommitteeSize::Micro, 30),
+            (CiphernodesCommitteeSize::Small, 31),
+        ] {
+            let committee = size.values();
+            let sample = ShareComputationCircuitData::generate_sample(
+                preset,
+                committee.clone(),
+                DkgInputType::SmudgingNoise,
+            )
+            .unwrap();
+            let c2_bounds = Bounds::compute(preset, &sample).unwrap();
+            let c2_bits = Bits::compute(preset, &c2_bounds).unwrap();
+            let c1 = crate::threshold::pk_generation::Configs::compute(preset, &committee).unwrap();
+
+            assert_eq!(c1.bounds.e_sm_bound, c2_bounds.e_sm_bound);
+            assert_eq!(c1.bits.e_sm_bit, c2_bits.bit_e_sm_secret);
+            assert_eq!(c1.bits.e_sm_bit, expected_bits);
+        }
+    }
+
+    #[test]
     fn test_input_smudging_noise_secret_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
