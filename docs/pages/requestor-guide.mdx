@@ -74,7 +74,6 @@ Concretely, every E3 that ends in a failed state is tagged with a `FailureReason
 | `ComputeTimeout`               | The compute provider didn't post a result before its deadline. | ~55%                                       |
 | `ComputeProviderExpired`       | The compute provider signalled it couldn't finish.             | ~55%                                       |
 | `ComputeProviderFailed`        | The compute provider returned a verifiable error.              | ~55%                                       |
-| `RequesterCancelled`           | You cancelled the round before the result was produced.        | ~55%                                       |
 | `DecryptionTimeout`            | The committee never published the decryption.                  | ~0% (work was already done)                |
 | `DecryptionInvalidShares`      | An operator submitted bad decryption shares and was caught.    | ~0% — but slashed bonds top up your refund |
 | `VerificationFailed`           | The decryption proof didn't verify.                            | ~0%                                        |
@@ -123,9 +122,8 @@ A few practical points that catch people out:
   fee, and approve that amount. Don't grant unlimited approvals to the Interfold contract.
 - **You can't top up later.** If the protocol's pricing changes after you submit, your locked fee is
   what runs your round. Don't try to amend an in-flight request — submit a new one if needed.
-- **You can cancel before compute starts.** Cancellation routes through the protocol's standard
-  failure path (`RequesterCancelled`) and gives you the matching partial refund. You will still pay
-  for sortition and key generation that already ran.
+- **Requests cannot be cancelled.** After submission, the round continues until it completes or a
+  defined failure condition is reached.
 - **Set realistic windows.** If you're configuring the round yourself rather than using a preset,
   give the input window enough time for participants to actually submit, and the compute window
   enough time for your worst observed program runtime.

@@ -133,7 +133,8 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │                                                       │
 │     │  │  Requester liability:                                 │
 │     │  │    NoInputsReceived, ComputeTimeout,                  │
-│     │  │    ComputeProviderExpired/Failed, RequesterCancelled  │
+│     │  │    ComputeProviderExpired/Failed,                    │
+│     │  │    RequesterCancelled (reserved; no requester path)  │
 │     │  │                                                       │
 │     │  │  Ciphernodes/supply liability:                        │
 │     │  │    CommitteeFormationTimeout,                         │

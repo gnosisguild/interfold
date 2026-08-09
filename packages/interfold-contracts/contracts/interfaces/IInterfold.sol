@@ -62,6 +62,7 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
+        // Reserved for storage and ABI compatibility. No requester cancellation path exists.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
