@@ -37,7 +37,8 @@ pub enum CircuitOutputLayout {
 }
 
 impl CircuitOutputLayout {
-    /// Number of fixed output fields, or `None` for void layouts.
+    /// Number of fixed output fields. Void layouts report `Some(0)`, because no arm
+    /// returns `None`.
     pub fn field_count(&self) -> Option<usize> {
         match self {
             CircuitOutputLayout::Fixed { fields } => Some(fields.len()),
@@ -49,7 +50,7 @@ impl CircuitOutputLayout {
     pub fn field_index(&self, name: &str) -> Option<usize> {
         match self {
             CircuitOutputLayout::Fixed { fields } => fields.iter().position(|f| f.name == name),
-            _ => None,
+            CircuitOutputLayout::None => None,
         }
     }
 
@@ -60,7 +61,7 @@ impl CircuitOutputLayout {
     pub fn extract_field<'a>(&self, public_signals: &'a [u8], name: &str) -> Option<&'a [u8]> {
         let fields = match self {
             CircuitOutputLayout::Fixed { fields } => fields,
-            _ => return None,
+            CircuitOutputLayout::None => return None,
         };
         let idx = fields.iter().position(|f| f.name == name)?;
         let total_output_bytes = fields.len() * FIELD_BYTE_LEN;

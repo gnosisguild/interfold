@@ -80,17 +80,16 @@ pub fn generate_chunk_toml(
                 .get("coefficients")
                 .and_then(Value::as_array)
                 .ok_or_else(|| CircuitsErrors::Sample("chunk SK secret malformed".into()))?;
-            if start >= coeffs.len() {
+            if end > coeffs.len() {
                 return Err(CircuitsErrors::Sample(format!(
                     "chunk [{start},{end}) out of bounds for secret of length {}",
                     coeffs.len()
                 )));
             }
-            let slice_end = end.min(coeffs.len());
             Value::Object(
                 [(
                     "coefficients".into(),
-                    Value::Array(coeffs[start..slice_end].to_vec()),
+                    Value::Array(coeffs[start..end].to_vec()),
                 )]
                 .into_iter()
                 .collect(),
@@ -107,17 +106,16 @@ pub fn generate_chunk_toml(
                         .ok_or_else(|| {
                             CircuitsErrors::Sample("chunk e-sm limb malformed".into())
                         })?;
-                    if start >= coeffs.len() {
+                    if end > coeffs.len() {
                         return Err(CircuitsErrors::Sample(format!(
                             "chunk [{start},{end}) out of bounds for e-sm limb of length {}",
                             coeffs.len()
                         )));
                     }
-                    let slice_end = end.min(coeffs.len());
                     Ok::<Value, CircuitsErrors>(Value::Object(
                         [(
                             "coefficients".into(),
-                            Value::Array(coeffs[start..slice_end].to_vec()),
+                            Value::Array(coeffs[start..end].to_vec()),
                         )]
                         .into_iter()
                         .collect(),
@@ -128,8 +126,14 @@ pub fn generate_chunk_toml(
         }
         other => {
             return Err(CircuitsErrors::Sample(format!(
-                "chunk secret has unexpected shape: {:?}",
-                other.to_string().chars().take(40).collect::<String>()
+                "chunk secret has unexpected JSON kind: {}",
+                match other {
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Number(_) => "number",
+                    Value::String(_) => "string",
+                    _ => "unknown",
+                }
             )))
         }
     };
@@ -185,6 +189,8 @@ pub fn generate_configs_with_chunk_size(
     crate::ciphernodes_committee::try_canonical_from_t_n(n_parties, threshold)
         .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
     let degree = threshold_params.degree();
+    // The threshold polynomial degree is authoritative for C2 chunking. Both codegen.rs and
+    // computation.rs derive the chunk partition from it, and it must equal the secret limb length.
     if !degree.is_multiple_of(chunk_size) {
         return Err(CircuitsErrors::Sample(format!(
             "C2 chunk size {chunk_size} must divide polynomial degree {degree}"

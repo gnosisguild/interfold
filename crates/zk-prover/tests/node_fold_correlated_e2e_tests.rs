@@ -67,6 +67,10 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c3_fold acc_public_inputs length") as usize;
+    assert!(
+        len >= 6 && (len - 6).is_multiple_of(3),
+        "unexpected acc_public_inputs length {len} (expected 6 + 3 * slots)"
+    );
     (len - 6) / 3
 }
 
@@ -355,7 +359,6 @@ async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
         "share_decryption",
     ];
     let recursive_circuits = [
-        CircuitName::C2ChunkBatch,
         CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
         CircuitName::ESmC2ChunkFinalize,

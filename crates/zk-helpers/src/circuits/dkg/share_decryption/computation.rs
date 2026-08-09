@@ -206,10 +206,11 @@ impl Computation for Inputs {
         // Iterate H slots in ascending honest-party order: external slots BFV-decrypt and
         // commit; the own slot uses the supplied plaintext directly.
         let chunk_size = data.chunk_size as usize;
-        if chunk_size == 0 {
-            return Err(CircuitsErrors::Sample(
-                "C4 chunk size must be greater than zero".to_string(),
-            ));
+        let dkg_degree = dkg_params.degree();
+        if chunk_size == 0 || !dkg_degree.is_multiple_of(chunk_size) {
+            return Err(CircuitsErrors::Sample(format!(
+                "C4 chunk size {chunk_size} must divide share degree {dkg_degree}"
+            )));
         }
         for slot in data.honest_ciphertexts.iter() {
             let mut party_commitments = Vec::with_capacity(threshold_l);
@@ -420,7 +421,7 @@ mod tests {
                     mod_idx,
                     &Polynomial::from_u64_vector(reversed),
                     msg_bit,
-                    512,
+                    sample.chunk_size as usize,
                 );
                 assert_eq!(
                     inputs.expected_commitments[party_idx][mod_idx], direct_commitment,

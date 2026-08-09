@@ -85,8 +85,7 @@ pub fn generate_c2_chunk_batches(
         .join(format!("{}.json", CircuitName::C2ChunkBatch.as_str()));
     let compiled = CompiledCircuit::from_file(&batch_circuit_path)?;
 
-    let mut batches = Vec::with_capacity(chunk_count / per_batch);
-    batches = chunk_proofs
+    let batches = chunk_proofs
         .par_chunks(per_batch)
         .enumerate()
         .map(|(batch_idx, proofs)| {
