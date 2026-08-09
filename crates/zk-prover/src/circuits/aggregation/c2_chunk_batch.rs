@@ -6,9 +6,7 @@
 
 //! Batch C2 chunk proofs and root finalization.
 
-use crate::circuits::aggregation::c2_chunk_config::{
-    chunks_per_batch, compiled_batch_count, compiled_chunk_count,
-};
+use crate::circuits::aggregation::c2_chunk_layout::C2ChunkLayout;
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk;
 use crate::error::ZkError;
@@ -57,23 +55,24 @@ pub fn generate_c2_chunk_batches(
             chunk_proofs.len()
         )));
     }
-    let expected_chunk_count = compiled_chunk_count(degree);
-    if chunk_count != expected_chunk_count {
+    let layout = C2ChunkLayout::compiled(degree)?;
+    if chunk_count != layout.chunk_count {
         return Err(ZkError::InvalidInput(format!(
-            "C2 chunk count {chunk_count} does not match compiled artifact count {expected_chunk_count}"
+            "C2 chunk count {chunk_count} does not match compiled artifact count {}",
+            layout.chunk_count
         )));
     }
-    let per_batch = chunks_per_batch(degree);
-    if chunk_count % per_batch != 0 {
+    if !chunk_count.is_multiple_of(layout.chunks_per_batch) {
         return Err(ZkError::InvalidInput(format!(
-            "C2 chunk count {chunk_count} is not divisible by batch size {per_batch}"
+            "C2 chunk count {chunk_count} is not divisible by batch size {}",
+            layout.chunks_per_batch
         )));
     }
-    let batch_count = chunk_count / per_batch;
-    let expected_batch_count = compiled_batch_count(degree);
-    if batch_count != expected_batch_count {
+    let batch_count = chunk_count / layout.chunks_per_batch;
+    if batch_count != layout.batch_count {
         return Err(ZkError::InvalidInput(format!(
-            "C2 batch count {batch_count} does not match compiled artifact count {expected_batch_count}"
+            "C2 batch count {batch_count} does not match compiled artifact count {}",
+            layout.batch_count
         )));
     }
 
@@ -86,11 +85,11 @@ pub fn generate_c2_chunk_batches(
     let compiled = CompiledCircuit::from_file(&batch_circuit_path)?;
 
     let batches = chunk_proofs
-        .par_chunks(per_batch)
+        .par_chunks(layout.chunks_per_batch)
         .enumerate()
         .map(|(batch_idx, proofs)| {
-            let mut chunk_public_inputs = Vec::with_capacity(per_batch);
-            let mut chunk_proof_fields = Vec::with_capacity(per_batch);
+            let mut chunk_public_inputs = Vec::with_capacity(layout.chunks_per_batch);
+            let mut chunk_proof_fields = Vec::with_capacity(layout.chunks_per_batch);
             for proof in proofs {
                 if proof.circuit != chunk_circuit {
                     return Err(ZkError::InvalidInput(format!(
@@ -213,15 +212,15 @@ pub fn finalize_c2_chunk_batches(
 
 #[cfg(test)]
 mod tests {
-    use super::chunks_per_batch;
+    use super::C2ChunkLayout;
 
     #[test]
     fn uses_one_batch_chunk_for_insecure_degree() {
-        assert_eq!(chunks_per_batch(512), 1);
+        assert_eq!(C2ChunkLayout::compiled(512).unwrap().chunks_per_batch, 1);
     }
 
     #[test]
     fn uses_four_batch_chunks_for_secure_degree() {
-        assert_eq!(chunks_per_batch(8192), 4);
+        assert_eq!(C2ChunkLayout::compiled(8192).unwrap().chunks_per_batch, 4);
     }
 }

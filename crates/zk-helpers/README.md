@@ -24,4 +24,4 @@ cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset inse
 | `--circuit <name>`   | Circuit to generate artifacts for                                                                     |
 | `--preset <name>`    | BFV preset: `insecure` (512), `secure` (8192), or aliases `2` / `80`                                  |
 | `--committee <name>` | Committee size: `minimum` (default), `micro`, or `small` — must match `circuits/lib` active committee |
-| `--chunk-size <n>`   | C2 coefficient chunk size; default `512`; must divide the preset polynomial degree                    |
+| `--chunk-size <n>`   | C2 coefficient chunk size; only `512` is supported (the compiled chunk layout is pinned to 512 coefficients) |

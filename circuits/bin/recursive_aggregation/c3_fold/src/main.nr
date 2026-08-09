@@ -23,6 +23,15 @@ pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
 
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 
+/// Named indices into the 6-field accumulator prefix (`c3_fold` and `c3_fold_kernel` share this
+/// layout; the 3-field-wide per-slot tail starts at `C3_FOLD_PREFIX_LEN`).
+pub global ACC_CHILD_VK_IDX: u32 = 0;
+pub global ACC_ACC_VK_IDX: u32 = 1;
+pub global ACC_IS_FIRST_STEP_IDX: u32 = 2;
+pub global ACC_SLOT_INDEX_IDX: u32 = 3;
+pub global ACC_EXPECTED_KERNEL_IDX: u32 = 4;
+pub global ACC_EXPECTED_FOLD_IDX: u32 = 5;
+
 fn main(
     inner_vk: UltraHonkVerificationKey,
     inner_proof: UltraHonkZKProof,
@@ -43,14 +52,19 @@ fn main(
     assert(c3_public_inputs[2] == (slot_index / L_THRESHOLD) as Field);
     assert(c3_public_inputs[3] == (slot_index % L_THRESHOLD) as Field);
 
+    // Bind every fold step to one canonical child VK: the previous accumulator's child VK hash
+    // (public input 0) must equal this step's inner `ShareEncryption` VK hash. This closes the VK
+    // substitution attack where an intermediate step is proven under a noncanonical child VK.
+    assert(acc_public_inputs[ACC_CHILD_VK_IDX] == inner_key_hash);
+
     if is_first_step {
         assert(acc_key_hash == expected_kernel_key_hash);
     } else {
         assert(acc_key_hash == expected_fold_key_hash);
-        if acc_public_inputs[2] == 1 {
-            assert(acc_public_inputs[4] == expected_kernel_key_hash);
+        if acc_public_inputs[ACC_IS_FIRST_STEP_IDX] == 1 {
+            assert(acc_public_inputs[ACC_EXPECTED_KERNEL_IDX] == expected_kernel_key_hash);
         } else {
-            assert(acc_public_inputs[5] == expected_fold_key_hash);
+            assert(acc_public_inputs[ACC_EXPECTED_FOLD_IDX] == expected_fold_key_hash);
         }
     }
 

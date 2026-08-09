@@ -227,9 +227,13 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **Complete DKG recursive VK binding:** the DKG proof carries the canonical `NodeFold` VK hash and
   a recursive VK manifest. The manifest binds the C0/C1, C2 chunk/batch/finalizer/C2AB, C3
   leaf/fold/kernel/C3AB, C4 leaf/C4AB, and NodesFold kernel VK hashes. NodesFold and C3Fold bind
-  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash.
-  `BfvPkVerifier` checks these values against deployment-time anchors before it calls the Honk
-  verifier. — `dkg_aggregator`, `BfvPkVerifier`
+  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash,
+  and every fold step asserts the accumulator's child-VK hash equals the inner proof's VK hash
+  (IF-005); a substituted inner VK fails witness generation. C2 terminal proofs
+  (`SkC2ChunkFinalize`/`ESmC2ChunkFinalize`) are bound to the deployment-time chunk-leaf and
+  `C2ChunkBatch` VK anchors before generic verification (IF-006). `BfvPkVerifier` checks these
+  values against deployment-time anchors before it calls the Honk verifier. — `dkg_aggregator`,
+  `BfvPkVerifier`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002).

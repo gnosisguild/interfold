@@ -192,7 +192,8 @@ struct Cli {
     /// When used with --toml: do not write configs.nr (e.g. for benchmarks where circuits use lib configs).
     #[arg(long, default_value = "false")]
     no_configs: bool,
-    /// C2 coefficient chunk size. Must divide the preset polynomial degree.
+    /// C2 coefficient chunk size. Only 512 is supported; the compiled artifact
+    /// layout is pinned to a 512-coefficient chunk size.
     #[arg(long, default_value_t = 512)]
     chunk_size: usize,
     /// Chunk index (0-based) to emit when circuit is `share-computation-chunk`.
@@ -258,6 +259,15 @@ fn main() -> Result<()> {
             "preset does not match circuit {} which requires {:?} (use insecure or secure)",
             circuit,
             circuit_param_type
+        ));
+    }
+
+    // The compiled C2 artifact set is pinned to a 512-coefficient chunk layout.
+    // A different chunk size produces artifacts that cannot verify against the
+    // deployed circuits, so reject it here instead of writing invalid configs.
+    if args.chunk_size != 512 {
+        return Err(anyhow!(
+            "--chunk-size must be 512; the compiled C2 chunk layout is pinned to a 512-coefficient chunk size"
         ));
     }
 

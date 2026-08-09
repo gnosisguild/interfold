@@ -27,9 +27,11 @@ DIRS=(
   "bin/recursive_aggregation/node_fold"
   "bin/recursive_aggregation/nodes_fold"
   "bin/recursive_aggregation/nodes_fold_kernel"
+  "bin/recursive_aggregation/dummy_nodes_inner"
   "bin/recursive_aggregation/dkg_aggregator"
   "bin/recursive_aggregation/decryption_aggregator"
   "bin/dkg"
+  "bin/dkg/dummy_c3_inner"
   "bin/threshold"
 )
 
