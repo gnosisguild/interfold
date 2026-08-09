@@ -1305,7 +1305,7 @@ contract BondingRegistry is
                     licenseBond: op.licenseBond,
                     licenseRequiredBond: licenseRequiredBond,
                     licenseActiveBps: licenseActiveBps,
-                    ticketBalance: ticketToken.balanceOf(operator),
+                    ticketToken: address(ticketToken),
                     ticketPrice: ticketPrice,
                     minTicketBalance: minTicketBalance
                 }),
