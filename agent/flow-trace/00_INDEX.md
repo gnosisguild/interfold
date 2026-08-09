@@ -5,7 +5,7 @@
 | #   | File                                                                   | Covers                                                                                                                                                                                                                                                                                                                                                                |
 | --- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | [01_REGISTRATION.md](01_REGISTRATION.md)                               | `setup`, `set-bond-owner`, and `status` CLI commands. Recommended separation of the hot operator key from its bond owner, with explicit self-ownership supported. Owner-driven on-chain registration into BondingRegistry → CiphernodeRegistry IMT. Rust-side event detection.                                                                                        |
-| 2   | [02_TOKENS_AND_ACTIVATION.md](02_TOKENS_AND_ACTIVATION.md)             | Owner-funded FOLD license bonding and USDC→tFOLD tickets for an operator, unbonding, burning, exit queue, and claiming. Activation thresholds and the `_updateOperatorStatus` formula.                                                                                                                                                                                |
+| 2   | [02_TOKENS_AND_ACTIVATION.md](02_TOKENS_AND_ACTIVATION.md)             | Owner-funded FOLD license bonding and collateral-backed tFOLD tickets for an operator, unbonding, burning, exit queue, and claiming. Activation thresholds and the `_updateOperatorStatus` formula.                                                                                                                                                                   |
 | 3   | [03_E3_REQUEST_AND_COMMITTEE.md](03_E3_REQUEST_AND_COMMITTEE.md)       | E3 request on-chain flow, fee payment, committee request, IMT snapshot. Rust-side sortition (score-based), on-chain ticket submission, committee finalization, `CiphernodeSelected` event.                                                                                                                                                                            |
 | 4   | [04_DKG_AND_COMPUTATION.md](04_DKG_AND_COMPUTATION.md)                 | Full DKG with ZK proof pipeline: BFV keygen → C0 proof → encryption key exchange → TrBFV share generation → C1/C2/C3 proofs → share verification → Shamir secret sharing → encrypted share broadcast → C4 proofs → decryption key reconstruction. C5 proof for PK aggregation. Ciphertext output → C6 proof for decryption shares → C7 proof for plaintext → rewards. |
 | 5   | [05_FAILURE_REFUND_SLASHING.md](05_FAILURE_REFUND_SLASHING.md)         | Timeout-based failure detection, `markE3Failed`, `processE3Failure`. Fault-attributed refunds: requester/DP/CP failures pay completed work from fee escrow; supplier/ciphernode failures return all fee escrow and compensate honest nodes from ticket slashes. Off-chain accusation, Lane A/B slashing, and slashed-fund routing.                                    |
@@ -36,7 +36,7 @@
 
 5. TICKETS      Bond owner calls addTicketBalanceFor(operator, N)
                   → Reverts with NotRegistered() before step 4
-                  → Owner's USDC → non-transferable tFOLD minted to operator
+                  → Owner's ticket collateral → non-transferable tFOLD minted to operator
                   → If bond+tickets meet thresholds → active=true
 
 6. START        interfold start
@@ -87,7 +87,7 @@
 16. DEREGISTER  Bond owner or operator kill switch calls deregisterOperatorFor(operator)
                   → All collateral queued for exit
                   → Removed from IMT
-                  → After exitDelay: claimExitsFor pays USDC + FOLD to bond owner
+                  → After exitDelay: claimExitsFor pays ticket collateral + FOLD to bond owner
 ```
 
 ## End-to-End Failure Path Summary
@@ -158,7 +158,7 @@
        │                        │                          │
        │              ┌─────────┴──────────┐     ┌─────────┴────────┐
        │              │  SlashingManager   │────→│ InterfoldTicketTkn │
-       │              │  (fault, penalties) │     │ (USDC wrapper)   │
+       │              │  (fault, penalties) │     │ (asset wrapper)  │
        │              └─────────┬──────────┘     └──────────────────┘
        │                        │
        │                        │ retryable reserved-fund route:

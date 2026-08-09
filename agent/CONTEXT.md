@@ -18,21 +18,21 @@ output — every step backed by ZK proofs verified on-chain.
 
 ## Terminology
 
-| Term         | Meaning                                                                                                                |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                       |
-| Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                    |
-| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                    |
-| DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                |
-| BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                     |
-| Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                    |
-| C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                          |
-| Sortition    | Random committee selection (`crates/sortition`)                                                                        |
-| Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                       |
-| Aggregator   | Role that recursively aggregates DKG/decryption proofs (`crates/aggregator`)                                           |
-| FOLD / tFOLD | `InterfoldToken` (license bonding) / `InterfoldTicketToken` (non-transferable USDC-backed tickets) — see flow-trace 02 |
-| IMT          | Incremental Merkle Tree used for on-chain node registration — see flow-trace 01                                        |
-| CRT          | Chinese Remainder Theorem moduli used by BFV presets and share aggregation (C7)                                        |
+| Term         | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                             |
+| Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                          |
+| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                          |
+| DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                      |
+| BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                           |
+| Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                          |
+| C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                |
+| Sortition    | Random committee selection (`crates/sortition`)                                                                              |
+| Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                             |
+| Aggregator   | Role that recursively aggregates DKG/decryption proofs (`crates/aggregator`)                                                 |
+| FOLD / tFOLD | `InterfoldToken` (license bonding) / `InterfoldTicketToken` (non-transferable collateral-backed tickets) — see flow-trace 02 |
+| IMT          | Incremental Merkle Tree used for on-chain node registration — see flow-trace 01                                              |
+| CRT          | Chinese Remainder Theorem moduli used by BFV presets and share aggregation (C7)                                              |
 
 ## Monorepo map
 
