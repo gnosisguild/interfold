@@ -55,7 +55,10 @@ const CONTRACT_KEYS: Record<string, string[]> = {
   slashing_manager: ["SlashingManager"],
   fee_token: ["FeeToken", "MockUSDC"],
   faucet: ["Faucet"],
-  e3_program: ["E3Program", "MockE3Program"],
+  // `e3_program` is deliberately absent. Many E3 programs can be registered on
+  // one deployment (CRISP runs its own CRISPProgram), so the protocol manifest
+  // has no authority over which one a given node should point at. Publishing
+  // one would make `config check` call every application's own program stale.
   dkg_fold_attestation_verifier: [
     "DkgFoldAttestationVerifier",
     "MockDkgFoldAttestationVerifier",
@@ -71,6 +74,7 @@ const REFERENCE_KEYS = [
   "InterfoldToken",
   "InterfoldTicketToken",
   "E3RefundManager",
+  "MockE3Program",
   "MockComputeProvider",
   "MockDecryptionVerifier",
   "MockCiphertextVerifier",
@@ -81,9 +85,13 @@ const REFERENCE_KEYS = [
   "BfvPkVerifier",
 ];
 
-/** Any of these present means the deployment is not proving anything. */
+/**
+ * Any of these present means the deployment is not proving anything, which is
+ * what the `mocks` flag claims downstream. Deliberately excludes `MockUSDC`: a
+ * mock fee token says nothing about whether proofs are checked, and including
+ * it would make a real-verifier deployment report itself as unverified.
+ */
 const MOCK_NAMES = [
-  "MockUSDC",
   "MockE3Program",
   "MockDecryptionVerifier",
   "MockCiphertextVerifier",
@@ -136,6 +144,18 @@ export const generate = (): string => {
       }
     }
 
+    // An unknown network would serialise `chain_id: undefined`, which
+    // JSON.stringify drops. The CLI reads an absent chain_id as "do not
+    // compare", silently disabling the one check that catches a config whose
+    // addresses all match but whose RPC points at another network.
+    const chainId = CHAIN_IDS[network];
+    if (chainId === undefined) {
+      throw new Error(
+        `${network}: no chain ID known for this network. Add it to CHAIN_IDS in ` +
+          `scripts/genManifest.ts so \`interfold config check\` can verify it.`,
+      );
+    }
+
     const reference: Record<string, Entry> = {};
     for (const name of REFERENCE_KEYS) {
       const entry = entryFor(contracts[name]);
@@ -143,7 +163,7 @@ export const generate = (): string => {
     }
 
     networks[network] = {
-      chain_id: CHAIN_IDS[network],
+      chain_id: chainId,
       mocks: MOCK_NAMES.some((n) => contracts[n]?.address),
       contracts: resolved,
       ...(Object.keys(reference).length > 0 ? { reference } : {}),

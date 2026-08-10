@@ -55,19 +55,12 @@ The Interfold protocol uses several contracts that work together:
 | MockUSDC (fee token)  | `0x3B351Fef5c403eAA9104551be20708Bc1c20caCC` | 11458353     |
 | Faucet                | `0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D` | 11458367     |
 
-The DKG and decryption aggregator circuits are deployed as the sole on-chain verifiers for BFV
-public-key publication and plaintext decryption respectively (each aggregator internally verifies
-the underlying node-fold/C5 and C6-fold/C7 sub-proofs). See `deployed_contracts.json` for addresses.
+### Proof Verification
 
-| Verifier                          | Address                                    |
-| --------------------------------- | ------------------------------------------ |
-| DkgAggregatorVerifier (DKG)       | See `deployed_contracts.json` after deploy |
-| DecryptionAggregatorVerifier (C7) | See `deployed_contracts.json` after deploy |
-
-> **The current Sepolia deployment runs with mock verifiers.** It was deployed with
-> `DEPLOY_MOCKS=true` and without `ENABLE_ZK_VERIFICATION`, so no aggregator verifier contracts
-> exist on this network and proofs are accepted without being checked. Use it to wire up and operate
-> a node, not to test proving correctness.
+> **The current Sepolia deployment does not verify proofs.** It was deployed with
+> `DEPLOY_MOCKS=true` and without `ENABLE_ZK_VERIFICATION`, so the verifier addresses below are
+> mocks that accept any proof. Use this network to wire up and operate a node, not to test proving
+> correctness.
 
 | Mock contract          | Address                                      | Deploy block |
 | ---------------------- | -------------------------------------------- | ------------ |
@@ -76,6 +69,15 @@ the underlying node-fold/C5 and C6-fold/C7 sub-proofs). See `deployed_contracts.
 | MockDecryptionVerifier | `0x443A6Be477Bb8e628a21BC98EbE6B3583b2e9CDd` | 11458372     |
 | MockCiphertextVerifier | `0x1Ccc4f3ba0Fba64A137a763C270AE404f3ed0298` | 11458373     |
 | MockPkVerifier         | `0x389f8801127408561460A737005B8f0A8Cf14A68` | 11458374     |
+
+`interfold config check` reports this too, so you do not have to remember which deployment you are
+pointed at.
+
+On a deployment built with `ENABLE_ZK_VERIFICATION`, these mocks are replaced by the DKG and
+decryption aggregator circuits, which are the sole on-chain verifiers for BFV public-key publication
+and plaintext decryption respectively (each aggregator internally verifies the underlying
+node-fold/C5 and C6-fold/C7 sub-proofs). Their addresses appear in `deployed_contracts.json` as
+`DkgAggregatorVerifier` and `DecryptionAggregatorVerifier`; neither is present on Sepolia today.
 
 > Always verify addresses from `packages/interfold-contracts/deployed_contracts.json` or your
 > deployment output. Addresses differ per network.

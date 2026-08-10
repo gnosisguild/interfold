@@ -23,7 +23,8 @@ chains:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
         deploy_block: 4
   - name: "sepolia"
-    rpc_url: "ws://localhost:8545"
+    rpc_url: "wss://ethereum-sepolia-rpc.publicnode.com"
+    chain_id: 11155111
     contracts:
       e3_program:
         address: "0x23fe6b6611ffF12BDbda1F1fA463B496ad6C3c4F"

@@ -95,6 +95,7 @@ node:
 chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    chain_id: 11155111
     contracts:
       interfold:
         address: '0xd49990bcbA083dcF05eda2b201e7e091dFbb4642'
@@ -211,6 +212,7 @@ node:
 chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    chain_id: 11155111
     contracts:
       interfold:
         address: '0xd49990bcbA083dcF05eda2b201e7e091dFbb4642'
@@ -340,7 +342,13 @@ docker logs -f ciphernode
 | ----------- | ------------------------------------ | -------- |
 | `name`      | Chain identifier                     | Yes      |
 | `rpc_url`   | WebSocket RPC endpoint               | Yes      |
+| `chain_id`  | EIP-155 chain ID                     | No       |
 | `contracts` | Contract addresses and deploy blocks | Yes      |
+
+Set `chain_id` even though it is optional: `interfold config check` compares it against the manifest
+rather than querying the endpoint, so it is the only thing that catches an `rpc_url` pointing at the
+wrong network. Without it, a config whose addresses all match but whose RPC points elsewhere passes
+the check.
 
 ### Contract Addresses
 

@@ -28,10 +28,6 @@
         "faucet": {
           "address": "0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D",
           "deploy_block": 11458367
-        },
-        "e3_program": {
-          "address": "0xf83Cb60BeCA5BccF6B21A68d0a80b101941809E1",
-          "deploy_block": 11458375
         }
       },
       "reference": {
@@ -46,6 +42,10 @@
         "E3RefundManager": {
           "address": "0x1dc1B79c85aF2C1ed1019B637fC741d081c2813a",
           "deploy_block": 11458380
+        },
+        "MockE3Program": {
+          "address": "0xf83Cb60BeCA5BccF6B21A68d0a80b101941809E1",
+          "deploy_block": 11458375
         },
         "MockComputeProvider": {
           "address": "0xdd8483a4469d5060e033B3cF6f2A9C8a56A8A182",

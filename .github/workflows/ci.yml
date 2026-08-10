@@ -63,6 +63,11 @@ jobs:
               - 'rust-toolchain.toml'
             contracts:
               - 'packages/interfold-contracts/**'
+              # The manifest is generated from deployed_contracts.json and
+              # verified by `gen:manifest:check` in test_contracts. Without this
+              # path a hand-edited manifest never runs the drift check and
+              # reaches the release assets stale.
+              - 'deployments/**'
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'

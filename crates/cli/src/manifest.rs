@@ -200,7 +200,10 @@ fn configured_contracts(chain: &ChainConfig) -> Vec<(&'static str, Option<&Contr
         ("slashing_manager", c.slashing_manager.as_ref()),
         ("fee_token", c.fee_token.as_ref()),
         ("faucet", c.faucet.as_ref()),
-        ("e3_program", c.e3_program.as_ref()),
+        // `e3_program` is intentionally not compared. A deployment can have many
+        // registered E3 programs and each application points at its own, so the
+        // protocol manifest cannot say which one a node should use. The manifest
+        // does not publish the key either; this list documents the omission.
         (
             "dkg_fold_attestation_verifier",
             c.dkg_fold_attestation_verifier.as_ref(),

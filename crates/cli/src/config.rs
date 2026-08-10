@@ -147,8 +147,9 @@ async fn check(
     }
 
     if errors > 0 {
+        // Not "address(es)": a chain-id mismatch counts here too.
         bail!(
-            "{} contract address(es) do not match the published deployment. \
+            "{} setting(s) do not match the published deployment. \
              Update your config, or re-run `interfold ciphernode setup`.",
             errors
         );
