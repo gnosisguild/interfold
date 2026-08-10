@@ -471,11 +471,11 @@ Time ─────────────────────────
 
 │ deregister[For]()│                    │ claimExits[For]()│
 │ or deactivate    │   EXIT DELAY       │                  │
-│                  │  (configured)       │                  │
+│                  │  (configured)      │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ tFOLD burned       │  Cannot cancel     │ asset returned   │
+│ tFOLD burned     │  Cannot cancel     │ asset returned   │
 │ FOLD locked      │  Can be slashed!   │ FOLD returned to │
-│                  │                    │ withdrawal addr  │
+│                  │                    │ bond owner       │
 │                  │                    │                  │
 
 IMPORTANT: Even during the exit delay, slashing can still
