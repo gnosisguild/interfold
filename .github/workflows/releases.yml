@@ -460,6 +460,13 @@ jobs:
         run: |
           mkdir -p release-assets
           find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
+          # `interfold config check` fetches this asset from the latest release,
+          # so a release without it leaves operators unable to detect a redeploy.
+          if [ ! -f deployments/manifest.json ]; then
+            echo "deployments/manifest.json is missing. Run \`pnpm gen:manifest\` and commit it." >&2
+            exit 1
+          fi
+          cp deployments/manifest.json release-assets/
           ls -la release-assets/
 
       - name: Generate Release Notes

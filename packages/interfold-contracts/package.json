@@ -167,6 +167,8 @@
     "upgrade:bondingRegistry": "pnpm validate:upgrade && hardhat run scripts/upgrade/bondingRegistry.ts",
     "validate:upgrade": "hardhat run scripts/validateUpgrade.ts",
     "snapshot:storage-layouts": "tsx scripts/snapshotStorageLayouts.ts",
+    "gen:manifest": "tsx scripts/genManifest.ts",
+    "gen:manifest:check": "tsx scripts/genManifest.ts --check",
     "upgrade:ciphernodeRegistryOwnable": "pnpm validate:upgrade && hardhat run scripts/upgrade/ciphernodeRegistryOwnable.ts",
     "upgrade:e3RefundManager": "pnpm validate:upgrade && hardhat run scripts/upgrade/e3RefundManager.ts",
     "e3:activate": "hardhat e3:activate",

@@ -19,10 +19,17 @@ describe("Protocol deployment", function () {
     const tokenFactory = await ethers.getContractFactory(
       "MockFeeOnTransferToken",
     );
+    // `deploy()` resolves once the transaction is sent, not once it is mined,
+    // and `getAddress()` returns the computed address either way. The addresses
+    // below are fed into further deployments, and Interfold rejects a program
+    // address with no runtime code, so each deployment has to land first.
     const feeToken = await tokenFactory.deploy(0);
+    await feeToken.waitForDeployment();
     const ticketUnderlyingToken = await tokenFactory.deploy(0);
+    await ticketUnderlyingToken.waitForDeployment();
     const programFactory = await ethers.getContractFactory("MockE3Program");
     const program = await programFactory.deploy();
+    await program.waitForDeployment();
 
     const config = JSON.parse(
       fs.readFileSync(

@@ -93,7 +93,7 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Default insecure-512 / minimum committee layout for BFV aggregator verifiers.
+ * Active insecure-512 / minimum committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
  * Minimum committee: N=3, T=1, H=2.
  * </generated-committee-doc>

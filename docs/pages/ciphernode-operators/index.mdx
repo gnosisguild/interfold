@@ -45,24 +45,39 @@ The Interfold protocol uses several contracts that work together:
 
 | Contract              | Address                                      | Deploy block |
 | --------------------- | -------------------------------------------- | ------------ |
-| Interfold             | `0x64Cd2d88537A18D8E599d786447F9a07Dd9C7f26` | 11124539     |
-| CiphernodeRegistry    | `0xDDd7e1eA2AD8195217D9B25B13fac667b6Fc4dD9` | 11124526     |
-| BondingRegistry       | `0x0c25cC9c034611D2F62686e68e61978F21eEc777` | 11124527     |
-| SlashingManager       | `0x7c0aCC0053370142Da824087640926814502Cf4a` | 11124525     |
-| E3RefundManager       | `0x01728C2d7E4586EdD2c29e34B35dEE1bdf6d5aEe` | 11124541     |
-| InterfoldTicketToken  | `0x4ba278FD34A701a5C47d49Accb0e30Fb0167584E` | 11124524     |
-| InterfoldToken (FOLD) | `0x27b4427cdECd5B08adE6E174B3580A2d227BB223` | 11124530     |
-| MockUSDC (fee token)  | `0x08260aE8970E3555E48caA547988bAD397786E6D` | 11124519     |
-| Faucet                | `0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df` | 11124533     |
+| Interfold             | `0xd49990bcbA083dcF05eda2b201e7e091dFbb4642` | 11458378     |
+| CiphernodeRegistry    | `0xCBe0816641b22f950f74C5E07913e18bC69C85b5` | 11458356     |
+| BondingRegistry       | `0x59070d9e902EC955ced770E53a3aaA12FF93dA7e` | 11458357     |
+| SlashingManager       | `0xBbc3FfCe6453B0Ae9ef9da77974e687F62C2D5d5` | 11458355     |
+| E3RefundManager       | `0x1dc1B79c85aF2C1ed1019B637fC741d081c2813a` | 11458380     |
+| InterfoldTicketToken  | `0xa3307871Be4f2c15A3b47dC5Fe2aF7F5769b68aB` | 11458354     |
+| InterfoldToken (FOLD) | `0xDb973F14D937C3d2a153e65d91798b0b40A8a5F8` | 11458364     |
+| MockUSDC (fee token)  | `0x3B351Fef5c403eAA9104551be20708Bc1c20caCC` | 11458353     |
+| Faucet                | `0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D` | 11458367     |
 
-The DKG and decryption aggregator circuits are deployed as the sole on-chain verifiers for BFV
-public-key publication and plaintext decryption respectively (each aggregator internally verifies
-the underlying node-fold/C5 and C6-fold/C7 sub-proofs). See `deployed_contracts.json` for addresses.
+### Proof Verification
 
-| Verifier                          | Address                                    |
-| --------------------------------- | ------------------------------------------ |
-| DkgAggregatorVerifier (DKG)       | See `deployed_contracts.json` after deploy |
-| DecryptionAggregatorVerifier (C7) | See `deployed_contracts.json` after deploy |
+> **The current Sepolia deployment does not verify proofs.** It was deployed with
+> `DEPLOY_MOCKS=true` and without `ENABLE_ZK_VERIFICATION`, so the verifier addresses below are
+> mocks that accept any proof. Use this network to wire up and operate a node, not to test proving
+> correctness.
+
+| Mock contract          | Address                                      | Deploy block |
+| ---------------------- | -------------------------------------------- | ------------ |
+| MockE3Program          | `0xf83Cb60BeCA5BccF6B21A68d0a80b101941809E1` | 11458375     |
+| MockComputeProvider    | `0xdd8483a4469d5060e033B3cF6f2A9C8a56A8A182` | 11458371     |
+| MockDecryptionVerifier | `0x443A6Be477Bb8e628a21BC98EbE6B3583b2e9CDd` | 11458372     |
+| MockCiphertextVerifier | `0x1Ccc4f3ba0Fba64A137a763C270AE404f3ed0298` | 11458373     |
+| MockPkVerifier         | `0x389f8801127408561460A737005B8f0A8Cf14A68` | 11458374     |
+
+`interfold config check` reports this too, so you do not have to remember which deployment you are
+pointed at.
+
+On a deployment built with `ENABLE_ZK_VERIFICATION`, these mocks are replaced by the DKG and
+decryption aggregator circuits, which are the sole on-chain verifiers for BFV public-key publication
+and plaintext decryption respectively (each aggregator internally verifies the underlying
+node-fold/C5 and C6-fold/C7 sub-proofs). Their addresses appear in `deployed_contracts.json` as
+`DkgAggregatorVerifier` and `DecryptionAggregatorVerifier`; neither is present on Sepolia today.
 
 > Always verify addresses from `packages/interfold-contracts/deployed_contracts.json` or your
 > deployment output. Addresses differ per network.

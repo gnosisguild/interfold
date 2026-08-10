@@ -95,26 +95,49 @@ node:
 chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    chain_id: 11155111
     contracts:
       interfold:
-        address: '0x64Cd2d88537A18D8E599d786447F9a07Dd9C7f26'
-        deploy_block: 11124539
+        address: '0xd49990bcbA083dcF05eda2b201e7e091dFbb4642'
+        deploy_block: 11458378
       ciphernode_registry:
-        address: '0xDDd7e1eA2AD8195217D9B25B13fac667b6Fc4dD9'
-        deploy_block: 11124526
+        address: '0xCBe0816641b22f950f74C5E07913e18bC69C85b5'
+        deploy_block: 11458356
       bonding_registry:
-        address: '0x0c25cC9c034611D2F62686e68e61978F21eEc777'
-        deploy_block: 11124527
+        address: '0x59070d9e902EC955ced770E53a3aaA12FF93dA7e'
+        deploy_block: 11458357
       slashing_manager:
-        address: '0x7c0aCC0053370142Da824087640926814502Cf4a'
-        deploy_block: 11124525
+        address: '0xBbc3FfCe6453B0Ae9ef9da77974e687F62C2D5d5'
+        deploy_block: 11458355
       fee_token:
-        address: '0x08260aE8970E3555E48caA547988bAD397786E6D'
-        deploy_block: 11124519
+        address: '0x3B351Fef5c403eAA9104551be20708Bc1c20caCC'
+        deploy_block: 11458353
       faucet:
-        address: '0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df'
-        deploy_block: 11124533
+        address: '0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D'
+        deploy_block: 11458367
 ```
+
+### Check Your Addresses Are Current
+
+Contract addresses change when the protocol is redeployed, and a node pointed at an old address
+fails silently — it syncs nothing and reports no error. Before starting, and after any redeploy
+announcement, compare your config against the published deployment manifest:
+
+```bash
+interfold config check
+```
+
+```
+Deployment manifest: release v0.6.0
+sepolia:
+  STALE interfold: config has 0x64Cd2d88…, published is 0xd49990bc…
+  warn  ciphernode_registry: deploy_block 11124526, published is 11458356
+```
+
+The command exits non-zero when any address is wrong, so it can gate a restart in a supervisor or a
+CI job. A stale `deploy_block` or an unconfigured optional contract is reported but does not fail
+the check. Use `--chain <name>` to check a single chain, and `--manifest-url <url>` to check against
+a specific manifest instead of the latest release.
 
 ### Start Your Node
 
@@ -146,6 +169,7 @@ interfold nodes down        # Stop all nodes
 | `interfold nodes restart <name>` | Restart a specific node                             |
 | `interfold nodes purge`          | Purge all local ciphernode data                     |
 | `interfold ciphernode status`    | Show on-chain registration status                   |
+| `interfold config check`         | Compare configured addresses against the manifest   |
 | `interfold net get-peer-id`      | Show your libp2p peer ID                            |
 | `interfold wallet get`           | Show your wallet address                            |
 | `interfold rev`                  | Show the git SHA the CLI was built from             |
@@ -188,25 +212,26 @@ node:
 chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    chain_id: 11155111
     contracts:
       interfold:
-        address: '0x64Cd2d88537A18D8E599d786447F9a07Dd9C7f26'
-        deploy_block: 11124539
+        address: '0xd49990bcbA083dcF05eda2b201e7e091dFbb4642'
+        deploy_block: 11458378
       ciphernode_registry:
-        address: '0xDDd7e1eA2AD8195217D9B25B13fac667b6Fc4dD9'
-        deploy_block: 11124526
+        address: '0xCBe0816641b22f950f74C5E07913e18bC69C85b5'
+        deploy_block: 11458356
       bonding_registry:
-        address: '0x0c25cC9c034611D2F62686e68e61978F21eEc777'
-        deploy_block: 11124527
+        address: '0x59070d9e902EC955ced770E53a3aaA12FF93dA7e'
+        deploy_block: 11458357
       slashing_manager:
-        address: '0x7c0aCC0053370142Da824087640926814502Cf4a'
-        deploy_block: 11124525
+        address: '0xBbc3FfCe6453B0Ae9ef9da77974e687F62C2D5d5'
+        deploy_block: 11458355
       fee_token:
-        address: '0x08260aE8970E3555E48caA547988bAD397786E6D'
-        deploy_block: 11124519
+        address: '0x3B351Fef5c403eAA9104551be20708Bc1c20caCC'
+        deploy_block: 11458353
       faucet:
-        address: '0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df'
-        deploy_block: 11124533
+        address: '0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D'
+        deploy_block: 11458367
 ```
 
 ### Create the Credentials Secret
@@ -317,7 +342,13 @@ docker logs -f ciphernode
 | ----------- | ------------------------------------ | -------- |
 | `name`      | Chain identifier                     | Yes      |
 | `rpc_url`   | WebSocket RPC endpoint               | Yes      |
+| `chain_id`  | EIP-155 chain ID                     | No       |
 | `contracts` | Contract addresses and deploy blocks | Yes      |
+
+Set `chain_id` even though it is optional: `interfold config check` compares it against the manifest
+rather than querying the endpoint, so it is the only thing that catches an `rpc_url` pointing at the
+wrong network. Without it, a config whose addresses all match but whose RPC points elsewhere passes
+the check.
 
 ### Contract Addresses
 
@@ -338,12 +369,12 @@ Each contract can be specified as a simple address string or with a deploy block
 ```yaml
 contracts:
   interfold:
-    address: '0x64Cd2d88537A18D8E599d786447F9a07Dd9C7f26'
-    deploy_block: 11124539
-  ciphernode_registry: '0xDDd7e1eA2AD8195217D9B25B13fac667b6Fc4dD9'
+    address: '0xd49990bcbA083dcF05eda2b201e7e091dFbb4642'
+    deploy_block: 11458378
+  ciphernode_registry: '0xCBe0816641b22f950f74C5E07913e18bC69C85b5'
   faucet:
-    address: '0x94FCD9b624baAf023c7F48C5E7200eAd85dc87Df'
-    deploy_block: 11124533
+    address: '0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D'
+    deploy_block: 11458367
 ```
 
 ---

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "networks": {
+    "sepolia": {
+      "chain_id": 11155111,
+      "mocks": true,
+      "contracts": {
+        "interfold": {
+          "address": "0xd49990bcbA083dcF05eda2b201e7e091dFbb4642",
+          "deploy_block": 11458378
+        },
+        "ciphernode_registry": {
+          "address": "0xCBe0816641b22f950f74C5E07913e18bC69C85b5",
+          "deploy_block": 11458356
+        },
+        "bonding_registry": {
+          "address": "0x59070d9e902EC955ced770E53a3aaA12FF93dA7e",
+          "deploy_block": 11458357
+        },
+        "slashing_manager": {
+          "address": "0xBbc3FfCe6453B0Ae9ef9da77974e687F62C2D5d5",
+          "deploy_block": 11458355
+        },
+        "fee_token": {
+          "address": "0x3B351Fef5c403eAA9104551be20708Bc1c20caCC",
+          "deploy_block": 11458353
+        },
+        "faucet": {
+          "address": "0xf607EA924da2cB007ee9c56671cb5F9cDbdd186D",
+          "deploy_block": 11458367
+        }
+      },
+      "reference": {
+        "InterfoldToken": {
+          "address": "0xDb973F14D937C3d2a153e65d91798b0b40A8a5F8",
+          "deploy_block": 11458364
+        },
+        "InterfoldTicketToken": {
+          "address": "0xa3307871Be4f2c15A3b47dC5Fe2aF7F5769b68aB",
+          "deploy_block": 11458354
+        },
+        "E3RefundManager": {
+          "address": "0x1dc1B79c85aF2C1ed1019B637fC741d081c2813a",
+          "deploy_block": 11458380
+        },
+        "MockE3Program": {
+          "address": "0xf83Cb60BeCA5BccF6B21A68d0a80b101941809E1",
+          "deploy_block": 11458375
+        },
+        "MockComputeProvider": {
+          "address": "0xdd8483a4469d5060e033B3cF6f2A9C8a56A8A182",
+          "deploy_block": 11458371
+        },
+        "MockDecryptionVerifier": {
+          "address": "0x443A6Be477Bb8e628a21BC98EbE6B3583b2e9CDd",
+          "deploy_block": 11458372
+        },
+        "MockCiphertextVerifier": {
+          "address": "0x1Ccc4f3ba0Fba64A137a763C270AE404f3ed0298",
+          "deploy_block": 11458373
+        },
+        "MockPkVerifier": {
+          "address": "0x389f8801127408561460A737005B8f0A8Cf14A68",
+          "deploy_block": 11458374
+        }
+      }
+    }
+  }
+}
