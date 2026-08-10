@@ -398,6 +398,11 @@ jobs:
       - name: 'Validate upgrade storage layouts'
         run: 'pnpm --filter @interfold/contracts validate:upgrade'
 
+      # The manifest is what operators fetch to detect a redeploy, so it must
+      # never lag deployed_contracts.json.
+      - name: 'Check the deployment manifest is up to date'
+        run: 'pnpm --filter @interfold/contracts gen:manifest:check'
+
       - name: 'Test the contracts and generate the coverage report'
         run: 'pnpm coverage'
 
