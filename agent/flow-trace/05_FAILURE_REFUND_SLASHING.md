@@ -247,7 +247,7 @@ SLASH RECIPIENT claims a token-specific entitlement:
 
 ```
 Scenario: E3 fails at KeyPublished stage (compute timeout)
-  Payment: 1,000,000 USDC (1 USDC in base units = 1e6)
+  Payment: 1,000,000 fee-token units (one token with 6 decimals)
   Honest nodes: 3 (out of 5 committee members, 2 were slashed)
 
   Work completed:  40% → honestNodeAmount = 400,000
@@ -265,14 +265,14 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
 
 ```
 Scenario: E3 fails during DKG because one member supplied invalid shares
-  Fee escrow: 1,000,000 USDC
+  Fee escrow: 1,000,000 fee-token units
   Honest nodes after expulsion: 2
   Faulty node ticket slash: 300,000 TICKET-USD
 
   Base fee-token claims:
-    requester:    1,000,000 USDC (100%)
-    honest nodes:         0 USDC
-    protocol:             0 USDC
+    requester:    1,000,000 fee-token units (100%)
+    honest nodes:         0 fee-token units
+    protocol:             0 fee-token units
 
   Separate slash-token claims:
     honest node 1: 150,000 TICKET-USD
@@ -802,7 +802,7 @@ _executeSlash(proposalId):
 │     │  │  │  → Callback cannot consume the reserve twice       │
 │     │  │  │  → Any later revert restores pending=true          │
 │     │  │  │                                                    │
-│     │  │  │  Step A: Move USDC from BondingRegistry            │
+│     │  │  │  Step A: Move collateral from BondingRegistry      │
 │     │  │  │    bondingRegistry.redirectReservedSlashedTicketFunds(
 │     │  │  │      proposalId                                    │
 │     │  │  │    )                                               │
@@ -811,8 +811,8 @@ _executeSlash(proposalId):
 │     │  │  │    ├─ reservedSlashedTicketBalance -= amount        │
 │     │  │  │    ├─ slashedTicketBalance -= amount                │
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
-│     │  │  │       → Transfers UNDERLYING USDC (not ticket      │
-│     │  │  │         tokens) to the E3RefundManager contract     │
+│     │  │  │       → Transfers the underlying collateral asset   │
+│     │  │  │         to the E3RefundManager contract             │
 │     │  │  │       → Uses payableBalance incremented by          │
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
@@ -1095,7 +1095,7 @@ Slash Reasons (derived from ProofType for Lane A):
 │     ├─ License bond slashed (active + exit queue)              │
 │     ├─ Node banned (if policy requires)                        │
 │     ├─ Committee member expelled                               │
-│     └─ Slashed USDC escrowed in E3RefundManager                │
+│     └─ Slashed ticket collateral escrowed in E3RefundManager   │
 │                                                                 │
 │  10. FUND DISTRIBUTION (at E3 terminal state)                  │
 │      ├─ Failure: fee refund is fault-attributed; slashes pay   │

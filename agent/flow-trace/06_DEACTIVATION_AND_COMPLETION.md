@@ -145,8 +145,8 @@ Bond owner or operator submits deregisterOperatorFor(operator)
    claimExitsFor(operator, maxTicket, maxLicense)
 ```
 
-Underlying USDC and FOLD are both paid to the bond owner. The queue and slash target remain keyed by
-the operator until the claim completes.
+The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
+remain keyed by the operator until the claim completes.
 
 Deregistration remains an emergency stop for future selection, even when the operator belongs to a
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
@@ -473,7 +473,7 @@ Time ─────────────────────────
 │ or deactivate    │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ tFOLD burned       │  Cannot cancel     │ USDC returned    │
+│ tFOLD burned       │  Cannot cancel     │ asset returned   │
 │ FOLD locked      │  Can be slashed!   │ FOLD returned to │
 │                  │                    │ withdrawal addr  │
 │                  │                    │                  │
