@@ -30,23 +30,24 @@ type Slice = {
 // Community = vivid brand greens; Other = dark brand neutrals.
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
-  // Community (52%)
-  { key: 'Foundation Treasury', pct: 41.4469, displayPct: 41.5, color: '#3A7D44', group: 'community' }, // vivid forest
-  { key: 'Unsold CCA Tokens', pct: 6.3615, displayPct: 6.5, color: '#687d71', group: 'community' }, // brand sage
+  // Community (51.81%)
+  { key: 'Foundation Treasury', pct: 41.4469, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'Unsold CCA Tokens', pct: 6.3615, displayPct: 6.36, color: '#687d71', group: 'community' }, // brand sage
   { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
-  // Other (48%)
+  // Other (48.19%)
   { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
   { key: 'Investors', pct: 19.1916, color: '#3A4E42', group: 'other' }, // dark muted forest
   { key: 'Team and Advisors', pct: 9, color: '#8FAE96', group: 'other' }, // muted sage
 ]
 
 // Ceilings rather than fixed amounts, so their share is shown as "at most".
-const UP_TO = new Set(['Unsold CCA Tokens'])
+// These are the categories the allocation sheet marks "up to".
+const UP_TO = new Set(['Airdrop', 'Unsold CCA Tokens'])
 
 const communitySlices = ALLOCATION.filter((d) => d.group === 'community')
 const otherSlices = ALLOCATION.filter((d) => d.group === 'other')
-const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 52
-const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48
+const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 51.8084
+const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48.1916
 
 const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(ALLOCATION.map((s) => [s.key, s.color]))
 
@@ -59,15 +60,22 @@ const GROUP_COLOR: Record<Group, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Percentages display as whole numbers. Exact values are kept in ALLOCATION so
-// the donut geometry stays true; only the printed figures are rounded.
-const fmtPct = (n: number) => `${Math.round(n)}%`
+const round2 = (n: number) => Math.round(n * 100) / 100
+const ceil2 = (n: number) => Math.ceil(n * 100) / 100
+
+// Percentages display to two decimal places, whole numbers included, so the
+// column reads as one aligned set of figures. Exact values are kept in
+// ALLOCATION so the donut geometry stays true; only the printed figures are
+// rounded.
+const fmtNum = (n: number) => n.toFixed(2)
+
+const fmtPct = (n: number) => `${fmtNum(round2(n))}%`
 
 // Slice shares honour displayPct when set. Without one, a ceiling rounds up so
-// the printed figure stays a true bound: 6.3615% shown as "≤ 6%" would be false.
+// the printed figure stays a true bound.
 const fmtShare = (d: Slice) => {
-  const v = d.displayPct ?? (UP_TO.has(d.key) ? Math.ceil(d.pct) : Math.round(d.pct))
-  return `${UP_TO.has(d.key) ? '≤ ' : ''}${Number.isInteger(v) ? v : v.toFixed(1)}%`
+  const v = d.displayPct ?? (UP_TO.has(d.key) ? ceil2(d.pct) : round2(d.pct))
+  return `${UP_TO.has(d.key) ? '≤ ' : ''}${fmtNum(v)}%`
 }
 
 function polar(cx: number, cy: number, r: number, angleDeg: number): [number, number] {
@@ -97,7 +105,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '≤ 28%' },
+    { label: 'Circulating Supply at TGE', value: '≤ 27.37%' },
   ]
   return (
     <div className={classes.stats}>
@@ -119,9 +127,9 @@ export function KeyParameters() {
 // so the two colour families read as distinct visual clusters.
 const GROUP_GAP_DEG = 6
 const TOTAL_SLICE_DEG = 360 - 2 * GROUP_GAP_DEG // 348°
-const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG // ≈ 198.36°
-const OTHER_SPAN_DEG = (OTHER_PCT / 100) * TOTAL_SLICE_DEG // ≈ 149.64°
-const OTHER_START_DEG = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG // ≈ 204.36°
+const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG // ≈ 180.29°
+const OTHER_SPAN_DEG = (OTHER_PCT / 100) * TOTAL_SLICE_DEG // ≈ 167.71°
+const OTHER_START_DEG = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG // ≈ 186.29°
 
 export function AllocationPie() {
   const size = 260
