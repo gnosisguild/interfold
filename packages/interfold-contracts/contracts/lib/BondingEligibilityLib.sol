@@ -15,6 +15,7 @@ import {
     BondingEligibilityStorage
 } from "../storage/BondingEligibilityStorage.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
 library BondingEligibilityLib {
@@ -26,7 +27,7 @@ library BondingEligibilityLib {
         uint256 licenseBond;
         uint256 licenseRequiredBond;
         uint256 licenseActiveBps;
-        uint256 ticketBalance;
+        address ticketToken;
         uint256 ticketPrice;
         uint256 minTicketBalance;
     }
@@ -58,7 +59,11 @@ library BondingEligibilityLib {
         uint256 configurationVersion,
         uint256 activeOperatorCount
     ) external returns (uint256 newActiveOperatorCount, bool newActive) {
+        InterfoldTicketToken ticketToken = InterfoldTicketToken(
+            requirements.ticketToken
+        );
         newActive =
+            ticketToken.registry() == address(this) &&
             requirements.registered &&
             !requirements.banned &&
             isLicensed(
@@ -66,7 +71,7 @@ library BondingEligibilityLib {
                 requirements.licenseRequiredBond,
                 requirements.licenseActiveBps
             ) &&
-            requirements.ticketBalance / requirements.ticketPrice >=
+            ticketToken.balanceOf(operator) / requirements.ticketPrice >=
             requirements.minTicketBalance;
         if (oldActive == newActive) {
             return (activeOperatorCount, newActive);

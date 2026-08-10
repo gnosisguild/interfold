@@ -41,8 +41,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   one configuration. Asset identity changes only after old balances, E3 assignments, slash locks,
   and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
   replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
-  bound to the exact BondingRegistry and asset-configuration version. — `flow-trace/02`, `05`; INDEX
-  concern #23
+  bound to the exact BondingRegistry and asset-configuration version. Asset activation requires the
+  ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive without
+  blocking license slashes, bans, or exit bookkeeping. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
   does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`

@@ -407,6 +407,11 @@ ProofFailureAccusation arrives via P2P from another committee member
 └─ 7. Check quorum immediately
 ```
 
+Governance can keep or increase `accusationVoteValidity` immediately. Every reduction, including a
+zero-second window, uses the two-day proposal and commit path. A proposal expires two days after it
+becomes ready. A direct keep or increase operation clears the pending proposal. This delay prevents
+an immediate reduction from making accusation votes unusable before operators can react.
+
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
 
 ```
