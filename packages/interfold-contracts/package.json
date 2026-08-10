@@ -1,7 +1,7 @@
 {
   "name": "@interfold/contracts",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.7.0",
+  "version": "0.6.0",
   "license": "LGPL-3.0-only",
   "type": "module",
   "author": {
@@ -159,7 +159,7 @@
     "compile:ts": "tsc",
     "coverage": "pnpm test --coverage",
     "deploy": "hardhat run scripts/run.ts",
-    "deploy:mocks": "export DEPLOY_MOCKS=true && pnpm clean:deployments && hardhat run scripts/run.ts",
+    "deploy:mocks": "export DEPLOY_MOCKS=true && pnpm clean:deployments && hardhat run scripts/run.ts --network localhost",
     "configure:slashing-policies": "hardhat run scripts/runConfigureSlashingPolicies.ts --network localhost",
     "deploy:verifiers": "hardhat run scripts/deployVerifiers.ts",
     "deploy:faucet": "hardhat run scripts/deployFaucet.ts --network sepolia",
