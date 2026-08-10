@@ -22,6 +22,10 @@ contract MockE3Program is IE3Program {
     /// the mock short-circuits that step by treating the input as the ciphertext.
     IInterfold public interfold;
 
+    bool public reenterPlaintextPublication;
+    bytes public reentrantPlaintext;
+    bytes public reentrantProof;
+
     mapping(uint256 e3Id => bytes32 paramsHash) public paramsHashes;
     mapping(uint256 e3Id => bytes32 commitment)
         public expectedCiphertextCommitments;
@@ -35,6 +39,15 @@ contract MockE3Program is IE3Program {
         bytes32 commitment
     ) external {
         expectedCiphertextCommitments[e3Id] = commitment;
+    }
+
+    function setReentrantPlaintextPublication(
+        bytes calldata plaintext,
+        bytes calldata proof
+    ) external {
+        reenterPlaintextPublication = true;
+        reentrantPlaintext = plaintext;
+        reentrantProof = proof;
     }
 
     function validate(
@@ -95,10 +108,17 @@ contract MockE3Program is IE3Program {
         bytes32,
         bytes32 ciphertextCommitment,
         bytes memory data
-    ) external view returns (bool success) {
+    ) external returns (bool success) {
         bytes32 expected = expectedCiphertextCommitments[e3Id];
         if (expected != bytes32(0) && ciphertextCommitment != expected) {
             return false;
+        }
+        if (reenterPlaintextPublication) {
+            interfold.publishPlaintextOutput(
+                e3Id,
+                reentrantPlaintext,
+                reentrantProof
+            );
         }
         return data.length > 0;
     }

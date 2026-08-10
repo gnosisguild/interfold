@@ -72,7 +72,8 @@ library BondingAssetLib {
             currentTicket,
             currentTicketDecimals,
             config.ticketToken,
-            config.expectedTicketDecimals
+            config.expectedTicketDecimals,
+            registry
         );
         _validateLicenseAsset(
             currentLicense,
@@ -105,12 +106,20 @@ library BondingAssetLib {
         address current,
         uint8 currentDecimals,
         address next,
-        uint8 expectedDecimals
+        uint8 expectedDecimals,
+        address registry
     ) private view {
         if (next.code.length == 0) {
             revert IBondingRegistry.InvalidBondingAsset(next);
         }
         _validateDecimals(next, expectedDecimals);
+        address configuredRegistry = _ticketRegistry(next);
+        if (configuredRegistry != registry && current != address(0)) {
+            revert IBondingRegistry.TicketTokenRegistryMismatch(
+                configuredRegistry,
+                registry
+            );
+        }
         if (
             current == address(0) ||
             (current == next && currentDecimals == expectedDecimals)
@@ -124,6 +133,16 @@ library BondingAssetLib {
                 liabilities
             );
         }
+    }
+
+    function _ticketRegistry(address token) private view returns (address) {
+        (bool success, bytes memory result) = token.staticcall(
+            abi.encodeWithSignature("registry()")
+        );
+        if (!success || result.length != 32) {
+            revert IBondingRegistry.InvalidBondingAsset(token);
+        }
+        return abi.decode(result, (address));
     }
 
     function _validateLicenseAsset(

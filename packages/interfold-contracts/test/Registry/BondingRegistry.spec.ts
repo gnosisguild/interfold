@@ -6,6 +6,7 @@
 import { expect } from "chai";
 
 import {
+  ADDRESS_TWO as AddressTwo,
   LICENSE_REQUIRED_BOND,
   MIN_TICKET_BALANCE,
   SEVEN_DAYS,
@@ -1684,6 +1685,77 @@ describe("BondingRegistry", function () {
         expect(
           await bondingRegistry.bondingAssetConfigurationVersion(),
         ).to.equal(version + 1n);
+      });
+
+      it("rejects a ticket token assigned to another registry", async function () {
+        const { bondingRegistry, usdcToken, owner } = await loadFixture(setup);
+        const replacement = await (
+          await ethers.getContractFactory("InterfoldTicketToken")
+        ).deploy(await usdcToken.getAddress(), AddressTwo, owner.address);
+
+        await expect(
+          setBondingAssetConfig(bondingRegistry, {
+            ticketToken: await replacement.getAddress(),
+          }),
+        )
+          .to.be.revertedWithCustomError(
+            bondingRegistry,
+            "TicketTokenRegistryMismatch",
+          )
+          .withArgs(AddressTwo, await bondingRegistry.getAddress());
+      });
+
+      it("keeps license slashing live after ticket registry drift", async function () {
+        const {
+          bondingRegistry,
+          ticketToken,
+          licenseToken,
+          usdcToken,
+          operator1,
+          slashingManager,
+        } = await loadFixture(setup);
+        const bondAmount = LICENSE_REQUIRED_BOND;
+        const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
+        const slashAmount = 1n;
+        const slashReason = ethers.encodeBytes32String("TEST_SLASH");
+
+        await licenseToken
+          .connect(operator1)
+          .approve(await bondingRegistry.getAddress(), bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .bondLicenseFor(operator1Address, bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address);
+        await usdcToken
+          .connect(operator1)
+          .approve(await ticketToken.getAddress(), ticketAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount);
+        expect(await bondingRegistry.isActive(operator1Address)).to.be.true;
+
+        await ticketToken.setRegistry(AddressTwo);
+        const slashSigner = await impersonateSlashingManager(slashingManager);
+        await expect(
+          bondingRegistry
+            .connect(slashSigner)
+            .slashLicenseBond(operator1Address, slashAmount, slashReason),
+        )
+          .to.emit(bondingRegistry, "LicenseBondUpdated")
+          .withArgs(
+            operator1Address,
+            -slashAmount,
+            bondAmount - slashAmount,
+            slashReason,
+          );
+        await networkHelpers.stopImpersonatingAccount(
+          await slashingManager.getAddress(),
+        );
+
+        expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
+        expect(await bondingRegistry.numActiveOperators()).to.equal(0);
       });
     });
 

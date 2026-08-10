@@ -808,6 +808,7 @@ Compute provider runs computation on encrypted data:
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
 │  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
+    │  │    0. enter the shared publication reentrancy guard      │
     │  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
@@ -825,8 +826,10 @@ Compute provider runs computation on encrypted data:
 │  │    8. e3Program.verify(...)                              │
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
-│  │    9. Emit CiphertextOutputPublished(...)                │
-│  │   10. Emit E3StageChanged(CiphertextReady)               │
+│  │       → Cannot re-enter ciphertext or plaintext publication│
+│  │    9. Confirm the stage is still CiphertextReady          │
+│  │   10. Emit CiphertextOutputPublished(...)                 │
+│  │   11. Emit E3StageChanged(CiphertextReady)                │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```

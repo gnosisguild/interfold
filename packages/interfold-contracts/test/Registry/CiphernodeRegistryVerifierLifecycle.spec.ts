@@ -127,19 +127,19 @@ describe("CiphernodeRegistryOwnable verifier lifecycle", function () {
     expect(await registry.pendingDkgFoldAttestationVerifierAt()).to.equal(0);
   });
 
-  it("requires timelock to set accusationVoteValidity to zero", async function () {
+  it("requires the timelock for any accusationVoteValidity reduction", async function () {
     const { registry } = await loadFixture(setup);
 
     await expect(
-      registry.setAccusationVoteValidity(0),
+      registry.setAccusationVoteValidity(1),
     ).to.be.revertedWithCustomError(
       registry,
-      "AccusationVoteValidityZeroRequiresTimelock",
+      "AccusationVoteValidityDecreaseRequiresTimelock",
     );
 
-    await registry.proposeAccusationVoteValidity(0);
+    await registry.proposeAccusationVoteValidity(1);
     await expect(
-      registry.commitAccusationVoteValidity(0),
+      registry.commitAccusationVoteValidity(1),
     ).to.be.revertedWithCustomError(
       registry,
       "AccusationVoteValidityTimelockActive",
@@ -149,10 +149,55 @@ describe("CiphernodeRegistryOwnable verifier lifecycle", function () {
       Number(await registry.ACCUSATION_VOTE_VALIDITY_TIMELOCK()) + 1,
     );
 
-    await expect(registry.commitAccusationVoteValidity(0))
+    await expect(registry.commitAccusationVoteValidity(1))
       .to.emit(registry, "AccusationVoteValiditySet")
-      .withArgs(0);
-    expect(await registry.accusationVoteValidity()).to.equal(0);
+      .withArgs(1);
+    expect(await registry.accusationVoteValidity()).to.equal(1);
+  });
+
+  it("allows accusationVoteValidity increases without the timelock", async function () {
+    const { registry } = await loadFixture(setup);
+    const increased = (await registry.DEFAULT_ACCUSATION_VOTE_VALIDITY()) + 1n;
+
+    await expect(registry.setAccusationVoteValidity(increased))
+      .to.emit(registry, "AccusationVoteValiditySet")
+      .withArgs(increased);
+    expect(await registry.accusationVoteValidity()).to.equal(increased);
+  });
+
+  it("clears a pending reduction on a direct validity update", async function () {
+    const { registry } = await loadFixture(setup);
+    const increased = (await registry.DEFAULT_ACCUSATION_VOTE_VALIDITY()) + 1n;
+
+    await registry.proposeAccusationVoteValidity(0);
+    await expect(registry.setAccusationVoteValidity(increased))
+      .to.emit(registry, "AccusationVoteValidityProposalCancelled")
+      .withArgs(0)
+      .and.to.emit(registry, "AccusationVoteValiditySet")
+      .withArgs(increased);
+
+    expect(await registry.pendingAccusationVoteValidityAt()).to.equal(0);
+    await expect(
+      registry.commitAccusationVoteValidity(0),
+    ).to.be.revertedWithCustomError(
+      registry,
+      "NoPendingAccusationVoteValidityUpdate",
+    );
+  });
+
+  it("expires an uncommitted accusationVoteValidity proposal", async function () {
+    const { registry } = await loadFixture(setup);
+    const timelock = await registry.ACCUSATION_VOTE_VALIDITY_TIMELOCK();
+
+    await registry.proposeAccusationVoteValidity(0);
+    await time.increase(Number(timelock * 2n) + 1);
+
+    await expect(
+      registry.commitAccusationVoteValidity(0),
+    ).to.be.revertedWithCustomError(
+      registry,
+      "AccusationVoteValidityProposalExpired",
+    );
   });
 
   it("cancels pending accusationVoteValidity proposal", async function () {

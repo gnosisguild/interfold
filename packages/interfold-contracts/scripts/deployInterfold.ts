@@ -251,6 +251,9 @@ export const deployInterfold = async (
   const bondingRegistryAddress = await bondingRegistry.getAddress();
   console.log("BondingRegistry deployed to:", bondingRegistryAddress);
 
+  console.log("Setting BondingRegistry address in InterfoldTicketToken...");
+  await interfoldTicketToken.setRegistry(bondingRegistryAddress);
+
   // FOLD is deployed with BondingRegistry's real address. Local deployments set
   // the deployer as the one-time claim source placeholder; production sale
   // deployments set the actual auction after it exists.
@@ -407,12 +410,6 @@ export const deployInterfold = async (
       SORTITION_SUBMISSION_WINDOW,
     ),
     "ciphernodeRegistry.setSortitionSubmissionWindow",
-  );
-
-  console.log("Setting BondingRegistry address in InterfoldTicketToken...");
-  await send(
-    interfoldTicketToken.setRegistry(bondingRegistryAddress),
-    "interfoldTicketToken.setRegistry",
   );
 
   console.log("Setting CiphernodeRegistry address in BondingRegistry...");
