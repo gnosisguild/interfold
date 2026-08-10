@@ -41,8 +41,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   one configuration. Asset identity changes only after old balances, E3 assignments, slash locks,
   and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
   replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
-  bound to the exact BondingRegistry and asset-configuration version. — `flow-trace/02`, `05`; INDEX
-  concern #23
+  bound to the exact BondingRegistry and asset-configuration version. Asset activation requires the
+  ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive without
+  blocking license slashes, bans, or exit bookkeeping. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
   does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
@@ -306,6 +307,17 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   hashes. — INDEX concern #21
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
   stored in plaintext. — `flow-trace/00`, `01`
+- **Deployment writes must be mined, not only sent.** Every configuration transaction in
+  `scripts/deployInterfold.ts` goes through the `send()` helper in `scripts/utils.ts`, which awaits
+  the receipt and fails on a missing receipt or a non-success status. `send()` also labels a
+  rejection from the send or the mining stage and keeps the original error as its `cause`. A bare
+  `await contract.setX(...)` resolves when the transaction is dispatched, so on a real network a
+  dropped write leaves the reference at `address(0)` while the script still exits zero.
+- **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
+  reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
+  InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry license token)
+  plus the BondingRegistry reward-distributor authorization for Interfold, and throws with the full
+  list of mismatches. Add a read-back for each new cross-contract setter.
 
 ## Known open issues (check before assuming current behavior is correct)
 

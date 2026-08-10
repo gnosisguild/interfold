@@ -20,6 +20,7 @@ mod events;
 mod faucet;
 pub mod helpers;
 mod init;
+mod manifest;
 mod net;
 mod net_get_peer_id;
 mod node;
@@ -76,16 +77,24 @@ pub async fn main() -> Result<()> {
     let maybe_remote_command = TryInto::<RemoteCli>::try_into(cli.clone()).ok();
 
     // If the socket exists and the command can be parsed as remote
-    if let Err(err) = if let (Some(server), Some(command)) = (maybe_server, maybe_remote_command) {
+    let result = if let (Some(server), Some(command)) = (maybe_server, maybe_remote_command) {
         // Run the command over the socket
         run_on_daemon(out, server, command).await
     } else {
         // Run the command locally
         cli.execute(out, config_result).await
-    } {
+    };
+
+    // Drain before reporting, not after. `Console` hands its messages to a
+    // spawned printer task, so exiting straight from the error branch discards
+    // everything the command had already logged — which is precisely the detail
+    // explaining the failure. Flushing first also keeps the error last, after
+    // the output it refers to.
+    handle.flush().await;
+
+    if let Err(err) = result {
         eprintln!("{}", colorize(err, Color::Red));
         std::process::exit(1);
     }
-    handle.flush().await;
     Ok(())
 }

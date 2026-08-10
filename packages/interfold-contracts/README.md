@@ -8,7 +8,7 @@
 | `CiphernodeRegistryOwnable.sol` | Ciphernode registration and committee selection                                                  |
 | `BondingRegistry.sol`           | FOLD token bonding for ciphernodes; tracks bond amounts and manages bond lifecycle               |
 | `InterfoldToken.sol`            | FOLD governance/utility token                                                                    |
-| `InterfoldTicketToken.sol`      | USDC-backed tickets used by ciphernodes for sortition entry                                      |
+| `InterfoldTicketToken.sol`      | Collateral-backed tickets used by ciphernodes for sortition entry                                |
 | `SlashingManager.sol`           | Fault attribution and slashing for dishonest ciphernodes (accusation → quorum → slash)           |
 | `E3RefundManager.sol`           | Issues refunds to requesters when an E3 fails                                                    |
 
@@ -93,6 +93,12 @@ contract code. It registers the program in `Interfold.initialize` before
 ownership transfers to the Safe. Later registrations require an owner
 transaction.
 
+The fee token and the ticket collateral token have separate configuration
+fields. For the planned launch, set `feeToken` to USDS and set
+`ticketUnderlyingToken` to sUSDS. Set both decimal values to `18`. Set
+`ticketPrice` and each ticket slash penalty in sUSDS share units. Do not copy
+the six-decimal mock-token values into a release configuration.
+
 The canonical outputs live under `packages/interfold-contracts/deploy/`. The
 scripts also mirror addresses into `deployed_contracts.json` for older tasks and
 verification.
@@ -100,9 +106,10 @@ verification.
 ## E3 pricing and protocol revenue
 
 Protocol revenue comes from successful E3 request fees, not from ticket
-purchases. Tickets are USDC-backed sortition capacity deposits for ciphernodes;
-they are normally redeemable by the node, while slashed ticket funds are routed
-through the failure/success slashed-funds paths.
+purchases. Tickets are collateral-backed sortition capacity deposits for
+ciphernodes. The planned launch uses sUSDS shares. Nodes can redeem their shares
+after an exit, while the protocol routes slashed shares through the slashed-fund
+paths.
 
 The launch pricing model is cost-plus:
 
@@ -182,7 +189,7 @@ pnpm ciphernode:add --network [network]
 Options:
 
 - `--license-bond-amount`: Amount of FOLD to bond (default: 1000 FOLD)
-- `--ticket-amount`: Amount of USDC for tickets (default: 1000 USDC)
+- `--ticket-amount`: Amount of the configured ticket collateral token
 
 For testing/development, you can also use the admin task to register any
 ciphernode address:

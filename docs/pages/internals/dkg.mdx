@@ -452,13 +452,12 @@ that call is only valid when no verifier is yet configured.
 
 #### Vote validity changes
 
-`setAccusationVoteValidity` is not timelocked — governance can change the window instantly. The
-restart requirement is therefore weaker than for the verifier (an updated window doesn't reject old
-signatures, it only shortens or extends the freshness check for future ones), but the same "live
-nodes keep stamping deadlines from the old value" caveat applies. After a non-trivial shortening,
-coordinate a rolling restart so every node observes the new window before any votes are signed
-against it. See the [Registry-wide vote validity window](#registry-wide-vote-validity-window)
-subsection for the emergency-stop semantics (setting it to 0).
+`setAccusationVoteValidity` applies increases immediately and clears any pending reduction. Every
+reduction uses the two-day `proposeAccusationVoteValidity` and `commitAccusationVoteValidity` path.
+After the delay, governance has two days to commit. The delay gives operators time to restart before
+updated peers enforce shorter local deadlines. See the
+[Registry-wide vote validity window](#registry-wide-vote-validity-window) subsection for the
+emergency-stop semantics of a zero-second window.
 
 **Multi-chain caveat.** When `interfold.config.yaml` lists more than one chain, the node reads
 `dkgFoldAttestationVerifier` and `accusationVoteValidity` from the **first enabled** chain only
@@ -573,7 +572,9 @@ seconds-window applied to every accusation vote's `deadline`. Ciphernodes fetch 
 startup via `fetch_accusation_vote_validity_from_registry` and reuse the value for the process
 lifetime — same lifecycle as `dkgFoldAttestationVerifier`.
 
-Governance can change it with `setAccusationVoteValidity(uint256)`. Two notable knob positions:
+Governance can keep or increase it with `setAccusationVoteValidity(uint256)`. This call clears a
+pending reduction. A reduction must use `proposeAccusationVoteValidity(uint256)`, wait two days, and
+then use `commitAccusationVoteValidity(uint256)` within two days. Two notable values are:
 
 - **Shorter window**: tighter freshness — useful if stolen-signature replay becomes a concern, at
   the cost of giving on-chain submitters less slack to land the `proposeSlash` transaction after
@@ -586,10 +587,9 @@ Governance can change it with `setAccusationVoteValidity(uint256)`. Two notable 
   if `proposeSlash` is included in the **same block** — zero is an emergency brake, not a guaranteed
   hard stop. Restore a non-zero window quickly to keep the slashing path operational.
 
-In-flight ciphernodes do not pick up the new value until restart. After a non-trivial shortening
-(e.g. 30 min → 1 min) operators should coordinate a rolling restart, otherwise live nodes will keep
-stamping deadlines from the old window and produce votes that the on-chain check rejects when the
-round closes.
+In-flight ciphernodes do not pick up the new value until restart. Operators must complete a rolling
+restart during the two-day delay for a reduction. Updated peers reject accusations whose deadlines
+exceed their local validity window. The on-chain check only rejects a deadline after it expires.
 
 ---
 

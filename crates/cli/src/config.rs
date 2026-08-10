@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Result;
+use crate::manifest::{self, Finding};
+use anyhow::{bail, Result};
 use clap::Subcommand;
 use e3_config::AppConfig;
 use e3_console::{log, Console};
@@ -16,10 +17,148 @@ pub enum ConfigCommands {
         /// The config parameter to get. If not provided, prints all config values
         param: Option<String>,
     },
+    /// Compare configured contract addresses against the published deployment manifest
+    Check {
+        /// Only check this chain. Defaults to every chain in the config.
+        #[arg(long)]
+        chain: Option<String>,
+
+        /// Fetch the manifest from this URL instead of the latest GitHub release
+        #[arg(long)]
+        manifest_url: Option<String>,
+    },
 }
 
 pub async fn execute(out: Console, command: ConfigCommands, config: &AppConfig) -> Result<()> {
-    let ConfigCommands::Get { param } = command;
+    match command {
+        ConfigCommands::Get { param } => get(out, param, config),
+        ConfigCommands::Check {
+            chain,
+            manifest_url,
+        } => check(out, chain, manifest_url, config).await,
+    }
+}
+
+/// Report configured addresses that no longer match the published deployment.
+///
+/// Exits non-zero when any address is wrong, so this can gate a node restart in
+/// a supervisor or a CI job. A stale `deploy_block` or an unconfigured optional
+/// contract is printed but does not fail the command.
+async fn check(
+    out: Console,
+    chain_filter: Option<String>,
+    manifest_url: Option<String>,
+    config: &AppConfig,
+) -> Result<()> {
+    let (published, source) = manifest::fetch(manifest_url.as_deref()).await?;
+    log!(out, "Deployment manifest: {}", source);
+
+    let chains: Vec<_> = config
+        .chains()
+        .iter()
+        .filter(|c| match &chain_filter {
+            Some(f) => &c.name == f,
+            None => true,
+        })
+        .collect();
+
+    if chains.is_empty() {
+        match chain_filter {
+            Some(name) => bail!("No chain named `{}` in the config", name),
+            None => bail!("No chains configured"),
+        }
+    }
+
+    let mut errors = 0usize;
+
+    for chain in chains {
+        let Some(network) = published.networks.get(&chain.name) else {
+            // A local or private deployment is not described by the published
+            // manifest. That is expected, not staleness worth reporting.
+            log!(
+                out,
+                "{}: not in the published manifest, skipping",
+                chain.name
+            );
+            continue;
+        };
+
+        let findings = manifest::compare(chain, network);
+
+        if findings.is_empty() {
+            log!(out, "{}: up to date", chain.name);
+        } else {
+            log!(out, "{}:", chain.name);
+            for finding in &findings {
+                if finding.is_error() {
+                    errors += 1;
+                }
+                match finding {
+                    Finding::AddressMismatch {
+                        key,
+                        configured,
+                        published,
+                    } => log!(
+                        out,
+                        "  STALE {}: config has {}, published is {}",
+                        key,
+                        configured,
+                        published
+                    ),
+                    Finding::DeployBlockMismatch {
+                        key,
+                        configured,
+                        published,
+                    } => log!(
+                        out,
+                        "  warn  {}: deploy_block {}, published is {}",
+                        key,
+                        configured
+                            .map(|b| b.to_string())
+                            .unwrap_or_else(|| "unset".to_string()),
+                        published
+                    ),
+                    Finding::Missing { key, published } => log!(
+                        out,
+                        "  note  {}: not configured, published is {}",
+                        key,
+                        published
+                    ),
+                    Finding::ChainIdMismatch {
+                        configured,
+                        published,
+                    } => log!(
+                        out,
+                        "  STALE chain_id: config has {}, published is {}",
+                        configured,
+                        published
+                    ),
+                }
+            }
+        }
+
+        if network.mocks {
+            log!(
+                out,
+                "  note  {} is a mock deployment - proofs are accepted without being verified",
+                chain.name
+            );
+        }
+    }
+
+    if errors > 0 {
+        // Not "address(es)": a chain-id mismatch counts here too.
+        bail!(
+            "{} setting(s) do not match the published deployment. \
+             Update your config, or re-run `interfold ciphernode setup`.",
+            errors
+        );
+    }
+
+    Ok(())
+}
+
+fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
     match param.as_deref() {
         Some("name") => {
             log!(out, "{}", config.name());

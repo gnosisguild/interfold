@@ -175,6 +175,14 @@ library InterfoldLifecycle {
             proof
         );
 
+        stage = stages[e3Id];
+        if (stage != IInterfold.E3Stage.CiphertextReady)
+            revert IInterfold.InvalidStage(
+                e3Id,
+                IInterfold.E3Stage.CiphertextReady,
+                stage
+            );
+
         emit IInterfold.CiphertextOutputPublished(
             e3Id,
             ciphertextOutput,

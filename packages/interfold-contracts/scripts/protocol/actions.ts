@@ -22,6 +22,11 @@ async function assertPreconditions(
     requireContract(ethers.provider, config.feeToken, "feeToken"),
     requireContract(
       ethers.provider,
+      config.ticketUnderlyingToken,
+      "ticketUnderlyingToken",
+    ),
+    requireContract(
+      ethers.provider,
       config.bondingRegistryProxy,
       "bondingRegistryProxy",
     ),
@@ -80,6 +85,7 @@ export async function actionDeploy(): Promise<void> {
     safe: config.safe,
     fold: config.fold,
     feeToken: config.feeToken,
+    ticketUnderlyingToken: config.ticketUnderlyingToken,
     bondingRegistryProxy: config.bondingRegistryProxy,
     bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
     ...result.contracts,
@@ -101,6 +107,8 @@ export async function actionDeploy(): Promise<void> {
 
   console.log(`
 Protocol contracts deployed
+  fee token:              ${deployment.feeToken}
+  ticket underlying:      ${deployment.ticketUnderlyingToken}
   ticketToken:            ${deployment.ticketToken}
   slashingManager:        ${deployment.slashingManager}
   ciphernodeRegistry:     ${deployment.ciphernodeRegistry}

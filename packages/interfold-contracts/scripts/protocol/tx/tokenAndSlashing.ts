@@ -19,6 +19,19 @@ export function appendTicketTxs(
       c.ticketToken,
       i.ticket.encodeFunctionData("setRegistry", [config.bondingRegistryProxy]),
     ),
+    safeTx(
+      config.bondingRegistryProxy,
+      i.bonding.encodeFunctionData("setBondingAssetConfig", [
+        {
+          ticketToken: c.ticketToken,
+          licenseToken: config.fold,
+          ticketPrice: BigInt(config.bonding.ticketPrice),
+          licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+          expectedTicketDecimals: config.bonding.ticketTokenDecimals,
+          expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+        },
+      ]),
+    ),
   );
   if (config.ticketToken.lockRegistry) {
     txs.push(
