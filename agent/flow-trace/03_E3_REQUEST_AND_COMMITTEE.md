@@ -191,7 +191,9 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ ScoreBackend.get_committee():
     │   │
     │   ├─ Loads nodes from NodeStateStore at requestBlock - 1
-    │   │   (filter: active then and now, historical tickets > 0)
+    │   │   (filter: active at that time, historical tickets > 0)
+    │   │   → Every node uses the complete request-time ticket range
+    │   │   → Local and remote active-job counts do not change this range
     │   │
     │   ├─ For EACH eligible node:
     │   │   For EACH ticket t in [1..availableTickets]:
@@ -209,8 +211,11 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     └─ Sends WithSortitionTicket<E3Requested> to CiphernodeSelector
         │
         ├─ If THIS node is in the selected committee:
-        │   ticket_id = Some(TicketId::Score(best_ticket_number))
-        │   party_index = Some(index_in_committee)
+        │   ├─ Check only this node's voluntary active-job limit
+        │   ├─ If capacity remains:
+        │   │   ticket_id = Some(TicketId::Score(best_ticket_number))
+        │   │   party_index = Some(index_in_committee)
+        │   └─ If capacity is exhausted: ticket_id = None
         │
         └─ If NOT selected: ticket_id = None
 ```
@@ -446,7 +451,8 @@ The registry must finalize a ready committee.
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
    consume those same values, so later activation, collateral, or price changes cannot alter the
-   candidate set.
+   candidate set. All nodes compute the same buffered winner set. A selected node can decline its
+   own submission when its local active-job capacity is exhausted.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

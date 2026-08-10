@@ -63,6 +63,11 @@ jobs:
               - 'rust-toolchain.toml'
             contracts:
               - 'packages/interfold-contracts/**'
+              # The manifest is generated from deployed_contracts.json and
+              # verified by `gen:manifest:check` in test_contracts. Without this
+              # path a hand-edited manifest never runs the drift check and
+              # reaches the release assets stale.
+              - 'deployments/**'
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
@@ -397,6 +402,11 @@ jobs:
 
       - name: 'Validate upgrade storage layouts'
         run: 'pnpm --filter @interfold/contracts validate:upgrade'
+
+      # The manifest is what operators fetch to detect a redeploy, so it must
+      # never lag deployed_contracts.json.
+      - name: 'Check the deployment manifest is up to date'
+        run: 'pnpm --filter @interfold/contracts gen:manifest:check'
 
       - name: 'Test the contracts and generate the coverage report'
         run: 'pnpm coverage'

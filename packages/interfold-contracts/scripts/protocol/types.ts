@@ -33,6 +33,7 @@ export interface ProtocolConfigFile {
   bondingRegistryProxyAdmin: string;
   feeToken: string;
   feeTokenDecimals: number;
+  ticketUnderlyingToken: string;
   protocolTreasury: string;
   slashedFundsTreasury: string;
   slasher: string;
@@ -75,6 +76,7 @@ export interface ProtocolDeployment {
   safe: string;
   fold: string;
   feeToken: string;
+  ticketUnderlyingToken: string;
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   bondingRegistryImplementation: string;

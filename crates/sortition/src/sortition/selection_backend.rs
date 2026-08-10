@@ -75,7 +75,6 @@ impl ScoreBackend {
         &self,
         chain_id: u64,
         node_state: &NodeStateStore,
-        local_address: Address,
         snapshot: SortitionSnapshot,
     ) -> Vec<RegisteredNode> {
         info!(
@@ -117,32 +116,48 @@ impl ScoreBackend {
                         .try_into()
                         .unwrap_or(0u64)
                 };
-                let count = if n.address == local_address {
-                    total_tickets.saturating_sub(ns.active_jobs)
-                } else {
-                    total_tickets
-                };
-
-                if count == 0 {
+                if total_tickets == 0 {
                     info!(
                         address = %addr_str,
                         ticket_balance = ?ticket_balance,
                         ticket_price = ?snapshot.ticket_price,
                         total_tickets = total_tickets,
-                        active_jobs = ns.active_jobs,
-                        is_local = n.address == local_address,
-                        "Node has no tickets in the local sortition view"
+                        "Node has no tickets in the request-time sortition view"
                     );
                     return None;
                 }
 
-                let tickets = (1..=count).map(|i| Ticket { ticket_id: i }).collect();
+                let tickets = (1..=total_tickets)
+                    .map(|i| Ticket { ticket_id: i })
+                    .collect();
                 Some(RegisteredNode {
                     address: n.address,
                     tickets,
                 })
             })
             .collect()
+    }
+
+    /// Return whether the local node chooses to accept one more committee duty.
+    fn has_local_capacity(
+        node_state: &NodeStateStore,
+        local_address: Address,
+        snapshot: SortitionSnapshot,
+    ) -> bool {
+        let Some(timepoint) = snapshot.request_block.checked_sub(1) else {
+            return false;
+        };
+        let Some(state) = node_state.nodes.get(&local_address.to_string()) else {
+            return false;
+        };
+        if snapshot.ticket_price.is_zero() {
+            return false;
+        }
+
+        let total_tickets = (state.ticket_balance_at(timepoint) / snapshot.ticket_price)
+            .try_into()
+            .unwrap_or(0u64);
+        state.active_jobs < total_tickets
     }
 }
 
@@ -165,7 +180,7 @@ impl SortitionList<String> for ScoreBackend {
         }
 
         let want: Address = address.parse()?;
-        let nodes = self.build_nodes_from_state(chain_id, node_state, want, snapshot);
+        let nodes = self.build_nodes_from_state(chain_id, node_state, snapshot);
         if nodes.is_empty() {
             return Ok(false);
         }
@@ -207,7 +222,7 @@ impl SortitionList<String> for ScoreBackend {
 
         let want: alloy::primitives::Address = address.parse()?;
         let nodes: Vec<RegisteredNode> =
-            self.build_nodes_from_state(chain_id, node_state, want, snapshot);
+            self.build_nodes_from_state(chain_id, node_state, snapshot);
 
         if nodes.is_empty() {
             return Ok(None);
@@ -232,6 +247,9 @@ impl SortitionList<String> for ScoreBackend {
             .iter()
             .enumerate()
             .find_map(|(i, w)| (w.address == want).then_some((i as u64, Some(w.ticket_id))));
+        if maybe.is_some() && !Self::has_local_capacity(node_state, want, snapshot) {
+            return Ok(None);
+        }
         Ok(maybe)
     }
 
@@ -287,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn active_jobs_reduce_only_the_local_nodes_ticket_range() {
+    fn active_jobs_do_not_change_the_canonical_ticket_ranges() {
         let local = Address::from([0x11; 20]);
         let remote = Address::from([0x22; 20]);
         let mut backend = ScoreBackend::default();
@@ -336,13 +354,72 @@ mod tests {
             ticket_price: U256::from(10),
         };
 
-        let local_view = backend.build_nodes_from_state(1, &state, local, snapshot);
-        assert_eq!(ticket_count(&local_view, local), Some(1));
-        assert_eq!(ticket_count(&local_view, remote), Some(3));
+        let nodes = backend.build_nodes_from_state(1, &state, snapshot);
+        assert_eq!(ticket_count(&nodes, local), Some(3));
+        assert_eq!(ticket_count(&nodes, remote), Some(3));
+    }
 
-        let remote_view = backend.build_nodes_from_state(1, &state, remote, snapshot);
-        assert_eq!(ticket_count(&remote_view, local), Some(3));
-        assert_eq!(ticket_count(&remote_view, remote), None);
+    #[test]
+    fn selected_node_remains_a_member_when_local_capacity_is_exhausted() {
+        let local = Address::from([0x11; 20]);
+        let mut backend = ScoreBackend::default();
+        backend.add(local.to_string());
+
+        let mut state = NodeStateStore::default();
+        state.nodes.insert(
+            local.to_string(),
+            NodeState {
+                ticket_balance: U256::from(30),
+                active_jobs: 3,
+                active: true,
+                ticket_balance_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: U256::from(30),
+                }],
+                active_history: vec![StateCheckpoint {
+                    timepoint: 1,
+                    value: true,
+                }],
+            },
+        );
+        let snapshot = SortitionSnapshot {
+            request_block: 2,
+            ticket_price: U256::from(10),
+        };
+        let e3_id = E3id::new("1", 1);
+        let seed = Seed::from(U256::from(1));
+
+        assert!(backend
+            .contains(
+                e3_id.clone(),
+                seed,
+                1,
+                local.to_string(),
+                1,
+                &state,
+                snapshot,
+            )
+            .unwrap());
+        assert_eq!(
+            backend
+                .get_index(
+                    e3_id.clone(),
+                    seed,
+                    1,
+                    local.to_string(),
+                    1,
+                    &state,
+                    snapshot,
+                )
+                .unwrap(),
+            None
+        );
+
+        state.nodes.get_mut(&local.to_string()).unwrap().active_jobs = 2;
+        assert!(backend
+            .get_index(e3_id, seed, 1, local.to_string(), 1, &state, snapshot,)
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -381,7 +458,6 @@ mod tests {
         let nodes = backend.build_nodes_from_state(
             1,
             &state,
-            address,
             SortitionSnapshot {
                 request_block: 10,
                 ticket_price: U256::from(10),
@@ -418,7 +494,6 @@ mod tests {
         let nodes = backend.build_nodes_from_state(
             1,
             &state,
-            address,
             SortitionSnapshot {
                 request_block: 10,
                 ticket_price: U256::from(10),
@@ -461,7 +536,6 @@ mod tests {
         let nodes = backend.build_nodes_from_state(
             1,
             &state,
-            address,
             SortitionSnapshot {
                 request_block: 10,
                 ticket_price: U256::from(10),

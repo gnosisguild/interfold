@@ -6,7 +6,8 @@
   "bondingRegistryProxy": "0x0000000000000000000000000000000000000000",
   "bondingRegistryProxyAdmin": "0x0000000000000000000000000000000000000000",
   "feeToken": "0x0000000000000000000000000000000000000000",
-  "feeTokenDecimals": 6,
+  "feeTokenDecimals": 18,
+  "ticketUnderlyingToken": "0x0000000000000000000000000000000000000000",
   "protocolTreasury": "0x0000000000000000000000000000000000000000",
   "slashedFundsTreasury": "0x0000000000000000000000000000000000000000",
   "slasher": "0x0000000000000000000000000000000000000000",
@@ -14,9 +15,9 @@
     "lockRegistry": false
   },
   "bonding": {
-    "ticketPrice": "10000000",
+    "ticketPrice": "10000000000000000000",
     "licenseRequiredBond": "100000000000000000000",
-    "ticketTokenDecimals": 6,
+    "ticketTokenDecimals": 18,
     "licenseTokenDecimals": 18,
     "minTicketBalance": "1",
     "exitDelay": "604800"
@@ -36,13 +37,13 @@
       "decryptionWindow": "3600"
     },
     "pricing": {
-      "keyGenFixedPerNode": "100000",
-      "keyGenPerEncryptionProof": "50000",
-      "coordinationPerPair": "10000",
-      "availabilityPerNodePerSec": "50",
-      "decryptionPerNode": "300000",
-      "publicationBase": "1000000",
-      "verificationPerProof": "5000",
+      "keyGenFixedPerNode": "100000000000000000",
+      "keyGenPerEncryptionProof": "50000000000000000",
+      "coordinationPerPair": "10000000000000000",
+      "availabilityPerNodePerSec": "50000000000000",
+      "decryptionPerNode": "300000000000000000",
+      "publicationBase": "1000000000000000000",
+      "verificationPerProof": "5000000000000000",
       "protocolTreasury": "0x0000000000000000000000000000000000000000",
       "marginBps": "1000",
       "protocolShareBps": "182",

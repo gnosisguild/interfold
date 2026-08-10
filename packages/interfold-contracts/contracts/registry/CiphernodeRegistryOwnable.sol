@@ -140,12 +140,10 @@ contract CiphernodeRegistryOwnable is
     address public pendingDkgFoldAttestationVerifier;
     uint256 public pendingDkgFoldAttestationVerifierAt;
 
-    /// @notice Registry-wide validity window (seconds) accusers stamp on accusation
-    ///         vote signatures. Ciphernodes fetch this on startup and add it to the
-    ///         current wall-clock when populating `AccusationVote.deadline`. The
-    ///         on-chain `SlashingManager._verifyAttestationEvidence` then enforces
-    ///         `block.timestamp <= deadline`, so this value bounds how long a leaked
-    ///         vote signature stays replayable.
+    /// @notice Registry-wide validity window (seconds) for accusation vote deadlines.
+    ///         Ciphernodes use it to create deadlines and validate peer accusations.
+    ///         The on-chain slashing manager only checks that the signed deadline
+    ///         has not expired.
     ///
     /// @dev Set with [`setAccusationVoteValidity`] by `owner()`. Defaults to the
     ///      [`DEFAULT_ACCUSATION_VOTE_VALIDITY`] constant on initialize so newly-
@@ -775,24 +773,29 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Update the registry-wide vote validity window used by accusers
     ///         when stamping `AccusationVote.deadline`.
-    /// @dev Ciphernodes fetch this value at startup. Operators must restart
-    ///      nodes after a change. Otherwise, nodes can create vote deadlines
-    ///      that the on-chain verifier rejects.
-    /// @param _accusationVoteValidity New nonzero validity window in seconds.
-    ///        Use the proposal and commit functions to set a zero value.
+    /// @dev Ciphernodes fetch this value at startup. Operators must restart nodes
+    ///      after a reduction so peers use the same local deadline limit.
+    /// @param _accusationVoteValidity New validity window in seconds.
+    ///        Use the proposal and commit functions to reduce the current value.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
         require(
-            _accusationVoteValidity != 0,
-            AccusationVoteValidityZeroRequiresTimelock()
+            _accusationVoteValidity >= accusationVoteValidity,
+            AccusationVoteValidityDecreaseRequiresTimelock()
         );
+        if (pendingAccusationVoteValidityAt != 0) {
+            uint256 pending = pendingAccusationVoteValidity;
+            pendingAccusationVoteValidity = 0;
+            pendingAccusationVoteValidityAt = 0;
+            emit AccusationVoteValidityProposalCancelled(pending);
+        }
         accusationVoteValidity = _accusationVoteValidity;
         emit AccusationVoteValiditySet(_accusationVoteValidity);
     }
 
-    /// @notice Propose a new accusation vote validity window. Zero is permitted.
-    /// @dev A zero value disables slash submission after the time delay.
+    /// @notice Propose a new accusation vote validity window.
+    /// @dev This path permits reductions, including a zero-second window.
     function proposeAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external onlyOwner {
@@ -805,6 +808,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @notice Commit a previously proposed accusation vote validity update.
+    /// @dev The commit window lasts for one timelock period after the proposal is ready.
     /// @param _accusationVoteValidity Must match the pending proposal.
     function commitAccusationVoteValidity(
         uint256 _accusationVoteValidity
@@ -820,6 +824,11 @@ contract CiphernodeRegistryOwnable is
         require(
             block.timestamp >= readyAt,
             AccusationVoteValidityTimelockActive(readyAt, block.timestamp)
+        );
+        uint256 expiredAt = readyAt + ACCUSATION_VOTE_VALIDITY_TIMELOCK;
+        require(
+            block.timestamp <= expiredAt,
+            AccusationVoteValidityProposalExpired(expiredAt, block.timestamp)
         );
         accusationVoteValidity = _accusationVoteValidity;
         pendingAccusationVoteValidity = 0;

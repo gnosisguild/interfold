@@ -15,7 +15,7 @@ export async function deployProtocolContracts(
 
   const ticketFactory = await ethers.getContractFactory("InterfoldTicketToken");
   const ticket = await ticketFactory.deploy(
-    config.feeToken,
+    config.ticketUnderlyingToken,
     ADDRESS_ONE,
     config.safe,
   );

@@ -62,6 +62,9 @@ interface IBondingRegistry {
         uint8 actual
     );
 
+    /// @notice The ticket token authorizes a different collateral registry.
+    error TicketTokenRegistryMismatch(address configured, address expected);
+
     /// @notice Asset rotation is blocked by unfinished work owned by a manager.
     error AssetConfigurationInUse(
         address manager,

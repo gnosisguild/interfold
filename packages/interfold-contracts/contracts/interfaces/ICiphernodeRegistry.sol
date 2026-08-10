@@ -340,15 +340,21 @@ interface ICiphernodeRegistry {
     /// @notice A vote-validity commit was attempted before timelock elapsed.
     error AccusationVoteValidityTimelockActive(uint256 readyAt, uint256 nowAt);
 
+    /// @notice A vote-validity commit was attempted after its commit window ended.
+    error AccusationVoteValidityProposalExpired(
+        uint256 expiredAt,
+        uint256 nowAt
+    );
+
     /// @notice `commitAccusationVoteValidity` was called but no proposal is pending.
     error NoPendingAccusationVoteValidityUpdate();
 
     /// @notice `commitAccusationVoteValidity` was called with value that does not match pending.
     error AccusationVoteValidityMismatch(uint256 pending, uint256 provided);
 
-    /// @notice Directly setting `accusationVoteValidity` to zero is disallowed.
+    /// @notice Directly reducing `accusationVoteValidity` is disallowed.
     ///         Use `proposeAccusationVoteValidity` + `commitAccusationVoteValidity`.
-    error AccusationVoteValidityZeroRequiresTimelock();
+    error AccusationVoteValidityDecreaseRequiresTimelock();
 
     /// @notice Node has already submitted a ticket for this E3
     error NodeAlreadySubmitted();
@@ -550,8 +556,8 @@ interface ICiphernodeRegistry {
     /// @notice Returns registry-wide accusation vote validity window (seconds).
     function accusationVoteValidity() external view returns (uint256);
 
-    /// @notice Sets nonzero accusation vote validity directly.
-    /// @dev Setting zero requires timelocked propose/commit flow.
+    /// @notice Keeps or increases accusation vote validity without a delay.
+    /// @dev Reductions require the timelocked propose/commit flow.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external;
