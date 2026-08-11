@@ -4,16 +4,34 @@
 
 use super::*;
 
+/// Report whether a contract call error is a revert with the named custom error.
+fn reverts_with(error: &anyhow::Error, error_name: &str) -> bool {
+    decode_error_from_str(&format!("{error:?}"))
+        .as_deref()
+        .is_some_and(|message| message.contains(error_name))
+}
+
 pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 'static>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
     ticket_number: u64,
-) -> Result<TransactionReceipt> {
+) -> Result<TxOutcome> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let ticket_number_u256 = U256::from(ticket_number);
 
-    send_tx_with_retry("submitTicket", &["CommitteeNotRequested"], || {
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        ticket_submission_settled(
+            settled_provider,
+            contract_address,
+            e3_id_u256,
+            ticket_number_u256,
+        )
+        .await
+    };
+
+    send_tx_idempotent("submitTicket", &["CommitteeNotRequested"], settled, || {
         let provider = provider.clone();
         async move {
             info!("Calling: contract.submitTicket(..)");
@@ -38,20 +56,79 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
     .await
 }
 
+/// Report whether this node's ticket is already recorded on chain.
+///
+/// `submitTicket` reverts with `NodeAlreadySubmitted` for a sender that is
+/// already in the submission set, so a retry that duplicates a mined
+/// submission needs no further attempt.
+async fn ticket_submission_settled<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id_u256: U256,
+    ticket_number_u256: U256,
+) -> Result<bool> {
+    let from_address = provider.provider().default_signer_address();
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    match contract
+        .submitTicket(e3_id_u256, ticket_number_u256)
+        .from(from_address)
+        .call()
+        .await
+    {
+        Ok(_) => Ok(false),
+        Err(err) => Ok(reverts_with(
+            &anyhow::Error::from(err),
+            "NodeAlreadySubmitted",
+        )),
+    }
+}
+
+/// Report whether another sender finalized the committee.
+///
+/// `finalizeCommittee` reverts with `CommitteeAlreadyFinalized` for every
+/// committee stage that is not `Requested`. The `Failed` stage gives the same
+/// revert, so the revert alone does not show that a committee formed. The
+/// check therefore reads the committee: `getActiveCommitteeNodes` returns an
+/// empty list for each stage other than `Finalized`. A failed formation stays
+/// an error.
+async fn committee_finalization_settled<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id_u256: U256,
+) -> Result<bool> {
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    let Err(err) = contract.finalizeCommittee(e3_id_u256).call().await else {
+        return Ok(false);
+    };
+
+    if !reverts_with(&anyhow::Error::from(err), "CommitteeAlreadyFinalized") {
+        return Ok(false);
+    }
+
+    let committee = contract.getActiveCommitteeNodes(e3_id_u256).call().await?;
+    Ok(!committee.nodes.is_empty())
+}
+
 pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-) -> Result<TransactionReceipt> {
+) -> Result<TxOutcome> {
     let e3_id_u256: U256 = e3_id.try_into()?;
 
-    send_tx_with_retry(
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        committee_finalization_settled(settled_provider, contract_address, e3_id_u256).await
+    };
+
+    send_tx_idempotent(
         "finalizeCommittee",
         &[
             "SubmissionWindowNotClosed",
             "CommitteeNotRequested",
             "ThresholdNotMet",
         ],
+        settled,
         || {
             let provider = provider.clone();
             async move {
@@ -152,8 +229,8 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     pk_commitment: [u8; 32],
     dkg_aggregator_proof: Option<&Proof>,
     dkg_attestation_bundle: Option<&[u8]>,
-) -> Result<TransactionReceipt> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
+) -> Result<TxOutcome> {
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
     let pk_commitment_b256 = B256::from(pk_commitment);
 
     // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
@@ -168,31 +245,45 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
             .ok_or_else(|| anyhow::anyhow!("mandatory DKG attestation bundle missing"))?,
     );
 
+    // The published commitment must equal ours, which `should_publish_committee`
+    // enforces. A different commitment stays an error.
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        should_publish_committee(settled_provider, contract_address, e3_id, pk_commitment)
+            .await
+            .map(|should_publish| !should_publish)
+    };
+
     // RPC may not have synced finalization yet
-    send_tx_with_retry("publishCommittee", &["CommitteeNotFinalized"], || {
-        let provider = provider.clone();
-        let proof = proof.clone();
-        let attestation_bundle = attestation_bundle.clone();
-        async move {
-            info!("Calling: contract.publishCommittee(..)");
-            let _nonce_guard = transaction_nonce_guard(&provider).await;
-            let from_address = provider.provider().default_signer_address();
-            let current_nonce = provider
-                .provider()
-                .get_transaction_count(from_address)
-                .pending()
-                .await?;
-            let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-            let builder = contract
-                .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
-                .nonce(current_nonce);
-            let pending = builder.send().await?;
-            drop(_nonce_guard);
-            let receipt = pending.get_receipt().await?;
-            require_successful_receipt("publish committee", &receipt)?;
-            Ok(receipt)
-        }
-    })
+    send_tx_idempotent(
+        "publishCommittee",
+        &["CommitteeNotFinalized"],
+        settled,
+        || {
+            let provider = provider.clone();
+            let proof = proof.clone();
+            let attestation_bundle = attestation_bundle.clone();
+            async move {
+                info!("Calling: contract.publishCommittee(..)");
+                let _nonce_guard = transaction_nonce_guard(&provider).await;
+                let from_address = provider.provider().default_signer_address();
+                let current_nonce = provider
+                    .provider()
+                    .get_transaction_count(from_address)
+                    .pending()
+                    .await?;
+                let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+                let builder = contract
+                    .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
+                    .nonce(current_nonce);
+                let pending = builder.send().await?;
+                drop(_nonce_guard);
+                let receipt = pending.get_receipt().await?;
+                require_successful_receipt("publish committee", &receipt)?;
+                Ok(receipt)
+            }
+        },
+    )
     .await
 }
 
