@@ -16,9 +16,9 @@
   },
   "bonding": {
     "ticketPrice": "10000000000000000000",
-    "licenseRequiredBond": "100000000000000000000",
+    "requiredCiphernodeBond": "100000000000000000000",
     "ticketTokenDecimals": 18,
-    "licenseTokenDecimals": 18,
+    "ciphernodeBondTokenDecimals": 18,
     "minTicketBalance": "1",
     "exitDelay": "604800"
   },

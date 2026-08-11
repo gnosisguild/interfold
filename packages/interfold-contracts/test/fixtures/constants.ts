@@ -112,7 +112,7 @@ export const COMMITTEE_THRESHOLDS_MINIMUM_ONLY: ReadonlyArray<
 // ── Bonding defaults (passed to BondingRegistry constructor) ─────────────────
 /** 10 USDC ticket price (6-decimal stable). */
 export const TICKET_PRICE = ethers.parseUnits("10", 6);
-/** 1000 license tokens (18-decimal) per active operator. */
-export const LICENSE_REQUIRED_BOND = ethers.parseEther("1000");
+/** 1000 ciphernode bond tokens (18-decimal) per active operator. */
+export const REQUIRED_CIPHERNODE_BOND = ethers.parseEther("1000");
 /** Minimum ticket balance (in ticket units, not USDC). */
 export const MIN_TICKET_BALANCE = 5;

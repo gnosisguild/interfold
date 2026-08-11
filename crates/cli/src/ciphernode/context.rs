@@ -116,8 +116,8 @@ impl ChainContext {
         &self.chain_label
     }
 
-    pub(crate) async fn license_token_address(&self) -> Result<Address> {
-        Ok(self.bonding().getLicenseToken().call().await?)
+    pub(crate) async fn ciphernode_bond_token_address(&self) -> Result<Address> {
+        Ok(self.bonding().getCiphernodeBondToken().call().await?)
     }
 
     pub(crate) async fn ticket_token_address(&self) -> Result<Address> {

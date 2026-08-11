@@ -41,7 +41,7 @@ library BondingRegistrationLib {
      * @param operators The registry's operator records.
      * @param operator The operator being registered.
      * @param slashingManager The configured slashing manager, which must be set.
-     * @param licenseRequiredBond The bond an operator must hold to register.
+     * @param requiredCiphernodeBond The bond an operator must hold to register.
      * @param banned Whether the operator is currently banned. Evaluated by the registry so this
      * library need not be linked against `BondingSlashingLib` in every deployment path;
      * `activeBanCount` is a view that cannot revert, so computing it earlier does not change
@@ -52,7 +52,7 @@ library BondingRegistrationLib {
             storage operators,
         address operator,
         address slashingManager,
-        uint256 licenseRequiredBond,
+        uint256 requiredCiphernodeBond,
         bool banned
     ) external {
         // Clear previous exit request
@@ -70,8 +70,8 @@ library BondingRegistrationLib {
             IBondingRegistry.AlreadyRegistered()
         );
         require(
-            operators[operator].licenseBond >= licenseRequiredBond,
-            IBondingRegistry.NotLicensed()
+            operators[operator].ciphernodeBond >= requiredCiphernodeBond,
+            IBondingRegistry.NotCiphernodeBonded()
         );
 
         operators[operator].registered = true;
@@ -123,7 +123,7 @@ library BondingRegistrationLib {
         BondingRegistry.Operator storage op = operators[operator];
 
         uint256 ticketOut = ticketToken.balanceOf(operator);
-        uint256 licenseOut = op.licenseBond;
+        uint256 ciphernodeBondOut = op.ciphernodeBond;
         if (ticketOut != 0) {
             ticketToken.burnTickets(operator, ticketOut);
             emit IBondingRegistry.TicketBalanceUpdated(
@@ -133,22 +133,22 @@ library BondingRegistrationLib {
                 REASON_WITHDRAW
             );
         }
-        if (licenseOut != 0) {
-            op.licenseBond = 0;
-            emit IBondingRegistry.LicenseBondUpdated(
+        if (ciphernodeBondOut != 0) {
+            op.ciphernodeBond = 0;
+            emit IBondingRegistry.CiphernodeBondUpdated(
                 operator,
-                -int256(licenseOut),
+                -int256(ciphernodeBondOut),
                 0,
                 REASON_UNBOND
             );
         }
 
-        if (ticketOut != 0 || licenseOut != 0) {
+        if (ticketOut != 0 || ciphernodeBondOut != 0) {
             exits.queueAssetsForExit(
                 operator,
                 exitDelay,
                 ticketOut,
-                licenseOut
+                ciphernodeBondOut
             );
         }
     }

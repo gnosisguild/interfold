@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Bonding-registry reads and writes behind the ciphernode operator guide.
 //
-// Only the BondingRegistry address is configured. Every other address (license
+// Only the BondingRegistry address is configured. Every other address (ciphernode bond
 // token, ticket wrapper, ticket underlying) is read back from the registry, so
 // the guide follows the deployment instead of a hardcoded token list.
 
@@ -20,17 +20,17 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Addr
 const registry = { address: CONTRACTS.BondingRegistry, abi: bondingRegistryAbi } as const
 
 export type BondingConfig = {
-  licenseToken: Address
-  licenseSymbol: string
-  licenseDecimals: number
+  ciphernodeBondToken: Address
+  ciphernodeBondSymbol: string
+  ciphernodeBondDecimals: number
   /** ERC-20 wrapper that mints non-transferable tickets. Spender for the ticket purchase. */
   ticketToken: Address
   /** Asset actually paid for tickets (the wrapper's underlying). */
   ticketBase: Address
   ticketSymbol: string
   ticketDecimals: number
-  /** License bond required before an operator can register. */
-  licenseRequiredBond: bigint
+  /** Ciphernode bond required before an operator can register. */
+  requiredCiphernodeBond: bigint
   /** Price of one ticket, in ticket-underlying units. */
   ticketPrice: bigint
   /** Tickets an operator must hold to become active. */
@@ -42,20 +42,20 @@ export type BondingConfig = {
 export type OperatorStatus = {
   bondOwner: Address | null
   pendingBondOwner: Address | null
-  licenseBond: bigint
+  ciphernodeBond: bigint
   ticketBalance: bigint
   availableTickets: bigint
-  licensed: boolean
+  bonded: boolean
   registered: boolean
   active: boolean
   exitInProgress: boolean
 }
 
 export type AccountFunds = {
-  /** License-token (FOLD) balance of the connected wallet. */
-  licenseBalance: bigint
-  /** License-token allowance granted to the bonding registry. */
-  licenseAllowance: bigint
+  /** Ciphernode bond-token (FOLD) balance of the connected wallet. */
+  ciphernodeBondBalance: bigint
+  /** Ciphernode bond-token allowance granted to the bonding registry. */
+  ciphernodeBondAllowance: bigint
   /** Ticket-underlying balance of the connected wallet. */
   ticketBaseBalance: bigint
   /** Ticket-underlying allowance granted to the ticket wrapper. */
@@ -63,10 +63,10 @@ export type AccountFunds = {
 }
 
 export async function fetchBondingConfig(): Promise<BondingConfig> {
-  const [licenseToken, ticketToken, licenseRequiredBond, ticketPrice, minTicketBalance, exitDelay] = await Promise.all([
-    (publicClient.readContract as any)({ ...registry, functionName: 'getLicenseToken' }) as Promise<Address>,
+  const [ciphernodeBondToken, ticketToken, requiredCiphernodeBond, ticketPrice, minTicketBalance, exitDelay] = await Promise.all([
+    (publicClient.readContract as any)({ ...registry, functionName: 'getCiphernodeBondToken' }) as Promise<Address>,
     (publicClient.readContract as any)({ ...registry, functionName: 'getTicketToken' }) as Promise<Address>,
-    (publicClient.readContract as any)({ ...registry, functionName: 'licenseRequiredBond' }) as Promise<bigint>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'requiredCiphernodeBond' }) as Promise<bigint>,
     (publicClient.readContract as any)({ ...registry, functionName: 'ticketPrice' }) as Promise<bigint>,
     (publicClient.readContract as any)({ ...registry, functionName: 'minTicketBalance' }) as Promise<bigint>,
     (publicClient.readContract as any)({ ...registry, functionName: 'exitDelay' }) as Promise<bigint>,
@@ -78,22 +78,22 @@ export async function fetchBondingConfig(): Promise<BondingConfig> {
     functionName: 'underlying',
   })) as Address
 
-  const [licenseSymbol, licenseDecimals, ticketSymbol, ticketDecimals] = await Promise.all([
-    tokenSymbol(licenseToken, 'FOLD'),
-    tokenDecimals(licenseToken, 18),
+  const [ciphernodeBondSymbol, ciphernodeBondDecimals, ticketSymbol, ticketDecimals] = await Promise.all([
+    tokenSymbol(ciphernodeBondToken, 'FOLD'),
+    tokenDecimals(ciphernodeBondToken, 18),
     tokenSymbol(ticketBase, 'USDC'),
     tokenDecimals(ticketBase, 6),
   ])
 
   return {
-    licenseToken,
-    licenseSymbol,
-    licenseDecimals,
+    ciphernodeBondToken,
+    ciphernodeBondSymbol,
+    ciphernodeBondDecimals,
     ticketToken,
     ticketBase,
     ticketSymbol,
     ticketDecimals,
-    licenseRequiredBond,
+    requiredCiphernodeBond,
     ticketPrice,
     minTicketBalance,
     exitDelay: BigInt(exitDelay),
@@ -118,14 +118,14 @@ async function tokenDecimals(token: Address, fallback: number): Promise<number> 
 }
 
 export async function fetchOperatorStatus(operator: Address): Promise<OperatorStatus> {
-  const [bondOwner, pendingBondOwner, licenseBond, ticketBalance, availableTickets, licensed, registered, active, exitInProgress] =
+  const [bondOwner, pendingBondOwner, ciphernodeBond, ticketBalance, availableTickets, bonded, registered, active, exitInProgress] =
     await Promise.all([
       (publicClient.readContract as any)({ ...registry, functionName: 'bondOwnerOf', args: [operator] }) as Promise<Address>,
       (publicClient.readContract as any)({ ...registry, functionName: 'pendingBondOwnerOf', args: [operator] }) as Promise<Address>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'getLicenseBond', args: [operator] }) as Promise<bigint>,
+      (publicClient.readContract as any)({ ...registry, functionName: 'getCiphernodeBond', args: [operator] }) as Promise<bigint>,
       (publicClient.readContract as any)({ ...registry, functionName: 'getTicketBalance', args: [operator] }) as Promise<bigint>,
       (publicClient.readContract as any)({ ...registry, functionName: 'availableTickets', args: [operator] }) as Promise<bigint>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'isLicensed', args: [operator] }) as Promise<boolean>,
+      (publicClient.readContract as any)({ ...registry, functionName: 'isCiphernodeBonded', args: [operator] }) as Promise<boolean>,
       (publicClient.readContract as any)({ ...registry, functionName: 'isRegistered', args: [operator] }) as Promise<boolean>,
       (publicClient.readContract as any)({ ...registry, functionName: 'isActive', args: [operator] }) as Promise<boolean>,
       (publicClient.readContract as any)({ ...registry, functionName: 'hasExitInProgress', args: [operator] }) as Promise<boolean>,
@@ -134,10 +134,10 @@ export async function fetchOperatorStatus(operator: Address): Promise<OperatorSt
   return {
     bondOwner: bondOwner === ZERO_ADDRESS ? null : bondOwner,
     pendingBondOwner: pendingBondOwner === ZERO_ADDRESS ? null : pendingBondOwner,
-    licenseBond,
+    ciphernodeBond,
     ticketBalance,
     availableTickets,
-    licensed,
+    bonded,
     registered,
     active,
     exitInProgress,
@@ -145,10 +145,10 @@ export async function fetchOperatorStatus(operator: Address): Promise<OperatorSt
 }
 
 export async function fetchAccountFunds(account: Address, config: BondingConfig): Promise<AccountFunds> {
-  const [licenseBalance, licenseAllowance, ticketBaseBalance, ticketBaseAllowance] = await Promise.all([
-    (publicClient.readContract as any)({ address: config.licenseToken, abi: erc20Abi, functionName: 'balanceOf', args: [account] }),
+  const [ciphernodeBondBalance, ciphernodeBondAllowance, ticketBaseBalance, ticketBaseAllowance] = await Promise.all([
+    (publicClient.readContract as any)({ address: config.ciphernodeBondToken, abi: erc20Abi, functionName: 'balanceOf', args: [account] }),
     (publicClient.readContract as any)({
-      address: config.licenseToken,
+      address: config.ciphernodeBondToken,
       abi: erc20Abi,
       functionName: 'allowance',
       args: [account, CONTRACTS.BondingRegistry],
@@ -162,8 +162,8 @@ export async function fetchAccountFunds(account: Address, config: BondingConfig)
     }),
   ])
   return {
-    licenseBalance: licenseBalance as bigint,
-    licenseAllowance: licenseAllowance as bigint,
+    ciphernodeBondBalance: ciphernodeBondBalance as bigint,
+    ciphernodeBondAllowance: ciphernodeBondAllowance as bigint,
     ticketBaseBalance: ticketBaseBalance as bigint,
     ticketBaseAllowance: ticketBaseAllowance as bigint,
   }

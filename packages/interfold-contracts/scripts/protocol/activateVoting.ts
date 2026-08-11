@@ -36,10 +36,10 @@ export async function actionActivateVoting(): Promise<void> {
   );
 
   // Fail here, with a readable message, rather than inside the constructor.
-  const licenseToken: string = await registry.getLicenseToken();
-  if (licenseToken.toLowerCase() !== config.fold.toLowerCase()) {
+  const ciphernodeBondToken: string = await registry.getCiphernodeBondToken();
+  if (ciphernodeBondToken.toLowerCase() !== config.fold.toLowerCase()) {
     throw new Error(
-      `BondingRegistry bonds ${licenseToken}, not FOLD (${config.fold}). ` +
+      `BondingRegistry bonds ${ciphernodeBondToken}, not FOLD (${config.fold}). ` +
         "Execute the Safe batch from --action deploy first.",
     );
   }

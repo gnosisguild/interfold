@@ -7,13 +7,16 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("BondingRegistry", (m) => {
   const ticketToken = m.getParameter("ticketToken");
-  const licenseToken = m.getParameter("licenseToken");
+  const ciphernodeBondToken = m.getParameter("ciphernodeBondToken");
   const registry = m.getParameter("registry");
   const slashedFundsTreasury = m.getParameter("slashedFundsTreasury");
   const ticketPrice = m.getParameter("ticketPrice");
-  const licenseRequiredBond = m.getParameter("licenseRequiredBond");
+  const requiredCiphernodeBond = m.getParameter("requiredCiphernodeBond");
   const expectedTicketDecimals = m.getParameter("expectedTicketDecimals", 6);
-  const expectedLicenseDecimals = m.getParameter("expectedLicenseDecimals", 18);
+  const expectedCiphernodeBondDecimals = m.getParameter(
+    "expectedCiphernodeBondDecimals",
+    18,
+  );
   const minTicketBalance = m.getParameter("minTicketBalance");
   const exitDelay = m.getParameter("exitDelay");
   const owner = m.getParameter("owner");
@@ -37,11 +40,11 @@ export default buildModule("BondingRegistry", (m) => {
     owner,
     {
       ticketToken,
-      licenseToken,
+      ciphernodeBondToken,
       ticketPrice,
-      licenseRequiredBond,
+      requiredCiphernodeBond,
       expectedTicketDecimals,
-      expectedLicenseDecimals,
+      expectedCiphernodeBondDecimals,
     },
     registry,
     slashedFundsTreasury,

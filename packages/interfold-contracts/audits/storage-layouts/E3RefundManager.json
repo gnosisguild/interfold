@@ -3,13 +3,13 @@
   "contract": "E3RefundManager",
   "source": "contracts/E3RefundManager.sol",
   "baseline": {
-    "buildInfoId": "solc-0_8_28-c67746045110bc3bfa6bcb8ada6c4b08a0757c58",
+    "buildInfoId": "solc-0_8_28-6c3df357e0d6be22cda7269d037ed22d4e31db41",
     "compiler": "0.8.28+commit.7893614a",
-    "compilerInputSha256": "41100e376652f54cb06460aeb8bafd03d7f95a7a08fd33dcd0a5cc10bc5729cc",
+    "compilerInputSha256": "4946f26d34c0958eb513d4e7abab0ca68c648201db381b043eb4730b409045be",
     "dependencyLockSha256": "6d68a3e5274e033311b5df563ae852a0657e6ac524a2be1a9b5c94dadd2134af",
     "evmVersion": "paris",
     "optimizerRuns": 1,
-    "sourceCommit": "f2346aa6ebf326e9c2f46594a17b30f1137490f4",
+    "sourceCommit": "aab60143569fe0f4d7843270f1d90457a78bebad",
     "sourceSha256": "0a0e815b6c52bd3f984bc0d2f186208a6eecd948cb99cf862ed3a8646bd928fd"
   },
   "metadata": {
@@ -65,23 +65,23 @@
   },
   "storage": [
     {
-      "astId": 12621,
+      "astId": 15283,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "interfold",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(IInterfold)23251"
+      "type": "t_contract(IInterfold)25947"
     },
     {
-      "astId": 12625,
+      "astId": 15287,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "bondingRegistry",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IBondingRegistry)20516"
+      "type": "t_contract(IBondingRegistry)23178"
     },
     {
-      "astId": 12628,
+      "astId": 15290,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "treasury",
       "offset": 0,
@@ -89,23 +89,23 @@
       "type": "t_address"
     },
     {
-      "astId": 12632,
+      "astId": 15294,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_workAllocation",
       "offset": 0,
       "slot": "3",
-      "type": "t_struct(WorkValueAllocation)21507_storage"
+      "type": "t_struct(WorkValueAllocation)24203_storage"
     },
     {
-      "astId": 12638,
+      "astId": 15300,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_distributions",
       "offset": 0,
       "slot": "4",
-      "type": "t_mapping(t_uint256,t_struct(RefundDistribution)21547_storage)"
+      "type": "t_mapping(t_uint256,t_struct(RefundDistribution)24243_storage)"
     },
     {
-      "astId": 12645,
+      "astId": 15307,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_requesterClaimed",
       "offset": 0,
@@ -113,7 +113,7 @@
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))"
     },
     {
-      "astId": 12650,
+      "astId": 15312,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_claimCount",
       "offset": 0,
@@ -121,7 +121,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 12655,
+      "astId": 15317,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_honestNodeClaimCount",
       "offset": 0,
@@ -129,7 +129,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 12660,
+      "astId": 15322,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_totalHonestNodePaid",
       "offset": 0,
@@ -137,7 +137,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 12666,
+      "astId": 15328,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_honestNodes",
       "offset": 0,
@@ -145,15 +145,15 @@
       "type": "t_mapping(t_uint256,t_array(t_address)dyn_storage)"
     },
     {
-      "astId": 12674,
+      "astId": 15336,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingTreasury",
       "offset": 0,
       "slot": "10",
-      "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)2491,t_uint256))"
+      "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)4279,t_uint256))"
     },
     {
-      "astId": 12681,
+      "astId": 15343,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_honestNodeClaimed",
       "offset": 0,
@@ -161,15 +161,15 @@
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))"
     },
     {
-      "astId": 12687,
+      "astId": 15349,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_e3PolicySnapshots",
       "offset": 0,
       "slot": "12",
-      "type": "t_mapping(t_uint256,t_struct(E3PolicySnapshot)21526_storage)"
+      "type": "t_mapping(t_uint256,t_struct(E3PolicySnapshot)24222_storage)"
     },
     {
-      "astId": 12690,
+      "astId": 15352,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "policyVersion",
       "offset": 0,
@@ -177,39 +177,39 @@
       "type": "t_uint64"
     },
     {
-      "astId": 12698,
+      "astId": 15360,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingSlashedByToken",
       "offset": 0,
       "slot": "14",
-      "type": "t_mapping(t_uint256,t_mapping(t_contract(IERC20)2491,t_uint256))"
+      "type": "t_mapping(t_uint256,t_mapping(t_contract(IERC20)4279,t_uint256))"
     },
     {
-      "astId": 12708,
+      "astId": 15370,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingSlashedClaims",
       "offset": 0,
       "slot": "15",
-      "type": "t_mapping(t_uint256,t_mapping(t_contract(IERC20)2491,t_mapping(t_address,t_uint256)))"
+      "type": "t_mapping(t_uint256,t_mapping(t_contract(IERC20)4279,t_mapping(t_address,t_uint256)))"
     },
     {
-      "astId": 12716,
+      "astId": 15378,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingTrackedTreasury",
       "offset": 0,
       "slot": "16",
-      "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)2491,t_uint256))"
+      "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)4279,t_uint256))"
     },
     {
-      "astId": 12722,
+      "astId": 15384,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_tokenLiability",
       "offset": 0,
       "slot": "17",
-      "type": "t_mapping(t_contract(IERC20)2491,t_uint256)"
+      "type": "t_mapping(t_contract(IERC20)4279,t_uint256)"
     },
     {
-      "astId": 12727,
+      "astId": 15389,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_successSettlementReady",
       "offset": 0,
@@ -217,7 +217,7 @@
       "type": "t_mapping(t_uint256,t_bool)"
     },
     {
-      "astId": 12734,
+      "astId": 15396,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_rewardRecipients",
       "offset": 0,
@@ -225,47 +225,47 @@
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_address))"
     },
     {
-      "astId": 12742,
+      "astId": 15404,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingSlashedRoutes",
       "offset": 0,
       "slot": "20",
-      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingSlashedRoute)12597_storage))"
+      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingSlashedRoute)15259_storage))"
     },
     {
-      "astId": 12750,
+      "astId": 15412,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingExpulsions",
       "offset": 0,
       "slot": "21",
-      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingExpulsion)12604_storage))"
+      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingExpulsion)15266_storage))"
     },
     {
-      "astId": 12758,
+      "astId": 15420,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_operatorEntitlements",
       "offset": 0,
       "slot": "22",
-      "type": "t_mapping(t_uint256,t_mapping(t_address,t_struct(OperatorEntitlement)12617_storage))"
+      "type": "t_mapping(t_uint256,t_mapping(t_address,t_struct(OperatorEntitlement)15279_storage))"
     },
     {
-      "astId": 12764,
+      "astId": 15426,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_e3SlashTokens",
       "offset": 0,
       "slot": "23",
-      "type": "t_mapping(t_uint256,t_contract(IERC20)2491)"
+      "type": "t_mapping(t_uint256,t_contract(IERC20)4279)"
     },
     {
-      "astId": 12770,
+      "astId": 15432,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_e3SuccessTokens",
       "offset": 0,
       "slot": "24",
-      "type": "t_mapping(t_uint256,t_contract(IERC20)2491)"
+      "type": "t_mapping(t_uint256,t_contract(IERC20)4279)"
     },
     {
-      "astId": 12777,
+      "astId": 15439,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "_pendingHeldSuccessClaims",
       "offset": 0,
@@ -273,7 +273,7 @@
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_uint256))"
     },
     {
-      "astId": 16741,
+      "astId": 19403,
       "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
       "label": "__gap",
       "offset": 0,
@@ -304,17 +304,17 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(IBondingRegistry)20516": {
+    "t_contract(IBondingRegistry)23178": {
       "encoding": "inplace",
       "label": "contract IBondingRegistry",
       "numberOfBytes": "20"
     },
-    "t_contract(IERC20)2491": {
+    "t_contract(IERC20)4279": {
       "encoding": "inplace",
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IInterfold)23251": {
+    "t_contract(IInterfold)25947": {
       "encoding": "inplace",
       "label": "contract IInterfold",
       "numberOfBytes": "20"
@@ -333,19 +333,19 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_mapping(t_contract(IERC20)2491,t_uint256))": {
+    "t_mapping(t_address,t_mapping(t_contract(IERC20)4279,t_uint256))": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => mapping(contract IERC20 => uint256))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_contract(IERC20)2491,t_uint256)"
+      "value": "t_mapping(t_contract(IERC20)4279,t_uint256)"
     },
-    "t_mapping(t_address,t_struct(OperatorEntitlement)12617_storage)": {
+    "t_mapping(t_address,t_struct(OperatorEntitlement)15279_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct E3RefundManager.OperatorEntitlement)",
       "numberOfBytes": "32",
-      "value": "t_struct(OperatorEntitlement)12617_storage"
+      "value": "t_struct(OperatorEntitlement)15279_storage"
     },
     "t_mapping(t_address,t_uint256)": {
       "encoding": "mapping",
@@ -354,16 +354,16 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_mapping(t_contract(IERC20)2491,t_mapping(t_address,t_uint256))": {
+    "t_mapping(t_contract(IERC20)4279,t_mapping(t_address,t_uint256))": {
       "encoding": "mapping",
-      "key": "t_contract(IERC20)2491",
+      "key": "t_contract(IERC20)4279",
       "label": "mapping(contract IERC20 => mapping(address => uint256))",
       "numberOfBytes": "32",
       "value": "t_mapping(t_address,t_uint256)"
     },
-    "t_mapping(t_contract(IERC20)2491,t_uint256)": {
+    "t_mapping(t_contract(IERC20)4279,t_uint256)": {
       "encoding": "mapping",
-      "key": "t_contract(IERC20)2491",
+      "key": "t_contract(IERC20)4279",
       "label": "mapping(contract IERC20 => uint256)",
       "numberOfBytes": "32",
       "value": "t_uint256"
@@ -382,12 +382,12 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_uint256,t_contract(IERC20)2491)": {
+    "t_mapping(t_uint256,t_contract(IERC20)4279)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => contract IERC20)",
       "numberOfBytes": "32",
-      "value": "t_contract(IERC20)2491"
+      "value": "t_contract(IERC20)4279"
     },
     "t_mapping(t_uint256,t_mapping(t_address,t_address))": {
       "encoding": "mapping",
@@ -403,12 +403,12 @@
       "numberOfBytes": "32",
       "value": "t_mapping(t_address,t_bool)"
     },
-    "t_mapping(t_uint256,t_mapping(t_address,t_struct(OperatorEntitlement)12617_storage))": {
+    "t_mapping(t_uint256,t_mapping(t_address,t_struct(OperatorEntitlement)15279_storage))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(address => struct E3RefundManager.OperatorEntitlement))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_address,t_struct(OperatorEntitlement)12617_storage)"
+      "value": "t_mapping(t_address,t_struct(OperatorEntitlement)15279_storage)"
     },
     "t_mapping(t_uint256,t_mapping(t_address,t_uint256))": {
       "encoding": "mapping",
@@ -417,61 +417,61 @@
       "numberOfBytes": "32",
       "value": "t_mapping(t_address,t_uint256)"
     },
-    "t_mapping(t_uint256,t_mapping(t_contract(IERC20)2491,t_mapping(t_address,t_uint256)))": {
+    "t_mapping(t_uint256,t_mapping(t_contract(IERC20)4279,t_mapping(t_address,t_uint256)))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(contract IERC20 => mapping(address => uint256)))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_contract(IERC20)2491,t_mapping(t_address,t_uint256))"
+      "value": "t_mapping(t_contract(IERC20)4279,t_mapping(t_address,t_uint256))"
     },
-    "t_mapping(t_uint256,t_mapping(t_contract(IERC20)2491,t_uint256))": {
+    "t_mapping(t_uint256,t_mapping(t_contract(IERC20)4279,t_uint256))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(contract IERC20 => uint256))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_contract(IERC20)2491,t_uint256)"
+      "value": "t_mapping(t_contract(IERC20)4279,t_uint256)"
     },
-    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingExpulsion)12604_storage))": {
+    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingExpulsion)15266_storage))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(uint256 => struct E3RefundManager.PendingExpulsion))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_uint256,t_struct(PendingExpulsion)12604_storage)"
+      "value": "t_mapping(t_uint256,t_struct(PendingExpulsion)15266_storage)"
     },
-    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingSlashedRoute)12597_storage))": {
+    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(PendingSlashedRoute)15259_storage))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(uint256 => struct E3RefundManager.PendingSlashedRoute))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_uint256,t_struct(PendingSlashedRoute)12597_storage)"
+      "value": "t_mapping(t_uint256,t_struct(PendingSlashedRoute)15259_storage)"
     },
-    "t_mapping(t_uint256,t_struct(E3PolicySnapshot)21526_storage)": {
+    "t_mapping(t_uint256,t_struct(E3PolicySnapshot)24222_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct IE3RefundManager.E3PolicySnapshot)",
       "numberOfBytes": "32",
-      "value": "t_struct(E3PolicySnapshot)21526_storage"
+      "value": "t_struct(E3PolicySnapshot)24222_storage"
     },
-    "t_mapping(t_uint256,t_struct(PendingExpulsion)12604_storage)": {
+    "t_mapping(t_uint256,t_struct(PendingExpulsion)15266_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct E3RefundManager.PendingExpulsion)",
       "numberOfBytes": "32",
-      "value": "t_struct(PendingExpulsion)12604_storage"
+      "value": "t_struct(PendingExpulsion)15266_storage"
     },
-    "t_mapping(t_uint256,t_struct(PendingSlashedRoute)12597_storage)": {
+    "t_mapping(t_uint256,t_struct(PendingSlashedRoute)15259_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct E3RefundManager.PendingSlashedRoute)",
       "numberOfBytes": "32",
-      "value": "t_struct(PendingSlashedRoute)12597_storage"
+      "value": "t_struct(PendingSlashedRoute)15259_storage"
     },
-    "t_mapping(t_uint256,t_struct(RefundDistribution)21547_storage)": {
+    "t_mapping(t_uint256,t_struct(RefundDistribution)24243_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct IE3RefundManager.RefundDistribution)",
       "numberOfBytes": "32",
-      "value": "t_struct(RefundDistribution)21547_storage"
+      "value": "t_struct(RefundDistribution)24243_storage"
     },
     "t_mapping(t_uint256,t_uint256)": {
       "encoding": "mapping",
@@ -480,20 +480,20 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_struct(E3PolicySnapshot)21526_storage": {
+    "t_struct(E3PolicySnapshot)24222_storage": {
       "encoding": "inplace",
       "label": "struct IE3RefundManager.E3PolicySnapshot",
       "members": [
         {
-          "astId": 21511,
+          "astId": 24207,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "allocation",
           "offset": 0,
           "slot": "0",
-          "type": "t_struct(WorkValueAllocation)21507_storage"
+          "type": "t_struct(WorkValueAllocation)24203_storage"
         },
         {
-          "astId": 21513,
+          "astId": 24209,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "treasury",
           "offset": 0,
@@ -501,7 +501,7 @@
           "type": "t_address"
         },
         {
-          "astId": 21515,
+          "astId": 24211,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "interfold",
           "offset": 0,
@@ -509,7 +509,7 @@
           "type": "t_address"
         },
         {
-          "astId": 21517,
+          "astId": 24213,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "registry",
           "offset": 0,
@@ -517,7 +517,7 @@
           "type": "t_address"
         },
         {
-          "astId": 21519,
+          "astId": 24215,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "version",
           "offset": 20,
@@ -525,7 +525,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 21521,
+          "astId": 24217,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "initialized",
           "offset": 28,
@@ -533,7 +533,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 21523,
+          "astId": 24219,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "bondingRegistry",
           "offset": 0,
@@ -541,7 +541,7 @@
           "type": "t_address"
         },
         {
-          "astId": 21525,
+          "astId": 24221,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "slashingManager",
           "offset": 0,
@@ -551,12 +551,12 @@
       ],
       "numberOfBytes": "192"
     },
-    "t_struct(OperatorEntitlement)12617_storage": {
+    "t_struct(OperatorEntitlement)15279_storage": {
       "encoding": "inplace",
       "label": "struct E3RefundManager.OperatorEntitlement",
       "members": [
         {
-          "astId": 12606,
+          "astId": 15268,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "pendingExpulsions",
           "offset": 0,
@@ -564,7 +564,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12608,
+          "astId": 15270,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "baseTopUp",
           "offset": 0,
@@ -572,7 +572,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12610,
+          "astId": 15272,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "heldSlash",
           "offset": 0,
@@ -580,7 +580,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12612,
+          "astId": 15274,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "heldSuccess",
           "offset": 0,
@@ -588,7 +588,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12614,
+          "astId": 15276,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "baseRiskExpulsions",
           "offset": 0,
@@ -596,7 +596,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12616,
+          "astId": 15278,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "excluded",
           "offset": 0,
@@ -606,12 +606,12 @@
       ],
       "numberOfBytes": "192"
     },
-    "t_struct(PendingExpulsion)12604_storage": {
+    "t_struct(PendingExpulsion)15266_storage": {
       "encoding": "inplace",
       "label": "struct E3RefundManager.PendingExpulsion",
       "members": [
         {
-          "astId": 12599,
+          "astId": 15261,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "operator",
           "offset": 0,
@@ -619,7 +619,7 @@
           "type": "t_address"
         },
         {
-          "astId": 12601,
+          "astId": 15263,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "pending",
           "offset": 20,
@@ -627,7 +627,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 12603,
+          "astId": 15265,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "holdsBaseReward",
           "offset": 21,
@@ -637,20 +637,20 @@
       ],
       "numberOfBytes": "32"
     },
-    "t_struct(PendingSlashedRoute)12597_storage": {
+    "t_struct(PendingSlashedRoute)15259_storage": {
       "encoding": "inplace",
       "label": "struct E3RefundManager.PendingSlashedRoute",
       "members": [
         {
-          "astId": 12592,
+          "astId": 15254,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "token",
           "offset": 0,
           "slot": "0",
-          "type": "t_contract(IERC20)2491"
+          "type": "t_contract(IERC20)4279"
         },
         {
-          "astId": 12594,
+          "astId": 15256,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "operator",
           "offset": 0,
@@ -658,7 +658,7 @@
           "type": "t_address"
         },
         {
-          "astId": 12596,
+          "astId": 15258,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "amount",
           "offset": 0,
@@ -668,12 +668,12 @@
       ],
       "numberOfBytes": "96"
     },
-    "t_struct(RefundDistribution)21547_storage": {
+    "t_struct(RefundDistribution)24243_storage": {
       "encoding": "inplace",
       "label": "struct IE3RefundManager.RefundDistribution",
       "members": [
         {
-          "astId": 21529,
+          "astId": 24225,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "requesterAmount",
           "offset": 0,
@@ -681,7 +681,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21531,
+          "astId": 24227,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "honestNodeAmount",
           "offset": 0,
@@ -689,7 +689,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21533,
+          "astId": 24229,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "protocolAmount",
           "offset": 0,
@@ -697,7 +697,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21535,
+          "astId": 24231,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "totalSlashed",
           "offset": 0,
@@ -705,7 +705,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21537,
+          "astId": 24233,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "honestNodeCount",
           "offset": 0,
@@ -713,7 +713,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21539,
+          "astId": 24235,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "calculated",
           "offset": 0,
@@ -721,15 +721,15 @@
           "type": "t_bool"
         },
         {
-          "astId": 21542,
+          "astId": 24238,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "feeToken",
           "offset": 1,
           "slot": "5",
-          "type": "t_contract(IERC20)2491"
+          "type": "t_contract(IERC20)4279"
         },
         {
-          "astId": 21544,
+          "astId": 24240,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "originalPayment",
           "offset": 0,
@@ -737,7 +737,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 21546,
+          "astId": 24242,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "perNodeAmount",
           "offset": 0,
@@ -747,12 +747,12 @@
       ],
       "numberOfBytes": "256"
     },
-    "t_struct(WorkValueAllocation)21507_storage": {
+    "t_struct(WorkValueAllocation)24203_storage": {
       "encoding": "inplace",
       "label": "struct IE3RefundManager.WorkValueAllocation",
       "members": [
         {
-          "astId": 21498,
+          "astId": 24194,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "committeeFormationBps",
           "offset": 0,
@@ -760,7 +760,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 21500,
+          "astId": 24196,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "dkgBps",
           "offset": 2,
@@ -768,7 +768,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 21502,
+          "astId": 24198,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "decryptionBps",
           "offset": 4,
@@ -776,7 +776,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 21504,
+          "astId": 24200,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "protocolBps",
           "offset": 6,
@@ -784,7 +784,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 21506,
+          "astId": 24202,
           "contract": "project/contracts/E3RefundManager.sol:E3RefundManager",
           "label": "successSlashedNodeBps",
           "offset": 8,

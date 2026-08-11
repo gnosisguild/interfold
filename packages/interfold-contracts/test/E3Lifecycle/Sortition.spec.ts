@@ -33,7 +33,7 @@ async function fundOperator(
   operator: Signer,
   bondOwner: Signer,
   bondingRegistry: any,
-  licenseToken: any,
+  ciphernodeBondToken: any,
   feeToken: any,
   ticketToken: any,
   registry: any,
@@ -41,19 +41,19 @@ async function fundOperator(
 ) {
   const operatorAddress = await operator.getAddress();
   const bondOwnerAddress = await bondOwner.getAddress();
-  await licenseToken.mint(
+  await ciphernodeBondToken.mint(
     bondOwnerAddress,
     ethers.parseEther("10000"),
     ethers.encodeBytes32String("Test allocation"),
   );
   await feeToken.mint(bondOwnerAddress, ethers.parseUnits("1000000", 6));
   await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
-  await licenseToken
+  await ciphernodeBondToken
     .connect(bondOwner)
     .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
   await bondingRegistry
     .connect(bondOwner)
-    .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+    .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
   await bondingRegistry.connect(bondOwner).registerOperatorFor(operatorAddress);
   if (ticketAmount > 0n) {
     await feeToken
@@ -80,7 +80,7 @@ async function deployStack() {
     ciphernodeRegistry,
     bondingRegistry,
     ticketToken,
-    licenseToken,
+    ciphernodeBondToken,
     usdcToken: feeToken,
     mocks: { e3Program, decryptionVerifier },
   } = sys;
@@ -146,7 +146,7 @@ async function deployStack() {
     ciphernodeRegistry,
     bondingRegistry,
     ticketToken,
-    licenseToken,
+    ciphernodeBondToken,
     feeToken,
     makeRequest,
   };
@@ -318,7 +318,7 @@ describe("Sortition & E3 lifecycle", function () {
         bondingRegistry,
         ticketToken,
         feeToken,
-        licenseToken,
+        ciphernodeBondToken,
         makeRequest,
       } = ctx;
 
@@ -326,13 +326,13 @@ describe("Sortition & E3 lifecycle", function () {
       const latecomer = allSigners[allSigners.length - 1];
       const latecomerAddress = await latecomer.getAddress();
 
-      // Register the latecomer with ZERO tickets (still licensed + registered)
+      // Register the latecomer with ZERO tickets (still bonded + registered)
       // so they appear in the ciphernode set but have no snapshot weight.
       await fundOperator(
         latecomer,
         ctx.owner,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         feeToken,
         ticketToken,
         ciphernodeRegistry,

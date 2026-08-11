@@ -35,10 +35,10 @@ The Interfold protocol uses several contracts that work together:
 | ------------------------ | -------------------------------------------------------------------------------- |
 | **Interfold**            | Core coordinator that manages E3 requests and computation lifecycle              |
 | **CiphernodeRegistry**   | Tracks registered operators and manages committee formation                      |
-| **BondingRegistry**      | Handles license bonds (FOLD) and ticket balances (tFOLD)                         |
+| **BondingRegistry**      | Handles ciphernode bonds (FOLD) and ticket balances (tFOLD)                      |
 | **SlashingManager**      | Processes slashing proposals, appeals, and ban enforcement                       |
 | **E3RefundManager**      | Calculates and distributes refunds when an E3 fails                              |
-| **InterfoldToken**       | FOLD token used for license bonding                                              |
+| **InterfoldToken**       | FOLD token used for ciphernode bonding                                           |
 | **InterfoldTicketToken** | Non-transferable tFOLD token representing ticket balances (backed by stablecoin) |
 
 ### Sepolia Contract Addresses
@@ -92,14 +92,14 @@ against `BondingRegistry`.
 | `setBondOwner(bondOwner)`                        | Operator key           | Authorize the wallet that controls this position         |
 | `proposeBondOwner(operator, newOwner)`           | Bond owner             | Nominate a replacement owner                             |
 | `acceptBondOwner(operator)`                      | Nominated owner        | Accept the position and move the FOLD accounting         |
-| `bondLicenseFor(operator, amount)`               | Bond owner             | Bond FOLD from the caller's wallet                       |
-| `unbondLicenseFor(operator, amount)`             | Bond owner             | Queue bonded FOLD for exit                               |
+| `bondCiphernodeFor(operator, amount)`               | Bond owner             | Bond FOLD from the caller's wallet                       |
+| `unbondCiphernodeFor(operator, amount)`             | Bond owner             | Queue bonded FOLD for exit                               |
 | `registerOperatorFor(operator)`                  | Bond owner             | Add the operator key to the ciphernode registry          |
 | `deregisterOperatorFor(operator)`                | Bond owner or operator | Request deregistration and queue all collateral          |
 | `addTicketBalanceFor(operator, amount)`          | Bond owner             | Deposit the fee token and mint tickets                   |
 | `removeTicketBalanceFor(operator, amount)`       | Bond owner             | Burn tickets and queue the underlying for exit           |
 | `claimExitsFor(operator, maxTicket, 0)`          | Anyone                 | Settle matured tickets to the bond owner                 |
-| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner             | Claim matured tickets and license collateral             |
+| `claimExitsFor(operator, maxTicket, maxCiphernodeBond)` | Bond owner             | Claim matured tickets and ciphernode bond collateral             |
 | `refreshOperatorStatus(operator)`                | Anyone                 | Recompute one operator's status under the current policy |
 | `refreshOperatorStatuses(operators)`             | Anyone                 | Recompute a batch of operators                           |
 
@@ -109,19 +109,20 @@ Read the current state with these view functions:
 | ------------------------------ | ----------------------------------------------------------------- |
 | `bondOwnerOf(operator)`        | Wallet that controls the collateral, or the zero address if unset |
 | `pendingBondOwnerOf(operator)` | Wallet nominated to accept the position                           |
-| `getLicenseBond(operator)`     | Active license bond                                               |
-| `isLicensed(operator)`         | Whether the bond meets the active-maintenance floor (see below)   |
+| `getCiphernodeBond(operator)`  | Active ciphernode bond                                            |
+| `isCiphernodeBonded(operator)` | Whether the bond meets the active-maintenance floor (see below)   |
 | `isRegistered(operator)`       | Whether the key is in the registry                                |
 | `isActive(operator)`           | Whether the operator is eligible for sortition                    |
 | `availableTickets(operator)`   | `floor(ticketBalance / ticketPrice)`                              |
 | `totalBonded(account)`         | FOLD that counts toward the locked-floor collateral of an owner   |
 | `hasExitInProgress(operator)`  | Whether an exit is queued                                         |
 
-> `isLicensed` and registration use different thresholds. `isLicensed` tests the active-maintenance
-> floor, which is `licenseRequiredBond` multiplied by `licenseActiveBps` (80% by default).
-> `registerOperatorFor` requires the full `licenseRequiredBond`. An operator between the two reads
-> as licensed but cannot register: the call reverts with `NotLicensed()`. Compare `getLicenseBond`
-> against `licenseRequiredBond` to test whether an operator can register.
+> `isCiphernodeBonded` and registration use different thresholds. `isCiphernodeBonded` tests the
+> active-maintenance floor, which is `requiredCiphernodeBond` multiplied by
+> `ciphernodeBondActiveBps` (80% by default). `registerOperatorFor` requires the full
+> `requiredCiphernodeBond`. An operator between the two reads as bonded but cannot register: the
+> call reverts with `NotCiphernodeBonded()`. Compare `getCiphernodeBond` against
+> `requiredCiphernodeBond` to test whether an operator can register.
 
 > `refreshOperatorStatus` is permissionless, but the operator must be registered. The call reverts
 > with `NotRegistered()` for an operator that is not in the registry. `refreshOperatorStatuses`
@@ -137,11 +138,11 @@ A ciphernode moves through several states during its lifecycle:
 stateDiagram-v2
     [*] --> Unbonded
     Unbonded --> Unbonded: setBondOwner(owner)
-    Unbonded --> Licensed: bondLicenseFor(operator, amount >= requiredBond)
-    Licensed --> Registered: registerOperatorFor(operator)
+    Unbonded --> Bonded: bondCiphernodeFor(operator, amount >= requiredBond)
+    Bonded --> Registered: registerOperatorFor(operator)
     Registered --> Active: addTicketBalanceFor(operator, balance >= minBalance)
-    Active --> Inactive: removeTicketBalanceFor(...) OR unbondLicenseFor(...)
-    Inactive --> Active: addTicketBalanceFor(...) OR bondLicenseFor(...)
+    Active --> Inactive: removeTicketBalanceFor(...) OR unbondCiphernodeFor(...)
+    Inactive --> Active: addTicketBalanceFor(...) OR bondCiphernodeFor(...)
     Active --> ExitPending: deregisterOperatorFor(operator)
     Inactive --> ExitPending: deregisterOperatorFor(operator)
     Registered --> ExitPending: deregisterOperatorFor(operator)
@@ -153,11 +154,11 @@ stateDiagram-v2
 
 | State           | Description                                                                        |
 | --------------- | ---------------------------------------------------------------------------------- |
-| **Unbonded**    | No license bond deposited; cannot register                                         |
-| **Licensed**    | FOLD bonded but not yet registered in the registry                                 |
+| **Unbonded**    | No ciphernode bond deposited; cannot register                                      |
+| **Bonded**      | FOLD bonded but not yet registered in the registry                                 |
 | **Registered**  | In the registry but lacking minimum ticket balance                                 |
 | **Active**      | Fully operational; eligible for committee selection via sortition                  |
-| **Inactive**    | Registered but below minimum requirements (tickets or license bond)                |
+| **Inactive**    | Registered but below minimum requirements (tickets or ciphernode bond)             |
 | **ExitPending** | Deregistration requested; waiting for exit delay before claiming or re-registering |
 
 ## Requirements
@@ -166,7 +167,7 @@ Before operating a ciphernode, ensure you have:
 
 | Requirement     | Details                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------ |
-| **FOLD Tokens** | At least `100 FOLD` for the license bond (check `licenseRequiredBond()`)                   |
+| **FOLD Tokens** | At least `100 FOLD` for the ciphernode bond (check `requiredCiphernodeBond()`)             |
 | **Stablecoin**  | USDC (or configured fee token) for tickets; minimum 1 ticket worth                         |
 | **ETH**         | Gas for transactions on your target network                                                |
 | **Hardware**    | Linux/macOS, 8+ cores, 32GB+ DDR5 RAM, 500GB+ NVMe SSD, stable internet with open UDP port |
@@ -177,7 +178,8 @@ Before operating a ciphernode, ensure you have:
 Follow these guides in order to become an active ciphernode operator:
 
 1. **[Running a Ciphernode](./running)** - Set up your node using DappNode, Interfold CLI, or Docker
-2. **[Registration & Licensing](./registration)** - Bond your license, register, and add tickets
+2. **[Registration & Bonding](./registration)** - Bond your ciphernode bond, register, and add
+   tickets
 3. **[Tickets & Sortition](./tickets-and-sortition)** - Understand how committee selection works
 4. **[Exits, Rewards & Slashing](./exits-and-slashing)** - Learn about rewards and exit procedures
 

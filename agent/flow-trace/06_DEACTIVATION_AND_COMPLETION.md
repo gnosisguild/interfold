@@ -7,9 +7,9 @@ deregistering (removing from the Merkle tree). The exit is time-locked, and pend
 slashable until claimed.
 
 Collateral withdrawals are bond-owner actions: `removeTicketBalanceFor(operator)` and
-`unbondLicenseFor(operator)`. Deregistration is callable by either the owner or the operator key,
+`unbondCiphernodeFor(operator)`. Deregistration is callable by either the owner or the operator key,
 which gives the running node an emergency kill switch. Anyone can settle a matured ticket-only exit
-to the bond owner. A claim that includes license collateral remains restricted to the bond owner.
+to the bond owner. A claim that includes ciphernode bond collateral remains restricted to the bond owner.
 
 ---
 
@@ -35,7 +35,7 @@ Bond owner submits removeTicketBalanceFor(operator, 50)
     │  │       → Locked in ExitQueue until now + exitDelay        │
     │  │    5. _updateOperatorStatus(operator)                   │
     │  │       → Active iff registered &&                         │
-    │  │         licenseBond >= _minLicenseBond() &&              │
+    │  │         ciphernodeBond >= _minCiphernodeBond() &&              │
     │  │         (ticketBalance / ticketPrice) >= minTicketBalance│
     │  │         active = false, numActiveOperators--             │
     │  │         Emit OperatorActivationChanged(op, false)        │
@@ -45,28 +45,28 @@ Bond owner submits removeTicketBalanceFor(operator, 50)
     │  └─────────────────────────────────────────────────────────┘
 ```
 
-### Via License Withdrawal
+### Via Ciphernode bond Withdrawal
 
 ```
-Bond owner submits unbondLicenseFor(operator, 20000)
+Bond owner submits unbondCiphernodeFor(operator, 20000)
 │
-└─ BondingRegistry.unbondLicenseFor(operator, 20000)
+└─ BondingRegistry.unbondCiphernodeFor(operator, 20000)
     │
     │  ┌─── ON-CHAIN ───────────────────────────────────────────┐
     │  │                                                         │
-    │  │  unbondLicenseFor(operator, 20000):                     │
+    │  │  unbondCiphernodeFor(operator, 20000):                     │
     │  │    1. require(msg.sender == bondOwnerOf(operator))      │
     │  │    2. require(amount != 0, sufficient bonded FOLD)      │
-    │  │    3. operators[op].licenseBond -= 20000                │
-    │  │    4. _exits.queueLicensesForExit(op, exitDelay, 20000)│
+    │  │    3. operators[op].ciphernodeBond -= 20000                │
+    │  │    4. _exits.queueCiphernodeBondsForExit(op, exitDelay, 20000)│
     │  │       → Pending FOLD remains in totalBonded(bondOwner)  │
     │  │         token-level locked-floor accounting             │
     │  │    5. _updateOperatorStatus(operator)                   │
-    │  │       → If licenseBond <                                │
-    │  │         (licenseRequiredBond * licenseActiveBps / 10000)│
+    │  │       → If ciphernodeBond <                                │
+    │  │         (requiredCiphernodeBond * ciphernodeBondActiveBps / 10000)│
     │  │         (default: 80% of required bond):                │
     │  │         active = false, numActiveOperators--             │
-    │  │    6. Emit LicenseBondUpdated(op, -amount, newBond,      │
+    │  │    6. Emit CiphernodeBondUpdated(op, -amount, newBond,      │
     │  │       "UNBOND")                                          │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
@@ -78,9 +78,9 @@ Bond owner submits unbondLicenseFor(operator, 20000)
 Bond owner submits both owner-authorized calls
 │
 ├─ Calls removeTicketBalanceFor(operator, 50) first
-└─ Then calls unbondLicenseFor(operator, 20000)
+└─ Then calls unbondCiphernodeFor(operator, 20000)
   → Tickets are queued in ExitQueueLib
-  → FOLD is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
+  → FOLD is queued in ExitQueueLib pending ciphernode bond exits and remains counted in totalBonded()
 ```
 
 ---
@@ -110,15 +110,15 @@ Bond owner or operator submits deregisterOperatorFor(operator)
     │  │       ticketToken.burnTickets(op, fullTicketBalance)    │
     │  │                                                         │
     │  │    8. Queue ALL collateral for exit:                    │
-    │  │       licenseBondAmount = operators[op].licenseBond     │
-    │  │       operators[op].licenseBond = 0                     │
+    │  │       ciphernodeBondAmount = operators[op].ciphernodeBond     │
+    │  │       operators[op].ciphernodeBond = 0                     │
     │  │       _exits.queueAssetsForExit(                        │
     │  │         op, exitDelay,                                   │
     │  │         fullTicketBalance,  // tickets                   │
-    │  │         0                   // license handled below     │
+    │  │         0                   // ciphernode bond handled below     │
     │  │       )                                                  │
     │  │       _exits.queueAssetsForExit(                        │
-    │  │         op, exitDelay, fullTicketBalance, licenseBondAmount)│
+    │  │         op, exitDelay, fullTicketBalance, ciphernodeBondAmount)│
     │  │                                                         │
     │  │    9. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(operator)               │
@@ -144,7 +144,7 @@ Bond owner or operator submits deregisterOperatorFor(operator)
 │
 └─ After exitDelay seconds:
    ├─ anyone may settle tickets with claimExitsFor(operator, maxTicket, 0)
-   └─ the bond owner may also claim licenses
+   └─ the bond owner may also claim ciphernode bonds
 ```
 
 The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
@@ -496,9 +496,9 @@ cannot be paid out until every committee obligation ends.
 ### Exit Queue Internals (audit hardening)
 
 - **Per-asset head indices.** `ExitQueueState` tracks `queueHeadIndexTicket` and
-  `queueHeadIndexLicense` separately so claiming/slashing one asset class cannot strand the other.
-  Previously a single shared head meant `claimAssets({TICKET})` could advance past tranches whose
-  license leg was still locked and silently forfeit them (audit C-03).
+  `queueHeadIndexCiphernodeBond` separately so claiming/slashing one asset class cannot strand the
+  other. Previously a single shared head meant `claimAssets({TICKET})` could advance past tranches
+  whose ciphernode bond leg was still locked and silently forfeit them (audit C-03).
 - **`continue`, not `break`, on locked tranches.** Both `previewClaimableAmounts` and
   `_takeAssetsFromQueue` skip locked tranches instead of stopping, so a later-but-sooner-unlocking
   tranche (created after governance lowered `exitDelay`) is still reachable (audit M-08).
@@ -506,8 +506,8 @@ cannot be paid out until every committee obligation ends.
   `MAX_ACTIVE_TRANCHES (= 64)` live (post-head) tranches would exist for the operator. This bounds
   the unbounded loop in `previewClaimableAmounts` / `_takeAssetsFromQueue` so an attacker cannot
   grief the operator with an ever-growing queue (audit H-21a).
-- **Exact license transfers.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
-  balance increase and the registry's balance decrease around `licenseToken.safeTransfer`. If either
+- **Exact ciphernode bond transfers.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
+  balance increase and the registry's balance decrease around `ciphernodeBondToken.safeTransfer`. If either
   amount differs from the recorded amount, the transaction reverts and restores the liability
   accounting.
 - **Frozen-deadline floor.** Each committee request raises the registry's latest deadline watermark.

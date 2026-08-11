@@ -18,21 +18,21 @@ output — every step backed by ZK proofs verified on-chain.
 
 ## Terminology
 
-| Term         | Meaning                                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                             |
-| Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                          |
-| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                          |
-| DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                      |
-| BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                           |
-| Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                          |
-| C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                |
-| Sortition    | Random committee selection (`crates/sortition`)                                                                              |
-| Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                             |
-| Aggregator   | Role that recursively aggregates DKG/decryption proofs (`crates/aggregator`)                                                 |
-| FOLD / tFOLD | `InterfoldToken` (license bonding) / `InterfoldTicketToken` (non-transferable collateral-backed tickets) — see flow-trace 02 |
-| IMT          | Incremental Merkle Tree used for on-chain node registration — see flow-trace 01                                              |
-| CRT          | Chinese Remainder Theorem moduli used by BFV presets and share aggregation (C7)                                              |
+| Term         | Meaning                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                                |
+| Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                             |
+| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
+| DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
+| BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
+| Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                             |
+| C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                   |
+| Sortition    | Random committee selection (`crates/sortition`)                                                                                 |
+| Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                                |
+| Aggregator   | Role that recursively aggregates DKG/decryption proofs (`crates/aggregator`)                                                    |
+| FOLD / tFOLD | `InterfoldToken` (ciphernode bonding) / `InterfoldTicketToken` (non-transferable collateral-backed tickets) — see flow-trace 02 |
+| IMT          | Incremental Merkle Tree used for on-chain node registration — see flow-trace 01                                                 |
+| CRT          | Chinese Remainder Theorem moduli used by BFV presets and share aggregation (C7)                                                 |
 
 ## Monorepo map
 
@@ -54,19 +54,19 @@ pins nargo/bb), `zk-helpers`, `trbfv`, `keyshare`, `aggregator`, `sortition`, `s
 
 Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 
-| Task                        | Command                                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Install / build all         | `pnpm i` · `pnpm build`                                                                                         |
-| Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                          |
-| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                           |
-| Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                         |
-| Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                           |
-| Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                               |
-| Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them) |
-| Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                    |
-| Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                            |
-| Consistency checks          | `pnpm check:committee` · `check:docs` · `check:invariants` · `check:license` · `check:pnpm` · `check:size`      |
-| Release bump                | `pnpm bump:versions X.Y.Z`                                                                                      |
+| Task                        | Command                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Install / build all         | `pnpm i` · `pnpm build`                                                                                            |
+| Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                             |
+| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                              |
+| Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                            |
+| Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                              |
+| Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                  |
+| Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)    |
+| Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                       |
+| Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                               |
+| Consistency checks          | `pnpm check:committee` · `check:docs` · `check:invariants` · `check:ciphernode bond` · `check:pnpm` · `check:size` |
+| Release bump                | `pnpm bump:versions X.Y.Z`                                                                                         |
 
 ## Conventions
 
@@ -76,7 +76,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
   conventional commits; breaking PRs merge only alongside a breaking release; docs changes get the
   `documentation` label. CI validates commit messages.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
-- **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
+- **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:ciphernode bond`, `check:committee`,
   `check:docs` (harness-doc drift gate — escape with `[skip-doc-sync]` in a commit message when no
   documented behavior changed), `check:invariants` (grep-enforced invariants: `do_send` ratchet,
   skip-proof feature containment — baselines in `scripts/invariant-baselines.env`).

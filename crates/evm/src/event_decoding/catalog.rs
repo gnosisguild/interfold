@@ -213,13 +213,13 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
-        "LicenseBondUpdated",
-        "LicenseBondUpdated(address,int256,uint256,bytes32)",
+        "CiphernodeBondUpdated",
+        "CiphernodeBondUpdated(address,int256,uint256,bytes32)",
         None,
     ),
     EvmEventDefinition::new(
-        "LicenseSurplusSwept",
-        "LicenseSurplusSwept(address,address,uint256)",
+        "CiphernodeBondSurplusSwept",
+        "CiphernodeBondSurplusSwept(address,address,uint256)",
         None,
     ),
     EvmEventDefinition::new(

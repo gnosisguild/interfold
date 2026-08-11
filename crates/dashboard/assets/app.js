@@ -39,13 +39,13 @@ var nu = { exports: {} },
   ru = { exports: {} },
   R = {}
 /**
- * @license React
+ * @ciphernode bond React
  * react.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
+ * CIPHERNODE BOND file in the root directory of this source tree.
  */ var Zn = Symbol.for('react.element'),
   wc = Symbol.for('react.portal'),
   kc = Symbol.for('react.fragment'),
@@ -370,13 +370,13 @@ ru.exports = R
 var T = ru.exports
 const Ic = xc(T)
 /**
- * @license React
+ * @ciphernode bond React
  * react-jsx-runtime.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
+ * CIPHERNODE BOND file in the root directory of this source tree.
  */ var $c = T,
   Dc = Symbol.for('react.element'),
   Fc = Symbol.for('react.fragment'),
@@ -404,13 +404,13 @@ var o = nu.exports,
   hu = { exports: {} },
   mu = {}
 /**
- * @license React
+ * @ciphernode bond React
  * scheduler.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
+ * CIPHERNODE BOND file in the root directory of this source tree.
  */ ;(function (e) {
   function t(S, L) {
     var z = S.length
@@ -663,13 +663,13 @@ var o = nu.exports,
 hu.exports = mu
 var Bc = hu.exports
 /**
- * @license React
+ * @ciphernode bond React
  * react-dom.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
+ * CIPHERNODE BOND file in the root directory of this source tree.
  */ var Hc = T,
   xe = Bc
 function w(e) {
@@ -8732,7 +8732,7 @@ function ap({ snapshot: e }) {
           exitInProgress: (f == null ? void 0 : f.exit_in_progress) ?? (y == null ? void 0 : y.exit_unlock_at) !== void 0,
           ticketBalance: (f == null ? void 0 : f.ticket_balance) ?? (y == null ? void 0 : y.ticket_balance),
           availableTickets: f == null ? void 0 : f.available_tickets,
-          licenseBond: (f == null ? void 0 : f.license_bond) ?? (y == null ? void 0 : y.license_bond),
+          ciphernodeBond: (f == null ? void 0 : f.ciphernode_bond) ?? (y == null ? void 0 : y.ciphernode_bond),
           rewardCredits: (y == null ? void 0 : y.rewards_credited.length) ?? 0,
         }
       }),
@@ -8891,8 +8891,8 @@ function ap({ snapshot: e }) {
                               }),
                               o.jsxs('div', {
                                 children: [
-                                  o.jsx('dt', { children: 'License bond' }),
-                                  o.jsx('dd', { className: 'mono', title: p.licenseBond, children: qt(p.licenseBond) }),
+                                  o.jsx('dt', { children: 'Ciphernode bond' }),
+                                  o.jsx('dd', { className: 'mono', title: p.ciphernodeBond, children: qt(p.ciphernodeBond) }),
                                 ],
                               }),
                               o.jsxs('div', {

@@ -44,7 +44,7 @@ const STATIC_DOC_PAGES: DocPage[] = [
   { slug: 'whitepaper', title: 'White Paper', url: '/whitepaper' },
   { slug: 'ciphernode-operators', title: 'Ciphernode Operators Overview', url: '/ciphernode-operators' },
   { slug: 'ciphernode-operators/running', title: 'Running a Ciphernode', url: '/ciphernode-operators/running' },
-  { slug: 'ciphernode-operators/registration', title: 'Registration & Licensing', url: '/ciphernode-operators/registration' },
+  { slug: 'ciphernode-operators/registration', title: 'Registration & Bonding', url: '/ciphernode-operators/registration' },
   { slug: 'ciphernode-operators/tickets-and-sortition', title: 'Tickets & Sortition', url: '/ciphernode-operators/tickets-and-sortition' },
   { slug: 'ciphernode-operators/exits-and-slashing', title: 'Exits, Rewards & Slashing', url: '/ciphernode-operators/exits-and-slashing' },
   { slug: 'CRISP/introduction', title: 'CRISP Introduction', url: '/CRISP/introduction' },

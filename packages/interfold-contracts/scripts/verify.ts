@@ -173,7 +173,7 @@ export const verifyContracts = (chain: string): void => {
     const isProxy = Boolean(deployment.proxyRecords?.implementationAddress);
     const skipProxyConstructorVerification =
       contractName === "BondingRegistry" &&
-      Boolean(deployment.constructorArgs?.licenseToken);
+      Boolean(deployment.constructorArgs?.ciphernodeBondToken);
 
     if (
       isProxy &&

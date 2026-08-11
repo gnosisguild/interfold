@@ -107,7 +107,7 @@ export async function actionValidate(): Promise<void> {
     ["refund.owner", refund.owner(), config.safe],
     ["bonding.owner", bonding.owner(), config.safe],
     ["bonding.ticketToken", bonding.ticketToken(), deployment.ticketToken],
-    ["bonding.licenseToken", bonding.licenseToken(), config.fold],
+    ["bonding.ciphernodeBondToken", bonding.ciphernodeBondToken(), config.fold],
     ["bonding.registry", bonding.registry(), deployment.ciphernodeRegistry],
     [
       "bonding.slashingManager",

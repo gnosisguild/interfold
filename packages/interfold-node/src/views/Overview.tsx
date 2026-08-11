@@ -14,7 +14,7 @@ interface OperatorCard {
   exitInProgress: boolean
   ticketBalance?: string
   availableTickets?: string
-  licenseBond?: string
+  ciphernodeBond?: string
   rewardCredits: number
 }
 
@@ -60,7 +60,7 @@ export default function Overview({ snapshot }: { snapshot: DashboardSnapshot }) 
         exitInProgress: live?.exit_in_progress ?? projected?.exit_unlock_at !== undefined,
         ticketBalance: live?.ticket_balance ?? projected?.ticket_balance,
         availableTickets: live?.available_tickets,
-        licenseBond: live?.license_bond ?? projected?.license_bond,
+        ciphernodeBond: live?.ciphernode_bond ?? projected?.ciphernode_bond,
         rewardCredits: projected?.rewards_credited.length ?? 0,
       }
     })
@@ -168,9 +168,9 @@ export default function Overview({ snapshot }: { snapshot: DashboardSnapshot }) 
                     </dd>
                   </div>
                   <div>
-                    <dt>License bond</dt>
-                    <dd className='mono' title={chain.licenseBond}>
-                      {compactInteger(chain.licenseBond)}
+                    <dt>Ciphernode bond</dt>
+                    <dd className='mono' title={chain.ciphernodeBond}>
+                      {compactInteger(chain.ciphernodeBond)}
                     </dd>
                   </div>
                   <div>

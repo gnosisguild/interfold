@@ -1,9 +1,9 @@
 ---
-title: 'Registration & Licensing'
+title: 'Registration & Bonding'
 description: 'Authorize a bond owner, fund an operator, and register the node'
 ---
 
-# Registration & Licensing
+# Registration & Bonding
 
 This guide walks you through the complete registration process to become an active ciphernode
 operator. Make sure your node is already [running](./running) before proceeding.
@@ -24,18 +24,18 @@ Using a separate cold wallet or Safe as the bond owner is strongly recommended s
 does not hold the key controlling collateral. Self-ownership is supported if an operator prefers a
 single-wallet setup. Ensure the selected bond-owner wallet has:
 
-| Token                   | Amount Required                          | Purpose                      |
-| ----------------------- | ---------------------------------------- | ---------------------------- |
-| **FOLD**                | ≥ 100 FOLD (check `licenseRequiredBond`) | License bond collateral      |
-| **USDC** (or fee token) | ≥ 10 USDC per ticket (minimum 1 ticket)  | Ticket balance for sortition |
-| **ETH**                 | Sufficient for gas                       | Transaction fees             |
+| Token                   | Amount Required                             | Purpose                      |
+| ----------------------- | ------------------------------------------- | ---------------------------- |
+| **FOLD**                | ≥ 100 FOLD (check `requiredCiphernodeBond`) | Ciphernode bond collateral   |
+| **USDC** (or fee token) | ≥ 10 USDC per ticket (minimum 1 ticket)     | Ticket balance for sortition |
+| **ETH**                 | Sufficient for gas                          | Transaction fees             |
 
 > **Testnet tokens:** on Sepolia you can self-serve test FOLD and mock USDC from the faucet with
 > `interfold faucet` (requires the `faucet` contract address in your config — see
 > [Running a Node → Contract Addresses](/ciphernode-operators/running#contract-addresses)). Each
 > call tops up FOLD and the fee token independently, only when your balance for that token is below
-> the faucet threshold. One call dispenses enough FOLD to meet the default 100 FOLD license bond. If
-> the faucet runs dry, reach out on the [community Telegram](https://t.me/enclave_e3).
+> the faucet threshold. One call dispenses enough FOLD to meet the default 100 FOLD ciphernode bond.
+> If the faucet runs dry, reach out on the [community Telegram](https://t.me/enclave_e3).
 
 ## Registration Steps
 
@@ -57,9 +57,9 @@ Ciphernode status on sepolia:
   Active: false
   Exit pending: false
   Ticket balance: 0 (0 available)
-  License bond: 0
-  Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
+  Ciphernode bond: 0
+  Pending exits: tickets=0, bond=0
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, ciphernodeBond=100 FOLD
 ```
 
 ### Step 2: Authorize the Bond Owner
@@ -81,18 +81,19 @@ For an EOA bond owner, run the owner-aware CLI commands using a config whose enc
 that owner:
 
 ```bash
-interfold --config /path/to/owner.yaml ciphernode license \
+interfold --config /path/to/owner.yaml ciphernode bond \
   --operator 0xOPERATOR bond --amount 100
 interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
 interfold --config /path/to/owner.yaml ciphernode tickets \
   --operator 0xOPERATOR buy --amount 100
 ```
 
-The CLI submits any required token approval first. Safe owners can submit the same `bondLicenseFor`,
-`registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe interface. The owner
-supplies the assets, while the operator address is added to the registry Merkle tree and receives
-non-transferable tFOLD. With the recommended separate-owner setup, the hot operator key does not
-control FOLD or USDC withdrawals, and protocol rewards are credited to the bond owner.
+The CLI submits any required token approval first. Safe owners can submit the same
+`bondCiphernodeFor`, `registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe
+interface. The owner supplies the assets, while the operator address is added to the registry Merkle
+tree and receives non-transferable tFOLD. With the recommended separate-owner setup, the hot
+operator key does not control FOLD or USDC withdrawals, and protocol rewards are credited to the
+bond owner.
 
 The number of usable tickets is calculated as:
 
@@ -120,9 +121,9 @@ Ciphernode status on sepolia:
   Active: true
   Exit pending: false
   Ticket balance: 100 (10 available)
-  License bond: 100
-  Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
+  Ciphernode bond: 100
+  Pending exits: tickets=0, bond=0
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, ciphernodeBond=100 FOLD
 ```
 
 ## Operator CLI Commands
@@ -132,7 +133,7 @@ Ciphernode status on sepolia:
 interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 
 # Fund and register from an EOA bond-owner config
-interfold --config /path/to/owner.yaml ciphernode license \
+interfold --config /path/to/owner.yaml ciphernode bond \
   --operator 0xOPERATOR bond --amount 100
 interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
 interfold --config /path/to/owner.yaml ciphernode tickets \
@@ -158,7 +159,7 @@ interfold --config /path/to/owner.yaml ciphernode activate --operator 0xOPERATOR
 
 # Queue collateral for exit and drop below the active thresholds
 interfold --config /path/to/owner.yaml ciphernode deactivate \
-  --operator 0xOPERATOR --tickets 50 --license 25
+  --operator 0xOPERATOR --tickets 50 --bond 25
 ```
 
 `activate` sends the same registration call as `register`. Use it only to register an operator again
@@ -169,9 +170,9 @@ To restore the active status of a registered operator after an eligibility param
 on-chain, call `refreshOperatorStatus(operator)` on the BondingRegistry. The call is permissionless.
 The CLI has no command for it.
 
-`deactivate` requires `--tickets`, `--license`, or both. It calls `removeTicketBalanceFor` for the
-ticket amount and `unbondLicenseFor` for the license amount. Both amounts enter the exit queue and
-become claimable after the exit delay. The operator stays registered, so use
+`deactivate` requires `--tickets`, `--bond`, or both. It calls `removeTicketBalanceFor` for the
+ticket amount and `unbondCiphernodeFor` for the ciphernode bond amount. Both amounts enter the exit
+queue and become claimable after the exit delay. The operator stays registered, so use
 [deregister](./exits-and-slashing#step-1-deregister) for a full exit.
 
 ### Rotate the Bond Owner
@@ -203,19 +204,19 @@ The `--chain` parameter matches the `name` field in your config's `chains` array
 
 Current Sepolia defaults (verify on-chain before depositing):
 
-| Parameter             | Value                | Description                        |
-| --------------------- | -------------------- | ---------------------------------- |
-| `ticketPrice`         | 10,000,000 (10 USDC) | Cost per ticket in fee token units |
-| `licenseRequiredBond` | 100 FOLD             | Minimum FOLD to bond               |
-| `minTicketBalance`    | 1 ticket             | Minimum tickets to be active       |
-| `exitDelay`           | 604,800s (7 days)    | Wait time before claiming exits    |
+| Parameter                | Value                | Description                        |
+| ------------------------ | -------------------- | ---------------------------------- |
+| `ticketPrice`            | 10,000,000 (10 USDC) | Cost per ticket in fee token units |
+| `requiredCiphernodeBond` | 100 FOLD             | Minimum FOLD to bond               |
+| `minTicketBalance`       | 1 ticket             | Minimum tickets to be active       |
+| `exitDelay`              | 604,800s (7 days)    | Wait time before claiming exits    |
 
 Query these values on-chain:
 
 ```bash
 # Using cast (foundry)
 cast call $BONDING "ticketPrice()" --rpc-url $RPC
-cast call $BONDING "licenseRequiredBond()" --rpc-url $RPC
+cast call $BONDING "requiredCiphernodeBond()" --rpc-url $RPC
 cast call $BONDING "minTicketBalance()" --rpc-url $RPC
 cast call $BONDING "exitDelay()" --rpc-url $RPC
 ```
@@ -224,8 +225,8 @@ cast call $BONDING "exitDelay()" --rpc-url $RPC
 
 ### Maintain Buffer Amounts
 
-- **License bond**: Keep 10-20% above the minimum to absorb potential slashing without losing active
-  status
+- **Ciphernode bond**: Keep 10-20% above the minimum to absorb potential slashing without losing
+  active status
 - **Tickets**: Maintain extra tickets so you're not deactivated if one is consumed or slashed
 
 ### Monitor Your Status
@@ -243,12 +244,12 @@ status changes due to balance or bond updates.
 
 ## Troubleshooting
 
-| Issue                     | Cause                                   | Solution                                             |
-| ------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| `isActive` is false       | Below minimum license (80%) or tickets  | Add more FOLD or tickets                             |
-| Registration fails        | Already registered, banned, or unbonded | Check `isRegistered()`, ban status, and license bond |
-| Ticket purchase fails     | Insufficient stablecoin or allowance    | Ensure balance and approve spending                  |
-| "NodeNotEligible" in logs | Not registered before E3 request        | Register before requests are made                    |
+| Issue                     | Cause                                          | Solution                                                |
+| ------------------------- | ---------------------------------------------- | ------------------------------------------------------- |
+| `isActive` is false       | Below minimum ciphernode bond (80%) or tickets | Add more FOLD or tickets                                |
+| Registration fails        | Already registered, banned, or unbonded        | Check `isRegistered()`, ban status, and ciphernode bond |
+| Ticket purchase fails     | Insufficient stablecoin or allowance           | Ensure balance and approve spending                     |
+| "NodeNotEligible" in logs | Not registered before E3 request               | Register before requests are made                       |
 
 ## Next Steps
 

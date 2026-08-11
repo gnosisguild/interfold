@@ -51,13 +51,13 @@ library BondingOwnershipLib {
 
         address currentOwner = bondOwners[msg.sender];
         if (currentOwner != address(0)) {
-            (uint256 pendingTicket, uint256 pendingLicense) = exits
+            (uint256 pendingTicket, uint256 pendingCiphernodeBond) = exits
                 .getPendingAmounts(msg.sender);
             BondingRegistry.Operator storage op = operators[msg.sender];
             if (
                 op.registered ||
-                op.licenseBond != 0 ||
-                pendingLicense != 0 ||
+                op.ciphernodeBond != 0 ||
+                pendingCiphernodeBond != 0 ||
                 ticketToken.balanceOf(msg.sender) != 0 ||
                 pendingTicket != 0
             ) {

@@ -65,7 +65,7 @@ export const CONTRACTS = {
   CiphernodeRegistry: envStr('VITE_CIPHERNODE_REGISTRY_ADDRESS', '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A') as Address,
   CRISPProgram: envStr('VITE_CRISP_PROGRAM_ADDRESS', '0xF8D438bDFA099bFD8a17d8f31172DD26cFD574dC') as Address,
   // Operator-guide contracts. The bonding registry is the only address the guide
-  // needs hardcoded — the license token, ticket wrapper, and ticket underlying
+  // needs hardcoded — the ciphernode bond token, ticket wrapper, and ticket underlying
   // are all read back from it at runtime so they cannot drift.
   BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x77384A924C18FfE00A9325815723121534105Abd') as Address,
   // Testnet-only convenience faucet (FOLD + fee token). The zero address or an
@@ -94,5 +94,5 @@ export const interfoldAbi = Interfold__factory.abi
 export const ciphernodeRegistryAbi = CiphernodeRegistryOwnable__factory.abi
 export const bondingRegistryAbi = BondingRegistry__factory.abi
 export const ticketTokenAbi = InterfoldTicketToken__factory.abi
-export const licenseTokenAbi = InterfoldToken__factory.abi
+export const ciphernodeBondTokenAbi = InterfoldToken__factory.abi
 export const faucetAbi = Faucet__factory.abi

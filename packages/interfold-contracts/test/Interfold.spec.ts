@@ -48,7 +48,7 @@ describe("Interfold", function () {
       interfold: sys.interfold,
       ciphernodeRegistryContract: sys.ciphernodeRegistry,
       bondingRegistry: sys.bondingRegistry,
-      licenseToken: sys.licenseToken,
+      ciphernodeBondToken: sys.ciphernodeBondToken,
       ticketToken: sys.ticketToken,
       usdcToken: sys.usdcToken,
       slashingManager: sys.slashingManager,

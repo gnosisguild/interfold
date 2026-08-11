@@ -12,7 +12,7 @@ use alloy::{
     sol_types::SolEvent,
 };
 use e3_events::{
-    BondOwnerSet, CiphernodeDeregistrationRequested, InterfoldEventData, LicenseBondUpdated,
+    BondOwnerSet, CiphernodeBondUpdated, CiphernodeDeregistrationRequested, InterfoldEventData,
 };
 use tracing::{error, trace};
 
@@ -89,10 +89,10 @@ impl From<OperatorActivationChangedWithChainId> for InterfoldEventData {
     }
 }
 
-struct LicenseBondUpdatedWithChainId(pub IBondingRegistry::LicenseBondUpdated, pub u64);
+struct CiphernodeBondUpdatedWithChainId(pub IBondingRegistry::CiphernodeBondUpdated, pub u64);
 
-impl From<LicenseBondUpdatedWithChainId> for LicenseBondUpdated {
-    fn from(value: LicenseBondUpdatedWithChainId) -> Self {
+impl From<CiphernodeBondUpdatedWithChainId> for CiphernodeBondUpdated {
+    fn from(value: CiphernodeBondUpdatedWithChainId) -> Self {
         Self {
             operator: value.0.operator.to_string(),
             delta: value.0.delta,
@@ -103,9 +103,9 @@ impl From<LicenseBondUpdatedWithChainId> for LicenseBondUpdated {
     }
 }
 
-impl From<LicenseBondUpdatedWithChainId> for InterfoldEventData {
-    fn from(value: LicenseBondUpdatedWithChainId) -> Self {
-        LicenseBondUpdated::from(value).into()
+impl From<CiphernodeBondUpdatedWithChainId> for InterfoldEventData {
+    fn from(value: CiphernodeBondUpdatedWithChainId) -> Self {
+        CiphernodeBondUpdated::from(value).into()
     }
 }
 
@@ -173,12 +173,12 @@ pub(crate) fn extractor(
                 OperatorActivationChangedWithChainId(event, chain_id),
             ))
         }
-        Some(&IBondingRegistry::LicenseBondUpdated::SIGNATURE_HASH) => {
-            let Ok(event) = IBondingRegistry::LicenseBondUpdated::decode_log_data(data) else {
-                error!("Error parsing event LicenseBondUpdated after topic matched!");
+        Some(&IBondingRegistry::CiphernodeBondUpdated::SIGNATURE_HASH) => {
+            let Ok(event) = IBondingRegistry::CiphernodeBondUpdated::decode_log_data(data) else {
+                error!("Error parsing event CiphernodeBondUpdated after topic matched!");
                 return None;
             };
-            Some(LicenseBondUpdatedWithChainId(event, chain_id).into())
+            Some(CiphernodeBondUpdatedWithChainId(event, chain_id).into())
         }
         Some(&IBondingRegistry::CiphernodeDeregistrationRequested::SIGNATURE_HASH) => {
             let Ok(event) =

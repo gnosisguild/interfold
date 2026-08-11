@@ -7,7 +7,8 @@ Interfold / CRISP public observation dashboard. Three tabs:
 - **E3 inspector** — deep technical record of one E3: request, committee, keygen rounds, input
   window, compute, decryption, publication, fees, on-chain event log.
 - **Run a ciphernode** — interactive operator guide. The only writing page: it connects a wallet and
-  walks the on-chain setup (authorize bond owner → bond the license → register → buy tickets).
+  walks the on-chain setup (authorize bond owner → bond the ciphernode bond → register → buy
+  tickets).
 
 ## Run
 
@@ -49,8 +50,9 @@ The operator key and the bond owner are separate addresses. The operator key is 
 signs with; the bond owner is the wallet that funds and controls the collateral. They may be the
 same wallet. The sequence the guide enforces is:
 
-1. `setBondOwner(bondOwner)` — **sent by the operator key**, authorizing a wallet to stake for it.
-2. `approve` license token to the registry, then `bondLicenseFor(operator, amount)`.
+1. `setBondOwner(bondOwner)` — **sent by the operator key**, authorizing a wallet to post collateral
+   for it.
+2. `approve` ciphernode bond token to the registry, then `bondCiphernodeFor(operator, amount)`.
 3. `registerOperatorFor(operator)` — adds the key to the ciphernode registry (requires the bond).
 4. `approve` the ticket underlying to the ticket wrapper, then
    `addTicketBalanceFor(operator, cost)`.
@@ -59,9 +61,9 @@ Steps 2–4 must come from the bond owner; the page detects the connected wallet
 it cannot send. Every write is simulated first (`simulateAndWrite`) so the registry's typed reverts
 (for example `NotBondOwner`) surface before the wallet prompt.
 
-Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The license token, ticket wrapper, ticket
-underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from the
-registry, so the guide follows the deployment instead of a hardcoded token list.
+Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
+ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
+the registry, so the guide follows the deployment instead of a hardcoded token list.
 
 CRISP question text + option labels are off-chain (the program doesn't store them); the mapping
 lives in `src/lib/pollMeta.ts`. Unknown E3 ids get a generic "Encrypted poll #N" header with numeric
