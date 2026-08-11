@@ -43,7 +43,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
   bound to the exact BondingRegistry and asset-configuration version. Asset activation requires the
   ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive without
-  blocking license slashes, bans, or exit bookkeeping. — `flow-trace/02`, `05`; INDEX concern #23
+  blocking license slashes, bans, or exit bookkeeping. License-token rotation atomically sends any
+  balance above `totalLicenseLiability` to the treasury before validating the replacement, so an
+  unsolicited transfer cannot interleave with rotation. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
   does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`

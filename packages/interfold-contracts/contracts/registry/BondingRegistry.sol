@@ -1060,6 +1060,7 @@ contract BondingRegistry is
     function _setBondingAssetConfig(
         BondingAssetConfig calldata config
     ) internal {
+        _sweepLicenseSurplus();
         bool assetChanged = BondingAssetLib.validateBondingAssetConfig(
             address(ticketToken),
             address(licenseToken),
@@ -1141,15 +1142,17 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function sweepLicenseSurplus() external onlyOwner returns (uint256 amount) {
-        IERC20 current = licenseToken;
-        uint256 balance = current.balanceOf(address(this));
-        uint256 liabilities = totalLicenseLiability;
-        if (balance <= liabilities) return 0;
+        return _sweepLicenseSurplus();
+    }
 
-        amount = balance - liabilities;
-        address treasury = slashedFundsTreasury;
-        _safeTransferLicenseWithDeltaCheck(treasury, amount);
-        emit LicenseSurplusSwept(address(current), treasury, amount);
+    function _sweepLicenseSurplus() private returns (uint256 amount) {
+        return
+            BondingAssetLib.sweepLicenseSurplus(
+                address(licenseToken),
+                address(this),
+                slashedFundsTreasury,
+                totalLicenseLiability
+            );
     }
 
     /// @inheritdoc IBondingRegistry

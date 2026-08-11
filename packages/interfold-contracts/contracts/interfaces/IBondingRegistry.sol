@@ -776,7 +776,9 @@ interface IBondingRegistry {
 
     /// @notice Sets both bonding tokens and their raw-unit values atomically.
     /// @dev Both underlying assets must transfer exact amounts and must not
-    ///      rebase account balances.
+    ///      rebase account balances. Before validation, any old license-token
+    ///      balance above recorded liabilities is sent to the treasury in this
+    ///      same transaction.
     function setBondingAssetConfig(BondingAssetConfig calldata config) external;
 
     /**
@@ -804,7 +806,7 @@ interface IBondingRegistry {
     /**
      * @notice Send unaccounted license-token surplus to the slashed-funds treasury.
      * @dev Never transfers active bonds, queued exits, or slashed-fund liabilities.
-     *      This is the governance path for clearing donated dust before rotation.
+     *      {setBondingAssetConfig} invokes the same cleanup automatically.
      * @return amount Amount requested for transfer
      */
     function sweepLicenseSurplus() external returns (uint256 amount);

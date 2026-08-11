@@ -120,11 +120,12 @@ Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot b
 the old wrapper has issued tickets or a payable balance. The registry tracks `totalLicenseLiability`
 across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
 treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
-distinguishable from operator liabilities and can be sent to `slashedFundsTreasury` with
-`sweepLicenseSurplus()` before rotation. Rotation also waits for every E3 assignment, slash lock,
-and pending slash route to close. Replacement assets must be deployed contracts; the only zero
-exception is the one-time license-token placeholder used to resolve the circular
-FOLD/BondingRegistry deployment.
+distinguishable from operator liabilities. `setBondingAssetConfig()` sends that surplus to
+`slashedFundsTreasury` before it validates and applies the replacement in the same transaction, so a
+new donation cannot interleave and block rotation. `sweepLicenseSurplus()` remains available for
+standalone cleanup. Rotation also waits for every E3 assignment, slash lock, and pending slash route
+to close. Replacement assets must be deployed contracts; the only zero exception is the one-time
+license-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
 
 The exit delay must exceed the current sortition submission window and every unexpired request-time
 deadline. Each request raises a monotonic deadline watermark. `exitDelayFloor()` returns the larger

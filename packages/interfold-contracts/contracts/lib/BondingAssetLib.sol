@@ -257,6 +257,34 @@ library BondingAssetLib {
         address recipient,
         uint256 amount
     ) external {
+        _transferExact(tokenAddress, recipient, amount);
+    }
+
+    function sweepLicenseSurplus(
+        address tokenAddress,
+        address registry,
+        address treasury,
+        uint256 liabilities
+    ) external returns (uint256 amount) {
+        if (tokenAddress == address(0)) return 0;
+        IERC20 token = IERC20(tokenAddress);
+        uint256 balance = token.balanceOf(registry);
+        if (balance <= liabilities) return 0;
+
+        amount = balance - liabilities;
+        _transferExact(tokenAddress, treasury, amount);
+        emit IBondingRegistry.LicenseSurplusSwept(
+            tokenAddress,
+            treasury,
+            amount
+        );
+    }
+
+    function _transferExact(
+        address tokenAddress,
+        address recipient,
+        uint256 amount
+    ) private {
         IERC20 token = IERC20(tokenAddress);
         uint256 custodyBefore = token.balanceOf(address(this));
         uint256 recipientBefore = token.balanceOf(recipient);

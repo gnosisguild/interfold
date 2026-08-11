@@ -2492,7 +2492,7 @@ describe("BondingRegistry", function () {
         .withArgs(await licenseToken.getAddress(), bondAmount);
     });
 
-    it("AUD-M08: sweeps donated license-token dust without touching liabilities", async function () {
+    it("atomically sweeps donated license surplus during rotation", async function () {
       const {
         bondingRegistry,
         licenseToken,
@@ -2510,31 +2510,21 @@ describe("BondingRegistry", function () {
       const replacement = await (
         await ethers.getContractFactory("MockLockAwareLicenseToken")
       ).deploy(0);
+      const treasuryBefore = await licenseToken.balanceOf(treasuryAddress);
       await expect(
         setBondingAssetConfig(bondingRegistry, {
           licenseToken: await replacement.getAddress(),
         }),
       )
-        .to.be.revertedWithCustomError(
-          bondingRegistry,
-          "OutstandingAssetLiabilities",
-        )
-        .withArgs(await licenseToken.getAddress(), dust);
-
-      const treasuryBefore = await licenseToken.balanceOf(treasuryAddress);
-      await expect(bondingRegistry.sweepLicenseSurplus())
         .to.emit(bondingRegistry, "LicenseSurplusSwept")
         .withArgs(await licenseToken.getAddress(), treasuryAddress, dust);
       expect(await licenseToken.balanceOf(treasury)).to.equal(
         treasuryBefore + dust,
       );
       expect(await licenseToken.balanceOf(registryAddress)).to.equal(0);
-
-      await expect(
-        setBondingAssetConfig(bondingRegistry, {
-          licenseToken: await replacement.getAddress(),
-        }),
-      ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
+      expect(await bondingRegistry.getLicenseToken()).to.equal(
+        await replacement.getAddress(),
+      );
     });
 
     it("rejects sender fees during license sweeps and exit claims", async function () {
