@@ -13,7 +13,9 @@ use eyre::{eyre, Context, Result}; // Add this import
 use reqwest;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration, Instant};
 
 // Define the Votes contract interface for getPastVotes
 sol! {
@@ -90,11 +92,26 @@ pub struct PotentialVoter {
     pub has_delegation: bool,
 }
 
+/// Minimum spacing between Etherscan requests.
+///
+/// Etherscan enforces a per-second call ceiling — 3/sec on the free tier — and rejects
+/// the excess outright rather than queueing it, so requests are spaced client-side.
+/// 500ms leaves headroom under that ceiling for retries and for concurrent rounds
+/// sharing the key. Raise the rate with {with_min_request_interval} on a higher plan.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How many times a rate-limited request is retried before giving up.
+const RATE_LIMIT_RETRIES: u32 = 5;
+
 /// Client for querying token holder data from Etherscan API.
 pub struct EtherscanClient {
     client: reqwest::Client,
     api_key: String,
     chain_id: u64,
+    /// Completion time of the last request, shared so that every call through this
+    /// client observes one spacing schedule.
+    last_request: Arc<Mutex<Option<Instant>>>,
+    min_interval: Duration,
 }
 
 impl EtherscanClient {
@@ -104,7 +121,30 @@ impl EtherscanClient {
             client: reqwest::Client::new(),
             api_key,
             chain_id,
+            last_request: Arc::new(Mutex::new(None)),
+            min_interval: MIN_REQUEST_INTERVAL,
         }
+    }
+
+    /// Override the spacing between requests, for a plan with a different ceiling.
+    pub fn with_min_request_interval(mut self, interval: Duration) -> Self {
+        self.min_interval = interval;
+        self
+    }
+
+    /// Block until enough time has passed since the previous request.
+    ///
+    /// The lock is held across the wait so concurrent callers queue behind one another
+    /// rather than all observing the same stale timestamp and firing together.
+    async fn throttle(&self) {
+        let mut last = self.last_request.lock().await;
+        if let Some(previous) = *last {
+            let elapsed = previous.elapsed();
+            if elapsed < self.min_interval {
+                sleep(self.min_interval - elapsed).await;
+            }
+        }
+        *last = Some(Instant::now());
     }
 
     /// Resolve an EIP-6372 timestamp timepoint to the highest block mined at or before it.
@@ -174,24 +214,16 @@ impl EtherscanClient {
             ETHERSCAN_API_URL, token, self.chain_id, self.api_key
         );
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send request to Etherscan")?;
-        let data: EtherscanResponse<Vec<ContractCreation>> = response
-            .json()
-            .await
-            .context("Failed to parse Etherscan response")?;
+        // Shares the throttle and the in-band error handling with the log queries; it
+        // is the first Etherscan call of a census and counts against the same ceiling.
+        let creations: Vec<ContractCreation> = self
+            .fetch_page(&url, "contract creation")
+            .await?
+            .ok_or_else(|| eyre!("No deployment data found"))?;
 
-        if data.status != "1" {
-            return Err(eyre!("Deployment block not found: {}", data.message));
-        }
-
-        let result = data
-            .result
-            .and_then(|r| r.into_iter().next())
+        let result = creations
+            .into_iter()
+            .next()
             .ok_or_else(|| eyre!("No deployment data found"))?;
 
         // Parse block number (could be hex or decimal)
@@ -218,53 +250,89 @@ impl EtherscanClient {
     ///
     /// Returns `Ok(None)` for the "No records found" response, which is a legitimate
     /// empty result rather than an error.
+    ///
+    /// Rate-limit rejections are retried with exponential backoff. Client-side spacing
+    /// alone cannot prevent them: the ceiling is per API key, so concurrent rounds — or
+    /// anything else sharing the key — can exhaust it between two correctly spaced calls.
     async fn fetch_page<T: serde::de::DeserializeOwned>(
         &self,
         url: &str,
         what: &str,
     ) -> Result<Option<T>> {
-        let body = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .with_context(|| format!("Failed to send {} request to Etherscan", what))?
-            .text()
-            .await
-            .with_context(|| format!("Failed to read {} response body", what))?;
+        let mut backoff = self.min_interval;
 
-        let envelope: EtherscanResponse<serde_json::Value> = serde_json::from_str(&body)
-            .with_context(|| {
-                format!(
-                    "Failed to parse {} response envelope; body was: {}",
-                    what,
-                    body.chars().take(500).collect::<String>()
-                )
-            })?;
+        for attempt in 0..=RATE_LIMIT_RETRIES {
+            self.throttle().await;
 
-        if envelope.status != "1" {
-            if envelope.message.eq_ignore_ascii_case("No records found") {
-                return Ok(None);
+            let body = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("Failed to send {} request to Etherscan", what))?
+                .text()
+                .await
+                .with_context(|| format!("Failed to read {} response body", what))?;
+
+            let envelope: EtherscanResponse<serde_json::Value> = serde_json::from_str(&body)
+                .with_context(|| {
+                    format!(
+                        "Failed to parse {} response envelope; body was: {}",
+                        what,
+                        body.chars().take(500).collect::<String>()
+                    )
+                })?;
+
+            if envelope.status != "1" {
+                if envelope.message.eq_ignore_ascii_case("No records found") {
+                    return Ok(None);
+                }
+
+                // The `result` field carries Etherscan's actual explanation; `message` is
+                // usually just "NOTOK".
+                let detail = match &envelope.result {
+                    Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                    _ => envelope.message.clone(),
+                };
+
+                if Self::is_rate_limited(&detail) && attempt < RATE_LIMIT_RETRIES {
+                    log::warn!(
+                        "Etherscan rate limit on {} (attempt {}/{}): {}; retrying in {:?}",
+                        what,
+                        attempt + 1,
+                        RATE_LIMIT_RETRIES,
+                        detail,
+                        backoff
+                    );
+                    sleep(backoff).await;
+                    backoff *= 2;
+                    continue;
+                }
+
+                return Err(eyre!("Etherscan {} request failed: {}", what, detail));
             }
 
-            // The `result` field carries Etherscan's actual explanation; `message` is
-            // usually just "NOTOK".
-            let detail = match &envelope.result {
-                Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
-                _ => envelope.message.clone(),
+            let result = match envelope.result {
+                Some(value) => value,
+                None => return Ok(None),
             };
-            return Err(eyre!("Etherscan {} request failed: {}", what, detail));
+
+            let typed = serde_json::from_value(result)
+                .with_context(|| format!("Failed to parse {} result payload", what))?;
+
+            return Ok(Some(typed));
         }
 
-        let result = match envelope.result {
-            Some(value) => value,
-            None => return Ok(None),
-        };
+        unreachable!("the retry loop returns or errors on its final attempt")
+    }
 
-        let typed = serde_json::from_value(result)
-            .with_context(|| format!("Failed to parse {} result payload", what))?;
-
-        Ok(Some(typed))
+    /// Whether an Etherscan error message describes a rate-limit rejection.
+    ///
+    /// Matched on text because the API reports it in-band with the same `status: "0"`
+    /// it uses for every other failure, with no distinguishing code.
+    fn is_rate_limited(detail: &str) -> bool {
+        let detail = detail.to_ascii_lowercase();
+        detail.contains("rate limit") || detail.contains("too many requests")
     }
 
     /// Get transfer logs for a token
@@ -304,9 +372,7 @@ impl EtherscanClient {
             }
 
             page += 1;
-
-            // Rate limiting - wait 100ms between requests
-            sleep(Duration::from_millis(100)).await;
+            // Spacing between requests is handled by `throttle`, so no sleep here.
         }
 
         Ok(all_logs)
@@ -350,9 +416,7 @@ impl EtherscanClient {
             }
 
             page += 1;
-
-            // Rate limiting - wait 100ms between requests
-            sleep(Duration::from_millis(100)).await;
+            // Spacing between requests is handled by `throttle`, so no sleep here.
         }
 
         Ok(all_logs)
