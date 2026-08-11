@@ -15,9 +15,7 @@ use crate::constants::{
         SEARCH_N as INSECURE_SEARCH_N, SEARCH_Z as INSECURE_SEARCH_Z,
     },
     search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z},
-    secure_16384,
-    secure_16384_search_defaults,
-    secure_8192,
+    secure_16384, secure_16384_search_defaults, secure_8192,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -340,15 +338,9 @@ impl BfvPreset {
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
         match s.to_ascii_uppercase().as_str() {
-            "SECURE-16384" | "SECURE_THRESHOLD_16384" => {
-                return Ok(Self::SecureThreshold16384)
-            }
-            "SECURE-8192" | "SECURE_THRESHOLD_8192" => {
-                return Ok(Self::SecureThreshold8192)
-            }
-            "INSECURE-512" | "INSECURE_THRESHOLD_512" => {
-                return Ok(Self::InsecureThreshold512)
-            }
+            "SECURE-16384" | "SECURE_THRESHOLD_16384" => return Ok(Self::SecureThreshold16384),
+            "SECURE-8192" | "SECURE_THRESHOLD_8192" => return Ok(Self::SecureThreshold8192),
+            "INSECURE-512" | "INSECURE_THRESHOLD_512" => return Ok(Self::InsecureThreshold512),
             _ => {}
         }
         if let Ok(lambda) = s.parse::<usize>() {
@@ -402,9 +394,9 @@ impl BfvPreset {
             BfvPreset::InsecureThreshold512 => Some(BfvPreset::InsecureDkg512),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
             BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
-            BfvPreset::InsecureDkg512
-            | BfvPreset::SecureDkg8192
-            | BfvPreset::SecureDkg16384 => None,
+            BfvPreset::InsecureDkg512 | BfvPreset::SecureDkg8192 | BfvPreset::SecureDkg16384 => {
+                None
+            }
         }
     }
 
@@ -495,7 +487,10 @@ impl BfvPreset {
     /// level must cross a serialization boundary; otherwise prefer [`BfvPreset::lambda`].
     pub fn lambda_config(&self) -> LambdaConfig {
         let meta = self.metadata();
-        if matches!(self, BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384) {
+        if matches!(
+            self,
+            BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384
+        ) {
             // This parameter set was sized with λ = 38. fhe.rs reserves Lambda::secure
             // for λ >= 50, so preserve the parameter-set value explicitly as insecure.
             return LambdaConfig::Insecure(meta.lambda);
@@ -611,9 +606,7 @@ impl From<BfvPreset> for BfvParamSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{
-        insecure_512, secure_16384, secure_16384_search_defaults, secure_8192,
-    };
+    use crate::constants::{insecure_512, secure_16384, secure_16384_search_defaults, secure_8192};
 
     #[test]
     fn from_name_accepts_all_presets() {
@@ -838,7 +831,10 @@ mod tests {
             BfvPreset::SecureDkg16384.lambda_config(),
             LambdaConfig::Insecure(38)
         );
-        assert_eq!(BfvPreset::SecureThreshold16384.lambda().unwrap().value(), 38);
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.lambda().unwrap().value(),
+            38
+        );
     }
 
     #[test]

@@ -245,7 +245,10 @@ mod tests {
             Some(error1_variance),
         );
         assert_eq!(params.degree(), degree);
-        assert_eq!(params.plaintext(), secure_16384::threshold::PLAINTEXT_MODULUS);
+        assert_eq!(
+            params.plaintext(),
+            secure_16384::threshold::PLAINTEXT_MODULUS
+        );
         assert_eq!(params.moduli(), threshold_moduli);
         assert_eq!(params.variance(), defaults::VARIANCE);
         assert_eq!(
@@ -254,8 +257,12 @@ mod tests {
         );
 
         // Test building DKG params using secure 16384 preset constants
-        let dkg_params =
-            build_bfv_params(degree, secure_16384::dkg::PLAINTEXT_MODULUS, secure_16384::dkg::MODULI, None);
+        let dkg_params = build_bfv_params(
+            degree,
+            secure_16384::dkg::PLAINTEXT_MODULUS,
+            secure_16384::dkg::MODULI,
+            None,
+        );
         assert_eq!(dkg_params.degree(), degree);
         assert_eq!(dkg_params.plaintext(), secure_16384::dkg::PLAINTEXT_MODULUS);
         assert_eq!(dkg_params.moduli(), secure_16384::dkg::MODULI);
