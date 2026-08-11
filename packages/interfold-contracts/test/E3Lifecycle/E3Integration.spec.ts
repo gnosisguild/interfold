@@ -1697,9 +1697,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const perNodeAmount =
         distribution.honestNodeAmount / BigInt(distribution.honestNodeCount);
-      expect(ownerBalanceAfter - ownerBalanceBefore).to.equal(
-        perNodeAmount + ownerSlashClaim,
-      );
+      const baseTopUp =
+        ownerBalanceAfter -
+        ownerBalanceBefore -
+        perNodeAmount -
+        ownerSlashClaim;
+      expect(
+        baseTopUp == perNodeAmount / 2n ||
+          baseTopUp == perNodeAmount - perNodeAmount / 2n,
+      ).to.equal(true);
     });
 
     it("does not return a non-expelling ticket penalty to its target", async function () {
@@ -1910,6 +1916,59 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           await computeProvider.getAddress(),
         ));
       expect(honestSlashClaims).to.equal(ethers.parseUnits("100", 6));
+    });
+
+    it("reallocates an unclaimed base reward after a late expulsion", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        operator1,
+        operator2,
+        operator3,
+        computeProvider,
+        makeReadyRequest,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      await makeReadyRequest();
+      await finalizeAndPublishCommittee();
+
+      const deadlines = await interfold.getDeadlines(0);
+      await time.increaseTo(deadlines.computeDeadline + 1n);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      const managerAddress = await slashingManager.getAddress();
+      await networkHelpers.impersonateAccount(managerAddress);
+      await networkHelpers.setBalance(managerAddress, ethers.parseEther("1"));
+      const manager = await ethers.getSigner(managerAddress);
+      await e3RefundManager
+        .connect(manager)
+        .openExpulsionProposal(0, 99, await operator1.getAddress());
+      await e3RefundManager
+        .connect(manager)
+        .resolveExpulsionProposal(0, 99, true);
+      await networkHelpers.stopImpersonatingAccount(managerAddress);
+
+      await expect(
+        e3RefundManager
+          .connect(computeProvider)
+          .claimHonestNodeReward(0, await operator1.getAddress()),
+      ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
+
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const balanceBefore = await usdcToken.balanceOf(computeProvider);
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHonestNodeReward(0, await operator2.getAddress());
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHonestNodeReward(0, await operator3.getAddress());
+      expect(
+        (await usdcToken.balanceOf(computeProvider)) - balanceBefore,
+      ).to.equal(distribution.perNodeAmount * 3n);
     });
 
     it("releases a successful E3 reward when an expelling proposal is cleared", async function () {

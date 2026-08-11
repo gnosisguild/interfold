@@ -215,10 +215,11 @@ HONEST NODE'S BOND OWNER claims:
 ├─ require(operator is in honestNodes[e3Id])
 ├─ load the recipient frozen when this E3's committee was finalized
 ├─ require(msg.sender == recipient)
-├─ If an expelling proposal is unresolved, hold this operator's claim
-│  without blocking other operators
-├─ If the operator is expelled, mark its base share consumed and
+├─ If an expelling proposal is unresolved, hold this operator's unclaimed
+│  share without blocking other operators, even if settlement happened first
+├─ If the operator is expelled, mark any unclaimed base share consumed and
 │  reallocate it as later top-up claims for the remaining operators
+│  → A base reward claimed before the proposal opened remains final
 ├─ Otherwise require either an unclaimed base reward or a new top-up
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements

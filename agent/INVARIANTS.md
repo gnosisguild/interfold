@@ -137,10 +137,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   treasury withdrawal **before** escrow. The route preserves its E3, target, token, amount, and
   request-time refund destination; retries are idempotent. — `flow-trace/05`
 - **E3 reward eligibility is order-independent:** an unresolved expelling proposal holds only the
-  accused operator's prospective fee and slash-funded shares. A cleared proposal releases those
-  shares, while execution reallocates them to the remaining operators. Peer claims do not wait. A
-  non-expelling slash excludes its target only from that proposal's penalty proceeds. All paths use
-  the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
+  accused operator's unclaimed fee and slash-funded shares, including a base share calculated before
+  the proposal opened. A cleared proposal releases those shares, while execution reallocates them to
+  the remaining operators. Rewards claimed before a proposal opens remain final. Peer claims do not
+  wait. A non-expelling slash excludes its target only from that proposal's penalty proceeds. All
+  paths use the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
