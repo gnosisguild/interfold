@@ -94,6 +94,50 @@ impl EtherscanClient {
         }
     }
 
+    /// Resolve an EIP-6372 timestamp timepoint to the last block mined at or before it.
+    ///
+    /// The E3 census snapshot is a timepoint, not a block height: `InterfoldTicketToken`
+    /// reports `CLOCK_MODE() == "mode=timestamp"`, so `E3.requestBlock` holds a timestamp
+    /// despite its name. Log queries address blocks, so the timepoint must be converted
+    /// before it can bound a `getLogs` range.
+    ///
+    /// Uses `closest=before` so the range covers exactly the blocks that contribute to
+    /// voting power at the timepoint. On a chain where several blocks can share one
+    /// timestamp, this can end the range at the first of them.
+    pub async fn get_block_by_timestamp(&self, timestamp: u64) -> Result<u64> {
+        let url = format!(
+            "{}?module=block&action=getblocknobytime&timestamp={}&closest=before&chainid={}&apikey={}",
+            ETHERSCAN_API_URL, timestamp, self.chain_id, self.api_key
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send block-by-timestamp request to Etherscan")?;
+        let data: EtherscanResponse<String> = response
+            .json()
+            .await
+            .context("Failed to parse block-by-timestamp response")?;
+
+        if data.status != "1" {
+            return Err(eyre!(
+                "Block for timestamp {} not found: {}",
+                timestamp,
+                data.message
+            ));
+        }
+
+        let block_number = data
+            .result
+            .ok_or_else(|| eyre!("No block data found for timestamp {}", timestamp))?;
+
+        block_number
+            .parse::<u64>()
+            .with_context(|| format!("Failed to parse block number {}", block_number))
+    }
+
     /// Get the deployment block number for a contract
     pub async fn get_deployment_block(&self, token: &str) -> Result<u64> {
         let url = format!(
@@ -309,12 +353,12 @@ impl EtherscanClient {
         potential_voters.into_values().collect()
     }
 
-    /// Verify voting power for multiple addresses
+    /// Verify voting power for multiple addresses at an EIP-6372 timepoint
     pub async fn verify_voting_power(
         &self,
         token_address: Address,
         potential_voters: &[PotentialVoter],
-        block_number: u64,
+        timepoint: u64,
         rpc_url: &str,
         threshold: U256,
     ) -> Result<Vec<TokenHolder>> {
@@ -328,7 +372,7 @@ impl EtherscanClient {
         let scale_factor = U256::from(10u128.pow(precision as u32));
 
         for voter in potential_voters {
-            match Self::get_past_votes(token_address, voter.address, block_number, rpc_url).await {
+            match Self::get_past_votes(token_address, voter.address, timepoint, rpc_url).await {
                 Ok(votes) => {
                     if votes >= threshold {
                         let scaled_votes = votes / scale_factor;
@@ -436,11 +480,11 @@ impl EtherscanClient {
         balances
     }
 
-    /// Verify actual voting power for an address at a specific block
+    /// Verify actual voting power for an address at an EIP-6372 timepoint
     async fn get_past_votes(
         token_address: Address,
         voter_address: Address,
-        block_number: u64,
+        timepoint: u64,
         rpc_url: &str,
     ) -> Result<U256> {
         let url = rpc_url.parse().context("Failed to parse RPC URL")?;
@@ -448,7 +492,7 @@ impl EtherscanClient {
         let token = ERC20Votes::new(token_address, provider);
 
         match token
-            .getPastVotes(voter_address, U256::from(block_number))
+            .getPastVotes(voter_address, U256::from(timepoint))
             .call()
             .await
         {
@@ -509,22 +553,36 @@ impl EtherscanClient {
         U256::from_str_radix(hex_data, 16).unwrap_or(U256::ZERO)
     }
 
-    /// Get all token holders with voting power at a specific block
+    /// Get all token holders with voting power at a census timepoint.
+    ///
+    /// `snapshot_timepoint` is an EIP-6372 timestamp, not a block height. Log discovery
+    /// needs the equivalent block, so both units are used: the block bounds the log
+    /// ranges, the timepoint is passed to `getPastVotes`.
     pub async fn get_token_holders_with_voting_power(
         &self,
         token_address: Address,
-        snapshot_block: u64,
+        snapshot_timepoint: u64,
         rpc_url: &str,
         threshold: U256,
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
-        // Step 1: Determine starting block
+        // Step 1: Determine the block range
         let start_block = self
             .get_deployment_block(&token_address.to_string())
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
+
+        let snapshot_block = self
+            .get_block_by_timestamp(snapshot_timepoint)
+            .await
+            .context("Failed to resolve snapshot timepoint to a block")?;
+        log::info!(
+            "Snapshot timepoint {} resolves to block {}",
+            snapshot_timepoint,
+            snapshot_block
+        );
 
         // Step 2: Fetch transfer logs
         log::info!(
@@ -555,13 +613,17 @@ impl EtherscanClient {
         let potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
         log::info!("Found {} potential voters", potential_voters.len());
 
-        // Step 5: Verify actual voting power
-        log::info!("Verifying voting power at block {}...", snapshot_block);
+        // Step 5: Verify actual voting power, at the timepoint rather than the block —
+        // the token checkpoints on `mode=timestamp`.
+        log::info!(
+            "Verifying voting power at timepoint {}...",
+            snapshot_timepoint
+        );
         let token_holders = self
             .verify_voting_power(
                 token_address,
                 &potential_voters,
-                snapshot_block,
+                snapshot_timepoint,
                 rpc_url,
                 threshold,
             )
@@ -583,7 +645,7 @@ impl EtherscanClient {
     pub async fn get_token_holders_with_constant_balance(
         &self,
         token_address: Address,
-        snapshot_block: u64,
+        snapshot_timepoint: u64,
         balance: U256,
     ) -> Result<Vec<TokenHolder>> {
         log::info!(
@@ -591,12 +653,24 @@ impl EtherscanClient {
             token_address
         );
 
-        // Step 1: Determine starting block
+        // Step 1: Determine the block range
         let start_block = self
             .get_deployment_block(&token_address.to_string())
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
+
+        // Eligibility here rests on the logs alone — no `getPastVotes` pass narrows the
+        // set afterwards — so the range must not reach past the census timepoint.
+        let snapshot_block = self
+            .get_block_by_timestamp(snapshot_timepoint)
+            .await
+            .context("Failed to resolve snapshot timepoint to a block")?;
+        log::info!(
+            "Snapshot timepoint {} resolves to block {}",
+            snapshot_timepoint,
+            snapshot_block
+        );
 
         // Step 2: Fetch transfer logs
         log::info!(
@@ -953,14 +1027,40 @@ mod tests {
         let api_key = &CONFIG.etherscan_api_key;
         let rpc_url = &CONFIG.http_rpc_url;
         let threshold = U256::ZERO;
-        let snapshot_block = 9564734;
+        // A timepoint, matching what `E3.requestBlock` carries — not a block height.
+        let snapshot_timepoint = 1761201108;
 
         let client = EtherscanClient::new(api_key.to_string(), chain_id);
         let res = client
-            .get_token_holders_with_voting_power(token_address, snapshot_block, rpc_url, threshold)
+            .get_token_holders_with_voting_power(
+                token_address,
+                snapshot_timepoint,
+                rpc_url,
+                threshold,
+            )
             .await
             .unwrap();
 
         assert!(res.len() == 2);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_block_by_timestamp() {
+        let chain_id = CONFIG.chain_id;
+        let api_key = &CONFIG.etherscan_api_key;
+        let client = EtherscanClient::new(api_key.to_string(), chain_id);
+
+        // A timepoint of the size `E3.requestBlock` carries. Read as a block height it
+        // is far beyond any chain head, which is the failure this resolver removes.
+        let snapshot_timepoint = 1761201108;
+
+        let block = client
+            .get_block_by_timestamp(snapshot_timepoint)
+            .await
+            .unwrap();
+
+        assert!(block > 0);
+        assert!(block < snapshot_timepoint);
     }
 }
