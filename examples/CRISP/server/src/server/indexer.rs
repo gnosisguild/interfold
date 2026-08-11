@@ -200,6 +200,7 @@ pub async fn register_e3_requested(
                             .get_token_holders_with_constant_balance(
                                 token_address,
                                 snapshot_timepoint,
+                                &CONFIG.http_rpc_url,
                                 credits_u256
                             )
                             .await

@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::server::models::TokenHolder;
+use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
 use eyre::{eyre, Context, Result}; // Add this import
 use reqwest;
@@ -106,48 +107,64 @@ impl EtherscanClient {
         }
     }
 
-    /// Resolve an EIP-6372 timestamp timepoint to the last block mined at or before it.
+    /// Resolve an EIP-6372 timestamp timepoint to the highest block mined at or before it.
     ///
-    /// The E3 census snapshot is a timepoint, not a block height: `InterfoldTicketToken`
-    /// reports `CLOCK_MODE() == "mode=timestamp"`, so `E3.requestBlock` holds a timestamp
-    /// despite its name. Log queries address blocks, so the timepoint must be converted
-    /// before it can bound a `getLogs` range.
+    /// The E3 census snapshot is a timepoint, not a block height: `Interfold.request`
+    /// assigns `block.timestamp` to `E3.requestBlock` regardless of the census token.
+    /// Log queries address blocks, so the timepoint must be converted before it can
+    /// bound a `getLogs` range.
     ///
-    /// Uses `closest=before` so the range covers exactly the blocks that contribute to
-    /// voting power at the timepoint. On a chain where several blocks can share one
-    /// timestamp, this can end the range at the first of them.
-    pub async fn get_block_by_timestamp(&self, timestamp: u64) -> Result<u64> {
-        let url = format!(
-            "{}?module=block&action=getblocknobytime&timestamp={}&closest=before&chainid={}&apikey={}",
-            ETHERSCAN_API_URL, timestamp, self.chain_id, self.api_key
-        );
+    /// Resolved over RPC by binary search rather than through Etherscan's
+    /// `getblocknobytime`, which is a Pro-tier endpoint and fails on free API keys.
+    /// The search also pins the boundary exactly — the greatest block whose timestamp
+    /// is `<= timestamp`, including every block that contributes to voting power at the
+    /// timepoint and none that follow it.
+    pub async fn get_block_by_timestamp(timestamp: u64, rpc_url: &str) -> Result<u64> {
+        let url = rpc_url.parse().context("Failed to parse RPC URL")?;
+        let provider = ProviderBuilder::new().connect_http(url);
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send block-by-timestamp request to Etherscan")?;
-        let data: EtherscanResponse<String> = response
-            .json()
-            .await
-            .context("Failed to parse block-by-timestamp response")?;
+        let block_timestamp = |number: u64| {
+            let provider = provider.clone();
+            async move {
+                provider
+                    .get_block_by_number(BlockNumberOrTag::Number(number))
+                    .await
+                    .with_context(|| format!("Failed to fetch block {}", number))?
+                    .map(|block| block.header.timestamp)
+                    .ok_or_else(|| eyre!("Block {} not found", number))
+            }
+        };
 
-        if data.status != "1" {
+        let latest = provider
+            .get_block_number()
+            .await
+            .context("Failed to fetch latest block number")?;
+
+        // A timepoint at or beyond the head means the whole chain qualifies. This is
+        // reachable normally: the census is built moments after the request is mined.
+        if block_timestamp(latest).await? <= timestamp {
+            return Ok(latest);
+        }
+
+        if block_timestamp(0).await? > timestamp {
             return Err(eyre!(
-                "Block for timestamp {} not found: {}",
-                timestamp,
-                data.message
+                "Timestamp {} predates the genesis block; it is not a valid timepoint",
+                timestamp
             ));
         }
 
-        let block_number = data
-            .result
-            .ok_or_else(|| eyre!("No block data found for timestamp {}", timestamp))?;
+        // Invariant: `lo` is always at or before the timepoint, `hi` always after it.
+        let (mut lo, mut hi) = (0u64, latest);
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if block_timestamp(mid).await? <= timestamp {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
 
-        block_number
-            .parse::<u64>()
-            .with_context(|| format!("Failed to parse block number {}", block_number))
+        Ok(lo)
     }
 
     /// Get the deployment block number for a contract
@@ -617,8 +634,7 @@ impl EtherscanClient {
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
 
-        let snapshot_block = self
-            .get_block_by_timestamp(snapshot_timepoint)
+        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
             .await
             .context("Failed to resolve snapshot timepoint to a block")?;
         log::info!(
@@ -696,6 +712,7 @@ impl EtherscanClient {
         &self,
         token_address: Address,
         snapshot_timepoint: u64,
+        rpc_url: &str,
         balance: U256,
     ) -> Result<Vec<TokenHolder>> {
         log::info!(
@@ -712,8 +729,7 @@ impl EtherscanClient {
 
         // Eligibility here rests on the logs alone — no `getPastVotes` pass narrows the
         // set afterwards — so the range must not reach past the census timepoint.
-        let snapshot_block = self
-            .get_block_by_timestamp(snapshot_timepoint)
+        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
             .await
             .context("Failed to resolve snapshot timepoint to a block")?;
         log::info!(
@@ -1097,20 +1113,47 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_block_by_timestamp() {
-        let chain_id = CONFIG.chain_id;
-        let api_key = &CONFIG.etherscan_api_key;
-        let client = EtherscanClient::new(api_key.to_string(), chain_id);
+        let rpc_url = &CONFIG.http_rpc_url;
 
         // A timepoint of the size `E3.requestBlock` carries. Read as a block height it
         // is far beyond any chain head, which is the failure this resolver removes.
         let snapshot_timepoint = 1761201108;
 
-        let block = client
-            .get_block_by_timestamp(snapshot_timepoint)
+        let block = EtherscanClient::get_block_by_timestamp(snapshot_timepoint, rpc_url)
             .await
             .unwrap();
 
         assert!(block > 0);
         assert!(block < snapshot_timepoint);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_block_by_timestamp_is_the_last_block_at_or_before() {
+        let rpc_url = &CONFIG.http_rpc_url;
+        let snapshot_timepoint = 1761201108;
+
+        let block = EtherscanClient::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .unwrap();
+
+        // The boundary must be exact: the resolved block is at or before the timepoint,
+        // and the next one is after it. An off-by-one here silently truncates or extends
+        // the census.
+        let url = rpc_url.parse().unwrap();
+        let provider = ProviderBuilder::new().connect_http(url);
+        let at = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block))
+            .await
+            .unwrap()
+            .unwrap();
+        let next = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block + 1))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(at.header.timestamp <= snapshot_timepoint);
+        assert!(next.header.timestamp > snapshot_timepoint);
     }
 }
