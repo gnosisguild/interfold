@@ -83,24 +83,30 @@ async fn ticket_submission_settled<P: Provider + WalletProvider + Clone + 'stati
     }
 }
 
-/// Report whether the committee no longer waits for finalization.
+/// Report whether another sender finalized the committee.
 ///
-/// `finalizeCommittee` reverts with `CommitteeAlreadyFinalized` when the
-/// committee stage is not `Requested`. That stage change is what a successful
-/// finalization produces, so another sender did the work.
+/// `finalizeCommittee` reverts with `CommitteeAlreadyFinalized` for every
+/// committee stage that is not `Requested`. The `Failed` stage gives the same
+/// revert, so the revert alone does not show that a committee formed. The
+/// check therefore reads the committee: `getActiveCommitteeNodes` returns an
+/// empty list for each stage other than `Finalized`. A failed formation stays
+/// an error.
 async fn committee_finalization_settled<P: Provider + WalletProvider + Clone + 'static>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id_u256: U256,
 ) -> Result<bool> {
     let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-    match contract.finalizeCommittee(e3_id_u256).call().await {
-        Ok(_) => Ok(false),
-        Err(err) => Ok(reverts_with(
-            &anyhow::Error::from(err),
-            "CommitteeAlreadyFinalized",
-        )),
+    let Err(err) = contract.finalizeCommittee(e3_id_u256).call().await else {
+        return Ok(false);
+    };
+
+    if !reverts_with(&anyhow::Error::from(err), "CommitteeAlreadyFinalized") {
+        return Ok(false);
     }
+
+    let committee = contract.getActiveCommitteeNodes(e3_id_u256).call().await?;
+    Ok(!committee.nodes.is_empty())
 }
 
 pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(

@@ -167,6 +167,10 @@ sol! {
             uint256 partyId
         ) external view returns (address);
 
+        function getActiveCommitteeNodes(
+            uint256 e3Id
+        ) external view returns (address[] memory nodes, uint256[] memory scores);
+
         function dkgFoldAttestationVerifier() external view returns (address);
 
         function accusationVoteValidity() external view returns (uint256);
