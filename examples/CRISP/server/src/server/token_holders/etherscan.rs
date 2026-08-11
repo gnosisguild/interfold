@@ -22,7 +22,19 @@ sol! {
         function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
         function balanceOf(address account) external view returns (uint256);
         function decimals() external view returns (uint8);
+        function CLOCK_MODE() external view returns (string);
     }
+}
+
+/// Which unit a census token's `getPastVotes` timepoint is denominated in.
+///
+/// Set by the census token itself, per EIP-6372 — not by Interfold. The census token is
+/// requester-supplied, and OpenZeppelin's `ERC20Votes` defaults to block numbers, so this
+/// must be read per token rather than assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockMode {
+    BlockNumber,
+    Timestamp,
 }
 
 // Config
@@ -480,6 +492,25 @@ impl EtherscanClient {
         balances
     }
 
+    /// Read a census token's EIP-6372 clock mode.
+    ///
+    /// Defaults to block numbers when `CLOCK_MODE()` is absent or unparseable: tokens
+    /// predating EIP-6372 checkpoint on `block.number`, and that is also OpenZeppelin's
+    /// default for `ERC20Votes`.
+    async fn get_clock_mode(token_address: Address, rpc_url: &str) -> ClockMode {
+        let Ok(url) = rpc_url.parse() else {
+            return ClockMode::BlockNumber;
+        };
+        let provider = ProviderBuilder::new().connect_http(url);
+        let token = ERC20Votes::new(token_address, provider);
+
+        match token.CLOCK_MODE().call().await {
+            Ok(mode) if mode.contains("mode=timestamp") => ClockMode::Timestamp,
+            Ok(_) => ClockMode::BlockNumber,
+            Err(_) => ClockMode::BlockNumber,
+        }
+    }
+
     /// Verify actual voting power for an address at an EIP-6372 timepoint
     async fn get_past_votes(
         token_address: Address,
@@ -497,8 +528,18 @@ impl EtherscanClient {
             .await
         {
             Ok(votes) => Ok(votes),
-            Err(_) => {
-                // Fallback to balanceOf if getPastVotes fails
+            Err(e) => {
+                // Fallback to balanceOf if getPastVotes fails. This substitutes a *current*
+                // balance for a historical one, so it is logged: a timepoint in the wrong
+                // unit reverts every call and would otherwise rebuild the whole census
+                // from live balances without a single error.
+                log::warn!(
+                    "getPastVotes failed for {} at timepoint {} ({}), falling back to \
+                     current balanceOf",
+                    voter_address,
+                    timepoint,
+                    e
+                );
                 let balance = token
                     .balanceOf(voter_address)
                     .call()
@@ -555,9 +596,11 @@ impl EtherscanClient {
 
     /// Get all token holders with voting power at a census timepoint.
     ///
-    /// `snapshot_timepoint` is an EIP-6372 timestamp, not a block height. Log discovery
-    /// needs the equivalent block, so both units are used: the block bounds the log
-    /// ranges, the timepoint is passed to `getPastVotes`.
+    /// `snapshot_timepoint` is an EIP-6372 timestamp, not a block height — `E3.requestBlock`
+    /// carries `block.timestamp` regardless of which token forms the census. Log discovery
+    /// needs the equivalent block, so both units are derived here: the block always bounds
+    /// the log ranges, while `getPastVotes` receives whichever unit the census token's own
+    /// `CLOCK_MODE()` reports.
     pub async fn get_token_holders_with_voting_power(
         &self,
         token_address: Address,
@@ -613,17 +656,24 @@ impl EtherscanClient {
         let potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
         log::info!("Found {} potential voters", potential_voters.len());
 
-        // Step 5: Verify actual voting power, at the timepoint rather than the block —
-        // the token checkpoints on `mode=timestamp`.
+        // Step 5: Verify actual voting power. The unit of the `getPastVotes` timepoint is
+        // the census token's to decide, so ask it rather than assuming. Passing the wrong
+        // unit reverts the call and silently degrades the census to current balances.
+        let clock_mode = Self::get_clock_mode(token_address, rpc_url).await;
+        let vote_timepoint = match clock_mode {
+            ClockMode::Timestamp => snapshot_timepoint,
+            ClockMode::BlockNumber => snapshot_block,
+        };
         log::info!(
-            "Verifying voting power at timepoint {}...",
-            snapshot_timepoint
+            "Census token clock is {:?}; verifying voting power at timepoint {}...",
+            clock_mode,
+            vote_timepoint
         );
         let token_holders = self
             .verify_voting_power(
                 token_address,
                 &potential_voters,
-                snapshot_timepoint,
+                vote_timepoint,
                 rpc_url,
                 threshold,
             )
