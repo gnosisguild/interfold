@@ -30,6 +30,10 @@ import {
  *         staking in the Interfold protocol.
  * @dev SECURITY NOTES
  *
+ *      Asset policy: the underlying token must transfer exact amounts and must not rebase account
+ *      balances. Deposits verify the custody increase. Outbound transfers verify the recipient
+ *      increase and custody decrease.
+ *
  *      Underlying-blacklist risk: if the wrapped stablecoin (e.g. USDC, USDT) blacklists this
  *      contract, the wrapper cannot move underlying tokens. Withdraw, payout and slashing exits
  *      that move the underlying will revert until the blacklist is cleared. {rescueERC20}
@@ -96,6 +100,9 @@ contract InterfoldTicketToken is
 
     /// @notice Thrown when {rescueERC20} targets the wrapper's underlying asset.
     error CannotRescueUnderlying();
+
+    /// @notice The underlying transfer delivered a different amount than requested.
+    error UnderlyingTransferMismatch(uint256 expected, uint256 actual);
 
     /// @notice Mandatory delay between requesting and activating a registry swap once locked.
     uint64 public constant REGISTRY_CHANGE_DELAY = 1 days;
@@ -249,12 +256,10 @@ contract InterfoldTicketToken is
     // ── Deposits / withdrawals ────────────────────────────────────────────────
 
     /**
-     * @notice Deposit underlying tokens and mint the actual amount received (fee-on-transfer safe).
-     * @dev Only callable by the registry contract. Mints based on the delta in the wrapper's
-     *      underlying balance instead of the requested {amount}, defending against
-     *      fee-on-transfer or rebasing stablecoins that would otherwise let an operator mint
-     *      tickets the wrapper is not actually backed by. Auto-delegates the operator to
-     *      themselves so {getPastVotes} reflects their balance immediately.
+     * @notice Deposit underlying tokens and mint the amount received.
+     * @dev Only callable by the registry contract. Reverts unless the wrapper receives the full
+     *      requested amount. Auto-delegates the operator to themselves so {getPastVotes} reflects
+     *      their balance immediately.
      * @param operator Address to receive the minted ticket tokens
      * @param amount Nominal amount of underlying tokens to pull from the caller
      * @return success Always true on success
@@ -269,15 +274,15 @@ contract InterfoldTicketToken is
         IERC20 underlying_ = IERC20(address(underlying()));
         uint256 balanceBefore = underlying_.balanceOf(address(this));
         underlying_.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 received = underlying_.balanceOf(address(this)) - balanceBefore;
-        _mint(operator, received);
+        _requireExactReceipt(underlying_, address(this), balanceBefore, amount);
+        _mint(operator, amount);
         if (delegates(operator) == address(0)) _delegate(operator, operator);
         return true;
     }
 
     /**
-     * @notice Deposit underlying from `from` and mint actual received amount to `to`.
-     * @dev Only callable by the registry contract. Same fee-on-transfer protection as
+     * @notice Deposit underlying from `from` and mint the same amount to `to`.
+     * @dev Only callable by the registry contract. Uses the same exact-transfer check as
      *      {depositFor}.
      */
     function depositFrom(
@@ -289,8 +294,8 @@ contract InterfoldTicketToken is
         IERC20 underlying_ = IERC20(address(underlying()));
         uint256 balanceBefore = underlying_.balanceOf(address(this));
         underlying_.safeTransferFrom(from, address(this), amount);
-        uint256 received = underlying_.balanceOf(address(this)) - balanceBefore;
-        _mint(to, received);
+        _requireExactReceipt(underlying_, address(this), balanceBefore, amount);
+        _mint(to, amount);
         if (delegates(to) == address(0)) _delegate(to, to);
         return true;
     }
@@ -308,7 +313,17 @@ contract InterfoldTicketToken is
         address receiver,
         uint256 amount
     ) public override onlyRegistry nonReentrant returns (bool success) {
-        return super.withdrawTo(receiver, amount);
+        IERC20 underlying_ = IERC20(address(underlying()));
+        uint256 custodyBefore = underlying_.balanceOf(address(this));
+        uint256 recipientBefore = underlying_.balanceOf(receiver);
+        success = super.withdrawTo(receiver, amount);
+        _requireExactTransfer(
+            underlying_,
+            receiver,
+            custodyBefore,
+            recipientBefore,
+            amount
+        );
     }
 
     /**
@@ -339,8 +354,50 @@ contract InterfoldTicketToken is
     ) external onlyRegistry nonReentrant {
         require(amount <= payableBalance, "Exceeds payable balance");
         payableBalance -= amount;
-        SafeERC20.safeTransfer(IERC20(address(underlying())), to, amount);
+        IERC20 underlying_ = IERC20(address(underlying()));
+        uint256 custodyBefore = underlying_.balanceOf(address(this));
+        uint256 recipientBefore = underlying_.balanceOf(to);
+        underlying_.safeTransfer(to, amount);
+        _requireExactTransfer(
+            underlying_,
+            to,
+            custodyBefore,
+            recipientBefore,
+            amount
+        );
         emit Payout(to, amount);
+    }
+
+    function _requireExactTransfer(
+        IERC20 token,
+        address recipient,
+        uint256 custodyBefore,
+        uint256 recipientBefore,
+        uint256 expected
+    ) private view {
+        _requireExactReceipt(token, recipient, recipientBefore, expected);
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != expected) {
+            revert UnderlyingTransferMismatch(expected, spent);
+        }
+    }
+
+    function _requireExactReceipt(
+        IERC20 token,
+        address recipient,
+        uint256 balanceBefore,
+        uint256 expected
+    ) private view {
+        uint256 balanceAfter = token.balanceOf(recipient);
+        uint256 actual = balanceAfter > balanceBefore
+            ? balanceAfter - balanceBefore
+            : 0;
+        if (actual != expected) {
+            revert UnderlyingTransferMismatch(expected, actual);
+        }
     }
 
     /**

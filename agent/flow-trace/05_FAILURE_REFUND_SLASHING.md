@@ -818,6 +818,8 @@ _executeSlash(proposalId):
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
 │     │  │  │       → Transfers the underlying collateral asset   │
 │     │  │  │         to the E3RefundManager contract             │
+│     │  │  │       → Reverts unless the manager receives the      │
+│     │  │  │         complete amount                              │
 │     │  │  │       → Uses payableBalance incremented by          │
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
@@ -856,11 +858,10 @@ _executeSlash(proposalId):
        actualTicketSlashed, actualLicenseSlashed, banned)
 ```
 
-> **License transfer note.** `withdrawSlashedFunds` (the treasury sweep for slashed license bonds)
-> measures the recipient's balance delta around `licenseToken.safeTransfer` and emits
-> `LicenseTransferShortfall(recipient, expected, actual)` if a fee-on-transfer license token
-> short-pays the treasury. Booking has already been zeroed before the transfer; the event exists for
-> indexer-side reconciliation (audit M-13).
+> **Asset transfer policy.** Fee and bonding assets must transfer exact amounts and must not rebase
+> account balances. Ticket payouts, license transfers, refund-manager funding, and every claimant
+> payment measure the recipient increase and custody decrease. A mismatch reverts the complete
+> accounting transaction and preserves the other pooled liabilities.
 
 ### Proposal-Aware Slashed Funds Settlement (Failure Path)
 
@@ -1127,7 +1128,7 @@ STEP 1: ESCROWING (always, at slash time)
   Flow: BondingRegistry.redirectReservedSlashedTicketFunds(proposalId)
     → loads the proposal's frozen refund manager and exact amount
     → ticketToken.payout(refundManager, amount)
-    → actual ticket underlying moves to E3RefundManager
+    → require the full ticket underlying amount reaches E3RefundManager
     → preserve (e3Id, proposalId, target, actualToken, amount)
     → _pendingSlashedByToken[e3Id][actualToken] += amount
     → tokenLiability[actualToken] protects the balance
@@ -1159,7 +1160,8 @@ FALLBACK: RETRY, NOT OWNER RELABELING
   Failed routes remain reserved in BondingRegistry and retryable by anyone.
   E3RefundManager has no owner function that accepts an arbitrary token to
   relabel an untyped amount. Its transfer helper preserves each token's
-  protected slash liability after base refunds and treasury claims.
+  protected slash liability after base refunds and treasury claims, and it
+  reverts unless each claimant receives the complete recorded amount.
 
 License bond slashes always go to treasury (no escrow routing for FOLD).
 ```

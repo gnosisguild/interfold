@@ -31,6 +31,66 @@ library InterfoldPricing {
         IERC20 indexed token,
         uint256 amount
     );
+    event RewardClaimed(
+        uint256 indexed e3Id,
+        address indexed account,
+        IERC20 indexed token,
+        uint256 amount
+    );
+    event TreasuryClaimed(
+        address indexed treasury,
+        IERC20 indexed token,
+        uint256 amount
+    );
+
+    /// @notice Pull an exact token amount into a custody contract.
+    function transferFromExact(
+        IERC20 token,
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = token.balanceOf(recipient);
+        token.safeTransferFrom(sender, recipient, amount);
+        _requireExactReceipt(token, recipient, balanceBefore, amount);
+    }
+
+    /// @notice Send an exact token amount from a custody contract.
+    function transferExact(
+        IERC20 token,
+        address recipient,
+        uint256 amount
+    ) external {
+        _transferExact(token, recipient, amount);
+    }
+
+    /// @notice Drain one E3 reward and transfer it to its recipient.
+    function claimReward(
+        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
+        mapping(uint256 => IERC20) storage feeTokens,
+        uint256 e3Id,
+        address account
+    ) external returns (uint256 amount) {
+        amount = pendingRewards[e3Id][account];
+        if (amount == 0) return 0;
+        pendingRewards[e3Id][account] = 0;
+        IERC20 token = feeTokens[e3Id];
+        _transferExact(token, account, amount);
+        emit RewardClaimed(e3Id, account, token, amount);
+    }
+
+    /// @notice Drain one treasury balance and transfer it to the treasury.
+    function claimTreasury(
+        mapping(address => mapping(IERC20 => uint256)) storage pendingTreasury,
+        address treasury,
+        IERC20 token
+    ) external returns (uint256 amount) {
+        amount = pendingTreasury[treasury][token];
+        if (amount == 0) return 0;
+        pendingTreasury[treasury][token] = 0;
+        _transferExact(token, treasury, amount);
+        emit TreasuryClaimed(treasury, token, amount);
+    }
 
     /// @notice Validates a fee asset and every raw-unit price tied to it.
     function validateFeeAssetConfig(
@@ -144,23 +204,44 @@ library InterfoldPricing {
             operator
         );
         if (held) {
-            uint256 balanceBefore = token.balanceOf(address(refundManager));
-            token.safeTransfer(address(refundManager), amount);
-            uint256 balanceAfter = token.balanceOf(address(refundManager));
-            uint256 received = balanceAfter > balanceBefore
-                ? balanceAfter - balanceBefore
-                : 0;
-            if (received > 0) {
-                refundManager.holdSuccessReward(
-                    e3Id,
-                    operator,
-                    token,
-                    received
-                );
-            }
+            _transferExact(token, address(refundManager), amount);
+            refundManager.holdSuccessReward(e3Id, operator, token, amount);
         } else {
             pendingRewards[e3Id][recipient] += amount;
             emit RewardCredited(e3Id, recipient, token, amount);
+        }
+    }
+
+    function _transferExact(
+        IERC20 token,
+        address recipient,
+        uint256 amount
+    ) private {
+        uint256 custodyBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
+        token.safeTransfer(recipient, amount);
+        _requireExactReceipt(token, recipient, recipientBefore, amount);
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != amount) {
+            revert IInterfold.AssetTransferMismatch(token, amount, spent);
+        }
+    }
+
+    function _requireExactReceipt(
+        IERC20 token,
+        address recipient,
+        uint256 balanceBefore,
+        uint256 expected
+    ) private view {
+        uint256 balanceAfter = token.balanceOf(recipient);
+        uint256 actual = balanceAfter > balanceBefore
+            ? balanceAfter - balanceBefore
+            : 0;
+        if (actual != expected) {
+            revert IInterfold.AssetTransferMismatch(token, expected, actual);
         }
     }
 

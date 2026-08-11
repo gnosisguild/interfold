@@ -1298,7 +1298,23 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address recipient,
         uint256 amount
     ) internal {
+        uint256 custodyBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
         token.safeTransfer(recipient, amount);
+        uint256 recipientAfter = token.balanceOf(recipient);
+        uint256 received = recipientAfter > recipientBefore
+            ? recipientAfter - recipientBefore
+            : 0;
+        if (received != amount) {
+            revert AssetTransferMismatch(token, amount, received);
+        }
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != amount) {
+            revert AssetTransferMismatch(token, amount, spent);
+        }
         _assertTokenSolvent(token);
     }
 

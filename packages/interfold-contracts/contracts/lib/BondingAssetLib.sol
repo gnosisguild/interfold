@@ -252,23 +252,35 @@ library BondingAssetLib {
         return abi.decode(result, (uint256));
     }
 
-    function transferWithDeltaCheck(
+    function transferExact(
         address tokenAddress,
         address recipient,
         uint256 amount
     ) external {
         IERC20 token = IERC20(tokenAddress);
-        uint256 beforeBalance = token.balanceOf(recipient);
+        uint256 custodyBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
         token.safeTransfer(recipient, amount);
-        uint256 afterBalance = token.balanceOf(recipient);
-        uint256 received = afterBalance > beforeBalance
-            ? afterBalance - beforeBalance
+        uint256 recipientAfter = token.balanceOf(recipient);
+        uint256 received = recipientAfter > recipientBefore
+            ? recipientAfter - recipientBefore
             : 0;
         if (received != amount) {
-            emit IBondingRegistry.LicenseTransferShortfall(
-                recipient,
+            revert IBondingRegistry.AssetTransferMismatch(
+                tokenAddress,
                 amount,
                 received
+            );
+        }
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != amount) {
+            revert IBondingRegistry.AssetTransferMismatch(
+                tokenAddress,
+                amount,
+                spent
             );
         }
     }

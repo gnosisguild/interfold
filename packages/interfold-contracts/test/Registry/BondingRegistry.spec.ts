@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import { MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory } from "../../types";
 import {
   ADDRESS_TWO as AddressTwo,
   LICENSE_REQUIRED_BOND,
@@ -2534,6 +2535,55 @@ describe("BondingRegistry", function () {
           licenseToken: await replacement.getAddress(),
         }),
       ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
+    });
+
+    it("rejects sender fees during license sweeps and exit claims", async function () {
+      const { bondingRegistry, operator1, owner } = await loadFixture(setup);
+      const token = await new MockFeeOnTransferTokenFactory(owner).deploy(0);
+      const tokenAddress = await token.getAddress();
+      const registryAddress = await bondingRegistry.getAddress();
+      await token.setFeeIsChargedOnTop(true);
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseToken: tokenAddress,
+      });
+
+      const bondAmount = ethers.parseEther("1000");
+      await token.mint(operator1, bondAmount);
+      await token.connect(operator1).approve(registryAddress, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+
+      const surplus = ethers.parseEther("100");
+      await token.mint(registryAddress, surplus);
+      await token.setFeeBps(100);
+      await expect(setBondingAssetConfig(bondingRegistry))
+        .to.be.revertedWithCustomError(bondingRegistry, "AssetTransferMismatch")
+        .withArgs(tokenAddress, surplus, surplus + surplus / 100n);
+      expect(await token.balanceOf(registryAddress)).to.equal(
+        bondAmount + surplus,
+      );
+
+      await token.setFeeBps(0);
+      await bondingRegistry.sweepLicenseSurplus();
+      const exitAmount = bondAmount / 2n;
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, exitAmount);
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+
+      await token.setFeeBps(100);
+      await expect(
+        bondingRegistry
+          .connect(operator1)
+          .claimExitsFor(operator1Address, 0, exitAmount),
+      )
+        .to.be.revertedWithCustomError(bondingRegistry, "AssetTransferMismatch")
+        .withArgs(tokenAddress, exitAmount, exitAmount + exitAmount / 100n);
+      expect(await token.balanceOf(registryAddress)).to.equal(bondAmount);
+      expect(await bondingRegistry.totalLicenseLiability()).to.equal(
+        bondAmount,
+      );
     });
 
     it("AUD-M08: blocks ticket-token rotation until supply and payouts are drained", async function () {

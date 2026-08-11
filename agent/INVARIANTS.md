@@ -27,7 +27,7 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 - Ticket deposits/withdrawals use **raw stablecoin base units**, never `× ticketPrice`;
   `ticketPrice` is used only in the activation check and sortition eligibility. tFOLD is minted 1:1
-  with underlying USDC. — `BondingRegistry.sol` (`addTicketBalance`, `removeTicketBalance`);
+  with its underlying asset. — `BondingRegistry.sol` (`addTicketBalance`, `removeTicketBalance`);
   `flow-trace/02`
 - Tickets (tFOLD) are **non-transferable**: `permit`/`delegateBySig` always revert; transfers
   restricted to mint/burn/bonding/whitelist. Collateral cannot be moved to dodge slashing; snapshot
@@ -47,6 +47,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
   does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+- **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
+  license token must transfer exact amounts and must not rebase account balances. Every custody
+  deposit checks the custody increase. Every outbound transfer checks the recipient increase and
+  custody decrease. A mismatch reverts the complete accounting transaction and preserves all other
+  pooled liabilities. — `InterfoldPricing.sol`; `InterfoldTicketToken.sol`; `BondingAssetLib.sol`;
+  `E3RefundManager.sol`; `flow-trace/02`, `03`, `05`
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 

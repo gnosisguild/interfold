@@ -1261,9 +1261,17 @@ contract BondingRegistry is
 
         uint256 balanceBefore = licenseToken.balanceOf(address(this));
         licenseToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 actualReceived = licenseToken.balanceOf(address(this)) -
-            balanceBefore;
-        require(actualReceived == amount, InvalidAmount());
+        uint256 balanceAfter = licenseToken.balanceOf(address(this));
+        uint256 actualReceived = balanceAfter > balanceBefore
+            ? balanceAfter - balanceBefore
+            : 0;
+        if (actualReceived != amount) {
+            revert AssetTransferMismatch(
+                address(licenseToken),
+                amount,
+                actualReceived
+            );
+        }
         totalLicenseLiability += amount;
 
         emit LicenseBondUpdated(
@@ -1339,18 +1347,13 @@ contract BondingRegistry is
         numActiveOperators = 0;
     }
 
-    /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta
-    ///      to detect fee-on-transfer / rebasing behavior (sender-side delta misses
-    ///      fees that burn or reroute). Internal accounting is already decremented at
-    ///      the call site, so a shortfall emits {LicenseTransferShortfall} rather than
-    ///      reverting (a revert would brick claims if the token starts taking fees);
-    ///      governance must pause new bonding and drain every liability before
-    ///      rotating the token via {setBondingAssetConfig}.
+    /// @dev Sends the license token and reverts unless the recipient receives the
+    ///      exact amount. A revert restores the liability accounting at the call site.
     function _safeTransferLicenseWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
     ) internal {
-        BondingAssetLib.transferWithDeltaCheck(
+        BondingAssetLib.transferExact(
             address(licenseToken),
             recipient,
             expectedAmount

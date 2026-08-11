@@ -42,6 +42,13 @@ interface IBondingRegistry {
     error ExitNotReady();
     error InvalidAmount();
 
+    /// @notice A bonding-asset transfer delivered a different amount than requested.
+    error AssetTransferMismatch(
+        address asset,
+        uint256 expected,
+        uint256 actual
+    );
+
     /// @notice A bonding asset must be a deployed contract (except the one-time
     ///         zero license-token placeholder used during circular deployment).
     error InvalidBondingAsset(address asset);
@@ -346,27 +353,6 @@ interface IBondingRegistry {
         uint256 indexed proposalId,
         address indexed refundManager,
         uint256 amount
-    );
-
-    /**
-     * @notice Emitted whenever a `licenseToken.safeTransfer` performed by the
-     *         registry sends FEWER tokens than requested (typical of
-     *         fee-on-transfer or rebasing tokens). The registry's internal
-     *         accounting is decremented by the requested amount, but the
-     *         recipient only receives `actualAmount`. The difference is left
-     *         in the registry as an unaccounted-for surplus. Operators and
-     *         monitoring infrastructure should treat any emission of this
-     *         event as evidence that the configured `licenseToken` is not a
-     *         well-behaved ERC-20. Rotation is permitted only after every
-     *         balance denominated in the old token has been drained.
-     * @param recipient The address that received the (short) transfer
-     * @param expectedAmount The amount the registry intended to send
-     * @param actualAmount The actual delta in registry-held balance
-     */
-    event LicenseTransferShortfall(
-        address indexed recipient,
-        uint256 expectedAmount,
-        uint256 actualAmount
     );
 
     /**
@@ -783,6 +769,8 @@ interface IBondingRegistry {
     // ======================
 
     /// @notice Sets both bonding tokens and their raw-unit values atomically.
+    /// @dev Both underlying assets must transfer exact amounts and must not
+    ///      rebase account balances.
     function setBondingAssetConfig(BondingAssetConfig calldata config) external;
 
     /**
