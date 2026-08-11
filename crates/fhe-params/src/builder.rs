@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::constants::{insecure_512, secure_8192};
+use crate::constants::{insecure_512, secure_16384, secure_8192};
 use crate::presets::{BfvParamSet, BfvPreset, PresetError};
 use fhe::bfv::{BfvParameters, BfvParametersBuilder};
 use num_bigint::BigUint;
@@ -49,6 +49,25 @@ pub fn build_pair_for_preset(
                 .set_degree(secure_8192::DEGREE)
                 .set_plaintext_modulus(secure_8192::dkg::PLAINTEXT_MODULUS)
                 .set_moduli(secure_8192::dkg::MODULI)
+                .build_arc()
+                .unwrap();
+
+            Ok((params_threshold, params_dkg))
+        }
+        BfvPreset::SecureThreshold16384 => {
+            let params_threshold = BfvParametersBuilder::new()
+                .set_degree(secure_16384::DEGREE)
+                .set_plaintext_modulus(secure_16384::threshold::PLAINTEXT_MODULUS)
+                .set_moduli(secure_16384::threshold::MODULI)
+                .set_error1_variance_str(secure_16384::threshold::ERROR1_VARIANCE)
+                .unwrap()
+                .build_arc()
+                .unwrap();
+
+            let params_dkg = BfvParametersBuilder::new()
+                .set_degree(secure_16384::DEGREE)
+                .set_plaintext_modulus(secure_16384::dkg::PLAINTEXT_MODULUS)
+                .set_moduli(secure_16384::dkg::MODULI)
                 .build_arc()
                 .unwrap();
 
@@ -145,7 +164,7 @@ pub fn try_build_bfv_params_arc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{defaults, insecure_512, secure_8192};
+    use crate::constants::{defaults, insecure_512, secure_16384, secure_8192};
     use crate::presets::BfvPreset;
     use num_bigint::BigUint;
     use std::str::FromStr;
@@ -210,6 +229,37 @@ mod tests {
             params.get_error1_variance(),
             &BigUint::from_str(error1_variance).unwrap()
         );
+    }
+
+    #[test]
+    fn test_build_secure_16384_threshold_and_dkg_params() {
+        // Test building threshold params using secure 16384 preset constants
+        let degree = secure_16384::DEGREE;
+        let threshold_moduli = secure_16384::threshold::MODULI;
+        let error1_variance = secure_16384::threshold::ERROR1_VARIANCE;
+
+        let params = build_bfv_params(
+            degree,
+            secure_16384::threshold::PLAINTEXT_MODULUS,
+            threshold_moduli,
+            Some(error1_variance),
+        );
+        assert_eq!(params.degree(), degree);
+        assert_eq!(params.plaintext(), secure_16384::threshold::PLAINTEXT_MODULUS);
+        assert_eq!(params.moduli(), threshold_moduli);
+        assert_eq!(params.variance(), defaults::VARIANCE);
+        assert_eq!(
+            params.get_error1_variance(),
+            &BigUint::from_str(error1_variance).unwrap()
+        );
+
+        // Test building DKG params using secure 16384 preset constants
+        let dkg_params =
+            build_bfv_params(degree, secure_16384::dkg::PLAINTEXT_MODULUS, secure_16384::dkg::MODULI, None);
+        assert_eq!(dkg_params.degree(), degree);
+        assert_eq!(dkg_params.plaintext(), secure_16384::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(dkg_params.moduli(), secure_16384::dkg::MODULI);
+        assert_eq!(dkg_params.variance(), defaults::VARIANCE);
     }
 
     #[test]

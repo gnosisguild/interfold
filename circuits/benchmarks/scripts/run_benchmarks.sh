@@ -2,6 +2,7 @@
 
 # run_benchmarks.sh - Main orchestration script for benchmarking circuits
 # Usage: ./run_benchmarks.sh [--config <config_file>] [--mode insecure|secure]
+#   [--preset insecure-512|secure-8192|secure-16384]
 #   [--committee minimum|micro|small] [--circuit <path>]
 #   [--skip-compile] [--bench-compile] [--clean] [--verbose]
 #   [--multithread-jobs N]
@@ -15,6 +16,7 @@ source "${SCRIPT_DIR}/benchmark_output_dir.sh"
 CONFIG_FILE="${BENCHMARKS_DIR}/config.json"
 CLEAN_ARTIFACTS=false
 MODE_OVERRIDE=""
+PRESET_OVERRIDE=""
 COMMITTEE_OVERRIDE=""
 SKIP_COMPILE=false
 BENCH_COMPILE=false
@@ -37,6 +39,17 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: Mode must be 'insecure' or 'secure'"
                 exit 1
             fi
+            shift 2
+            ;;
+        --preset)
+            PRESET_OVERRIDE="$2"
+            case "$PRESET_OVERRIDE" in
+                insecure-512|secure-8192|secure-16384) ;;
+                *)
+                    echo "Error: preset must be insecure-512|secure-8192|secure-16384"
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --committee)
@@ -76,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--committee minimum|micro|small] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose] [--multithread-jobs N]"
+            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--preset insecure-512|secure-8192|secure-16384] [--committee minimum|micro|small] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose] [--multithread-jobs N]"
             exit 1
             ;;
     esac
@@ -108,6 +121,13 @@ ORACLES=$(jq -r '.oracles[]' "$CONFIG_FILE")
 OUTPUT_DIR_BASE=$(jq -r '.output_dir // "results"' "$CONFIG_FILE")
 BIN_DIR=$(jq -r '.bin_dir // "../bin"' "$CONFIG_FILE")
 MODE=$(jq -r '.mode // "insecure"' "$CONFIG_FILE")
+if [ -n "$PRESET_OVERRIDE" ]; then
+    PRESET_NAME="$PRESET_OVERRIDE"
+elif [ "$MODE" = "secure" ]; then
+    PRESET_NAME="secure-8192"
+else
+    PRESET_NAME="insecure-512"
+fi
 
 # Restrict to one circuit if --circuit was given
 if [ -n "$CIRCUIT_FILTER" ]; then
@@ -218,11 +238,6 @@ echo ""
 # Preflight build for selected preset so raw benches and integration stages
 # use consistent, freshly-generated circuit artifacts.
 if [ "$SKIP_COMPILE" = false ]; then
-    if [ "$MODE" = "secure" ]; then
-        PRESET_NAME="secure-8192"
-    else
-        PRESET_NAME="insecure-512"
-    fi
     ENSURE_ARGS=("$PRESET_NAME" --committee "$OUTPUT_COMMITTEE")
     if [ "$VERBOSE" = true ]; then
         ENSURE_ARGS+=(--verbose)
@@ -297,7 +312,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         
         # Generate Prover.toml (and configs.nr) via zk_cli so nargo execute has witness
         echo "  Generating Prover.toml..."
-        if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
+        if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" BENCHMARK_PRESET="$PRESET_NAME" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
             echo "⚠️  Prover.toml generation failed for $CIRCUIT, skipping benchmark"
             echo ""
             continue
@@ -326,7 +341,7 @@ echo "Stage 1/3: Running gas extraction pipeline (CRISP test + integration + EVM
 GAS_JSON_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/crisp_verify_gas.json"
 # Remove any previous gas artifact so failures cannot leak stale values.
 rm -f "${GAS_JSON_FILE}"
-EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE" --committee "$OUTPUT_COMMITTEE")
+EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE" --preset "$PRESET_NAME" --committee "$OUTPUT_COMMITTEE")
 if [ "$VERBOSE" = true ]; then
     EXTRACT_ARGS+=(--verbose)
 fi
@@ -346,7 +361,7 @@ MT_JOBS_JSON="${BENCHMARK_MULTITHREAD_JOBS:-1}"
 load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
 jq -n \
     --arg mode "$MODE" \
-    --arg preset "$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-512")" \
+    --arg preset "${PRESET_NAME:-$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-512")}" \
     --arg committee "$OUTPUT_COMMITTEE" \
     --argjson proof_agg true \
     --argjson multithread_jobs "$MT_JOBS_JSON" \

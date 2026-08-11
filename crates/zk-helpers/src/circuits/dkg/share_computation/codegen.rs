@@ -197,6 +197,12 @@ pub fn generate_configs_with_chunk_size(
         )));
     }
     let chunk_count = degree / chunk_size;
+    let chunks_per_batch = if chunk_count <= 1 {
+        1
+    } else {
+        4.min(chunk_count)
+    };
+    let batch_count = chunk_count / chunks_per_batch;
     let config_name = preset.metadata().security.as_config_str();
     let parity_matrix_str = parity_matrix_constant_string(&threshold_params, n_parties, threshold)?;
     let prefix = <ShareComputationCircuit as Circuit>::PREFIX;
@@ -207,6 +213,8 @@ pub use crate::configs::{}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}
 pub global N: u32 = {};
 pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
 pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = {};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = {};
 
 {}
 /************************************
@@ -240,6 +248,8 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
         degree,
         chunk_size,
         chunk_count,
+        chunks_per_batch,
+        batch_count,
         parity_matrix_str,
         prefix,
         bits.bit_share,
@@ -381,6 +391,8 @@ mod tests {
 
         assert!(configs.contains("SHARE_COMPUTATION_CHUNK_SIZE: u32 = 256"));
         assert!(configs.contains("SHARE_COMPUTATION_N_CHUNKS: u32 = 2"));
+        assert!(configs.contains("SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 2"));
+        assert!(configs.contains("SHARE_COMPUTATION_N_BATCHES: u32 = 1"));
     }
 
     #[test]

@@ -75,10 +75,12 @@ fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
     let suffix = match preset {
         BfvPreset::InsecureThreshold512 => "insecure",
         BfvPreset::SecureThreshold8192 => "secure",
+        BfvPreset::SecureThreshold16384 => "secure",
         // Codegen runs against the threshold side of each preset family.
         // DKG-only variants don't need their own file.
         BfvPreset::InsecureDkg512 => "insecure",
         BfvPreset::SecureDkg8192 => "secure",
+        BfvPreset::SecureDkg16384 => "secure",
     };
     root.join(committee).join(format!("parity_{suffix}.nr"))
 }
@@ -92,7 +94,7 @@ fn smudging_file(root: &Path, committee: &str) -> PathBuf {
 fn render(committee: &str, preset_suffix: &str, l_module: &str, matrix_literal: &str) -> String {
     let preset_label = match preset_suffix {
         "insecure" => "insecure-512 (L_THRESHOLD=2)",
-        "secure" => "secure-8192 (L_THRESHOLD=3)",
+        "secure" => "secure-16384 (L_THRESHOLD=5)",
         other => other,
     };
     format!(
@@ -160,7 +162,10 @@ fn main() -> Result<()> {
         );
     }
 
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in [
+        BfvPreset::InsecureThreshold512,
+        BfvPreset::SecureThreshold16384,
+    ] {
         let (threshold_params, _) = build_pair_for_preset(preset)
             .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
         let literal = parity_matrix_constant_string(&threshold_params, params.n, params.threshold)
@@ -173,6 +178,7 @@ fn main() -> Result<()> {
         let (suffix, l_module) = match preset {
             BfvPreset::InsecureThreshold512 => ("insecure", "insecure"),
             BfvPreset::SecureThreshold8192 => ("secure", "secure"),
+            BfvPreset::SecureThreshold16384 => ("secure", "secure"),
             _ => continue, // PAIR_PRESETS only carries the threshold variants
         };
         let path = file_for(&root, &args.committee, preset);
@@ -188,7 +194,7 @@ fn main() -> Result<()> {
 
     let insecure = PkGenerationConfigs::compute(BfvPreset::InsecureThreshold512, &params)
         .context("computing insecure smudging constants")?;
-    let secure = PkGenerationConfigs::compute(BfvPreset::SecureThreshold8192, &params)
+    let secure = PkGenerationConfigs::compute(BfvPreset::SecureThreshold16384, &params)
         .context("computing secure smudging constants")?;
     let path = smudging_file(&root, &args.committee);
     std::fs::write(&path, render_smudging(&args.committee, &insecure, &secure))

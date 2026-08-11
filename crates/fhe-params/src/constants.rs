@@ -51,6 +51,34 @@ pub mod secure_8192 {
     }
 }
 
+/// Secure preset constants (degree 16384) - mult-depth 3, λ = 38
+pub mod secure_16384 {
+    pub const DEGREE: usize = 16384;
+    pub const NUM_PARTIES: u128 = 20; // real - used in the search default
+    /// Statistical security parameter λ for the noise analysis (Eq2/Eq3).
+    pub const LAMBDA: usize = 38;
+
+    /// Threshold BFV parameters
+    pub mod threshold {
+        pub const PLAINTEXT_MODULUS: u64 = 1000;
+        pub const MODULI: &[u64] = &[
+            0x00040000009f0001,
+            0x00040000008a0001,
+            0x0004000000800001,
+            0x00040000007e0001,
+            0x0004000000750001,
+        ];
+        pub const ERROR1_VARIANCE: &str = "4326914048779023023775413607683413333";
+    }
+
+    /// DKG parameters
+    pub mod dkg {
+        pub const PLAINTEXT_MODULUS: u64 = 1125899917262849;
+        pub const MODULI: &[u64] = &[0x0010000000060001, 0x00100000000f0001];
+        pub const ERROR1_VARIANCE: &str = "10";
+    }
+}
+
 /// Common search defaults shared across presets
 /// Search defaults for the SecureThreshold8192 preset (production scale).
 /// The InsecureThreshold512 preset uses its own smaller values (see `insecure_search_defaults`)
@@ -61,6 +89,16 @@ pub mod search_defaults {
     pub const SEARCH_N: u128 = 20;
     pub const SEARCH_K: u128 = 1000000;
     pub const SEARCH_Z: u128 = 1000000;
+}
+
+/// Search defaults for the SecureThreshold16384 preset.
+/// Plaintext space k = 1000 and multiplication depth z = 3 (see `secure_16384`).
+pub mod secure_16384_search_defaults {
+    pub const B: u128 = 20;
+    pub const B_CHI: u128 = 1;
+    pub const SEARCH_N: u128 = 20;
+    pub const SEARCH_K: u128 = 1000;
+    pub const SEARCH_Z: u128 = 3;
 }
 
 /// Search defaults for the InsecureThreshold512 preset (test-only, small scale).

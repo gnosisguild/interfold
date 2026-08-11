@@ -74,7 +74,9 @@ function appendCommitteeAndPricingTxs(
     const activeParams =
       ACTIVE_BFV_PARAM_SET === 0
         ? BFV_PARAMS.insecure512
-        : BFV_PARAMS.secure8192;
+        : ACTIVE_BFV_PARAM_SET === 1
+          ? BFV_PARAMS.secure8192
+          : BFV_PARAMS.secure16384;
     txs.push(
       safeTx(
         c.interfold,

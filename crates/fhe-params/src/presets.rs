@@ -15,6 +15,8 @@ use crate::constants::{
         SEARCH_N as INSECURE_SEARCH_N, SEARCH_Z as INSECURE_SEARCH_Z,
     },
     search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z},
+    secure_16384,
+    secure_16384_search_defaults,
     secure_8192,
 };
 use serde::{Deserialize, Serialize};
@@ -61,6 +63,17 @@ pub enum BfvPreset {
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
     SecureDkg8192,
+    /// Secure threshold BFV parameters (degree 16384) - PRODUCTION READY
+    ///
+    /// Larger ring for higher noise capacity with multiplication depth 3.
+    /// Used for threshold encryption (GRECO) and threshold decryption operations.
+    SecureThreshold16384,
+    /// Secure DKG parameters (degree 16384) - PRODUCTION READY
+    ///
+    /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
+    /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
+    /// only during the key generation process.
+    SecureDkg16384,
 }
 
 impl BfvPreset {
@@ -70,6 +83,7 @@ impl BfvPreset {
         match value {
             0 => Some(BfvPreset::InsecureThreshold512),
             1 => Some(BfvPreset::SecureThreshold8192),
+            2 => Some(BfvPreset::SecureThreshold16384),
             _ => None,
         }
     }
@@ -283,16 +297,19 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 4] = [
+    pub const ALL: [BfvPreset; 6] = [
         BfvPreset::InsecureThreshold512,
         BfvPreset::InsecureDkg512,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureDkg8192,
+        BfvPreset::SecureThreshold16384,
+        BfvPreset::SecureDkg16384,
     ];
 
-    pub const PAIR_PRESETS: [BfvPreset; 2] = [
+    pub const PAIR_PRESETS: [BfvPreset; 3] = [
         BfvPreset::InsecureThreshold512,
         BfvPreset::SecureThreshold8192,
+        BfvPreset::SecureThreshold16384,
     ];
 
     pub fn from_name(name: &str) -> Result<Self, PresetError> {
@@ -302,6 +319,8 @@ impl BfvPreset {
             "INSECURE_DKG_512" => Ok(Self::InsecureDkg512),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
+            "SECURE_THRESHOLD_16384" => Ok(Self::SecureThreshold16384),
+            "SECURE_DKG_16384" => Ok(Self::SecureDkg16384),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
         }
     }
@@ -312,12 +331,26 @@ impl BfvPreset {
             BfvPreset::InsecureDkg512 => "INSECURE_DKG_512",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
+            BfvPreset::SecureThreshold16384 => "SECURE_THRESHOLD_16384",
+            BfvPreset::SecureDkg16384 => "SECURE_DKG_16384",
         }
     }
 
     /// Parses "insecure"|"secure" or λ (e.g. 2|80) into the threshold preset. Uses [`PAIR_PRESETS`] and [`PresetMetadata`].
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
+        match s.to_ascii_uppercase().as_str() {
+            "SECURE-16384" | "SECURE_THRESHOLD_16384" => {
+                return Ok(Self::SecureThreshold16384)
+            }
+            "SECURE-8192" | "SECURE_THRESHOLD_8192" => {
+                return Ok(Self::SecureThreshold8192)
+            }
+            "INSECURE-512" | "INSECURE_THRESHOLD_512" => {
+                return Ok(Self::InsecureThreshold512)
+            }
+            _ => {}
+        }
         if let Ok(lambda) = s.parse::<usize>() {
             return Self::PAIR_PRESETS
                 .iter()
@@ -368,7 +401,10 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold512 => Some(BfvPreset::InsecureDkg512),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
-            BfvPreset::InsecureDkg512 | BfvPreset::SecureDkg8192 => None,
+            BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
+            BfvPreset::InsecureDkg512
+            | BfvPreset::SecureDkg8192
+            | BfvPreset::SecureDkg16384 => None,
         }
     }
 
@@ -381,7 +417,10 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureDkg512 => Some(BfvPreset::InsecureThreshold512),
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
-            BfvPreset::InsecureThreshold512 | BfvPreset::SecureThreshold8192 => None,
+            BfvPreset::SecureDkg16384 => Some(BfvPreset::SecureThreshold16384),
+            BfvPreset::InsecureThreshold512
+            | BfvPreset::SecureThreshold8192
+            | BfvPreset::SecureThreshold16384 => None,
         }
     }
 
@@ -423,6 +462,24 @@ impl BfvPreset {
                 parameter_type: ParameterType::DKG,
                 security: SecurityTier::SECURE,
             },
+            BfvPreset::SecureThreshold16384 => PresetMetadata {
+                name: self.name(),
+                degree: secure_16384::DEGREE,
+                num_moduli: secure_16384::threshold::MODULI.len(),
+                num_parties: secure_16384::NUM_PARTIES,
+                lambda: secure_16384::LAMBDA,
+                parameter_type: ParameterType::THRESHOLD,
+                security: SecurityTier::SECURE,
+            },
+            BfvPreset::SecureDkg16384 => PresetMetadata {
+                name: self.name(),
+                degree: secure_16384::DEGREE,
+                num_moduli: secure_16384::dkg::MODULI.len(),
+                num_parties: secure_16384::NUM_PARTIES,
+                lambda: secure_16384::LAMBDA,
+                parameter_type: ParameterType::DKG,
+                security: SecurityTier::SECURE,
+            },
         }
     }
 
@@ -438,6 +495,11 @@ impl BfvPreset {
     /// level must cross a serialization boundary; otherwise prefer [`BfvPreset::lambda`].
     pub fn lambda_config(&self) -> LambdaConfig {
         let meta = self.metadata();
+        if matches!(self, BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384) {
+            // This parameter set was sized with λ = 38. fhe.rs reserves Lambda::secure
+            // for λ >= 50, so preserve the parameter-set value explicitly as insecure.
+            return LambdaConfig::Insecure(meta.lambda);
+        }
         match meta.security {
             SecurityTier::SECURE => LambdaConfig::Secure(meta.lambda),
             SecurityTier::INSECURE => LambdaConfig::Insecure(meta.lambda),
@@ -486,6 +548,14 @@ impl BfvPreset {
                 b: B,
                 b_chi: B_CHI,
             }),
+            BfvPreset::SecureThreshold16384 => Some(PresetSearchDefaults {
+                n: secure_16384_search_defaults::SEARCH_N,
+                k: secure_16384_search_defaults::SEARCH_K,
+                z: secure_16384_search_defaults::SEARCH_Z,
+                lambda: secure_16384::LAMBDA as u32,
+                b: secure_16384_search_defaults::B,
+                b_chi: secure_16384_search_defaults::B_CHI,
+            }),
             _ => None,
         }
     }
@@ -522,6 +592,18 @@ impl From<BfvPreset> for BfvParamSet {
                 moduli: secure_8192::dkg::MODULI,
                 error1_variance: Some(secure_8192::dkg::ERROR1_VARIANCE),
             },
+            BfvPreset::SecureThreshold16384 => BfvParamSet {
+                degree: secure_16384::DEGREE,
+                plaintext_modulus: secure_16384::threshold::PLAINTEXT_MODULUS,
+                moduli: secure_16384::threshold::MODULI,
+                error1_variance: Some(secure_16384::threshold::ERROR1_VARIANCE),
+            },
+            BfvPreset::SecureDkg16384 => BfvParamSet {
+                degree: secure_16384::DEGREE,
+                plaintext_modulus: secure_16384::dkg::PLAINTEXT_MODULUS,
+                moduli: secure_16384::dkg::MODULI,
+                error1_variance: Some(secure_16384::dkg::ERROR1_VARIANCE),
+            },
         }
     }
 }
@@ -529,7 +611,9 @@ impl From<BfvPreset> for BfvParamSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{insecure_512, secure_8192};
+    use crate::constants::{
+        insecure_512, secure_16384, secure_16384_search_defaults, secure_8192,
+    };
 
     #[test]
     fn from_name_accepts_all_presets() {
@@ -595,6 +679,17 @@ mod tests {
         assert_eq!(dkg.degree(), secure_8192::DEGREE);
         assert_eq!(dkg.plaintext(), secure_8192::dkg::PLAINTEXT_MODULUS);
         assert_eq!(dkg.moduli(), secure_8192::dkg::MODULI);
+
+        let (threshold, dkg) = BfvPreset::SecureThreshold16384.build_pair().unwrap();
+        assert_eq!(threshold.degree(), secure_16384::DEGREE);
+        assert_eq!(
+            threshold.plaintext(),
+            secure_16384::threshold::PLAINTEXT_MODULUS
+        );
+        assert_eq!(threshold.moduli(), secure_16384::threshold::MODULI);
+        assert_eq!(dkg.degree(), secure_16384::DEGREE);
+        assert_eq!(dkg.plaintext(), secure_16384::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(dkg.moduli(), secure_16384::dkg::MODULI);
     }
 
     #[test]
@@ -639,6 +734,12 @@ mod tests {
         assert_eq!(metadata.degree, secure_8192::DEGREE);
         assert_eq!(metadata.num_parties, secure_8192::NUM_PARTIES);
         assert_eq!(metadata.lambda, DEFAULT_SECURE_LAMBDA);
+
+        let secure = BfvPreset::SecureThreshold16384;
+        let metadata = secure.metadata();
+        assert_eq!(metadata.degree, secure_16384::DEGREE);
+        assert_eq!(metadata.num_parties, secure_16384::NUM_PARTIES);
+        assert_eq!(metadata.lambda, secure_16384::LAMBDA);
     }
 
     #[test]
@@ -657,9 +758,17 @@ mod tests {
         assert_eq!(defaults.z, SEARCH_Z);
         assert_eq!(defaults.lambda, DEFAULT_SECURE_LAMBDA as u32);
 
+        let preset = BfvPreset::SecureThreshold16384;
+        let defaults = preset.search_defaults().unwrap();
+        assert_eq!(defaults.n, secure_16384_search_defaults::SEARCH_N);
+        assert_eq!(defaults.k, secure_16384_search_defaults::SEARCH_K);
+        assert_eq!(defaults.z, secure_16384_search_defaults::SEARCH_Z);
+        assert_eq!(defaults.lambda, secure_16384::LAMBDA as u32);
+
         // DKG presets don't have search defaults
         assert!(BfvPreset::InsecureDkg512.search_defaults().is_none());
         assert!(BfvPreset::SecureDkg8192.search_defaults().is_none());
+        assert!(BfvPreset::SecureDkg16384.search_defaults().is_none());
     }
 
     #[test]
@@ -674,5 +783,78 @@ mod tests {
             "secure-8192"
         );
         assert_eq!(BfvPreset::SecureDkg8192.artifacts_dir(), "secure-8192");
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.artifacts_dir(),
+            "secure-16384"
+        );
+        assert_eq!(BfvPreset::SecureDkg16384.artifacts_dir(), "secure-16384");
+    }
+
+    #[test]
+    fn from_on_chain_param_set_maps_supported_parameter_sets() {
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(0),
+            Some(BfvPreset::InsecureThreshold512)
+        );
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(1),
+            Some(BfvPreset::SecureThreshold8192)
+        );
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(2),
+            Some(BfvPreset::SecureThreshold16384)
+        );
+        assert_eq!(BfvPreset::from_on_chain_param_set(3), None);
+        assert_eq!(BfvPreset::from_on_chain_param_set(255), None);
+    }
+
+    #[test]
+    fn from_security_config_name_resolves_16384_and_keeps_prior_names() {
+        assert_eq!(
+            BfvPreset::from_security_config_name("secure").expect("secure tier"),
+            BfvPreset::SecureThreshold8192
+        );
+        assert_eq!(
+            BfvPreset::from_security_config_name("38").expect("lambda 38"),
+            BfvPreset::SecureThreshold16384
+        );
+        assert_eq!(
+            BfvPreset::from_security_config_name("50").expect("lambda 50"),
+            BfvPreset::SecureThreshold8192
+        );
+        assert_eq!(
+            BfvPreset::from_security_config_name("secure-16384").expect("secure-16384"),
+            BfvPreset::SecureThreshold16384
+        );
+    }
+
+    #[test]
+    fn secure_16384_preserves_lambda_38_as_explicitly_insecure() {
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.lambda_config(),
+            LambdaConfig::Insecure(38)
+        );
+        assert_eq!(
+            BfvPreset::SecureDkg16384.lambda_config(),
+            LambdaConfig::Insecure(38)
+        );
+        assert_eq!(BfvPreset::SecureThreshold16384.lambda().unwrap().value(), 38);
+    }
+
+    #[test]
+    fn counterpart_presets_are_symmetric_16384() {
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.dkg_counterpart(),
+            Some(BfvPreset::SecureDkg16384)
+        );
+        assert_eq!(
+            BfvPreset::SecureDkg16384.threshold_counterpart(),
+            Some(BfvPreset::SecureThreshold16384)
+        );
+        assert_eq!(BfvPreset::SecureDkg16384.dkg_counterpart(), None);
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.threshold_counterpart(),
+            None
+        );
     }
 }

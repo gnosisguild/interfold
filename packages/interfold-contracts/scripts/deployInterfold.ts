@@ -46,6 +46,18 @@ const BFV_PARAMS = {
     moduli: [0x0400000001460001n, 0x0400000000ea0001n, 0x0400000000920001n],
     error1Variance: "2331171231419734472395201298275918858425592709120",
   },
+  secure16384: {
+    degree: 16384n,
+    plaintextModulus: 1000n,
+    moduli: [
+      0x00040000009f0001n,
+      0x00040000008a0001n,
+      0x0004000000800001n,
+      0x00040000007e0001n,
+      0x0004000000750001n,
+    ],
+    error1Variance: "4326914048779023023775413607683413333",
+  },
 } as const;
 
 function encodeBfvParams(params: {
@@ -118,6 +130,7 @@ export const deployInterfold = async (
 
   const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure512);
   const encodedSecure = encodeBfvParams(BFV_PARAMS.secure8192);
+  const encodedSecure16384 = encodeBfvParams(BFV_PARAMS.secure16384);
 
   const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
   const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
@@ -474,7 +487,11 @@ export const deployInterfold = async (
   // Register BFV param sets
   console.log("Registering BFV param sets...");
   const activeParams =
-    ACTIVE_BFV_PARAM_SET === 0 ? encodedInsecure : encodedSecure;
+    ACTIVE_BFV_PARAM_SET === 0
+      ? encodedInsecure
+      : ACTIVE_BFV_PARAM_SET === 1
+        ? encodedSecure
+        : encodedSecure16384;
   await interfold.setParamSet(ACTIVE_BFV_PARAM_SET, activeParams);
   console.log(`Active BFV parameter set ${ACTIVE_BFV_PARAM_SET} registered`);
 

@@ -248,7 +248,7 @@ class NoirCircuitBuilder {
   private patchUtilsTs(preset: CircuitPreset, committee: CircuitCommittee): void {
     if (this.options.skipUtilsPatch) return
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'scripts', 'utils.ts')
     if (!existsSync(path)) return // optional in minimal checkouts
@@ -307,9 +307,9 @@ class NoirCircuitBuilder {
   /** Writes the circuit-bound constants consumed by Interfold. */
   private writeActiveCryptoConfig(preset: CircuitPreset, committee: CircuitCommittee): void {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
-    const params = paramSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192
+    const params = paramSet === 0 ? BFV_PARAMS.insecure512 : paramSet === 1 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
     const encodedParams = AbiCoder.defaultAbiCoder().encode(
       ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
       [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
@@ -1143,7 +1143,7 @@ Commands: build (default), hash
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)
   --circuit <name>    Build specific circuit(s)
-  --preset <preset>   Parameter preset: insecure-512 (default), secure-8192, or all
+  --preset <preset>   Parameter preset: insecure-512 (default), secure-8192, secure-16384, or all
   --committee <name>  Committee size: minimum (default), micro, small, or all
   --skip-utils-patch  Don't rewrite BFV_DKG_H/T in packages/interfold-contracts/scripts/utils.ts
   --skip-vk           Skip verification key generation

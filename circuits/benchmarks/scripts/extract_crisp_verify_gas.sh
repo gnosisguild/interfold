@@ -2,6 +2,7 @@
 
 # extract_crisp_verify_gas.sh - Runs CRISP verifier test with gas reporter and emits JSON.
 # Usage: ./extract_crisp_verify_gas.sh --output <json_file> [--mode insecure|secure]
+#        [--preset insecure-512|secure-8192|secure-16384]
 #        [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]
 #
 # Integration test env (also set by run_benchmarks.sh):
@@ -13,6 +14,7 @@ set -e
 
 OUTPUT_JSON=""
 MODE="insecure"
+PRESET_OVERRIDE=""
 COMMITTEE=""
 VERBOSE=false
 SKIP_BUILD=false
@@ -26,6 +28,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mode)
             MODE="$2"
+            shift 2
+            ;;
+        --preset)
+            PRESET_OVERRIDE="$2"
             shift 2
             ;;
         --committee)
@@ -53,14 +59,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 --output <json_file> [--mode insecure|secure] [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]"
+            echo "Usage: $0 --output <json_file> [--mode insecure|secure] [--preset insecure-512|secure-8192|secure-16384] [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]"
             exit 1
             ;;
     esac
 done
 
 if [ -z "$OUTPUT_JSON" ]; then
-    echo "Usage: $0 --output <json_file> [--mode insecure|secure] [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]"
+    echo "Usage: $0 --output <json_file> [--mode insecure|secure] [--preset insecure-512|secure-8192|secure-16384] [--committee minimum|micro|small] [--verbose] [--skip-build] [--force-build]"
     exit 1
 fi
 if [ "$SKIP_BUILD" = true ] && [ "$FORCE_BUILD" = true ]; then
@@ -69,6 +75,10 @@ if [ "$SKIP_BUILD" = true ] && [ "$FORCE_BUILD" = true ]; then
 fi
 if [ "$MODE" != "insecure" ] && [ "$MODE" != "secure" ]; then
     echo "Error: mode must be 'insecure' or 'secure'"
+    exit 1
+fi
+if [ -n "$PRESET_OVERRIDE" ] && [ "$PRESET_OVERRIDE" != "insecure-512" ] && [ "$PRESET_OVERRIDE" != "secure-8192" ] && [ "$PRESET_OVERRIDE" != "secure-16384" ]; then
+    echo "Error: preset must be insecure-512, secure-8192, or secure-16384"
     exit 1
 fi
 
@@ -110,7 +120,9 @@ RAW_DIR="${OUTPUT_DIR}/raw"
 
 # Ensure recursive/noir VK variants exist for integration-based folded-proof export.
 # This populates target artifacts required by `test_trbfv_actor`.
-if [ "$MODE" = "secure" ]; then
+if [ -n "$PRESET_OVERRIDE" ]; then
+    PRESET_NAME="$PRESET_OVERRIDE"
+elif [ "$MODE" = "secure" ]; then
     PRESET_NAME="secure-8192"
 else
     PRESET_NAME="insecure-512"

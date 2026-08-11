@@ -741,7 +741,7 @@ async function main() {
     } else if (arg === '--preset') {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
-        console.error('Error: --preset requires a value (insecure-512 | secure-8192)')
+        console.error('Error: --preset requires a value (insecure-512 | secure-8192 | secure-16384)')
         process.exit(1)
       }
       if (!ALL_PRESETS.includes(value as (typeof ALL_PRESETS)[number])) {
@@ -802,7 +802,7 @@ current circuit VKs is surfaced as a failure rather than a silent rewrite.
 Options:
   --check                Verify committed verifiers match current VKs (no writes).
                          Exits non-zero on drift. Used by test/benchmark/CI flows.
-  --preset <name>        BFV preset for circuits/bin (insecure-512 | secure-8192).
+  --preset <name>        BFV preset for circuits/bin (insecure-512 | secure-8192 | secure-16384).
                          Defaults to insecure-512. With --check and a non-insecure preset,
                          only verifies dist/ + circuits/bin alignment (no .sol diff).
   --committee <name>     Committee size (minimum | micro | small). When omitted, read from
