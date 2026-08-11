@@ -88,5 +88,6 @@ export {
   encodeCustomParams,
   calculateInputWindow,
   decodePlaintextOutput,
+  decodePlaintextOutputBigInt,
   type ComputeProviderParams,
 } from './utils'

@@ -1,0 +1,33 @@
+{
+  "name": "interfold-e3-studio",
+  "version": "1.0.0",
+  "description": "Interactive Interfold Encrypted Execution Environment (E3), BFV FHE & Ciphernode Studio.",
+  "main": "src/index.js",
+  "type": "module",
+  "bin": {
+    "interfold-cli": "./bin/interfold-cli.js"
+  },
+  "scripts": {
+    "start": "node src/server/app.js",
+    "cli": "node bin/interfold-cli.js",
+    "test": "node tests/run-all.js"
+  },
+  "keywords": [
+    "interfold",
+    "theinterfold",
+    "encrypted-execution-environment",
+    "e3",
+    "fhe",
+    "bfv",
+    "ciphernode",
+    "threshold-mpc"
+  ],
+  "author": "Interfold Community",
+  "license": "LGPL-3.0-only",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "express": "^4.21.2"
+  }
+}
