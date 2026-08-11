@@ -208,6 +208,65 @@ impl EtherscanClient {
         Ok(block_number)
     }
 
+    /// Fetch one page of Etherscan results, surfacing in-band API errors.
+    ///
+    /// Etherscan reports failures with HTTP 200, `status: "0"`, and the explanation in
+    /// `result` as a bare string rather than the success type. Deserializing the body
+    /// straight into `T` therefore collapses every API error — invalid key, rate limit,
+    /// Pro-only endpoint — into an indistinguishable decode failure. The envelope is
+    /// inspected before `result` is typed, so the real message reaches the caller.
+    ///
+    /// Returns `Ok(None)` for the "No records found" response, which is a legitimate
+    /// empty result rather than an error.
+    async fn fetch_page<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        what: &str,
+    ) -> Result<Option<T>> {
+        let body = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send {} request to Etherscan", what))?
+            .text()
+            .await
+            .with_context(|| format!("Failed to read {} response body", what))?;
+
+        let envelope: EtherscanResponse<serde_json::Value> = serde_json::from_str(&body)
+            .with_context(|| {
+                format!(
+                    "Failed to parse {} response envelope; body was: {}",
+                    what,
+                    body.chars().take(500).collect::<String>()
+                )
+            })?;
+
+        if envelope.status != "1" {
+            if envelope.message.eq_ignore_ascii_case("No records found") {
+                return Ok(None);
+            }
+
+            // The `result` field carries Etherscan's actual explanation; `message` is
+            // usually just "NOTOK".
+            let detail = match &envelope.result {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                _ => envelope.message.clone(),
+            };
+            return Err(eyre!("Etherscan {} request failed: {}", what, detail));
+        }
+
+        let result = match envelope.result {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+
+        let typed = serde_json::from_value(result)
+            .with_context(|| format!("Failed to parse {} result payload", what))?;
+
+        Ok(Some(typed))
+    }
+
     /// Get transfer logs for a token
     pub async fn get_transfer_logs(
         &self,
@@ -227,32 +286,11 @@ impl EtherscanClient {
                 ETHERSCAN_API_URL, token, from_block, to_block, transfer_topic, page, self.chain_id, self.api_key
             );
 
-            let response = self
-                .client
-                .get(&url)
-                .send()
+            let logs: Vec<TransferLog> = match self
+                .fetch_page::<Vec<TransferLog>>(&url, "transfer logs")
                 .await
-                .context("Failed to fetch transfer logs")?;
-            let data: EtherscanResponse<Vec<TransferLog>> = response
-                .json()
-                .await
-                .context("Failed to parse transfer logs response")?;
-
-            // Break if request failed
-            if data.status != "1" {
-                if data.message.eq_ignore_ascii_case("No records found") {
-                    break;
-                }
-
-                return Err(eyre!(
-                    "Etherscan getLogs failed on page {}: {}",
-                    page,
-                    data.message
-                ));
-            }
-
-            // Break if no results
-            let logs = match data.result {
+                .with_context(|| format!("Transfer logs page {}", page))?
+            {
                 Some(logs) if !logs.is_empty() => logs,
                 _ => break,
             };
@@ -294,32 +332,11 @@ impl EtherscanClient {
                 ETHERSCAN_API_URL, token, from_block, to_block, delegate_votes_changed_topic, page, self.chain_id, self.api_key
             );
 
-            let response = self
-                .client
-                .get(&url)
-                .send()
+            let logs: Vec<DelegateVotesChangedLog> = match self
+                .fetch_page::<Vec<DelegateVotesChangedLog>>(&url, "delegation logs")
                 .await
-                .context("Failed to fetch delegation logs")?;
-            let data: EtherscanResponse<Vec<DelegateVotesChangedLog>> = response
-                .json()
-                .await
-                .context("Failed to parse delegation logs response")?;
-
-            // Break if request failed
-            if data.status != "1" {
-                if data.message.eq_ignore_ascii_case("No records found") {
-                    break;
-                }
-
-                return Err(eyre!(
-                    "Etherscan getLogs failed on page {}: {}",
-                    page,
-                    data.message
-                ));
-            }
-
-            // Break if no results
-            let logs = match data.result {
+                .with_context(|| format!("Delegation logs page {}", page))?
+            {
                 Some(logs) if !logs.is_empty() => logs,
                 _ => break,
             };

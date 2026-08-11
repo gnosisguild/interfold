@@ -204,7 +204,7 @@ pub async fn register_e3_requested(
                                 credits_u256
                             )
                             .await
-                            .map_err(|e| eyre::eyre!("Etherscan error: {}", e))?
+                            .context("Etherscan token-holder discovery failed")?
                         }
                         CreditMode::Custom => {
                             etherscan_client
@@ -223,7 +223,7 @@ pub async fn register_e3_requested(
                                 )?,
                             )
                             .await
-                            .map_err(|e| eyre::eyre!("Etherscan error: {}", e))?
+                            .context("Etherscan token-holder discovery failed")?
                         }
                     }
                 };
