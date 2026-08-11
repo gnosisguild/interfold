@@ -141,6 +141,12 @@ interface IBondingRegistry {
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
 
+    /// @notice Exit collateral could unlock while snapshot tickets remain valid.
+    error ExitDelayMustExceedSortitionWindow(
+        uint256 exitDelay,
+        uint256 requiredDelay
+    );
+
     /// @notice Thrown when {setRewardDistributor} would exceed
     ///         {MAX_AUTHORIZED_DISTRIBUTORS}.
     error MaxAuthorizedDistributors();
@@ -790,7 +796,8 @@ interface IBondingRegistry {
     /**
      * @notice Set exit delay period
      * @param newExitDelay New exit delay in seconds
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. The delay must exceed the
+     *      configured registry's exit-delay floor.
      */
     function setExitDelay(uint64 newExitDelay) external;
 
@@ -812,8 +819,9 @@ interface IBondingRegistry {
     /**
      * @notice Set registry address
      * @param newRegistry New registry contract address
-     * @dev Only callable by contract owner
+     * @dev Only callable by contract owner. The address cannot be zero.
      */
+    /// @dev The new registry's exit-delay floor must be shorter than {exitDelay}.
     function setRegistry(ICiphernodeRegistry newRegistry) external;
 
     /**

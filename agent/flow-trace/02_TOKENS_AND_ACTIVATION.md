@@ -126,6 +126,13 @@ and pending slash route to close. Replacement assets must be deployed contracts;
 exception is the one-time license-token placeholder used to resolve the circular
 FOLD/BondingRegistry deployment.
 
+The exit delay must exceed the current sortition submission window and every unexpired request-time
+deadline. Each request raises a monotonic deadline watermark. `exitDelayFloor()` returns the larger
+of the current window and the remaining watermark duration. Both contracts check this floor when
+governance changes either value or connects a replacement registry. BondingRegistry rejects a zero
+registry pointer. Equality is rejected because a snapshot-weighted ticket remains valid at the
+deadline.
+
 ---
 
 ## Step 1: Bond License

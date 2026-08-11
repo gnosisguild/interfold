@@ -535,9 +535,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         usdcToken,
         makeRequest,
         owner,
-        requester,
         treasury,
-        computeProvider,
         operator1,
         operator2,
         operator3,
@@ -568,8 +566,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(dependencies.interfoldContract).to.equal(interfoldAddress);
       expect(dependencies.refundManager).to.equal(refundManagerAddress);
 
-      const rotatedRegistry = await requester.getAddress();
-      const rotatedBonding = await computeProvider.getAddress();
+      const rotatedRegistry = await (
+        await ethers.deployContract("MockCiphernodeRegistry")
+      ).getAddress();
+      const rotatedBonding = await (
+        await ethers.deployContract("MockBondingRegistry")
+      ).getAddress();
       const rotatedRefundManager = await treasury.getAddress();
       const rotatedManager = await ethers.deployContract("SlashingManager", [
         0,

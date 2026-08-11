@@ -504,6 +504,9 @@ cannot be paid out until every committee obligation ends.
   balance increase and the registry's balance decrease around `licenseToken.safeTransfer`. If either
   amount differs from the recorded amount, the transaction reverts and restores the liability
   accounting.
+- **Frozen-deadline floor.** Each committee request raises the registry's latest deadline watermark.
+  `exitDelayFloor()` combines its remaining duration with the current submission window. Exit-delay
+  reductions become available after the older request windows expire.
 
 ---
 

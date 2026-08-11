@@ -109,6 +109,9 @@ contract BondingRegistry is
     ///         duration so operators retain a meaningful exit path.
     uint64 public constant MAX_EXIT_DELAY = 90 days; // duration in seconds; not calendar-aware
 
+    uint256 private constant EXIT_DELAY_FLOOR_SELECTOR = 0x6672857e;
+    uint256 private constant INVALID_EXIT_TIMING_SELECTOR = 0x01851c51;
+
     /// @notice Basis-points denominator (100% = 10_000 bps).
     uint256 internal constant BPS_BASE = 10_000;
 
@@ -1111,10 +1114,16 @@ contract BondingRegistry is
         // bound the configurable exit delay so a malicious owner cannot
         // instantly drain operator stake (delay too short) or permanently
         // freeze withdrawals (delay too long).
-        require(
-            newExitDelay >= MIN_EXIT_DELAY && newExitDelay <= MAX_EXIT_DELAY,
-            ExitDelayOutOfBounds(newExitDelay)
-        );
+        // Keep the bounds check compact because BondingRegistry is size-constrained.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if or(lt(newExitDelay, 86400), gt(newExitDelay, 7776000)) {
+                mstore(0x00, 0x2b4d9a8c)
+                mstore(0x20, newExitDelay)
+                revert(0x1c, 0x24)
+            }
+        }
+        _validateExitTiming(registry, newExitDelay);
         uint256 oldValue = uint256(exitDelay);
         exitDelay = newExitDelay;
 
@@ -1145,8 +1154,46 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setRegistry(ICiphernodeRegistry newRegistry) public onlyOwner {
+        require(address(newRegistry) != address(0), ZeroAddress());
+        _validateExitTiming(newRegistry, exitDelay);
         registry = newRegistry;
         emit RegistrySet(address(newRegistry));
+    }
+
+    function _validateExitTiming(
+        ICiphernodeRegistry configuredRegistry,
+        uint64 configuredExitDelay
+    ) private view {
+        // Keep this check compact because BondingRegistry is size-constrained.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if and(configuredRegistry, configuredExitDelay) {
+                mstore(0x00, EXIT_DELAY_FLOOR_SELECTOR)
+                if iszero(
+                    staticcall(
+                        gas(),
+                        configuredRegistry,
+                        0x1c,
+                        0x04,
+                        0x00,
+                        0x20
+                    )
+                ) {
+                    returndatacopy(0x00, 0x00, returndatasize())
+                    revert(0x00, returndatasize())
+                }
+                if lt(returndatasize(), 0x20) {
+                    revert(0x00, 0x00)
+                }
+                let requiredDelay := mload(0x00)
+                if iszero(gt(configuredExitDelay, requiredDelay)) {
+                    mstore(0x00, INVALID_EXIT_TIMING_SELECTOR)
+                    mstore(0x20, configuredExitDelay)
+                    mstore(0x40, requiredDelay)
+                    revert(0x1c, 0x44)
+                }
+            }
+        }
     }
 
     /// @inheritdoc IBondingRegistry

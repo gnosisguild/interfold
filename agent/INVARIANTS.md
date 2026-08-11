@@ -84,6 +84,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
 - `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
   successful call locks the canonical on-chain committee order. — `flow-trace/03`
+- **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
+  `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
+  setters enforce the relationship; equality is invalid because ticket submission includes the
+  deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`; `flow-trace/02`, `03`
 - **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
@@ -92,6 +96,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
   registry observes a terminal E3 and releases the complete committee. — `flow-trace/03`, `06`;
   INDEX concern Z-04
+- **Exit timing covers frozen requests:** `exitDelay` must exceed the current submission window and
+  the remaining time for the latest request-time committee deadline. Each request raises a monotonic
+  deadline watermark. The time-based floor decreases after old windows expire, and the
+  BondingRegistry cannot clear its registry pointer. — `flow-trace/02`, `03`, `06`; INDEX Z-37
 - **E3 program allowlist:** production initialization registers one deployed E3 program before
   ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
   registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`

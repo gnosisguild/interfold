@@ -17,6 +17,10 @@ None → Requested → CommitteeFinalized → KeyPublished → CiphertextReady �
 
 Each transition has a deadline. Missing a deadline allows anyone to call `markE3Failed()`.
 
+`BondingRegistry.exitDelay` exceeds the current submission window and every unexpired frozen
+committee deadline. Therefore, queued ticket collateral cannot become claimable while an older
+request accepts snapshot-weighted ticket submissions.
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 decimals check confirms the unit scale only; it does not prove that two tokens have the same
@@ -123,6 +127,7 @@ Requester calls: Interfold.request({
 │   │   │  │           block.timestamp + sortitionWindow,        │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
+│   │   │  │       → raise the latest deadline watermark         │
 │   │   │  │    5. sortitionTicketPrices[e3Id] =                 │
 │   │   │  │         bondingRegistry.ticketPrice()               │
 │   │   │  │       → Freeze ticket capacity for this E3          │

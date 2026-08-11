@@ -24,7 +24,7 @@ const { loadFixture } = networkHelpers;
 
 const data = "0xda7a";
 const dataHash = ethers.id(data);
-const SORTITION_SUBMISSION_WINDOW = 3;
+const SORTITION_SUBMISSION_WINDOW = 10;
 
 describe("CiphernodeRegistryOwnable", function () {
   async function finalizeCommitteeAfterWindow(
@@ -846,6 +846,73 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
+    });
+  });
+
+  describe("exit timing", function () {
+    const ONE_DAY = 24 * 60 * 60;
+
+    it("rejects a zero registry pointer in BondingRegistry", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      await expect(
+        bondingRegistry.setRegistry(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAddress");
+    });
+
+    it("keeps exit claims behind request-time committee deadlines", async function () {
+      const {
+        owner,
+        operator1,
+        registry,
+        interfold,
+        bondingRegistry,
+        ticketToken,
+        usdcToken,
+        request,
+      } = await loadFixture(setup);
+      const oldSubmissionWindow = 2 * ONE_DAY;
+      const oldExitDelay = 3 * ONE_DAY;
+
+      await interfold.setTimeoutConfig({
+        dkgWindow: ONE_DAY,
+        computeWindow: 3 * ONE_DAY,
+        decryptionWindow: ONE_DAY,
+      });
+      await bondingRegistry.setExitDelay(oldExitDelay);
+      await registry.setSortitionSubmissionWindow(oldSubmissionWindow);
+      await request();
+      const oldDeadline = await registry.getCommitteeDeadline(0);
+
+      await registry.setSortitionSubmissionWindow(10);
+      await expect(
+        bondingRegistry.setExitDelay(ONE_DAY),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "ExitDelayMustExceedSortitionWindow",
+      );
+
+      await networkHelpers.time.increaseTo(oldDeadline + 1n);
+      await bondingRegistry.setExitDelay(ONE_DAY);
+
+      const operatorAddress = await operator1.getAddress();
+      const exitAmount = ethers.parseUnits("1", 6);
+      await bondingRegistry
+        .connect(owner)
+        .removeTicketBalanceFor(operatorAddress, exitAmount);
+      await networkHelpers.time.increase(ONE_DAY + 1);
+
+      const ownerAddress = await owner.getAddress();
+      const balanceBefore = await usdcToken.balanceOf(ownerAddress);
+      await bondingRegistry
+        .connect(owner)
+        .claimExitsFor(operatorAddress, exitAmount, 0);
+      expect(await usdcToken.balanceOf(ownerAddress)).to.equal(
+        balanceBefore + exitAmount,
+      );
+      expect(await ticketToken.balanceOf(operatorAddress)).to.be.gt(0);
+      await expect(
+        registry.connect(operator1).submitTicket(0, 1),
+      ).to.be.revertedWithCustomError(registry, "CommitteeDeadlineReached");
     });
   });
 
