@@ -319,8 +319,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   maintainer command. — INDEX concern #27
 - Contracts CI fails a release if `Interfold` / aggregator-verifier runtime bytecode is within 256
   bytes of the EIP-170 limit. — INDEX concern #22
-- BFV verifier constructors require a deployed circuit-verifier contract and nonzero recursive VK
-  hashes. — INDEX concern #21
+- BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
+  contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
+  Z-15
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
   stored in plaintext. — `flow-trace/00`, `01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in

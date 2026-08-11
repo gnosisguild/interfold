@@ -22,6 +22,17 @@ describe("Risc0BfvCiphertextVerifier", function () {
     return Uint8Array.from(encoded);
   }
 
+  it("rejects a verifier address without code", async function () {
+    const [, verifierAddress] = await ethers.getSigners();
+    const factory = await ethers.getContractFactory(
+      "Risc0BfvCiphertextVerifier",
+    );
+
+    await expect(
+      factory.deploy(verifierAddress, imageId),
+    ).to.be.revertedWithCustomError(factory, "InvalidVerifier");
+  });
+
   it("verifies the exact E3 domain emitted by the compute guest", async function () {
     const [publisher] = await ethers.getSigners();
     const risc0 = await ethers.deployContract("MockRisc0ComputeVerifier");
