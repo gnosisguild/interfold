@@ -5,14 +5,17 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::server::models::TokenHolder;
+use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
 use eyre::{eyre, Context, Result}; // Add this import
 use reqwest;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration, Instant};
 
 // Define the Votes contract interface for getPastVotes
 sol! {
@@ -22,7 +25,19 @@ sol! {
         function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
         function balanceOf(address account) external view returns (uint256);
         function decimals() external view returns (uint8);
+        function CLOCK_MODE() external view returns (string);
     }
+}
+
+/// Which unit a census token's `getPastVotes` timepoint is denominated in.
+///
+/// Set by the census token itself, per EIP-6372 — not by Interfold. The census token is
+/// requester-supplied, and OpenZeppelin's `ERC20Votes` defaults to block numbers, so this
+/// must be read per token rather than assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockMode {
+    BlockNumber,
+    Timestamp,
 }
 
 // Config
@@ -77,11 +92,26 @@ pub struct PotentialVoter {
     pub has_delegation: bool,
 }
 
+/// Minimum spacing between Etherscan requests.
+///
+/// Etherscan enforces a per-second call ceiling — 3/sec on the free tier — and rejects
+/// the excess outright rather than queueing it, so requests are spaced client-side.
+/// 500ms leaves headroom under that ceiling for retries and for concurrent rounds
+/// sharing the key. Raise the rate with {with_min_request_interval} on a higher plan.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How many times a rate-limited request is retried before giving up.
+const RATE_LIMIT_RETRIES: u32 = 5;
+
 /// Client for querying token holder data from Etherscan API.
 pub struct EtherscanClient {
     client: reqwest::Client,
     api_key: String,
     chain_id: u64,
+    /// Completion time of the last request, shared so that every call through this
+    /// client observes one spacing schedule.
+    last_request: Arc<Mutex<Option<Instant>>>,
+    min_interval: Duration,
 }
 
 impl EtherscanClient {
@@ -91,7 +121,90 @@ impl EtherscanClient {
             client: reqwest::Client::new(),
             api_key,
             chain_id,
+            last_request: Arc::new(Mutex::new(None)),
+            min_interval: MIN_REQUEST_INTERVAL,
         }
+    }
+
+    /// Override the spacing between requests, for a plan with a different ceiling.
+    pub fn with_min_request_interval(mut self, interval: Duration) -> Self {
+        self.min_interval = interval;
+        self
+    }
+
+    /// Block until enough time has passed since the previous request.
+    ///
+    /// The lock is held across the wait so concurrent callers queue behind one another
+    /// rather than all observing the same stale timestamp and firing together.
+    async fn throttle(&self) {
+        let mut last = self.last_request.lock().await;
+        if let Some(previous) = *last {
+            let elapsed = previous.elapsed();
+            if elapsed < self.min_interval {
+                sleep(self.min_interval - elapsed).await;
+            }
+        }
+        *last = Some(Instant::now());
+    }
+
+    /// Resolve an EIP-6372 timestamp timepoint to the highest block mined at or before it.
+    ///
+    /// The E3 census snapshot is a timepoint, not a block height: `Interfold.request`
+    /// assigns `block.timestamp` to `E3.requestBlock` regardless of the census token.
+    /// Log queries address blocks, so the timepoint must be converted before it can
+    /// bound a `getLogs` range.
+    ///
+    /// Resolved over RPC by binary search rather than through Etherscan's
+    /// `getblocknobytime`, which is a Pro-tier endpoint and fails on free API keys.
+    /// The search also pins the boundary exactly — the greatest block whose timestamp
+    /// is `<= timestamp`, including every block that contributes to voting power at the
+    /// timepoint and none that follow it.
+    pub async fn get_block_by_timestamp(timestamp: u64, rpc_url: &str) -> Result<u64> {
+        let url = rpc_url.parse().context("Failed to parse RPC URL")?;
+        let provider = ProviderBuilder::new().connect_http(url);
+
+        let block_timestamp = |number: u64| {
+            let provider = provider.clone();
+            async move {
+                provider
+                    .get_block_by_number(BlockNumberOrTag::Number(number))
+                    .await
+                    .with_context(|| format!("Failed to fetch block {}", number))?
+                    .map(|block| block.header.timestamp)
+                    .ok_or_else(|| eyre!("Block {} not found", number))
+            }
+        };
+
+        let latest = provider
+            .get_block_number()
+            .await
+            .context("Failed to fetch latest block number")?;
+
+        // A timepoint at or beyond the head means the whole chain qualifies. This is
+        // reachable normally: the census is built moments after the request is mined.
+        if block_timestamp(latest).await? <= timestamp {
+            return Ok(latest);
+        }
+
+        if block_timestamp(0).await? > timestamp {
+            return Err(eyre!(
+                "Timestamp {} predates the genesis block; it is not a valid timepoint",
+                timestamp
+            ));
+        }
+
+        // Invariant: `lo` is always at or before the timepoint, `hi` always after it.
+        let (mut lo, mut hi) = (0u64, latest);
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if block_timestamp(mid).await? <= timestamp {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        Ok(lo)
     }
 
     /// Get the deployment block number for a contract
@@ -101,24 +214,16 @@ impl EtherscanClient {
             ETHERSCAN_API_URL, token, self.chain_id, self.api_key
         );
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send request to Etherscan")?;
-        let data: EtherscanResponse<Vec<ContractCreation>> = response
-            .json()
-            .await
-            .context("Failed to parse Etherscan response")?;
+        // Shares the throttle and the in-band error handling with the log queries; it
+        // is the first Etherscan call of a census and counts against the same ceiling.
+        let creations: Vec<ContractCreation> = self
+            .fetch_page(&url, "contract creation")
+            .await?
+            .ok_or_else(|| eyre!("No deployment data found"))?;
 
-        if data.status != "1" {
-            return Err(eyre!("Deployment block not found: {}", data.message));
-        }
-
-        let result = data
-            .result
-            .and_then(|r| r.into_iter().next())
+        let result = creations
+            .into_iter()
+            .next()
             .ok_or_else(|| eyre!("No deployment data found"))?;
 
         // Parse block number (could be hex or decimal)
@@ -133,6 +238,101 @@ impl EtherscanClient {
         };
 
         Ok(block_number)
+    }
+
+    /// Fetch one page of Etherscan results, surfacing in-band API errors.
+    ///
+    /// Etherscan reports failures with HTTP 200, `status: "0"`, and the explanation in
+    /// `result` as a bare string rather than the success type. Deserializing the body
+    /// straight into `T` therefore collapses every API error — invalid key, rate limit,
+    /// Pro-only endpoint — into an indistinguishable decode failure. The envelope is
+    /// inspected before `result` is typed, so the real message reaches the caller.
+    ///
+    /// Returns `Ok(None)` for the "No records found" response, which is a legitimate
+    /// empty result rather than an error.
+    ///
+    /// Rate-limit rejections are retried with exponential backoff. Client-side spacing
+    /// alone cannot prevent them: the ceiling is per API key, so concurrent rounds — or
+    /// anything else sharing the key — can exhaust it between two correctly spaced calls.
+    async fn fetch_page<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        what: &str,
+    ) -> Result<Option<T>> {
+        let mut backoff = self.min_interval;
+
+        for attempt in 0..=RATE_LIMIT_RETRIES {
+            self.throttle().await;
+
+            let body = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("Failed to send {} request to Etherscan", what))?
+                .text()
+                .await
+                .with_context(|| format!("Failed to read {} response body", what))?;
+
+            let envelope: EtherscanResponse<serde_json::Value> = serde_json::from_str(&body)
+                .with_context(|| {
+                    format!(
+                        "Failed to parse {} response envelope; body was: {}",
+                        what,
+                        body.chars().take(500).collect::<String>()
+                    )
+                })?;
+
+            if envelope.status != "1" {
+                if envelope.message.eq_ignore_ascii_case("No records found") {
+                    return Ok(None);
+                }
+
+                // The `result` field carries Etherscan's actual explanation; `message` is
+                // usually just "NOTOK".
+                let detail = match &envelope.result {
+                    Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                    _ => envelope.message.clone(),
+                };
+
+                if Self::is_rate_limited(&detail) && attempt < RATE_LIMIT_RETRIES {
+                    log::warn!(
+                        "Etherscan rate limit on {} (attempt {}/{}): {}; retrying in {:?}",
+                        what,
+                        attempt + 1,
+                        RATE_LIMIT_RETRIES,
+                        detail,
+                        backoff
+                    );
+                    sleep(backoff).await;
+                    backoff *= 2;
+                    continue;
+                }
+
+                return Err(eyre!("Etherscan {} request failed: {}", what, detail));
+            }
+
+            let result = match envelope.result {
+                Some(value) => value,
+                None => return Ok(None),
+            };
+
+            let typed = serde_json::from_value(result)
+                .with_context(|| format!("Failed to parse {} result payload", what))?;
+
+            return Ok(Some(typed));
+        }
+
+        unreachable!("the retry loop returns or errors on its final attempt")
+    }
+
+    /// Whether an Etherscan error message describes a rate-limit rejection.
+    ///
+    /// Matched on text because the API reports it in-band with the same `status: "0"`
+    /// it uses for every other failure, with no distinguishing code.
+    fn is_rate_limited(detail: &str) -> bool {
+        let detail = detail.to_ascii_lowercase();
+        detail.contains("rate limit") || detail.contains("too many requests")
     }
 
     /// Get transfer logs for a token
@@ -154,32 +354,11 @@ impl EtherscanClient {
                 ETHERSCAN_API_URL, token, from_block, to_block, transfer_topic, page, self.chain_id, self.api_key
             );
 
-            let response = self
-                .client
-                .get(&url)
-                .send()
+            let logs: Vec<TransferLog> = match self
+                .fetch_page::<Vec<TransferLog>>(&url, "transfer logs")
                 .await
-                .context("Failed to fetch transfer logs")?;
-            let data: EtherscanResponse<Vec<TransferLog>> = response
-                .json()
-                .await
-                .context("Failed to parse transfer logs response")?;
-
-            // Break if request failed
-            if data.status != "1" {
-                if data.message.eq_ignore_ascii_case("No records found") {
-                    break;
-                }
-
-                return Err(eyre!(
-                    "Etherscan getLogs failed on page {}: {}",
-                    page,
-                    data.message
-                ));
-            }
-
-            // Break if no results
-            let logs = match data.result {
+                .with_context(|| format!("Transfer logs page {}", page))?
+            {
                 Some(logs) if !logs.is_empty() => logs,
                 _ => break,
             };
@@ -193,9 +372,7 @@ impl EtherscanClient {
             }
 
             page += 1;
-
-            // Rate limiting - wait 100ms between requests
-            sleep(Duration::from_millis(100)).await;
+            // Spacing between requests is handled by `throttle`, so no sleep here.
         }
 
         Ok(all_logs)
@@ -221,32 +398,11 @@ impl EtherscanClient {
                 ETHERSCAN_API_URL, token, from_block, to_block, delegate_votes_changed_topic, page, self.chain_id, self.api_key
             );
 
-            let response = self
-                .client
-                .get(&url)
-                .send()
+            let logs: Vec<DelegateVotesChangedLog> = match self
+                .fetch_page::<Vec<DelegateVotesChangedLog>>(&url, "delegation logs")
                 .await
-                .context("Failed to fetch delegation logs")?;
-            let data: EtherscanResponse<Vec<DelegateVotesChangedLog>> = response
-                .json()
-                .await
-                .context("Failed to parse delegation logs response")?;
-
-            // Break if request failed
-            if data.status != "1" {
-                if data.message.eq_ignore_ascii_case("No records found") {
-                    break;
-                }
-
-                return Err(eyre!(
-                    "Etherscan getLogs failed on page {}: {}",
-                    page,
-                    data.message
-                ));
-            }
-
-            // Break if no results
-            let logs = match data.result {
+                .with_context(|| format!("Delegation logs page {}", page))?
+            {
                 Some(logs) if !logs.is_empty() => logs,
                 _ => break,
             };
@@ -260,9 +416,7 @@ impl EtherscanClient {
             }
 
             page += 1;
-
-            // Rate limiting - wait 100ms between requests
-            sleep(Duration::from_millis(100)).await;
+            // Spacing between requests is handled by `throttle`, so no sleep here.
         }
 
         Ok(all_logs)
@@ -309,12 +463,12 @@ impl EtherscanClient {
         potential_voters.into_values().collect()
     }
 
-    /// Verify voting power for multiple addresses
+    /// Verify voting power for multiple addresses at an EIP-6372 timepoint
     pub async fn verify_voting_power(
         &self,
         token_address: Address,
         potential_voters: &[PotentialVoter],
-        block_number: u64,
+        timepoint: u64,
         rpc_url: &str,
         threshold: U256,
     ) -> Result<Vec<TokenHolder>> {
@@ -328,7 +482,7 @@ impl EtherscanClient {
         let scale_factor = U256::from(10u128.pow(precision as u32));
 
         for voter in potential_voters {
-            match Self::get_past_votes(token_address, voter.address, block_number, rpc_url).await {
+            match Self::get_past_votes(token_address, voter.address, timepoint, rpc_url).await {
                 Ok(votes) => {
                     if votes >= threshold {
                         let scaled_votes = votes / scale_factor;
@@ -436,11 +590,30 @@ impl EtherscanClient {
         balances
     }
 
-    /// Verify actual voting power for an address at a specific block
+    /// Read a census token's EIP-6372 clock mode.
+    ///
+    /// Defaults to block numbers when `CLOCK_MODE()` is absent or unparseable: tokens
+    /// predating EIP-6372 checkpoint on `block.number`, and that is also OpenZeppelin's
+    /// default for `ERC20Votes`.
+    async fn get_clock_mode(token_address: Address, rpc_url: &str) -> ClockMode {
+        let Ok(url) = rpc_url.parse() else {
+            return ClockMode::BlockNumber;
+        };
+        let provider = ProviderBuilder::new().connect_http(url);
+        let token = ERC20Votes::new(token_address, provider);
+
+        match token.CLOCK_MODE().call().await {
+            Ok(mode) if mode.contains("mode=timestamp") => ClockMode::Timestamp,
+            Ok(_) => ClockMode::BlockNumber,
+            Err(_) => ClockMode::BlockNumber,
+        }
+    }
+
+    /// Verify actual voting power for an address at an EIP-6372 timepoint
     async fn get_past_votes(
         token_address: Address,
         voter_address: Address,
-        block_number: u64,
+        timepoint: u64,
         rpc_url: &str,
     ) -> Result<U256> {
         let url = rpc_url.parse().context("Failed to parse RPC URL")?;
@@ -448,13 +621,23 @@ impl EtherscanClient {
         let token = ERC20Votes::new(token_address, provider);
 
         match token
-            .getPastVotes(voter_address, U256::from(block_number))
+            .getPastVotes(voter_address, U256::from(timepoint))
             .call()
             .await
         {
             Ok(votes) => Ok(votes),
-            Err(_) => {
-                // Fallback to balanceOf if getPastVotes fails
+            Err(e) => {
+                // Fallback to balanceOf if getPastVotes fails. This substitutes a *current*
+                // balance for a historical one, so it is logged: a timepoint in the wrong
+                // unit reverts every call and would otherwise rebuild the whole census
+                // from live balances without a single error.
+                log::warn!(
+                    "getPastVotes failed for {} at timepoint {} ({}), falling back to \
+                     current balanceOf",
+                    voter_address,
+                    timepoint,
+                    e
+                );
                 let balance = token
                     .balanceOf(voter_address)
                     .call()
@@ -509,22 +692,37 @@ impl EtherscanClient {
         U256::from_str_radix(hex_data, 16).unwrap_or(U256::ZERO)
     }
 
-    /// Get all token holders with voting power at a specific block
+    /// Get all token holders with voting power at a census timepoint.
+    ///
+    /// `snapshot_timepoint` is an EIP-6372 timestamp, not a block height — `E3.requestBlock`
+    /// carries `block.timestamp` regardless of which token forms the census. Log discovery
+    /// needs the equivalent block, so both units are derived here: the block always bounds
+    /// the log ranges, while `getPastVotes` receives whichever unit the census token's own
+    /// `CLOCK_MODE()` reports.
     pub async fn get_token_holders_with_voting_power(
         &self,
         token_address: Address,
-        snapshot_block: u64,
+        snapshot_timepoint: u64,
         rpc_url: &str,
         threshold: U256,
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
-        // Step 1: Determine starting block
+        // Step 1: Determine the block range
         let start_block = self
             .get_deployment_block(&token_address.to_string())
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
+
+        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .context("Failed to resolve snapshot timepoint to a block")?;
+        log::info!(
+            "Snapshot timepoint {} resolves to block {}",
+            snapshot_timepoint,
+            snapshot_block
+        );
 
         // Step 2: Fetch transfer logs
         log::info!(
@@ -555,13 +753,24 @@ impl EtherscanClient {
         let potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
         log::info!("Found {} potential voters", potential_voters.len());
 
-        // Step 5: Verify actual voting power
-        log::info!("Verifying voting power at block {}...", snapshot_block);
+        // Step 5: Verify actual voting power. The unit of the `getPastVotes` timepoint is
+        // the census token's to decide, so ask it rather than assuming. Passing the wrong
+        // unit reverts the call and silently degrades the census to current balances.
+        let clock_mode = Self::get_clock_mode(token_address, rpc_url).await;
+        let vote_timepoint = match clock_mode {
+            ClockMode::Timestamp => snapshot_timepoint,
+            ClockMode::BlockNumber => snapshot_block,
+        };
+        log::info!(
+            "Census token clock is {:?}; verifying voting power at timepoint {}...",
+            clock_mode,
+            vote_timepoint
+        );
         let token_holders = self
             .verify_voting_power(
                 token_address,
                 &potential_voters,
-                snapshot_block,
+                vote_timepoint,
                 rpc_url,
                 threshold,
             )
@@ -583,7 +792,8 @@ impl EtherscanClient {
     pub async fn get_token_holders_with_constant_balance(
         &self,
         token_address: Address,
-        snapshot_block: u64,
+        snapshot_timepoint: u64,
+        rpc_url: &str,
         balance: U256,
     ) -> Result<Vec<TokenHolder>> {
         log::info!(
@@ -591,12 +801,23 @@ impl EtherscanClient {
             token_address
         );
 
-        // Step 1: Determine starting block
+        // Step 1: Determine the block range
         let start_block = self
             .get_deployment_block(&token_address.to_string())
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
+
+        // Eligibility here rests on the logs alone — no `getPastVotes` pass narrows the
+        // set afterwards — so the range must not reach past the census timepoint.
+        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .context("Failed to resolve snapshot timepoint to a block")?;
+        log::info!(
+            "Snapshot timepoint {} resolves to block {}",
+            snapshot_timepoint,
+            snapshot_block
+        );
 
         // Step 2: Fetch transfer logs
         log::info!(
@@ -953,14 +1174,67 @@ mod tests {
         let api_key = &CONFIG.etherscan_api_key;
         let rpc_url = &CONFIG.http_rpc_url;
         let threshold = U256::ZERO;
-        let snapshot_block = 9564734;
+        // A timepoint, matching what `E3.requestBlock` carries — not a block height.
+        let snapshot_timepoint = 1761201108;
 
         let client = EtherscanClient::new(api_key.to_string(), chain_id);
         let res = client
-            .get_token_holders_with_voting_power(token_address, snapshot_block, rpc_url, threshold)
+            .get_token_holders_with_voting_power(
+                token_address,
+                snapshot_timepoint,
+                rpc_url,
+                threshold,
+            )
             .await
             .unwrap();
 
         assert!(res.len() == 2);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_block_by_timestamp() {
+        let rpc_url = &CONFIG.http_rpc_url;
+
+        // A timepoint of the size `E3.requestBlock` carries. Read as a block height it
+        // is far beyond any chain head, which is the failure this resolver removes.
+        let snapshot_timepoint = 1761201108;
+
+        let block = EtherscanClient::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .unwrap();
+
+        assert!(block > 0);
+        assert!(block < snapshot_timepoint);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_block_by_timestamp_is_the_last_block_at_or_before() {
+        let rpc_url = &CONFIG.http_rpc_url;
+        let snapshot_timepoint = 1761201108;
+
+        let block = EtherscanClient::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .unwrap();
+
+        // The boundary must be exact: the resolved block is at or before the timepoint,
+        // and the next one is after it. An off-by-one here silently truncates or extends
+        // the census.
+        let url = rpc_url.parse().unwrap();
+        let provider = ProviderBuilder::new().connect_http(url);
+        let at = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block))
+            .await
+            .unwrap()
+            .unwrap();
+        let next = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block + 1))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(at.header.timestamp <= snapshot_timepoint);
+        assert!(next.header.timestamp > snapshot_timepoint);
     }
 }
