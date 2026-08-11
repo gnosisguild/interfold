@@ -378,7 +378,7 @@ export async function validateDeployment(
   assertEq(
     "FOLD whitelist LiquidityLauncher",
     await fold.transferWhitelist(plan.liquidityLauncher),
-    true,
+    false,
   );
   assertEq(
     "FOLD whitelist LBPStrategy",

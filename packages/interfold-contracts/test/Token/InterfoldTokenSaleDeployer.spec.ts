@@ -328,7 +328,7 @@ describe("InterfoldTokenSaleDeployer", function () {
     expect(await fold.CLAIM_SOURCE()).to.equal(ethers.ZeroAddress);
     expect(await fold.balanceOf(auctionAddress)).to.equal(SALE_AMOUNT);
     expect(await fold.balanceOf(ctx.lbpStrategyAddress)).to.equal(LP_RESERVE);
-    expect(await fold.transferWhitelist(ctx.launcherAddress)).to.equal(true);
+    expect(await fold.transferWhitelist(ctx.launcherAddress)).to.equal(false);
     expect(await fold.transferWhitelist(ctx.lbpStrategyAddress)).to.equal(true);
     expect(await fold.transferWhitelist(ctx.mockPositionManager)).to.equal(
       true,

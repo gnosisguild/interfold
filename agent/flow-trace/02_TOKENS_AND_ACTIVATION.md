@@ -504,7 +504,9 @@ enforcement based on immutable policy curves. Key changes:
   transfer gate automatically lifts at TGE. There is no manual transfer restriction flag.
 - **Pre-TGE transfer gate.** Before TGE, only bonding-registry transfers, claim-source
   distributions, and whitelisted addresses can transfer. Bonding is always allowed so operators can
-  stake during Virtual phase.
+  stake during Virtual phase. The sale deployer removes the LiquidityLauncher from this whitelist
+  after it distributes the sale and liquidity balances. The LBP strategy and position manager stay
+  whitelisted because they move liquidity after the distribution transaction.
 - **Immutable constructor parameters.** `CCA_START`, `CCA_END`, `CLAIM_SOURCE`, and
   `BONDING_REGISTRY` are set at construction and cannot change. The BondingRegistry must be deployed
   first (or a placeholder used and fixed via `setLicenseToken`).
