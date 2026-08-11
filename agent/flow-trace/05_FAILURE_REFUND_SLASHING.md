@@ -918,10 +918,13 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 ├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
 │   toNodes = escrowed * successSlashedNodeBps / 10000
 │   toTreasury = escrowed - toNodes
+│   → Each proposal is rounded separately
+│   → Percentage remainder goes to the treasury
 │
 ├─ Credit (pull-payment, H-01/M-02) — funds are NOT pushed here:
 │   for node in activeNodes:
-│       perNode = toNodes / activeNodes.length  (dust → last node)
+│       perNode = toNodes / eligibleNodes
+│       division remainder → final eligible node in canonical address order
 │       recipient = rewardRecipient[e3Id][node]
 │       _pendingSlashedClaims[e3Id][actualToken][recipient] += perNode
 │       Emit SlashedFundsCredited(e3Id, recipient, actualToken, perNode)
@@ -947,6 +950,15 @@ Design rationale:
   cannot brick the success-path or strand other claimants' funds.
   Governance changes to the live allocation or treasury increment policyVersion
   and apply only to later E3 requests; existing snapshots never migrate implicitly.
+
+Rounding policy:
+  Every slash proposal settles as a separate route. The node percentage uses
+  floor division for that route, and the treasury receives its percentage
+  remainder. This can give nodes at most one fewer base unit per additional
+  route than one aggregate calculation. The node share is then divided in
+  canonical committee order. The final eligible node receives that division
+  remainder on both success and failure paths. This bounded bias avoids extra
+  remainder and cursor state, and no token value is lost.
 ```
 
 ### In-flight dependency rotation (AUD M-04)

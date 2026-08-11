@@ -650,6 +650,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit SlashedFundsApplied(e3Id, token, 0, toHonestNodes);
     }
 
+    /// @dev Each proposal is split independently. Percentage division rounds
+    ///      down the node share, so the treasury receives that route's remainder.
     function _settleSuccessfulE3Slash(
         uint256 e3Id,
         IERC20 token,
@@ -669,6 +671,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit SlashedFundsDistributedOnSuccess(e3Id, token, toNodes, toProtocol);
     }
 
+    /// @dev The committee array uses canonical address order. The final eligible
+    ///      entry receives the node-division remainder for this proposal.
     function _creditNodeSlashedClaims(
         uint256 e3Id,
         IERC20 token,
