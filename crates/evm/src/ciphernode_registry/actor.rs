@@ -14,7 +14,10 @@ use crate::actors::evm_parser::EvmParser;
 use crate::contracts::ICiphernodeRegistry;
 use crate::domain::ciphernode_registry_events::extractor;
 use crate::domain::error_decoder::{decode_error_from_str, format_evm_error};
-use crate::helpers::{encode_zk_proof, send_tx_with_retry, transaction_nonce_guard, EthProvider};
+use crate::helpers::{
+    encode_zk_proof, send_tx_idempotent, send_tx_with_retry, transaction_nonce_guard, EthProvider,
+    TxOutcome,
+};
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
 use actix::prelude::*;
 use alloy::{

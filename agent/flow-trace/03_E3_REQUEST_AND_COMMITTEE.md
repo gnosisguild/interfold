@@ -325,7 +325,17 @@ CommitteeFinalizer actor receives CommitteeRequested event
 ```
 CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
 │
+├─ Preflight: should_finalize_committee() (eth_call)
+│   └─ Skips the transaction when the committee is not finalizable
+│      (CommitteeAlreadyFinalized / CommitteeNotRequested /
+│       SubmissionWindowNotClosed / ThresholdNotMet)
+│
 └─ Calls contract.finalizeCommittee(e3Id).send()
+    │
+    │  If the transaction is mined with a failed receipt, the writer runs the
+    │  state check again (send_tx_idempotent in crates/evm/src/helpers.rs). A
+    │  revert with CommitteeAlreadyFinalized means another sender finalized
+    │  after the preflight, so the node logs the outcome and reports no error.
     │
     │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────────┐
     │  │                                                         │
@@ -463,7 +473,10 @@ The registry must finalize a ready committee.
    lowest non-expelled `party_id` in the address-sorted runtime committee.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the deadline — no
-   single point of failure.
+   single point of failure. Because the staggered timers can overlap, more than one node can send
+   the transaction. The losing transaction reverts with `CommitteeAlreadyFinalized`; the writer
+   re-reads the state after the failure and treats that revert as a completed operation, not as a
+   node error.
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee.

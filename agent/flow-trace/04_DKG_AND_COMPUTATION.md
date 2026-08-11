@@ -673,6 +673,9 @@ phase.
   ├─ Calls contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
+  │  └─ If that transaction is mined with a failed receipt, the writer reads the
+  │     commitment again. An equal commitment from another aggregator completes
+  │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
         │
