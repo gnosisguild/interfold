@@ -9,6 +9,10 @@ pragma solidity 0.8.28;
 ///         Returns 0 for totalBonded so locked-balance enforcement works
 ///         without a full system deployment.
 contract MockBondingRegistry {
+    function exitDelay() external pure returns (uint64) {
+        return 7 days;
+    }
+
     function totalBonded(
         address /* account */
     ) external pure returns (uint256) {

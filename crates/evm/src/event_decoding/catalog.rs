@@ -217,11 +217,6 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new(
-        "LicenseTransferShortfall",
-        "LicenseTransferShortfall(address,uint256,uint256)",
-        None,
-    ),
-    EvmEventDefinition::new(
         "ManagerBanUpdated",
         "ManagerBanUpdated(address,address,bool)",
         None,

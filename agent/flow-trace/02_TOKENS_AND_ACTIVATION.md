@@ -108,7 +108,9 @@ Collateral ownership and operator identity are separate namespaces:
 
 `setBondingAssetConfig()` updates both tokens, their expected decimals, `ticketPrice`, and
 `licenseRequiredBond` in one transaction. Decimal checks confirm the raw-unit scale but do not
-establish either token's economic value.
+establish either token's economic value. Both assets must transfer exact amounts and must not rebase
+account balances. Deposits verify the custody increase. Exits, payouts, and license transfers verify
+the recipient increase and custody decrease. A mismatch reverts the complete transaction.
 
 The protocol deployment configuration keeps `feeToken` separate from `ticketUnderlyingToken`. The
 planned launch uses USDS for fees and sUSDS for ticket collateral. A fixed `ticketPrice` or ticket
@@ -118,11 +120,19 @@ Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot b
 the old wrapper has issued tickets or a payable balance. The registry tracks `totalLicenseLiability`
 across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
 treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
-distinguishable from operator liabilities and can be sent to `slashedFundsTreasury` with
-`sweepLicenseSurplus()` before rotation. Rotation also waits for every E3 assignment, slash lock,
-and pending slash route to close. Replacement assets must be deployed contracts; the only zero
-exception is the one-time license-token placeholder used to resolve the circular
-FOLD/BondingRegistry deployment.
+distinguishable from operator liabilities. `setBondingAssetConfig()` sends that surplus to
+`slashedFundsTreasury` before it validates and applies the replacement in the same transaction, so a
+new donation cannot interleave and block rotation. `sweepLicenseSurplus()` remains available for
+standalone cleanup. Rotation also waits for every E3 assignment, slash lock, and pending slash route
+to close. Replacement assets must be deployed contracts; the only zero exception is the one-time
+license-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
+
+The exit delay must exceed the current sortition submission window and every unexpired request-time
+deadline. Each request raises a monotonic deadline watermark. `exitDelayFloor()` returns the larger
+of the current window and the remaining watermark duration. Both contracts check this floor when
+governance changes either value or connects a replacement registry. BondingRegistry rejects a zero
+registry pointer. Equality is rejected because a snapshot-weighted ticket remains valid at the
+deadline.
 
 ---
 
@@ -156,6 +166,7 @@ Bond owner submits bondLicenseFor(operator, 50000)
 │     │  │       → FOLD _update can see the pre-recorded bond   │
 │     │  │         and enforce locked-floor accounting          │
 │     │  │       → FOLD tokens move from owner → contract       │
+│     │  │       → require the registry receives exactly amount │
 │     │  │    5. totalLicenseLiability += amount                │
 │     │  │    6. _updateOperatorStatus(operator)                │
 │     │  │       → May activate if all conditions now met       │
@@ -258,8 +269,9 @@ Bond owner submits addTicketBalanceFor(operator, amount)
 │     │  │       │  │  1. underlying.transferFrom(           │  │
 │     │  │       │  │       from, address(this), amount)     │  │
 │     │  │       │  │     → collateral moves: owner → tFOLD    │  │
+│     │  │       │  │     → require tFOLD receives all amount │  │
 │     │  │       │  │  2. _mint(to, amount)                  │  │
-│     │  │       │  │     → minted amount = received amount   │  │
+│     │  │       │  │     → minted amount = requested amount  │  │
 │     │  │       │  │  3. Auto-delegate to self on first     │  │
 │     │  │       │  │     deposit (for voting power tracking)│  │
 │     │  │       │  └────────────────────────────────────────┘  │
@@ -401,11 +413,15 @@ Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 │     │  │       │  │  payableBalance to bond owner           │  │
 │     │  │       │  │  payableBalance -= amount               │  │
 │     │  │       │  │  underlying.safeTransfer(to, amount)    │  │
+│     │  │       │  │  require owner receives exactly amount  │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
 │     │  │    4. if licenseAmount > 0:                           │
 │     │  │       totalLicenseLiability -= licenseAmount          │
-│     │  │       licenseToken.safeTransfer(msg.sender, amount)   │
+│     │  │       licenseToken.safeTransfer(                       │
+│     │  │         msg.sender, licenseAmount)                     │
+│     │  │       → require owner receives exactly licenseAmount   │
+│     │  │       → require registry spends exactly licenseAmount  │
 │     │  │       → Pending FOLD is removed from totalBonded()    │
 │     │  │         as returned FOLD reaches the wallet           │
 │     │  │  }                                                    │
@@ -476,9 +492,9 @@ The token contracts were hardened against the following audit findings. All chan
   `(IERC20 baseToken, address registry_, address initialOwner_)` and assigns `registry = registry_`
   directly (emitting `RegistryChanged(0, registry_)`) instead of requiring the deployer to call
   `setRegistry()` later. Reverts `ZeroAddress` if `registry_ == 0`.
-- **H-03 — fee-on-transfer safe deposits.** `depositFor` and `depositFrom` measure the underlying
-  balance before/after `safeTransferFrom` and mint the _actual_ amount received. Operators auto
-  self-delegate on first deposit.
+- **Exact-transfer deposits.** `depositFor` and `depositFrom` measure the underlying balance around
+  `safeTransferFrom`. They revert unless the wrapper receives the full amount, then mint that same
+  amount. Operators auto self-delegate on first deposit.
 - **H-16 / H-20 / M-22 — registry swap timelock.** Once `lockRegistry()` is called (one-way,
   `RegistryLockAlreadySet` on repeat) further registry swaps must go through
   `requestRegistryChange(addr)` → wait `REGISTRY_CHANGE_DELAY = 1 day` → `activateRegistryChange()`.
@@ -504,7 +520,9 @@ enforcement based on immutable policy curves. Key changes:
   transfer gate automatically lifts at TGE. There is no manual transfer restriction flag.
 - **Pre-TGE transfer gate.** Before TGE, only bonding-registry transfers, claim-source
   distributions, and whitelisted addresses can transfer. Bonding is always allowed so operators can
-  stake during Virtual phase.
+  stake during Virtual phase. The sale deployer removes the LiquidityLauncher from this whitelist
+  after it distributes the sale and liquidity balances. The LBP strategy and position manager stay
+  whitelisted because they move liquidity after the distribution transaction.
 - **Immutable constructor parameters.** `CCA_START`, `CCA_END`, `CLAIM_SOURCE`, and
   `BONDING_REGISTRY` are set at construction and cannot change. The BondingRegistry must be deployed
   first (or a placeholder used and fixed via `setLicenseToken`).

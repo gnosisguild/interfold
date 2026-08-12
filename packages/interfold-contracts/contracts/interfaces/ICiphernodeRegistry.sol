@@ -286,6 +286,12 @@ interface ICiphernodeRegistry {
     /// @notice Committee has already been finalized for this E3
     error CommitteeAlreadyFinalized();
 
+    /// @notice Exit collateral could unlock while snapshot tickets remain valid.
+    error ExitDelayMustExceedSortitionWindow(
+        uint256 exitDelay,
+        uint256 requiredDelay
+    );
+
     /// @notice Committee has not been finalized yet for this E3
     error CommitteeNotFinalized();
 
@@ -539,7 +545,8 @@ interface ICiphernodeRegistry {
     function setInterfold(IInterfold _interfold) external;
 
     /// @notice Sets the bonding registry contract address
-    /// @dev Only callable by owner
+    /// @dev Only callable by owner. Its exit delay must exceed the current
+    ///      exit-delay floor.
     /// @param _bondingRegistry Address of the bonding registry contract
     function setBondingRegistry(IBondingRegistry _bondingRegistry) external;
 
@@ -547,7 +554,15 @@ interface ICiphernodeRegistry {
     /// @return The sortition submission window in seconds.
     function sortitionSubmissionWindow() external view returns (uint256);
 
+    /// @notice Returns the duration that the exit delay must exceed.
+    /// @dev Includes the current submission window and the remaining time for
+    ///      the latest request-time committee deadline.
+    /// @return floor Required duration in seconds.
+    function exitDelayFloor() external view returns (uint256);
+
     /// @notice This function should be called to set the submission window for the E3 sortition.
+    /// @dev The proposed window and frozen-deadline floor must remain shorter
+    ///      than the bonding registry's exit delay.
     /// @param _sortitionSubmissionWindow The submission window for the E3 sortition in seconds.
     function setSortitionSubmissionWindow(
         uint256 _sortitionSubmissionWindow

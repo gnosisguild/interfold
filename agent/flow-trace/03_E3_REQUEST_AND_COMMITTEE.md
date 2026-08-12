@@ -17,11 +17,17 @@ None → Requested → CommitteeFinalized → KeyPublished → CiphertextReady �
 
 Each transition has a deadline. Missing a deadline allows anyone to call `markE3Failed()`.
 
+`BondingRegistry.exitDelay` exceeds the current submission window and every unexpired frozen
+committee deadline. Therefore, queued ticket collateral cannot become claimable while an older
+request accepts snapshot-weighted ticket submissions.
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 decimals check confirms the unit scale only; it does not prove that two tokens have the same
 economic value. Each request snapshots the active token, so later fee-asset changes do not alter an
-existing E3's escrow or settlement unit.
+existing E3's escrow or settlement unit. Fee assets must transfer exact amounts and must not rebase
+account balances. Interfold checks the custody increase for escrow deposits. Each outbound transfer
+checks the recipient increase and the Interfold custody decrease.
 
 ---
 
@@ -60,6 +66,7 @@ Requester calls: Interfold.request({
 │   │   → availability covers at least request time through input-window end
 │   │   → a later equal-length input window therefore costs more
 │   ├─ feeToken.transferFrom(requester, address(this), fee)
+│   │   → require Interfold receives exactly fee
 │   └─ e3Payments[e3Id] = fee  (stored per-E3)
 │       _e3FeeTokens[e3Id] = feeToken  (survives global token rotation)
 │
@@ -120,6 +127,7 @@ Requester calls: Interfold.request({
 │   │   │  │           block.timestamp + sortitionWindow,        │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
+│   │   │  │       → raise the latest deadline watermark         │
 │   │   │  │    5. sortitionTicketPrices[e3Id] =                 │
 │   │   │  │         bondingRegistry.ticketPrice()               │
 │   │   │  │       → Freeze ticket capacity for this E3          │

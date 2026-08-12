@@ -109,6 +109,9 @@ contract BondingRegistry is
     ///         duration so operators retain a meaningful exit path.
     uint64 public constant MAX_EXIT_DELAY = 90 days; // duration in seconds; not calendar-aware
 
+    uint256 private constant EXIT_DELAY_FLOOR_SELECTOR = 0x6672857e;
+    uint256 private constant INVALID_EXIT_TIMING_SELECTOR = 0x01851c51;
+
     /// @notice Basis-points denominator (100% = 10_000 bps).
     uint256 internal constant BPS_BASE = 10_000;
 
@@ -1057,6 +1060,7 @@ contract BondingRegistry is
     function _setBondingAssetConfig(
         BondingAssetConfig calldata config
     ) internal {
+        _sweepLicenseSurplus();
         bool assetChanged = BondingAssetLib.validateBondingAssetConfig(
             address(ticketToken),
             address(licenseToken),
@@ -1111,10 +1115,16 @@ contract BondingRegistry is
         // bound the configurable exit delay so a malicious owner cannot
         // instantly drain operator stake (delay too short) or permanently
         // freeze withdrawals (delay too long).
-        require(
-            newExitDelay >= MIN_EXIT_DELAY && newExitDelay <= MAX_EXIT_DELAY,
-            ExitDelayOutOfBounds(newExitDelay)
-        );
+        // Keep the bounds check compact because BondingRegistry is size-constrained.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if or(lt(newExitDelay, 86400), gt(newExitDelay, 7776000)) {
+                mstore(0x00, 0x2b4d9a8c)
+                mstore(0x20, newExitDelay)
+                revert(0x1c, 0x24)
+            }
+        }
+        _validateExitTiming(registry, newExitDelay);
         uint256 oldValue = uint256(exitDelay);
         exitDelay = newExitDelay;
 
@@ -1132,21 +1142,61 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function sweepLicenseSurplus() external onlyOwner returns (uint256 amount) {
-        IERC20 current = licenseToken;
-        uint256 balance = current.balanceOf(address(this));
-        uint256 liabilities = totalLicenseLiability;
-        if (balance <= liabilities) return 0;
+        return _sweepLicenseSurplus();
+    }
 
-        amount = balance - liabilities;
-        address treasury = slashedFundsTreasury;
-        _safeTransferLicenseWithDeltaCheck(treasury, amount);
-        emit LicenseSurplusSwept(address(current), treasury, amount);
+    function _sweepLicenseSurplus() private returns (uint256 amount) {
+        return
+            BondingAssetLib.sweepLicenseSurplus(
+                address(licenseToken),
+                address(this),
+                slashedFundsTreasury,
+                totalLicenseLiability
+            );
     }
 
     /// @inheritdoc IBondingRegistry
     function setRegistry(ICiphernodeRegistry newRegistry) public onlyOwner {
+        require(address(newRegistry) != address(0), ZeroAddress());
+        _validateExitTiming(newRegistry, exitDelay);
         registry = newRegistry;
         emit RegistrySet(address(newRegistry));
+    }
+
+    function _validateExitTiming(
+        ICiphernodeRegistry configuredRegistry,
+        uint64 configuredExitDelay
+    ) private view {
+        // Keep this check compact because BondingRegistry is size-constrained.
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            if and(configuredRegistry, configuredExitDelay) {
+                mstore(0x00, EXIT_DELAY_FLOOR_SELECTOR)
+                if iszero(
+                    staticcall(
+                        gas(),
+                        configuredRegistry,
+                        0x1c,
+                        0x04,
+                        0x00,
+                        0x20
+                    )
+                ) {
+                    returndatacopy(0x00, 0x00, returndatasize())
+                    revert(0x00, returndatasize())
+                }
+                if lt(returndatasize(), 0x20) {
+                    revert(0x00, 0x00)
+                }
+                let requiredDelay := mload(0x00)
+                if iszero(gt(configuredExitDelay, requiredDelay)) {
+                    mstore(0x00, INVALID_EXIT_TIMING_SELECTOR)
+                    mstore(0x20, configuredExitDelay)
+                    mstore(0x40, requiredDelay)
+                    revert(0x1c, 0x44)
+                }
+            }
+        }
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1261,9 +1311,17 @@ contract BondingRegistry is
 
         uint256 balanceBefore = licenseToken.balanceOf(address(this));
         licenseToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 actualReceived = licenseToken.balanceOf(address(this)) -
-            balanceBefore;
-        require(actualReceived == amount, InvalidAmount());
+        uint256 balanceAfter = licenseToken.balanceOf(address(this));
+        uint256 actualReceived = balanceAfter > balanceBefore
+            ? balanceAfter - balanceBefore
+            : 0;
+        if (actualReceived != amount) {
+            revert AssetTransferMismatch(
+                address(licenseToken),
+                amount,
+                actualReceived
+            );
+        }
         totalLicenseLiability += amount;
 
         emit LicenseBondUpdated(
@@ -1339,18 +1397,13 @@ contract BondingRegistry is
         numActiveOperators = 0;
     }
 
-    /// @dev `safeTransfer` of the license token, measuring the RECIPIENT-side delta
-    ///      to detect fee-on-transfer / rebasing behavior (sender-side delta misses
-    ///      fees that burn or reroute). Internal accounting is already decremented at
-    ///      the call site, so a shortfall emits {LicenseTransferShortfall} rather than
-    ///      reverting (a revert would brick claims if the token starts taking fees);
-    ///      governance must pause new bonding and drain every liability before
-    ///      rotating the token via {setBondingAssetConfig}.
+    /// @dev Sends the license token and reverts unless the recipient receives the
+    ///      exact amount. A revert restores the liability accounting at the call site.
     function _safeTransferLicenseWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
     ) internal {
-        BondingAssetLib.transferWithDeltaCheck(
+        BondingAssetLib.transferExact(
             address(licenseToken),
             recipient,
             expectedAmount

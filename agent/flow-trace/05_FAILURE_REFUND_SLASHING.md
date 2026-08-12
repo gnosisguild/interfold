@@ -215,10 +215,11 @@ HONEST NODE'S BOND OWNER claims:
 ├─ require(operator is in honestNodes[e3Id])
 ├─ load the recipient frozen when this E3's committee was finalized
 ├─ require(msg.sender == recipient)
-├─ If an expelling proposal is unresolved, hold this operator's claim
-│  without blocking other operators
-├─ If the operator is expelled, mark its base share consumed and
+├─ If an expelling proposal is unresolved, hold this operator's unclaimed
+│  share without blocking other operators, even if settlement happened first
+├─ If the operator is expelled, mark any unclaimed base share consumed and
 │  reallocate it as later top-up claims for the remaining operators
+│  → A base reward claimed before the proposal opened remains final
 ├─ Otherwise require either an unclaimed base reward or a new top-up
 │  → This ledger is independent from the requester-refund claim ledger, so a
 │    requester who is also an honest node can receive both entitlements
@@ -818,6 +819,8 @@ _executeSlash(proposalId):
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
 │     │  │  │       → Transfers the underlying collateral asset   │
 │     │  │  │         to the E3RefundManager contract             │
+│     │  │  │       → Reverts unless the manager receives the      │
+│     │  │  │         complete amount                              │
 │     │  │  │       → Uses payableBalance incremented by          │
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
@@ -856,11 +859,10 @@ _executeSlash(proposalId):
        actualTicketSlashed, actualLicenseSlashed, banned)
 ```
 
-> **License transfer note.** `withdrawSlashedFunds` (the treasury sweep for slashed license bonds)
-> measures the recipient's balance delta around `licenseToken.safeTransfer` and emits
-> `LicenseTransferShortfall(recipient, expected, actual)` if a fee-on-transfer license token
-> short-pays the treasury. Booking has already been zeroed before the transfer; the event exists for
-> indexer-side reconciliation (audit M-13).
+> **Asset transfer policy.** Fee and bonding assets must transfer exact amounts and must not rebase
+> account balances. Ticket payouts, license transfers, refund-manager funding, and every claimant
+> payment measure the recipient increase and custody decrease. A mismatch reverts the complete
+> accounting transaction and preserves the other pooled liabilities.
 
 ### Proposal-Aware Slashed Funds Settlement (Failure Path)
 
@@ -917,10 +919,13 @@ distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 ├─ Split using snapshot.allocation.successSlashedNodeBps (default 5000):
 │   toNodes = escrowed * successSlashedNodeBps / 10000
 │   toTreasury = escrowed - toNodes
+│   → Each proposal is rounded separately
+│   → Percentage remainder goes to the treasury
 │
 ├─ Credit (pull-payment, H-01/M-02) — funds are NOT pushed here:
 │   for node in activeNodes:
-│       perNode = toNodes / activeNodes.length  (dust → last node)
+│       perNode = toNodes / eligibleNodes
+│       division remainder → final eligible node in canonical address order
 │       recipient = rewardRecipient[e3Id][node]
 │       _pendingSlashedClaims[e3Id][actualToken][recipient] += perNode
 │       Emit SlashedFundsCredited(e3Id, recipient, actualToken, perNode)
@@ -946,6 +951,15 @@ Design rationale:
   cannot brick the success-path or strand other claimants' funds.
   Governance changes to the live allocation or treasury increment policyVersion
   and apply only to later E3 requests; existing snapshots never migrate implicitly.
+
+Rounding policy:
+  Every slash proposal settles as a separate route. The node percentage uses
+  floor division for that route, and the treasury receives its percentage
+  remainder. This can give nodes at most one fewer base unit per additional
+  route than one aggregate calculation. The node share is then divided in
+  canonical committee order. The final eligible node receives that division
+  remainder on both success and failure paths. This bounded bias avoids extra
+  remainder and cursor state, and no token value is lost.
 ```
 
 ### In-flight dependency rotation (AUD M-04)
@@ -1127,7 +1141,7 @@ STEP 1: ESCROWING (always, at slash time)
   Flow: BondingRegistry.redirectReservedSlashedTicketFunds(proposalId)
     → loads the proposal's frozen refund manager and exact amount
     → ticketToken.payout(refundManager, amount)
-    → actual ticket underlying moves to E3RefundManager
+    → require the full ticket underlying amount reaches E3RefundManager
     → preserve (e3Id, proposalId, target, actualToken, amount)
     → _pendingSlashedByToken[e3Id][actualToken] += amount
     → tokenLiability[actualToken] protects the balance
@@ -1159,7 +1173,8 @@ FALLBACK: RETRY, NOT OWNER RELABELING
   Failed routes remain reserved in BondingRegistry and retryable by anyone.
   E3RefundManager has no owner function that accepts an arbitrary token to
   relabel an untyped amount. Its transfer helper preserves each token's
-  protected slash liability after base refunds and treasury claims.
+  protected slash liability after base refunds and treasury claims, and it
+  reverts unless each claimant receives the complete recorded amount.
 
 License bond slashes always go to treasury (no escrow routing for FOLD).
 ```

@@ -178,6 +178,26 @@ describe("Governance — access control, bounds & events", function () {
         bondingRegistry.setExitDelay(max + 1n),
       ).to.be.revertedWithCustomError(bondingRegistry, "ExitDelayOutOfBounds");
     });
+
+    it("keeps exit delay longer than the sortition window", async function () {
+      const { bondingRegistry, ciphernodeRegistry } = await deployAll();
+      const exitDelay = await bondingRegistry.exitDelay();
+      await expect(ciphernodeRegistry.setSortitionSubmissionWindow(exitDelay))
+        .to.be.revertedWithCustomError(
+          ciphernodeRegistry,
+          "ExitDelayMustExceedSortitionWindow",
+        )
+        .withArgs(exitDelay, exitDelay);
+
+      const minimumExitDelay = await bondingRegistry.MIN_EXIT_DELAY();
+      await ciphernodeRegistry.setSortitionSubmissionWindow(minimumExitDelay);
+      await expect(bondingRegistry.setExitDelay(minimumExitDelay))
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "ExitDelayMustExceedSortitionWindow",
+        )
+        .withArgs(minimumExitDelay, minimumExitDelay);
+    });
   });
 
   describe("bps and appeal-window caps exposed", function () {

@@ -500,11 +500,13 @@ cannot be paid out until every committee obligation ends.
   `MAX_ACTIVE_TRANCHES (= 64)` live (post-head) tranches would exist for the operator. This bounds
   the unbounded loop in `previewClaimableAmounts` / `_takeAssetsFromQueue` so an attacker cannot
   grief the operator with an ever-growing queue (audit H-21a).
-- **License transfer shortfall.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
-  balance delta around `licenseToken.safeTransfer` and emit
-  `LicenseTransferShortfall(recipient, expectedAmount, actualAmount)` if the recipient received less
-  than expected (e.g. a fee-on-transfer license token). The transfer itself is not reverted —
-  booking is already updated — but indexers can detect the discrepancy (audit M-13).
+- **Exact license transfers.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
+  balance increase and the registry's balance decrease around `licenseToken.safeTransfer`. If either
+  amount differs from the recorded amount, the transaction reverts and restores the liability
+  accounting.
+- **Frozen-deadline floor.** Each committee request raises the registry's latest deadline watermark.
+  `exitDelayFloor()` combines its remaining duration with the current submission window. Exit-delay
+  reductions become available after the older request windows expire.
 
 ---
 

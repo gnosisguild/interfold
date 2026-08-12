@@ -163,6 +163,10 @@ contract InterfoldTokenSaleDeployer {
             config.distributionSalt
         );
 
+        IFoldToken(fold).setTransferWhitelisted(
+            config.liquidityLauncher,
+            false
+        );
         IFoldToken(fold).transferOwnership(protocolAdmin);
 
         emit SaleDeployed(configHash, fold, config.auctionAmount, msg.sender);

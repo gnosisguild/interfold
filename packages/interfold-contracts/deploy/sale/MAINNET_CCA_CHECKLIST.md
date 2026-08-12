@@ -241,7 +241,7 @@ Required pass conditions:
 - [ ] LBP strategy values validate.
 - [ ] LBP recipient is Foundation Safe.
 - [ ] LBP position recipient is Foundation Safe.
-- [ ] LiquidityLauncher is transfer-whitelisted on FOLD.
+- [ ] LiquidityLauncher is not transfer-whitelisted on FOLD after distribution.
 - [ ] LBPStrategy is transfer-whitelisted on FOLD.
 - [ ] PositionManager is transfer-whitelisted on FOLD.
 - [ ] Safe has `DEFAULT_ADMIN_ROLE`.

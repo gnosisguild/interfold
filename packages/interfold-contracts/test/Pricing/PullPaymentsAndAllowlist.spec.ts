@@ -5,8 +5,10 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import type { MockBlacklistUSDC } from "../../types";
+import { MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory } from "../../types";
 import {
   SORTITION_SUBMISSION_WINDOW,
+  currentPricingConfig,
   DATA as data,
   deployInterfoldSystem,
   encodeMockDkgProof,
@@ -297,6 +299,35 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       // Re-allow restores request().
       await interfold.setFeeTokenAllowed(await feeToken.getAddress(), true);
       await interfold.request(fresh); // should not revert
+    });
+  });
+
+  describe("exact-transfer fee policy", function () {
+    it("rejects a request when the fee token short-pays escrow", async function () {
+      const ctx = await loadFixture(fixturePlain);
+      const { interfold, owner, request } = ctx;
+      const feeToken = await new MockFeeOnTransferTokenFactory(owner).deploy(
+        100,
+      );
+      const tokenAddress = await feeToken.getAddress();
+      await feeToken.mint(owner, ethers.parseEther("10000"));
+      await interfold.connect(owner).setFeeAssetConfig({
+        token: tokenAddress,
+        expectedDecimals: 18,
+        pricing: await currentPricingConfig(interfold),
+      });
+
+      const now = await time.latest();
+      const fresh = {
+        ...request,
+        inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
+      };
+      const fee = await interfold.getE3Quote(fresh);
+      await feeToken.connect(owner).approve(await interfold.getAddress(), fee);
+
+      await expect(interfold.connect(owner).request(fresh))
+        .to.be.revertedWithCustomError(interfold, "AssetTransferMismatch")
+        .withArgs(tokenAddress, fee, fee - (fee * 100n) / 10_000n);
     });
   });
 });

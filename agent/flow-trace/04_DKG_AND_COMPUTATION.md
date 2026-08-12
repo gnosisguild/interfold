@@ -799,9 +799,11 @@ parameter hash, and input root in one ABI-encoded proof.
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
 program reconstructs the application fields from its state. Both contracts verify the same receipt.
 An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
-The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
-commitments, with a minimum depth of one. The compute provider and E3 program must use this same
-leaf value, order, zero value, and depth rule.
+The RISC Zero wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
+cannot satisfy the verifier's void-return call with empty return data. The input root uses the
+smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commitments, with a
+minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
+value, and depth rule.
 
 ```
 Compute provider runs computation on encrypted data:

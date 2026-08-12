@@ -27,7 +27,7 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 - Ticket deposits/withdrawals use **raw stablecoin base units**, never `× ticketPrice`;
   `ticketPrice` is used only in the activation check and sortition eligibility. tFOLD is minted 1:1
-  with underlying USDC. — `BondingRegistry.sol` (`addTicketBalance`, `removeTicketBalance`);
+  with its underlying asset. — `BondingRegistry.sol` (`addTicketBalance`, `removeTicketBalance`);
   `flow-trace/02`
 - Tickets (tFOLD) are **non-transferable**: `permit`/`delegateBySig` always revert; transfers
   restricted to mint/burn/bonding/whitelist. Collateral cannot be moved to dodge slashing; snapshot
@@ -43,10 +43,18 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
   bound to the exact BondingRegistry and asset-configuration version. Asset activation requires the
   ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive without
-  blocking license slashes, bans, or exit bookkeeping. — `flow-trace/02`, `05`; INDEX concern #23
+  blocking license slashes, bans, or exit bookkeeping. License-token rotation atomically sends any
+  balance above `totalLicenseLiability` to the treasury before validating the replacement, so an
+  unsolicited transfer cannot interleave with rotation. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
   does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+- **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
+  license token must transfer exact amounts and must not rebase account balances. Every custody
+  deposit checks the custody increase. Every outbound transfer checks the recipient increase and
+  custody decrease. A mismatch reverts the complete accounting transaction and preserves all other
+  pooled liabilities. — `InterfoldPricing.sol`; `InterfoldTicketToken.sol`; `BondingAssetLib.sol`;
+  `E3RefundManager.sol`; `flow-trace/02`, `03`, `05`
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
@@ -78,6 +86,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
 - `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
   successful call locks the canonical on-chain committee order. — `flow-trace/03`
+- **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
+  `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
+  setters enforce the relationship; equality is invalid because ticket submission includes the
+  deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`; `flow-trace/02`, `03`
 - **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
   slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
   their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
@@ -86,6 +98,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
   registry observes a terminal E3 and releases the complete committee. — `flow-trace/03`, `06`;
   INDEX concern Z-04
+- **Exit timing covers frozen requests:** `exitDelay` must exceed the current submission window and
+  the remaining time for the latest request-time committee deadline. Each request raises a monotonic
+  deadline watermark. The time-based floor decreases after old windows expire, and the
+  BondingRegistry cannot clear its registry pointer. — `flow-trace/02`, `03`, `06`; INDEX Z-37
 - **E3 program allowlist:** production initialization registers one deployed E3 program before
   ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
   registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
@@ -121,10 +137,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   treasury withdrawal **before** escrow. The route preserves its E3, target, token, amount, and
   request-time refund destination; retries are idempotent. — `flow-trace/05`
 - **E3 reward eligibility is order-independent:** an unresolved expelling proposal holds only the
-  accused operator's prospective fee and slash-funded shares. A cleared proposal releases those
-  shares, while execution reallocates them to the remaining operators. Peer claims do not wait. A
-  non-expelling slash excludes its target only from that proposal's penalty proceeds. All paths use
-  the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
+  accused operator's unclaimed fee and slash-funded shares, including a base share calculated before
+  the proposal opened. A cleared proposal releases those shares, while execution reallocates them to
+  the remaining operators. Rewards claimed before a proposal opens remain final. Peer claims do not
+  wait. A non-expelling slash excludes its target only from that proposal's penalty proceeds. All
+  paths use the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
@@ -303,8 +320,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   maintainer command. — INDEX concern #27
 - Contracts CI fails a release if `Interfold` / aggregator-verifier runtime bytecode is within 256
   bytes of the EIP-170 limit. — INDEX concern #22
-- BFV verifier constructors require a deployed circuit-verifier contract and nonzero recursive VK
-  hashes. — INDEX concern #21
+- BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
+  contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
+  Z-15
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
   stored in plaintext. — `flow-trace/00`, `01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in

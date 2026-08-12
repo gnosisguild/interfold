@@ -422,6 +422,9 @@ interface IInterfold {
         uint8 actual
     );
 
+    /// @notice A fee-token transfer delivered a different amount than requested.
+    error AssetTransferMismatch(IERC20 token, uint256 expected, uint256 actual);
+
     /// @notice E3 is not in expected stage
     error InvalidStage(uint256 e3Id, E3Stage expected, E3Stage actual);
 
@@ -609,7 +612,8 @@ interface IInterfold {
     function setBondingRegistry(IBondingRegistry _bondingRegistry) external;
 
     /// @notice Sets the fee token and every price denominated in its raw units.
-    /// @dev Auto-adds the configured token to the fee-token allow-list.
+    /// @dev Auto-adds the configured token to the fee-token allow-list. The token
+    ///      must transfer exact amounts and must not rebase account balances.
     function setFeeAssetConfig(FeeAssetConfig calldata config) external;
 
     /// @notice Add or remove a token from the fee-token allow-list.

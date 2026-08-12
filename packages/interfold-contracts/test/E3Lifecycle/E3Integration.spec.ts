@@ -7,9 +7,14 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import InterfoldModule from "../../ignition/modules/interfold";
-import type { MockBlacklistUSDC } from "../../types";
+import type {
+  MockBlacklistUSDC,
+  MockFeeOnTransferToken,
+  MockUSDC,
+} from "../../types";
 import {
   Interfold__factory as InterfoldFactory,
+  MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory,
   MockUSDC__factory as MockUSDCFactory,
 } from "../../types";
 import {
@@ -124,7 +129,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     const makeRequest = async (
       signer: Signer = requester,
       committeeSize: number = 0,
-      requestToken = usdcToken,
+      requestToken: MockUSDC | MockFeeOnTransferToken = usdcToken,
     ): Promise<{ e3Id: number }> => {
       // Ticket voting power is snapshotted at request timestamp - 1. EDR may
       // mine consecutive setup transactions with the same timestamp, so move
@@ -530,9 +535,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         usdcToken,
         makeRequest,
         owner,
-        requester,
         treasury,
-        computeProvider,
         operator1,
         operator2,
         operator3,
@@ -563,8 +566,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(dependencies.interfoldContract).to.equal(interfoldAddress);
       expect(dependencies.refundManager).to.equal(refundManagerAddress);
 
-      const rotatedRegistry = await requester.getAddress();
-      const rotatedBonding = await computeProvider.getAddress();
+      const rotatedRegistry = await (
+        await ethers.deployContract("MockCiphernodeRegistry")
+      ).getAddress();
+      const rotatedBonding = await (
+        await ethers.deployContract("MockBondingRegistry")
+      ).getAddress();
       const rotatedRefundManager = await treasury.getAddress();
       const rotatedManager = await ethers.deployContract("SlashingManager", [
         0,
@@ -963,6 +970,69 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await requester.getAddress(),
       );
       expect(balanceAfter).to.be.gt(balanceBefore);
+    });
+
+    it("rejects sender fees from fee escrow and refund custody", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        makeRequest,
+        owner,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      await setupOperator(operator1);
+      await setupOperator(operator2);
+      await setupOperator(operator3);
+
+      const token = await new MockFeeOnTransferTokenFactory(owner).deploy(0);
+      const tokenAddress = await token.getAddress();
+      await token.setFeeIsChargedOnTop(true);
+      await token.mint(requester, ethers.parseEther("10000"));
+      await interfold.setFeeAssetConfig({
+        token: tokenAddress,
+        expectedDecimals: 18,
+        pricing: await currentPricingConfig(interfold),
+      });
+
+      await makeRequest(requester, 0, token);
+      await makeRequest(requester, 0, token);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 2);
+      await interfold.markE3Failed(0);
+      await interfold.markE3Failed(1);
+
+      const firstPayment = await interfold.e3Payments(0);
+      const senderFee = firstPayment / 100n;
+      await token.setFeeBps(100);
+      await expect(interfold.processE3Failure(0))
+        .to.be.revertedWithCustomError(interfold, "AssetTransferMismatch")
+        .withArgs(tokenAddress, firstPayment, firstPayment + senderFee);
+      expect(await interfold.e3Payments(0)).to.equal(firstPayment);
+
+      await token.setFeeBps(0);
+      await interfold.processE3Failure(0);
+      await interfold.processE3Failure(1);
+
+      const firstDistribution = await e3RefundManager.getRefundDistribution(0);
+      const managerAddress = await e3RefundManager.getAddress();
+      const managerBalance = await token.balanceOf(managerAddress);
+      const refundFee = firstDistribution.requesterAmount / 100n;
+      await token.setFeeBps(100);
+      await expect(e3RefundManager.connect(requester).claimRequesterRefund(0))
+        .to.be.revertedWithCustomError(e3RefundManager, "AssetTransferMismatch")
+        .withArgs(
+          tokenAddress,
+          firstDistribution.requesterAmount,
+          firstDistribution.requesterAmount + refundFee,
+        );
+      expect(await token.balanceOf(managerAddress)).to.equal(managerBalance);
+
+      await token.setFeeBps(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(0);
     });
 
     it("reverts if trying to process failure twice", async function () {
@@ -1627,9 +1697,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const perNodeAmount =
         distribution.honestNodeAmount / BigInt(distribution.honestNodeCount);
-      expect(ownerBalanceAfter - ownerBalanceBefore).to.equal(
-        perNodeAmount + ownerSlashClaim,
-      );
+      const baseTopUp =
+        ownerBalanceAfter -
+        ownerBalanceBefore -
+        perNodeAmount -
+        ownerSlashClaim;
+      expect(
+        baseTopUp == perNodeAmount / 2n ||
+          baseTopUp == perNodeAmount - perNodeAmount / 2n,
+      ).to.equal(true);
     });
 
     it("does not return a non-expelling ticket penalty to its target", async function () {
@@ -1840,6 +1916,59 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           await computeProvider.getAddress(),
         ));
       expect(honestSlashClaims).to.equal(ethers.parseUnits("100", 6));
+    });
+
+    it("reallocates an unclaimed base reward after a late expulsion", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        operator1,
+        operator2,
+        operator3,
+        computeProvider,
+        makeReadyRequest,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      await makeReadyRequest();
+      await finalizeAndPublishCommittee();
+
+      const deadlines = await interfold.getDeadlines(0);
+      await time.increaseTo(deadlines.computeDeadline + 1n);
+      await interfold.markE3Failed(0);
+      await interfold.processE3Failure(0);
+
+      const managerAddress = await slashingManager.getAddress();
+      await networkHelpers.impersonateAccount(managerAddress);
+      await networkHelpers.setBalance(managerAddress, ethers.parseEther("1"));
+      const manager = await ethers.getSigner(managerAddress);
+      await e3RefundManager
+        .connect(manager)
+        .openExpulsionProposal(0, 99, await operator1.getAddress());
+      await e3RefundManager
+        .connect(manager)
+        .resolveExpulsionProposal(0, 99, true);
+      await networkHelpers.stopImpersonatingAccount(managerAddress);
+
+      await expect(
+        e3RefundManager
+          .connect(computeProvider)
+          .claimHonestNodeReward(0, await operator1.getAddress()),
+      ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
+
+      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const balanceBefore = await usdcToken.balanceOf(computeProvider);
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHonestNodeReward(0, await operator2.getAddress());
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHonestNodeReward(0, await operator3.getAddress());
+      expect(
+        (await usdcToken.balanceOf(computeProvider)) - balanceBefore,
+      ).to.equal(distribution.perNodeAmount * 3n);
     });
 
     it("releases a successful E3 reward when an expelling proposal is cleared", async function () {

@@ -300,6 +300,9 @@ contract CiphernodeRegistryOwnable is
         // {block.timestamp}. This matches the InterfoldTicketToken's timestamp-mode clock so
         // {getPastVotes} lookups resolve consistently.
         c.committeeDeadline = block.timestamp + sortitionSubmissionWindow;
+        if (c.committeeDeadline > _latestCommitteeDeadline) {
+            _latestCommitteeDeadline = c.committeeDeadline;
+        }
         c.threshold = threshold;
         roots[e3Id] = root();
 
@@ -738,6 +741,7 @@ contract CiphernodeRegistryOwnable is
         IBondingRegistry _bondingRegistry
     ) public onlyOwner {
         require(address(_bondingRegistry) != address(0), ZeroAddress());
+        _validateExitTiming(_bondingRegistry, exitDelayFloor());
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
     }
@@ -767,8 +771,37 @@ contract CiphernodeRegistryOwnable is
                 _sortitionSubmissionWindow <= MAX_SORTITION_SUBMISSION_WINDOW,
             SortitionSubmissionWindowOutOfBounds(_sortitionSubmissionWindow)
         );
+        uint256 requiredDelay = exitDelayFloor();
+        if (_sortitionSubmissionWindow > requiredDelay) {
+            requiredDelay = _sortitionSubmissionWindow;
+        }
+        _validateExitTiming(bondingRegistry, requiredDelay);
         sortitionSubmissionWindow = _sortitionSubmissionWindow;
         emit SortitionSubmissionWindowSet(_sortitionSubmissionWindow);
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function exitDelayFloor() public view returns (uint256 floor) {
+        floor = sortitionSubmissionWindow;
+        uint256 deadline = _latestCommitteeDeadline;
+        if (deadline > block.timestamp) {
+            uint256 remaining = deadline - block.timestamp;
+            if (remaining > floor) floor = remaining;
+        }
+    }
+
+    function _validateExitTiming(
+        IBondingRegistry configuredBondingRegistry,
+        uint256 requiredDelay
+    ) private view {
+        if (address(configuredBondingRegistry) == address(0)) return;
+        uint256 configuredExitDelay = configuredBondingRegistry.exitDelay();
+        if (configuredExitDelay <= requiredDelay) {
+            revert ExitDelayMustExceedSortitionWindow(
+                configuredExitDelay,
+                requiredDelay
+            );
+        }
     }
 
     /// @notice Update the registry-wide vote validity window used by accusers
@@ -1274,7 +1307,10 @@ contract CiphernodeRegistryOwnable is
             interfaceId == type(IERC165).interfaceId;
     }
 
+    /// @dev Highest committee deadline created by a request.
+    uint256 private _latestCommitteeDeadline;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 }
