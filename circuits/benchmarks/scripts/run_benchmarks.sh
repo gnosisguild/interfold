@@ -35,8 +35,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mode)
             MODE_OVERRIDE="$2"
-            if [ "$MODE_OVERRIDE" != "insecure" ] && [ "$MODE_OVERRIDE" != "secure" ]; then
-                echo "Error: Mode must be 'insecure' or 'secure'"
+            if [ "$MODE_OVERRIDE" = "secure-16384" ]; then
+                PRESET_OVERRIDE="secure-16384"
+                MODE_OVERRIDE="secure"
+            elif [ "$MODE_OVERRIDE" != "insecure" ] && [ "$MODE_OVERRIDE" != "secure" ]; then
+                echo "Error: Mode must be 'insecure', 'secure', or 'secure-16384'"
                 exit 1
             fi
             shift 2

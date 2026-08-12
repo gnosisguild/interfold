@@ -30,7 +30,7 @@ if [ -n "${BENCHMARK_PRESET:-}" ]; then
     case "$BENCHMARK_PRESET" in
         insecure-512) PRESET="insecure" ;;
         secure-8192) PRESET="secure" ;;
-        secure-16384) PRESET="38" ;;
+        secure-16384) PRESET="secure-16384" ;;
         *)
             echo "Error: BENCHMARK_PRESET must be insecure-512, secure-8192, or secure-16384"
             exit 1

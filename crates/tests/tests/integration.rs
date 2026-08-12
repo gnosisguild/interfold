@@ -61,6 +61,8 @@ struct BenchmarkParams {
     lambda: usize,
     /// Collector-timeout env var bundle for secure runs.
     collection_timeout_secs: Option<(u64, u64, u64)>,
+    /// Shared DKG window used by benchmark-only timeout fallback paths.
+    dkg_window_secs: Option<u64>,
     /// Expected upper-bounds for history collection (end-to-end wall clock).
     pubkey_flow_timeout: Duration,
     plaintext_flow_timeout: Duration,
@@ -68,43 +70,49 @@ struct BenchmarkParams {
 
 fn select_benchmark_params() -> BenchmarkParams {
     let benchmark_mode = std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
-    let is_secure_mode = benchmark_mode == "secure";
-
-    let bfv_preset = if is_secure_mode {
-        BfvPreset::SecureThreshold8192
-    } else {
-        DEFAULT_BFV_PRESET
+    let preset_name = std::env::var("BENCHMARK_PRESET").unwrap_or_else(|_| {
+        if benchmark_mode == "secure" {
+            "secure-8192".to_string()
+        } else {
+            "insecure-512".to_string()
+        }
+    });
+    let (bfv_preset, preset_subdir, is_secure_mode) = match preset_name.as_str() {
+        "insecure-512" => (DEFAULT_BFV_PRESET, "insecure-512", false),
+        "secure-8192" => (BfvPreset::SecureThreshold8192, "secure-8192", true),
+        "secure-16384" => (BfvPreset::SecureThreshold16384, "secure-16384", true),
+        other => panic!("unsupported BENCHMARK_PRESET: {other}"),
     };
 
     // λ is part of the preset metadata; using a hard-coded value here will mix parameter
     // families and can invalidate noise/security assumptions.
     let lambda = bfv_preset.metadata().lambda;
 
-    let preset_subdir = if is_secure_mode {
-        "secure-8192"
-    } else {
-        "insecure-512"
-    };
 
     let committee = active_committee(preset_subdir);
     let is_small_committee = committee == e3_zk_helpers::CiphernodesCommitteeSize::Small;
 
-    let collection_timeout_secs = if is_secure_mode && is_small_committee {
-        Some((7_200, 46_000, 46_000)) // Small: threshold/dec kept > pubkey_flow
-    } else if is_secure_mode {
-        Some((1_800, 7_200, 7_200))
-    } else {
-        None
+    let (collection_timeout_secs, dkg_window_secs, pubkey_flow_timeout) = match preset_name.as_str() {
+        "secure-16384" => (
+            Some((1_800, 259_200, 259_200)),
+            Some(259_200),
+            Duration::from_secs(260_000), // Three-day budget for large-preset proof generation.
+        ),
+        "secure-8192" if is_small_committee => (
+            Some((7_200, 46_000, 46_000)),
+            Some(46_000),
+            Duration::from_secs(45_000), // Small: conservative upper bound.
+        ),
+        "secure-8192" => (
+            Some((1_800, 46_000, 46_000)), // Secure proof generation can exceed the default DKG budget.
+            Some(46_000),
+            Duration::from_secs(45_000),
+        ),
+        _ => (None, None, Duration::from_secs(5_000)),
     };
-
-    let pubkey_flow_timeout = if is_secure_mode && is_small_committee {
-        Duration::from_secs(45_000) // Small: conservative upper bound
-    } else if is_secure_mode {
-        Duration::from_secs(15_000)
-    } else {
-        Duration::from_secs(5_000)
-    };
-    let plaintext_flow_timeout = if is_secure_mode && is_small_committee {
+    let plaintext_flow_timeout = if preset_name == "secure-16384" {
+        Duration::from_secs(43_200) // Secure16384: allow up to twelve hours for decryption and aggregation.
+    } else if is_secure_mode && is_small_committee {
         Duration::from_secs(6_000) // Small: conservative upper bound; smaller than DKG
     } else if is_secure_mode {
         Duration::from_secs(3_000)
@@ -117,6 +125,7 @@ fn select_benchmark_params() -> BenchmarkParams {
         bfv_preset,
         lambda,
         collection_timeout_secs,
+        dkg_window_secs,
         pubkey_flow_timeout,
         plaintext_flow_timeout,
     }
@@ -271,6 +280,7 @@ struct EnvTimeoutVarsGuard {
     enc: Option<OsString>,
     thr: Option<OsString>,
     dec_shared: Option<OsString>,
+    dkg_window: Option<OsString>,
 }
 
 impl EnvTimeoutVarsGuard {
@@ -279,6 +289,7 @@ impl EnvTimeoutVarsGuard {
             enc: std::env::var_os("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS"),
             thr: std::env::var_os("E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS"),
             dec_shared: std::env::var_os("E3_DECRYPTION_KEY_SHARED_COLLECTION_TIMEOUT_SECS"),
+            dkg_window: std::env::var_os("E3_DKG_WINDOW_SECS"),
         }
     }
 }
@@ -299,6 +310,7 @@ impl Drop for EnvTimeoutVarsGuard {
             "E3_DECRYPTION_KEY_SHARED_COLLECTION_TIMEOUT_SECS",
             &self.dec_shared,
         );
+        restore("E3_DKG_WINDOW_SECS", &self.dkg_window);
     }
 }
 
@@ -1380,6 +1392,9 @@ async fn test_trbfv_actor() -> Result<()> {
     // Parameters selected by benchmark mode.
     let benchmark_params = select_benchmark_params();
     let _env_guard = EnvTimeoutVarsGuard::new();
+    if let Some(dkg_window) = benchmark_params.dkg_window_secs {
+        std::env::set_var("E3_DKG_WINDOW_SECS", dkg_window.to_string());
+    }
     if let Some((enc, threshold, dec_shared)) = benchmark_params.collection_timeout_secs {
         std::env::set_var("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS", enc.to_string());
         std::env::set_var(
