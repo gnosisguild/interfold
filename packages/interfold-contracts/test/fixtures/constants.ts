@@ -18,7 +18,7 @@ export const SEVEN_DAYS = 7 * ONE_DAY;
 export const THIRTY_DAYS = 30 * ONE_DAY;
 
 // ── Sortition ────────────────────────────────────────────────────────────────
-export const SORTITION_SUBMISSION_WINDOW = 10;
+export const SORTITION_SUBMISSION_WINDOW = 60;
 
 // ── Encryption scheme ───────────────────────────────────────────────────────
 // Derived from the same string the BFV verifier wrappers and

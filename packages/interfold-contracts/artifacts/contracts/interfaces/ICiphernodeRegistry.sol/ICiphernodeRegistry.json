@@ -145,6 +145,22 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "exitDelay",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "requiredDelay",
+          "type": "uint256"
+        }
+      ],
+      "name": "ExitDelayMustExceedSortitionWindow",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "FoldAttestationVerifierAlreadySet",
       "type": "error"
@@ -281,6 +297,22 @@
     {
       "inputs": [],
       "name": "PkCommitmentRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "entropyBlock",
+          "type": "uint256"
+        }
+      ],
+      "name": "SortitionSeedUnavailable",
       "type": "error"
     },
     {
@@ -602,7 +634,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "seed",
+          "name": "entropyBlock",
           "type": "uint256"
         },
         {
@@ -938,6 +970,19 @@
           "internalType": "contract IDkgFoldAttestationVerifier",
           "name": "",
           "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "exitDelayFloor",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -1365,7 +1410,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "seed",
+          "name": "legacySeed",
           "type": "uint256"
         },
         {
@@ -1520,5 +1565,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-2669d7c5659f9a42878527352413c8338ef4bc08"
+  "buildInfoId": "solc-0_8_28-0db228c3bd2b99b41cbc08984c918b0d7bbc1f68"
 }

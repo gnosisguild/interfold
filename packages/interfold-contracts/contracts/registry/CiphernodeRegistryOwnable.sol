@@ -42,10 +42,14 @@ contract CiphernodeRegistryOwnable is
     error RenounceOwnershipDisabled();
 
     /// @notice Minimum permitted value for {sortitionSubmissionWindow}.
-    uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 1;
+    uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 60;
 
     /// @notice Maximum permitted value for {sortitionSubmissionWindow}.
     uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 7 days;
+
+    /// @notice EIP-2935 block-hash history contract.
+    address public constant BLOCKHASH_HISTORY =
+        0x0000F90827F1C53a10cb7A02335B175320002935;
 
     /// @notice Thrown when {setSortitionSubmissionWindow} input is outside the
     ///         permitted window.
@@ -251,7 +255,7 @@ contract CiphernodeRegistryOwnable is
     ///      Submission also requires current activity as a liveness check.
     function requestCommittee(
         uint256 e3Id,
-        uint256 seed,
+        uint256,
         uint32[2] calldata threshold
     ) external onlyInterfold returns (bool success) {
         Committee storage c = committees[e3Id];
@@ -294,7 +298,8 @@ contract CiphernodeRegistryOwnable is
         sortitionTicketPrices[e3Id] = ticketPrice;
 
         c.stage = ICiphernodeRegistry.CommitteeStage.Requested;
-        c.seed = seed;
+        uint256 entropyBlock = block.number + 1;
+        sortitionEntropyBlocks[e3Id] = entropyBlock;
         // NOTE: `requestBlock` stores a timepoint per EIP-6372 (mode=timestamp) — its name
         // is kept for storage/event compatibility but it must be compared to
         // {block.timestamp}. This matches the InterfoldTicketToken's timestamp-mode clock so
@@ -308,7 +313,7 @@ contract CiphernodeRegistryOwnable is
 
         emit CommitteeRequested(
             e3Id,
-            seed,
+            entropyBlock,
             threshold,
             c.requestBlock,
             c.committeeDeadline,
@@ -598,14 +603,15 @@ contract CiphernodeRegistryOwnable is
         // Validate node eligibility and ticket number
         _validateNodeEligibility(msg.sender, ticketNumber, e3Id);
 
-        // Compute score using the seed committed at request time. Same-block
-        // manipulation is bounded by the snapshot of ticket balances at
-        // `c.requestBlock - 1` performed inside {_validateNodeEligibility}.
+        uint256 seed = _resolveSortitionSeed(e3Id, c);
+
+        // The ticket snapshot predates the request, while the seed comes from
+        // a block that is committed only after the request succeeds.
         uint256 score = _computeTicketScore(
             msg.sender,
             ticketNumber,
             e3Id,
-            c.seed
+            seed
         );
 
         // Store submission
@@ -615,6 +621,57 @@ contract CiphernodeRegistryOwnable is
         _insertTopN(c, msg.sender, score);
 
         emit TicketSubmitted(e3Id, msg.sender, ticketNumber, score);
+    }
+
+    /// @notice Returns the request-bound sortition seed after its entropy block is sealed.
+    /// @param e3Id ID of the E3 computation.
+    /// @return ready Whether the seed is available.
+    /// @return seed Seed used to score committee tickets.
+    function sortitionSeed(
+        uint256 e3Id
+    ) public view returns (bool ready, uint256 seed) {
+        Committee storage c = committees[e3Id];
+        if (sortitionSeedResolved[e3Id]) return (true, c.seed);
+
+        uint256 entropyBlock = sortitionEntropyBlocks[e3Id];
+        if (entropyBlock == 0 || block.number <= entropyBlock) {
+            return (false, 0);
+        }
+
+        bytes32 entropy = _blockHashAt(entropyBlock);
+        if (entropy == bytes32(0)) return (false, 0);
+
+        return (true, uint256(keccak256(abi.encode(entropy, e3Id))));
+    }
+
+    function _blockHashAt(
+        uint256 blockNumber
+    ) internal view returns (bytes32 blockHash) {
+        blockHash = blockhash(blockNumber);
+        if (blockHash != bytes32(0)) return blockHash;
+
+        (bool success, bytes memory result) = BLOCKHASH_HISTORY.staticcall(
+            abi.encode(blockNumber)
+        );
+        if (success && result.length == 32) {
+            blockHash = abi.decode(result, (bytes32));
+        }
+    }
+
+    function _resolveSortitionSeed(
+        uint256 e3Id,
+        Committee storage c
+    ) internal returns (uint256 seed) {
+        (bool ready, uint256 resolvedSeed) = sortitionSeed(e3Id);
+        require(
+            ready,
+            SortitionSeedUnavailable(e3Id, sortitionEntropyBlocks[e3Id])
+        );
+        if (!sortitionSeedResolved[e3Id]) {
+            c.seed = resolvedSeed;
+            sortitionSeedResolved[e3Id] = true;
+        }
+        return resolvedSeed;
     }
 
     /// @notice Finalize the committee after submission window closes
@@ -1310,7 +1367,13 @@ contract CiphernodeRegistryOwnable is
     /// @dev Highest committee deadline created by a request.
     uint256 private _latestCommitteeDeadline;
 
+    /// @notice Future block committed when an E3 requests a committee.
+    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
+
+    /// @notice Whether the committee seed has been stored for an E3.
+    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[48] private __gap;
+    uint256[46] private __gap;
 }

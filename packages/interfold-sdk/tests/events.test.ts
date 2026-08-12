@@ -72,7 +72,7 @@ describe('RegistryEventType', () => {
       type: RegistryEventType.COMMITTEE_REQUESTED,
       data: {
         e3Id: 1n,
-        seed: 2n,
+        entropyBlock: 2n,
         threshold: [2n, 3n],
         requestBlock: 4n,
         committeeDeadline: 5n,

@@ -127,7 +127,8 @@ export const deployInterfold = async (
   const ONE_MONTH_IN_SECONDS = THIRTY_DAYS_IN_SECONDS;
   const LOCK_SUNSET_DELAY_SECONDS =
     FOUR_YEARS_IN_SECONDS + ONE_MONTH_IN_SECONDS;
-  const SORTITION_SUBMISSION_WINDOW = 10;
+  // The next block hash is usable by contracts from the following block.
+  const SORTITION_SUBMISSION_WINDOW = 60;
   const addressOne = "0x0000000000000000000000000000000000000001";
 
   const poseidonT3 = await deployAndSavePoseidonT3({ hre });

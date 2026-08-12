@@ -23,7 +23,7 @@
     "exitDelay": "604800"
   },
   "registry": {
-    "sortitionSubmissionWindow": "10"
+    "sortitionSubmissionWindow": "60"
   },
   "slashing": {
     "initialDelay": "172800"

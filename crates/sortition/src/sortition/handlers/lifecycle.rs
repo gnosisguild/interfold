@@ -107,6 +107,8 @@ impl Handler<TypedEvent<E3StageChanged>> for Sortition {
                 E3Stage::Complete | E3Stage::Failed => {
                     let reason = format!("E3StageChanged to {:?}", msg.new_stage);
                     self.decrement_jobs_for_e3(&msg.e3_id, &reason, ec)?;
+                    self.sortition_seeds.remove(&msg.e3_id);
+                    self.pending_requests.remove(&msg.e3_id);
                 }
                 _ => {
                     // Non-terminal stages, no action needed
@@ -132,6 +134,8 @@ impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
                     Ok(committees)
                 })?;
             self.pending_expulsions.remove(&msg.e3_id);
+            self.sortition_seeds.remove(&msg.e3_id);
+            self.pending_requests.remove(&msg.e3_id);
             Ok(())
         })
     }

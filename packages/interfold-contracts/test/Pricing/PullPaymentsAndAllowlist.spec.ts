@@ -30,6 +30,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     publicKey: string,
     operators: Signer[],
   ) => {
+    await networkHelpers.mine(1);
     for (const operator of operators) {
       await registry.connect(operator).submitTicket(e3Id, 1);
     }

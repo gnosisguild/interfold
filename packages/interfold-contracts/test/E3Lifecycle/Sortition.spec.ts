@@ -124,7 +124,9 @@ async function deployStack() {
         ["0x1234567890123456789012345678901234567890"],
       ),
     } as any;
-    return interfold.connect(requester).request(req);
+    const tx = await interfold.connect(requester).request(req);
+    await mine(1);
+    return tx;
   };
 
   return {

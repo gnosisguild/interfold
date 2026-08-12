@@ -10,7 +10,7 @@ description:
 Sortition is the mechanism that selects a subset of registered ciphernodes to form a committee for
 each E3 request. The design goals are:
 
-- **Unpredictability** — no party can know the outcome before the request block
+- **Unpredictability** — the requester cannot know the outcome before its request is committed
 - **Proportionality** — selection probability scales linearly with ticket stake
 - **Determinism** — every honest node independently computes the same result
 - **Sybil-resistance** — splitting funds across many wallets provides no advantage
@@ -20,20 +20,25 @@ each E3 request. The design goals are:
 
 ## Sortition Seed
 
-The seed for every sortition round is derived from the EVM's `block.prevrandao` (EIP-4399) combined
-with the E3 identifier:
+Each request commits the next execution block as its entropy block. After that block is sealed, the
+sortition seed combines its hash with the E3 identifier:
 
 ```solidity
-seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
+seed = uint256(keccak256(abi.encode(blockhash(entropyBlock), e3Id)));
 ```
 
-This is a convenient shared per-E3 value for deterministic ticket scoring. It is not fed into BFV
-key generation, and the protocol does not treat it as cryptographically unbiasable randomness.
-`prevrandao` can be influenced by block production; a future design can use a stronger randomness
-source if the sortition threat model comes to require one.
+The paid request is final before this hash exists, so a requester cannot inspect the committee seed
+and revert an unfavorable request in the same transaction. Rust reads the entropy block through the
+execution RPC. By default, it waits for one block to build on top of the entropy block; operators
+can configure a different confirmation count for their chain. The first ticket submission derives
+and stores the same seed on-chain. No separate randomness transaction is required.
 
-The seed is emitted with `E3Requested` and used by all nodes to deterministically compute the same
-committee.
+The E3 computation seed in `E3Requested` remains separate. It is still used by the cryptographic
+workflow, but it does not rank tickets. A block producer can influence block-hash entropy, so this
+design removes requester-side conditional-revert grinding without claiming the stronger guarantees
+of verifiable randomness. Operators must submit while the committed hash remains available to the
+contract. The contract uses EIP-2935 history when the chain provides it and otherwise relies on the
+EVM's 256-block recent history.
 
 ---
 
@@ -118,8 +123,8 @@ be expelled and the next node in score order steps in without restarting the com
 
 ## On-chain Submission Window
 
-After `E3Requested` is emitted, there is a fixed window (e.g. 10 seconds on Sepolia) during which
-eligible operators submit their winning tickets:
+After `E3Requested` is emitted, there is a configured window during which eligible operators wait
+for the entropy block and submit their winning tickets. New deployments use 60 seconds by default:
 
 ```solidity
 submitTicket(e3Id, ticketNumber)
@@ -206,11 +211,14 @@ sequenceDiagram
     participant NodeB
     participant NodeC
 
-    Chain->>NodeA: E3Requested(e3Id, seed, requestBlock)
-    Chain->>NodeB: E3Requested(e3Id, seed, requestBlock)
-    Chain->>NodeC: E3Requested(e3Id, seed, requestBlock)
+    Chain->>NodeA: E3Requested(e3Id, computationSeed, requestBlock)
+    Chain->>NodeB: E3Requested(e3Id, computationSeed, requestBlock)
+    Chain->>NodeC: E3Requested(e3Id, computationSeed, requestBlock)
+    Chain->>NodeA: CommitteeRequested(e3Id, entropyBlock)
+    Chain->>NodeB: CommitteeRequested(e3Id, entropyBlock)
+    Chain->>NodeC: CommitteeRequested(e3Id, entropyBlock)
 
-    Note over NodeA,NodeC: Each node snapshots balances at requestBlock-1,<br/>scores all tickets, keeps best
+    Note over NodeA,NodeC: Wait for entropyBlock, derive the committee seed,<br/>snapshot balances at requestBlock-1,<br/>score all tickets, keep best
 
     NodeA->>Chain: submitTicket(e3Id, ticketId=3)
     NodeB->>Chain: submitTicket(e3Id, ticketId=0)
@@ -230,7 +238,7 @@ sequenceDiagram
 
 | Property                | Mechanism                                                           |
 | ----------------------- | ------------------------------------------------------------------- |
-| **Shared seed**         | `prevrandao` and `e3Id` provide a common per-E3 scoring input       |
+| **Shared seed**         | The committed future block hash and `e3Id` provide the scoring seed |
 | **Proportionality**     | Expected min-score over N tickets scales with N                     |
 | **Sybil-resistance**    | Splitting tickets across wallets doesn't improve expected min-score |
 | **Determinism**         | Hash function is identical on-chain (Solidity) and off-chain (Rust) |

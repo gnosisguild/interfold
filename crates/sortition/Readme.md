@@ -60,8 +60,11 @@ sequenceDiagram
 
     Note over Operator,PlaintextAggregator: Phase 2: E3 Request & Sortition
 
-    Operator->>EventBus: E3Requested(e3Id, thresholdM, thresholdN, seed, params, chainId)
+    Operator->>EventBus: E3Requested(e3Id, thresholdM, thresholdN, computationSeed, params, chainId)
+    CiphernodeRegistry->>EventBus: CommitteeRequested(e3Id, entropyBlock, requestBlock, chainId)
     EventBus->>Sortition: E3Requested
+    EventBus->>Sortition: CommitteeRequested with the resolved sortition seed
+    Sortition->>Sortition: Wait until both request events are available
     Sortition->>NodeStateManager: GetNodeState(chainId)
     NodeStateManager-->>Sortition: NodeStateStore { nodes, ticketPrice }
     Sortition->>Sortition: Build sortition list from active nodes
@@ -319,24 +322,25 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 ### Ciphernode Registry Events
 
-| Event               | Parameters                        | Purpose           |
-| ------------------- | --------------------------------- | ----------------- |
-| `CiphernodeAdded`   | address, index, numNodes, chainId | Node registration |
-| `CiphernodeRemoved` | address, index, numNodes, chainId | Node removal      |
+| Event                | Parameters                                | Purpose                |
+| -------------------- | ----------------------------------------- | ---------------------- |
+| `CiphernodeAdded`    | address, index, numNodes, chainId         | Node registration      |
+| `CiphernodeRemoved`  | address, index, numNodes, chainId         | Node removal           |
+| `CommitteeRequested` | e3Id, entropyBlock, requestBlock, chainId | Delayed sortition seed |
 
 ### Interfold Events
 
-| Event                       | Parameters                                          | Purpose               |
-| --------------------------- | --------------------------------------------------- | --------------------- |
-| `E3Requested`               | e3Id, thresholdM, thresholdN, seed, params, chainId | Computation request   |
-| `TicketGenerated`           | e3Id, node, ticketId, chainId                       | Sortition ticket      |
-| `CommitteeFinalized`        | e3Id, committee[], chainId                          | Committee selected    |
-| `CiphernodeSelected`        | e3Id, node, chainId                                 | Node is in committee  |
-| `KeyshareCreated`           | e3Id, node, pubkey, chainId                         | Keyshare generated    |
-| `PublicKeyAggregated`       | e3Id, pubkey, nodes, chainId                        | Public key ready      |
-| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                           | Encrypted computation |
-| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId       | Decryption share      |
-| `PlaintextAggregated`       | e3Id, plaintext, nodes, chainId                     | Decryption complete   |
+| Event                       | Parameters                                                     | Purpose               |
+| --------------------------- | -------------------------------------------------------------- | --------------------- |
+| `E3Requested`               | e3Id, thresholdM, thresholdN, computationSeed, params, chainId | Computation request   |
+| `TicketGenerated`           | e3Id, node, ticketId, chainId                                  | Sortition ticket      |
+| `CommitteeFinalized`        | e3Id, committee[], chainId                                     | Committee selected    |
+| `CiphernodeSelected`        | e3Id, node, chainId                                            | Node is in committee  |
+| `KeyshareCreated`           | e3Id, node, pubkey, chainId                                    | Keyshare generated    |
+| `PublicKeyAggregated`       | e3Id, pubkey, nodes, chainId                                   | Public key ready      |
+| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                                      | Encrypted computation |
+| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId                  | Decryption share      |
+| `PlaintextAggregated`       | e3Id, plaintext, nodes, chainId                                | Decryption complete   |
 
 ## Testing Flow
 

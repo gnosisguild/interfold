@@ -82,8 +82,7 @@ Requester calls: Interfold.request({
 │   │     request-time Interfold, committee registry, bonding registry,
 │   │     and slashing manager
 │   ├─ seed = uint256(keccak256(block.prevrandao, e3Id))
-│   │   → Shared per-E3 ticket-scoring input only; not BFV key material and
-│   │     not relied upon for cryptographic unpredictability.
+│   │   → Shared input for the E3 computation. Committee selection does not use it.
 │   │
 │   ├─ encryptionSchemeId = e3Program.validate(
 │   │     e3Id, seed, e3ProgramParams, computeProviderParams, customParams
@@ -109,7 +108,8 @@ Requester calls: Interfold.request({
 │   │   │
 │   │   │  ┌─── CiphernodeRegistryOwnable ──────────────────────┐
 │   │   │  │                                                     │
-│   │   │  │  requestCommittee(e3Id, seed, threshold) {          │
+│   │   │  │  requestCommittee(e3Id, legacySeed, threshold) {    │
+│   │   │  │    → legacySeed is ignored for ticket sortition    │
 │   │   │  │    1. require(!committees[e3Id].initialized)        │
 │   │   │  │    2. Snapshot request-time Interfold, bonding,     │
 │   │   │  │       slashing manager, and fold verifier           │
@@ -121,7 +121,8 @@ Requester calls: Interfold.request({
 │   │   │  │       → Count and submissions use one boundary      │
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
-│   │   │  │         seed: seed,                                 │
+│   │   │  │         seed: unresolved,                           │
+│   │   │  │         entropyBlock: block.number + 1,             │
 │   │   │  │         requestBlock: block.timestamp, // H-26      │
 │   │   │  │         committeeDeadline:                          │
 │   │   │  │           block.timestamp + sortitionWindow,        │
@@ -136,8 +137,9 @@ Requester calls: Interfold.request({
 │   │   │  │       → Only nodes in tree at request time eligible │
 │   │   │  │    7. Emit DkgFoldAttestationContextEstablished(    │
 │   │   │  │              e3Id, registry, foldVerifier)          │
-│   │   │  │       Emit CommitteeRequested(e3Id, seed, threshold,│
-│   │   │  │              requestBlock, committeeDeadline,       │
+│   │   │  │       Emit CommitteeRequested(e3Id, entropyBlock,   │
+│   │   │  │              threshold, requestBlock,               │
+│   │   │  │              committeeDeadline,                     │
 │   │   │  │              ticketPrice)                           │
 │   │   │  │       BondingRegistry records this request-time      │
 │   │   │  │       registry as the E3's obligation owner          │
@@ -171,6 +173,11 @@ the latest snapshot then replay in order and add any newer E3 contexts.
 CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 │
 └─ Stores the E3's request-time registry and verifier for signing, validation, and publication
+│
+├─ Decodes CommitteeRequested and waits until entropyBlock has the configured confirmations
+├─ Reads the entropy block through the execution RPC and derives
+│  keccak256(blockHash, e3Id) without sending a transaction
+└─ Publishes CommitteeRequested with the resolved committee seed
 
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
@@ -180,7 +187,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 │
 ├─ Publishes InterfoldEvent::E3Requested {
 │     e3_id, threshold_m, threshold_n,
-│     seed, params, error_size, esi_per_ct
+│     computation_seed, params, error_size, esi_per_ct
 │   }
 │
 ├─ FheExtension.on_event():
@@ -193,7 +200,9 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 │
 └─ Sortition actor receives E3Requested:
     │
+    ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
+    ├─ Uses the CommitteeRequested seed for ticket ranking
     ├─ Calculates buffer = calculate_buffer_size(M, N)
     │
     ├─ ScoreBackend.get_committee():
@@ -280,22 +289,29 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │       require(ticketNumber >= 1)                        │
     │  │       require(ticketNumber <= availableTickets)          │
     │  │                                                         │
-    │  │    7. score = uint256(keccak256(                        │
+    │  │    7. If this is the first ticket, resolve and store:  │
+    │  │       seed = keccak256(                                │
+    │  │         blockhash(sortitionEntropyBlocks[e3Id]), e3Id │
+    │  │       )                                                │
+    │  │       → The entropy block is after the paid request    │
+    │  │       → No separate seed transaction is required       │
+    │  │                                                         │
+    │  │    8. score = uint256(keccak256(                        │
     │  │         msg.sender, ticketNumber, e3Id, seed            │
     │  │       ))                                                │
     │  │       → SAME formula as Rust-side computation           │
     │  │       → Both sides agree on scores                      │
     │  │                                                         │
-    │  │    8. submitted[msg.sender] = true                      │
+    │  │    9. submitted[msg.sender] = true                      │
     │  │       scoreOf[msg.sender] = score                       │
     │  │                                                         │
-    │  │    9. _insertTopN(e3Id, msg.sender, score):             │
+    │  │   10. _insertTopN(e3Id, msg.sender, score):             │
     │  │       Maintains array of N lowest-scoring nodes:        │
     │  │       - If < N nodes: just insert                       │
     │  │       - If N nodes: replace highest if new score lower  │
     │  │       - O(N) linear scan per insertion                  │
     │  │                                                         │
-    │  │   10. Emit TicketSubmitted(e3Id, msg.sender, score)     │
+    │  │   11. Emit TicketSubmitted(e3Id, msg.sender, score)     │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
@@ -466,7 +482,9 @@ The registry must finalize a ready committee.
 
 1. **Deterministic sortition**: Both Rust and Solidity compute
    `keccak256(address, ticket, e3Id, seed)`. The on-chain contract verifies what the off-chain node
-   computed.
+   computed. The seed comes from the committed next-block hash. The requester cannot inspect it and
+   revert the request in the same transaction. The first ticket stores the seed, so no separate
+   randomness transaction is needed.
 
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
@@ -516,6 +534,24 @@ The registry must finalize a ready committee.
 ---
 
 ## Cluster 7 audit additions (post-fix semantics)
+
+### Z-05 — request seed grinding
+
+The E3 computation seed is still created during Interfold.request, but it no longer ranks committee
+tickets. The registry commits the next block as the entropy block. Rust waits until that block is
+sealed and reads the committee seed. The first ticket stores the same seed before it calculates the
+score. A requester can revert the request or learn the committee seed, but it cannot do both in one
+transaction.
+
+The basic EVM source uses a block hash, so the seed must be resolved while that hash remains in the
+chain's history. The contract first uses the EVM's recent-block lookup and then tries the EIP-2935
+history contract. Chains without EIP-2935 retain the 256-block limit. This removes requester-side
+conditional-revert grinding. It does not claim the stronger proposer-resistance of a verifiable
+randomness service.
+
+The registry event keeps its existing ABI. The Rust reader recognizes older events, where the same
+field contains the request-time seed, and replays them with the previous seed encoding. New events
+must commit the block immediately after the request event.
 
 ### H-04 — snapshot-based eligibility
 

@@ -71,8 +71,8 @@ Look for `"SubmissionWindowClosed"` errors or missing `TicketSubmitted` events.
 
 ### Common causes
 
-**RPC latency.** The sortition submission window is short (10 seconds on Sepolia). If your RPC
-endpoint is slow, the transaction may not be mined in time.
+**RPC latency.** The sortition submission window includes the wait for the entropy block. If your
+RPC endpoint is slow, the transaction may not be mined in time.
 
 **Fix:** Use a faster RPC endpoint. Avoid free-tier endpoints that throttle under load.
 
