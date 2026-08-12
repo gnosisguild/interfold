@@ -12,7 +12,7 @@ export interface PollOption {
 }
 
 export interface PollResult {
-  roundId: number
+  roundId: string
   totalVotes: number
   date: string
   options: PollOption[]
@@ -20,7 +20,7 @@ export interface PollResult {
 }
 
 export interface PollRequestResult {
-  round_id: number
+  round_id: string
   tally: number[]
   option_1_emoji: string
   option_2_emoji: string
@@ -35,6 +35,6 @@ export interface Poll {
 }
 
 export interface PollEmoji {
-  round_id: number
+  round_id: string
   emojis: [string, string]
 }

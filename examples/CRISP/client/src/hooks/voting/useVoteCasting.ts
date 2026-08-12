@@ -100,7 +100,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
         const proof = isAMask
           ? await sdk.generateMaskVoteProof({
-              e3Id: votingRound.round_id,
+              e3Id: BigInt(votingRound.round_id),
               publicKey,
               balance,
               slotAddress: address,
@@ -109,7 +109,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
             })
           : await sdk.generateVoteProof({
               vote,
-              e3Id: votingRound.round_id,
+              e3Id: BigInt(votingRound.round_id),
               publicKey,
               signature: signature as `0x${string}`,
               merkleLeaves,

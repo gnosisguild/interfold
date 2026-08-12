@@ -64,14 +64,14 @@ struct ComputeProviderParams {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 struct PKRequest {
-    round_id: u64,
+    round_id: String,
     pk_bytes: Vec<u8>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 struct CTRequest {
-    round_id: u64,
+    round_id: String,
     ct_bytes: Vec<u8>,
 }
 
@@ -186,15 +186,16 @@ pub async fn get_current_timestamp() -> Result<u64, Box<dyn std::error::Error + 
 }
 
 pub async fn check_committee_key_published(
-    e3_id: u64,
+    e3_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let e3_id = U256::from_str_radix(e3_id, 10)?;
     let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
     let registry_address: Address = CONFIG.ciphernode_registry_address.parse()?;
     let registry = CiphernodeRegistryReadiness::new(registry_address, provider);
     let events = registry
         .CommitteePublished_filter()
         .from_block(0)
-        .topic1(U256::from(e3_id))
+        .topic1(e3_id)
         .query()
         .await?;
 
@@ -204,7 +205,7 @@ pub async fn check_committee_key_published(
 pub async fn initialize_crisp_round(
     token_address: &str,
     balance_threshold: &str,
-) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<U256, Box<dyn std::error::Error + Send + Sync>> {
     let contract = InterfoldContract::new(
         &CONFIG.http_rpc_url,
         &CONFIG.private_key,
@@ -357,17 +358,16 @@ pub async fn initialize_crisp_round(
         .await
         .map_err(format_request_e3_revert)?;
     info!("E3 request sent. TxHash: {:?}", res.transaction_hash);
-    let e3_id_u64 = u64::try_from(e3_id)?;
-    info!("E3 ID: {}", e3_id_u64);
+    info!("E3 ID: {}", e3_id);
 
-    Ok(e3_id_u64)
+    Ok(e3_id)
 }
 
 #[allow(dead_code)]
 pub async fn participate_in_existing_round(
     client: &Client,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let input_crisp_id: u64 = Input::with_theme(&ColorfulTheme::default())
+    let input_crisp_id: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Enter CRISP round ID.")
         .interact_text()?;
 
@@ -378,7 +378,7 @@ pub async fn participate_in_existing_round(
     let resp = client
         .post(&url)
         .json(&PKRequest {
-            round_id: input_crisp_id,
+            round_id: input_crisp_id.clone(),
             pk_bytes: vec![0],
         })
         .send()
@@ -398,7 +398,10 @@ pub async fn participate_in_existing_round(
         )
         .await?;
         let res = contract
-            .publish_input(U256::from(input_crisp_id), Bytes::from(ct.to_bytes()))
+            .publish_input(
+                U256::from_str_radix(&input_crisp_id, 10)?,
+                Bytes::from(ct.to_bytes()),
+            )
             .await?;
         info!("Vote broadcast. TxHash: {:?}", res.transaction_hash);
     }
@@ -410,7 +413,7 @@ pub async fn participate_in_existing_round(
 pub async fn decrypt_and_publish_result(
     client: &Client,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let input_crisp_id: u64 = Input::with_theme(&ColorfulTheme::default())
+    let input_crisp_id: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Enter CRISP round ID.")
         .interact_text()?;
 
@@ -418,7 +421,7 @@ pub async fn decrypt_and_publish_result(
     let resp = client
         .post(&url)
         .json(&CTRequest {
-            round_id: input_crisp_id,
+            round_id: input_crisp_id.clone(),
             ct_bytes: vec![0],
         })
         .send()
@@ -449,7 +452,7 @@ pub async fn decrypt_and_publish_result(
     .await?;
     let res = contract
         .publish_plaintext_output(
-            U256::from(input_crisp_id),
+            U256::from_str_radix(&input_crisp_id, 10)?,
             Bytes::from(votes.to_be_bytes()),
             proof,
         )

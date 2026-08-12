@@ -9,13 +9,13 @@ use std::str::FromStr;
 use crate::server::{
     app_data::AppData,
     models::{
-        GetRoundRequest, PreviousCiphertextRequest, PreviousCiphertextResponse,
+        e3_id_to_u256, GetRoundRequest, PreviousCiphertextRequest, PreviousCiphertextResponse,
         RoundRequestWithRequester, WebhookPayload,
     },
     CONFIG,
 };
 use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, Bytes, B256};
 use e3_sdk::evm_helpers::contracts::{
     InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };
@@ -76,10 +76,12 @@ async fn handle_get_previous_ciphertext(
         }
     };
 
-    let slot_index = match contract
-        .get_slot_index_from_address(U256::from(incoming.round_id), address)
-        .await
-    {
+    let e3_id = match e3_id_to_u256(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+
+    let slot_index = match contract.get_slot_index_from_address(e3_id, address).await {
         Ok(Some(index)) => index,
         Ok(None) => return HttpResponse::NotFound().body("Ciphertext not found"),
         Err(e) => {
@@ -174,7 +176,10 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
             // Try the direct call
             let tx_result = contract
                 .publish_ciphertext_output(
-                    U256::from(e3_id),
+                    match e3_id_to_u256(&e3_id) {
+                        Ok(e3_id) => e3_id,
+                        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+                    },
                     Bytes::from(ciphertext.clone()),
                     B256::from_slice(&ciphertext_commitment),
                     Bytes::from(proof.clone()),
@@ -236,20 +241,19 @@ async fn get_all_round_results(
 ) -> impl Responder {
     let incoming = data.into_inner();
 
-    let round_count = match store.current_round().get_current_round_id().await {
-        Ok(count) => count,
+    let round_ids = match store.current_round().get_round_ids().await {
+        Ok(ids) => ids,
         Err(e) => {
-            info!("Error retrieving round count: {:?}", e);
-            return HttpResponse::InternalServerError().body("Failed to retrieve round count");
+            info!("Error retrieving round index: {:?}", e);
+            return HttpResponse::InternalServerError().body("Failed to retrieve round index");
         }
     };
 
     let mut states = Vec::new();
     let requesters = incoming.requesters;
 
-    // FIXME: This assumes ids are ordered
-    for i in 0..round_count + 1 {
-        match store.e3(i).get_web_result_request().await {
+    for e3_id in round_ids {
+        match store.e3(&e3_id).get_web_result_request().await {
             Ok(w) => {
                 if !requesters.is_empty() {
                     // if we have any requesters to filter by, do it
@@ -261,7 +265,7 @@ async fn get_all_round_results(
                 }
             }
             Err(e) => {
-                info!("Error retrieving state for round {}: {:?}", i, e);
+                info!("Error retrieving state for round {}: {:?}", e3_id, e);
                 continue;
             }
         }

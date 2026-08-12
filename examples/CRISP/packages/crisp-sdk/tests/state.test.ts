@@ -14,6 +14,7 @@ import { CreditMode } from '../src/types'
 import type { E3StateLiteResponse } from '../src/types'
 
 const { readContract } = vi.hoisted(() => ({ readContract: vi.fn() }))
+const GLOBAL_E3_ID = (1n << 200n) + 7n
 
 vi.mock('../src/chain', () => ({
   getPublicClient: () => ({ readContract }),
@@ -21,7 +22,7 @@ vi.mock('../src/chain', () => ({
 
 describe('State', () => {
   const mockStateLiteResponse: E3StateLiteResponse = {
-    id: 0,
+    id: GLOBAL_E3_ID.toString(),
     chain_id: 11155111,
     interfold_address: '0x1234567890123456789012345678901234567890',
     status: 'active',
@@ -59,10 +60,10 @@ describe('State', () => {
 
       vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockFetchResponse)
 
-      const state = await getRoundDetails(CRISP_SERVER_URL, 0)
+      const state = await getRoundDetails(CRISP_SERVER_URL, GLOBAL_E3_ID)
 
       expect(state).toBeDefined()
-      expect(state.e3Id).toBe(0n)
+      expect(state.e3Id).toBe(GLOBAL_E3_ID)
       expect(state.chainId).toBe(11155111n)
       expect(state.interfoldAddress).toBe('0x1234567890123456789012345678901234567890')
       expect(state.status).toBe('active')
@@ -87,7 +88,7 @@ describe('State', () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ round_id: 0 }),
+          body: JSON.stringify({ round_id: GLOBAL_E3_ID.toString() }),
         }),
       )
     })
@@ -100,7 +101,7 @@ describe('State', () => {
 
       vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockFetchResponse)
 
-      const state = await getRoundDetails(CRISP_SERVER_URL, 0)
+      const state = await getRoundDetails(CRISP_SERVER_URL, GLOBAL_E3_ID)
 
       expect(state.creditMode).toBe(CreditMode.CUSTOM)
       expect(state.credits).toBe(500n)
@@ -115,7 +116,7 @@ describe('State', () => {
     it('should read the round data from the CRISPProgram contract', async () => {
       readContract.mockResolvedValueOnce([100n, paramsHash, 2n, 0, inputRoot, 3])
 
-      const roundData = await getOnChainRoundData(programAddress, 5, 31337)
+      const roundData = await getOnChainRoundData(programAddress, GLOBAL_E3_ID, 31337)
 
       expect(roundData.merkleRoot).toBe(100n)
       expect(roundData.paramsHash).toBe(paramsHash)
@@ -129,7 +130,7 @@ describe('State', () => {
         expect.objectContaining({
           address: programAddress,
           functionName: 'getRoundData',
-          args: [5n],
+          args: [GLOBAL_E3_ID],
         }),
       )
     })
@@ -137,7 +138,7 @@ describe('State', () => {
     it('should return the custom credit mode', async () => {
       readContract.mockResolvedValueOnce([100n, paramsHash, 2n, 1, inputRoot, 3])
 
-      const roundData = await getOnChainRoundData(programAddress, 5, 31337)
+      const roundData = await getOnChainRoundData(programAddress, 5n, 31337)
 
       expect(roundData.creditMode).toBe(CreditMode.CUSTOM)
     })
@@ -145,7 +146,7 @@ describe('State', () => {
     it('should return zeroed data for a round which was not initialized', async () => {
       readContract.mockResolvedValueOnce([0n, `0x${'00'.repeat(32)}`, 0n, 0, inputRoot, 0])
 
-      const roundData = await getOnChainRoundData(programAddress, 42, 31337)
+      const roundData = await getOnChainRoundData(programAddress, 42n, 31337)
 
       expect(roundData.merkleRoot).toBe(0n)
       expect(roundData.numOptions).toBe(0n)
@@ -155,7 +156,7 @@ describe('State', () => {
     it('should propagate contract read errors', async () => {
       readContract.mockRejectedValueOnce(new Error('execution reverted'))
 
-      await expect(getOnChainRoundData(programAddress, 5, 31337)).rejects.toThrow('execution reverted')
+      await expect(getOnChainRoundData(programAddress, 5n, 31337)).rejects.toThrow('execution reverted')
     })
   })
 
@@ -170,7 +171,7 @@ describe('State', () => {
 
       vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockFetchResponse)
 
-      const tokenDetails = await getRoundTokenDetails(CRISP_SERVER_URL, 0)
+      const tokenDetails = await getRoundTokenDetails(CRISP_SERVER_URL, GLOBAL_E3_ID)
 
       expect(tokenDetails.tokenAddress).not.toBe(zeroAddress)
       expect(tokenDetails.tokenAddress).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')

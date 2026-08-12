@@ -7,12 +7,13 @@
 use crate::server::{
     app_data::AppData,
     models::{
-        VoteRequest, VoteResponse, VoteResponseStatus, VoteStatusRequest, VoteStatusResponse,
+        e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus, VoteStatusRequest,
+        VoteStatusResponse,
     },
     CONFIG,
 };
 use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Bytes, U256};
+use alloy::primitives::Bytes;
 use evm_helpers::CRISPContract;
 use eyre::Error;
 use log::{error, info};
@@ -45,7 +46,7 @@ async fn get_vote_status(
     );
 
     let has_voted = match store
-        .e3(request.round_id)
+        .e3(&request.round_id)
         .has_voted(request.address.clone())
         .await
     {
@@ -59,7 +60,7 @@ async fn get_vote_status(
         }
     };
 
-    let round_status = match store.e3(request.round_id).get_e3_state_lite().await {
+    let round_status = match store.e3(&request.round_id).get_e3_state_lite().await {
         Ok(state) => Some(state.status),
         Err(_) => None,
     };
@@ -90,7 +91,7 @@ async fn broadcast_encrypted_vote(
 
     // Check if user has already voted
     let has_voted = match store
-        .e3(vote.round_id)
+        .e3(&vote.round_id)
         .has_voted(vote.address.clone())
         .await
     {
@@ -109,9 +110,12 @@ async fn broadcast_encrypted_vote(
         info!("[e3_id={}] User is updating their vote", vote.round_id);
     }
 
-    let mut repo = store.e3(vote.round_id);
+    let mut repo = store.e3(&vote.round_id);
 
-    let e3_id = U256::from(vote.round_id);
+    let e3_id = match e3_id_to_u256(&vote.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
+    };
 
     // encoded_proof is already encoded in JavaScript, just decode from hex
     let hex_str = vote

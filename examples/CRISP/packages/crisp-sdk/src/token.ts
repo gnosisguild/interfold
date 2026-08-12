@@ -15,13 +15,13 @@ import { getPublicClient } from './chain'
  * @param serverUrl - The base URL of the CRISP server
  * @param e3Id - The e3Id of the round
  */
-export const getTreeData = async (serverUrl: string, e3Id: number): Promise<bigint[]> => {
+export const getTreeData = async (serverUrl: string, e3Id: bigint): Promise<bigint[]> => {
   const response = await fetch(`${serverUrl}/${CRISP_SERVER_TOKEN_TREE_ENDPOINT}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ round_id: e3Id }),
+    body: JSON.stringify({ round_id: e3Id.toString() }),
   })
 
   const hashes = (await response.json()) as string[]

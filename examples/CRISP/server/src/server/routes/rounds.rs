@@ -117,7 +117,7 @@ async fn get_current_round(
 async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -> impl Responder {
     let mut incoming = data.into_inner();
 
-    match store.e3(incoming.round_id).get_ciphertext_output().await {
+    match store.e3(&incoming.round_id).get_ciphertext_output().await {
         Ok(ct_bytes) => {
             incoming.ct_bytes = ct_bytes;
             HttpResponse::Ok().json(incoming)
@@ -140,7 +140,11 @@ async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -
 async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -> impl Responder {
     let mut incoming = data.into_inner();
 
-    match store.e3(incoming.round_id).get_committee_public_key().await {
+    match store
+        .e3(&incoming.round_id)
+        .get_committee_public_key()
+        .await
+    {
         Ok(pk_bytes) => {
             incoming.pk_bytes = pk_bytes;
             HttpResponse::Ok().json(incoming)

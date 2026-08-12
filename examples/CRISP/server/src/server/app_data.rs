@@ -20,7 +20,7 @@ impl AppData {
         Self { db }
     }
 
-    pub fn e3(&self, e3_id: u64) -> CrispE3Repository<SledDB> {
+    pub fn e3(&self, e3_id: impl ToString) -> CrispE3Repository<SledDB> {
         CrispE3Repository::new(self.db.clone(), e3_id)
     }
 

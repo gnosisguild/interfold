@@ -4,17 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use alloy::primitives::U256;
 use anyhow::Result;
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+
+pub fn e3_id_to_u256(e3_id: &str) -> Result<U256> {
+    U256::from_str_radix(e3_id, 10).map_err(|e| anyhow::anyhow!("Invalid E3 ID '{}': {}", e3_id, e))
+}
 
 #[derive(Derivative, Deserialize, Serialize)]
 #[derivative(Debug)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum WebhookPayload {
     Completed {
-        e3_id: u64,
+        e3_id: String,
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
         ciphertext: Vec<u8>,
@@ -26,7 +31,7 @@ pub enum WebhookPayload {
         proof: Vec<u8>,
     },
     Failed {
-        e3_id: u64,
+        e3_id: String,
         error: String,
     },
 }
@@ -64,13 +69,13 @@ pub struct VoteResponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VoteStatusRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub address: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VoteStatusResponse {
-    pub round_id: u64,
+    pub round_id: String,
     pub address: String,
     pub has_voted: bool,
     pub round_status: Option<String>,
@@ -84,30 +89,30 @@ pub struct RoundCount {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CurrentRound {
-    pub id: u64,
+    pub id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PKRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub pk_bytes: Vec<u8>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CTRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub ct_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VoteRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub encoded_proof: String,
     pub address: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GetRoundRequest {
-    pub round_id: u64,
+    pub round_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -117,7 +122,7 @@ pub struct RoundRequestWithRequester {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PreviousCiphertextRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub address: String,
 }
 
@@ -152,7 +157,7 @@ pub struct RoundRequest {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct WebResultRequest {
-    pub round_id: u64,
+    pub round_id: String,
     pub tally: Vec<String>,
     pub option_1_emoji: String,
     pub option_2_emoji: String,
@@ -163,7 +168,7 @@ pub struct WebResultRequest {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct E3StateLite {
-    pub id: u64,
+    pub id: String,
     pub chain_id: u64,
     pub interfold_address: String,
 
@@ -194,7 +199,7 @@ pub struct E3StateLite {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct E3 {
     // Identifiers
-    pub id: u64,
+    pub id: String,
     pub chain_id: u64,
     pub interfold_address: String,
 
@@ -337,5 +342,21 @@ mod census_mode_tests {
     fn known_values_round_trip() {
         assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
         assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
+    }
+}
+
+#[cfg(test)]
+mod e3_id_tests {
+    use super::e3_id_to_u256;
+
+    #[test]
+    fn accepts_full_width_decimal_ids() {
+        let id = (alloy::primitives::U256::from(1) << 200) + alloy::primitives::U256::from(7);
+        assert_eq!(e3_id_to_u256(&id.to_string()).unwrap(), id);
+    }
+
+    #[test]
+    fn rejects_non_decimal_ids() {
+        assert!(e3_id_to_u256("not-an-id").is_err());
     }
 }
