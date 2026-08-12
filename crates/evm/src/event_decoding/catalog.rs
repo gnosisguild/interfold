@@ -76,15 +76,10 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
     EvmEventDefinition::new(
         "E3Requested",
-        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address,bytes32),address)",
+        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address,bytes32),bytes32)",
         None,
     ),
     EvmEventDefinition::new("E3StageChanged", "E3StageChanged(uint256,uint8,uint8)", Some(1)),
-    EvmEventDefinition::new(
-        "EncryptionSchemeDisabled",
-        "EncryptionSchemeDisabled(bytes32)",
-        None,
-    ),
     EvmEventDefinition::new(
         "EncryptionSchemeEnabled",
         "EncryptionSchemeEnabled(bytes32)",
@@ -325,6 +320,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "CiphernodeRemoved",
         "CiphernodeRemoved(address,uint256,uint256,uint256)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "CiphernodeTreeCapacityWarning",
+        "CiphernodeTreeCapacityWarning(uint256,uint256)",
         None,
     ),
     EvmEventDefinition::new(

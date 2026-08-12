@@ -3099,6 +3099,7 @@ dependencies = [
 name = "e3-support-types"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "derivative",
  "e3-compute-provider",

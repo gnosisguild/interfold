@@ -220,6 +220,9 @@ interface ICiphernodeRegistry {
         uint256 size
     );
 
+    /// @notice Emitted when tree use reaches the capacity warning point.
+    event CiphernodeTreeCapacityWarning(uint256 size, uint256 capacity);
+
     /// @notice This event MUST be emitted when a ciphernode is removed from the registry.
     /// @param node Address of the ciphernode.
     /// @param index Index of the ciphernode in the registry.

@@ -47,8 +47,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   balance above `totalLicenseLiability` to the treasury before validating the replacement, so an
   unsolicited transfer cannot interleave with rotation. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
-  Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
-  does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+  Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
+  time. Decimal validation checks the unit scale only; it does not establish the token's economic
+  value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
 - **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
   license token must transfer exact amounts and must not rebase account balances. Every custody
   deposit checks the custody increase. Every outbound transfer checks the recipient increase and
@@ -71,11 +72,16 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### E3 request and committee selection
 
+- E3 IDs include the Interfold controller address in their high 160 bits. The low 96 bits form the
+  controller-local sequence. On-chain snapshots, signed payloads, Rust persistence, and indexer keys
+  must preserve the complete `uint256`. — `Interfold.initialize`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
   `pnpm build:circuits` generates that binding from the active preset. Governance cannot enable a
   different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
-  contracts. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
-  `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
+  contracts. The request supplies the expected configuration ID, which binds the scheme, parameter
+  hash, and circuit version. Solidity snapshots it, and Rust rejects an event or stored E3 whose ID
+  differs from its local build. Pricing uses circuit threshold `T`, not on-chain viability value
+  `H`. `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
   `seed = uint256(keccak256(blockhash(entropyBlock), e3Id))`; top-N lowest win. `entropyBlock` is

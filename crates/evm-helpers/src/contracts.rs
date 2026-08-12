@@ -73,6 +73,9 @@ sol! {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
+        address expectedFeeToken;
+        bytes32 expectedCryptoConfigId;
+        uint256 maxFee;
     }
 
     #[derive(Debug, PartialEq)]
@@ -134,6 +137,9 @@ sol! {
         function getRequester(uint256 e3Id) external view returns (address requester);
         function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
         function getTimeoutConfig() external view returns (E3TimeoutConfig memory config);
+        function feeToken() external view returns (address token);
+        function activeCryptoConfigId() external view returns (bytes32 configId);
+        function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32 configId);
     }
 }
 
@@ -171,6 +177,9 @@ pub trait InterfoldRead {
     async fn get_deadlines(&self, e3_id: U256) -> Result<E3Deadlines>;
 
     async fn get_timeout_config(&self) -> Result<E3TimeoutConfig>;
+
+    /// Read the circuit configuration frozen for an E3 request.
+    async fn get_e3_crypto_config_id(&self, e3_id: U256) -> Result<B256>;
 
     /// Look up the ABI-encoded BFV parameters for a param set index
     async fn get_param_set_registry(&self, param_set: u8) -> Result<Bytes>;
@@ -383,6 +392,9 @@ where
             paramSet: param_set,
             computeProviderParams: compute_provider_params,
             customParams: Bytes::new(),
+            expectedFeeToken: Address::ZERO,
+            expectedCryptoConfigId: B256::ZERO,
+            maxFee: U256::ZERO,
         };
 
         let contract = Interfold::new(self.contract_address, &self.provider);
@@ -420,6 +432,11 @@ where
         Ok(config)
     }
 
+    async fn get_e3_crypto_config_id(&self, e3_id: U256) -> Result<B256> {
+        let contract = Interfold::new(self.contract_address, &self.provider);
+        Ok(contract.e3CryptoConfigIds(e3_id).call().await?)
+    }
+
     async fn get_param_set_registry(&self, param_set: u8) -> Result<Bytes> {
         let contract = Interfold::new(self.contract_address, &self.provider);
         let params = contract.paramSetRegistry(param_set).call().await?;
@@ -447,14 +464,31 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
 
         let contract = Interfold::new(self.contract_address, &self.provider);
         let e3_id = contract.nexte3Id().call().await?;
+        let fee_token = contract.feeToken().call().await?;
+        let crypto_config_id = contract.activeCryptoConfigId().call().await?;
 
-        let e3_request = E3RequestParams {
+        let quote_request = E3RequestParams {
             committeeSize: committee_size,
             inputWindow: input_window,
             e3Program: e3_program,
             paramSet: param_set,
             computeProviderParams: compute_provider_params.clone(),
             customParams: custom_params.clone(),
+            expectedFeeToken: fee_token,
+            expectedCryptoConfigId: crypto_config_id,
+            maxFee: U256::MAX,
+        };
+        let max_fee = contract.getE3Quote(quote_request).call().await?;
+        let e3_request = E3RequestParams {
+            committeeSize: committee_size,
+            inputWindow: input_window,
+            e3Program: e3_program,
+            paramSet: param_set,
+            computeProviderParams: compute_provider_params,
+            customParams: custom_params,
+            expectedFeeToken: fee_token,
+            expectedCryptoConfigId: crypto_config_id,
+            maxFee: max_fee,
         };
 
         let builder = contract.request(e3_request).nonce(nonce);

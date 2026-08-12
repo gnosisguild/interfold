@@ -446,7 +446,8 @@ zero-second window, uses the two-day proposal and commit path. A proposal expire
 becomes ready. A direct keep or increase operation clears the pending proposal. A live value of zero
 disables new Lane A submissions. Each E3 also snapshots its nonzero maximum signed window and an
 objective submission deadline. The objective deadline is the latest possible request lifecycle
-deadline plus the one-day reporting window.
+deadline plus the one-day reporting window. Governance cannot close the E3 assignment or retire its
+slashing manager before that submission deadline passes.
 
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
 

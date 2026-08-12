@@ -18,6 +18,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   COMMITTEE_SIZE_MINIMUM,
   COMMITTEE_THRESHOLDS_ONCHAIN,
   LARGE_TIMEOUT_CONFIG,
@@ -33,6 +34,7 @@ import {
 const { loadFixture, mine, time } = networkHelpers;
 
 describe("Committee Expulsion & Fault Tolerance", function () {
+  let firstE3Id: bigint;
   const INSUFFICIENT_COMMITTEE_MEMBERS = 2;
   // Lane A reasons are derived on-chain as keccak256(abi.encodePacked(proofType))
   const REASON_PT_0 = ethers.keccak256(ethers.solidityPacked(["uint256"], [0]));
@@ -78,6 +80,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     const e3Program = mocks.e3Program;
     const decryptionVerifier = mocks.decryptionVerifier;
     const interfoldAddress = await interfold.getAddress();
+    firstE3Id = await interfold.nexte3Id();
 
     // Fund the requester (fixture's `mintUsdcTo: []` skipped this).
     await usdcToken.mint(requesterAddress, ethers.parseUnits("100000", 6));
@@ -152,6 +155,9 @@ describe("Committee Expulsion & Fault Tolerance", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
+        expectedFeeToken: await usdcToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
       };
 
       const fee = await interfold.getE3Quote(requestParams);
@@ -160,7 +166,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await mine(1);
     }
 
-    async function finalizeCommittee(e3Id: number, operators: Signer[]) {
+    async function finalizeCommittee(e3Id: bigint, operators: Signer[]) {
       for (const op of operators)
         await registry.connect(op).submitTicket(e3Id, 1);
 
@@ -168,7 +174,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await registry.finalizeCommittee(e3Id);
     }
 
-    async function publishFinalizedCommittee(e3Id: number) {
+    async function publishFinalizedCommittee(e3Id: bigint) {
       const publicKey = ethers.toUtf8Bytes("fake-public-key");
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
@@ -180,14 +186,14 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     }
 
     async function finalizeCommitteeWithOperators(
-      e3Id: number,
+      e3Id: bigint,
       operators: Signer[],
     ) {
       await finalizeCommittee(e3Id, operators);
       await publishFinalizedCommittee(e3Id);
     }
 
-    async function expelBelowThreshold(e3Id: number, operators: Signer[]) {
+    async function expelBelowThreshold(e3Id: bigint, operators: Signer[]) {
       const managerAddress = await slashingManager.getAddress();
       await networkHelpers.impersonateAccount(managerAddress);
       await networkHelpers.setBalance(managerAddress, ethers.parseEther("1"));
@@ -210,17 +216,17 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const operators = [operator1, operator2, operator3];
       for (const operator of operators) await setupOperator(operator);
       await makeRequest(0);
-      await finalizeCommittee(0, operators);
-      if (publish) await publishFinalizedCommittee(0);
+      await finalizeCommittee(firstE3Id, operators);
+      if (publish) await publishFinalizedCommittee(firstE3Id);
     }
 
     async function slashFirstMember() {
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await signAndEncodeAttestation(
           [operator2, operator3],
-          0,
+          firstE3Id,
           await operator1.getAddress(),
           await slashingManager.getAddress(),
         ),
@@ -250,7 +256,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     async function proposeThresholdBreach(reason: string) {
       const proposalId = await slashingManager.totalProposals();
       await slashingManager.proposeSlashEvidence(
-        0,
+        firstE3Id,
         await operator2.getAddress(),
         reason,
         ethers.toUtf8Bytes("evidence-data"),
@@ -307,7 +313,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
 
       // Minimum → M=2, N=3
       await makeRequest(COMMITTEE_SIZE_MINIMUM);
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -316,31 +322,41 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const op1Address = await operator1.getAddress();
 
       // Verify member is active before slash
-      expect(await registry.isCommitteeMemberActive(0, op1Address)).to.be.true;
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(3);
+      expect(await registry.isCommitteeMemberActive(firstE3Id, op1Address)).to
+        .be.true;
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(3);
 
       // Committee members attest that operator1 is faulty
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         op1Address,
         await slashingManager.getAddress(),
       );
-      const tx = await slashingManager.proposeSlash(0, op1Address, proof);
+      const tx = await slashingManager.proposeSlash(
+        firstE3Id,
+        op1Address,
+        proof,
+      );
 
       // Should emit CommitteeMemberExpelled
       await expect(tx)
         .to.emit(registry, "CommitteeMemberExpelled")
-        .withArgs(0, op1Address, REASON_PT_0, 2);
+        .withArgs(firstE3Id, op1Address, REASON_PT_0, 2);
 
       // Should emit CommitteeViabilityUpdated
       await expect(tx)
         .to.emit(registry, "CommitteeViabilityUpdated")
-        .withArgs(0, 2, 2, true); // 2 >= 2 → viable
+        .withArgs(firstE3Id, 2, 2, true); // 2 >= 2 → viable
 
       // Verify member is no longer active
-      expect(await registry.isCommitteeMemberActive(0, op1Address)).to.be.false;
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(2);
+      expect(await registry.isCommitteeMemberActive(firstE3Id, op1Address)).to
+        .be.false;
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
     });
 
     it("should keep E3 alive when active members >= threshold", async function () {
@@ -361,7 +377,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator3);
 
       await makeRequest(0); // M=2, N=3
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -370,24 +386,24 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // Slash one member — 3 active → 2 active, threshold is 2, still viable
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
 
       // E3 should NOT be failed — stage should still be Requested (1)
       // or whatever stage it was at, not Failed
-      const stage = await interfold.getE3Stage(0);
+      const stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.not.equal(6); // 6 = E3Stage.Failed
 
       // Active committee still has enough members
       const { activeCount, thresholdM } =
-        await registry.getCommitteeViability(0);
+        await registry.getCommitteeViability(firstE3Id);
       expect(activeCount).to.equal(2);
       expect(thresholdM).to.equal(2); // M=2
     });
@@ -430,7 +446,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await slashingManager.grantRole(SLASHER_ROLE, await owner.getAddress());
 
       await makeRequest(0); // M=2, N=3
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -442,7 +458,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const evidence1 = ethers.hexlify(ethers.toUtf8Bytes("data1"));
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
         0,
@@ -450,12 +466,12 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         evidence1,
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
 
-      let stage = await interfold.getE3Stage(0);
+      let stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.not.equal(6); // Not failed yet
 
       // Lane B: Evidence-based slash of op2 (no attestation needed) — active 2→1 < M=2
@@ -464,7 +480,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // Lane B (SLASHER_ROLE) bypasses attestation requirements for this final slash.
       const nextProposalId = await slashingManager.totalProposals();
       await slashingManager.proposeSlashEvidence(
-        0,
+        firstE3Id,
         await operator2.getAddress(),
         REASON_EVIDENCE,
         ethers.toUtf8Bytes("evidence-data"),
@@ -478,11 +494,11 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await expect(tx).to.emit(interfold, "E3Failed");
 
       // E3 should now be Failed
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // E3Stage.Failed
 
       // Every threshold breach has the same supplier-paid reason.
-      const reason = await interfold.getFailureReason(0);
+      const reason = await interfold.getFailureReason(firstE3Id);
       expect(reason).to.equal(INSUFFICIENT_COMMITTEE_MEMBERS);
     });
 
@@ -503,7 +519,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator3);
 
       await makeRequest(0);
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -513,7 +529,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const ev1 = ethers.hexlify(ethers.toUtf8Bytes("first"));
       const proof1 = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
         0,
@@ -521,11 +537,13 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         ev1,
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof1,
       );
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(2);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
 
       // Slash operator1 again for a different proof type to verify expulsion is idempotent.
       // Same (e3Id, operator, proofType) would revert DuplicateEvidence — that's correct.
@@ -533,7 +551,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const ev2 = ethers.hexlify(ethers.toUtf8Bytes("second"));
       const proof2 = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
         7, // C6ThresholdShareDecryption — different proofType
@@ -541,13 +559,15 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         ev2,
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof2,
       );
 
       // Active count should still be 2 (idempotent expulsion)
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(2);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
     });
 
     it("should exclude expelled members from getActiveCommitteeNodes", async function () {
@@ -567,7 +587,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator3);
 
       await makeRequest(0);
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -575,7 +595,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
 
       // Before expulsion: all 3 should be in active nodes
       const [nodesBefore, scoresBefore] =
-        await registry.getActiveCommitteeNodes(0);
+        await registry.getActiveCommitteeNodes(firstE3Id);
       expect(nodesBefore.length).to.equal(3);
       expect(scoresBefore.length).to.equal(3);
       expect(nodesBefore).to.include(await operator1.getAddress());
@@ -590,19 +610,19 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // Expel operator1
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
 
       // After expulsion: only 2 should be active
       const [nodesAfter, scoresAfter] =
-        await registry.getActiveCommitteeNodes(0);
+        await registry.getActiveCommitteeNodes(firstE3Id);
       expect(nodesAfter.length).to.equal(2);
       expect(scoresAfter.length).to.equal(2);
       expect(nodesAfter).to.not.include(await operator1.getAddress());
@@ -654,7 +674,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await slashingManager.grantRole(SLASHER_ROLE, await owner.getAddress());
 
       await makeRequest(0); // M=2, N=3
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -663,12 +683,12 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // Step 1: Lane A slash op1 — still viable (3→2 active, >= M=2)
       const laneAProof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         laneAProof,
       );
@@ -677,7 +697,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // Lane B (SLASHER_ROLE) is required for the final expulsion.
       const nextProposalId = await slashingManager.totalProposals();
       await slashingManager.proposeSlashEvidence(
-        0,
+        firstE3Id,
         await operator2.getAddress(),
         REASON_EVIDENCE,
         ethers.toUtf8Bytes("evidence-data"),
@@ -693,9 +713,9 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       // activeCount drops to 1, which is < M=2
       await expect(tx)
         .to.emit(registry, "CommitteeViabilityUpdated")
-        .withArgs(0, 1, 2, false);
+        .withArgs(firstE3Id, 1, 2, false);
 
-      const stage = await interfold.getE3Stage(0);
+      const stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // Failed
     });
 
@@ -716,7 +736,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator3);
 
       await makeRequest(COMMITTEE_SIZE_MINIMUM);
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -726,7 +746,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const evExpelOp1 = ethers.hexlify(ethers.toUtf8Bytes("expel-op1"));
       const proof1 = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
         0,
@@ -734,22 +754,22 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         evExpelOp1,
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof1,
       );
 
-      const stage = await interfold.getE3Stage(0);
+      const stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.not.equal(6);
 
       // One non-accused signer cannot authorize another expulsion at H=2.
       await expect(
         slashingManager.proposeSlash(
-          0,
+          firstE3Id,
           await operator2.getAddress(),
           await signAndEncodeAttestation(
             [operator3],
-            0,
+            firstE3Id,
             await operator2.getAddress(),
             await slashingManager.getAddress(),
             0,
@@ -762,7 +782,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         "InsufficientAttestations",
       );
 
-      const stageAfter = await interfold.getE3Stage(0);
+      const stageAfter = await interfold.getE3Stage(firstE3Id);
       expect(stageAfter).to.not.equal(6);
     });
 
@@ -805,7 +825,9 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         "FailureCallbackRejected",
       );
 
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(2);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
       expect(await bondingRegistry.getTicketBalance(operator)).to.equal(
         ticketsBefore,
       );
@@ -836,14 +858,16 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
       await interfold
         .connect(await ethers.getSigner(registryAddress))
-        .onE3Failed(0, INSUFFICIENT_COMMITTEE_MEMBERS);
+        .onE3Failed(firstE3Id, INSUFFICIENT_COMMITTEE_MEMBERS);
       await networkHelpers.stopImpersonatingAccount(registryAddress);
 
       const proposalId = await proposeThresholdBreach(reason);
       await slashingManager.executeSlash(proposalId);
 
-      expect(await interfold.getE3Stage(0)).to.equal(6);
-      expect((await registry.getCommitteeViability(0)).activeCount).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(6);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(1);
     });
   });
 
@@ -858,13 +882,13 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       } = await loadFixture(setup);
 
       await prepareMinimumCommittee(false);
-      await expelBelowThreshold(0, [operator1, operator2]);
+      await expelBelowThreshold(firstE3Id, [operator1, operator2]);
 
       const publicKey = ethers.toUtf8Bytes("fake-public-key");
       const commitment = ethers.keccak256(publicKey);
       await expect(
         registry.publishCommittee(
-          0,
+          firstE3Id,
           commitment,
           encodeMockDkgProof(commitment),
           "0x01",
@@ -883,13 +907,15 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       } = await loadFixture(setup);
 
       await prepareMinimumCommittee();
-      await expelBelowThreshold(0, [operator1, operator2]);
-      await time.increaseTo(Number((await interfold.getE3(0)).inputWindow[1]));
+      await expelBelowThreshold(firstE3Id, [operator1, operator2]);
+      await time.increaseTo(
+        Number((await interfold.getE3(firstE3Id)).inputWindow[1]),
+      );
 
       const ciphertext = "0x" + "ab".repeat(100);
       await expect(
         interfold.publishCiphertextOutput(
-          0,
+          firstE3Id,
           ciphertext,
           ethers.keccak256(ciphertext),
           "0x1337",
@@ -908,19 +934,25 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       } = await loadFixture(setup);
 
       await prepareMinimumCommittee();
-      await time.increaseTo(Number((await interfold.getE3(0)).inputWindow[1]));
+      await time.increaseTo(
+        Number((await interfold.getE3(firstE3Id)).inputWindow[1]),
+      );
 
       const ciphertext = "0x" + "ab".repeat(100);
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertext,
         ethers.keccak256(ciphertext),
         "0x1337",
       );
-      await expelBelowThreshold(0, [operator1, operator2]);
+      await expelBelowThreshold(firstE3Id, [operator1, operator2]);
 
       await expect(
-        interfold.publishPlaintextOutput(0, "0x" + "cd".repeat(100), "0x1337"),
+        interfold.publishPlaintextOutput(
+          firstE3Id,
+          "0x" + "cd".repeat(100),
+          "0x1337",
+        ),
       ).to.be.revertedWithCustomError(registry, "ThresholdNotMet");
     });
   });
@@ -942,7 +974,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await setupOperator(operator3);
 
       await makeRequest(0);
-      await finalizeCommitteeWithOperators(0, [
+      await finalizeCommitteeWithOperators(firstE3Id, [
         operator1,
         operator2,
         operator3,
@@ -950,16 +982,16 @@ describe("Committee Expulsion & Fault Tolerance", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       const op1Addr = await operator1.getAddress();
-      const tx = await slashingManager.proposeSlash(0, op1Addr, proof);
+      const tx = await slashingManager.proposeSlash(firstE3Id, op1Addr, proof);
 
       await expect(tx).to.emit(slashingManager, "SlashExecuted").withArgs(
         0, // proposalId
-        0, // e3Id
+        firstE3Id,
         op1Addr,
         REASON_PT_0,
         ethers.parseUnits("10", 6), // ticketPenalty

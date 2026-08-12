@@ -374,6 +374,12 @@ contract SlashingManager is
     /// @inheritdoc ISlashingManager
     function closeE3(uint256 e3Id) external onlyGovernance {
         E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        if (block.timestamp <= dependencies.slashSubmissionDeadline) {
+            revert AccusationWindowOpen(
+                e3Id,
+                dependencies.slashSubmissionDeadline
+            );
+        }
         dependencies.bonding.releaseSlashRouteDestination(e3Id);
         delete _e3Dependencies[e3Id];
         activeE3Assignments--;

@@ -14,6 +14,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  zeroHash,
   webSocket,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
@@ -145,6 +146,12 @@ export class ContractClient {
       }
 
       const committeeSize = validateCommitteeSize(params.committeeSize)
+      const maxFee = params.maxFee ?? (await this.getE3Quote(params))
+      const expectedCryptoConfigId = await this.publicClient.readContract({
+        address: this.contracts.interfold,
+        abi: Interfold__factory.abi,
+        functionName: 'activeCryptoConfigId',
+      })
 
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
@@ -158,6 +165,9 @@ export class ContractClient {
             paramSet: params.paramSet,
             computeProviderParams: params.computeProviderParams,
             customParams: params.customParams || '0x',
+            expectedFeeToken: this.contracts.feeToken,
+            expectedCryptoConfigId,
+            maxFee,
           },
         ],
         account,
@@ -257,6 +267,9 @@ export class ContractClient {
             paramSet: requestParams.paramSet,
             computeProviderParams: requestParams.computeProviderParams,
             customParams: requestParams.customParams || '0x',
+            expectedFeeToken: this.contracts.feeToken,
+            expectedCryptoConfigId: zeroHash,
+            maxFee: requestParams.maxFee ?? 0n,
           },
         ],
       })

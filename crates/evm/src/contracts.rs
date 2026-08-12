@@ -52,7 +52,7 @@ sol! {
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
 
         // ── Events ──────────────────────────────────────────────────────────
-        event E3Requested(uint256 e3Id, E3 e3, address indexed e3Program);
+        event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
         event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
         event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
         event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);

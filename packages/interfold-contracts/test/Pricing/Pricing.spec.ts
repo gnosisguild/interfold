@@ -6,6 +6,7 @@
 import { expect } from "chai";
 
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   DATA as data,
   deployInterfoldSystem,
   ethers,
@@ -18,6 +19,7 @@ import {
 const { loadFixture, time, mine } = networkHelpers;
 
 describe("E3 Pricing", function () {
+  let firstE3Id: bigint;
   // Default pricing config matching initialize() defaults
   const defaultPricingConfig = {
     keyGenFixedPerNode: 100000n,
@@ -67,6 +69,7 @@ describe("E3 Pricing", function () {
       treasury: treasurySigner,
       wireSlashingManager: true,
     });
+    firstE3Id = await sys.interfold.nexte3Id();
     await mine(1);
     return {
       owner: sys.owner,
@@ -434,12 +437,15 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
+        expectedFeeToken: await usdcToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
       };
 
       // Make request with large approval to avoid fee mismatch
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await interfold.request(freshRequest);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
       const fee = await interfold.e3Payments(e3Id);
 
       // Setup committee
@@ -522,12 +528,15 @@ describe("E3 Pricing", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
+        expectedFeeToken: await usdcToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
       };
 
       // Make request with large approval
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await interfold.request(freshRequest);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
       const fee = await interfold.e3Payments(e3Id);
 
       // Setup committee

@@ -21,6 +21,7 @@ import {
     CiphertextVerifierStorage
 } from "../storage/CiphertextVerifierStorage.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title InterfoldLifecycle
@@ -29,6 +30,47 @@ import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
+    /// @notice Checks the fee and circuit values accepted with a quote.
+    function validateQuoteLimit(
+        address actualFeeToken,
+        address expectedFeeToken,
+        bytes32 expectedCryptoConfigId,
+        uint256 maxFee,
+        uint256 fee
+    ) external pure {
+        if (actualFeeToken != expectedFeeToken)
+            revert IInterfold.FeeTokenChanged(
+                IERC20(expectedFeeToken),
+                IERC20(actualFeeToken)
+            );
+        bytes32 configId = ActiveCryptoConfig.id();
+        if (expectedCryptoConfigId != configId)
+            revert IInterfold.CryptoConfigChanged(
+                expectedCryptoConfigId,
+                configId
+            );
+        if (fee > maxFee) revert IInterfold.FeeExceedsMaximum(fee, maxFee);
+    }
+
+    /// @notice Binds an E3 to the circuit and parameter bytes used at request time.
+    function bindCryptoConfig(
+        uint256 e3Id,
+        bytes32 encryptionSchemeId,
+        bytes calldata encodedParams
+    ) external {
+        ActiveCryptoConfig.validateEncryptionScheme(encryptionSchemeId);
+        bytes32 paramsHash = keccak256(encodedParams);
+        CiphertextVerifierStorage.Layout
+            storage state = _ciphertextVerifierLayout();
+        ICiphertextVerifier verifier = state.current[encryptionSchemeId];
+        if (address(verifier) == address(0))
+            revert IInterfold.InvalidEncryptionScheme(encryptionSchemeId);
+        state.requests[e3Id] = CiphertextVerifierStorage.RequestConfig(
+            verifier,
+            paramsHash
+        );
+    }
+
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
@@ -77,11 +119,16 @@ library InterfoldLifecycle {
 
     /// @notice Requires the current dependency generation to own no live state.
     function validateGenerationDrained(
+        address currentDependency,
+        bool configurationActivated,
+        bool requestsPaused,
         uint256 activeE3Count,
         address registryAddress,
         address bondingAddress,
         address slashManagerAddress
     ) external view {
+        if (currentDependency == address(0) || !configurationActivated) return;
+        if (!requestsPaused) revert IInterfold.RequestsPaused();
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         IBondingRegistry bonding = IBondingRegistry(bondingAddress);
         ISlashingManager slashManager = ISlashingManager(slashManagerAddress);
@@ -284,22 +331,6 @@ library InterfoldLifecycle {
     }
 
     /// @notice Freezes the configured verifier for an E3 request.
-    function snapshotCiphertextVerifier(
-        uint256 e3Id,
-        bytes32 encryptionSchemeId,
-        bytes32 paramsHash
-    ) external {
-        CiphertextVerifierStorage.Layout
-            storage state = _ciphertextVerifierLayout();
-        ICiphertextVerifier verifier = state.current[encryptionSchemeId];
-        if (address(verifier) == address(0))
-            revert IInterfold.InvalidEncryptionScheme(encryptionSchemeId);
-        state.requests[e3Id] = CiphertextVerifierStorage.RequestConfig(
-            verifier,
-            paramsHash
-        );
-    }
-
     function _verifyCiphertext(
         E3 storage e3,
         uint256 e3Id,

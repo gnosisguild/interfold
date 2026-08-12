@@ -128,6 +128,7 @@ Bond owner or operator submits deregisterOperatorFor(operator)
     │  │       │  │    index = ciphernodeTreeIndex[node]      │  │
     │  │       │  │    ciphernodes._update(0, index)          │  │
     │  │       │  │    → Leaf zeroed in Lazy IMT              │  │
+    │  │       │  │    → Index added to the reusable free list│  │
     │  │       │  │    numCiphernodes--                       │  │
     │  │       │  │    Emit CiphernodeRemoved(node)           │  │
     │  │       │  └──────────────────────────────────────────┘  │
@@ -148,6 +149,9 @@ Bond owner or operator submits deregisterOperatorFor(operator)
 
 The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
 remain keyed by the operator until the claim completes.
+
+The next registration uses a free tree index before it appends a leaf. Historical E3 roots remain
+unchanged because each request stores its root value before later tree updates.
 
 Deregistration remains an emergency stop for future selection, even when the operator belongs to a
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit

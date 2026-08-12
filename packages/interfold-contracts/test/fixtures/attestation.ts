@@ -48,7 +48,7 @@ export const VOTE_TYPEHASH = ethers.keccak256(
  */
 export async function signAndEncodeAttestation(
   voterSigners: Signer[],
-  e3Id: number,
+  e3Id: number | bigint,
   operator: string,
   verifyingContract: string,
   proofType: number = 0,

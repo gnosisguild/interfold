@@ -235,6 +235,7 @@ contract Interfold is
         setE3RefundManager(_e3RefundManager);
         _setFeeAssetConfig(feeAssetConfig);
         _setTimeoutConfig(config);
+        nexte3Id = uint256(uint160(address(this))) << 96;
         requestsPaused = true;
         emit RequestsPausedSet(true);
 
@@ -267,10 +268,6 @@ contract Interfold is
         require(_feeTokenAllowed[feeToken], FeeTokenNotAllowed(feeToken));
 
         // Threshold gates ([1] > 0, min size, min threshold) are enforced inside {getE3Quote} below.
-        uint32[2] memory threshold = committeeThresholds[
-            requestParams.committeeSize
-        ];
-
         // Input-window / duration gates are enforced by
         // {InterfoldLifecycle.validateRequest} (external library link, EIP-170 cap).
         require(
@@ -278,8 +275,16 @@ contract Interfold is
             E3ProgramNotAllowed(requestParams.e3Program)
         );
 
-        uint256 e3Fee = getE3Quote(requestParams);
+        uint256 quotedFee = getE3Quote(requestParams);
+        InterfoldLifecycle.validateQuoteLimit(
+            address(feeToken),
+            address(requestParams.expectedFeeToken),
+            requestParams.expectedCryptoConfigId,
+            requestParams.maxFee,
+            quotedFee
+        );
 
+        if (uint96(nexte3Id) == type(uint96).max) revert E3IdSpaceExhausted();
         e3Id = nexte3Id++;
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         dependencies.registry = ciphernodeRegistry;
@@ -303,7 +308,8 @@ contract Interfold is
         // separate committee seed after this request is final.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
-        e3Payments[e3Id] = e3Fee;
+        e3Payments[e3Id] = quotedFee;
+        e3CryptoConfigIds[e3Id] = requestParams.expectedCryptoConfigId;
         _e3FeeTokens[e3Id] = feeToken;
         _e3ProtocolShareBps[e3Id] = _pricingConfig.protocolShareBps;
         _e3ProtocolTreasury[e3Id] = _pricingConfig.protocolTreasury;
@@ -327,38 +333,30 @@ contract Interfold is
         e3.customParams = requestParams.customParams;
         e3.requester = msg.sender;
 
-        bytes memory e3ProgramParams = paramSetRegistry[requestParams.paramSet];
-
         bytes32 encryptionSchemeId = requestParams.e3Program.validate(
             e3Id,
             seed,
-            e3ProgramParams,
+            paramSetRegistry[requestParams.paramSet],
             requestParams.computeProviderParams,
             requestParams.customParams
         );
-        IDecryptionVerifier decryptionVerifier = decryptionVerifiers[
-            encryptionSchemeId
-        ];
-
-        require(
-            address(decryptionVerifier) != address(0),
-            InvalidEncryptionScheme(encryptionSchemeId)
-        );
-
-        IPkVerifier pkVerifier = pkVerifiers[encryptionSchemeId];
-        require(
-            address(pkVerifier) != address(0),
-            InvalidEncryptionScheme(encryptionSchemeId)
-        );
-        InterfoldLifecycle.snapshotCiphertextVerifier(
+        InterfoldLifecycle.bindCryptoConfig(
             e3Id,
             encryptionSchemeId,
-            keccak256(e3ProgramParams)
+            paramSetRegistry[requestParams.paramSet]
+        );
+        require(
+            address(decryptionVerifiers[encryptionSchemeId]) != address(0),
+            InvalidEncryptionScheme(encryptionSchemeId)
         );
 
+        require(
+            address(pkVerifiers[encryptionSchemeId]) != address(0),
+            InvalidEncryptionScheme(encryptionSchemeId)
+        );
         e3.encryptionSchemeId = encryptionSchemeId;
-        e3.decryptionVerifier = decryptionVerifier;
-        e3.pkVerifier = pkVerifier;
+        e3.decryptionVerifier = decryptionVerifiers[encryptionSchemeId];
+        e3.pkVerifier = pkVerifiers[encryptionSchemeId];
         // CEI: write all state before external calls below
         e3s[e3Id] = e3;
 
@@ -367,15 +365,19 @@ contract Interfold is
             feeToken,
             msg.sender,
             address(this),
-            e3Fee
+            quotedFee
         );
 
         require(
-            dependencies.registry.requestCommittee(e3Id, seed, threshold),
+            dependencies.registry.requestCommittee(
+                e3Id,
+                seed,
+                committeeThresholds[requestParams.committeeSize]
+            ),
             CommitteeSelectionFailed()
         );
 
-        emit E3Requested(e3Id, e3, requestParams.e3Program);
+        emit E3Requested(e3Id, e3, requestParams.expectedCryptoConfigId);
         emit E3StageChanged(e3Id, E3Stage.None, E3Stage.Requested);
     }
 
@@ -627,21 +629,6 @@ contract Interfold is
             ciphertextVerifier
         );
         emit CiphertextVerifierSet(encryptionSchemeId, ciphertextVerifier);
-    }
-
-    /// @inheritdoc IInterfold
-    function disableEncryptionScheme(
-        bytes32 encryptionSchemeId
-    ) external onlyOwner {
-        require(
-            decryptionVerifiers[encryptionSchemeId] !=
-                IDecryptionVerifier(address(0)),
-            InvalidEncryptionScheme(encryptionSchemeId)
-        );
-        decryptionVerifiers[encryptionSchemeId] = IDecryptionVerifier(
-            address(0)
-        );
-        emit EncryptionSchemeDisabled(encryptionSchemeId);
     }
 
     /// @notice Registers the parameter set compiled into the active circuits.
@@ -1099,6 +1086,11 @@ contract Interfold is
         return InterfoldLifecycle.getCiphertextVerifier(encryptionSchemeId);
     }
 
+    /// @inheritdoc IInterfold
+    function activeCryptoConfigId() external pure returns (bytes32) {
+        return ActiveCryptoConfig.id();
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //              Pull-Payment Claim Functions              //
@@ -1191,11 +1183,10 @@ contract Interfold is
     }
 
     function _requireDependencyReplacementReady(address current) private view {
-        if (current == address(0) || !_dependencyConfigurationActivated) {
-            return;
-        }
-        if (!requestsPaused) revert RequestsPaused();
         InterfoldLifecycle.validateGenerationDrained(
+            current,
+            _dependencyConfigurationActivated,
+            requestsPaused,
             activeE3Count,
             address(ciphernodeRegistry),
             address(bondingRegistry),
@@ -1239,10 +1230,13 @@ contract Interfold is
     /// @notice Latest possible lifecycle deadline derived at request time.
     mapping(uint256 e3Id => uint256 deadline) private _e3LifecycleDeadlines;
 
+    /// @notice Circuit configuration frozen for each E3 request.
+    mapping(uint256 e3Id => bytes32 configId) public e3CryptoConfigIds;
+
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 }

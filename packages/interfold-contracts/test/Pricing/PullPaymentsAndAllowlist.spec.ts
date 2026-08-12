@@ -7,6 +7,7 @@ import type { Signer } from "ethers";
 import type { MockBlacklistUSDC } from "../../types";
 import { MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory } from "../../types";
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   SORTITION_SUBMISSION_WINDOW,
   currentPricingConfig,
   DATA as data,
@@ -26,7 +27,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
 
   const setupAndPublishCommittee = async (
     registry: any,
-    e3Id: number,
+    e3Id: number | bigint,
     publicKey: string,
     operators: Signer[],
   ) => {
@@ -104,6 +105,9 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
+      expectedFeeToken: await feeToken.getAddress(),
+      expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+      maxFee: ethers.MaxUint256,
     };
 
     return {
@@ -136,8 +140,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       request,
     } = ctx;
     await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+    const e3Id = await interfold.nexte3Id();
     await interfold.request(request);
-    const e3Id = 0;
     const nodes = [
       await operator1.getAddress(),
       await operator2.getAddress(),
@@ -189,14 +193,14 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       const ctx = await loadFixture(fixturePlain);
       const { interfold, feeToken, owner, request } = ctx;
       // Two sequential E3s for the same committee.
-      await runRequestAndPublish(ctx);
+      const { e3Id: firstE3Id } = await runRequestAndPublish(ctx);
       const now = await time.latest();
       const req2 = {
         ...request,
         inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
       };
       await interfold.request(req2);
-      const e3Id2 = 1;
+      const e3Id2 = firstE3Id + 1n;
       await setupAndPublishCommittee(
         ctx.ciphernodeRegistryContract,
         e3Id2,
@@ -218,10 +222,10 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
 
       const ownerAddress = await owner.getAddress();
       const expected =
-        (await interfold.pendingReward(0, ownerAddress)) +
-        (await interfold.pendingReward(1, ownerAddress));
+        (await interfold.pendingReward(firstE3Id, ownerAddress)) +
+        (await interfold.pendingReward(e3Id2, ownerAddress));
       const before = await feeToken.balanceOf(ownerAddress);
-      await interfold.connect(owner).claimRewards([0, 1]);
+      await interfold.connect(owner).claimRewards([firstE3Id, e3Id2]);
       const after = await feeToken.balanceOf(ownerAddress);
       expect(after - before).to.equal(expected);
     });
@@ -322,6 +326,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       const fresh = {
         ...request,
         inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
+        expectedFeeToken: tokenAddress,
       };
       const fee = await interfold.getE3Quote(fresh);
       await feeToken.connect(owner).approve(await interfold.getAddress(), fee);

@@ -12,7 +12,6 @@ export enum InterfoldEventType {
   PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',
   E3_PROGRAM_REGISTERED = 'E3ProgramRegistered',
   ENCRYPTION_SCHEME_ENABLED = 'EncryptionSchemeEnabled',
-  ENCRYPTION_SCHEME_DISABLED = 'EncryptionSchemeDisabled',
   CIPHERNODE_REGISTRY_SET = 'CiphernodeRegistrySet',
   MAX_DURATION_SET = 'MaxDurationSet',
   PARAM_SET_REGISTERED = 'ParamSetRegistered',
@@ -47,8 +46,7 @@ export interface E3RequestedData {
     ciphertextCommitment: string
     plaintextOutput: string
   }
-  filter: string
-  e3Program: string
+  cryptoConfigId: string
 }
 
 export interface E3ActivatedData {
@@ -112,7 +110,6 @@ export interface InterfoldEventData {
   [InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED]: PlaintextOutputPublishedData
   [InterfoldEventType.E3_PROGRAM_REGISTERED]: { e3Program: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_ENABLED]: { encryptionSchemeId: string }
-  [InterfoldEventType.ENCRYPTION_SCHEME_DISABLED]: { encryptionSchemeId: string }
   [InterfoldEventType.CIPHERNODE_REGISTRY_SET]: { ciphernodeRegistry: string }
   [InterfoldEventType.MAX_DURATION_SET]: { maxDuration: bigint }
   [InterfoldEventType.PARAM_SET_REGISTERED]: { paramSet: number; encodedParams: string }

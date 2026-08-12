@@ -151,6 +151,22 @@
     {
       "inputs": [
         {
+          "internalType": "bytes32",
+          "name": "expected",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "actual",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CryptoConfigChanged",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -208,6 +224,11 @@
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "E3IdSpaceExhausted",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -254,6 +275,38 @@
         }
       ],
       "name": "FailureConditionNotMet",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "fee",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maximum",
+          "type": "uint256"
+        }
+      ],
+      "name": "FeeExceedsMaximum",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "expected",
+          "type": "address"
+        },
+        {
+          "internalType": "contract IERC20",
+          "name": "actual",
+          "type": "address"
+        }
+      ],
+      "name": "FeeTokenChanged",
       "type": "error"
     },
     {
@@ -911,9 +964,9 @@
         },
         {
           "indexed": true,
-          "internalType": "contract IE3Program",
-          "name": "e3Program",
-          "type": "address"
+          "internalType": "bytes32",
+          "name": "cryptoConfigId",
+          "type": "bytes32"
         }
       ],
       "name": "E3Requested",
@@ -942,19 +995,6 @@
         }
       ],
       "name": "E3StageChanged",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "bytes32",
-          "name": "encryptionSchemeId",
-          "type": "bytes32"
-        }
-      ],
-      "name": "EncryptionSchemeDisabled",
       "type": "event"
     },
     {
@@ -1424,6 +1464,19 @@
     },
     {
       "inputs": [],
+      "name": "activeCryptoConfigId",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "activeE3Count",
       "outputs": [
         {
@@ -1513,19 +1566,6 @@
         }
       ],
       "name": "claimRewards",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "bytes32",
-          "name": "encryptionSchemeId",
-          "type": "bytes32"
-        }
-      ],
-      "name": "disableEncryptionScheme",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1811,6 +1851,21 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
+            },
+            {
+              "internalType": "contract IERC20",
+              "name": "expectedFeeToken",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "expectedCryptoConfigId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxFee",
+              "type": "uint256"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -2318,6 +2373,21 @@
               "internalType": "bytes",
               "name": "customParams",
               "type": "bytes"
+            },
+            {
+              "internalType": "contract IERC20",
+              "name": "expectedFeeToken",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "expectedCryptoConfigId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxFee",
+              "type": "uint256"
             }
           ],
           "internalType": "struct IInterfold.E3RequestParams",
@@ -2767,5 +2837,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-06a5eff6990b53e25ef653ebe1c27db68a04d543"
+  "buildInfoId": "solc-0_8_28-237c02391cd3c59ddd3267c5dcdd3f53101f06d8"
 }

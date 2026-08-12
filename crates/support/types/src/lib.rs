@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use alloy_primitives::U256;
 use anyhow::Result;
 use derivative::Derivative;
 use e3_compute_provider::{ComputeInput, ComputeResult};
@@ -13,7 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub struct ComputeDomain {
     pub chain_id: u64,
     pub verifying_contract: [u8; 20],
-    pub e3_id: u64,
+    pub e3_id: [u8; 32],
     pub encryption_scheme_id: [u8; 32],
     pub committee_public_key_hash: [u8; 32],
 }
@@ -22,7 +23,7 @@ impl ComputeDomain {
     pub fn new(
         chain_id: u64,
         interfold_address: &str,
-        e3_id: u64,
+        e3_id: &str,
         encryption_scheme_id: &[u8],
         committee_public_key_hash: &[u8],
     ) -> std::result::Result<Self, String> {
@@ -33,7 +34,10 @@ impl ComputeDomain {
                     .map_err(|error| format!("invalid Interfold address: {error}"))?,
                 "Interfold address",
             )?,
-            e3_id,
+            e3_id: e3_id
+                .parse::<U256>()
+                .map_err(|error| format!("invalid E3 ID: {error}"))?
+                .to_be_bytes(),
             encryption_scheme_id: fixed(encryption_scheme_id, "encryption scheme ID")?,
             committee_public_key_hash: fixed(
                 committee_public_key_hash,
@@ -75,10 +79,7 @@ pub struct ComputeJournal {
 }
 
 impl ComputeJournal {
-    pub fn new(
-        domain: ComputeDomain,
-        result: ComputeResult,
-    ) -> std::result::Result<Self, String> {
+    pub fn new(domain: ComputeDomain, result: ComputeResult) -> std::result::Result<Self, String> {
         for (name, value) in [
             ("ciphertext hash", &result.ciphertext_hash),
             ("ciphertext commitment", &result.ciphertext_commitment),
@@ -93,7 +94,7 @@ impl ComputeJournal {
         Ok(Self {
             chain_id: uint_word(domain.chain_id),
             verifying_contract: [vec![0_u8; 12], domain.verifying_contract.to_vec()].concat(),
-            e3_id: uint_word(domain.e3_id),
+            e3_id: domain.e3_id.to_vec(),
             encryption_scheme_id: domain.encryption_scheme_id.to_vec(),
             committee_public_key_hash: domain.committee_public_key_hash.to_vec(),
             ciphertext_hash: result.ciphertext_hash,
@@ -112,7 +113,7 @@ pub struct ComputeResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ComputeRequest {
-    pub e3_id: Option<u64>,
+    pub e3_id: Option<String>,
     pub chain_id: u64,
     pub interfold_address: String,
     #[serde(deserialize_with = "deserialize_hex_string")]
@@ -134,7 +135,7 @@ pub struct ComputeRequest {
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum WebhookPayload {
     Completed {
-        e3_id: u64,
+        e3_id: String,
         #[serde(serialize_with = "serialize_as_hex")]
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
@@ -149,7 +150,7 @@ pub enum WebhookPayload {
         proof: Vec<u8>,
     },
     Failed {
-        e3_id: u64,
+        e3_id: String,
         error: String,
     },
 }
@@ -189,13 +190,29 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{ComputeRequest, WebhookPayload};
+    use crate::{ComputeDomain, ComputeRequest, WebhookPayload};
+
+    #[test]
+    fn compute_domain_preserves_ids_larger_than_u64() {
+        let domain = ComputeDomain::new(
+            1,
+            "0x1111111111111111111111111111111111111111",
+            "18446744073709551616",
+            &[0x22; 32],
+            &[0x33; 32],
+        )
+        .unwrap();
+
+        assert_eq!(domain.e3_id[23], 1);
+        assert!(domain.e3_id[..23].iter().all(|byte| *byte == 0));
+        assert!(domain.e3_id[24..].iter().all(|byte| *byte == 0));
+    }
 
     #[test]
     fn test_deserialize_compute_request() {
         let json = r#"
         {
-            "e3_id": 12345,
+            "e3_id": "12345",
             "chain_id": 31337,
             "interfold_address": "0x1111111111111111111111111111111111111111",
             "encryption_scheme_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -211,7 +228,7 @@ mod tests {
 
         let payload: ComputeRequest = serde_json::from_str(json).unwrap();
 
-        assert_eq!(payload.e3_id, Some(12345));
+        assert_eq!(payload.e3_id, Some("12345".to_string()));
         assert_eq!(payload.chain_id, 31337);
         assert_eq!(
             payload.interfold_address,
@@ -239,7 +256,7 @@ mod tests {
     fn test_deserialize_compute_request_no_prefix() {
         let json = r#"
         {
-            "e3_id": 12345,
+            "e3_id": "12345",
             "chain_id": 31337,
             "interfold_address": "0x1111111111111111111111111111111111111111",
             "encryption_scheme_id": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -255,7 +272,7 @@ mod tests {
 
         let payload: ComputeRequest = serde_json::from_str(json).unwrap();
 
-        assert_eq!(payload.e3_id, Some(12345));
+        assert_eq!(payload.e3_id, Some("12345".to_string()));
         assert_eq!(payload.encryption_scheme_id, vec![0x22; 32]);
         assert_eq!(payload.committee_public_key_hash, vec![0x33; 32]);
         assert_eq!(payload.params, hex::decode("12345ffa").unwrap());
@@ -277,7 +294,7 @@ mod tests {
     #[test]
     fn test_webhook_payload_serialization_completed() {
         let payload = WebhookPayload::Completed {
-            e3_id: 12345,
+            e3_id: "12345".to_string(),
             ciphertext: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
             ciphertext_commitment: vec![0x11; 32],
             proof: vec![0xde, 0xad, 0xbe, 0xef],
@@ -285,7 +302,7 @@ mod tests {
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
         let expected = format!(
-            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","ciphertext_commitment":"0x{}","proof":"0xdeadbeef"}}"#,
+            r#"{{"status":"completed","e3_id":"12345","ciphertext":"0x0123456789abcdef","ciphertext_commitment":"0x{}","proof":"0xdeadbeef"}}"#,
             "11".repeat(32)
         );
 
@@ -295,12 +312,12 @@ mod tests {
     #[test]
     fn test_webhook_payload_serialization_failed() {
         let payload = WebhookPayload::Failed {
-            e3_id: 12345,
+            e3_id: "12345".to_string(),
             error: "Computation failed".to_string(),
         };
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
-        let expected = r#"{"status":"failed","e3_id":12345,"error":"Computation failed"}"#;
+        let expected = r#"{"status":"failed","e3_id":"12345","error":"Computation failed"}"#;
 
         assert_eq!(json, expected);
     }
@@ -308,7 +325,7 @@ mod tests {
     #[test]
     fn test_webhook_deserialize_roundtrip() {
         let json = format!(
-            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0xabcdef","ciphertext_commitment":"0x{}","proof":"0x123456"}}"#,
+            r#"{{"status":"completed","e3_id":"12345","ciphertext":"0xabcdef","ciphertext_commitment":"0x{}","proof":"0x123456"}}"#,
             "22".repeat(32)
         );
         let payload: WebhookPayload = serde_json::from_str(&json).unwrap();
@@ -319,7 +336,7 @@ mod tests {
                 ciphertext_commitment,
                 proof,
             } => {
-                assert_eq!(e3_id, 12345);
+                assert_eq!(e3_id, "12345");
                 assert_eq!(ciphertext, vec![0xab, 0xcd, 0xef]);
                 assert_eq!(ciphertext_commitment, vec![0x22; 32]);
                 assert_eq!(proof, vec![0x12, 0x34, 0x56]);
@@ -335,6 +352,7 @@ mod tests {
 
         let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
         let request = value.as_object_mut().unwrap();
+        request.insert("e3_id".into(), "0".into());
         request.insert("chain_id".into(), 31337.into());
         request.insert(
             "interfold_address".into(),

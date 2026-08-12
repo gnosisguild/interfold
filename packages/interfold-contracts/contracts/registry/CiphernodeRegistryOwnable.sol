@@ -96,10 +96,13 @@ contract CiphernodeRegistryOwnable is
     uint8 public constant TREE_DEPTH = 20;
 
     /// @notice Maximum number of leaves the underlying LazyIMT can hold.
-    /// @dev Slots freed by {removeCiphernode} are NOT reused (`_update(0, index)` zeroes
-    ///      the slot but never decrements the leaf count), so {addCiphernode} reverts
-    ///      with {CiphernodeTreeExhausted} once `numberOfLeaves` reaches this cap.
+    /// @dev New slots cannot be allocated after the tree reaches this cap. Removed
+    ///      slots are reused before the registry allocates another leaf.
     uint256 public constant MAX_CIPHERNODE_LEAVES = uint256(1) << TREE_DEPTH;
+
+    /// @notice Lifetime insertion count at which operators must prepare a new tree generation.
+    uint256 public constant CIPHERNODE_TREE_WARNING_THRESHOLD =
+        (MAX_CIPHERNODE_LEAVES * 4) / 5;
 
     /// @notice Maximum serialized public-key candidate size.
     /// @dev Covers every currently supported BFV preset, including SecureThreshold8192.
@@ -528,15 +531,28 @@ contract CiphernodeRegistryOwnable is
             return;
         }
 
-        uint40 index = ciphernodes.numberOfLeaves;
-        // cap insertions before LazyIMT depth is exhausted. Slots
-        // freed by {removeCiphernode} are not reclaimed, so monotonic
-        // register/deregister churn would otherwise brick the registry.
-        require(
-            uint256(index) < MAX_CIPHERNODE_LEAVES,
-            CiphernodeTreeExhausted()
-        );
-        ciphernodes._insert(uint160(node));
+        uint40 index;
+        uint256 freeCount = _freeCiphernodeTreeIndices.length;
+        if (freeCount == 0) {
+            index = ciphernodes.numberOfLeaves;
+            require(
+                uint256(index) < MAX_CIPHERNODE_LEAVES,
+                CiphernodeTreeExhausted()
+            );
+            ciphernodes._insert(uint160(node));
+            if (
+                ciphernodes.numberOfLeaves == CIPHERNODE_TREE_WARNING_THRESHOLD
+            ) {
+                emit CiphernodeTreeCapacityWarning(
+                    ciphernodes.numberOfLeaves,
+                    MAX_CIPHERNODE_LEAVES
+                );
+            }
+        } else {
+            index = _freeCiphernodeTreeIndices[freeCount - 1];
+            _freeCiphernodeTreeIndices.pop();
+            ciphernodes._update(uint160(node), index);
+        }
         ciphernodeEnabled[node] = true;
         ciphernodeTreeIndex[node] = index;
         numCiphernodes++;
@@ -554,6 +570,7 @@ contract CiphernodeRegistryOwnable is
 
         uint40 index = ciphernodeTreeIndex[node];
         ciphernodes._update(0, index);
+        _freeCiphernodeTreeIndices.push(index);
         ciphernodeEnabled[node] = false;
         numCiphernodes--;
         emit CiphernodeRemoved(
@@ -1392,7 +1409,10 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     uint256 public unreleasedCommitteeCount;
 
+    /// @dev Removed tree slots that can be assigned to future registrations.
+    uint40[] private _freeCiphernodeTreeIndices;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[45] private __gap;
+    uint256[44] private __gap;
 }

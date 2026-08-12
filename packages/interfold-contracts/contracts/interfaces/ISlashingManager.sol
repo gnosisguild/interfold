@@ -244,6 +244,7 @@ interface ISlashingManager {
 
     /// @notice The objective E3 accusation reporting period has ended.
     error SlashSubmissionDeadlinePassed();
+    error AccusationWindowOpen(uint256 e3Id, uint256 closesAt);
 
     /// @notice Thrown when an operator action is gated by any unresolved slash proposal
     error OperatorUnderSlash();

@@ -21,6 +21,14 @@ interface IInterfold {
     error ParamSetAlreadyRegistered(uint8 paramSet);
     /// @notice A verifier does not match the active circuit threshold.
     error VerifierThresholdMismatch(uint256 actual, uint256 expected);
+    /// @notice The fee token changed after the caller obtained a quote.
+    error FeeTokenChanged(IERC20 expected, IERC20 actual);
+    /// @notice The current quote is greater than the caller's limit.
+    error FeeExceedsMaximum(uint256 fee, uint256 maximum);
+    /// @notice The active circuit configuration changed after quoting.
+    error CryptoConfigChanged(bytes32 expected, bytes32 actual);
+    /// @notice The controller-local E3 ID range is exhausted.
+    error E3IdSpaceExhausted();
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -125,8 +133,8 @@ interface IInterfold {
     /// @notice This event MUST be emitted when an Encrypted Execution Environment (E3) is successfully requested.
     /// @param e3Id ID of the E3.
     /// @param e3 Details of the E3.
-    /// @param e3Program Address of the Computation module selected.
-    event E3Requested(uint256 e3Id, E3 e3, IE3Program indexed e3Program);
+    /// @param cryptoConfigId Circuit configuration selected for the E3.
+    event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
 
     /// @notice This event MUST be emitted when an input to an Encrypted Execution Environment (E3) is
     /// successfully published.
@@ -245,10 +253,6 @@ interface IInterfold {
     /// @notice The event MUST be emitted any time an encryption scheme is enabled.
     /// @param encryptionSchemeId The ID of the encryption scheme that was enabled.
     event EncryptionSchemeEnabled(bytes32 encryptionSchemeId);
-
-    /// @notice This event MUST be emitted any time an encryption scheme is disabled.
-    /// @param encryptionSchemeId The ID of the encryption scheme that was disabled.
-    event EncryptionSchemeDisabled(bytes32 encryptionSchemeId);
 
     /// @notice This event MUST be emitted any time a E3 Program is registered.
     /// @param e3Program The address of the E3 Program.
@@ -557,6 +561,9 @@ interface IInterfold {
     /// @param paramSet The BFV encryption parameter set to use.
     /// @param computeProviderParams The ABI encoded compute provider parameters.
     /// @param customParams Arbitrary ABI-encoded application-defined parameters.
+    /// @param expectedFeeToken Fee token accepted by the requester.
+    /// @param expectedCryptoConfigId Circuit configuration accepted by the requester.
+    /// @param maxFee Maximum fee accepted for this request.
     struct E3RequestParams {
         CommitteeSize committeeSize;
         uint256[2] inputWindow;
@@ -564,6 +571,9 @@ interface IInterfold {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
+        IERC20 expectedFeeToken;
+        bytes32 expectedCryptoConfigId;
+        uint256 maxFee;
     }
 
     ////////////////////////////////////////////////////////////
@@ -677,10 +687,8 @@ interface IInterfold {
         bytes32 encryptionSchemeId
     ) external view returns (address);
 
-    /// @notice Disables a previously enabled encryption scheme.
-    /// @dev This function MUST revert if the encryption scheme is not currently enabled.
-    /// @param encryptionSchemeId The unique identifier for the encryption scheme to disable.
-    function disableEncryptionScheme(bytes32 encryptionSchemeId) external;
+    /// @notice Returns the circuit configuration accepted by new requests.
+    function activeCryptoConfigId() external pure returns (bytes32);
 
     /// @notice Registers ABI-encoded BFV parameters for a param set enum variant.
     /// @param paramSet The param set index to register.

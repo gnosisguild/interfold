@@ -77,7 +77,7 @@ contract InterfoldTicketToken is
     ///         funds are still awaiting payout by the current registry.
     error OutstandingPayableBalance(uint256 amount);
 
-    /// @notice Registry migration requires every live ticket to be burned first.
+    /// @notice Registry replacement requires every live ticket to be burned first.
     error OutstandingTicketSupply(uint256 amount);
 
     /// @notice Minting and burning are frozen after a registry change is requested.

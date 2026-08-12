@@ -57,6 +57,7 @@ import type { InterfoldTicketToken } from "../../types/contracts/token/Interfold
 import type { InterfoldToken } from "../../types/contracts/token/InterfoldToken";
 import { ethers, ignition, networkHelpers } from "./connection";
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_ONE,
   BFV_PARAMS_DEFAULT,
   COMMITTEE_SIZE_MINIMUM,
@@ -595,6 +596,9 @@ export async function deployInterfoldSystem(
       ["address"],
       ["0x1234567890123456789012345678901234567890"],
     ),
+    expectedFeeToken: await usdcToken.getAddress(),
+    expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+    maxFee: ethers.MaxUint256,
   };
 
   return {

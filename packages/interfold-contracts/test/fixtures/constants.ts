@@ -48,6 +48,18 @@ export const BFV_PARAMS_DEFAULT = abiCoder.encode(
   ],
 );
 
+/** Circuit, BFV parameters, and verifier generation used by this build. */
+export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
+  abiCoder.encode(
+    ["bytes32", "bytes32", "bytes32"],
+    [
+      ENCRYPTION_SCHEME_ID,
+      ethers.keccak256(BFV_PARAMS_DEFAULT),
+      ethers.id("interfold-bfv-v1"),
+    ],
+  ),
+);
+
 // ── Timeout configs ──────────────────────────────────────────────────────────
 /** 1h / 1h / 1h — used by short-lifecycle tests. */
 export const DEFAULT_TIMEOUT_CONFIG = {

@@ -18,6 +18,7 @@ import {
   MockUSDC__factory as MockUSDCFactory,
 } from "../../types";
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   currentPricingConfig,
   deployInterfoldSystem,
   deploySlashingManager,
@@ -41,6 +42,7 @@ const { loadFixture, mine, time } = networkHelpers;
  * - CiphernodeRegistryOwnable.sol (committee management)
  */
 describe("E3 Integration - Refund/Timeout Mechanism", function () {
+  let firstE3Id: bigint;
   // Time constants
   const ONE_HOUR = 60 * 60;
   const ONE_DAY = 24 * ONE_HOUR;
@@ -104,6 +106,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     } = sys;
 
     const interfoldAddress = await interfold.getAddress();
+    firstE3Id = await interfold.nexte3Id();
     const e3RefundManagerAddress = await e3RefundManager.getAddress();
 
     // Slash policy for Lane A proof routing E2E tests
@@ -131,7 +134,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       signer: Signer = requester,
       committeeSize: number = 0,
       requestToken: MockUSDC | MockFeeOnTransferToken = usdcToken,
-    ): Promise<{ e3Id: number }> => {
+    ): Promise<{ e3Id: bigint }> => {
       // Ticket voting power is snapshotted at request timestamp - 1. EDR may
       // mine consecutive setup transactions with the same timestamp, so move
       // the request clock forward before taking that conservative snapshot.
@@ -151,14 +154,18 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
+        expectedFeeToken: await requestToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
       };
 
+      const e3Id = await interfold.nexte3Id();
       const fee = await interfold.getE3Quote(requestParams);
       await requestToken.connect(signer).approve(interfoldAddress, fee);
       await interfold.connect(signer).request(requestParams);
       await mine(1);
 
-      return { e3Id: 0 };
+      return { e3Id };
     };
 
     const setupOperator = async (operator: Signer) => {
@@ -212,22 +219,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     const finalizeReadyCommittee = async () => {
       await makeReadyRequest();
       for (const operator of [operator1, operator2, operator3]) {
-        await registry.connect(operator).submitTicket(0, 1);
+        await registry.connect(operator).submitTicket(firstE3Id, 1);
       }
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
     };
 
     const finalizeAndPublishCommittee = async () => {
       for (const operator of [operator1, operator2, operator3]) {
-        await registry.connect(operator).submitTicket(0, 1);
+        await registry.connect(operator).submitTicket(firstE3Id, 1);
       }
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -291,11 +298,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       // Check that E3 lifecycle was initialized
-      const stage = await interfold.getE3Stage(0);
+      const stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(1); // E3Stage.Requested
 
       // Check requester is tracked
-      const storedRequester = await interfold.getRequester(0);
+      const storedRequester = await interfold.getRequester(firstE3Id);
       expect(storedRequester).to.equal(await requester.getAddress());
     });
 
@@ -315,17 +322,17 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         bondingRegistry
           .connect(computeProvider)
-          .setCommitteeObligation(0, operatorAddress, false),
+          .setCommitteeObligation(firstE3Id, operatorAddress, false),
       ).to.be.revertedWithCustomError(bondingRegistry, "Unauthorized");
-      await expect(registry.releaseCommittee(0))
+      await expect(registry.releaseCommittee(firstE3Id))
         .to.be.revertedWithCustomError(registry, "E3NotTerminal")
-        .withArgs(0);
+        .withArgs(firstE3Id);
 
       await bondingRegistry
         .connect(operator1)
         .deregisterOperatorFor(operatorAddress);
-      expect(await registry.isCommitteeMemberActive(0, operatorAddress)).to.be
-        .true;
+      expect(await registry.isCommitteeMemberActive(firstE3Id, operatorAddress))
+        .to.be.true;
 
       await time.increase((await bondingRegistry.exitDelay()) + 1n);
       await expect(
@@ -337,10 +344,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         "OperatorInActiveCommittee",
       );
 
-      await interfold.markE3Failed(0);
-      await expect(registry.releaseCommittee(0))
+      await interfold.markE3Failed(firstE3Id);
+      await expect(registry.releaseCommittee(firstE3Id))
         .to.emit(registry, "CommitteeActivationChanged")
-        .withArgs(0, false);
+        .withArgs(firstE3Id, false);
 
       await bondingRegistry
         .connect(computeProvider)
@@ -374,18 +381,18 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await loadFixture(setup);
       await makeReadyRequest();
 
-      await expect(interfold.connect(owner).cancelE3(0))
+      await expect(interfold.connect(owner).cancelE3(firstE3Id))
         .to.be.revertedWithCustomError(interfold, "NotRequester")
-        .withArgs(0, await owner.getAddress());
+        .withArgs(firstE3Id, await owner.getAddress());
 
-      await expect(interfold.connect(requester).cancelE3(0))
+      await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.emit(interfold, "E3Failed")
-        .withArgs(0, 1, 9);
-      expect(await interfold.getFailureReason(0)).to.equal(9);
+        .withArgs(firstE3Id, 1, 9);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(9);
 
-      await expect(interfold.connect(requester).cancelE3(0))
+      await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
-        .withArgs(0, 6);
+        .withArgs(firstE3Id, 6);
     });
 
     it("pays only completed milestones when the requester cancels", async function () {
@@ -407,11 +414,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           await ctx.makeReadyRequest();
           await ctx.finalizeAndPublishCommittee();
           if (scenario.stage === 4) {
-            const e3 = await ctx.interfold.getE3(0);
+            const e3 = await ctx.interfold.getE3(firstE3Id);
             await time.increaseTo(e3.inputWindow[1]);
             const ciphertext = "0x" + "ab".repeat(100);
             await ctx.interfold.publishCiphertextOutput(
-              0,
+              firstE3Id,
               ciphertext,
               ethers.keccak256(ciphertext),
               "0x1337",
@@ -419,11 +426,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           }
         }
 
-        expect(await ctx.interfold.getE3Stage(0)).to.equal(scenario.stage);
-        await ctx.interfold.connect(ctx.requester).cancelE3(0);
-        await ctx.interfold.processE3Failure(0);
+        expect(await ctx.interfold.getE3Stage(firstE3Id)).to.equal(
+          scenario.stage,
+        );
+        await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
+        await ctx.interfold.processE3Failure(firstE3Id);
 
-        const distribution = await ctx.e3RefundManager.getRefundDistribution(0);
+        const distribution =
+          await ctx.e3RefundManager.getRefundDistribution(firstE3Id);
         expect(distribution.requesterAmount).to.equal(
           (distribution.originalPayment * scenario.requesterBps) / 10000n,
         );
@@ -441,7 +451,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         );
         await ctx.e3RefundManager
           .connect(ctx.requester)
-          .claimRequesterRefund(0);
+          .claimRequesterRefund(firstE3Id);
         const after = await ctx.usdcToken.balanceOf(
           await ctx.requester.getAddress(),
         );
@@ -460,7 +470,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const registrySigner = await ethers.getSigner(registryAddress);
 
       for (const reason of [0, 9, 13, 255]) {
-        await expect(interfold.connect(registrySigner).onE3Failed(0, reason))
+        await expect(
+          interfold.connect(registrySigner).onE3Failed(firstE3Id, reason),
+        )
           .to.be.revertedWithCustomError(interfold, "InvalidFailureReason")
           .withArgs(reason);
       }
@@ -501,16 +513,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
-      const deadlines = await interfold.getDeadlines(0);
+      const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       expect(
         await e3RefundManager.pendingTreasuryClaim(
@@ -544,7 +556,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const originalTreasury = await treasury.getAddress();
       const rotatedTreasury = await computeProvider.getAddress();
-      const snapshot = await e3RefundManager.getE3PolicySnapshot(0);
+      const snapshot = await e3RefundManager.getE3PolicySnapshot(firstE3Id);
       expect(snapshot.initialized).to.equal(true);
       expect(snapshot.version).to.equal(1);
       expect(snapshot.treasury).to.equal(originalTreasury);
@@ -563,25 +575,26 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
       await e3RefundManager.connect(owner).setTreasury(rotatedTreasury);
 
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
-      const deadlines = await interfold.getDeadlines(0);
+      const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.honestNodeAmount).to.equal(
         (distribution.originalPayment * 4000n) / 10000n,
       );
@@ -598,7 +611,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         ),
       ).to.equal(0);
 
-      const unchanged = await e3RefundManager.getE3PolicySnapshot(0);
+      const unchanged = await e3RefundManager.getE3PolicySnapshot(firstE3Id);
       expect(unchanged.version).to.equal(1);
       expect(unchanged.treasury).to.equal(originalTreasury);
       expect(unchanged.allocation.committeeFormationBps).to.equal(1000);
@@ -655,37 +668,37 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       // Verify stage is Requested
-      let stage = await interfold.getE3Stage(0);
+      let stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(1); // E3Stage.Requested
 
       // Submit tickets for sortition
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
 
       // Fast forward past submission window
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
 
       // Finalize committee
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       // Publish committee (this triggers onCommitteePublished -> onCommitteeFormed)
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
 
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
       // Verify stage transitioned to KeyPublished (after publishCommittee which calls onKeyPublished)
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(3); // E3Stage.KeyPublished
 
       // Verify deadlines were set
-      const deadlines = await interfold.getDeadlines(0);
+      const deadlines = await interfold.getDeadlines(firstE3Id);
       expect(deadlines.dkgDeadline).to.be.gt(0);
     });
 
@@ -708,11 +721,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       // Complete sortition process
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       // Publish committee and expect CommitteeFormed event
       const publicKey = "0x1234567890abcdef1234567890abcdef";
@@ -720,14 +733,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await expect(
         registry.publishCommittee(
-          0,
+          firstE3Id,
           pkCommitment,
           encodeMockDkgProof(pkCommitment),
           "0x01",
         ),
       )
         .to.emit(interfold, "CommitteeFormed")
-        .withArgs(0);
+        .withArgs(firstE3Id);
     });
 
     it("rejects committee publication after the DKG deadline", async function () {
@@ -737,12 +750,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
-      const { dkgDeadline } = await interfold.getDeadlines(0);
+      const { dkgDeadline } = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(dkgDeadline + 1n);
 
       await expect(
         registry.publishCommittee(
-          0,
+          firstE3Id,
           pkCommitment,
           encodeMockDkgProof(pkCommitment),
           "0x01",
@@ -791,7 +804,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Calling processE3Failure with a placeholder lifecycle should revert
       // (it will try to call getE3Stage on an EOA which will fail)
-      await expect(newInterfold.processE3Failure(0)).to.be.revert(ethers);
+      await expect(newInterfold.processE3Failure(firstE3Id)).to.be.revert(
+        ethers,
+      );
     });
 
     it("reverts if E3 not in failed state", async function () {
@@ -811,10 +826,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       // E3 is in Requested state, not Failed
-      await expect(interfold.processE3Failure(0)).to.be.revertedWithCustomError(
-        interfold,
-        "E3NotFailed",
-      );
+      await expect(
+        interfold.processE3Failure(firstE3Id),
+      ).to.be.revertedWithCustomError(interfold, "E3NotFailed");
     });
 
     it("processes failure and calculates refund for committee formation timeout", async function () {
@@ -838,18 +852,19 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
 
       // Mark E3 as failed
-      await interfold.markE3Failed(0);
+      await interfold.markE3Failed(firstE3Id);
 
-      const stage = await interfold.getE3Stage(0);
+      const stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // E3Stage.Failed
 
       // Process the failure
-      await expect(interfold.processE3Failure(0)).to.emit(
+      await expect(interfold.processE3Failure(firstE3Id)).to.emit(
         interfold,
         "E3FailureProcessed",
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.calculated).to.be.true;
       expect(distribution.requesterAmount).to.equal(
         distribution.originalPayment,
@@ -868,13 +883,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       } = await loadFixture(setup);
 
       await makeReadyRequest();
-      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
 
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
-      await interfold.processE3Failure(0);
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      await interfold.processE3Failure(firstE3Id);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.honestNodeAmount).to.equal(0);
     });
 
@@ -885,23 +901,25 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         wireSlashingManager: true,
       });
       const registry = sys.mockCiphernodeRegistry!;
+      const e3Id = await sys.interfold.nexte3Id();
       await makeRequest(sys.interfold, sys.usdcToken, sys.request);
-      const payment = await sys.interfold.e3Payments(0);
+      const payment = await sys.interfold.e3Payments(e3Id);
       const registryAddress = await registry.getAddress();
 
       await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
       await networkHelpers.impersonateAccount(registryAddress);
       await sys.interfold
         .connect(await ethers.getSigner(registryAddress))
-        .onE3Failed(0, 8);
+        .onE3Failed(e3Id, 8);
       await networkHelpers.stopImpersonatingAccount(registryAddress);
       await registry.setRevertActiveCommitteeNodes(true);
 
       await expect(
-        sys.interfold.processE3Failure(0),
+        sys.interfold.processE3Failure(e3Id),
       ).to.be.revertedWithCustomError(registry, "ActiveCommitteeLookupFailed");
-      expect(await sys.interfold.e3Payments(0)).to.equal(payment);
-      const distribution = await sys.e3RefundManager.getRefundDistribution(0);
+      expect(await sys.interfold.e3Payments(e3Id)).to.equal(payment);
+      const distribution =
+        await sys.e3RefundManager.getRefundDistribution(e3Id);
       expect(distribution.calculated).to.equal(false);
     });
 
@@ -931,11 +949,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Fast forward and fail E3
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       // Claim refund
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
 
       const balanceAfter = await usdcToken.balanceOf(
         await requester.getAddress(),
@@ -973,27 +991,30 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest(requester, 0, token);
       await makeRequest(requester, 0, token);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 2);
-      await interfold.markE3Failed(0);
-      await interfold.markE3Failed(1);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.markE3Failed(firstE3Id + 1n);
 
-      const firstPayment = await interfold.e3Payments(0);
+      const firstPayment = await interfold.e3Payments(firstE3Id);
       const senderFee = firstPayment / 100n;
       await token.setFeeBps(100);
-      await expect(interfold.processE3Failure(0))
+      await expect(interfold.processE3Failure(firstE3Id))
         .to.be.revertedWithCustomError(interfold, "AssetTransferMismatch")
         .withArgs(tokenAddress, firstPayment, firstPayment + senderFee);
-      expect(await interfold.e3Payments(0)).to.equal(firstPayment);
+      expect(await interfold.e3Payments(firstE3Id)).to.equal(firstPayment);
 
       await token.setFeeBps(0);
-      await interfold.processE3Failure(0);
-      await interfold.processE3Failure(1);
+      await interfold.processE3Failure(firstE3Id);
+      await interfold.processE3Failure(firstE3Id + 1n);
 
-      const firstDistribution = await e3RefundManager.getRefundDistribution(0);
+      const firstDistribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const managerAddress = await e3RefundManager.getAddress();
       const managerBalance = await token.balanceOf(managerAddress);
       const refundFee = firstDistribution.requesterAmount / 100n;
       await token.setFeeBps(100);
-      await expect(e3RefundManager.connect(requester).claimRequesterRefund(0))
+      await expect(
+        e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id),
+      )
         .to.be.revertedWithCustomError(e3RefundManager, "AssetTransferMismatch")
         .withArgs(
           tokenAddress,
@@ -1003,7 +1024,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(await token.balanceOf(managerAddress)).to.equal(managerBalance);
 
       await token.setFeeBps(0);
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
     });
 
     it("reverts if trying to process failure twice", async function () {
@@ -1023,14 +1044,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       // Second call should fail - payment already cleared
-      await expect(interfold.processE3Failure(0)).to.be.revertedWithCustomError(
-        interfold,
-        "NoPaymentToRefund",
-      );
+      await expect(
+        interfold.processE3Failure(firstE3Id),
+      ).to.be.revertedWithCustomError(interfold, "NoPaymentToRefund");
     });
 
     it("reverts if requester tries to claim refund twice", async function () {
@@ -1052,15 +1072,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       // First claim succeeds
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
 
       // Second claim should fail
       await expect(
-        e3RefundManager.connect(requester).claimRequesterRefund(0),
+        e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id),
       ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
     });
 
@@ -1083,7 +1103,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Try to claim before failure is processed
       await expect(
-        e3RefundManager.connect(requester).claimRequesterRefund(0),
+        e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id),
       ).to.be.revertedWithCustomError(e3RefundManager, "RefundNotCalculated");
     });
   });
@@ -1123,31 +1143,32 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
       // 1. Request E3, form committee, publish key
       await makeRequest(requester, 0);
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
       // 2. Wait past compute deadline → mark as failed
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       const computeDeadline =
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
-      await interfold.markE3Failed(0);
+      await interfold.markE3Failed(firstE3Id);
 
       // 3. Process failure → distribution calculated, funds transferred to refund manager
-      await interfold.processE3Failure(0);
-      const distributionBefore = await e3RefundManager.getRefundDistribution(0);
+      await interfold.processE3Failure(firstE3Id);
+      const distributionBefore =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distributionBefore.calculated).to.be.true;
 
       // Record refund manager USDC balance before slash routing
@@ -1163,13 +1184,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       //    underlying through Interfold into E3RefundManager escrow.
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
 
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
@@ -1190,7 +1211,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 6. Base refunds stay denominated in the E3 fee token; the slash is a
       //    separate claim in its actual underlying token.
-      const distributionAfter = await e3RefundManager.getRefundDistribution(0);
+      const distributionAfter =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distributionAfter.requesterAmount).to.equal(
         distributionBefore.requesterAmount,
       );
@@ -1199,7 +1221,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       const usdcAddress = await usdcToken.getAddress();
       const requesterSlashClaim = await e3RefundManager.pendingSlashedClaim(
-        0,
+        firstE3Id,
         usdcAddress,
         await requester.getAddress(),
       );
@@ -1207,7 +1229,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distributionAfter.totalSlashed).to.equal(actualSlashedAmount);
 
       const honestSlashClaims = await e3RefundManager.pendingSlashedClaim(
-        0,
+        firstE3Id,
         usdcAddress,
         await computeProvider.getAddress(),
       );
@@ -1215,7 +1237,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       for (const node of [operator1, operator2, operator3]) {
         expect(
           await e3RefundManager.pendingSlashedClaim(
-            0,
+            firstE3Id,
             usdcAddress,
             await node.getAddress(),
           ),
@@ -1226,7 +1248,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const requesterBalanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       expect(
         await usdcToken.balanceOf(await e3RefundManager.getAddress()),
       ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
@@ -1271,26 +1293,26 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest(requester, 0);
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         ethers.keccak256(publicKey),
         encodeMockDkgProof(ethers.keccak256(publicKey)),
         "0x01",
       );
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       const computeDeadline =
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       const blacklistToken = usdcToken as unknown as MockBlacklistUSDC;
       const refundManagerAddress = await e3RefundManager.getAddress();
@@ -1298,17 +1320,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await expect(
-        slashingManager.proposeSlash(0, await operator1.getAddress(), proof),
+        slashingManager.proposeSlash(
+          firstE3Id,
+          await operator1.getAddress(),
+          proof,
+        ),
       ).to.emit(slashingManager, "SlashRoutePending");
 
       const pending = await slashingManager.getPendingSlashRoute(0);
       expect(pending.pending).to.equal(true);
-      expect(pending.e3Id).to.equal(0);
+      expect(pending.e3Id).to.equal(firstE3Id);
       expect(pending.token).to.equal(await usdcToken.getAddress());
       expect(pending.amount).to.be.gt(0);
       expect(await bondingRegistry.reservedSlashedTicketBalance()).to.equal(
@@ -1322,7 +1348,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         oldManagerAddress,
         0,
       );
-      expect(reservation.e3Id).to.equal(0);
+      expect(reservation.e3Id).to.equal(firstE3Id);
       expect(reservation.refundManager).to.equal(refundManagerAddress);
       expect(reservation.amount).to.equal(pending.amount);
 
@@ -1371,9 +1397,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await usdcToken.balanceOf(refundManagerAddress);
       await expect(slashingManager.connect(requester).retrySlashRoute(0))
         .to.emit(slashingManager, "SlashRouteCompleted")
-        .withArgs(0, 0, await usdcToken.getAddress(), pending.amount)
+        .withArgs(0, firstE3Id, await usdcToken.getAddress(), pending.amount)
         .and.to.emit(interfold, "SlashedFundsEscrowed")
-        .withArgs(0, await usdcToken.getAddress(), pending.amount);
+        .withArgs(firstE3Id, await usdcToken.getAddress(), pending.amount);
 
       expect(
         (await usdcToken.balanceOf(refundManagerAddress)) - refundBalanceBefore,
@@ -1386,7 +1412,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(
         await bondingRegistry.pendingSlashRouteCount(oldManagerAddress),
       ).to.equal(0);
-      await slashingManager.connect(owner).closeE3(0);
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+      await expect(slashingManager.connect(owner).closeE3(firstE3Id))
+        .to.be.revertedWithCustomError(slashingManager, "AccusationWindowOpen")
+        .withArgs(firstE3Id, submissionDeadline);
+      await time.increaseTo(submissionDeadline + 1n);
+      await slashingManager.connect(owner).closeE3(firstE3Id);
       await bondingRegistry
         .connect(owner)
         .revokeSlashingManager(oldManagerAddress);
@@ -1440,14 +1472,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest(requester, 0, feeToken);
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         ethers.keccak256(publicKey),
         encodeMockDkgProof(ethers.keccak256(publicKey)),
         "0x01",
@@ -1455,12 +1487,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
@@ -1469,28 +1501,29 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const feeTokenAddress = await feeToken.getAddress();
       const actualSlash = ethers.parseUnits("50", 6);
       expect(
-        await e3RefundManager.pendingSlashedFunds(0, underlyingAddress),
+        await e3RefundManager.pendingSlashedFunds(firstE3Id, underlyingAddress),
       ).to.equal(actualSlash);
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       // Fee settlement cannot consume or relabel the ticket underlying.
       // Anyone can settle its recorded proposal explicitly.
       expect(
-        await e3RefundManager.pendingSlashedFunds(0, underlyingAddress),
+        await e3RefundManager.pendingSlashedFunds(firstE3Id, underlyingAddress),
       ).to.equal(actualSlash);
-      await e3RefundManager.connect(operator3).settleSlashedFunds(0, 0);
+      await e3RefundManager.connect(operator3).settleSlashedFunds(firstE3Id, 0);
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.feeToken).to.equal(feeTokenAddress);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           feeTokenAddress,
           await requester.getAddress(),
         ),
@@ -1498,21 +1531,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const bondOwnerAddress = await computeProvider.getAddress();
       const totalSlashCredits = await e3RefundManager.pendingSlashedClaim(
-        0,
+        firstE3Id,
         underlyingAddress,
         bondOwnerAddress,
       );
       expect(totalSlashCredits).to.equal(actualSlash);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           underlyingAddress,
           await requester.getAddress(),
         ),
       ).to.equal(0);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           underlyingAddress,
           await operator1.getAddress(),
         ),
@@ -1520,7 +1553,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(totalSlashCredits).to.be.gt(0);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           underlyingAddress,
           await operator2.getAddress(),
         ),
@@ -1533,10 +1566,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const feeBefore = await feeToken.balanceOf(requesterAddress);
       const underlyingBefore =
         await ticketUnderlying.balanceOf(bondOwnerAddress);
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       await e3RefundManager
         .connect(computeProvider)
-        .claimSlashedFunds(0, underlyingAddress);
+        .claimSlashedFunds(firstE3Id, underlyingAddress);
 
       expect((await feeToken.balanceOf(requesterAddress)) - feeBefore).to.equal(
         distribution.requesterAmount,
@@ -1583,16 +1616,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Request E3, form committee, publish key
       await makeRequest(undefined, 0);
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
@@ -1604,48 +1637,50 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .proposeBondOwner(operator2Address, await owner.getAddress());
       await bondingRegistry.connect(owner).acceptBondOwner(operator2Address);
       expect(
-        await e3RefundManager.rewardRecipient(0, operator2Address),
+        await e3RefundManager.rewardRecipient(firstE3Id, operator2Address),
       ).to.equal(await computeProvider.getAddress());
 
       // 2. Fail via compute timeout
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       const computeDeadline =
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       // 3. Record the base distribution before slash.
-      const distributionBefore = await e3RefundManager.getRefundDistribution(0);
+      const distributionBefore =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const honestNodeAmountBefore = distributionBefore.honestNodeAmount;
 
       // 4. Slash operator1 — this routes funds into the refund pool
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.honestNodeCount).to.be.gt(0);
       expect(distribution.honestNodeAmount).to.equal(honestNodeAmountBefore);
       const usdcAddress = await usdcToken.getAddress();
       const bondOwnerAddress = await computeProvider.getAddress();
       const ownerSlashClaim = await e3RefundManager.pendingSlashedClaim(
-        0,
+        firstE3Id,
         usdcAddress,
         bondOwnerAddress,
       );
       expect(ownerSlashClaim).to.be.gt(0);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           usdcAddress,
           await operator1.getAddress(),
         ),
@@ -1656,14 +1691,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         e3RefundManager
           .connect(operator2)
-          .claimHonestNodeReward(0, await operator2.getAddress()),
+          .claimHonestNodeReward(firstE3Id, await operator2.getAddress()),
       ).to.be.revertedWithCustomError(e3RefundManager, "Unauthorized");
       await e3RefundManager
         .connect(computeProvider)
-        .claimHonestNodeReward(0, await operator2.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
       await e3RefundManager
         .connect(computeProvider)
-        .claimSlashedFunds(0, usdcAddress);
+        .claimSlashedFunds(firstE3Id, usdcAddress);
       const ownerBalanceAfter = await usdcToken.balanceOf(bondOwnerAddress);
 
       const perNodeAmount =
@@ -1705,21 +1740,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
       await finalizeAndPublishCommittee();
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
@@ -1729,16 +1764,20 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const operator2Recipient = await treasury.getAddress();
       const operator3Recipient = await computeProvider.getAddress();
       expect(
-        await e3RefundManager.pendingSlashedClaim(0, token, targetRecipient),
+        await e3RefundManager.pendingSlashedClaim(
+          firstE3Id,
+          token,
+          targetRecipient,
+        ),
       ).to.equal(0);
       const recipientClaims =
         (await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           token,
           operator2Recipient,
         )) +
         (await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           token,
           operator3Recipient,
         ));
@@ -1746,7 +1785,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await e3RefundManager
         .connect(requester)
-        .claimHonestNodeReward(0, await operator1.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator1.getAddress());
     });
 
     it("holds an accused member's base reward and reallocates it after expulsion", async function () {
@@ -1801,32 +1840,32 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       const unrelatedProof = await signAndEncodeAttestation(
         [operator1, operator3],
-        0,
+        firstE3Id,
         await operator2.getAddress(),
         await slashingManager.getAddress(),
         1,
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator2.getAddress(),
         unrelatedProof,
       );
@@ -1834,17 +1873,18 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         e3RefundManager
           .connect(requester)
-          .claimHonestNodeReward(0, await operator1.getAddress()),
+          .claimHonestNodeReward(firstE3Id, await operator1.getAddress()),
       ).to.be.revertedWithCustomError(
         e3RefundManager,
         "RewardPendingExpulsion",
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const perNode = distribution.perNodeAmount;
       await e3RefundManager
         .connect(treasury)
-        .claimHonestNodeReward(0, await operator2.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
       const treasuryBefore = await usdcToken.balanceOf(
         await treasury.getAddress(),
       );
@@ -1854,11 +1894,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         e3RefundManager
           .connect(requester)
-          .claimHonestNodeReward(0, await operator1.getAddress()),
+          .claimHonestNodeReward(firstE3Id, await operator1.getAddress()),
       ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
       await e3RefundManager
         .connect(treasury)
-        .claimHonestNodeReward(0, await operator2.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
       const treasuryTopUp =
         (await usdcToken.balanceOf(await treasury.getAddress())) -
         treasuryBefore;
@@ -1870,19 +1910,19 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const token = await usdcToken.getAddress();
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           token,
           await requester.getAddress(),
         ),
       ).to.equal(0);
       const honestSlashClaims =
         (await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           token,
           await treasury.getAddress(),
         )) +
         (await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           token,
           await computeProvider.getAddress(),
         ));
@@ -1906,10 +1946,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeReadyRequest();
       await finalizeAndPublishCommittee();
 
-      const deadlines = await interfold.getDeadlines(0);
+      const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
       const managerAddress = await slashingManager.getAddress();
       await networkHelpers.impersonateAccount(managerAddress);
@@ -1917,26 +1957,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const manager = await ethers.getSigner(managerAddress);
       await e3RefundManager
         .connect(manager)
-        .openExpulsionProposal(0, 99, await operator1.getAddress());
+        .openExpulsionProposal(firstE3Id, 99, await operator1.getAddress());
       await e3RefundManager
         .connect(manager)
-        .resolveExpulsionProposal(0, 99, true);
+        .resolveExpulsionProposal(firstE3Id, 99, true);
       await networkHelpers.stopImpersonatingAccount(managerAddress);
 
       await expect(
         e3RefundManager
           .connect(computeProvider)
-          .claimHonestNodeReward(0, await operator1.getAddress()),
+          .claimHonestNodeReward(firstE3Id, await operator1.getAddress()),
       ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const balanceBefore = await usdcToken.balanceOf(computeProvider);
       await e3RefundManager
         .connect(computeProvider)
-        .claimHonestNodeReward(0, await operator2.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
       await e3RefundManager
         .connect(computeProvider)
-        .claimHonestNodeReward(0, await operator3.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator3.getAddress());
       expect(
         (await usdcToken.balanceOf(computeProvider)) - balanceBefore,
       ).to.equal(distribution.perNodeAmount * 3n);
@@ -1980,46 +2021,53 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
       await slashingManager.connect(operator1).fileAppeal(0, "not responsible");
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
       const ciphertext = "0x" + "ab".repeat(100);
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertext,
         ethers.keccak256(ciphertext),
         "0x1337",
       );
       await interfold.publishPlaintextOutput(
-        0,
+        firstE3Id,
         "0x" + "cd".repeat(100),
         "0x1337",
       );
 
       const targetRecipient = await requester.getAddress();
-      expect(await interfold.pendingReward(0, targetRecipient)).to.equal(0);
       expect(
-        await e3RefundManager.pendingHeldSuccessReward(0, targetRecipient),
+        await interfold.pendingReward(firstE3Id, targetRecipient),
+      ).to.equal(0);
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          targetRecipient,
+        ),
       ).to.equal(0);
 
       await slashingManager.connect(owner).resolveAppeal(0, true, "cleared");
       const released = await e3RefundManager.pendingHeldSuccessReward(
-        0,
+        firstE3Id,
         targetRecipient,
       );
       expect(released).to.be.gt(0);
       const balanceBefore = await usdcToken.balanceOf(targetRecipient);
-      await e3RefundManager.connect(requester).claimHeldSuccessReward(0);
+      await e3RefundManager
+        .connect(requester)
+        .claimHeldSuccessReward(firstE3Id);
       expect(
         (await usdcToken.balanceOf(targetRecipient)) - balanceBefore,
       ).to.equal(released);
@@ -2047,10 +2095,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Fail at committee formation (no honest nodes, requester gets all escrow).
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
-      const distributionBefore = await e3RefundManager.getRefundDistribution(0);
+      const distributionBefore =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const slashedAmount = ethers.parseUnits("100", 6);
       await usdcToken.mint(await e3RefundManager.getAddress(), slashedAmount);
 
@@ -2067,7 +2116,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await e3RefundManager
         .connect(await ethers.getSigner(originalInterfold))
         .escrowSlashedFunds(
-          0,
+          firstE3Id,
           100,
           await operator1.getAddress(),
           await usdcToken.getAddress(),
@@ -2077,7 +2126,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         originalInterfold,
       ]);
 
-      const distributionAfter = await e3RefundManager.getRefundDistribution(0);
+      const distributionAfter =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       const tokenAddress = await usdcToken.getAddress();
 
       expect(distributionAfter.requesterAmount).to.equal(
@@ -2087,7 +2137,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distributionAfter.protocolAmount).to.equal(0);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           tokenAddress,
           await requester.getAddress(),
         ),
@@ -2123,16 +2173,17 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
 
       await makeRequest(requester);
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
       await time.increase(defaultTimeoutConfig.dkgWindow + 1);
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
         distribution.originalPayment,
       );
@@ -2157,7 +2208,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await e3RefundManager
         .connect(interfoldSigner)
         .escrowSlashedFunds(
-          0,
+          firstE3Id,
           100,
           await operator1.getAddress(),
           usdcAddress,
@@ -2165,7 +2216,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         );
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           usdcAddress,
           await requester.getAddress(),
         ),
@@ -2174,7 +2225,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await e3RefundManager
         .connect(interfoldSigner)
         .escrowSlashedFunds(
-          0,
+          firstE3Id,
           101,
           await operator2.getAddress(),
           usdcAddress,
@@ -2186,20 +2237,20 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           usdcAddress,
           await requester.getAddress(),
         ),
       ).to.equal(0);
 
       const honestSlashClaims = await e3RefundManager.pendingSlashedClaim(
-        0,
+        firstE3Id,
         usdcAddress,
         await computeProvider.getAddress(),
       );
       expect(honestSlashClaims).to.equal(totalSlash);
       expect(
-        (await e3RefundManager.getRefundDistribution(0)).totalSlashed,
+        (await e3RefundManager.getRefundDistribution(firstE3Id)).totalSlashed,
       ).to.equal(totalSlash);
     });
 
@@ -2225,7 +2276,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Fail E3 but DON'T call processE3Failure yet
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
+      await interfold.markE3Failed(firstE3Id);
 
       const slashedAmount = ethers.parseUnits("50", 6);
       await usdcToken.mint(await e3RefundManager.getAddress(), slashedAmount);
@@ -2242,7 +2293,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await e3RefundManager
         .connect(await ethers.getSigner(originalInterfold))
         .escrowSlashedFunds(
-          0,
+          firstE3Id,
           100,
           await operator1.getAddress(),
           await usdcToken.getAddress(),
@@ -2253,22 +2304,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ]);
 
       // Distribution should not exist yet
-      const distBefore = await e3RefundManager.getRefundDistribution(0);
+      const distBefore = await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distBefore.calculated).to.be.false;
 
       // Process the failure, then settle the proposal-scoped route.
-      await interfold.processE3Failure(0);
-      await e3RefundManager.settleSlashedFunds(0, 100);
+      await interfold.processE3Failure(firstE3Id);
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 100);
 
-      const distAfter = await e3RefundManager.getRefundDistribution(0);
+      const distAfter = await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distAfter.calculated).to.be.true;
       const usdcAddress = await usdcToken.getAddress();
       expect(
-        await e3RefundManager.pendingSlashedFunds(0, usdcAddress),
+        await e3RefundManager.pendingSlashedFunds(firstE3Id, usdcAddress),
       ).to.equal(0);
       expect(
         await e3RefundManager.pendingSlashedClaim(
-          0,
+          firstE3Id,
           usdcAddress,
           await requester.getAddress(),
         ),
@@ -2306,46 +2357,46 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       await makeRequest(operator1);
 
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
-      await interfold.markE3Failed(0);
-      await interfold.processE3Failure(0);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
 
-      await e3RefundManager.connect(operator1).claimRequesterRefund(0);
+      await e3RefundManager.connect(operator1).claimRequesterRefund(firstE3Id);
       expect(
         await e3RefundManager.hasRequesterClaimed(
-          0,
+          firstE3Id,
           await operator1.getAddress(),
         ),
       ).to.equal(true);
       expect(
         await e3RefundManager.hasHonestNodeClaimed(
-          0,
+          firstE3Id,
           await operator1.getAddress(),
         ),
       ).to.equal(false);
 
       await e3RefundManager
         .connect(computeProvider)
-        .claimHonestNodeReward(0, await operator1.getAddress());
+        .claimHonestNodeReward(firstE3Id, await operator1.getAddress());
       expect(
         await e3RefundManager.hasHonestNodeClaimed(
-          0,
+          firstE3Id,
           await operator1.getAddress(),
         ),
       ).to.equal(true);
@@ -2371,46 +2422,48 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Make request
       await makeRequest();
-      let stage = await interfold.getE3Stage(0);
+      let stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(1); // Requested
 
       // 2. Complete sortition (committee finalized, DKG starts)
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(2); // CommitteeFinalized
 
       // 3. Fast forward past DKG deadline (key never published - simulating DKG failure)
       await time.increase(defaultTimeoutConfig.dkgWindow + 1);
 
       // 4. Check failure condition and mark as failed
-      const [canFail, reason] = await interfold.checkFailureCondition(0);
+      const [canFail, reason] =
+        await interfold.checkFailureCondition(firstE3Id);
       expect(canFail).to.be.true;
       expect(reason).to.equal(3); // DKGTimeout
 
-      await interfold.markE3Failed(0);
-      stage = await interfold.getE3Stage(0);
+      await interfold.markE3Failed(firstE3Id);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // Failed
 
-      const failureReason = await interfold.getFailureReason(0);
+      const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(3); // DKGTimeout
 
       // 5. Process failure and claim refund
-      await interfold.processE3Failure(0);
+      await interfold.processE3Failure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       const balanceAfter = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
         distribution.originalPayment,
       );
@@ -2443,58 +2496,60 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Make request
       await makeRequest();
-      let stage = await interfold.getE3Stage(0);
+      let stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(1); // Requested
 
       // 2. Complete sortition and DKG
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(3); // KeyPublished
 
       // 3. Wait past compute deadline (ciphertext never published)
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       const computeDeadline =
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
 
       // 4. Check failure condition and mark as failed
-      const [canFail, reason] = await interfold.checkFailureCondition(0);
+      const [canFail, reason] =
+        await interfold.checkFailureCondition(firstE3Id);
       expect(canFail).to.be.true;
       expect(reason).to.equal(6); // ComputeTimeout
 
-      await interfold.markE3Failed(0);
-      stage = await interfold.getE3Stage(0);
+      await interfold.markE3Failed(firstE3Id);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // Failed
 
-      const failureReason = await interfold.getFailureReason(0);
+      const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(6); // ComputeTimeout
 
       // 5. Process and claim
-      await interfold.processE3Failure(0);
+      await interfold.processE3Failure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       const balanceAfter = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
         (distribution.originalPayment * 5500n) / 10000n,
       );
@@ -2533,70 +2588,72 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Make request
       await makeRequest();
-      let stage = await interfold.getE3Stage(0);
+      let stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(1); // Requested
 
       // 2. Complete sortition and DKG
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(3); // KeyPublished
 
       // 3. Publish ciphertext output
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
         proof,
       );
-      stage = await interfold.getE3Stage(0);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(4); // CiphertextReady
 
       // 4. Wait past decryption deadline (plaintext never published)
       await time.increase(defaultTimeoutConfig.decryptionWindow + 1);
 
       // 5. Check failure condition and mark as failed
-      const [canFail, reason] = await interfold.checkFailureCondition(0);
+      const [canFail, reason] =
+        await interfold.checkFailureCondition(firstE3Id);
       expect(canFail).to.be.true;
       expect(reason).to.equal(10); // DecryptionTimeout
 
-      await interfold.markE3Failed(0);
-      stage = await interfold.getE3Stage(0);
+      await interfold.markE3Failed(firstE3Id);
+      stage = await interfold.getE3Stage(firstE3Id);
       expect(stage).to.equal(6); // Failed
 
-      const failureReason = await interfold.getFailureReason(0);
+      const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(10); // DecryptionTimeout
 
       // 6. Process failure and claim refund
-      await interfold.processE3Failure(0);
+      await interfold.processE3Failure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       const balanceAfter = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
 
-      const distribution = await e3RefundManager.getRefundDistribution(0);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
         distribution.originalPayment,
       );
@@ -2644,6 +2701,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             ["address"],
             ["0x1234567890123456789012345678901234567890"],
           ),
+          expectedFeeToken: await usdcToken.getAddress(),
+          expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+          maxFee: ethers.MaxUint256,
         };
         const fee = await interfold.getE3Quote(requestParams);
         await usdcToken.connect(requester).approve(interfoldAddress, fee);
@@ -2657,37 +2717,37 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequestN(2);
 
       // Verify all are in Requested stage
-      expect(await interfold.getE3Stage(0)).to.equal(1);
-      expect(await interfold.getE3Stage(1)).to.equal(1);
-      expect(await interfold.getE3Stage(2)).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id + 1n)).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id + 2n)).to.equal(1);
 
       // Fail E3 #0 by waiting past its deadline
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
+      await interfold.markE3Failed(firstE3Id);
 
       // E3 #0 is failed, but E3 #1 and #2 are still active
-      expect(await interfold.getE3Stage(0)).to.equal(6); // Failed
-      expect(await interfold.getE3Stage(1)).to.equal(1); // Still Requested
-      expect(await interfold.getE3Stage(2)).to.equal(1); // Still Requested
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(6); // Failed
+      expect(await interfold.getE3Stage(firstE3Id + 1n)).to.equal(1); // Still Requested
+      expect(await interfold.getE3Stage(firstE3Id + 2n)).to.equal(1); // Still Requested
 
       // E3 #1 and #2 also can be failed now (their deadlines have also passed)
-      const [canFail1] = await interfold.checkFailureCondition(1);
-      const [canFail2] = await interfold.checkFailureCondition(2);
+      const [canFail1] = await interfold.checkFailureCondition(firstE3Id + 1n);
+      const [canFail2] = await interfold.checkFailureCondition(firstE3Id + 2n);
       expect(canFail1).to.be.true;
       expect(canFail2).to.be.true;
 
       // But they haven't auto-failed - must be explicitly marked
-      expect(await interfold.getE3Stage(1)).to.equal(1);
-      expect(await interfold.getE3Stage(2)).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id + 1n)).to.equal(1);
+      expect(await interfold.getE3Stage(firstE3Id + 2n)).to.equal(1);
 
       // Now mark E3 #2 as failed (but not #1)
-      await interfold.markE3Failed(2);
-      expect(await interfold.getE3Stage(2)).to.equal(6); // Now Failed
-      expect(await interfold.getE3Stage(1)).to.equal(1); // Still Requested
+      await interfold.markE3Failed(firstE3Id + 2n);
+      expect(await interfold.getE3Stage(firstE3Id + 2n)).to.equal(6); // Now Failed
+      expect(await interfold.getE3Stage(firstE3Id + 1n)).to.equal(1); // Still Requested
 
       // Verify each E3 has independent failure reasons
-      expect(await interfold.getFailureReason(0)).to.equal(1); // CommitteeFormationTimeout
-      expect(await interfold.getFailureReason(2)).to.equal(1); // CommitteeFormationTimeout
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(1); // CommitteeFormationTimeout
+      expect(await interfold.getFailureReason(firstE3Id + 2n)).to.equal(1); // CommitteeFormationTimeout
     });
 
     it("allows claiming refunds for each failed E3 independently", async function () {
@@ -2726,6 +2786,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             ["address"],
             ["0x1234567890123456789012345678901234567890"],
           ),
+          expectedFeeToken: await usdcToken.getAddress(),
+          expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+          maxFee: ethers.MaxUint256,
         };
         const fee = await interfold.getE3Quote(requestParams);
         await usdcToken.connect(requester).approve(interfoldAddress, fee);
@@ -2734,25 +2797,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Fail both
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(0);
-      await interfold.markE3Failed(1);
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.markE3Failed(firstE3Id + 1n);
 
       // Process both
-      await interfold.processE3Failure(0);
-      await interfold.processE3Failure(1);
+      await interfold.processE3Failure(firstE3Id);
+      await interfold.processE3Failure(firstE3Id + 1n);
 
       // Claim both refunds independently
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
 
-      await e3RefundManager.connect(requester).claimRequesterRefund(0);
+      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
       const balanceAfterFirst = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
       expect(balanceAfterFirst).to.be.gt(balanceBefore);
 
-      await e3RefundManager.connect(requester).claimRequesterRefund(1);
+      await e3RefundManager
+        .connect(requester)
+        .claimRequesterRefund(firstE3Id + 1n);
       const balanceAfterSecond = await usdcToken.balanceOf(
         await requester.getAddress(),
       );
@@ -2760,7 +2825,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // Verify can't claim twice
       await expect(
-        e3RefundManager.connect(requester).claimRequesterRefund(0),
+        e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id),
       ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
     });
   });
@@ -2801,22 +2866,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await e3RefundManager
         .connect(owner)
         .setTreasury(await computeProvider.getAddress());
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
-      expect(await interfold.getE3Stage(0)).to.equal(3); // KeyPublished
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(3); // KeyPublished
 
       // 2. Slash operator1 during active E3 (before completion)
       //    With the stage-check removed, this should escrow funds in E3RefundManager
@@ -2826,12 +2891,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
       await slashingManager.proposeSlash(
-        0,
+        firstE3Id,
         await operator1.getAddress(),
         proof,
       );
@@ -2843,21 +2908,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(actualSlashedAmount).to.be.gt(0);
 
       // 3. Complete the E3 successfully: publish ciphertext → publish plaintext
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proofBytes = "0x1337";
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
         proofBytes,
       );
-      expect(await interfold.getE3Stage(0)).to.equal(4); // CiphertextReady
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(4); // CiphertextReady
 
       // Record the E3 payment (normal rewards) before completion zeroes it
-      const e3Payment = await interfold.e3Payments(0);
+      const e3Payment = await interfold.e3Payments(firstE3Id);
 
       // Record balances before plaintext publish (which triggers pull credits).
       const treasuryAddress = await treasury.getAddress();
@@ -2867,9 +2932,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await usdcToken.balanceOf(bondOwnerAddress);
 
       const plaintextOutput = "0x" + "cd".repeat(100);
-      await interfold.publishPlaintextOutput(0, plaintextOutput, proofBytes);
-      expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
-      await e3RefundManager.settleSlashedFunds(0, 0);
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        plaintextOutput,
+        proofBytes,
+      );
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(5); // Complete
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 0);
 
       // 4. Verify escrowed slashed funds were distributed
       //    50% to honest nodes (split equally), 50% to treasury
@@ -2904,7 +2973,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await e3RefundManager
         .connect(computeProvider)
-        .claimSlashedFunds(0, usdcAddress);
+        .claimSlashedFunds(firstE3Id, usdcAddress);
       const slashedClaimedTotal =
         (await usdcToken.balanceOf(bondOwnerAddress)) - bondOwnerBalanceBefore;
       expect(slashedClaimedTotal).to.equal(expectedSlashedToNodes);
@@ -2932,52 +3001,51 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Make request
       await makeRequest();
-      expect(await interfold.getE3Stage(0)).to.equal(1); // Requested
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(1); // Requested
 
       // 2. Complete sortition and publish committee (CommitteeFinalized -> KeyPublished)
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
-      expect(await interfold.getE3Stage(0)).to.equal(2); // CommitteeFinalized
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(2); // CommitteeFinalized
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
-      expect(await interfold.getE3Stage(0)).to.equal(3); // KeyPublished
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(3); // KeyPublished
 
       // 3. Publish ciphertext output (after input deadline)
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
         proof,
       );
-      expect(await interfold.getE3Stage(0)).to.equal(4); // CiphertextReady
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(4); // CiphertextReady
 
       // 4. Publish plaintext output
       const plaintextOutput = "0x" + "cd".repeat(100);
-      await interfold.publishPlaintextOutput(0, plaintextOutput, proof);
-      expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
+      await interfold.publishPlaintextOutput(firstE3Id, plaintextOutput, proof);
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(5); // Complete
 
       // Cannot mark completed E3 as failed
-      await expect(interfold.markE3Failed(0)).to.be.revertedWithCustomError(
-        interfold,
-        "E3AlreadyComplete",
-      );
+      await expect(
+        interfold.markE3Failed(firstE3Id),
+      ).to.be.revertedWithCustomError(interfold, "E3AlreadyComplete");
     });
 
     it("prevents refund claims for completed E3", async function () {
@@ -3001,42 +3069,42 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
 
       // Complete sortition
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await registry.finalizeCommittee(0);
+      await registry.finalizeCommittee(firstE3Id);
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         pkCommitment,
         encodeMockDkgProof(pkCommitment),
         "0x01",
       );
 
       // Publish outputs
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
       await interfold.publishCiphertextOutput(
-        0,
+        firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
         proof,
       );
 
       const plaintextOutput = "0x" + "cd".repeat(100);
-      await interfold.publishPlaintextOutput(0, plaintextOutput, proof);
+      await interfold.publishPlaintextOutput(firstE3Id, plaintextOutput, proof);
 
       // Verify E3 is complete
-      expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(5); // Complete
 
       await expect(
-        e3RefundManager.connect(requester).claimRequesterRefund(0),
+        e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id),
       ).to.be.revertedWithCustomError(e3RefundManager, "RefundNotCalculated");
     });
   });
