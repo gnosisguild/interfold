@@ -918,9 +918,10 @@ describe("CiphernodeRegistryOwnable", function () {
         );
     });
     it("reuses a removed tree slot before growing the tree", async function () {
-      const { registry, operator1 } = await loadFixture(setup);
-      const removed = await operator1.getAddress();
+      const { registry, operator3 } = await loadFixture(setup);
+      const removed = await operator3.getAddress();
       const removedIndex = await registry.ciphernodeTreeIndex(removed);
+      expect(removedIndex).to.be.gt(0);
       const treeSize = await registry.treeSize();
 
       await registry.removeCiphernode(removed);

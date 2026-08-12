@@ -24,6 +24,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::events::E3Requested;
+
 static NONCE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Get the next pending nonce for a given address from the provider
@@ -463,7 +465,6 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
-        let e3_id = contract.nexte3Id().call().await?;
         let fee_token = contract.feeToken().call().await?;
         let crypto_config_id = contract.activeCryptoConfigId().call().await?;
 
@@ -494,6 +495,13 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let builder = contract.request(e3_request).nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
         e3_utils::require_successful_receipt("request E3", &receipt)?;
+        let e3_id = receipt
+            .logs()
+            .iter()
+            .filter(|log| log.address() == self.contract_address)
+            .find_map(|log| log.log_decode::<E3Requested>().ok())
+            .map(|log| log.inner.data.e3Id)
+            .ok_or_else(|| eyre::eyre!("request E3 receipt is missing E3Requested"))?;
 
         Ok((receipt, e3_id))
     }
