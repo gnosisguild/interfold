@@ -53,6 +53,8 @@ use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tracing::{error, info, warn};
 
+const DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS: u64 = 1;
+
 #[derive(Clone, Debug)]
 enum EventSystemType {
     Persisted { log_path: PathBuf, kv_path: PathBuf },
@@ -1037,6 +1039,10 @@ async fn setup_evm_system(
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
+        // An entropy block read at the chain head can disappear before the ticket transaction.
+        let reorg_confirmations = chain
+            .reorg_confirmations
+            .unwrap_or(DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS);
         evm_config.insert(chain_id, chain.try_into()?);
 
         let rpc_url = chain.rpc_url()?;
@@ -1045,7 +1051,7 @@ async fn setup_evm_system(
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
-            .with_provider_factory(provider_factory)
+            .with_provider_factory(provider_factory.clone())
             .with_buffer_limit(max_buffered_evm_events);
 
         if contract_components.interfold {
@@ -1074,9 +1080,18 @@ async fn setup_evm_system(
 
         if contract_components.ciphernode_registry {
             let contract = &chain.contracts.ciphernode_registry;
+            let contract_address = contract.address()?;
+            let registry_provider = provider.clone();
+            let registry_provider_factory = provider_factory.clone();
 
-            system.with_contract(contract.address()?, move |next| {
-                CiphernodeRegistrySolReader::setup(&next).recipient()
+            system.with_contract(contract_address, move |next| {
+                CiphernodeRegistrySolReader::setup_with_factory(
+                    &next,
+                    registry_provider,
+                    Some(registry_provider_factory),
+                    reorg_confirmations,
+                )
+                .recipient()
             });
 
             // TODO: Should we not let this pass and just use '?'?

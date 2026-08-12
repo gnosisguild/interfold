@@ -194,7 +194,7 @@ sol! {
 
         event CommitteeRequested(
             uint256 indexed e3Id,
-            uint256 seed,
+            uint256 entropyBlock,
             uint32[2] threshold,
             uint256 requestBlock,
             uint256 committeeDeadline,

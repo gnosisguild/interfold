@@ -8,8 +8,8 @@
 
 use crate::contracts::ICiphernodeRegistry;
 use alloy::{
-    primitives::{LogData, B256},
-    sol_types::SolEvent,
+    primitives::{keccak256, LogData, B256, U256},
+    sol_types::{SolEvent, SolValue},
 };
 use e3_events::{
     CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed, CommitteePublished,
@@ -76,13 +76,17 @@ impl From<CiphernodeRemovedWithChainId> for InterfoldEventData {
     }
 }
 
-struct CommitteeRequestedWithChainId(pub ICiphernodeRegistry::CommitteeRequested, pub u64);
+struct CommitteeRequestedWithChainId(
+    pub ICiphernodeRegistry::CommitteeRequested,
+    pub u64,
+    pub Seed,
+);
 
 impl From<CommitteeRequestedWithChainId> for e3_events::CommitteeRequested {
     fn from(value: CommitteeRequestedWithChainId) -> Self {
         e3_events::CommitteeRequested {
             e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
-            seed: Seed(value.0.seed.to_be_bytes()),
+            seed: value.2,
             threshold: [value.0.threshold[0] as usize, value.0.threshold[1] as usize],
             request_block: value.0.requestBlock.to(),
             committee_deadline: value.0.committeeDeadline.to(),
@@ -97,6 +101,35 @@ impl From<CommitteeRequestedWithChainId> for InterfoldEventData {
         let payload: e3_events::CommitteeRequested = value.into();
         InterfoldEventData::from(payload)
     }
+}
+
+pub(crate) fn decode_committee_request(
+    data: &LogData,
+    topics: &[B256],
+) -> Option<ICiphernodeRegistry::CommitteeRequested> {
+    if topics.first() != Some(&ICiphernodeRegistry::CommitteeRequested::SIGNATURE_HASH) {
+        return None;
+    }
+    ICiphernodeRegistry::CommitteeRequested::decode_log_data(data).ok()
+}
+
+pub(crate) fn extractor_with_sortition_seed(
+    data: &LogData,
+    topics: &[B256],
+    chain_id: u64,
+    seed: Seed,
+) -> Option<InterfoldEventData> {
+    let event = decode_committee_request(data, topics)?;
+    Some(CommitteeRequestedWithChainId(event, chain_id, seed).into())
+}
+
+pub(crate) fn derive_sortition_seed(entropy: B256, e3_id: U256) -> Seed {
+    let digest = keccak256((entropy, e3_id).abi_encode());
+    Seed::from(U256::from_be_bytes(digest.0))
+}
+
+pub(crate) fn legacy_sortition_seed(value: U256) -> Seed {
+    Seed(value.to_be_bytes())
 }
 
 struct CommitteeFinalizedWithChainId(
@@ -308,13 +341,8 @@ pub(crate) fn extractor(
             )))
         }
         Some(&ICiphernodeRegistry::CommitteeRequested::SIGNATURE_HASH) => {
-            let Ok(event) = ICiphernodeRegistry::CommitteeRequested::decode_log_data(data) else {
-                error!("Error parsing event CommitteeRequested after topic was matched!");
-                return None;
-            };
-            Some(InterfoldEventData::from(CommitteeRequestedWithChainId(
-                event, chain_id,
-            )))
+            error!("CommitteeRequested requires its delayed sortition seed");
+            None
         }
         Some(&ICiphernodeRegistry::SortitionCommitteeFinalized::SIGNATURE_HASH) => {
             let Ok(event) = ICiphernodeRegistry::SortitionCommitteeFinalized::decode_log_data(data)
@@ -435,7 +463,7 @@ pub(crate) fn extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::primitives::{b256, Address, Bytes, U256};
 
     #[test]
     fn test_extractor_decodes_ciphernode_added() {
@@ -483,18 +511,38 @@ mod tests {
     fn committee_request_keeps_the_frozen_ticket_price() {
         let event = ICiphernodeRegistry::CommitteeRequested {
             e3Id: U256::from(7),
-            seed: U256::from(8),
+            entropyBlock: U256::from(8),
             threshold: [2, 3],
             requestBlock: U256::from(100),
             committeeDeadline: U256::from(110),
             ticketPrice: U256::from(25),
         };
 
+        let seed = Seed::from(U256::from(9));
         let converted: e3_events::CommitteeRequested =
-            CommitteeRequestedWithChainId(event, 1).into();
+            CommitteeRequestedWithChainId(event, 1, seed).into();
 
+        assert_eq!(converted.seed, seed);
         assert_eq!(converted.request_block, 100);
         assert_eq!(converted.ticket_price, U256::from(25));
+    }
+
+    #[test]
+    fn sortition_seed_matches_solidity_abi_encoding() {
+        let entropy = B256::repeat_byte(0x11);
+        let expected = Seed::from(U256::from_be_bytes(
+            b256!("ea2cda56caceff556aeeb2756e2c1a820445b6413765d79997510293af0f2e35").0,
+        ));
+
+        assert_eq!(derive_sortition_seed(entropy, U256::from(7)), expected);
+    }
+
+    #[test]
+    fn legacy_sortition_seed_keeps_the_previous_byte_order() {
+        let mut expected = [0_u8; 32];
+        expected[30..].copy_from_slice(&[0x01, 0x02]);
+
+        assert_eq!(legacy_sortition_seed(U256::from(0x0102)), Seed(expected));
     }
 
     #[test]

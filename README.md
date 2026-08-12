@@ -224,7 +224,8 @@ sequenceDiagram
     Interfold->>E3Program: validate(e3ProgramParams)
     Interfold->>ComputeProvider: validate(computeProviderParams)
     ComputeProvider-->>Interfold: decryptionVerifier
-    Interfold->>CiphernodeRegistry: requestCommittee(e3Id, seed, threshold)
+    Interfold->>CiphernodeRegistry: requestCommittee(e3Id, legacySeed, threshold)
+    CiphernodeRegistry->>CiphernodeRegistry: commit future entropy block
     CiphernodeRegistry-->>Interfold: success
     Interfold-->>Users: e3Id, E3 struct
 

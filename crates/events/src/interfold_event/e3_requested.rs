@@ -20,7 +20,7 @@ pub struct E3Requested {
     pub threshold_m: usize,
     /// The total committee size for the round
     pub threshold_n: usize,
-    /// Shared per-E3 seed for deterministic ticket scoring.
+    /// Shared per-E3 seed for the E3 computation.
     pub seed: Seed,
     /// Timestamp-mode checkpoint recorded when the E3 was requested.
     pub request_block: u64,

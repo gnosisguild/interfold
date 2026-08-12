@@ -29,7 +29,7 @@ import {
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, time } = networkHelpers;
+const { loadFixture, mine, time } = networkHelpers;
 
 /**
  * Integration tests for E3 Refund/Timeout Mechanism
@@ -45,7 +45,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   const ONE_DAY = 24 * ONE_HOUR;
   const THREE_DAYS = 3 * ONE_DAY;
   const THIRTY_DAYS = 30 * ONE_DAY;
-  const SORTITION_SUBMISSION_WINDOW = 10;
+  const SORTITION_SUBMISSION_WINDOW = 60;
 
   const addressOne = "0x0000000000000000000000000000000000000001";
 
@@ -155,6 +155,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const fee = await interfold.getE3Quote(requestParams);
       await requestToken.connect(signer).approve(interfoldAddress, fee);
       await interfold.connect(signer).request(requestParams);
+      await mine(1);
 
       return { e3Id: 0 };
     };

@@ -286,9 +286,8 @@ contract Interfold is
             e3Id,
             address(dependencies.registry)
         );
-        // The seed is only a shared per-E3 input to deterministic ticket
-        // scoring; it is not BFV key material and the protocol does not rely
-        // on it for cryptographic unpredictability.
+        // This seed belongs to the E3 computation. The registry derives a
+        // separate committee seed after this request is final.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
         e3Payments[e3Id] = e3Fee;

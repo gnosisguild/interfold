@@ -70,13 +70,13 @@ interface ICiphernodeRegistry {
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
-    /// @param seed Random seed for score computation.
+    /// @param entropyBlock Future block whose hash supplies sortition entropy.
     /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).
     event CommitteeRequested(
         uint256 indexed e3Id,
-        uint256 seed,
+        uint256 entropyBlock,
         uint32[2] threshold,
         uint256 requestBlock,
         uint256 committeeDeadline,
@@ -283,6 +283,9 @@ interface ICiphernodeRegistry {
     /// @notice Committee deadline has been reached for this E3
     error CommitteeDeadlineReached();
 
+    /// @notice The committed block hash is not available yet or is outside the chain's history.
+    error SortitionSeedUnavailable(uint256 e3Id, uint256 entropyBlock);
+
     /// @notice Committee has already been finalized for this E3
     error CommitteeAlreadyFinalized();
 
@@ -442,12 +445,12 @@ interface ICiphernodeRegistry {
     /// @notice Initiates the committee selection process for a specified E3.
     /// @dev This function MUST revert when not called by the Interfold contract.
     /// @param e3Id ID of the E3 for which to select the committee.
-    /// @param seed Random seed for score computation.
+    /// @param legacySeed Deprecated E3 computation seed. The registry MUST ignore it for sortition.
     /// @param threshold The viability threshold and total member count [H, N].
     /// @return success True if committee selection was successfully initiated.
     function requestCommittee(
         uint256 e3Id,
-        uint256 seed,
+        uint256 legacySeed,
         uint32[2] calldata threshold
     ) external returns (bool success);
 
