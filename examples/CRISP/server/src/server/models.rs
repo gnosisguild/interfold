@@ -351,7 +351,8 @@ mod e3_id_tests {
 
     #[test]
     fn accepts_full_width_decimal_ids() {
-        let id = (alloy::primitives::U256::from(1) << 200) + alloy::primitives::U256::from(7);
+        let id: alloy::primitives::U256 =
+            (alloy::primitives::U256::from(1) << 200) + alloy::primitives::U256::from(7);
         assert_eq!(e3_id_to_u256(&id.to_string()).unwrap(), id);
     }
 
