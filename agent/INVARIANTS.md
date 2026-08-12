@@ -135,6 +135,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
   snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
   the protected reserve. — `flow-trace/05`
+- Only the original requester can cancel an active E3. Cancellation records the pre-failure stage;
+  nodes receive only fully completed milestone allocations, while the requester receives the
+  remaining work allocation. Cancellation does not wait for refund processing. — `flow-trace/05`
 - Dual-role accounts (requester + honest node) claim via independent ledgers, each once. —
   `flow-trace/05`
 - Committee finalization freezes each operator's reward recipient for that E3. Success rewards,

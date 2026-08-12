@@ -34,6 +34,14 @@ fn vote_digest_is_deterministic() {
         AccusationVoting::vote_digest(&vote2, sm),
         "changing deadline must change the digest"
     );
+
+    let mut vote3 = vote;
+    vote3.issued_at += 1;
+    assert_ne!(
+        a,
+        AccusationVoting::vote_digest(&vote3, sm),
+        "changing issued_at must change the digest"
+    );
 }
 
 /// A second agreeing vote that reaches `vote_quorum_h` must produce a single

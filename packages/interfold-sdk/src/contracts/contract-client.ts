@@ -170,6 +170,31 @@ export class ContractClient {
     }
   }
 
+  public async cancelE3(e3Id: bigint): Promise<Hash> {
+    if (!this.walletClient) {
+      throw new SDKError('Wallet client required for write operations', 'NO_WALLET')
+    }
+
+    try {
+      const account = this.walletClient.account
+      if (!account) {
+        throw new SDKError('No account connected', 'NO_ACCOUNT')
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: this.contracts.interfold,
+        abi: Interfold__factory.abi,
+        functionName: 'cancelE3',
+        args: [e3Id],
+        account,
+      })
+
+      return await this.walletClient.writeContract(request)
+    } catch (error) {
+      throw new SDKError(`Failed to cancel E3: ${error}`, 'CANCEL_E3_FAILED')
+    }
+  }
+
   public async publishCiphertextOutput(
     e3Id: bigint,
     ciphertextOutput: `0x${string}`,

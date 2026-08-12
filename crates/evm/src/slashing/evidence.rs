@@ -17,9 +17,10 @@ use e3_events::AccusationQuorumReached;
 /// `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`
 ///
 /// Voters are sorted ascending by address to satisfy the contract's duplicate-prevention
-/// check. All `votes_for` share the same `deadline` (the accuser stamps one value at
-/// accusation time and `AccusationManager::on_vote_received` rejects votes whose
-/// deadline disagrees), so the encoder pulls it from the first vote. Returns `None`
+/// check. All `votes_for` share the same `issued_at` and `deadline` values. The
+/// accuser sets both values, and `AccusationManager::on_vote_received` rejects a
+/// vote when either value differs. The encoder therefore reads them from the
+/// first vote. Returns `None`
 /// if `votes_for` is empty — the on-chain submitter must skip the submission in that
 /// case rather than send malformed calldata.
 pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec<u8>> {

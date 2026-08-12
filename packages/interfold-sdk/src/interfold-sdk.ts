@@ -168,6 +168,10 @@ export class InterfoldSDK {
     return this.contractClient.requestE3(params)
   }
 
+  public async cancelE3(e3Id: bigint): Promise<Hash> {
+    return this.contractClient.cancelE3(e3Id)
+  }
+
   public async getE3PublicKey(e3Id: bigint): Promise<`0x${string}`> {
     return this.contractClient.getE3PublicKey(e3Id)
   }

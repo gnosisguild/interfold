@@ -67,8 +67,12 @@ impl AccusationVoting {
             || vote.deadline != pending.accusation.deadline
         {
             warn!(
-                "Ignoring vote from {} — deadline {} does not match accusation deadline {}",
-                vote.voter, vote.deadline, pending.accusation.deadline
+                "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
+                vote.voter,
+                vote.issued_at,
+                pending.accusation.issued_at,
+                vote.deadline,
+                pending.accusation.deadline
             );
             return;
         }

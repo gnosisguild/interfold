@@ -840,6 +840,18 @@ contract Interfold is
         _markE3FailedWithReason(e3Id, current, reason);
     }
 
+    /// @inheritdoc IInterfold
+    function cancelE3(uint256 e3Id) external {
+        InterfoldLifecycle.cancelE3(
+            _e3Stages,
+            _e3FailureReasons,
+            _e3Requesters,
+            e3Id,
+            msg.sender
+        );
+        activeE3Count--;
+    }
+
     /// @notice Internal function to mark E3 as failed with specific reason
     /// @param e3Id The E3 ID
     /// @param current The current stage (already loaded by caller)
@@ -882,23 +894,13 @@ contract Interfold is
         returns (bool canFail, FailureReason reason, uint256 deadline)
     {
         uint8 rawReason;
-        (deadline, rawReason) = InterfoldLifecycle.stageDeadlineAndReason(
+        (canFail, rawReason, deadline) = InterfoldLifecycle.failureCondition(
             address(_registryFor(e3Id)),
             e3Id,
             uint8(stage),
             _e3Deadlines[e3Id]
         );
         reason = FailureReason(rawReason);
-
-        canFail = deadline != 0 && block.timestamp > deadline;
-        if (
-            canFail &&
-            stage == E3Stage.Requested &&
-            _registryFor(e3Id).committeeThresholdMet(e3Id)
-        ) {
-            return (false, FailureReason.None, deadline);
-        }
-        if (!canFail) reason = FailureReason.None;
     }
 
     /// @notice Get current stage of an E3

@@ -48,6 +48,7 @@ library BondingAssetLib {
         }
 
         address bondOwner = bondOwners[operator];
+        if (bondOwner == address(0)) revert IBondingRegistry.ZeroAddress();
         if (ticketClaim != 0) ticketToken.payout(bondOwner, ticketClaim);
         if (claimedLicense != 0) {
             bondedByOwner[bondOwner] -= claimedLicense;

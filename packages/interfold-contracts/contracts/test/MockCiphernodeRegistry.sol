@@ -28,6 +28,7 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     mapping(uint256 e3Id => uint256[] partyIds) private _dkgPartyIds;
     mapping(uint256 e3Id => bytes32[] skAggCommits) private _dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) private _dkgEsmAggCommits;
+    mapping(uint256 e3Id => bool unreleased) private _unreleasedCommittees;
     bool private _revertActiveCommitteeNodes;
 
     error ActiveCommitteeLookupFailed();
@@ -80,10 +81,13 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     }
 
     function requestCommittee(
-        uint256,
+        uint256 e3Id,
         uint256,
         uint32[2] calldata
-    ) external pure returns (bool success) {
+    ) external returns (bool success) {
+        require(!_unreleasedCommittees[e3Id], "Committee already requested");
+        _unreleasedCommittees[e3Id] = true;
+        unreleasedCommitteeCount++;
         success = true;
     }
 
@@ -125,8 +129,11 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     // solhint-disable-next-line no-empty-blocks
     function publishCommitteePublicKey(uint256, bytes calldata) external pure {}
 
-    // solhint-disable-next-line no-empty-blocks
-    function releaseCommittee(uint256) external pure {}
+    function releaseCommittee(uint256 e3Id) external {
+        require(_unreleasedCommittees[e3Id], "Committee already released");
+        _unreleasedCommittees[e3Id] = false;
+        unreleasedCommitteeCount--;
+    }
 
     function getCommitteeNodes(
         uint256 e3Id

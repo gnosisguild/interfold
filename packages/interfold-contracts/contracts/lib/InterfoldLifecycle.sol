@@ -412,30 +412,36 @@ library InterfoldLifecycle {
     }
 
     // prettier-ignore
-    function stageDeadlineAndReason(
+    function failureCondition(
         address registryAddress, uint256 e3Id, uint8 current, IInterfold.E3Deadlines calldata deadlines
-    ) external view returns (uint256 deadline, uint8 reason) {
+    ) external view returns (bool canFail, uint8 reason, uint256 deadline) {
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
-        if (stage == IInterfold.E3Stage.Requested)
-            return (
-                ICiphernodeRegistry(registryAddress).getCommitteeDeadline(e3Id),
-                uint8(IInterfold.FailureReason.CommitteeFormationTimeout)
+        if (stage == IInterfold.E3Stage.Requested) {
+            deadline = ICiphernodeRegistry(registryAddress)
+                .getCommitteeDeadline(e3Id);
+            reason = uint8(
+                IInterfold.FailureReason.CommitteeFormationTimeout
             );
-        if (stage == IInterfold.E3Stage.CommitteeFinalized)
-            return (
-                deadlines.dkgDeadline,
-                uint8(IInterfold.FailureReason.DKGTimeout)
-            );
-        if (stage == IInterfold.E3Stage.KeyPublished)
-            return (
-                deadlines.computeDeadline,
-                uint8(IInterfold.FailureReason.ComputeTimeout)
-            );
-        if (stage == IInterfold.E3Stage.CiphertextReady)
-            return (
-                deadlines.decryptionDeadline,
-                uint8(IInterfold.FailureReason.DecryptionTimeout)
-            );
+        } else if (stage == IInterfold.E3Stage.CommitteeFinalized) {
+            deadline = deadlines.dkgDeadline;
+            reason = uint8(IInterfold.FailureReason.DKGTimeout);
+        } else if (stage == IInterfold.E3Stage.KeyPublished) {
+            deadline = deadlines.computeDeadline;
+            reason = uint8(IInterfold.FailureReason.ComputeTimeout);
+        } else if (stage == IInterfold.E3Stage.CiphertextReady) {
+            deadline = deadlines.decryptionDeadline;
+            reason = uint8(IInterfold.FailureReason.DecryptionTimeout);
+        }
+
+        canFail = deadline != 0 && block.timestamp > deadline;
+        if (
+            canFail &&
+            stage == IInterfold.E3Stage.Requested &&
+            ICiphernodeRegistry(registryAddress).committeeThresholdMet(e3Id)
+        ) {
+            return (false, uint8(IInterfold.FailureReason.None), deadline);
+        }
+        if (!canFail) reason = uint8(IInterfold.FailureReason.None);
     }
 
     /// @notice Checks the timeout configuration.
@@ -535,6 +541,8 @@ library InterfoldLifecycle {
         uint256 sortitionWindow,
         IInterfold.E3TimeoutConfig memory timeoutConfig
     ) public pure returns (uint256 duration) {
+        if (inputWindowEnd < requestTime)
+            revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
         uint256 inputReservation = inputWindowEnd - requestTime;
         uint256 committeeReservation = sortitionWindow +
             timeoutConfig.dkgWindow;
@@ -545,5 +553,33 @@ library InterfoldLifecycle {
             preCompute +
             timeoutConfig.computeWindow +
             timeoutConfig.decryptionWindow;
+    }
+
+    /// @notice Cancels an active E3 for its original requester.
+    function cancelE3(
+        mapping(uint256 => IInterfold.E3Stage) storage stages,
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        mapping(uint256 => address) storage requesters,
+        uint256 e3Id,
+        address caller
+    ) external {
+        address requester = requesters[e3Id];
+        if (requester == address(0)) revert IInterfold.E3DoesNotExist(e3Id);
+        if (caller != requester) revert IInterfold.NotRequester(e3Id, caller);
+        IInterfold.E3Stage stage = stages[e3Id];
+        if (
+            stage == IInterfold.E3Stage.None ||
+            stage >= IInterfold.E3Stage.Complete
+        ) {
+            revert IInterfold.E3NotCancellable(e3Id, stage);
+        }
+        stages[e3Id] = IInterfold.E3Stage.Failed;
+        failureReasons[e3Id] = IInterfold.FailureReason.RequesterCancelled;
+        emit IInterfold.E3StageChanged(e3Id, stage, IInterfold.E3Stage.Failed);
+        emit IInterfold.E3Failed(
+            e3Id,
+            stage,
+            IInterfold.FailureReason.RequesterCancelled
+        );
     }
 }

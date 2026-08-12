@@ -329,7 +329,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             return (0, originalPayment, 0);
         }
 
-        IInterfold.E3Stage failedAt = _getFailedAtStage(reason);
+        IInterfold.E3Stage failedAt = reason ==
+            IInterfold.FailureReason.RequesterCancelled
+            ? _getCancellationStage(e3Id)
+            : _getFailedAtStage(reason);
         (
             uint16 workCompletedBps,
             uint16 workRemainingBps
@@ -382,6 +385,24 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
 
         return IInterfold.E3Stage.None;
+    }
+
+    /// @notice Derives the cancellation stage from monotonic lifecycle markers.
+    function _getCancellationStage(
+        uint256 e3Id
+    ) internal view returns (IInterfold.E3Stage) {
+        IInterfold.E3Deadlines memory deadlines = _interfoldFor(e3Id)
+            .getDeadlines(e3Id);
+        if (deadlines.decryptionDeadline != 0) {
+            return IInterfold.E3Stage.CiphertextReady;
+        }
+        if (deadlines.computeDeadline != 0) {
+            return IInterfold.E3Stage.KeyPublished;
+        }
+        if (deadlines.dkgDeadline != 0) {
+            return IInterfold.E3Stage.CommitteeFinalized;
+        }
+        return IInterfold.E3Stage.Requested;
     }
 
     /// @inheritdoc IE3RefundManager

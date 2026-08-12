@@ -612,8 +612,10 @@ interface ISlashingManager {
      *        abi.encode(uint256 proofType,
      *          address[] voters, bytes32[] dataHashes, bytes evidence,
      *          uint256 issuedAt, uint256 deadline, bytes[] signatures)
-     *      Each voter must have signed: personal_sign(keccak256(abi.encode(VOTE_TYPEHASH,
-     *        e3Id, accusationId, voter, dataHash, issuedAt, deadline)))
+     *      Each voter must have signed the EIP-712 digest
+     *      `keccak256("\x19\x01" || domainSeparator || structHash)`, where
+     *      `structHash = keccak256(abi.encode(VOTE_TYPEHASH, e3Id,
+     *      accusationId, voter, dataHash, issuedAt, deadline))`.
      *      where accusationId = keccak256(abi.encodePacked(block.chainid, e3Id, operator, proofType))
      *      Verifications performed:
      *        1. Number of votes >= committee threshold M

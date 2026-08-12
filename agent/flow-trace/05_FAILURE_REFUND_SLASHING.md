@@ -93,6 +93,35 @@ Specific triggers:
   submitted tickets. SlashingManager also uses it when an expulsion leaves fewer than H active
   members. Reusing the existing supplier-paid reason preserves the persisted enum layout.
 
+### Requester Cancellation
+
+Only the address that created an E3 can call `cancelE3(e3Id)`. The call is valid in `Requested`,
+`CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. It records the current stage before it
+sets the terminal `Failed` stage and emits `RequesterCancelled` through the standard failure events.
+
+Cancellation and settlement are separate. This lets the E3 stop even if a registry lookup or token
+transfer temporarily fails. Any account can later retry `processE3Failure(e3Id)`.
+
+```text
+Requester calls: Interfold.cancelE3(e3Id)
+│
+├─ require(msg.sender == request-time requester)
+├─ require(stage is active and not terminal)
+├─ _e3Stages[e3Id] = Failed
+├─ _e3FailureReasons[e3Id] = RequesterCancelled
+└─ Emit E3StageChanged and E3Failed
+
+Settlement derives the pre-failure stage from the monotonic deadline markers
+that each lifecycle transition stored before cancellation:
+  Requested          → no completed node milestone
+  CommitteeFinalized → committee-formation allocation completed
+  KeyPublished       → committee formation and DKG completed
+  CiphertextReady    → committee formation and DKG completed
+
+The requester receives the remaining work allocation. The request-time protocol share is retained.
+No decryption allocation is paid unless the E3 completes normally.
+```
+
 ---
 
 ## Refund Processing
@@ -133,7 +162,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │                                                       │
 │     │  │  Requester liability:                                 │
 │     │  │    NoInputsReceived, ComputeTimeout,                  │
-│     │  │    ComputeProviderExpired/Failed                      │
+│     │  │    ComputeProviderExpired/Failed, RequesterCancelled  │
 │     │  │                                                       │
 │     │  │  Ciphernodes/supply liability:                        │
 │     │  │    CommitteeFormationTimeout,                         │
@@ -141,7 +170,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │    DKGInvalidShares, DecryptionTimeout,               │
 │     │  │    DecryptionInvalidShares, VerificationFailed        │
 │     │  │                                                       │
-│     │  │  None, reserved value 9, _MAX_FAILURE_REASON, and     │
+│     │  │  None, _MAX_FAILURE_REASON, and                       │
 │     │  │  future unclassified reasons revert                   │
 │     │  │  InvalidFailureReason (fail closed).                  │
 │     │  │                                                       │
@@ -460,8 +489,9 @@ check_quorum(accusation_id):
 │   │   All agreeing voters have same data_hash?
 │   │   ├─ YES → AccusationOutcome::AccusedFaulted (SLASHABLE)
 │   │   │   → accused sent the same bad proof to everyone
-│   │   └─ NO  → AccusationOutcome::Equivocation (SLASHABLE)
+│   │   └─ NO  → AccusationOutcome::Equivocation (NOT slashable yet)
 │   │       → accused sent DIFFERENT data to different nodes
+│   │       → the current single-preimage evidence cannot prove every payload
 │   │
 │   └─ Emit AccusationQuorumReached
 │
@@ -475,7 +505,9 @@ check_quorum(accusation_id):
 ```
 AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │
-├─ Only for SLASHABLE outcomes (AccusedFaulted, Equivocation):
+├─ Continue only for AccusedFaulted
+│     → Equivocation remains local evidence until the on-chain format can
+│       prove each distinct signed payload
 │
 ├─ 1. EFFECT AND REPLAY GATE:
 │     Before EffectsEnabled (startup replay), retain the intent without sending a transaction

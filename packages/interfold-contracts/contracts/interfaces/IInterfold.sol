@@ -62,7 +62,7 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
-        /// @dev Reserved for storage compatibility. No cancellation flow exists.
+        /// @dev Requester-initiated cancellation of an active E3.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
@@ -450,6 +450,12 @@ interface IInterfold {
     /// @notice Failure condition not yet met
     error FailureConditionNotMet(uint256 e3Id);
 
+    /// @notice Caller is not the requester that created the E3.
+    error NotRequester(uint256 e3Id, address caller);
+
+    /// @notice The E3 is not in an active stage that the requester can cancel.
+    error E3NotCancellable(uint256 e3Id, E3Stage stage);
+
     /// @notice Thrown when a committee publishes its key after the DKG deadline.
     /// @param e3Id The E3 identifier.
     /// @param deadline The last valid publication timestamp.
@@ -794,6 +800,12 @@ interface IInterfold {
     /// @param e3Id The E3 ID
     /// @return reason The failure reason
     function markE3Failed(uint256 e3Id) external returns (FailureReason reason);
+
+    /// @notice Cancel an active E3 and preserve payment for completed work.
+    /// @dev Only the original requester can cancel. Refund settlement remains
+    ///      permissionless through {processE3Failure}.
+    /// @param e3Id The E3 ID.
+    function cancelE3(uint256 e3Id) external;
 
     /// @notice Process a failed E3: transfer payment to E3RefundManager and calculate refunds.
     /// @dev Permissionless. Requires E3 to be in Failed stage.

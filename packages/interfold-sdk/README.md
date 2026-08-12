@@ -331,6 +331,14 @@ const stage = await sdk.getE3Stage(e3Id: bigint);
 const reason = await sdk.getFailureReason(e3Id: bigint);
 ```
 
+The original requester can cancel an active E3. Operators retain the configured value of completed
+milestones, and the remaining work allocation becomes claimable through the refund manager.
+
+```ts
+const hash = await sdk.cancelE3(e3Id)
+await sdk.waitForTransaction(hash)
+```
+
 #### Event Handling
 
 ```typescript

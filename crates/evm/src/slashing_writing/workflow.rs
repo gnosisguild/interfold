@@ -139,10 +139,7 @@ where
 
 /// Outcomes that warrant an on-chain slash proposal.
 pub(crate) fn is_slashable_outcome(outcome: &AccusationOutcome) -> bool {
-    matches!(
-        outcome,
-        AccusationOutcome::AccusedFaulted | AccusationOutcome::Equivocation
-    )
+    matches!(outcome, AccusationOutcome::AccusedFaulted)
 }
 
 /// Whether this node should attempt submission for the given quorum result.
@@ -234,11 +231,12 @@ mod tests {
             &AccusationOutcome::AccusedFaulted,
             Some(MAX_SLASH_SUBMITTERS)
         ));
-        // Not a voter.
+        // Equivocation requires evidence for each distinct payload, which the
+        // current single-preimage Lane A format cannot prove.
         assert!(!should_submit_slash(
             true,
             &AccusationOutcome::Equivocation,
-            None
+            Some(0)
         ));
     }
 

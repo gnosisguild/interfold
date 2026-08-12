@@ -221,9 +221,8 @@ library InterfoldPricing {
         uint256 activeLength = activeNodes.length;
         if (activeLength == 0) {
             address requester = requesters[e3Id];
-            if (requester != address(0)) {
-                _transferExact(paymentToken, requester, totalAmount);
-            }
+            if (requester == address(0)) revert IInterfold.E3DoesNotExist(e3Id);
+            _transferExact(paymentToken, requester, totalAmount);
             refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
             return;
         }

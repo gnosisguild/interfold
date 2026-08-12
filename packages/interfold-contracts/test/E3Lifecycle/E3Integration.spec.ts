@@ -354,7 +354,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     it("classifies every supported failure reason by economic responsibility", async function () {
       const { e3RefundManager } = await loadFixture(setup);
 
-      for (const reason of [5, 6, 7, 8]) {
+      for (const reason of [5, 6, 7, 8, 9]) {
         expect(await e3RefundManager.getFailurePayer(reason)).to.equal(1);
       }
       for (const reason of [1, 2, 3, 4, 10, 11, 12]) {
@@ -365,11 +365,88 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         e3RefundManager.getFailurePayer(0),
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
       await expect(
-        e3RefundManager.getFailurePayer(9),
-      ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
-      await expect(
         e3RefundManager.getFailurePayer(13),
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
+    });
+
+    it("allows only the requester to cancel an active E3", async function () {
+      const { interfold, makeReadyRequest, owner, requester } =
+        await loadFixture(setup);
+      await makeReadyRequest();
+
+      await expect(interfold.connect(owner).cancelE3(0))
+        .to.be.revertedWithCustomError(interfold, "NotRequester")
+        .withArgs(0, await owner.getAddress());
+
+      await expect(interfold.connect(requester).cancelE3(0))
+        .to.emit(interfold, "E3Failed")
+        .withArgs(0, 1, 9);
+      expect(await interfold.getFailureReason(0)).to.equal(9);
+
+      await expect(interfold.connect(requester).cancelE3(0))
+        .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
+        .withArgs(0, 6);
+    });
+
+    it("pays only completed milestones when the requester cancels", async function () {
+      const scenarios = [
+        { stage: 1, requesterBps: 9500n, nodeBps: 0n },
+        { stage: 2, requesterBps: 8500n, nodeBps: 1000n },
+        { stage: 3, requesterBps: 5500n, nodeBps: 4000n },
+        { stage: 4, requesterBps: 5500n, nodeBps: 4000n },
+      ] as const;
+
+      for (const scenario of scenarios) {
+        const ctx = await loadFixture(setup);
+
+        if (scenario.stage === 1) {
+          await ctx.makeReadyRequest();
+        } else if (scenario.stage === 2) {
+          await ctx.finalizeReadyCommittee();
+        } else {
+          await ctx.makeReadyRequest();
+          await ctx.finalizeAndPublishCommittee();
+          if (scenario.stage === 4) {
+            const e3 = await ctx.interfold.getE3(0);
+            await time.increaseTo(e3.inputWindow[1]);
+            const ciphertext = "0x" + "ab".repeat(100);
+            await ctx.interfold.publishCiphertextOutput(
+              0,
+              ciphertext,
+              ethers.keccak256(ciphertext),
+              "0x1337",
+            );
+          }
+        }
+
+        expect(await ctx.interfold.getE3Stage(0)).to.equal(scenario.stage);
+        await ctx.interfold.connect(ctx.requester).cancelE3(0);
+        await ctx.interfold.processE3Failure(0);
+
+        const distribution = await ctx.e3RefundManager.getRefundDistribution(0);
+        expect(distribution.requesterAmount).to.equal(
+          (distribution.originalPayment * scenario.requesterBps) / 10000n,
+        );
+        expect(distribution.honestNodeAmount).to.equal(
+          (distribution.originalPayment * scenario.nodeBps) / 10000n,
+        );
+        expect(distribution.protocolAmount).to.equal(
+          distribution.originalPayment -
+            distribution.requesterAmount -
+            distribution.honestNodeAmount,
+        );
+
+        const before = await ctx.usdcToken.balanceOf(
+          await ctx.requester.getAddress(),
+        );
+        await ctx.e3RefundManager
+          .connect(ctx.requester)
+          .claimRequesterRefund(0);
+        const after = await ctx.usdcToken.balanceOf(
+          await ctx.requester.getAddress(),
+        );
+        expect(after - before).to.equal(distribution.requesterAmount);
+      }
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {
@@ -382,7 +459,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
       const registrySigner = await ethers.getSigner(registryAddress);
 
-      for (const reason of [0, 13, 255]) {
+      for (const reason of [0, 9, 13, 255]) {
         await expect(interfold.connect(registrySigner).onE3Failed(0, reason))
           .to.be.revertedWithCustomError(interfold, "InvalidFailureReason")
           .withArgs(reason);

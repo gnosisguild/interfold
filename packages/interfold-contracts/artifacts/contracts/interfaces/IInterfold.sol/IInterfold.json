@@ -213,6 +213,22 @@
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
+        },
+        {
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "stage",
+          "type": "uint8"
+        }
+      ],
+      "name": "E3NotCancellable",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
         }
       ],
       "name": "E3NotFailed",
@@ -481,6 +497,22 @@
         }
       ],
       "name": "NoPaymentToRefund",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "caller",
+          "type": "address"
+        }
+      ],
+      "name": "NotRequester",
       "type": "error"
     },
     {
@@ -1414,6 +1446,19 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "cancelE3",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -2722,5 +2767,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-98d9e0c50aaecc1f04dd558659f762ce6ef669a8"
+  "buildInfoId": "solc-0_8_28-06a5eff6990b53e25ef653ebe1c27db68a04d543"
 }

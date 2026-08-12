@@ -381,7 +381,7 @@ settle matured ticket exits by passing `maxLicense = 0`. A claim that includes l
 must come from the bond owner. The exit queue remains keyed by operator, so queued assets stay
 slashable against the correct protocol identity.
 
-```
+```text
 Caller submits claimExitsFor(operator, maxTicket, maxLicense)
 │
 ├─ BondingRegistry.claimExitsFor(operator, maxTicket, maxLicense)
