@@ -8,6 +8,11 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
+import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
+import {
+    IProtocolDependencyView
+} from "../interfaces/IProtocolDependencyView.sol";
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ICiphertextVerifier } from "../interfaces/ICiphertextVerifier.sol";
@@ -27,6 +32,69 @@ library InterfoldLifecycle {
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
+
+    /// @notice Rejects requests unless every dependency points to one graph.
+    function validateDependencyGraph(
+        address registryAddress,
+        address bondingAddress,
+        address slashManagerAddress,
+        address refundManagerAddress
+    ) external view {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+        IBondingRegistry bonding = IBondingRegistry(bondingAddress);
+        IProtocolDependencyView registryView = IProtocolDependencyView(
+            registryAddress
+        );
+        IProtocolDependencyView bondingView = IProtocolDependencyView(
+            bondingAddress
+        );
+        IProtocolDependencyView slashView = IProtocolDependencyView(
+            slashManagerAddress
+        );
+        IProtocolDependencyView refundView = IProtocolDependencyView(
+            refundManagerAddress
+        );
+        if (
+            registryAddress.code.length == 0 ||
+            bondingAddress.code.length == 0 ||
+            slashManagerAddress.code.length == 0 ||
+            refundManagerAddress.code.length == 0 ||
+            registryView.interfold() != address(this) ||
+            registryView.bondingRegistry() != bondingAddress ||
+            registryView.slashingManager() != slashManagerAddress ||
+            bondingView.registry() != registryAddress ||
+            bondingView.slashingManager() != slashManagerAddress ||
+            address(bonding.ticketToken().registry()) != bondingAddress ||
+            slashView.interfold() != address(this) ||
+            slashView.ciphernodeRegistry() != registryAddress ||
+            slashView.bondingRegistry() != bondingAddress ||
+            slashView.e3RefundManager() != refundManagerAddress ||
+            refundView.interfold() != address(this) ||
+            refundView.bondingRegistry() != bondingAddress ||
+            registry.numCiphernodes() != bonding.numRegisteredOperators()
+        ) revert IInterfold.DependencyConfigurationMismatch();
+    }
+
+    /// @notice Requires the current dependency generation to own no live state.
+    function validateGenerationDrained(
+        uint256 activeE3Count,
+        address registryAddress,
+        address bondingAddress,
+        address slashManagerAddress
+    ) external view {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+        IBondingRegistry bonding = IBondingRegistry(bondingAddress);
+        ISlashingManager slashManager = ISlashingManager(slashManagerAddress);
+        if (
+            activeE3Count != 0 ||
+            registry.unreleasedCommitteeCount() != 0 ||
+            registry.numCiphernodes() != 0 ||
+            bonding.unresolvedCommitteeCount() != 0 ||
+            bonding.numRegisteredOperators() != 0 ||
+            slashManager.activeE3Assignments() != 0 ||
+            slashManager.activeBanCount() != 0
+        ) revert IInterfold.DependencyGenerationNotDrained();
+    }
 
     /// @notice Validates finalization and freezes committee reward recipients.
     function validateAndSnapshotCommitteeFinalization(
@@ -318,6 +386,8 @@ library InterfoldLifecycle {
             revert IInterfold.E3AlreadyFailed(e3Id);
         if (
             reason == uint8(IInterfold.FailureReason.None) ||
+            reason ==
+            uint8(IInterfold.FailureReason.RequesterCancelled) ||
             reason >= uint8(IInterfold.FailureReason._MAX_FAILURE_REASON)
         ) revert IInterfold.InvalidFailureReason(reason);
     }
@@ -440,19 +510,40 @@ library InterfoldLifecycle {
     function validateRequest(
         uint256[2] calldata inputWindow,
         uint256 nowTs,
-        uint256 computeWindow,
-        uint256 decryptionWindow,
+        uint256 sortitionWindow,
+        IInterfold.E3TimeoutConfig calldata timeoutConfig,
         uint256 maxDuration
     ) external pure {
         if (inputWindow[0] < nowTs)
             revert IInterfold.InvalidInputDeadlineStart(inputWindow[0]);
         if (inputWindow[1] < inputWindow[0])
             revert IInterfold.InvalidInputDeadlineEnd(inputWindow[1]);
-        uint256 totalDuration = inputWindow[1] -
-            nowTs +
-            computeWindow +
-            decryptionWindow;
+        uint256 totalDuration = requestLifecycleDuration(
+            inputWindow[1],
+            nowTs,
+            sortitionWindow,
+            timeoutConfig
+        );
         if (totalDuration > maxDuration)
             revert IInterfold.InvalidDuration(totalDuration);
+    }
+
+    /// @notice Returns the worst-case request-to-decryption duration.
+    function requestLifecycleDuration(
+        uint256 inputWindowEnd,
+        uint256 requestTime,
+        uint256 sortitionWindow,
+        IInterfold.E3TimeoutConfig memory timeoutConfig
+    ) public pure returns (uint256 duration) {
+        uint256 inputReservation = inputWindowEnd - requestTime;
+        uint256 committeeReservation = sortitionWindow +
+            timeoutConfig.dkgWindow;
+        uint256 preCompute = inputReservation > committeeReservation
+            ? inputReservation
+            : committeeReservation;
+        return
+            preCompute +
+            timeoutConfig.computeWindow +
+            timeoutConfig.decryptionWindow;
     }
 }

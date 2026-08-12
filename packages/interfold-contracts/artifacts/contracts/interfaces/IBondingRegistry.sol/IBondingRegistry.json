@@ -43,6 +43,27 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "asset",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expected",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "actual",
+          "type": "uint256"
+        }
+      ],
+      "name": "AssetTransferMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "operator",
           "type": "address"
         },
@@ -138,6 +159,22 @@
         }
       ],
       "name": "E3AssignmentNotTerminal",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "exitDelay",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "requiredDelay",
+          "type": "uint256"
+        }
+      ],
+      "name": "ExitDelayMustExceedSortitionWindow",
       "type": "error"
     },
     {
@@ -487,6 +524,31 @@
           "type": "address"
         },
         {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ticketAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "licenseAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "AssetsClaimed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
           "indexed": true,
           "internalType": "address",
           "name": "bondOwner",
@@ -712,31 +774,6 @@
         }
       ],
       "name": "LicenseSurplusSwept",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "recipient",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "expectedAmount",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "actualAmount",
-          "type": "uint256"
-        }
-      ],
-      "name": "LicenseTransferShortfall",
       "type": "event"
     },
     {
@@ -1604,6 +1641,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "numRegisteredOperators",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -2275,6 +2325,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "unresolvedCommitteeCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -2299,5 +2362,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-2669d7c5659f9a42878527352413c8338ef4bc08"
+  "buildInfoId": "solc-0_8_28-98d9e0c50aaecc1f04dd558659f762ce6ef669a8"
 }

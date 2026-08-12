@@ -51,15 +51,15 @@ impl AccusationVoting {
 
     /// Compute the on-chain vote-validity deadline (Unix seconds) the accuser
     /// stamps on a fresh accusation.
-    pub(super) fn compute_deadline(&self) -> u64 {
-        self.clock
-            .unix_now_secs()
-            .saturating_add(self.vote_validity_secs)
+    pub(super) fn compute_vote_window(&self) -> (u64, u64) {
+        let issued_at = self.clock.unix_now_secs();
+        (issued_at, issued_at.saturating_add(self.vote_validity_secs))
     }
 
     /// Validate a peer-provided accusation deadline against this node's local
     /// vote-validity policy and wall clock.
     pub(crate) fn is_peer_deadline_acceptable(
+        issued_at: u64,
         deadline: u64,
         now: u64,
         vote_validity_secs: u64,
@@ -68,10 +68,10 @@ impl AccusationVoting {
         if vote_validity_secs == 0 {
             return false;
         }
-        let max_deadline = now
-            .saturating_add(vote_validity_secs)
-            .saturating_add(skew_secs);
-        deadline > now && deadline <= max_deadline
+        issued_at <= now.saturating_add(skew_secs)
+            && deadline >= issued_at
+            && deadline.saturating_sub(issued_at) <= vote_validity_secs
+            && deadline > now
     }
 
     // ─── Accusation ID computation ───────────────────────────────────────
@@ -114,7 +114,7 @@ impl AccusationVoting {
             .try_into()
             .expect("E3id should be valid U256");
         let typehash: [u8; 32] = keccak256(
-            "ProofFailureAccusation(uint256 chainId,uint256 e3Id,address accuser,address accused,uint256 proofType,bytes32 dataHash,uint256 deadline)"
+            "ProofFailureAccusation(uint256 chainId,uint256 e3Id,address accuser,address accused,uint256 proofType,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
         ).into();
         let encoded = (
             typehash,
@@ -124,6 +124,7 @@ impl AccusationVoting {
             accusation.accused,
             U256::from(accusation.proof_type as u8),
             accusation.data_hash,
+            U256::from(accusation.issued_at),
             U256::from(accusation.deadline),
         )
             .abi_encode();
@@ -193,6 +194,7 @@ impl AccusationVoting {
                 vote.accusation_id,
                 vote.voter,
                 vote.data_hash,
+                U256::from(vote.issued_at),
                 U256::from(vote.deadline),
             )
                 .abi_encode(),

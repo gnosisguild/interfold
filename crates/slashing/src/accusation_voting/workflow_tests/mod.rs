@@ -24,6 +24,7 @@ fn ctx() -> EventContext<Sequenced> {
         accusation_id: [0u8; 32],
         voter: Address::ZERO,
         data_hash: [0u8; 32],
+        issued_at: 0,
         deadline: 0,
         signature: ArcBytes::default(),
     };
@@ -77,6 +78,7 @@ fn signed_vote(
         accusation_id,
         voter: who.address(),
         data_hash,
+        issued_at: deadline.saturating_sub(VALIDITY),
         deadline,
         signature: ArcBytes::default(),
     };
@@ -101,6 +103,7 @@ fn insert_pending(
         accused_party_id: 1,
         proof_type: ProofType::C1PkGeneration,
         data_hash,
+        issued_at: deadline.saturating_sub(VALIDITY),
         deadline,
         signed_payload: None,
         signature: ArcBytes::default(),

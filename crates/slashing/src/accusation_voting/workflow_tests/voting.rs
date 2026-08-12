@@ -19,6 +19,7 @@ fn vote_digest_is_deterministic() {
         accusation_id: [0xab; 32],
         voter,
         data_hash: [0xcd; 32],
+        issued_at: NOW.saturating_sub(VALIDITY),
         deadline: NOW,
         signature: ArcBytes::default(),
     };

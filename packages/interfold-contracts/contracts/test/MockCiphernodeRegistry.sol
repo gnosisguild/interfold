@@ -14,6 +14,10 @@ import {
 
 contract MockCiphernodeRegistry is ICiphernodeRegistry {
     uint256 public override numCiphernodes;
+    uint256 public override unreleasedCommitteeCount;
+    IInterfold public interfold;
+    IBondingRegistry public bondingRegistry;
+    address public slashingManager;
 
     /// @notice Configurable committee members per E3 for testing
     mapping(uint256 e3Id => address[] nodes) private _committeeNodes;
@@ -164,15 +168,21 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         return 0;
     }
 
-    function getBondingRegistry() external pure returns (address) {
-        return address(0);
+    function getBondingRegistry() external view returns (address) {
+        return address(bondingRegistry);
     }
 
-    // solhint-disable-next-line no-empty-blocks
-    function setInterfold(IInterfold) external pure {}
+    function setInterfold(IInterfold value) external {
+        interfold = value;
+    }
 
-    // solhint-disable-next-line no-empty-blocks
-    function setBondingRegistry(IBondingRegistry) external pure {}
+    function setBondingRegistry(IBondingRegistry value) external {
+        bondingRegistry = value;
+    }
+
+    function setSlashingManager(address value) external {
+        slashingManager = value;
+    }
 
     // solhint-disable-next-line no-empty-blocks
     function submitTicket(uint256, uint256) external pure {}
@@ -289,6 +299,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 }
 
 contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
+    function unreleasedCommitteeCount() external pure returns (uint256) {
+        return 0;
+    }
+
     function dkgFoldAttestationVerifierFor(
         uint256
     ) external view returns (IDkgFoldAttestationVerifier) {

@@ -468,14 +468,16 @@ export async function deployInterfoldSystem(
 
   if (wireSlashingManager) {
     await interfold.setSlashingManager(await slashingManager.getAddress());
-    if (!mockCiphernodeRegistry) {
-      await ciphernodeRegistry.setSlashingManager(
-        await slashingManager.getAddress(),
-      );
-    }
+    await registryForWiring.setSlashingManager(
+      await slashingManager.getAddress(),
+    );
     await slashingManager.setCiphernodeRegistry(effectiveRegistryAddress);
     await slashingManager.setInterfold(interfoldAddress);
     await slashingManager.setE3RefundManager(e3RefundManagerAddress);
+  }
+
+  if (wireSlashingManager) {
+    await interfold.setRequestsPaused(false);
   }
 
   // ── Mocks ─────────────────────────────────────────────────────────────────

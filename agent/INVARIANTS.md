@@ -93,9 +93,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
   setters enforce the relationship; equality is invalid because ticket submission includes the
   deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`; `flow-trace/02`, `03`
-- **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
-  slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
-  their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
+- **One coherent dependency generation:** each request validates and snapshots the complete
+  Interfold, registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause
+  requests and drain all E3s, committees, operators, bans, and slash routes before it replaces any
+  graph member. Old and new generations never serve requests at the same time. — `flow-trace/03`,
+  `05`
 - **Selected-member collateral remains slashable:** committee requests assign their request-time
   registry in `BondingRegistry`, and successful finalization records one unresolved obligation per
   member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
@@ -111,9 +113,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### Deadlines
 
-- Every stage has a deadline; once missed, **anyone** may call `markE3Failed(e3Id)`.
-  `computeDeadline = inputWindow.end + computeWindow`; `dkgDeadline = now + dkgWindow`. —
-  `flow-trace/03`
+- Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
+  The request snapshots all timeout windows. The DKG deadline starts when the committee is
+  finalized. The compute deadline starts at the later of key publication and the end of the input
+  window. Request validation reserves the full worst-case sortition, DKG, compute, and decryption
+  lifecycle. — `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 

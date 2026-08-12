@@ -146,15 +146,14 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Registry-wide validity window (seconds) for accusation vote deadlines.
     ///         Ciphernodes use it to create deadlines and validate peer accusations.
-    ///         The on-chain slashing manager only checks that the signed deadline
-    ///         has not expired.
+    ///         The slashing manager snapshots the value for each E3 and bounds the
+    ///         signed issue time, validity window, and objective submission deadline.
     ///
     /// @dev Set with [`setAccusationVoteValidity`] by `owner()`. Defaults to the
     ///      [`DEFAULT_ACCUSATION_VOTE_VALIDITY`] constant on initialize so newly-
     ///      deployed registries are operational without an extra setter call.
-    ///      Setting to zero disables the off-chain freshness window (deadlines
-    ///      collapse to "now", effectively rejecting every vote on chain) — intentionally
-    ///      allowed so governance can hard-stop slashing in an emergency.
+    ///      Setting the live value to zero makes the slashing manager reject new
+    ///      attestation-based proposals. Governance can use this as an emergency stop.
     uint256 public accusationVoteValidity;
 
     /// @notice Default value for `accusationVoteValidity` applied at `initialize`.
@@ -277,6 +276,7 @@ contract CiphernodeRegistryOwnable is
         dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
         dependencies.bonding.setCommitteeObligation(e3Id, address(0), true);
+        unreleasedCommitteeCount++;
         emit DkgFoldAttestationContextEstablished(
             e3Id,
             address(this),
@@ -707,6 +707,7 @@ contract CiphernodeRegistryOwnable is
             );
             c.obligationsReleased = true;
             _setCommitteeObligations(e3Id, c, false);
+            unreleasedCommitteeCount--;
             return false;
         }
 
@@ -735,7 +736,8 @@ contract CiphernodeRegistryOwnable is
     function releaseCommittee(uint256 e3Id) external {
         Committee storage c = committees[e3Id];
         require(
-            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
+            c.stage == ICiphernodeRegistry.CommitteeStage.Requested ||
+                c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
             CommitteeNotFinalized()
         );
         if (c.obligationsReleased) {
@@ -749,7 +751,11 @@ contract CiphernodeRegistryOwnable is
         ) revert E3NotTerminal(e3Id);
 
         c.obligationsReleased = true;
+        if (c.stage == ICiphernodeRegistry.CommitteeStage.Requested) {
+            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
+        }
         _setCommitteeObligations(e3Id, c, false);
+        unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
     }
 
@@ -787,6 +793,7 @@ contract CiphernodeRegistryOwnable is
     /// @param _interfold Address of the Interfold contract
     function setInterfold(IInterfold _interfold) public onlyOwner {
         require(address(_interfold) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(interfold));
         interfold = _interfold;
         emit InterfoldSet(address(_interfold));
     }
@@ -798,6 +805,7 @@ contract CiphernodeRegistryOwnable is
         IBondingRegistry _bondingRegistry
     ) public onlyOwner {
         require(address(_bondingRegistry) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(bondingRegistry));
         _validateExitTiming(_bondingRegistry, exitDelayFloor());
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
@@ -810,6 +818,7 @@ contract CiphernodeRegistryOwnable is
         ISlashingManager _slashingManager
     ) public onlyOwner {
         require(address(_slashingManager) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(slashingManager));
         slashingManager = _slashingManager;
         emit RegistrySlashingManagerSet(address(_slashingManager));
     }
@@ -859,6 +868,13 @@ contract CiphernodeRegistryOwnable is
                 requiredDelay
             );
         }
+    }
+
+    function _requireGenerationDrained(address current) private view {
+        if (
+            current != address(0) &&
+            (numCiphernodes != 0 || unreleasedCommitteeCount != 0)
+        ) revert RegistryGenerationNotDrained();
     }
 
     /// @notice Update the registry-wide vote validity window used by accusers
@@ -1373,7 +1389,10 @@ contract CiphernodeRegistryOwnable is
     /// @notice Whether the committee seed has been stored for an E3.
     mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
 
+    /// @inheritdoc ICiphernodeRegistry
+    uint256 public unreleasedCommitteeCount;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[46] private __gap;
+    uint256[45] private __gap;
 }

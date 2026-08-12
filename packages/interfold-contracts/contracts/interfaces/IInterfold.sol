@@ -62,6 +62,7 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
+        /// @dev Reserved for storage compatibility. No cancellation flow exists.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
@@ -267,6 +268,9 @@ interface IInterfold {
     /// @param slashingManager The address of the SlashingManager contract.
     event SlashingManagerSet(address indexed slashingManager);
 
+    /// @notice Emitted when request admission is paused or resumed.
+    event RequestsPausedSet(bool paused);
+
     /// @notice Emitted when slashed funds are escrowed for an E3
     /// @param e3Id The E3 ID.
     /// @param amount The amount of slashed funds escrowed.
@@ -407,6 +411,15 @@ interface IInterfold {
     /// @notice Thrown when attempting to set an invalid bonding registry address.
     /// @param bondingRegistry The invalid bonding registry address.
     error InvalidBondingRegistry(IBondingRegistry bondingRegistry);
+
+    /// @notice New E3 requests are paused while a dependency generation drains.
+    error RequestsPaused();
+
+    /// @notice The configured dependency graph is incomplete or inconsistent.
+    error DependencyConfigurationMismatch();
+
+    /// @notice A dependency generation still owns protocol state.
+    error DependencyGenerationNotDrained();
 
     /// @notice Thrown when attempting to set an invalid fee token address.
     /// @param feeToken The invalid fee token address.
@@ -691,6 +704,16 @@ interface IInterfold {
     /// @notice Returns the full pricing configuration.
     function getPricingConfig() external view returns (PricingConfig memory);
 
+    /// @notice Returns the timeout windows frozen for an E3.
+    function getE3TimeoutConfig(
+        uint256 e3Id
+    ) external view returns (E3TimeoutConfig memory config);
+
+    /// @notice Returns the request-time upper bound for the E3 lifecycle.
+    function getE3LifecycleDeadline(
+        uint256 e3Id
+    ) external view returns (uint256 deadline);
+
     /// @notice Returns the decryption verifier for a given encryption scheme.
     /// @param encryptionSchemeId The unique identifier for the encryption scheme.
     /// @return The decryption verifier contract for the specified encryption scheme.
@@ -716,6 +739,15 @@ interface IInterfold {
 
     /// @notice Returns the current SlashingManager contract.
     function slashingManager() external view returns (ISlashingManager);
+
+    /// @notice Whether new requests are paused for dependency maintenance.
+    function requestsPaused() external view returns (bool);
+
+    /// @notice Number of E3s that have not reached a terminal stage.
+    function activeE3Count() external view returns (uint256);
+
+    /// @notice Pause or resume request admission.
+    function setRequestsPaused(bool paused) external;
 
     /// @notice Called by CiphernodeRegistry when committee is finalized (sortition complete).
     /// @dev Updates E3 lifecycle to CommitteeFinalized stage, starts DKG deadline.

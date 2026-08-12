@@ -22,7 +22,15 @@ export async function deployProtocolContracts(
   await ticket.waitForDeployment();
   const ticketToken = await deployedAddress(ticket);
 
-  const slashingFactory = await ethers.getContractFactory("SlashingManager");
+  const slashingEvidenceFactory = await ethers.getContractFactory(
+    "SlashingEvidenceLib",
+  );
+  const slashingEvidence = await slashingEvidenceFactory.deploy();
+  await slashingEvidence.waitForDeployment();
+  const slashingEvidenceLib = await deployedAddress(slashingEvidence);
+  const slashingFactory = await ethers.getContractFactory("SlashingManager", {
+    libraries: { SlashingEvidenceLib: slashingEvidenceLib },
+  });
   const slashing = await slashingFactory.deploy(
     BigInt(config.slashing.initialDelay),
     config.safe,
@@ -138,6 +146,7 @@ export async function deployProtocolContracts(
     contracts: {
       ticketToken,
       slashingManager,
+      slashingEvidenceLib,
       poseidonT3,
       ciphernodeRegistry: registryProxy.proxy,
       ciphernodeRegistryImplementation,

@@ -140,6 +140,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "RewardsDistributed(uint256,address[],uint256[])",
         Some(1),
     ),
+    EvmEventDefinition::new("RequestsPausedSet", "RequestsPausedSet(bool)", None),
     EvmEventDefinition::new(
         "SlashedFundsEscrowed",
         "SlashedFundsEscrowed(uint256,address,uint256)",

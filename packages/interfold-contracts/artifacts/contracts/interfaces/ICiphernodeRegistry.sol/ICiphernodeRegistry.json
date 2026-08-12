@@ -300,6 +300,11 @@
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "RegistryGenerationNotDrained",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -1557,6 +1562,19 @@
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "unreleasedCommitteeCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     }
   ],
   "bytecode": "0x",
@@ -1565,5 +1583,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-0db228c3bd2b99b41cbc08984c918b0d7bbc1f68"
+  "buildInfoId": "solc-0_8_28-98d9e0c50aaecc1f04dd558659f762ce6ef669a8"
 }

@@ -562,7 +562,7 @@ fn test_reason_for_proof_type_matches_solidity() {
 fn test_vote_typehash() {
     let expected: [u8; 32] = keccak256(VOTE_TYPEHASH_STR).into();
     // Cross-check with the exact string the Solidity contract uses:
-    let sol_str = "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 deadline)";
+    let sol_str = "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)";
     let sol_hash: [u8; 32] = keccak256(sol_str).into();
     assert_eq!(
         expected, sol_hash,
@@ -1795,6 +1795,7 @@ async fn test_onchain_actor_signed_vote_accepted() {
             accusation_id: *accusation_id.as_ref(),
             voter,
             data_hash: *data_hash.as_ref(),
+            issued_at: deadline.saturating_sub(1_800),
             deadline,
             signature: ArcBytes::default(),
         };

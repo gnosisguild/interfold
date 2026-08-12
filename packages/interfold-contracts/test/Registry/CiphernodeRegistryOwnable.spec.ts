@@ -938,12 +938,16 @@ describe("CiphernodeRegistryOwnable", function () {
       ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     });
     it("sets the interfold address", async function () {
-      const { registry } = await loadFixture(setup);
+      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
+        setupOperators: 0,
+      });
       expect(await registry.setInterfold(AddressTwo));
       expect(await registry.interfold()).to.equal(AddressTwo);
     });
     it("emits an InterfoldSet event", async function () {
-      const { registry } = await loadFixture(setup);
+      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
+        setupOperators: 0,
+      });
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);

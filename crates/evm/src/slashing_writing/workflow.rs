@@ -172,6 +172,7 @@ mod tests {
             accusation_id: B256::ZERO.0,
             voter,
             data_hash: B256::repeat_byte(7).0,
+            issued_at: 90,
             deadline: 100,
             signature: ArcBytes::from_bytes(b"signature"),
         }

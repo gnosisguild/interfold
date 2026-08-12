@@ -369,8 +369,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         if (
             reason == IInterfold.FailureReason.ComputeTimeout ||
             reason == IInterfold.FailureReason.ComputeProviderExpired ||
-            reason == IInterfold.FailureReason.ComputeProviderFailed ||
-            reason == IInterfold.FailureReason.RequesterCancelled
+            reason == IInterfold.FailureReason.ComputeProviderFailed
         ) {
             return IInterfold.E3Stage.KeyPublished;
         }

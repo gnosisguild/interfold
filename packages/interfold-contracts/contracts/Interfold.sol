@@ -235,6 +235,8 @@ contract Interfold is
         setE3RefundManager(_e3RefundManager);
         _setFeeAssetConfig(feeAssetConfig);
         _setTimeoutConfig(config);
+        requestsPaused = true;
+        emit RequestsPausedSet(true);
 
         registerE3Program(initialE3Program);
 
@@ -257,6 +259,8 @@ contract Interfold is
     function request(
         E3RequestParams calldata requestParams
     ) external returns (uint256 e3Id, E3 memory e3) {
+        if (requestsPaused) revert RequestsPaused();
+        _validateDependencyGraph();
         // Fee-token allow-list gate: protects requesters from being
         // forced into a fee token they did not consent to (e.g. a malicious
         // owner pointing `feeToken` at a fee-on-transfer or rebasing token).
@@ -282,6 +286,15 @@ contract Interfold is
         dependencies.refundManager = e3RefundManager;
         dependencies.slashManager = slashingManager;
         dependencies.bonding = bondingRegistry;
+        _e3TimeoutConfigs[e3Id] = _timeoutConfig;
+        _e3LifecycleDeadlines[e3Id] =
+            block.timestamp +
+            InterfoldLifecycle.requestLifecycleDuration(
+                requestParams.inputWindow[1],
+                block.timestamp,
+                dependencies.registry.sortitionSubmissionWindow(),
+                _timeoutConfig
+            );
         dependencies.refundManager.snapshotE3Policy(
             e3Id,
             address(dependencies.registry)
@@ -298,11 +311,7 @@ contract Interfold is
         // Initialize E3 Lifecycle
         _e3Stages[e3Id] = E3Stage.Requested;
         _e3Requesters[e3Id] = msg.sender;
-
-        // the compute deadline is end of input window + compute window
-        _e3Deadlines[e3Id].computeDeadline =
-            requestParams.inputWindow[1] +
-            _timeoutConfig.computeWindow;
+        activeE3Count++;
 
         e3.seed = seed;
         e3.committeeSize = requestParams.committeeSize;
@@ -384,7 +393,7 @@ contract Interfold is
                 _e3Deadlines,
                 address(_registryFor(e3Id)),
                 e3Id,
-                _timeoutConfig.decryptionWindow,
+                _e3TimeoutConfigs[e3Id].decryptionWindow,
                 ciphertextOutput,
                 ciphertextCommitment,
                 proof
@@ -420,6 +429,7 @@ contract Interfold is
 
         e3s[e3Id].plaintextOutput = plaintextOutput;
         _e3Stages[e3Id] = E3Stage.Complete;
+        activeE3Count--;
 
         _verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);
         success = true;
@@ -460,74 +470,18 @@ contract Interfold is
     ///      transfer — single recipient, no other party harmed.
     /// @param e3Id The ID of the E3 for which to distribute rewards.
     function _distributeRewards(uint256 e3Id) internal {
-        (address[] memory activeNodes, ) = _registryFor(e3Id)
-            .getActiveCommitteeNodes(e3Id);
-        IE3RefundManager refundManager = _refundManagerFor(e3Id);
-        uint256 activeLength = activeNodes.length;
-
-        uint256 totalAmount = e3Payments[e3Id];
-        e3Payments[e3Id] = 0;
-
-        // Use the per-E3 fee token (not the global one, which may have been rotated)
-        IERC20 paymentToken = _e3FeeTokens[e3Id];
-
-        if (totalAmount == 0) {
-            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
-            return;
-        }
-
-        // If all committee members were expelled (all malicious), refund the
-        // requester in full — the protocol should not profit from a
-        // compromised E3.
-        if (activeLength == 0) {
-            address requester = _e3Requesters[e3Id];
-            if (requester != address(0)) {
-                InterfoldPricing.transferExact(
-                    paymentToken,
-                    requester,
-                    totalAmount
-                );
-            }
-            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
-            return;
-        }
-
-        // Split between protocol treasury and CN rewards
-        uint256 protocolAmount;
-        uint16 _protocolShareBps = _e3ProtocolShareBps[e3Id];
-        address _protocolTreasury = _e3ProtocolTreasury[e3Id];
-        if (_protocolShareBps > 0 && _protocolTreasury != address(0)) {
-            protocolAmount =
-                (totalAmount * uint256(_protocolShareBps)) /
-                uint256(BPS_BASE);
-            if (protocolAmount > 0) {
-                _pendingTreasury[_protocolTreasury][
-                    paymentToken
-                ] += protocolAmount;
-                emit TreasuryCredited(
-                    e3Id,
-                    _protocolTreasury,
-                    paymentToken,
-                    protocolAmount
-                );
-            }
-        }
-
-        uint256 cnAmount = totalAmount - protocolAmount;
-
-        // Split the ciphernode share and credit each node owner's pull balance.
-        uint256[] memory amounts = InterfoldPricing.computeAndCreditRewards(
+        InterfoldPricing.distributeRewards(
+            e3Payments,
+            _e3FeeTokens,
+            _e3Requesters,
+            _e3ProtocolShareBps,
+            _e3ProtocolTreasury,
+            _pendingTreasury,
             _pendingRewards,
-            refundManager,
-            cnAmount,
-            e3Id,
-            activeNodes,
-            paymentToken
+            address(_registryFor(e3Id)),
+            _refundManagerFor(e3Id),
+            e3Id
         );
-
-        emit RewardsDistributed(e3Id, activeNodes, amounts);
-
-        refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
     }
 
     /// @notice Retrieves the honest committee nodes for a given E3.
@@ -559,6 +513,7 @@ contract Interfold is
                 _ciphernodeRegistry != ciphernodeRegistry,
             InvalidCiphernodeRegistry(_ciphernodeRegistry)
         );
+        _requireDependencyReplacementReady(address(ciphernodeRegistry));
         ciphernodeRegistry = _ciphernodeRegistry;
         emit CiphernodeRegistrySet(address(_ciphernodeRegistry));
     }
@@ -572,6 +527,7 @@ contract Interfold is
                 _bondingRegistry != bondingRegistry,
             InvalidBondingRegistry(_bondingRegistry)
         );
+        _requireDependencyReplacementReady(address(bondingRegistry));
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
     }
@@ -710,6 +666,7 @@ contract Interfold is
         IE3RefundManager _e3RefundManager
     ) public onlyOwner {
         require(address(_e3RefundManager) != address(0));
+        _requireDependencyReplacementReady(address(e3RefundManager));
         e3RefundManager = _e3RefundManager;
         emit E3RefundManagerSet(address(_e3RefundManager));
     }
@@ -720,6 +677,7 @@ contract Interfold is
         ISlashingManager _slashingManager
     ) external onlyOwner {
         require(address(_slashingManager) != address(0));
+        _requireDependencyReplacementReady(address(slashingManager));
         slashingManager = _slashingManager;
         emit SlashingManagerSet(address(_slashingManager));
     }
@@ -789,7 +747,7 @@ contract Interfold is
         _e3Stages[e3Id] = E3Stage.CommitteeFinalized;
         _e3Deadlines[e3Id].dkgDeadline =
             block.timestamp +
-            _timeoutConfig.dkgWindow;
+            _e3TimeoutConfigs[e3Id].dkgWindow;
 
         emit CommitteeFinalized(e3Id);
         emit E3StageChanged(
@@ -815,6 +773,12 @@ contract Interfold is
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;
+        uint256 computeStartsAt = block.timestamp > e3.inputWindow[1]
+            ? block.timestamp
+            : e3.inputWindow[1];
+        _e3Deadlines[e3Id].computeDeadline =
+            computeStartsAt +
+            _e3TimeoutConfigs[e3Id].computeWindow;
 
         emit CommitteeFormed(e3Id);
         emit E3StageChanged(
@@ -887,6 +851,7 @@ contract Interfold is
     ) internal {
         _e3Stages[e3Id] = E3Stage.Failed;
         _e3FailureReasons[e3Id] = reason;
+        activeE3Count--;
 
         emit E3StageChanged(e3Id, current, E3Stage.Failed);
         emit E3Failed(e3Id, current, reason);
@@ -980,6 +945,31 @@ contract Interfold is
         return _timeoutConfig;
     }
 
+    /// @inheritdoc IInterfold
+    function getE3TimeoutConfig(
+        uint256 e3Id
+    ) external view returns (E3TimeoutConfig memory config) {
+        return _e3TimeoutConfigs[e3Id];
+    }
+
+    /// @inheritdoc IInterfold
+    function getE3LifecycleDeadline(
+        uint256 e3Id
+    ) external view returns (uint256 deadline) {
+        return _e3LifecycleDeadlines[e3Id];
+    }
+
+    /// @inheritdoc IInterfold
+    function setRequestsPaused(bool paused) external onlyOwner {
+        if (requestsPaused == paused) return;
+        if (!paused) {
+            _validateDependencyGraph();
+            _dependencyConfigurationActivated = true;
+        }
+        requestsPaused = paused;
+        emit RequestsPausedSet(paused);
+    }
+
     /// @notice Set timeout configuration
     /// @param config The new timeout config
     function setTimeoutConfig(
@@ -1052,8 +1042,8 @@ contract Interfold is
         InterfoldLifecycle.validateRequest(
             requestParams.inputWindow,
             block.timestamp,
-            _timeoutConfig.computeWindow,
-            _timeoutConfig.decryptionWindow,
+            ciphernodeRegistry.sortitionSubmissionWindow(),
+            _timeoutConfig,
             maxDuration
         );
         require(
@@ -1189,6 +1179,28 @@ contract Interfold is
         return _e3Dependencies[e3Id].slashManager;
     }
 
+    function _validateDependencyGraph() private view {
+        InterfoldLifecycle.validateDependencyGraph(
+            address(ciphernodeRegistry),
+            address(bondingRegistry),
+            address(slashingManager),
+            address(e3RefundManager)
+        );
+    }
+
+    function _requireDependencyReplacementReady(address current) private view {
+        if (current == address(0) || !_dependencyConfigurationActivated) {
+            return;
+        }
+        if (!requestsPaused) revert RequestsPaused();
+        InterfoldLifecycle.validateGenerationDrained(
+            activeE3Count,
+            address(ciphernodeRegistry),
+            address(bondingRegistry),
+            address(slashingManager)
+        );
+    }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //              ERC-165 Interface Detection               //
@@ -1210,10 +1222,25 @@ contract Interfold is
     /// @notice Expected decimals for the active fee token.
     uint8 public feeTokenDecimals;
 
+    /// @inheritdoc IInterfold
+    bool public requestsPaused;
+
+    /// @inheritdoc IInterfold
+    uint256 public activeE3Count;
+
+    /// @notice Whether the first complete dependency graph has been activated.
+    bool private _dependencyConfigurationActivated;
+
+    /// @notice Timeout windows frozen when each E3 is requested.
+    mapping(uint256 e3Id => E3TimeoutConfig config) private _e3TimeoutConfigs;
+
+    /// @notice Latest possible lifecycle deadline derived at request time.
+    mapping(uint256 e3Id => uint256 deadline) private _e3LifecycleDeadlines;
+
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[48] private __gap;
+    uint256[44] private __gap;
 }

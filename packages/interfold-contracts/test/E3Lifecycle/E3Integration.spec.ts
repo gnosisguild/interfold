@@ -20,6 +20,7 @@ import {
 import {
   currentPricingConfig,
   deployInterfoldSystem,
+  deploySlashingManager,
   encodeMockDkgProof,
   ethers,
   ignition,
@@ -261,7 +262,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   };
 
   describe("E3 Request with Lifecycle Integration", function () {
-    it("rejects a request before the slashing manager is configured", async function () {
+    it("rejects requests until the dependency graph is activated", async function () {
       const sys = await deployInterfoldSystem({
         setupOperators: 0,
         wireSlashingManager: false,
@@ -269,10 +270,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await expect(
         makeRequest(sys.interfold, sys.usdcToken, sys.request),
-      ).to.be.revertedWithCustomError(
-        sys.e3RefundManager,
-        "InvalidSlashingManager",
-      );
+      ).to.be.revertedWithCustomError(sys.interfold, "RequestsPaused");
     });
 
     it("initializes E3 lifecycle when request is made", async function () {
@@ -356,7 +354,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     it("classifies every supported failure reason by economic responsibility", async function () {
       const { e3RefundManager } = await loadFixture(setup);
 
-      for (const reason of [5, 6, 7, 8, 9]) {
+      for (const reason of [5, 6, 7, 8]) {
         expect(await e3RefundManager.getFailurePayer(reason)).to.equal(1);
       }
       for (const reason of [1, 2, 3, 4, 10, 11, 12]) {
@@ -365,6 +363,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await expect(
         e3RefundManager.getFailurePayer(0),
+      ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
+      await expect(
+        e3RefundManager.getFailurePayer(9),
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
       await expect(
         e3RefundManager.getFailurePayer(13),
@@ -526,17 +527,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(unchanged.allocation.committeeFormationBps).to.equal(1000);
     });
 
-    it("AUD-M04: drains an in-flight E3 through request-time dependencies", async function () {
+    it("blocks dependency rotation until the active generation is drained", async function () {
       const {
         interfold,
-        e3RefundManager,
-        bondingRegistry,
         registry,
-        slashingManager,
-        usdcToken,
         makeRequest,
         owner,
-        treasury,
         operator1,
         operator2,
         operator3,
@@ -546,122 +542,19 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator1);
       await setupOperator(operator2);
       await setupOperator(operator3);
-      const rotationTestWindow = 100;
-      await registry
-        .connect(owner)
-        .setSortitionSubmissionWindow(rotationTestWindow);
       await makeRequest();
-
-      const interfoldAddress = await interfold.getAddress();
-      const refundManagerAddress = await e3RefundManager.getAddress();
-      const registryAddress = await registry.getAddress();
-      const bondingAddress = await bondingRegistry.getAddress();
-
-      const policy = await e3RefundManager.getE3PolicySnapshot(0);
-      expect(policy.interfold).to.equal(interfoldAddress);
-      expect(policy.registry).to.equal(registryAddress);
-      expect(policy.bondingRegistry).to.equal(bondingAddress);
-      const dependencies = await slashingManager.getE3Dependencies(0);
-      expect(dependencies.bonding).to.equal(bondingAddress);
-      expect(dependencies.registry).to.equal(registryAddress);
-      expect(dependencies.interfoldContract).to.equal(interfoldAddress);
-      expect(dependencies.refundManager).to.equal(refundManagerAddress);
-
       const rotatedRegistry = await (
         await ethers.deployContract("MockCiphernodeRegistry")
       ).getAddress();
-      const rotatedBonding = await (
-        await ethers.deployContract("MockBondingRegistry")
-      ).getAddress();
-      const rotatedRefundManager = await treasury.getAddress();
-      const rotatedManager = await ethers.deployContract("SlashingManager", [
-        0,
-        await owner.getAddress(),
-      ]);
-      await rotatedManager.setBondingRegistry(bondingAddress);
-      const rotatedSlashingManager = await rotatedManager.getAddress();
-
-      // Rotate every global dependency after the E3 has been requested. The
-      // replacement manager is deliberately not wired beyond its registry bind.
-      await interfold.connect(owner).setCiphernodeRegistry(rotatedRegistry);
-      await interfold.connect(owner).setBondingRegistry(rotatedBonding);
-      await interfold.connect(owner).setE3RefundManager(rotatedRefundManager);
-      await interfold.connect(owner).setSlashingManager(rotatedSlashingManager);
-      await registry.connect(owner).setInterfold(rotatedRegistry);
-      await registry.connect(owner).setBondingRegistry(rotatedBonding);
-      await registry.connect(owner).setSlashingManager(rotatedSlashingManager);
-      await bondingRegistry.connect(owner).setRegistry(rotatedRegistry);
-      await bondingRegistry
-        .connect(owner)
-        .setSlashingManager(rotatedSlashingManager);
-      await e3RefundManager.connect(owner).setInterfold(rotatedRegistry);
-      await slashingManager.connect(owner).setBondingRegistry(rotatedBonding);
-      await slashingManager
-        .connect(owner)
-        .setCiphernodeRegistry(rotatedRegistry);
-      await slashingManager.connect(owner).setInterfold(rotatedRegistry);
-      await slashingManager
-        .connect(owner)
-        .setE3RefundManager(rotatedRefundManager);
-
-      // Committee selection still reads eligibility and ticket checkpoints from
-      // the original bonding registry, then calls back into the original Interfold.
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await time.increase(rotationTestWindow + 1);
-      await registry.finalizeCommittee(0);
-
-      const publicKey = "0x1234567890abcdef1234567890abcdef";
-      await registry.publishCommittee(
-        0,
-        ethers.keccak256(publicKey),
-        encodeMockDkgProof(ethers.keccak256(publicKey)),
-        "0x01",
+      await interfold.connect(owner).setRequestsPaused(true);
+      await expect(
+        interfold.connect(owner).setCiphernodeRegistry(rotatedRegistry),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
       );
-
-      // Slashing also stays bound to the original registry, bonding, Interfold,
-      // and refund manager even though all four global pointers were rotated.
-      const proof = await signAndEncodeAttestation(
-        [operator2, operator3],
-        0,
-        await operator1.getAddress(),
-        await slashingManager.getAddress(),
-      );
-      const refundBalanceBefore =
-        await usdcToken.balanceOf(refundManagerAddress);
-      await slashingManager.proposeSlash(
-        0,
-        await operator1.getAddress(),
-        proof,
-      );
-      expect(
-        await bondingRegistry.isAuthorizedSlashingManager(
-          await slashingManager.getAddress(),
-        ),
-      ).to.equal(true);
-      expect(await usdcToken.balanceOf(refundManagerAddress)).to.be.gt(
-        refundBalanceBefore,
-      );
-
-      const e3 = await interfold.getE3(0);
-      await time.increaseTo(Number(e3.inputWindow[1]));
-      await interfold.publishCiphertextOutput(
-        0,
-        "0x" + "ab".repeat(100),
-        ethers.keccak256("0x" + "ab".repeat(100)),
-        "0x1337",
-      );
-      await interfold.publishPlaintextOutput(
-        0,
-        "0x" + "cd".repeat(100),
-        "0x1337",
-      );
-
-      expect(await interfold.getE3Stage(0)).to.equal(5); // Complete
-      await expect(registry.releaseCommittee(0))
-        .to.emit(registry, "CommitteeActivationChanged")
-        .withArgs(0, false);
+      expect(await interfold.activeE3Count()).to.equal(1);
+      expect(await registry.unreleasedCommitteeCount()).to.equal(1);
     });
   });
 
@@ -1356,10 +1249,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(reservation.refundManager).to.equal(refundManagerAddress);
       expect(reservation.amount).to.equal(pending.amount);
 
-      const newManager = await ethers.deployContract("SlashingManager", [
+      const newManager = await deploySlashingManager(
         0,
         await owner.getAddress(),
-      ]);
+      );
       await newManager.setBondingRegistry(await bondingRegistry.getAddress());
       const newManagerAddress = await newManager.getAddress();
       await bondingRegistry

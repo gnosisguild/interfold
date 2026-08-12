@@ -321,7 +321,7 @@ describe("InterfoldTicketToken", function () {
       expect(await token.pendingRegistry()).to.equal(ethers.ZeroAddress);
     });
 
-    it("activateRegistryChange reverts if payable balance appears during the timelock", async function () {
+    it("freezes new ticket liabilities during the registry timelock", async function () {
       const fixture = await loadFixture(deploy);
       const { token, initialOwner, otherRegistry } = fixture;
       await token.connect(initialOwner).lockRegistry();
@@ -329,12 +329,15 @@ describe("InterfoldTicketToken", function () {
         .connect(initialOwner)
         .requestRegistryChange(await otherRegistry.getAddress());
 
-      const amount = await createPayableBalance(fixture);
+      await expect(createPayableBalance(fixture)).to.be.revertedWithCustomError(
+        token,
+        "RegistryChangePending",
+      );
       await time.increase(REGISTRY_CHANGE_DELAY);
 
-      await expect(token.connect(initialOwner).activateRegistryChange())
-        .to.be.revertedWithCustomError(token, "OutstandingPayableBalance")
-        .withArgs(amount);
+      await expect(
+        token.connect(initialOwner).activateRegistryChange(),
+      ).to.emit(token, "RegistryChanged");
     });
 
     it("cancelRegistryChange clears the pending swap", async function () {

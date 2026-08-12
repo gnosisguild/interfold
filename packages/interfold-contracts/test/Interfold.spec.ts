@@ -147,19 +147,24 @@ describe("Interfold", function () {
     });
 
     it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+      const replacementAddress = await replacement.getAddress();
 
-      expect(await interfold.ciphernodeRegistry()).to.not.equal(AddressTwo);
-      await interfold.setCiphernodeRegistry(AddressTwo);
-      expect(await interfold.ciphernodeRegistry()).to.equal(AddressTwo);
+      await interfold.setRequestsPaused(true);
+      await interfold.setCiphernodeRegistry(replacementAddress);
+      expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
     });
 
     it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+      const replacementAddress = await replacement.getAddress();
 
-      await expect(interfold.setCiphernodeRegistry(AddressTwo))
+      await interfold.setRequestsPaused(true);
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
         .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(AddressTwo);
+        .withArgs(replacementAddress);
     });
   });
 
@@ -496,7 +501,7 @@ describe("Interfold", function () {
       await interfold.request(exactDurationRequest);
       expect(await interfold.nexte3Id()).to.equal(1);
     });
-    it("rejects a schedule whose compute deadline cannot follow committee finalization", async function () {
+    it("allows compute to start after a late committee finalization", async function () {
       const { interfold, ciphernodeRegistryContract, request, usdcToken } =
         await loadFixture(setup);
       const sortitionWindow = time.duration.days(1);
@@ -510,20 +515,11 @@ describe("Interfold", function () {
         sortitionWindow,
       );
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      const balanceBefore = await usdcToken.balanceOf(
-        await interfold.getAddress(),
+      await interfold.request(impossibleRequest);
+      expect(await interfold.nexte3Id()).to.equal(1);
+      expect(await interfold.getE3LifecycleDeadline(0)).to.be.gt(
+        impossibleRequest.inputWindow[1],
       );
-
-      await expect(
-        interfold.request(impossibleRequest),
-      ).to.be.revertedWithCustomError(
-        interfold,
-        "ComputeDeadlinePrecedesCommitteeFinalization",
-      );
-      expect(await usdcToken.balanceOf(await interfold.getAddress())).to.equal(
-        balanceBefore,
-      );
-      expect(await interfold.nexte3Id()).to.equal(0);
     });
     it("reverts if E3 Program is not enabled", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);

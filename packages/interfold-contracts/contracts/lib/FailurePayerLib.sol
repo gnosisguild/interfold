@@ -17,8 +17,7 @@ library FailurePayerLib {
             reason == IInterfold.FailureReason.NoInputsReceived ||
             reason == IInterfold.FailureReason.ComputeTimeout ||
             reason == IInterfold.FailureReason.ComputeProviderExpired ||
-            reason == IInterfold.FailureReason.ComputeProviderFailed ||
-            reason == IInterfold.FailureReason.RequesterCancelled
+            reason == IInterfold.FailureReason.ComputeProviderFailed
         ) {
             return IE3RefundManager.FailurePayer.Requester;
         }

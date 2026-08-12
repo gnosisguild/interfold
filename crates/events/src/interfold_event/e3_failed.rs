@@ -21,6 +21,7 @@ pub enum FailureReason {
     ComputeTimeout,
     ComputeProviderExpired,
     ComputeProviderFailed,
+    /// Reserved for wire compatibility. No requester cancellation flow exists.
     RequesterCancelled,
     DecryptionTimeout,
     DecryptionInvalidShares,

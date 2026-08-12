@@ -6,10 +6,10 @@ An operator can voluntarily leave the network by deactivating (withdrawing colla
 deregistering (removing from the Merkle tree). The exit is time-locked, and pending exits remain
 slashable until claimed.
 
-Collateral withdrawals and claims are bond-owner actions: `removeTicketBalanceFor(operator)`,
-`unbondLicenseFor(operator)`, and `claimExitsFor(operator)`. Deregistration is callable by either
-the owner or the operator key, giving the running node an emergency kill switch while keeping all
-payouts owner-only.
+Collateral withdrawals are bond-owner actions: `removeTicketBalanceFor(operator)` and
+`unbondLicenseFor(operator)`. Deregistration is callable by either the owner or the operator key,
+which gives the running node an emergency kill switch. Anyone can settle a matured ticket-only exit
+to the bond owner. A claim that includes license collateral remains restricted to the bond owner.
 
 ---
 
@@ -141,8 +141,9 @@ Bond owner or operator submits deregisterOperatorFor(operator)
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 │
-└─ After exitDelay seconds, the owner calls:
-   claimExitsFor(operator, maxTicket, maxLicense)
+└─ After exitDelay seconds:
+   ├─ anyone may settle tickets with claimExitsFor(operator, maxTicket, 0)
+   └─ the bond owner may also claim licenses
 ```
 
 The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
@@ -152,7 +153,8 @@ Deregistration remains an emergency stop for future selection, even when the ope
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
 delay, `claimExitsFor` still reverts with `OperatorInActiveCommittee` while any selected committee
 is nonterminal. Anyone can call `releaseCommittee` on the request-time registry after the E3 becomes
-`Complete` or `Failed`; the next claim can then pay the matured assets.
+`Complete` or `Failed`; the next claim can then pay the matured assets. This permissionless ticket
+path also lets governance clear old ticket liabilities before a registry generation change.
 
 ## E3 Completion (Happy Path)
 

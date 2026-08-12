@@ -6,6 +6,27 @@
     {
       "inputs": [
         {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expected",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "actual",
+          "type": "uint256"
+        }
+      ],
+      "name": "AssetTransferMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "size",
           "type": "uint256"
@@ -141,6 +162,16 @@
         }
       ],
       "name": "DKGDeadlinePassed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DependencyConfigurationMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DependencyGenerationNotDrained",
       "type": "error"
     },
     {
@@ -508,6 +539,11 @@
     {
       "inputs": [],
       "name": "ProofRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "RequestsPaused",
       "type": "error"
     },
     {
@@ -1134,6 +1170,19 @@
       "anonymous": false,
       "inputs": [
         {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "paused",
+          "type": "bool"
+        }
+      ],
+      "name": "RequestsPausedSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
           "indexed": true,
           "internalType": "uint256",
           "name": "e3Id",
@@ -1340,6 +1389,19 @@
       ],
       "name": "TreasuryCredited",
       "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "activeE3Count",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
       "inputs": [],
@@ -1655,6 +1717,25 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3LifecycleDeadline",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "deadline",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "components": [
             {
               "internalType": "enum IInterfold.CommitteeSize",
@@ -1717,6 +1798,42 @@
           "internalType": "enum IInterfold.E3Stage",
           "name": "stage",
           "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3TimeoutConfig",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "dkgWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "computeWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionWindow",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IInterfold.E3TimeoutConfig",
+          "name": "config",
+          "type": "tuple"
         }
       ],
       "stateMutability": "view",
@@ -2257,6 +2374,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "requestsPaused",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "contract IBondingRegistry",
@@ -2513,6 +2643,19 @@
     {
       "inputs": [
         {
+          "internalType": "bool",
+          "name": "paused",
+          "type": "bool"
+        }
+      ],
+      "name": "setRequestsPaused",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "components": [
             {
               "internalType": "uint256",
@@ -2579,5 +2722,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-2669d7c5659f9a42878527352413c8338ef4bc08"
+  "buildInfoId": "solc-0_8_28-98d9e0c50aaecc1f04dd558659f762ce6ef669a8"
 }

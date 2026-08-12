@@ -77,8 +77,28 @@ export const deployAndSaveSlashingManager = async ({
     return { slashingManager: slashingManagerContract };
   }
 
-  const slashingManagerFactory =
-    await ethers.getContractFactory("SlashingManager");
+  const evidenceFactory = await ethers.getContractFactory(
+    "SlashingEvidenceLib",
+  );
+  const evidenceLib = await evidenceFactory.deploy();
+  await evidenceLib.waitForDeployment();
+  const evidenceLibAddress = await evidenceLib.getAddress();
+  storeDeploymentArgs(
+    {
+      blockNumber: await ethers.provider.getBlockNumber(),
+      address: evidenceLibAddress,
+    },
+    "SlashingEvidenceLib",
+    chain,
+  );
+  const slashingManagerFactory = await ethers.getContractFactory(
+    "SlashingManager",
+    {
+      libraries: {
+        SlashingEvidenceLib: evidenceLibAddress,
+      },
+    },
+  );
   const slashingManager = await slashingManagerFactory.deploy(delay, admin);
 
   await slashingManager.waitForDeployment();

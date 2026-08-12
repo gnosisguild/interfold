@@ -148,17 +148,12 @@ describe("SlashingManager", function () {
     );
     await slashingManager.addSlasher(await slasher.getAddress());
     await slashingManager.setCiphernodeRegistry(mockCiphernodeRegistryAddress);
-    await slashingManager.setInterfold(addressOne);
+    const mockInterfold = await ethers.deployContract("MockSlashingInterfold");
+    await slashingManager.setInterfold(await mockInterfold.getAddress());
     await slashingManager.setE3RefundManager(addressOne);
-    await networkHelpers.setBalance(addressOne, ethers.parseEther("1"));
-    await networkHelpers.impersonateAccount(addressOne);
-    await slashingManager
-      .connect(await ethers.getSigner(addressOne))
-      .snapshotE3Dependencies(0);
-    await slashingManager
-      .connect(await ethers.getSigner(addressOne))
-      .snapshotE3Dependencies(1);
-    await networkHelpers.stopImpersonatingAccount(addressOne);
+    const now = await time.latest();
+    await mockInterfold.snapshotDependencies(slashingManager, 0, now + 3600);
+    await mockInterfold.snapshotDependencies(slashingManager, 1, now + 3600);
     await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
     await mockCiphernodeRegistry.setCommitteeNodes(1, [operatorAddress]);
 
@@ -179,6 +174,7 @@ describe("SlashingManager", function () {
       usdcToken,
       _mockVerifier,
       mockCiphernodeRegistry,
+      mockInterfold,
     };
   }
 
@@ -737,7 +733,8 @@ describe("SlashingManager", function () {
           [chainId, 0, operatorAddress, 0],
         ),
       );
-      const deadline = ethers.MaxUint256;
+      const issuedAt = BigInt(await time.latest());
+      const deadline = issuedAt + 30n * 60n;
       const evidence = ethers.hexlify(ethers.toUtf8Bytes("invalid-signature"));
       const evidenceHash = ethers.keccak256(evidence);
 
@@ -761,6 +758,7 @@ describe("SlashingManager", function () {
           { name: "accusationId", type: "bytes32" },
           { name: "voter", type: "address" },
           { name: "dataHash", type: "bytes32" },
+          { name: "issuedAt", type: "uint256" },
           { name: "deadline", type: "uint256" },
         ],
       };
@@ -784,6 +782,7 @@ describe("SlashingManager", function () {
           accusationId,
           voter: voterAddr,
           dataHash: evidenceHash,
+          issuedAt,
           deadline,
         };
         const signature = await signerToUse.signTypedData(domain, types, value);
@@ -791,8 +790,16 @@ describe("SlashingManager", function () {
       }
 
       const proof = abiCoder.encode(
-        ["uint256", "address[]", "bytes32[]", "bytes", "uint256", "bytes[]"],
-        [0, voters, dataHashes, evidence, deadline, signatures],
+        [
+          "uint256",
+          "address[]",
+          "bytes32[]",
+          "bytes",
+          "uint256",
+          "uint256",
+          "bytes[]",
+        ],
+        [0, voters, dataHashes, evidence, issuedAt, deadline, signatures],
       );
 
       await expect(
@@ -870,7 +877,7 @@ describe("SlashingManager", function () {
         0,
         31337,
         evidence,
-        ethers.MaxUint256,
+        undefined,
         ethers.ZeroHash, // deliberately mismatched vs keccak256(evidence)
       );
 
@@ -915,6 +922,8 @@ describe("SlashingManager", function () {
         31337,
         ethers.ZeroHash,
         expiredDeadline,
+        undefined,
+        expiredDeadline - 60n,
       );
 
       await expect(
@@ -924,11 +933,130 @@ describe("SlashingManager", function () {
       ).to.be.revertedWithCustomError(slashingManager, "SignatureExpired");
     });
 
+    it("rejects an accusation window longer than the request-time policy", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+
+      await slashingManager.setSlashPolicy(REASON_PT_0, buildProofPolicy());
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+      const issuedAt = BigInt(await time.latest());
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+        0,
+        31337,
+        ethers.ZeroHash,
+        issuedAt + 30n * 60n + 1n,
+        undefined,
+        issuedAt,
+      );
+
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "InvalidAccusationWindow",
+      );
+    });
+
+    it("disables Lane A immediately when governance sets validity to zero", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+
+      await slashingManager.setSlashPolicy(REASON_PT_0, buildProofPolicy());
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+      );
+      await mockCiphernodeRegistry.setAccusationVoteValidity(0);
+
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "AccusationSlashingDisabled",
+      );
+    });
+
+    it("rejects Lane A after the objective reporting deadline", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+
+      await slashingManager.setSlashPolicy(REASON_PT_0, buildProofPolicy());
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(0);
+      await time.increaseTo(submissionDeadline + 1n);
+      const issuedAt = BigInt(await time.latest());
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+        0,
+        31337,
+        ethers.ZeroHash,
+        issuedAt + 30n * 60n,
+        undefined,
+        issuedAt,
+      );
+
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.be.revertedWithCustomError(
+        slashingManager,
+        "SlashSubmissionDeadlinePassed",
+      );
+    });
+
     it("should revert if operator is zero address", async function () {
       const { slashingManager, proposer } = await loadFixture(setup);
 
       await setupPolicies(slashingManager);
-
       const proof = encodeDummyAttestation();
 
       await expect(
@@ -1124,6 +1252,7 @@ describe("SlashingManager", function () {
 
       // banNode=true → auto-executed → node is now banned
       expect(await slashingManager.isBanned(operatorAddress)).to.be.true;
+      expect(await slashingManager.activeBanCount()).to.equal(1);
       expect(await bondingRegistry.isActive(operatorAddress)).to.be.false;
       expect(await bondingRegistry.numActiveOperators()).to.equal(0);
     });
@@ -1840,6 +1969,7 @@ describe("SlashingManager", function () {
         .withArgs(operatorAddress, false, reason, await owner.getAddress());
 
       expect(await slashingManager.isBanned(operatorAddress)).to.be.false;
+      expect(await slashingManager.activeBanCount()).to.equal(0);
     });
 
     it("should allow governance to cancel a pending ban proposal", async function () {

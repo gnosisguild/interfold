@@ -16,6 +16,7 @@ import { IDkgFoldAttestationVerifier } from "./IDkgFoldAttestationVerifier.sol";
  * and coordinates committee selection for E3 computations
  */
 interface ICiphernodeRegistry {
+    function unreleasedCommitteeCount() external view returns (uint256);
     /// @notice Current number of registered ciphernodes.
     function numCiphernodes() external view returns (uint256);
 
@@ -303,6 +304,9 @@ interface ICiphernodeRegistry {
 
     /// @notice The E3's committee collateral obligations were already released.
     error CommitteeObligationsAlreadyReleased(uint256 e3Id);
+
+    /// @notice Registry dependencies cannot change while membership or committees remain.
+    error RegistryGenerationNotDrained();
 
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();

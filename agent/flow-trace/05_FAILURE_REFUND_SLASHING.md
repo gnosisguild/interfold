@@ -133,7 +133,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │                                                       │
 │     │  │  Requester liability:                                 │
 │     │  │    NoInputsReceived, ComputeTimeout,                  │
-│     │  │    ComputeProviderExpired/Failed, RequesterCancelled  │
+│     │  │    ComputeProviderExpired/Failed                      │
 │     │  │                                                       │
 │     │  │  Ciphernodes/supply liability:                        │
 │     │  │    CommitteeFormationTimeout,                         │
@@ -141,8 +141,9 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │    DKGInvalidShares, DecryptionTimeout,               │
 │     │  │    DecryptionInvalidShares, VerificationFailed        │
 │     │  │                                                       │
-│     │  │  None, _MAX_FAILURE_REASON, and future unclassified   │
-│     │  │  reasons revert InvalidFailureReason (fail closed).   │
+│     │  │  None, reserved value 9, _MAX_FAILURE_REASON, and     │
+│     │  │  future unclassified reasons revert                   │
+│     │  │  InvalidFailureReason (fail closed).                  │
 │     │  │                                                       │
 │     │  │  2a. Ciphernodes/supply liability:                    │
 │     │  │      requesterAmount = payment (100%)                 │
@@ -343,16 +344,17 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
     ├─ 4. Create and SIGN accusation:
     │     ProofFailureAccusation {
     │       e3_id, accuser: my_address, accused, accused_party_id,
-    │       proof_type, data_hash, signed_payload (C3 only),
+    │       proof_type, data_hash, issued_at, deadline,
+    │       signed_payload (C3 only),
     │       signature: ecSign(accusation_digest)
     │     }
     │
     ├─ 5. Broadcast accusation via P2P gossip
     │
-    ├─ 6. Cast OWN VOTE (agrees = true):
+    ├─ 6. Cast own affirmative vote:
     │     AccusationVote {
     │       e3_id, accusation_id, voter: my_address,
-    │       agrees: true, data_hash,
+    │       data_hash, issued_at, deadline,
     │       signature: ecSign(vote_digest)
     │     }
     │     → Broadcast via P2P gossip
@@ -372,7 +374,9 @@ ProofFailureAccusation arrives via P2P from another committee member
 │
 ├─ 2. Validate accusation deadline against local policy:
 │     - reject if deadline <= now (expired)
-│     - reject if deadline > now + accusationVoteValidity + skew
+│     - reject if issued_at is more than the allowed clock skew in the future
+│     - reject if deadline < issued_at
+│     - reject if deadline - issued_at > accusationVoteValidity
 │     - reject all peer accusations when accusationVoteValidity == 0
 │     - `skew` defaults to 30s and is configurable via
 │       `ACCUSATION_DEADLINE_SKEW_SECS` on the node process
@@ -389,18 +393,18 @@ ProofFailureAccusation arrives via P2P from another committee member
 │     │   → Vote agrees = true
 │     │
 │     ├─ Case B: We already PASSED verification for (accused, proof_type):
-│     │   → Vote agrees = false
+│     │   → Do not vote
 │     │
 │     └─ Case C: Unknown (haven't verified yet):
 │         ├─ For C3a/C3b: re-verify using signed_payload from accusation
 │         │   → Dispatch to ZkActor for local re-verification
 │         │   → Vote after re-verification completes
-│         └─ For other proofs: vote agrees = false (no local evidence)
+│         └─ For other proofs: do not vote without local evidence
 │
 ├─ 6. Create and SIGN vote:
 │     AccusationVote {
 │       e3_id, accusation_id, voter: my_address,
-│       agrees: <determined above>, data_hash,
+│       data_hash, issued_at, deadline,
 │       signature: ecSign(vote_digest)
 │     }
 │     → Broadcast via P2P gossip
@@ -410,8 +414,10 @@ ProofFailureAccusation arrives via P2P from another committee member
 
 Governance can keep or increase `accusationVoteValidity` immediately. Every reduction, including a
 zero-second window, uses the two-day proposal and commit path. A proposal expires two days after it
-becomes ready. A direct keep or increase operation clears the pending proposal. This delay prevents
-an immediate reduction from making accusation votes unusable before operators can react.
+becomes ready. A direct keep or increase operation clears the pending proposal. A live value of zero
+disables new Lane A submissions. Each E3 also snapshots its nonzero maximum signed window and an
+objective submission deadline. The objective deadline is the latest possible request lifecycle
+deadline plus the one-day reporting window.
 
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
 
@@ -421,23 +427,23 @@ Accusation ID (deterministic, same on Rust + Solidity):
     chainId, e3Id, accused_address, proofType
   ))
 
-Vote Digest (EIP-191 signed, verified on-chain):
-  vote_digest = keccak256(abi.encode(
-    VOTE_TYPEHASH,           // "AccusationVote(uint256 chainId,...)"
-    chainId,
+Vote Digest (EIP-712 signed, verified on-chain):
+  struct_hash = keccak256(abi.encode(
+    VOTE_TYPEHASH,
     e3Id,
     accusation_id,
     voter_address,
-    agrees,                  // bool
-    data_hash                // keccak256 of the proof data
+    data_hash,
+    issued_at,
+    deadline
   ))
-  signature = personal_sign(vote_digest, voter_private_key)
+  vote_digest = keccak256("\x19\x01" || domain_separator || struct_hash)
+  signature = sign_hash(vote_digest, voter_private_key)
 
 CRITICAL: These type hashes MUST match the Solidity constants:
   VOTE_TYPEHASH = keccak256(
-    "AccusationVote(uint256 chainId,uint256 e3Id,"
-    "bytes32 accusationId,address voter,"
-    "bool agrees,bytes32 dataHash)"
+    "AccusationVote(uint256 e3Id,bytes32 accusationId,"
+    "address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
   )
 ```
 
@@ -446,7 +452,7 @@ CRITICAL: These type hashes MUST match the Solidity constants:
 ```
 check_quorum(accusation_id):
 │
-├─ Count: agree_count, disagree_count, total_votes
+├─ Count affirmative votes
 │
 ├─ CASE A: agree_count >= threshold_m
 │   │
@@ -459,16 +465,9 @@ check_quorum(accusation_id):
 │   │
 │   └─ Emit AccusationQuorumReached
 │
-├─ CASE B: agree_count + remaining_voters < threshold_m
-│   │   → Mathematically impossible to reach quorum
-│   │
-│   ├─ Multiple data_hashes across ALL votes?
-│   │   └─ YES → AccusationOutcome::Equivocation (SLASHABLE)
-│   │
-│   └─ Otherwise → AccusationOutcome::Inconclusive (NOT slashable)
-│
-└─ CASE C: Still waiting for more votes
-    → Timeout (300s) handles this case → resolves as Inconclusive
+└─ CASE B: agree_count < threshold_m
+    ├─ Continue collecting affirmative votes until the local timeout
+    └─ At timeout → AccusationOutcome::Inconclusive (NOT slashable)
 ```
 
 #### Step 5: On-Chain Slash Submission
@@ -500,6 +499,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │       voters[],        // address[] — sorted ascending
 │       dataHashes[],    // bytes32[] — per-voter data hashes
 │       evidence,        // bytes — shared evidence preimage
+│       issuedAt,        // uint256 — common signed issue time
 │       deadline,        // uint256 — common signed deadline
 │       signatures[]     // bytes[] — per-voter ECDSA signatures
 │     )
@@ -520,7 +520,8 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │
 ├─ 1. Decode proof:
-│     (proofType, voters[], agrees[], dataHashes[], signatures[])
+│     (proofType, voters[], dataHashes[], evidence,
+│      issuedAt, deadline, signatures[])
 │     = abi.decode(proof, (...))
 │
 ├─ 2. Derive slash reason deterministically:
@@ -546,34 +547,40 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │     │
 │     │  ┌─── Attestation Verification ─────────────────────────┐
 │     │  │                                                       │
-│     │  │  1. Validate array lengths match (voters, agrees,    │
-│     │  │     dataHashes, signatures all same length)           │
+│     │  │  1. Validate array lengths match                      │
 │     │  │                                                       │
-│     │  │  2. Compute accusation_id:                            │
+│     │  │  2. Require the live vote window is nonzero           │
+│     │  │     and the E3 objective submission deadline          │
+│     │  │     has not passed                                    │
+│     │  │                                                       │
+│     │  │  3. Require issuedAt is not too far in the future,    │
+│     │  │     deadline >= issuedAt, and                         │
+│     │  │     deadline - issuedAt <= the E3 snapshot            │
+│     │  │     Require the signed deadline has not passed        │
+│     │  │                                                       │
+│     │  │  4. Compute accusation_id:                            │
 │     │  │     keccak256(abi.encodePacked(                       │
 │     │  │       chainId, e3Id, operator, proofType              │
 │     │  │     ))                                                │
 │     │  │     → SAME formula as Rust AccusationManager          │
 │     │  │                                                       │
-│     │  │  3. Check quorum: numVotes >= threshold_m             │
+│     │  │  5. Check quorum: numVotes >= threshold_m             │
 │     │  │     → Get threshold from ciphernodeRegistry           │
 │     │  │                                                       │
-│     │  │  4. For EACH voter:                                   │
+│     │  │  6. Require keccak256(evidence) == dataHashes[0]      │
+│     │  │     and every voter uses that same hash               │
+│     │  │                                                       │
+│     │  │  7. For EACH voter:                                   │
 │     │  │     ├─ Ascending order check (prevents duplicates):   │
 │     │  │     │   require(voter > prevVoter)                    │
 │     │  │     ├─ Conflict check (accused can't vote):           │
 │     │  │     │   require(voter != operator)                    │
-│     │  │     ├─ All votes must agree:                          │
-│     │  │     │   require(agrees[i] == true)                    │
 │     │  │     ├─ Voter must be active committee member:         │
 │     │  │     │   require(isCommitteeMemberActive(e3Id, voter)) │
 │     │  │     └─ VERIFY ECDSA SIGNATURE:                        │
-│     │  │         hash = toEthSignedMessageHash(                │
-│     │  │           keccak256(abi.encode(                       │
-│     │  │             VOTE_TYPEHASH, chainId, e3Id,             │
-│     │  │             accusationId, voter, agrees[i],           │
-│     │  │             dataHashes[i]                              │
-│     │  │           ))                                           │
+│     │  │         hash = EIP712Hash(                            │
+│     │  │           e3Id, accusationId, voter,                  │
+│     │  │           dataHashes[i], issuedAt, deadline           │
 │     │  │         )                                              │
 │     │  │         require(ECDSA.recover(hash, sig) == voter)    │
 │     │  │         → Proves voter actually signed this vote      │
@@ -962,34 +969,27 @@ Rounding policy:
   remainder and cursor state, and no token value is lost.
 ```
 
-### In-flight dependency rotation (AUD M-04)
+### Dependency generation replacement
 
-Every slash and settlement route resolves the dependency graph frozen when the E3 was requested:
+The protocol does not run old and new registry generations concurrently. Governance uses this
+sequence:
 
-- `Interfold` uses the per-E3 registry, bonding registry, refund manager, and slashing manager for
-  callbacks, committee reads, verification, owner-routed rewards, failure settlement, and slash
-  escrow.
-- `CiphernodeRegistryOwnable` uses the per-E3 Interfold, bonding registry, and slashing manager for
-  ticket eligibility, committee callbacks, and expulsion authorization.
-- `SlashingManager` uses the per-E3 bonding registry, ciphernode registry, Interfold, and refund
-  manager for attestations, penalties, expulsion, failure callbacks, and fund routing.
-- `E3RefundManager` accepts lifecycle calls from the Interfold recorded in the E3 policy snapshot.
-- `E3RefundManager` reads slash recipients from the committee registry recorded in that snapshot.
-- At committee finalization, `E3RefundManager` resolves each member's bond owner through the
-  request-time bonding registry and freezes that reward recipient for the E3.
-- `BondingRegistry` retains replaced slashing managers as authorized until governance explicitly
-  revokes them. Managers write proposal locks and bans into registry-owned aggregates, so user exits
-  do not call old managers.
-- Each slash policy records the exact BondingRegistry and bonding-asset configuration version. Asset
-  rotation invalidates every omitted policy. Governance must install the replacement policies before
-  proposals for later E3s can proceed.
+1. Pause new E3 requests.
+2. Let every active E3 reach `Complete` or `Failed`.
+3. Release every terminal committee and close every terminal slashing assignment.
+4. Deregister all operators, settle matured ticket exits, clear bans, and finish slash routes.
+5. Replace the dependency pointers and ticket-token registry only after all drain counters are zero.
+6. Wire the complete reciprocal graph, validate it, and enable requests.
 
-Admin setters update the live defaults for future requests only. Each E3 must have a complete
-request-time snapshot; lifecycle calls fail closed if that invariant is not satisfied. Governance
-must revoke a replaced slashing manager only after its E3 assignments, proposal locks, bans, and
-pending slash routes are clear. Governance closes each terminal E3 through
-`SlashingManager.closeE3`. It can deliberately clear a retained manager's stale ban before
-revocation.
+`Interfold` rejects every request while paused and validates the full dependency graph before each
+accepted request. The graph includes reciprocal Interfold, committee registry, bonding registry,
+slashing manager, refund manager, and ticket-token pointers. It also requires the committee and
+bonding registries to report the same operator count. Component setters reject a replacement while
+their generation still owns live state. This prevents mixed-generation membership, slash routing,
+callbacks, and eligibility.
+
+Each E3 still snapshots its graph for internal routing. That snapshot protects lifecycle calls
+during the drain. It is not permission to enable a replacement generation early.
 
 ### Slashed Funds Ordering: Escrow → Terminal State Resolution
 

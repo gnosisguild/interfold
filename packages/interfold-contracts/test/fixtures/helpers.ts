@@ -18,6 +18,21 @@ import { buildMockDkgAttestationFixtureData } from "./dkgAttestation";
 const { time } = networkHelpers;
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
+/** Deploy a SlashingManager with its external evidence verifier linked. */
+export const deploySlashingManager = async (
+  initialDelay: number | bigint,
+  admin: string,
+) => {
+  const evidenceLib = await ethers.deployContract("SlashingEvidenceLib");
+  await evidenceLib.waitForDeployment();
+  const factory = await ethers.getContractFactory("SlashingManager", {
+    libraries: { SlashingEvidenceLib: await evidenceLib.getAddress() },
+  });
+  const manager = await factory.deploy(initialDelay, admin);
+  await manager.waitForDeployment();
+  return manager;
+};
+
 /**
  * Build ABI-encoded fake DKG proof bytes accepted by `MockPkVerifier`.
  * The last public input must equal `pkCommitment`.

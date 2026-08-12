@@ -15,7 +15,10 @@ export default buildModule("SlashingManager", (m) => {
   // Always use a non-zero value in production deployments.
   const initialDelay = m.getParameter("initialDelay", DEFAULT_ADMIN_DELAY);
 
-  const slashingManager = m.contract("SlashingManager", [initialDelay, admin]);
+  const evidenceLib = m.library("SlashingEvidenceLib");
+  const slashingManager = m.contract("SlashingManager", [initialDelay, admin], {
+    libraries: { SlashingEvidenceLib: evidenceLib },
+  });
 
   return { slashingManager };
 }) as any;
