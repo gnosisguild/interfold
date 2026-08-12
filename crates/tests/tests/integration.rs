@@ -88,11 +88,11 @@ fn select_benchmark_params() -> BenchmarkParams {
     // families and can invalidate noise/security assumptions.
     let lambda = bfv_preset.metadata().lambda;
 
-
     let committee = active_committee(preset_subdir);
     let is_small_committee = committee == e3_zk_helpers::CiphernodesCommitteeSize::Small;
 
-    let (collection_timeout_secs, dkg_window_secs, pubkey_flow_timeout) = match preset_name.as_str() {
+    let (collection_timeout_secs, dkg_window_secs, pubkey_flow_timeout) = match preset_name.as_str()
+    {
         "secure-16384" => (
             Some((1_800, 259_200, 259_200)),
             Some(259_200),
