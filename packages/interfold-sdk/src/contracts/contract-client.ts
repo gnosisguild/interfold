@@ -174,13 +174,12 @@ export class ContractClient {
     if (!this.walletClient) {
       throw new SDKError('Wallet client required for write operations', 'NO_WALLET')
     }
+    const account = this.walletClient.account
+    if (!account) {
+      throw new SDKError('No account connected', 'NO_ACCOUNT')
+    }
 
     try {
-      const account = this.walletClient.account
-      if (!account) {
-        throw new SDKError('No account connected', 'NO_ACCOUNT')
-      }
-
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
         abi: Interfold__factory.abi,
