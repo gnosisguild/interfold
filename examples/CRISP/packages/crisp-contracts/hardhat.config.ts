@@ -131,6 +131,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/lib/BondingAssetLib.sol',
       '@interfold/contracts/contracts/lib/BondingEligibilityLib.sol',
       '@interfold/contracts/contracts/lib/BondingSlashingLib.sol',
+      '@interfold/contracts/contracts/lib/SlashingEvidenceLib.sol',
       '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
       '@interfold/contracts/contracts/registry/BondingRegistry.sol',
       '@interfold/contracts/contracts/slashing/SlashingManager.sol',
