@@ -441,6 +441,70 @@ and burns until governance activates or cancels it.
 
 ---
 
+## Operator Voting Power
+
+Bonding transfers FOLD to `BondingRegistry`, which never delegates it. Under ERC20Votes an
+undelegated balance carries no voting power, so those votes are not moved to the registry — they
+cease to exist. Bonded FOLD nonetheless still counts in `getPastTotalSupply`, so it raises the
+quorum denominator while being unable to help meet it.
+
+Two contracts restore that weight:
+
+| Contract                     | Role                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.  |
+| `registry/BondedVotes`       | `IERC5805` view summing wallet FOLD and bonded FOLD at the same timepoint. |
+
+```
+BondedVotes.getPastVotes(account, t)
+│
+├─ InterfoldToken.getPastVotes(account, t)        ← FOLD held in the wallet
+└─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
+
+BondedVotes.getPastTotalSupply(t)
+└─ InterfoldToken.getPastTotalSupply(t)           ← passed through unchanged
+```
+
+Total supply is **not** adjusted. Bonded FOLD was transferred, not burned, so it is already in the
+supply — adding it again would inflate every quorum denominator, which is the distortion this is
+meant to remove.
+
+### Checkpoint write sites
+
+`BondingRegistry._syncBondedCheckpoint(bondOwner)` sends the owner's **current total**, not a delta,
+so the history mirrors `_bondedByOwner`. A mutation site that forgets to call it is caught by
+comparing the two; a delta-derived history would drift undetected, and it would drift in voting
+weight. It is called from every site that mutates `_bondedByOwner`:
+
+| Site                            | Trigger                                      |
+| ------------------------------- | -------------------------------------------- |
+| `_bondLicense`                  | bond                                         |
+| `_decreaseDelegatedBond`        | slash                                        |
+| `acceptBondOwner` (both owners) | bond-owner transfer                          |
+| `_claimExits`                   | exit claim, mutated inside `BondingAssetLib` |
+
+`unbondLicenseFor` is **not** a write site. Unbonding moves the bond into the exit queue, where the
+FOLD is still held by the registry, so the delegated total is unchanged until the exit is claimed or
+slashed. Voting power therefore stays with the owner for the duration of the exit window.
+
+### Timepoints and configuration
+
+`BondedCheckpoints` keys history by `block.timestamp`, matching `InterfoldToken`'s ERC-6372
+`mode=timestamp` clock. `BondedVotes` compares the two clocks at construction and reverts on a
+mismatch: summing a timestamp-keyed history with a block-numbered one would answer for two unrelated
+points in time, and nothing downstream could detect it.
+
+`setBondedCheckpoints` is settable **once**, and requires the checkpoint contract to name this
+registry — with one-shot semantics an address whose `sync` rejects the registry would brick bonding
+permanently. While unset, `_syncBondedCheckpoint` is a no-op rather than a revert: the registry is
+upgradeable, so the upgrade lands before the contract can be pointed at it, and reverting in that
+window would freeze bonding, unbonding and slashing. History begins at configuration.
+
+Bonded weight is **not delegatable** — the registry owns the position — so it always sits with the
+bond owner, including for an owner that never self-delegated. Wallet-held FOLD keeps its normal
+delegation through the token. `BondedVotes.delegate`/`delegateBySig` revert rather than silently
+doing nothing.
+
 ## Activation Thresholds Summary
 
 | Requirement           | Default             | Description                                |

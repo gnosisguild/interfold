@@ -37,6 +37,36 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
   plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
   `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
+- **Bonded-voting history mirrors the mapping, never a delta.**
+  `BondingRegistry._syncBondedCheckpoint` sends the owner's current `_bondedByOwner` total to
+  `BondedCheckpoints`, and must be called from every site that mutates it: bond, slash, both sides
+  of a bond-owner transfer, and exit claim (which mutates through a storage pointer inside
+  `BondingAssetLib`, so the checkpoint is taken by the caller). Unbonding is deliberately not a
+  write site — the FOLD stays with the registry until claimed. A missed site is caught by
+  `getPastBonded(owner, t) == totalBonded(owner)`; a delta-derived history would drift silently, and
+  it would drift in voting weight. — `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
+- **Bonded voting power is additive to the token, never to its supply.** `BondedVotes.getPastVotes`
+  sums wallet FOLD and bonded FOLD, but `getPastTotalSupply` passes through unchanged: bonded FOLD
+  was transferred, not burned, so it is already counted. Adding it again would inflate every quorum
+  denominator. Summed voting power must never exceed total supply. — `BondedVotes.sol`;
+  `flow-trace/02`
+- **Bonded history and the token must share a clock.** `BondedCheckpoints` keys by `block.timestamp`
+  to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes` compares both clocks at
+  construction. Summing a timestamp-keyed history with a block-numbered one answers for two
+  unrelated points in time and is undetectable downstream. — `BondedVotes.sol`; `flow-trace/02`
+- **`setBondedCheckpoints` is one-shot and self-verifying.** It requires the checkpoint contract to
+  name this registry, because with one-shot semantics an address whose `sync` rejects the registry
+  would brick bonding permanently. Repointing is refused: it would abandon recorded history and
+  silently change every past answer. While unset the sync is a no-op, not a revert, so an upgrade
+  cannot freeze bonding before the contract is configured. — `BondingRegistry.sol`; `flow-trace/02`
+- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 256 bytes of headroom by
+  `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
+  `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib` for that reason. Every
+  library must be linked in all deploy paths (ignition, `deployAndSave`, `protocol/deployContracts`,
+  `upgrade/safeProxyUpgrade`, `deploymentRecords`, `protocol/types`) — a missing link fails at
+  deployment, not at compile. The `Operator` struct stays declared in `BondingRegistry`: the upgrade
+  baseline compares type labels, so relocating it reads as a type change on an unchanged layout. —
+  `BondingRegistry.sol`; INDEX concern #22
 - Ticket and license tokens, expected decimals, `ticketPrice`, and `licenseRequiredBond` change as
   one configuration. Asset identity changes only after old balances, E3 assignments, slash locks,
   and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
