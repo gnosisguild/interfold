@@ -72,9 +72,13 @@ compiler:
 
 ```bash
 curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
-noirup -v v1.0.0-beta.26   # NOIR_TOOLCHAIN in .github/workflows/ci.yml
+export PATH="$PATH:$HOME/.nargo/bin"   # installer writes this to your shell profile, not this shell
+noirup -v v1.0.0-beta.26               # NOIR_TOOLCHAIN in .github/workflows/ci.yml
 nargo --version
 ```
+
+Both `noirup` and `nargo` land in `~/.nargo/bin`, so the export above covers the rest of this
+session. New shells pick it up from the profile the installer edited.
 
 ### bb
 
