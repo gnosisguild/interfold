@@ -463,6 +463,19 @@ interface IBondingRegistry {
     function setBondedCheckpoints(IBondedCheckpoints newCheckpoints) external;
 
     /**
+     * @notice Record an owner's current bonded total in the checkpoint contract.
+     * @dev Bonding that happened before `setBondedCheckpoints` left no history, because the sync
+     * is a no-op while unconfigured. Without this, such an owner stays invisible to governance
+     * until its next bond, slash, transfer or exit claim happens to record it.
+     *
+     * Permissionless and idempotent: it can only write the owner's true current total at the
+     * current timepoint, so there is nothing to gain by calling it and no past entry it can
+     * rewrite. Anyone may repair an owner's history, including a third party.
+     * @param bondOwner The owner to record.
+     */
+    function resyncBondedCheckpoint(address bondOwner) external;
+
+    /**
      * @notice Get current ticket price
      * @return Price per ticket in collateral token units
      */

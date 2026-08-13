@@ -1127,6 +1127,11 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
+    function resyncBondedCheckpoint(address bondOwner) external {
+        _syncBondedCheckpoint(bondOwner);
+    }
+
+    /// @inheritdoc IBondingRegistry
     function setMinTicketBalance(uint256 newMinTicketBalance) public onlyOwner {
         require(newMinTicketBalance != 0, InvalidConfiguration());
         uint256 oldValue = minTicketBalance;

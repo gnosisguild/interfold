@@ -503,6 +503,116 @@ describe("BondedVotes", function () {
     });
   });
 
+  describe("current voting power", function () {
+    /// `getVotes` must read both halves at the same instant. Pairing a current wallet balance
+    /// with a timepoint-behind bonded read would leave the bonded half stale after a claim in the
+    /// same block, and the sum could exceed what the owner actually holds.
+    it("reflects a claim in the same block", async function () {
+      const { bondedVotes, bondOwnerAddress, bond, unbond, claim } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      await unbond(BOND);
+      await time.increase(SEVEN_DAYS + 1);
+      await claim(BOND);
+
+      // Read immediately, without advancing time.
+      expect(await bondedVotes.getVotes(bondOwnerAddress)).to.equal(MINTED);
+    });
+
+    it("reflects a slash in the same block", async function () {
+      const { bondedVotes, bondOwnerAddress, bond, slash } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      const slashAmount = BOND / 4n;
+      await slash(slashAmount);
+
+      expect(await bondedVotes.getVotes(bondOwnerAddress)).to.equal(
+        MINTED - slashAmount,
+      );
+    });
+
+    it("agrees with the historical read once the timepoint settles", async function () {
+      const { bondedVotes, bondOwnerAddress, bond } = await loadFixture(setup);
+
+      await bond(BOND);
+      const now = await bondedVotes.getVotes(bondOwnerAddress);
+
+      await time.increase(1);
+      expect(
+        await bondedVotes.getPastVotes(
+          bondOwnerAddress,
+          (await time.latest()) - 1,
+        ),
+      ).to.equal(now);
+    });
+  });
+
+  describe("history predating configuration", function () {
+    /// The sync is a no-op while `bondedCheckpoints` is unset, so an owner that bonded before
+    /// configuration has no history until its next mutation. `resyncBondedCheckpoint` repairs
+    /// that without waiting for one.
+    it("records an owner that bonded before the checkpoint contract existed", async function () {
+      const [, operatorKey, bondOwner] = await ethers.getSigners();
+
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+        mintUsdcTo: [],
+      });
+      const { bondingRegistry, licenseToken } = sys;
+
+      const bondOwnerAddress = await bondOwner.getAddress();
+      const operatorAddress = await operatorKey.getAddress();
+      const registryAddress = await bondingRegistry.getAddress();
+
+      await licenseToken.mint(
+        bondOwnerAddress,
+        MINTED,
+        ethers.encodeBytes32String("Test allocation"),
+      );
+      await bondingRegistry.connect(operatorKey).setBondOwner(bondOwnerAddress);
+
+      // Bond first, with no checkpoint contract configured.
+      await licenseToken.connect(bondOwner).approve(registryAddress, BOND);
+      await bondingRegistry
+        .connect(bondOwner)
+        .bondLicenseFor(operatorAddress, BOND);
+
+      const checkpoints = await ethers.deployContract("BondedCheckpoints", [
+        registryAddress,
+      ]);
+      await bondingRegistry.setBondedCheckpoints(
+        await checkpoints.getAddress(),
+      );
+
+      // Configuration alone backfills nothing.
+      expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(0n);
+
+      // Permissionless: a third party can repair an owner's history.
+      await bondingRegistry
+        .connect(operatorKey)
+        .resyncBondedCheckpoint(bondOwnerAddress);
+
+      expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND);
+      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(BOND);
+    });
+
+    it("is idempotent", async function () {
+      const { bondingRegistry, checkpoints, bondOwnerAddress, bond } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      await bondingRegistry.resyncBondedCheckpoint(bondOwnerAddress);
+      await bondingRegistry.resyncBondedCheckpoint(bondOwnerAddress);
+
+      // It can only ever write the true current total, so repeating it changes nothing.
+      expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND);
+    });
+  });
+
   describe("wiring", function () {
     it("rejects a checkpoint contract bound to another registry", async function () {
       const { bondingRegistry } = await loadFixture(setup);

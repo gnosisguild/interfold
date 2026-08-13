@@ -1916,6 +1916,19 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        }
+      ],
+      "name": "resyncBondedCheckpoint",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "distributor",
           "type": "address"
         }
@@ -2388,5 +2401,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-359afc20abfdf436001a52ceb18f2c0cd09399f2"
+  "buildInfoId": "solc-0_8_28-6a9c9eb5ef7ad86d89baf545faad35bb62a48435"
 }

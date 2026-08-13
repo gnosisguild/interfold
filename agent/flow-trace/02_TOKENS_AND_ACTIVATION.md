@@ -498,7 +498,15 @@ points in time, and nothing downstream could detect it.
 registry — with one-shot semantics an address whose `sync` rejects the registry would brick bonding
 permanently. While unset, `_syncBondedCheckpoint` is a no-op rather than a revert: the registry is
 upgradeable, so the upgrade lands before the contract can be pointed at it, and reverting in that
-window would freeze bonding, unbonding and slashing. History begins at configuration.
+window would freeze bonding, unbonding and slashing.
+
+Configuration does **not** backfill. An owner that bonded beforehand has no recorded history until
+something mutates its total again, so until then it reads as holding nothing and votes only its
+wallet balance. `resyncBondedCheckpoint(bondOwner)` records the owner's current total without
+waiting for that mutation. It is permissionless and idempotent — it can only write the true
+current total at the current timepoint, and cannot rewrite any past entry — so a third party may
+repair an owner's history. Either call it for every existing owner after configuring, or configure
+the checkpoint contract in the same transaction that upgrades the registry, before any bonding.
 
 Bonded weight is **not delegatable** — the registry owns the position — so it always sits with the
 bond owner, including for an owner that never self-delegated. Wallet-held FOLD keeps its normal

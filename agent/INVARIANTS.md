@@ -43,8 +43,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   of a bond-owner transfer, and exit claim (which mutates through a storage pointer inside
   `BondingAssetLib`, so the checkpoint is taken by the caller). Unbonding is deliberately not a
   write site — the FOLD stays with the registry until claimed. A missed site is caught by
-  `getPastBonded(owner, t) == totalBonded(owner)`; a delta-derived history would drift silently, and
-  it would drift in voting weight. — `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
+  `getPastBonded(owner, t) == totalBonded(owner)`, which holds for every owner that has been
+  synchronized at least once — configuring `BondedCheckpoints` does not backfill, so an owner that
+  bonded beforehand reads as zero until its next mutation or a `resyncBondedCheckpoint` call. A
+  delta-derived history would drift silently instead, and it would drift in voting weight. —
+  `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
 - **Bonded voting power is additive to the token, never to its supply.** `BondedVotes.getPastVotes`
   sums wallet FOLD and bonded FOLD, but `getPastTotalSupply` passes through unchanged: bonded FOLD
   was transferred, not burned, so it is already counted. Adding it again would inflate every quorum

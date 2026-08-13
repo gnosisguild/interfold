@@ -49,6 +49,16 @@ interface IBondedCheckpoints {
     ) external view returns (uint256);
 
     /**
+     * @notice Get an owner's bonded total right now.
+     * @dev Distinct from `getPastBonded(account, clock() - 1)`, which is a timepoint behind. A
+     * caller mixing that with a current wallet balance would sum two different instants, and a
+     * bond that changed in this block would make the total exceed what the owner actually holds.
+     * @param account The owner to read.
+     * @return The bonded total at the latest checkpoint.
+     */
+    function bonded(address account) external view returns (uint256);
+
+    /**
      * @notice Get the current timepoint, in ERC-6372 clock units.
      * @return Current timepoint.
      */

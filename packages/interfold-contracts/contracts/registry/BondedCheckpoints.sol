@@ -77,6 +77,11 @@ contract BondedCheckpoints is IBondedCheckpoints {
     }
 
     /// @inheritdoc IBondedCheckpoints
+    function bonded(address account) external view returns (uint256) {
+        return _history[account].latest();
+    }
+
+    /// @inheritdoc IBondedCheckpoints
     function clock() public view returns (uint48) {
         return SafeCast.toUint48(block.timestamp);
     }

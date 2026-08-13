@@ -107,15 +107,12 @@ contract BondedVotes is IERC5805 {
     }
 
     /// @inheritdoc IVotes
-    /// @dev Current rather than historical, so it mirrors `getPastVotes` at the latest settled
-    /// timepoint. At `clock() == 0` there is no settled timepoint, so only wallet weight exists.
+    /// @dev Both halves read the present. Pairing a current wallet balance with
+    /// `getPastBonded(account, clock() - 1)` would sum two different instants: a claim or a slash
+    /// in this block would leave the bonded half stale and high, so the total could exceed what
+    /// the owner holds — and, summed across owners, exceed total supply.
     function getVotes(address account) external view returns (uint256) {
-        uint48 currentClock = clock();
-        if (currentClock == 0) return token.getVotes(account);
-
-        return
-            token.getVotes(account) +
-            checkpoints.getPastBonded(account, currentClock - 1);
+        return token.getVotes(account) + checkpoints.bonded(account);
     }
 
     /// @inheritdoc IVotes
