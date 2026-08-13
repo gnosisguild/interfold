@@ -620,7 +620,9 @@ mod custom_params_decoding_tests {
 
     #[test]
     fn an_unrecognised_mode_is_an_error() {
-        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(2)).unwrap();
+        // 3 rather than 2: 2 is `Onchain`. This must stay one past the highest variant, so it
+        // keeps testing an unknown mode rather than silently becoming a valid one.
+        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(3)).unwrap();
         assert!(CensusMode::try_from(decoded.5.to::<u64>()).is_err());
     }
 }

@@ -40,8 +40,6 @@ describe('CRISP Contracts', function () {
   // One round per publishing test. The ballot digest commits to the e3Id, so a ballot built for
   // one round is rejected by another — each publishing test needs its own proof.
   let publishE3Id: bigint
-  let treeE3Id: bigint
-  let treeVoteProof: ProofData
   const balance = 100n
   const vote = [10, 0]
 
@@ -61,8 +59,6 @@ describe('CRISP Contracts', function () {
     // The digest commits to the e3Id, so a ballot built for one round is rejected by another —
     // that rejection is the cross-round replay protection, not a test artefact.
     publishE3Id = await mockInterfold.nextE3Id()
-    await mockInterfold.request(await crispProgram.getAddress())
-    treeE3Id = await mockInterfold.nextE3Id()
     await mockInterfold.request(await crispProgram.getAddress())
 
     const domain = {
@@ -108,7 +104,6 @@ describe('CRISP Contracts', function () {
     }
 
     voteProof = await buildVoteProof(publishE3Id)
-    treeVoteProof = await buildVoteProof(treeE3Id)
 
     const preparedMask = await prepareBallot({
       censusMode: 'merkle',
@@ -243,13 +238,11 @@ describe('CRISP Contracts', function () {
       expect(merkleRoot).to.equal(BigInt(merkleTree.root))
     })
 
+    /// Reads the round `validate input` published to, rather than publishing a second ballot.
+    /// A ballot is bound to one round, so a second round would need a second proof — and proof
+    /// generation dominates this suite's runtime, which already times out on CI hardware.
     it('should reflect a published vote in the input tree', async function () {
-      const merkleTree = generateMerkleTree(leaves)
-      await mockInterfold.setCommitteePublicKey(treeVoteProof.publicInputs[8])
-      await crispProgram.setMerkleRoot(treeE3Id, merkleTree.root)
-      await crispProgram.publishInput(treeE3Id, encodeSolidityProof(treeVoteProof))
-
-      const [, , , , inputRoot, numberOfVotes] = await crispProgram.getRoundData(treeE3Id)
+      const [, , , , inputRoot, numberOfVotes] = await crispProgram.getRoundData(publishE3Id)
 
       expect(numberOfVotes).to.equal(1n)
       expect(inputRoot).to.not.equal(EMPTY_TREE_ROOT)

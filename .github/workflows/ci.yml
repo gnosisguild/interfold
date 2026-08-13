@@ -1206,7 +1206,9 @@ jobs:
             examples/CRISP/packages/crisp-sdk/dist
             examples/CRISP/packages/crisp-zk-inputs/dist
             examples/CRISP/circuits/bin/crisp/target
+            examples/CRISP/circuits/bin/crisp_onchain/target
             examples/CRISP/circuits/bin/fold/target
+            examples/CRISP/circuits/bin/fold_onchain/target
             circuits/bin/threshold/target
             circuits/bin/recursive_aggregation/*/target
           retention-days: 1
