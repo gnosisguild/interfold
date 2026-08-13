@@ -198,6 +198,10 @@ pub struct E3StateLite {
 
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
+    /// Served so a client can tell which ballot circuit a round needs. Without it a client
+    /// cannot distinguish an ONCHAIN round and would build a Merkle witness for it, which no
+    /// verifier accepts.
+    pub census_mode: CensusMode,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -258,6 +262,10 @@ pub struct E3Crisp {
     /// is read. Named for a block height for backwards compatibility.
     #[serde(default)]
     pub snapshot_block: u64,
+    /// Defaults to `Token` for rounds stored before this field existed, which is what they
+    /// were: `Onchain` did not exist when they were written.
+    #[serde(default)]
+    pub census_mode: CensusMode,
 }
 
 impl From<E3> for WebResultRequest {
@@ -299,9 +307,10 @@ pub enum CreditMode {
 ///
 /// Required in the params and never inferred: a round that omits it fails to decode rather than
 /// quietly becoming a token vote over the wrong people.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum CensusMode {
+    #[default]
     Token = 0,
     ByRequester = 1,
     /// No census at all. `CRISPProgram` reads voting power from the token per input, so the

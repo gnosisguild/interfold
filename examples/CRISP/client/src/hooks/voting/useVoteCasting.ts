@@ -12,7 +12,7 @@ import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
 import { Poll } from '@/model/poll.model'
-import { BroadcastVoteRequest, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
+import { BroadcastVoteRequest, CensusMode, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
@@ -125,6 +125,14 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       if (!roundState) throw new Error('No round state available for proof generation')
       if (!publicClient) throw new Error('No RPC client available for proof generation')
 
+      // This path builds a Merkle witness. An ONCHAIN round has no census tree and needs the
+      // `crisp_onchain` circuit with the voting power the contract read, so a ballot built here
+      // would be rejected by a verifier it was never meant for. Refused explicitly rather than
+      // producing a proof that cannot be published.
+      if (roundState.census_mode === CensusMode.Onchain) {
+        throw new Error('This round uses an on-chain census, which this client cannot vote in yet.')
+      }
+
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
         const previousCiphertext = await getPreviousCiphertext(votingRound.round_id, address)
@@ -166,13 +174,14 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
         return encodeSolidityProof(await finishBallotProof(prepared, digest, signature))
       } catch (error) {
+        // Logged and rethrown, not shown. `castVoteWithProof` already toasts what it catches, and
+        // toasting here as well gave a rejected wallet prompt two notifications.
         const message = error instanceof Error ? error.message : String(error)
-        showToast({ type: 'danger', message })
         handleGenericError('generateProof', error instanceof Error ? error : new Error(message))
         throw error
       }
     },
-    [votingRound, roundState, publicClient, chainId, signTypedDataAsync, showToast],
+    [votingRound, roundState, publicClient, chainId, signTypedDataAsync],
   )
 
   const resetVotingState = useCallback(() => {

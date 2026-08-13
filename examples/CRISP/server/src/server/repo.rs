@@ -213,6 +213,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             num_options: custom_params.num_options,
             credit_mode: custom_params.credit_mode,
             credits: custom_params.credits,
+            census_mode: custom_params.census_mode,
             end_time,
             snapshot_block,
         })
@@ -323,6 +324,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             num_options: e3_crisp.num_options,
             credit_mode: e3_crisp.credit_mode,
             credits: e3_crisp.credits,
+            census_mode: e3_crisp.census_mode,
         })
     }
 
