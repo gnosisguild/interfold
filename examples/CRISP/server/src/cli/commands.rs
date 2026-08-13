@@ -417,7 +417,10 @@ pub async fn decrypt_and_publish_result(
         .with_prompt("Enter CRISP round ID.")
         .interact_text()?;
 
-    let url = format!("{}/rounds/ciphertext", CONFIG.interfold_address);
+    let url = format!(
+        "{}/rounds/ciphertext",
+        CONFIG.interfold_server_url_for_clients()
+    );
     let resp = client
         .post(&url)
         .json(&CTRequest {
