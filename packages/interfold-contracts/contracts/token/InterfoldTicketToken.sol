@@ -77,6 +77,12 @@ contract InterfoldTicketToken is
     ///         funds are still awaiting payout by the current registry.
     error OutstandingPayableBalance(uint256 amount);
 
+    /// @notice Registry replacement requires every live ticket to be burned first.
+    error OutstandingTicketSupply(uint256 amount);
+
+    /// @notice Minting and burning are frozen after a registry change is requested.
+    error RegistryChangePending();
+
     /// @notice Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
 
@@ -196,7 +202,7 @@ contract InterfoldTicketToken is
         if (registryLocked) revert RegistryAlreadyLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
         if (newRegistry == registry) revert SameRegistry();
-        _revertIfPayableBalanceOutstanding();
+        _revertIfLiabilitiesOutstanding();
         address old = registry;
         registry = newRegistry;
         emit RegistryChanged(old, newRegistry);
@@ -218,7 +224,7 @@ contract InterfoldTicketToken is
         if (!registryLocked) revert RegistryNotLocked();
         if (newRegistry == address(0)) revert ZeroAddress();
         if (newRegistry == registry) revert SameRegistry();
-        _revertIfPayableBalanceOutstanding();
+        _revertIfLiabilitiesOutstanding();
         pendingRegistry = newRegistry;
         uint64 activatesAt = uint64(block.timestamp) + REGISTRY_CHANGE_DELAY;
         pendingRegistryActivationTime = activatesAt;
@@ -234,7 +240,7 @@ contract InterfoldTicketToken is
         if (block.timestamp < pendingRegistryActivationTime) {
             revert RegistryChangeNotReady();
         }
-        _revertIfPayableBalanceOutstanding();
+        _revertIfLiabilitiesOutstanding();
         address old = registry;
         registry = pending;
         pendingRegistry = address(0);
@@ -268,6 +274,7 @@ contract InterfoldTicketToken is
         address operator,
         uint256 amount
     ) public override onlyRegistry nonReentrant returns (bool success) {
+        _revertIfRegistryChangePending();
         if (operator == address(0) || operator == address(this)) {
             revert ZeroAddress();
         }
@@ -290,6 +297,7 @@ contract InterfoldTicketToken is
         address to,
         uint256 amount
     ) external onlyRegistry nonReentrant returns (bool) {
+        _revertIfRegistryChangePending();
         if (to == address(0) || to == address(this)) revert ZeroAddress();
         IERC20 underlying_ = IERC20(address(underlying()));
         uint256 balanceBefore = underlying_.balanceOf(address(this));
@@ -338,6 +346,7 @@ contract InterfoldTicketToken is
         address operator,
         uint256 amount
     ) external onlyRegistry {
+        _revertIfRegistryChangePending();
         payableBalance += amount;
         _burn(operator, amount);
     }
@@ -420,11 +429,17 @@ contract InterfoldTicketToken is
         emit ERC20Rescued(address(token), to, amount);
     }
 
-    function _revertIfPayableBalanceOutstanding() internal view {
+    function _revertIfLiabilitiesOutstanding() internal view {
+        uint256 supply = totalSupply();
+        if (supply != 0) revert OutstandingTicketSupply(supply);
         uint256 amount = payableBalance;
         if (amount != 0) {
             revert OutstandingPayableBalance(amount);
         }
+    }
+
+    function _revertIfRegistryChangePending() private view {
+        if (pendingRegistry != address(0)) revert RegistryChangePending();
     }
 
     // ── Disabled flows ─────────────────────────────────────────────────────────

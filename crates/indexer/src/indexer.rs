@@ -11,7 +11,7 @@ use alloy::consensus::BlockHeader;
 use alloy::hex;
 use alloy::primitives::{keccak256, Uint};
 use alloy::providers::Provider;
-use alloy::sol_types::SolEvent;
+use alloy::sol_types::{SolEvent, SolValue};
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
 use e3_evm_helpers::{
@@ -23,7 +23,7 @@ use e3_evm_helpers::{
     event_listener::EventListener,
     events::{CiphertextOutputPublished, CommitteePublished, PlaintextOutputPublished},
 };
-use e3_fhe_params::decode_bfv_params;
+use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
 use eyre::eyre;
 use eyre::Result;
 use serde::{de::DeserializeOwned, Serialize};
@@ -33,7 +33,7 @@ use thiserror::Error;
 use tokio::{sync::RwLock, time::sleep};
 use tracing::{error, info, warn};
 
-type E3Id = u64;
+type E3Id = String;
 
 #[derive(Error, Debug)]
 pub enum IndexerError {
@@ -343,7 +343,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
             let contract = ctx.contract();
             let db = ctx.store();
             let interfold_address = ctx.interfold_address();
-            let e3_id = u64_try_from(e.e3Id)?;
+            let e3_id = e.e3Id.to_string();
 
             info!(
                 "CommitteePublished: id={}, public_key_len={}, proof_len={}",
@@ -353,7 +353,28 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
             );
 
             let e3 = contract.get_e3(e.e3Id).await?;
-            let e3_params = contract.get_param_set_registry(e3.paramSet).await?;
+            let params_preset =
+                BfvPreset::from_on_chain_param_set(e3.paramSet).ok_or_else(|| {
+                    eyre!(
+                        "unsupported BFV parameter set {} for E3 {e3_id}",
+                        e3.paramSet
+                    )
+                })?;
+            let e3_params = encode_bfv_params(&BfvParamSet::from(params_preset).build_arc());
+            let crypto_config_id = keccak256(
+                (
+                    keccak256(b"fhe.rs:BFV"),
+                    keccak256(&e3_params),
+                    keccak256(b"interfold-bfv-v1"),
+                )
+                    .abi_encode(),
+            );
+            let request_crypto_config_id = contract.get_e3_crypto_config_id(e.e3Id).await?;
+            if request_crypto_config_id != crypto_config_id {
+                return Err(eyre!(
+                    "local circuit configuration does not match request-time config for E3 {e3_id}"
+                ));
+            }
             if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
                 let decoded_params = decode_bfv_params(&e3_params)
                     .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
@@ -386,7 +407,8 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 e3_params: e3_params.to_vec(),
                 interfold_address,
                 encryption_scheme_id: e3.encryptionSchemeId.to_vec(),
-                id: e3_id,
+                crypto_config_id: crypto_config_id.to_vec(),
+                id: e3_id.clone(),
                 plaintext_output: vec![],
                 request_block,
                 seed,
@@ -395,7 +417,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 requester: e3.requester.to_string(),
             };
 
-            let mut repo = E3Repository::new(db, e3_id);
+            let mut repo = E3Repository::new(db, &e3_id);
             repo.set_e3(e3_obj).await?;
 
             info!("E3 {} created and stored", e3_id);
@@ -414,7 +436,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 e.e3Id,
                 hex::encode(&e.ciphertextOutput[..8.min(e.ciphertextOutput.len())])
             );
-            let e3_id = u64_try_from(e.e3Id)?;
+            let e3_id = e.e3Id.to_string();
 
             let mut repo = E3Repository::new(store, e3_id);
             repo.set_ciphertext_output(e.ciphertextOutput.to_vec())
@@ -437,7 +459,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 hex::encode(&e.plaintextOutput[..8.min(e.plaintextOutput.len())]),
                 e.proof.len()
             );
-            let e3_id = u64_try_from(e.e3Id)?;
+            let e3_id = e.e3Id.to_string();
             let mut repo = E3Repository::new(store, e3_id);
             repo.set_plaintext_output(e.plaintextOutput.to_vec())
                 .await?;
@@ -502,7 +524,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         }
     }
 
-    pub async fn get_e3(&self, e3_id: u64) -> Result<E3, IndexerError> {
+    pub async fn get_e3(&self, e3_id: impl ToString) -> Result<E3, IndexerError> {
         let (e3, _) = get_e3(self.ctx.store.inner.clone(), e3_id).await?;
         Ok(e3)
     }
@@ -514,15 +536,16 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
 pub async fn get_e3(
     store: Arc<RwLock<impl DataStore>>,
-    e3_id: u64,
+    e3_id: impl ToString,
 ) -> Result<(E3, String), IndexerError> {
+    let e3_id = e3_id.to_string();
     let key = format!("_e3:{}", e3_id);
     match store
         .read()
         .await
         .get::<E3>(&key)
         .await
-        .map_err(|_| IndexerError::Serialization(e3_id))?
+        .map_err(|_| IndexerError::Serialization(e3_id.clone()))?
     {
         Some(e3) => Ok((e3, key)),
         None => Err(IndexerError::E3NotFound(e3_id)),

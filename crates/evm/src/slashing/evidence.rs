@@ -14,12 +14,13 @@ use e3_events::AccusationQuorumReached;
 
 /// Encode `AccusationQuorumReached` into the attestation evidence format expected
 /// by both `SlashingManager.proposeSlash()` and `SlashingManager.proposeSlashByDkgParty()`:
-/// `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 deadline, bytes[] signatures)`
+/// `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`
 ///
 /// Voters are sorted ascending by address to satisfy the contract's duplicate-prevention
-/// check. All `votes_for` share the same `deadline` (the accuser stamps one value at
-/// accusation time and `AccusationManager::on_vote_received` rejects votes whose
-/// deadline disagrees), so the encoder pulls it from the first vote. Returns `None`
+/// check. All `votes_for` share the same `issued_at` and `deadline` values. The
+/// accuser sets both values, and `AccusationManager::on_vote_received` rejects a
+/// vote when either value differs. The encoder therefore reads them from the
+/// first vote. Returns `None`
 /// if `votes_for` is empty — the on-chain submitter must skip the submission in that
 /// case rather than send malformed calldata.
 pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec<u8>> {
@@ -35,6 +36,7 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
     let voters: Vec<Address> = votes.iter().map(|v| v.voter).collect();
     let data_hashes: Vec<[u8; 32]> = votes.iter().map(|v| v.data_hash).collect();
     let evidence = data.evidence.clone();
+    let issued_at = U256::from(votes[0].issued_at);
     // All voters signed the same deadline (enforced off-chain by AccusationManager);
     // pick any one — the first vote suffices.
     let deadline = U256::from(votes[0].deadline);
@@ -49,6 +51,7 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
             voters,
             data_hashes,
             evidence,
+            issued_at,
             deadline,
             signatures,
         )
@@ -69,6 +72,7 @@ mod tests {
             accusation_id: [0u8; 32],
             voter,
             data_hash: [7u8; 32],
+            issued_at: deadline.saturating_sub(10),
             deadline,
             signature: ArcBytes::from_bytes(&[1, 2, 3]),
         }
@@ -107,9 +111,12 @@ mod tests {
         let encoded = encode_attestation_evidence(&q).expect("should encode");
 
         let decoded =
-            <(U256, Vec<Address>, Vec<B256>, Bytes, U256, Vec<Bytes>)>::abi_decode_params(&encoded)
-                .expect("decodes");
+            <(U256, Vec<Address>, Vec<B256>, Bytes, U256, U256, Vec<Bytes>)>::abi_decode_params(
+                &encoded,
+            )
+            .expect("decodes");
         assert_eq!(decoded.1, vec![lo, hi]);
-        assert_eq!(decoded.4, U256::from(100u64));
+        assert_eq!(decoded.4, U256::from(90u64));
+        assert_eq!(decoded.5, U256::from(100u64));
     }
 }

@@ -62,11 +62,17 @@ impl AccusationVoting {
             return;
         };
 
-        // Reject votes whose deadline disagrees with the accusation's deadline.
-        if vote.deadline != pending.accusation.deadline {
+        // Reject votes whose signed window disagrees with the accusation.
+        if vote.issued_at != pending.accusation.issued_at
+            || vote.deadline != pending.accusation.deadline
+        {
             warn!(
-                "Ignoring vote from {} — deadline {} does not match accusation deadline {}",
-                vote.voter, vote.deadline, pending.accusation.deadline
+                "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
+                vote.voter,
+                vote.issued_at,
+                pending.accusation.issued_at,
+                vote.deadline,
+                pending.accusation.deadline
             );
             return;
         }

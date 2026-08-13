@@ -19,6 +19,7 @@ fn vote_digest_is_deterministic() {
         accusation_id: [0xab; 32],
         voter,
         data_hash: [0xcd; 32],
+        issued_at: NOW.saturating_sub(VALIDITY),
         deadline: NOW,
         signature: ArcBytes::default(),
     };
@@ -32,6 +33,14 @@ fn vote_digest_is_deterministic() {
         a,
         AccusationVoting::vote_digest(&vote2, sm),
         "changing deadline must change the digest"
+    );
+
+    let mut vote3 = vote;
+    vote3.issued_at += 1;
+    assert_ne!(
+        a,
+        AccusationVoting::vote_digest(&vote3, sm),
+        "changing issued_at must change the digest"
     );
 }
 

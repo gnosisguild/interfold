@@ -7,12 +7,13 @@
 use crate::server::{
     app_data::AppData,
     models::{
-        VoteRequest, VoteResponse, VoteResponseStatus, VoteStatusRequest, VoteStatusResponse,
+        canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
+        VoteStatusRequest, VoteStatusResponse,
     },
     CONFIG,
 };
 use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Bytes, U256};
+use alloy::primitives::Bytes;
 use evm_helpers::CRISPContract;
 use eyre::Error;
 use log::{error, info};
@@ -39,33 +40,33 @@ async fn get_vote_status(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let request = data.into_inner();
+    let e3_id = match canonical_e3_id(&request.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
+    };
     info!(
         "[e3_id={}] Checking vote status for address: {}",
-        request.round_id, request.address
+        e3_id, request.address
     );
 
-    let has_voted = match store
-        .e3(request.round_id)
-        .has_voted(request.address.clone())
-        .await
-    {
+    let has_voted = match store.e3(&e3_id).has_voted(request.address.clone()).await {
         Ok(voted) => voted,
         Err(e) => {
             error!(
                 "[e3_id={}] Database error checking vote status: {:?}",
-                request.round_id, e
+                e3_id, e
             );
             return HttpResponse::InternalServerError().json("Internal server error");
         }
     };
 
-    let round_status = match store.e3(request.round_id).get_e3_state_lite().await {
+    let round_status = match store.e3(&e3_id).get_e3_state_lite().await {
         Ok(state) => Some(state.status),
         Err(_) => None,
     };
 
     HttpResponse::Ok().json(VoteStatusResponse {
-        round_id: request.round_id,
+        round_id: e3_id,
         address: request.address,
         has_voted,
         round_status,
@@ -86,19 +87,21 @@ async fn broadcast_encrypted_vote(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let vote = data.into_inner();
-    info!("[e3_id={}] Broadcasting encrypted vote", vote.round_id);
+    let e3_id = match e3_id_to_u256(&vote.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
+    };
+    let e3_key = e3_id.to_string();
+
+    info!("[e3_id={}] Broadcasting encrypted vote", e3_key);
 
     // Check if user has already voted
-    let has_voted = match store
-        .e3(vote.round_id)
-        .has_voted(vote.address.clone())
-        .await
-    {
+    let has_voted = match store.e3(&e3_key).has_voted(vote.address.clone()).await {
         Ok(voted) => voted,
         Err(e) => {
             error!(
                 "[e3_id={}] Database error checking vote status: {:?}",
-                vote.round_id, e
+                e3_key, e
             );
             return HttpResponse::InternalServerError().json("Internal server error");
         }
@@ -106,12 +109,10 @@ async fn broadcast_encrypted_vote(
 
     let is_vote_update = has_voted;
     if is_vote_update {
-        info!("[e3_id={}] User is updating their vote", vote.round_id);
+        info!("[e3_id={}] User is updating their vote", e3_key);
     }
 
-    let mut repo = store.e3(vote.round_id);
-
-    let e3_id = U256::from(vote.round_id);
+    let mut repo = store.e3(&e3_key);
 
     // encoded_proof is already encoded in JavaScript, just decode from hex
     let hex_str = vote
@@ -121,10 +122,7 @@ async fn broadcast_encrypted_vote(
     let encoded_proof = match hex::decode(hex_str) {
         Ok(decoded) => Bytes::from(decoded),
         Err(e) => {
-            error!(
-                "[e3_id={}] Failed to decode encoded_proof: {:?}",
-                vote.round_id, e
-            );
+            error!("[e3_id={}] Failed to decode encoded_proof: {:?}", e3_key, e);
 
             return HttpResponse::BadRequest().json(VoteResponse {
                 status: VoteResponseStatus::FailedBroadcast,
@@ -145,7 +143,7 @@ async fn broadcast_encrypted_vote(
     {
         Ok(c) => c,
         Err(e) => {
-            error!("[e3_id={}] Contract creation error: {:?}", vote.round_id, e);
+            error!("[e3_id={}] Contract creation error: {:?}", e3_key, e);
             return HttpResponse::InternalServerError().json("Internal server error");
         }
     };
@@ -156,7 +154,7 @@ async fn broadcast_encrypted_vote(
                 if let Err(e) = repo.insert_voter_address(vote.address.clone()).await {
                     error!(
                         "[e3_id={}] Vote on-chain but failed to record voter locally: {:?}",
-                        vote.round_id, e
+                        e3_key, e
                     );
                 }
             }
@@ -168,7 +166,7 @@ async fn broadcast_encrypted_vote(
             };
             info!(
                 "[e3_id={}] Vote broadcasted successfully (update: {})",
-                vote.round_id, is_vote_update
+                e3_key, is_vote_update
             );
             HttpResponse::Ok().json(VoteResponse {
                 status: VoteResponseStatus::Success,

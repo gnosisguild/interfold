@@ -9,12 +9,15 @@ use eyre::Result;
 
 pub struct E3Repository<S: DataStore> {
     store: SharedStore<S>,
-    e3_id: u64,
+    e3_id: String,
 }
 
 impl<S: DataStore> E3Repository<S> {
-    pub fn new(store: SharedStore<S>, e3_id: u64) -> Self {
-        Self { store, e3_id }
+    pub fn new(store: SharedStore<S>, e3_id: impl ToString) -> Self {
+        Self {
+            store,
+            e3_id: e3_id.to_string(),
+        }
     }
 
     pub async fn set_e3(&mut self, value: E3) -> Result<()> {
@@ -93,7 +96,7 @@ impl<S: DataStore> E3Repository<S> {
     }
 
     fn e3_key(&self) -> String {
-        let e3_id = self.e3_id;
+        let e3_id = &self.e3_id;
         format!("_e3:{e3_id}")
     }
 }

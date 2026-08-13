@@ -25,7 +25,7 @@ describe('callFheRunner', () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ status: 'processing', e3_id: 7 }),
+      json: async () => ({ status: 'processing', e3_id: '7' }),
     })
     vi.stubGlobal('fetch', fetchMock)
     const logMock = vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -50,7 +50,7 @@ describe('callFheRunner', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          e3_id: 7,
+          e3_id: '7',
           chain_id: 31_337,
           interfold_address: '0x1111111111111111111111111111111111111111',
           encryption_scheme_id: `0x${'22'.repeat(32)}`,

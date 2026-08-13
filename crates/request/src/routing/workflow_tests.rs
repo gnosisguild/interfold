@@ -268,6 +268,19 @@ fn e3_failed_decryption_timeout_publishes_complete() {
 }
 
 #[test]
+fn requester_cancellation_publishes_complete() {
+    let id = e3id();
+    let msg = e3_failed(id.clone(), FailureReason::RequesterCancelled);
+    assert_eq!(
+        RequestRouter::route(&msg, &HashSet::new()),
+        RoutingDecision::Process {
+            e3_id: id,
+            post_forward: PostForward::PublishComplete,
+        }
+    );
+}
+
+#[test]
 fn e3_failed_invalid_shares_does_not_complete() {
     // Slashable failures must NOT trigger E3RequestComplete — the accusation/slashing
     // lifecycle must be allowed to finish first.

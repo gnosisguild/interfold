@@ -10,7 +10,7 @@ use alloy::sol;
 
 sol! {
     #[derive(Debug)]
-    event E3Requested(uint256 e3Id, E3 e3, IE3Program indexed e3Program);
+    event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
 
     #[derive(Debug)]
     interface IE3Program {

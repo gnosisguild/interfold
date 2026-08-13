@@ -10,6 +10,7 @@ import type { IInterfold, Interfold } from "../../types/contracts/Interfold";
 import type { MockUSDC } from "../../types/contracts/test/MockStableToken.sol/MockUSDC";
 import { ethers, networkHelpers } from "./connection";
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   COMMITTEE_SIZE_MINIMUM,
   SORTITION_SUBMISSION_WINDOW,
 } from "./constants";
@@ -17,6 +18,26 @@ import { buildMockDkgAttestationFixtureData } from "./dkgAttestation";
 
 const { time } = networkHelpers;
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+
+export type E3RequestInput = Omit<
+  IInterfold.E3RequestParamsStruct,
+  "expectedFeeToken" | "expectedCryptoConfigId" | "maxFee"
+>;
+
+/** Deploy a SlashingManager with its external evidence verifier linked. */
+export const deploySlashingManager = async (
+  initialDelay: number | bigint,
+  admin: string,
+) => {
+  const evidenceLib = await ethers.deployContract("SlashingEvidenceLib");
+  await evidenceLib.waitForDeployment();
+  const factory = await ethers.getContractFactory("SlashingManager", {
+    libraries: { SlashingEvidenceLib: await evidenceLib.getAddress() },
+  });
+  const manager = await factory.deploy(initialDelay, admin);
+  await manager.waitForDeployment();
+  return manager;
+};
 
 /**
  * Build ABI-encoded fake DKG proof bytes accepted by `MockPkVerifier`.
@@ -39,7 +60,7 @@ export const encodeMockDkgProof = (pkCommitment: string): string =>
  */
 export const setupAndPublishCommittee = async (
   registry: any,
-  e3Id: number,
+  e3Id: number | bigint,
   publicKey: string,
   operators: Signer[],
   committeeProof: string = "0x",
@@ -93,15 +114,21 @@ export const setupAndPublishCommittee = async (
 export const makeRequest = async (
   interfold: Interfold,
   usdcToken: MockUSDC,
-  requestParams: IInterfold.E3RequestParamsStruct,
+  requestParams: E3RequestInput,
   signer?: Signer,
 ): Promise<ContractTransactionResponse> => {
-  const fee = await interfold.getE3Quote(requestParams);
   const tokenContract = signer ? usdcToken.connect(signer) : usdcToken;
   const interfoldContract = signer ? interfold.connect(signer) : interfold;
+  const quoteParams = {
+    ...requestParams,
+    expectedFeeToken: await usdcToken.getAddress(),
+    expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+    maxFee: 0,
+  };
+  const fee = await interfold.getE3Quote(quoteParams);
 
   await tokenContract.approve(await interfold.getAddress(), fee);
-  return interfoldContract.request(requestParams);
+  return interfoldContract.request({ ...quoteParams, maxFee: fee });
 };
 
 /** Options for {@link buildRequestParams}. */
@@ -126,7 +153,7 @@ export const buildRequestParams = async (
   e3Program: { getAddress: () => Promise<string> } | string,
   decryptionVerifier: { getAddress: () => Promise<string> } | string,
   opts: BuildRequestParamsOptions = {},
-): Promise<IInterfold.E3RequestParamsStruct> => {
+): Promise<E3RequestInput> => {
   const now = await time.latest();
   const startOffset = opts.startOffset ?? 10;
   const windowDuration = opts.windowDuration ?? 300;

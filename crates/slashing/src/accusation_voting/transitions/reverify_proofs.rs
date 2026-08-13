@@ -77,8 +77,12 @@ impl AccusationVoting {
         }
 
         // ZK re-verification failed ⇒ we agree with the accusation.
-        let (ec, deadline) = match self.pending.get(&reverif.accusation_id) {
-            Some(pending) => (pending.ec.clone(), pending.accusation.deadline),
+        let (ec, issued_at, deadline) = match self.pending.get(&reverif.accusation_id) {
+            Some(pending) => (
+                pending.ec.clone(),
+                pending.accusation.issued_at,
+                pending.accusation.deadline,
+            ),
             None => {
                 // Accusation already resolved before ZK finished
                 return actions;
@@ -90,6 +94,7 @@ impl AccusationVoting {
             accusation_id: reverif.accusation_id,
             voter: self.my_address,
             data_hash: reverif.data_hash,
+            issued_at,
             deadline,
             signature: ArcBytes::default(),
         };

@@ -22,7 +22,7 @@ export async function callFheRunner(
   const { PROGRAM_RUNNER_URL, CALLBACK_URL } = getProgramRunnerConfig()
 
   const payload = {
-    e3_id: Number(e3Id),
+    e3_id: e3Id.toString(),
     chain_id: domain.chainId,
     interfold_address: domain.interfoldAddress,
     encryption_scheme_id: domain.encryptionSchemeId,

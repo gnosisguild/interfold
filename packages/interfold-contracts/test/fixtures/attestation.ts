@@ -17,19 +17,16 @@ const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 // and the contract enforces witness equality across all voters via `dataHash`.
 export const VOTE_TYPEHASH = ethers.keccak256(
   ethers.toUtf8Bytes(
-    "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 deadline)",
+    "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)",
   ),
 );
-
-// MaxUint256 sentinel for "no expiry" used in tests that don't exercise the
-// signature deadline path. Real signers should pick a tight deadline.
-const NO_EXPIRY = ethers.MaxUint256;
 
 /**
  * Helper to create signed committee attestation evidence for Lane A.
  *
  * Returns `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
- *                     bytes evidence, uint256 deadline, bytes[] signatures)` with
+ *                     bytes evidence, uint256 issuedAt, uint256 deadline,
+ *                     bytes[] signatures)` with
  * voters sorted ascending by address.
  *
  * Each voter signs the EIP-712 `AccusationVote` struct against the
@@ -45,20 +42,26 @@ const NO_EXPIRY = ethers.MaxUint256;
  * @param chainId      - Chain ID for the EIP-712 domain. Defaults to 31337 (hardhat).
  * @param evidence     - Evidence preimage bytes. All voters sign
  *                       `keccak256(evidence)` as `dataHash`.
- * @param deadline     - Optional unix expiry. Defaults to MaxUint256.
+ * @param deadline     - Optional unix expiry. Defaults to 30 minutes after issue.
  * @param dataHashOverride - Optional negative-test override for signed `dataHash`.
+ * @param issuedAt     - Optional signature issue time. Defaults to the latest block.
  */
 export async function signAndEncodeAttestation(
   voterSigners: Signer[],
-  e3Id: number,
+  e3Id: number | bigint,
   operator: string,
   verifyingContract: string,
   proofType: number = 0,
   chainId: number = 31337,
   evidence: string = ethers.hexlify(ethers.toUtf8Bytes("lane-a-attestation")),
-  deadline: bigint = NO_EXPIRY,
+  deadline?: bigint,
   dataHashOverride?: string,
+  issuedAt?: bigint,
 ): Promise<string> {
+  const latestBlock = await ethers.provider.getBlock("latest");
+  const effectiveIssuedAt =
+    issuedAt ?? BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000));
+  const effectiveDeadline = deadline ?? effectiveIssuedAt + 30n * 60n;
   const accusationId = ethers.keccak256(
     ethers.solidityPacked(
       ["uint256", "uint256", "address", "uint256"],
@@ -79,6 +82,7 @@ export async function signAndEncodeAttestation(
       { name: "accusationId", type: "bytes32" },
       { name: "voter", type: "address" },
       { name: "dataHash", type: "bytes32" },
+      { name: "issuedAt", type: "uint256" },
       { name: "deadline", type: "uint256" },
     ],
   } as const;
@@ -111,7 +115,8 @@ export async function signAndEncodeAttestation(
       accusationId,
       voter: voterAddress,
       dataHash,
-      deadline,
+      issuedAt: effectiveIssuedAt,
+      deadline: effectiveDeadline,
     };
 
     const signature = await (
@@ -131,7 +136,23 @@ export async function signAndEncodeAttestation(
   void abiCoder;
 
   return ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "address[]", "bytes32[]", "bytes", "uint256", "bytes[]"],
-    [proofType, voters, dataHashes, evidence, deadline, signatures],
+    [
+      "uint256",
+      "address[]",
+      "bytes32[]",
+      "bytes",
+      "uint256",
+      "uint256",
+      "bytes[]",
+    ],
+    [
+      proofType,
+      voters,
+      dataHashes,
+      evidence,
+      effectiveIssuedAt,
+      effectiveDeadline,
+      signatures,
+    ],
   );
 }

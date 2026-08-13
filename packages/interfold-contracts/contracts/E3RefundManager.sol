@@ -32,6 +32,21 @@ import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
 contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
+    /// @notice Maximum protocol share within {WorkValueAllocation}.
+    uint16 public constant MAX_PROTOCOL_BPS = 5_000;
+
+    /// @notice Basis-points denominator (100% = 10_000 bps).
+    uint16 internal constant BPS_BASE = 10_000;
+
+    /// @notice Thrown when {renounceOwnership} is called.
+    error RenounceOwnershipDisabled();
+
+    /// @notice Emitted whenever {interfold} is updated.
+    event InterfoldUpdated(address indexed previous, address indexed next);
+
+    /// @notice Emitted whenever {treasury} is updated.
+    event TreasuryUpdated(address indexed previous, address indexed next);
+
     struct PendingSlashedRoute {
         IERC20 token;
         address operator;
@@ -193,21 +208,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         if (_owner != owner()) _transferOwnership(_owner);
     }
 
-    /// @notice Maximum protocol share within {WorkValueAllocation}.
-    uint16 public constant MAX_PROTOCOL_BPS = 5_000;
-
-    /// @notice Basis-points denominator (100% = 10_000 bps).
-    uint16 internal constant BPS_BASE = 10_000;
-
-    /// @notice Thrown when {renounceOwnership} is called.
-    error RenounceOwnershipDisabled();
-
-    /// @notice Emitted whenever {interfold} is updated.
-    event InterfoldUpdated(address indexed previous, address indexed next);
-
-    /// @notice Emitted whenever {treasury} is updated.
-    event TreasuryUpdated(address indexed previous, address indexed next);
-
     /// @notice Disabled. Reverts unconditionally.
     function renounceOwnership() public view override onlyOwner {
         revert RenounceOwnershipDisabled();
@@ -329,7 +329,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             return (0, originalPayment, 0);
         }
 
-        IInterfold.E3Stage failedAt = _getFailedAtStage(reason);
+        IInterfold.E3Stage failedAt = reason ==
+            IInterfold.FailureReason.RequesterCancelled
+            ? _getCancellationStage(e3Id)
+            : _getFailedAtStage(reason);
         (
             uint16 workCompletedBps,
             uint16 workRemainingBps
@@ -369,8 +372,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         if (
             reason == IInterfold.FailureReason.ComputeTimeout ||
             reason == IInterfold.FailureReason.ComputeProviderExpired ||
-            reason == IInterfold.FailureReason.ComputeProviderFailed ||
-            reason == IInterfold.FailureReason.RequesterCancelled
+            reason == IInterfold.FailureReason.ComputeProviderFailed
         ) {
             return IInterfold.E3Stage.KeyPublished;
         }
@@ -383,6 +385,24 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
 
         return IInterfold.E3Stage.None;
+    }
+
+    /// @notice Derives the cancellation stage from monotonic lifecycle markers.
+    function _getCancellationStage(
+        uint256 e3Id
+    ) internal view returns (IInterfold.E3Stage) {
+        IInterfold.E3Deadlines memory deadlines = _interfoldFor(e3Id)
+            .getDeadlines(e3Id);
+        if (deadlines.decryptionDeadline != 0) {
+            return IInterfold.E3Stage.CiphertextReady;
+        }
+        if (deadlines.computeDeadline != 0) {
+            return IInterfold.E3Stage.KeyPublished;
+        }
+        if (deadlines.dkgDeadline != 0) {
+            return IInterfold.E3Stage.CommitteeFinalized;
+        }
+        return IInterfold.E3Stage.Requested;
     }
 
     /// @inheritdoc IE3RefundManager

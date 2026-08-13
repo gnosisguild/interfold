@@ -15,6 +15,11 @@ use eyre::Result;
 use log::info;
 use num_bigint::BigUint;
 
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+struct RoundIndex {
+    ids: Vec<String>,
+}
+
 pub struct CurrentRoundRepository<S: DataStore> {
     store: SharedStore<S>,
 }
@@ -31,6 +36,33 @@ impl<S: DataStore> CurrentRoundRepository<S> {
             .await
             .map_err(|_| eyre::eyre!("Could not set current_round for '{key}'"))?;
         Ok(())
+    }
+
+    pub async fn record_round(&mut self, e3_id: impl ToString) -> Result<()> {
+        let e3_id = e3_id.to_string();
+        let key = self.round_index_key();
+        self.store
+            .modify(&key, |index: Option<RoundIndex>| {
+                let mut index = index.unwrap_or_default();
+                if !index.ids.contains(&e3_id) {
+                    index.ids.push(e3_id.clone());
+                }
+                Some(index)
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not record round in '{key}'"))?;
+        Ok(())
+    }
+
+    pub async fn get_round_ids(&self) -> Result<Vec<String>> {
+        let key = self.round_index_key();
+        let index = self
+            .store
+            .get::<RoundIndex>(&key)
+            .await
+            .map_err(|_| eyre::eyre!("Could not get round index at '{key}'"))?
+            .unwrap_or_default();
+        Ok(index.ids)
     }
 
     pub async fn get_current_round(&self) -> Result<Option<CurrentRound>> {
@@ -55,12 +87,8 @@ impl<S: DataStore> CurrentRoundRepository<S> {
         &self,
         requester: String,
     ) -> Result<Option<CurrentRound>> {
-        // Get the current round count to iterate through all rounds
-        let round_count = self.get_current_round_id().await?;
-
-        // Iterate backwards from the most recent round to find the latest one for this requester
-        for round_id in (0..=round_count).rev() {
-            let crisp_repo = CrispE3Repository::new(self.store.clone(), round_id);
+        for round_id in self.get_round_ids().await?.into_iter().rev() {
+            let crisp_repo = CrispE3Repository::new(self.store.clone(), &round_id);
 
             match crisp_repo.get_e3_state_lite().await {
                 Ok(state) => {
@@ -78,28 +106,26 @@ impl<S: DataStore> CurrentRoundRepository<S> {
         Ok(None)
     }
 
-    pub async fn get_current_round_id(&self) -> Result<u64> {
-        let round = self
-            .get_current_round()
-            .await?
-            .ok_or(eyre::eyre!("No current round has been saved"))?;
-
-        Ok(round.id)
-    }
-
     fn current_round_key(&self) -> String {
         "_e3:current_round".to_string()
+    }
+
+    fn round_index_key(&self) -> String {
+        "_e3:round_index".to_string()
     }
 }
 
 pub struct CrispE3Repository<S: DataStore> {
     store: SharedStore<S>,
-    e3_id: u64,
+    e3_id: String,
 }
 
 impl<S: DataStore> CrispE3Repository<S> {
-    pub fn new(store: SharedStore<S>, e3_id: u64) -> Self {
-        Self { store, e3_id }
+    pub fn new(store: SharedStore<S>, e3_id: impl ToString) -> Self {
+        Self {
+            store,
+            e3_id: e3_id.to_string(),
+        }
     }
 
     async fn set_crisp(&mut self, value: E3Crisp) -> Result<()> {
@@ -194,7 +220,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     fn get_e3_repo(&self) -> E3Repository<S> {
-        E3Repository::new(self.store.clone(), self.e3_id)
+        E3Repository::new(self.store.clone(), &self.e3_id)
     }
 
     pub async fn get_e3(&self) -> Result<InterfoldE3> {
@@ -281,7 +307,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         let snapshot_block = snapshot_block(e3.request_block, e3_crisp.snapshot_block);
         Ok(E3StateLite {
             emojis: e3_crisp.emojis,
-            id: self.e3_id,
+            id: self.e3_id.clone(),
             status: e3_crisp.status,
             chain_id: e3.chain_id,
             start_time: e3.input_window[0],
@@ -399,7 +425,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     fn crisp_key(&self) -> String {
-        let e3_id = self.e3_id;
+        let e3_id = &self.e3_id;
         format!("_e3:crisp:{e3_id}")
     }
 }

@@ -290,7 +290,7 @@ The SDK provides two event type enums for subscribing to on-chain events:
 | 6     | `ComputeTimeout`               |
 | 7     | `ComputeProviderExpired`       |
 | 8     | `ComputeProviderFailed`        |
-| 9     | `RequesterCancelled`           |
+| 9     | Reserved                       |
 | 10    | `DecryptionTimeout`            |
 | 11    | `DecryptionInvalidShares`      |
 | 12    | `VerificationFailed`           |
@@ -384,6 +384,9 @@ that wraps or complements the core Interfold SDK.
   request.
 - **Fee token approval**: call `sdk.approveFeeToken(amount)` before `requestE3` to approve the fee
   token spend.
+- **Cancel an E3**: call `sdk.cancelE3(e3Id)` from the original requester account. The refund keeps
+  the value of completed milestones and returns the remaining work allocation through the normal
+  failed-E3 claim flow.
 - **Query E3 data**: use `sdk.getE3(e3Id)` to read the full E3 struct, `sdk.getE3Stage(e3Id)` for
   the current lifecycle stage (returns `E3Stage` enum), and `sdk.getFailureReason(e3Id)` if the E3
   has failed (returns `FailureReason` enum).

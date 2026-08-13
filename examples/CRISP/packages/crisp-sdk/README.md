@@ -31,7 +31,7 @@ const sdk = new CrispSDK(serverUrl)
 
 // Generate a vote proof (automatically fetches previous ciphertext if needed)
 const voteProof = await sdk.generateVoteProof({
-  e3Id: 1,
+  e3Id: 1n,
   vote: { yes: 100n, no: 0n },
   publicKey: publicKeyBytes,
   signature: '0x...',
@@ -43,7 +43,7 @@ const voteProof = await sdk.generateVoteProof({
 
 // Generate a mask vote proof (automatically fetches previous ciphertext if needed)
 const maskProof = await sdk.generateMaskVoteProof({
-  e3Id: 1,
+  e3Id: 1n,
   balance: 1000n,
   slotAddress: '0x...',
   publicKey: publicKeyBytes,
@@ -167,10 +167,10 @@ const previousCiphertext = await getPreviousCiphertext(serverUrl, e3Id, slotAddr
 
 ### State Functions
 
-- `getRoundDetails(serverUrl: string, e3Id: number): Promise<RoundDetails>` - Get round details
-- `getRoundTokenDetails(serverUrl: string, e3Id: number): Promise<TokenDetails>` - Get token details
+- `getRoundDetails(serverUrl: string, e3Id: bigint): Promise<RoundDetails>` - Get round details
+- `getRoundTokenDetails(serverUrl: string, e3Id: bigint): Promise<TokenDetails>` - Get token details
   for a round
-- `getPreviousCiphertext(serverUrl: string, e3Id: number, address: string): Promise<Uint8Array | undefined>` -
+- `getPreviousCiphertext(serverUrl: string, e3Id: bigint, address: string): Promise<Uint8Array | undefined>` -
   Get previous ciphertext for a slot (undefined when slot is empty)
 
 ### Token Functions
@@ -179,7 +179,7 @@ const previousCiphertext = await getPreviousCiphertext(serverUrl, e3Id, slotAddr
   Get token balance at a specific block
 - `getTotalSupplyAt(tokenAddress: string, snapshotBlock: number, chainId: number): Promise<bigint>` -
   Get total supply at a specific block
-- `getTreeData(serverUrl: string, e3Id: number): Promise<bigint[]>` - Get merkle tree leaves from
+- `getTreeData(serverUrl: string, e3Id: bigint): Promise<bigint[]>` - Get merkle tree leaves from
   server
 
 ### Vote Functions

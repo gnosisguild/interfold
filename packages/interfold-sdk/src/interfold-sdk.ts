@@ -156,16 +156,12 @@ export class InterfoldSDK {
     return this.contractClient.approveFeeToken(amount)
   }
 
-  public async requestE3(params: {
-    committeeSize: number
-    inputWindow: [bigint, bigint]
-    e3Program: `0x${string}`
-    paramSet: number
-    computeProviderParams: `0x${string}`
-    customParams?: `0x${string}`
-    gasLimit?: bigint
-  }): Promise<Hash> {
+  public async requestE3(params: E3RequestParams): Promise<Hash> {
     return this.contractClient.requestE3(params)
+  }
+
+  public async cancelE3(e3Id: bigint): Promise<Hash> {
+    return this.contractClient.cancelE3(e3Id)
   }
 
   public async getE3PublicKey(e3Id: bigint): Promise<`0x${string}`> {

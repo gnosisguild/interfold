@@ -16,6 +16,7 @@ import { IDkgFoldAttestationVerifier } from "./IDkgFoldAttestationVerifier.sol";
  * and coordinates committee selection for E3 computations
  */
 interface ICiphernodeRegistry {
+    function unreleasedCommitteeCount() external view returns (uint256);
     /// @notice Current number of registered ciphernodes.
     function numCiphernodes() external view returns (uint256);
 
@@ -219,6 +220,9 @@ interface ICiphernodeRegistry {
         uint256 size
     );
 
+    /// @notice Emitted when tree use reaches the capacity warning point.
+    event CiphernodeTreeCapacityWarning(uint256 size, uint256 capacity);
+
     /// @notice This event MUST be emitted when a ciphernode is removed from the registry.
     /// @param node Address of the ciphernode.
     /// @param index Index of the ciphernode in the registry.
@@ -303,6 +307,9 @@ interface ICiphernodeRegistry {
 
     /// @notice The E3's committee collateral obligations were already released.
     error CommitteeObligationsAlreadyReleased(uint256 e3Id);
+
+    /// @notice Registry dependencies cannot change while membership or committees remain.
+    error RegistryGenerationNotDrained();
 
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();

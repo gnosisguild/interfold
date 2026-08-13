@@ -87,9 +87,9 @@ export const getCurrentRound = async (serverUrl: string, requesters: string[] = 
  * @param e3Id - The e3Id of the round
  * @returns The committee public key bytes
  */
-export const getRoundPublicKey = async (serverUrl: string, e3Id: number): Promise<Uint8Array> => {
-  const data = await postJson<{ round_id: number; pk_bytes: number[] }>(serverUrl, CRISP_SERVER_ROUNDS_PUBLIC_KEY_ENDPOINT, {
-    round_id: e3Id,
+export const getRoundPublicKey = async (serverUrl: string, e3Id: bigint): Promise<Uint8Array> => {
+  const data = await postJson<{ round_id: string; pk_bytes: number[] }>(serverUrl, CRISP_SERVER_ROUNDS_PUBLIC_KEY_ENDPOINT, {
+    round_id: e3Id.toString(),
     pk_bytes: [],
   })
 
@@ -102,9 +102,9 @@ export const getRoundPublicKey = async (serverUrl: string, e3Id: number): Promis
  * @param e3Id - The e3Id of the round
  * @returns The ciphertext output bytes
  */
-export const getRoundCiphertext = async (serverUrl: string, e3Id: number): Promise<Uint8Array> => {
-  const data = await postJson<{ round_id: number; ct_bytes: number[] }>(serverUrl, CRISP_SERVER_ROUNDS_CIPHERTEXT_ENDPOINT, {
-    round_id: e3Id,
+export const getRoundCiphertext = async (serverUrl: string, e3Id: bigint): Promise<Uint8Array> => {
+  const data = await postJson<{ round_id: string; ct_bytes: number[] }>(serverUrl, CRISP_SERVER_ROUNDS_CIPHERTEXT_ENDPOINT, {
+    round_id: e3Id.toString(),
     ct_bytes: [],
   })
 
@@ -137,7 +137,7 @@ export const broadcastVote = async (serverUrl: string, request: BroadcastVoteReq
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      round_id: request.e3Id,
+      round_id: request.e3Id.toString(),
       encoded_proof: request.encodedProof,
       address: request.address,
     }),
@@ -160,8 +160,8 @@ export const broadcastVote = async (serverUrl: string, request: BroadcastVoteReq
  * @param address - The voter address
  * @returns The vote status for the address
  */
-export const getVoteStatus = async (serverUrl: string, e3Id: number, address: string): Promise<VoteStatusResponse> =>
-  postJson<VoteStatusResponse>(serverUrl, CRISP_SERVER_VOTING_STATUS_ENDPOINT, { round_id: e3Id, address })
+export const getVoteStatus = async (serverUrl: string, e3Id: bigint, address: string): Promise<VoteStatusResponse> =>
+  postJson<VoteStatusResponse>(serverUrl, CRISP_SERVER_VOTING_STATUS_ENDPOINT, { round_id: e3Id.toString(), address })
 
 /**
  * Get the result for a given round.
@@ -169,8 +169,8 @@ export const getVoteStatus = async (serverUrl: string, e3Id: number, address: st
  * @param e3Id - The e3Id of the round
  * @returns The round result (tally, emojis, total votes, end time and requester)
  */
-export const getRoundResult = async (serverUrl: string, e3Id: number): Promise<WebResultResponse> =>
-  postJson<WebResultResponse>(serverUrl, CRISP_SERVER_STATE_RESULT_ENDPOINT, { round_id: e3Id })
+export const getRoundResult = async (serverUrl: string, e3Id: bigint): Promise<WebResultResponse> =>
+  postJson<WebResultResponse>(serverUrl, CRISP_SERVER_STATE_RESULT_ENDPOINT, { round_id: e3Id.toString() })
 
 /**
  * Get the results for all rounds, optionally filtered by requester addresses.
@@ -188,8 +188,8 @@ export const getAllRoundResults = async (serverUrl: string, requesters: string[]
  * @param e3Id - The e3Id of the round
  * @returns The lite round state
  */
-export const getRoundStateLite = async (serverUrl: string, e3Id: number): Promise<E3StateLiteResponse> =>
-  postJson<E3StateLiteResponse>(serverUrl, CRISP_SERVER_STATE_LITE_ENDPOINT, { round_id: e3Id })
+export const getRoundStateLite = async (serverUrl: string, e3Id: bigint): Promise<E3StateLiteResponse> =>
+  postJson<E3StateLiteResponse>(serverUrl, CRISP_SERVER_STATE_LITE_ENDPOINT, { round_id: e3Id.toString() })
 
 /**
  * Get the token holder hashes (hash(address, balance)) for a given round.
@@ -198,8 +198,8 @@ export const getRoundStateLite = async (serverUrl: string, e3Id: number): Promis
  * @param e3Id - The e3Id of the round
  * @returns The list of token holder hashes
  */
-export const getTokenHolderHashes = async (serverUrl: string, e3Id: number): Promise<string[]> =>
-  postJson<string[]>(serverUrl, CRISP_SERVER_TOKEN_TREE_ENDPOINT, { round_id: e3Id })
+export const getTokenHolderHashes = async (serverUrl: string, e3Id: bigint): Promise<string[]> =>
+  postJson<string[]>(serverUrl, CRISP_SERVER_TOKEN_TREE_ENDPOINT, { round_id: e3Id.toString() })
 
 /**
  * Get the eligible addresses and their balances for a given round.
@@ -207,5 +207,5 @@ export const getTokenHolderHashes = async (serverUrl: string, e3Id: number): Pro
  * @param e3Id - The e3Id of the round
  * @returns The list of eligible token holders
  */
-export const getEligibleAddresses = async (serverUrl: string, e3Id: number): Promise<TokenHolder[]> =>
-  postJson<TokenHolder[]>(serverUrl, CRISP_SERVER_ELIGIBLE_ADDRESSES_ENDPOINT, { round_id: e3Id })
+export const getEligibleAddresses = async (serverUrl: string, e3Id: bigint): Promise<TokenHolder[]> =>
+  postJson<TokenHolder[]>(serverUrl, CRISP_SERVER_ELIGIBLE_ADDRESSES_ENDPOINT, { round_id: e3Id.toString() })

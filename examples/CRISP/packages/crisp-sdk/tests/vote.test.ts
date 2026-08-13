@@ -23,7 +23,7 @@ describe('Vote', () => {
   let publicKey: Uint8Array
   let secretKey: Uint8Array
   let previousCiphertext: Uint8Array
-  let e3Id: number
+  let e3Id: bigint
   let sdk: CrispSDK
 
   const zeroVote = getZeroVote(2)
@@ -62,7 +62,7 @@ describe('Vote', () => {
     publicKey = keys.publicKey
     secretKey = keys.secretKey
     previousCiphertext = encryptVote(zeroVote, publicKey)
-    e3Id = 0
+    e3Id = (1n << 200n) + 7n
     sdk = new CrispSDK(CRISP_SERVER_URL)
   })
 
@@ -233,7 +233,7 @@ describe('Vote', () => {
         slotAddress: SLOT_ADDRESS,
         publicKey,
         merkleLeaves: leaves,
-        e3Id: 0,
+        e3Id: 0n,
         numOptions: 2,
       })
 
@@ -259,7 +259,7 @@ describe('Vote', () => {
         slotAddress: SLOT_ADDRESS,
         publicKey,
         merkleLeaves: leaves,
-        e3Id: 0,
+        e3Id: 0n,
         numOptions: 2,
       })
 

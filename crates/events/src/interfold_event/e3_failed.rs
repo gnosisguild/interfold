@@ -21,6 +21,7 @@ pub enum FailureReason {
     ComputeTimeout,
     ComputeProviderExpired,
     ComputeProviderFailed,
+    /// The requester cancelled the E3 before completion.
     RequesterCancelled,
     DecryptionTimeout,
     DecryptionInvalidShares,
@@ -38,6 +39,11 @@ impl FailureReason {
                 | Self::ComputeTimeout
                 | Self::DecryptionTimeout
         )
+    }
+
+    /// Returns true when the E3 can stop without an accusation or slash flow.
+    pub fn ends_without_slashing(&self) -> bool {
+        self.is_timeout() || matches!(self, Self::RequesterCancelled)
     }
 }
 

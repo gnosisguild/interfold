@@ -839,6 +839,12 @@ export const deployInterfold = async (
   }
   console.log("Cross-contract wiring verified.");
 
+  console.log("Enabling E3 requests...");
+  await send(
+    interfold.setRequestsPaused(false),
+    "interfold.setRequestsPaused(false)",
+  );
+
   console.log(`
     ============================================
     Deployment Complete!

@@ -8,7 +8,7 @@ use crate::config::CONFIG;
 use crate::server::app_data::AppData;
 use crate::server::indexer::get_current_timestamp_rpc;
 use crate::server::models::{
-    CTRequest, ComputeProviderParams, JsonResponse, PKRequest, RoundRequest,
+    canonical_e3_id, CTRequest, ComputeProviderParams, JsonResponse, PKRequest, RoundRequest,
     RoundRequestWithRequester,
 };
 
@@ -116,8 +116,13 @@ async fn get_current_round(
 /// * A JSON response containing the ciphertext
 async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -> impl Responder {
     let mut incoming = data.into_inner();
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+    incoming.round_id = e3_id.clone();
 
-    match store.e3(incoming.round_id).get_ciphertext_output().await {
+    match store.e3(e3_id).get_ciphertext_output().await {
         Ok(ct_bytes) => {
             incoming.ct_bytes = ct_bytes;
             HttpResponse::Ok().json(incoming)
@@ -139,8 +144,13 @@ async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -
 /// * A JSON response containing the public key
 async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -> impl Responder {
     let mut incoming = data.into_inner();
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+    incoming.round_id = e3_id.clone();
 
-    match store.e3(incoming.round_id).get_committee_public_key().await {
+    match store.e3(e3_id).get_committee_public_key().await {
         Ok(pk_bytes) => {
             incoming.pk_bytes = pk_bytes;
             HttpResponse::Ok().json(incoming)

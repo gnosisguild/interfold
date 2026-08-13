@@ -145,13 +145,14 @@ bondingRegistry.registerOperatorFor(operator);
 
 ## Actions Summary
 
-| Action                                           | Signer         | Description                        |
-| ------------------------------------------------ | -------------- | ---------------------------------- |
-| `interfold ciphernode status`                    | Operator       | Check registration and exit status |
-| `deregisterOperatorFor(operator)`                | Owner/operator | Start the full exit process        |
-| `removeTicketBalanceFor(operator, amount)`       | Bond owner     | Queue ticket collateral for exit   |
-| `unbondLicenseFor(operator, amount)`             | Bond owner     | Queue FOLD for exit                |
-| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner     | Claim unlocked assets              |
+| Action                                           | Signer         | Description                                   |
+| ------------------------------------------------ | -------------- | --------------------------------------------- |
+| `interfold ciphernode status`                    | Operator       | Check registration and exit status            |
+| `deregisterOperatorFor(operator)`                | Owner/operator | Start the full exit process                   |
+| `removeTicketBalanceFor(operator, amount)`       | Bond owner     | Queue ticket collateral for exit              |
+| `unbondLicenseFor(operator, amount)`             | Bond owner     | Queue FOLD for exit                           |
+| `claimExitsFor(operator, maxTicket, 0)`          | Anyone         | Settle unlocked tickets to the bond owner     |
+| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner     | Claim unlocked tickets and license collateral |
 
 ## Monitoring Checklist
 

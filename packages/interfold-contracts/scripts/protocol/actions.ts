@@ -111,6 +111,7 @@ Protocol contracts deployed
   ticket underlying:      ${deployment.ticketUnderlyingToken}
   ticketToken:            ${deployment.ticketToken}
   slashingManager:        ${deployment.slashingManager}
+  slashingEvidenceLib:    ${deployment.slashingEvidenceLib}
   ciphernodeRegistry:     ${deployment.ciphernodeRegistry}
   interfold:              ${deployment.interfold}
   interfoldLifecycle:     ${deployment.interfoldLifecycle}

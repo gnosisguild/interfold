@@ -28,24 +28,23 @@ function crispTokenAddress(): string {
   return tokenAddress
 }
 
-async function runCliInit(): Promise<number> {
+async function runCliInit(): Promise<string> {
   try {
     const output = execFileSync(CLI, ['init', '--token-address', crispTokenAddress(), '--balance-threshold', '1000'], { encoding: 'utf-8' })
     console.log('Command output:', output)
     const lines = output.trim().split('\n')
     const lastLine = lines[lines.length - 1].trim()
-    const e3Id = parseInt(lastLine, 10)
-    if (isNaN(e3Id)) {
+    if (!/^\d+$/.test(lastLine)) {
       throw new Error(`Failed to parse e3Id from CLI output: ${lastLine}`)
     }
-    return e3Id
+    return lastLine
   } catch (error) {
     console.error('Error executing command:', error)
     throw error
   }
 }
 
-async function checkE3Ready(e3id: number): Promise<boolean> {
+async function checkE3Ready(e3id: string): Promise<boolean> {
   try {
     const output = execFileSync(CLI, ['check-e3-ready', '--e3id', String(e3id)], {
       encoding: 'utf-8',
@@ -59,7 +58,7 @@ async function checkE3Ready(e3id: number): Promise<boolean> {
   }
 }
 
-async function waitForE3Ready(e3id: number, maxWaitMs: number = E3_DURATION): Promise<void> {
+async function waitForE3Ready(e3id: string, maxWaitMs: number = E3_DURATION): Promise<void> {
   const startTime = Date.now()
   while (Date.now() - startTime < maxWaitMs) {
     const isActivated = await checkE3Ready(e3id)
@@ -219,10 +218,11 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   await page.locator('a:has-text("All Polls")').click()
   log(`asserting that All polls page exists...`)
   await expect(page.locator('h1')).toHaveText('All polls')
+  const pollResult = page.locator(`[data-test-id='poll-${e3id}-0']`)
   log(`asserting that result has 100% on the vote we clicked on...`)
-  await expect(page.locator("[data-test-id='poll-0-0'] [data-test-id='poll-result-0'] .h2")).toHaveText('100%')
+  await expect(pollResult.locator("[data-test-id='poll-result-0'] .h2")).toHaveText('100%')
   log(`asserting that result has 0% on the vote we did not click on...`)
-  await expect(page.locator("[data-test-id='poll-0-0'] [data-test-id='poll-result-1'] .h2")).toHaveText('0%')
+  await expect(pollResult.locator("[data-test-id='poll-result-1'] .h2")).toHaveText('0%')
 
   log('============================================')
   log('        PLAYWRIGHT TEST IS COMPLETE         ')

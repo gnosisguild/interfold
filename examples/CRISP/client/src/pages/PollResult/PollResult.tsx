@@ -39,7 +39,7 @@ const PollResult: React.FC = () => {
     if (pollResult || confirmationPoll || !roundId) return
 
     const fetchPoll = async () => {
-      const fetched = await getWebResultByRound(parseInt(roundId))
+      const fetched = await getWebResultByRound(roundId)
       if (fetched) {
         setPollResult(convertPollData([fetched])[0])
       }

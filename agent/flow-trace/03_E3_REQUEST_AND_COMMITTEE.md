@@ -29,6 +29,10 @@ existing E3's escrow or settlement unit. Fee assets must transfer exact amounts 
 account balances. Interfold checks the custody increase for escrow deposits. Each outbound transfer
 checks the recipient increase and the Interfold custody decrease.
 
+Interfold starts with requests paused. Deployment wires and validates one complete dependency
+generation before it enables requests. Governance must pause requests and drain the current
+generation before it replaces a registry, bonding registry, slashing manager, or refund manager.
+
 ---
 
 ## Step 1: E3 Request (On-Chain)
@@ -40,21 +44,29 @@ Requester calls: Interfold.request({
   committeeSize: <minimum | micro | small>,
   inputWindow: [start, end], // when inputs are accepted
   e3Program: <address>,      // computation program contract
-  e3ProgramParams: <bytes>,  // ABI-encoded program parameters
+  paramSet: <uint8>,         // active BFV parameter set
   computeProviderParams: <bytes>,
-  customParams: <bytes>
+  customParams: <bytes>,
+  expectedFeeToken: <address>,
+  expectedCryptoConfigId: <bytes32>,
+  maxFee: <uint256>
 })
 │
 ├─ VALIDATION:
+│   ├─ requestsPaused == false
+│   ├─ Registry, bonding, slashing, refund, and ticket-token pointers form one
+│   │  reciprocal dependency graph with matching operator membership
 │   ├─ Resolve the build-generated active crypto configuration.
 │   │    The current build is insecure-512 / minimum [H=2, N=3, T=1].
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
-│   ├─ inputWindow[1] + computeWindow >
-│   │    block.timestamp + registry.sortitionSubmissionWindow()
-│   │    (committee finalization must be possible before compute expires)
-│   ├─ total duration < maxDuration
+│   ├─ Snapshot the complete timeout configuration
+│   ├─ Reserve the later of:
+│   │    inputWindow[1], or
+│   │    request time + sortitionWindow + dkgWindow
+│   ├─ Add computeWindow and decryptionWindow to that reservation
+│   ├─ total worst-case lifecycle duration <= maxDuration
 │   └─ e3Programs[e3Program] == true (program whitelisted)
 │
 ├─ FEE CALCULATION:
@@ -65,6 +77,10 @@ Requester calls: Interfold.request({
 │   │     proof counts, availability, decryption/publication costs, and margin
 │   │   → availability covers at least request time through input-window end
 │   │   → a later equal-length input window therefore costs more
+│   ├─ Require the current fee token to equal expectedFeeToken
+│   ├─ Require the active scheme, parameter hash, and circuit version to equal
+│   │  expectedCryptoConfigId
+│   ├─ Require fee <= maxFee
 │   ├─ feeToken.transferFrom(requester, address(this), fee)
 │   │   → require Interfold receives exactly fee
 │   └─ e3Payments[e3Id] = fee  (stored per-E3)
@@ -72,9 +88,11 @@ Requester calls: Interfold.request({
 │
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
+│   │   → nexte3Id starts at uint160(address(this)) << 96
+│   │   → every controller has a separate uint256 namespace
 │   ├─ Snapshot Interfold dependencies for this E3:
 │   │   registry, bonding registry, refund manager, and slashing manager
-│   │   → later global rotations apply only to new requests
+│   │   → replacements are blocked until this E3 and its generation drain
 │   │   → the slashing manager registers this E3's refund destination in
 │   │     BondingRegistry for proposal-scoped ticket-slash routes
 │   ├─ snapshottedRefundManager.snapshotE3Policy(e3Id, registry)
@@ -85,9 +103,11 @@ Requester calls: Interfold.request({
 │   │   → Shared input for the E3 computation. Committee selection does not use it.
 │   │
 │   ├─ encryptionSchemeId = e3Program.validate(
-│   │     e3Id, seed, e3ProgramParams, computeProviderParams, customParams
+│   │     e3Id, seed, paramSetRegistry[paramSet], computeProviderParams, customParams
 │   │   )
 │   │   → Program validates params and returns which encryption scheme to use
+│   ├─ Store e3CryptoConfigIds[e3Id] and snapshot the parameter hash and
+│   │  ciphertext verifier used by this E3
 │   │
 │   ├─ decryptionVerifier = decryptionVerifiers[encryptionSchemeId]
 │   │   → Must exist (registered by admin for this scheme)
@@ -96,7 +116,7 @@ Requester calls: Interfold.request({
 │   │   e3s[e3Id] = E3 {
 │   │     seed, threshold, requestBlock: block.timestamp,  // H-26: EIP-6372 clock
 │   │     inputWindow, encryptionSchemeId, e3Program,
-│   │     e3ProgramParams, customParams, decryptionVerifier,
+│   │     paramSet, customParams, decryptionVerifier, pkVerifier,
 │   │     requester: msg.sender
 │   │   }
 │   │
@@ -146,11 +166,9 @@ Requester calls: Interfold.request({
 │   │   │  │  }                                                  │
 │   │   │  └─────────────────────────────────────────────────────┘
 │   │
-│   └─ Set deadlines:
-│       _e3Deadlines[e3Id].computeDeadline =
-│         inputWindow[1] + _timeoutConfig.computeWindow
+│   └─ Store the request-time lifecycle limit used by accusation reporting
 │
-├─ EMIT: E3Requested(e3Id, e3, e3Program)  // seed & params inside E3 struct
+├─ EMIT: E3Requested(e3Id, e3, cryptoConfigId)
 ├─ EMIT: E3StageChanged(e3Id, E3Stage.None, E3Stage.Requested)
 │
 └─ RETURN: (e3Id, e3)
@@ -180,6 +198,12 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 └─ Publishes CommitteeRequested with the resolved committee seed
 
 InterfoldSolReader decodes IInterfold::E3Requested log
+│
+├─ Preserves the complete uint256 E3 ID as a decimal string through persistence,
+│  program-runner requests, compute-proof journals, and webhook responses
+│
+├─ Rebuilds the crypto configuration ID from the local scheme, BFV parameters,
+│  and circuit version; skips participation if it does not match the event
 │
 ├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
 │  binary supports, records the provider log as internally processed and skips participation;
@@ -508,19 +532,18 @@ The registry must finalize a ready committee.
    `Failed` stage produces the same revert and stays an error.
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
-   after the request don't affect this E3's committee.
+   after the request don't affect this E3's committee. A removed node's current-tree slot can be
+   reused, but previously stored roots do not change.
 
-7. **Dependency graph snapshot**: Each E3 drains through its request-time registry, bonding,
-   slashing, refund, and Interfold relationships. Admin rotation changes defaults for later E3s but
-   cannot redirect or brick committee callbacks, proof checks, failure settlement, rewards, or
-   slashed-fund routing for an in-flight E3. A request atomically records the complete graph before
-   committee formation begins. Because applying a new graph requires several governance
-   transactions, request-time validation rejects every intermediate state; a requester can only
-   freeze the fully old or fully new graph.
+7. **Coherent dependency generations**: A request atomically validates and records its registry,
+   bonding, slashing, refund, and Interfold relationships. Governance pauses new requests before a
+   replacement. The old generation must have no active E3s, unreleased committees, registered
+   operators, bans, or slash assignments before any pointer can change. Governance then wires the
+   complete new graph and enables requests. No request can observe a partly updated graph.
 
 8. **Committee collateral follows the E3**: The request-time registry owns the E3's collateral
-   obligations. Successful finalization locks every member. A later registry rotation cannot open,
-   release, or strand those obligations through the replacement registry.
+   obligations. Successful finalization locks every member. The generation cannot rotate until all
+   request-time committee obligations are released.
 
 9. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
    `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,

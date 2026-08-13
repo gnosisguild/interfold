@@ -13,6 +13,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   deployInterfoldSystem,
   ethers,
   networkHelpers,
@@ -23,6 +24,7 @@ const { loadFixture, time, mine } = networkHelpers;
 
 const inputWindowDuration = 300;
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+let firstE3Id: bigint;
 
 // Local helper — allows ticketAmount = 0 (the snapshot-eligibility test
 // registers a latecomer with zero tickets, which the shared fixture
@@ -85,6 +87,7 @@ async function deployStack() {
   const [, , , , , treasury, other] = await ethers.getSigners();
   const treasuryAddress = await treasury.getAddress();
   const interfoldAddress = await interfold.getAddress();
+  firstE3Id = await interfold.nexte3Id();
 
   await setPricingConfig(interfold, {
     keyGenFixedPerNode: 0n,
@@ -123,7 +126,10 @@ async function deployStack() {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
-    } as any;
+      expectedFeeToken: await feeToken.getAddress(),
+      expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+      maxFee: ethers.MaxUint256,
+    };
     const tx = await interfold.connect(requester).request(req);
     await mine(1);
     return tx;
@@ -153,17 +159,17 @@ describe("Sortition & E3 lifecycle", function () {
 
     await ctx.makeRequest();
     for (const operator of [op1, op2, op3]) {
-      await ciphernodeRegistry.connect(operator).submitTicket(0, 1);
+      await ciphernodeRegistry.connect(operator).submitTicket(firstE3Id, 1);
     }
 
-    const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+    const deadline = await ciphernodeRegistry.getCommitteeDeadline(firstE3Id);
     await time.increaseTo(deadline + 1n);
 
     await expect(
-      interfold.connect(other).markE3Failed(0),
+      interfold.connect(other).markE3Failed(firstE3Id),
     ).to.be.revertedWithCustomError(interfold, "FailureConditionNotMet");
 
-    await expect(ciphernodeRegistry.finalizeCommittee(0)).to.emit(
+    await expect(ciphernodeRegistry.finalizeCommittee(firstE3Id)).to.emit(
       interfold,
       "CommitteeFinalized",
     );
@@ -203,7 +209,7 @@ describe("Sortition & E3 lifecycle", function () {
       const grace = 600;
       await interfold.setMarkFailedGracePeriod(grace);
       await makeRequest();
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       const deadline = await ctx.ciphernodeRegistry.getCommitteeDeadline(e3Id);
       // Move just past the deadline, still inside the grace window.
@@ -226,7 +232,7 @@ describe("Sortition & E3 lifecycle", function () {
       const grace = 600;
       await interfold.setMarkFailedGracePeriod(grace);
       await makeRequest();
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       const deadline = await ctx.ciphernodeRegistry.getCommitteeDeadline(e3Id);
       await time.increaseTo(deadline + BigInt(grace) + 1n);
@@ -244,13 +250,13 @@ describe("Sortition & E3 lifecycle", function () {
       const grace = 600;
       await interfold.setMarkFailedGracePeriod(grace);
       await makeRequest();
-      await ciphernodeRegistry.connect(op1).submitTicket(0, 1);
+      await ciphernodeRegistry.connect(op1).submitTicket(firstE3Id, 1);
 
-      const deadline = await ciphernodeRegistry.getCommitteeDeadline(0);
+      const deadline = await ciphernodeRegistry.getCommitteeDeadline(firstE3Id);
       await time.increaseTo(deadline + 1n);
 
       await expect(
-        interfold.connect(op1).markE3Failed(0),
+        interfold.connect(op1).markE3Failed(firstE3Id),
       ).to.be.revertedWithCustomError(interfold, "MarkE3FailedInGracePeriod");
     });
 
@@ -305,7 +311,7 @@ describe("Sortition & E3 lifecycle", function () {
 
       const tx = await makeRequest();
       const receipt = await tx.wait();
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       const iface = ciphernodeRegistry.interface;
       const evt = receipt!.logs

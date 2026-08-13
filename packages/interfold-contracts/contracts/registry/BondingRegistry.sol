@@ -109,9 +109,6 @@ contract BondingRegistry is
     ///         duration so operators retain a meaningful exit path.
     uint64 public constant MAX_EXIT_DELAY = 90 days; // duration in seconds; not calendar-aware
 
-    uint256 private constant EXIT_DELAY_FLOOR_SELECTOR = 0x6672857e;
-    uint256 private constant INVALID_EXIT_TIMING_SELECTOR = 0x01851c51;
-
     /// @notice Basis-points denominator (100% = 10_000 bps).
     uint256 internal constant BPS_BASE = 10_000;
 
@@ -189,6 +186,39 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     uint256 public totalLicenseLiability;
+
+    /// @dev Owner authorized by an operator. Zero means unset.
+    mapping(address operator => address bondOwner) private _bondOwnerOf;
+
+    /// @dev Aggregate license collateral owned by an account across operator keys.
+    mapping(address bondOwner => uint256 amount) private _bondedByOwner;
+
+    /// @dev Proposed owner in the two-step bond-owner transfer flow.
+    mapping(address operator => address pendingOwner)
+        private _pendingBondOwnerOf;
+
+    /// @dev Refund manager frozen by each slashing manager for each E3.
+    mapping(address manager => mapping(uint256 e3Id => address refundManager))
+        private _slashRouteDestinations;
+
+    /// @dev Proposal-scoped reservations owned by each slashing manager.
+    mapping(address manager => mapping(uint256 proposalId => SlashedTicketReservation reservation))
+        private _slashedTicketReservations;
+
+    /// @dev Number of proposal-scoped reservations owned by each manager.
+    mapping(address manager => uint256 count) private _pendingSlashRouteCount;
+
+    /// @notice Version shared by the ticket and license asset identities.
+    uint64 public bondingAssetConfigurationVersion;
+
+    /// @notice Expected decimals for the active ticket token.
+    uint8 private _ticketTokenDecimals;
+
+    /// @notice Expected decimals for the active license token.
+    uint8 private _licenseTokenDecimals;
+
+    /// @inheritdoc IBondingRegistry
+    uint256 public numRegisteredOperators;
 
     // ======================
     // Modifiers
@@ -463,6 +493,11 @@ contract BondingRegistry is
         return _pendingSlashRouteCount[manager];
     }
 
+    /// @inheritdoc IBondingRegistry
+    function unresolvedCommitteeCount() external view returns (uint256) {
+        return BondingSlashingLib.unresolvedCommitteeCount();
+    }
+
     // ======================
     // Operator Functions
     // ======================
@@ -560,6 +595,7 @@ contract BondingRegistry is
         );
 
         operators[operator].registered = true;
+        numRegisteredOperators++;
 
         // CiphernodeRegistry already emits an event when a ciphernode is added
         registry.addCiphernode(operator);
@@ -584,6 +620,7 @@ contract BondingRegistry is
         require(op.registered, NotRegistered());
 
         op.registered = false;
+        numRegisteredOperators--;
         op.exitRequested = true;
         op.exitUnlocksAt = uint64(block.timestamp) + exitDelay;
 
@@ -733,7 +770,8 @@ contract BondingRegistry is
         address operator,
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
-    ) external nonReentrant onlyBondOwner(operator) {
+    ) external nonReentrant {
+        if (maxLicenseAmount != 0) _checkBondOwner(operator);
         BondingSlashingLib.validateExitClaim(operator);
         _claimExits(operator, maxTicketAmount, maxLicenseAmount);
     }
@@ -757,20 +795,17 @@ contract BondingRegistry is
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
     ) internal {
-        (uint256 ticketClaim, uint256 licenseClaim) = _exits.claimAssets(
+        uint256 licenseClaim = BondingAssetLib.claimExits(
+            _exits,
+            ticketToken,
+            licenseToken,
+            _bondOwnerOf,
+            _bondedByOwner,
             operator,
             maxTicketAmount,
             maxLicenseAmount
         );
-        require(ticketClaim > 0 || licenseClaim > 0, ExitNotReady());
-
-        address bondOwner = bondOwnerOf(operator);
-        if (ticketClaim > 0) ticketToken.payout(bondOwner, ticketClaim);
-        if (licenseClaim > 0) {
-            _decreaseDelegatedBond(operator, licenseClaim);
-            totalLicenseLiability -= licenseClaim;
-            _safeTransferLicenseWithDeltaCheck(bondOwner, licenseClaim);
-        }
+        totalLicenseLiability -= licenseClaim;
     }
 
     // ======================
@@ -1124,7 +1159,7 @@ contract BondingRegistry is
                 revert(0x1c, 0x24)
             }
         }
-        _validateExitTiming(registry, newExitDelay);
+        BondingAssetLib.validateExitTiming(address(registry), newExitDelay);
         uint256 oldValue = uint256(exitDelay);
         exitDelay = newExitDelay;
 
@@ -1157,46 +1192,16 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setRegistry(ICiphernodeRegistry newRegistry) public onlyOwner {
-        require(address(newRegistry) != address(0), ZeroAddress());
-        _validateExitTiming(newRegistry, exitDelay);
+        BondingAssetLib.validateRegistryUpdate(
+            address(registry),
+            address(newRegistry),
+            exitDelay,
+            numRegisteredOperators,
+            numActiveOperators,
+            BondingSlashingLib.unresolvedCommitteeCount()
+        );
         registry = newRegistry;
         emit RegistrySet(address(newRegistry));
-    }
-
-    function _validateExitTiming(
-        ICiphernodeRegistry configuredRegistry,
-        uint64 configuredExitDelay
-    ) private view {
-        // Keep this check compact because BondingRegistry is size-constrained.
-        // solhint-disable-next-line no-inline-assembly
-        assembly ("memory-safe") {
-            if and(configuredRegistry, configuredExitDelay) {
-                mstore(0x00, EXIT_DELAY_FLOOR_SELECTOR)
-                if iszero(
-                    staticcall(
-                        gas(),
-                        configuredRegistry,
-                        0x1c,
-                        0x04,
-                        0x00,
-                        0x20
-                    )
-                ) {
-                    returndatacopy(0x00, 0x00, returndatasize())
-                    revert(0x00, returndatasize())
-                }
-                if lt(returndatasize(), 0x20) {
-                    revert(0x00, 0x00)
-                }
-                let requiredDelay := mload(0x00)
-                if iszero(gt(configuredExitDelay, requiredDelay)) {
-                    mstore(0x00, INVALID_EXIT_TIMING_SELECTOR)
-                    mstore(0x20, configuredExitDelay)
-                    mstore(0x40, requiredDelay)
-                    revert(0x1c, 0x44)
-                }
-            }
-        }
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1308,20 +1313,11 @@ contract BondingRegistry is
 
         operators[operator].licenseBond += amount;
         _bondedByOwner[bondOwner] += amount;
-
-        uint256 balanceBefore = licenseToken.balanceOf(address(this));
-        licenseToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceAfter = licenseToken.balanceOf(address(this));
-        uint256 actualReceived = balanceAfter > balanceBefore
-            ? balanceAfter - balanceBefore
-            : 0;
-        if (actualReceived != amount) {
-            revert AssetTransferMismatch(
-                address(licenseToken),
-                amount,
-                actualReceived
-            );
-        }
+        BondingAssetLib.transferFromExact(
+            address(licenseToken),
+            msg.sender,
+            amount
+        );
         totalLicenseLiability += amount;
 
         emit LicenseBondUpdated(
@@ -1426,37 +1422,7 @@ contract BondingRegistry is
             interfaceId == type(IERC165).interfaceId;
     }
 
-    /// @dev Owner authorized by an operator. Zero means unset.
-    mapping(address operator => address bondOwner) private _bondOwnerOf;
-
-    /// @dev Aggregate license collateral owned by an account across operator keys.
-    mapping(address bondOwner => uint256 amount) private _bondedByOwner;
-
-    /// @dev Proposed owner in the two-step bond-owner transfer flow.
-    mapping(address operator => address pendingOwner)
-        private _pendingBondOwnerOf;
-
-    /// @dev Refund manager frozen by each slashing manager for each E3.
-    mapping(address manager => mapping(uint256 e3Id => address refundManager))
-        private _slashRouteDestinations;
-
-    /// @dev Proposal-scoped reservations owned by each slashing manager.
-    mapping(address manager => mapping(uint256 proposalId => SlashedTicketReservation reservation))
-        private _slashedTicketReservations;
-
-    /// @dev Number of proposal-scoped reservations owned by each manager.
-    mapping(address manager => uint256 count) private _pendingSlashRouteCount;
-
-    /// @notice Version shared by the ticket and license asset identities.
-    uint64 public bondingAssetConfigurationVersion;
-
-    /// @notice Expected decimals for the active ticket token.
-    uint8 private _ticketTokenDecimals;
-
-    /// @notice Expected decimals for the active license token.
-    uint8 private _licenseTokenDecimals;
-
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 }

@@ -49,7 +49,7 @@ export async function signFoldAttestation(
   chainId: bigint,
   verifyingContract: string,
   registry: string,
-  e3Id: number,
+  e3Id: number | bigint,
   partyId: number,
   skAggCommit: string,
   esmAggCommit: string,
@@ -84,7 +84,7 @@ export async function signFoldAttestation(
  */
 export async function buildMockDkgAttestationFixtureData(
   operators: Signer[],
-  e3Id: number,
+  e3Id: number | bigint,
   pkCommitment: string,
   signingVerifierAddress: string,
   signingRegistryAddress: string,
@@ -164,7 +164,7 @@ export async function buildMockDkgAttestationFixtureData(
 /** Convenience helper for Interfold tests with a plaintext public key input. */
 export async function buildMockAggregationPublishArgs(
   operators: Signer[],
-  e3Id: number,
+  e3Id: number | bigint,
   publicKey: string,
   signingVerifierAddress: string,
   signingRegistryAddress: string,

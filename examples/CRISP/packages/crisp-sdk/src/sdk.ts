@@ -103,7 +103,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The committee public key bytes
    */
-  async getRoundPublicKey(e3Id: number): Promise<Uint8Array> {
+  async getRoundPublicKey(e3Id: bigint): Promise<Uint8Array> {
     return getRoundPublicKey(this.serverUrl, e3Id)
   }
 
@@ -112,7 +112,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The ciphertext output bytes
    */
-  async getRoundCiphertext(e3Id: number): Promise<Uint8Array> {
+  async getRoundCiphertext(e3Id: bigint): Promise<Uint8Array> {
     return getRoundCiphertext(this.serverUrl, e3Id)
   }
 
@@ -140,7 +140,7 @@ export class CrispSDK {
    * @param address - The voter address
    * @returns The vote status for the address
    */
-  async getVoteStatus(e3Id: number, address: string): Promise<VoteStatusResponse> {
+  async getVoteStatus(e3Id: bigint, address: string): Promise<VoteStatusResponse> {
     return getVoteStatus(this.serverUrl, e3Id, address)
   }
 
@@ -149,7 +149,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The round result (tally, emojis, total votes, end time and requester)
    */
-  async getRoundResult(e3Id: number): Promise<WebResultResponse> {
+  async getRoundResult(e3Id: bigint): Promise<WebResultResponse> {
     return getRoundResult(this.serverUrl, e3Id)
   }
 
@@ -167,7 +167,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The lite round state
    */
-  async getRoundStateLite(e3Id: number): Promise<E3StateLiteResponse> {
+  async getRoundStateLite(e3Id: bigint): Promise<E3StateLiteResponse> {
     return getRoundStateLite(this.serverUrl, e3Id)
   }
 
@@ -176,7 +176,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The round details
    */
-  async getRoundDetails(e3Id: number): Promise<RoundDetails> {
+  async getRoundDetails(e3Id: bigint): Promise<RoundDetails> {
     return getRoundDetails(this.serverUrl, e3Id)
   }
 
@@ -190,7 +190,7 @@ export class CrispSDK {
    * @param chainId - The chain ID of the network the program is deployed on
    * @returns The on chain round data
    */
-  async getOnChainRoundData(programAddress: string, e3Id: number, chainId?: number): Promise<OnChainRoundData> {
+  async getOnChainRoundData(programAddress: string, e3Id: bigint, chainId?: number): Promise<OnChainRoundData> {
     const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
 
     return getOnChainRoundData(programAddress, e3Id, chain)
@@ -201,7 +201,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The token details
    */
-  async getRoundTokenDetails(e3Id: number): Promise<TokenDetails> {
+  async getRoundTokenDetails(e3Id: bigint): Promise<TokenDetails> {
     return getRoundTokenDetails(this.serverUrl, e3Id)
   }
 
@@ -211,7 +211,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The list of token holder hashes
    */
-  async getTokenHolderHashes(e3Id: number): Promise<string[]> {
+  async getTokenHolderHashes(e3Id: bigint): Promise<string[]> {
     return getTokenHolderHashes(this.serverUrl, e3Id)
   }
 
@@ -220,7 +220,7 @@ export class CrispSDK {
    * @param e3Id - The e3Id of the round
    * @returns The list of eligible token holders
    */
-  async getEligibleAddresses(e3Id: number): Promise<TokenHolder[]> {
+  async getEligibleAddresses(e3Id: bigint): Promise<TokenHolder[]> {
     return getEligibleAddresses(this.serverUrl, e3Id)
   }
 
@@ -230,7 +230,7 @@ export class CrispSDK {
    * @param address - The address of the slot
    * @returns The previous ciphertext, or undefined if the slot is empty
    */
-  async getPreviousCiphertext(e3Id: number, address: string): Promise<Uint8Array | undefined> {
+  async getPreviousCiphertext(e3Id: bigint, address: string): Promise<Uint8Array | undefined> {
     return getPreviousCiphertext(this.serverUrl, e3Id, address)
   }
 }

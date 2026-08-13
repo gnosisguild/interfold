@@ -21,6 +21,14 @@ interface IInterfold {
     error ParamSetAlreadyRegistered(uint8 paramSet);
     /// @notice A verifier does not match the active circuit threshold.
     error VerifierThresholdMismatch(uint256 actual, uint256 expected);
+    /// @notice The fee token changed after the caller obtained a quote.
+    error FeeTokenChanged(IERC20 expected, IERC20 actual);
+    /// @notice The current quote is greater than the caller's limit.
+    error FeeExceedsMaximum(uint256 fee, uint256 maximum);
+    /// @notice The active circuit configuration changed after quoting.
+    error CryptoConfigChanged(bytes32 expected, bytes32 actual);
+    /// @notice The controller-local E3 ID range is exhausted.
+    error E3IdSpaceExhausted();
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -62,6 +70,7 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
+        /// @dev Requester-initiated cancellation of an active E3.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
@@ -124,8 +133,8 @@ interface IInterfold {
     /// @notice This event MUST be emitted when an Encrypted Execution Environment (E3) is successfully requested.
     /// @param e3Id ID of the E3.
     /// @param e3 Details of the E3.
-    /// @param e3Program Address of the Computation module selected.
-    event E3Requested(uint256 e3Id, E3 e3, IE3Program indexed e3Program);
+    /// @param cryptoConfigId Circuit configuration selected for the E3.
+    event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
 
     /// @notice This event MUST be emitted when an input to an Encrypted Execution Environment (E3) is
     /// successfully published.
@@ -245,10 +254,6 @@ interface IInterfold {
     /// @param encryptionSchemeId The ID of the encryption scheme that was enabled.
     event EncryptionSchemeEnabled(bytes32 encryptionSchemeId);
 
-    /// @notice This event MUST be emitted any time an encryption scheme is disabled.
-    /// @param encryptionSchemeId The ID of the encryption scheme that was disabled.
-    event EncryptionSchemeDisabled(bytes32 encryptionSchemeId);
-
     /// @notice This event MUST be emitted any time a E3 Program is registered.
     /// @param e3Program The address of the E3 Program.
     /// @dev Registration is append-only; programs cannot be deregistered.
@@ -266,6 +271,9 @@ interface IInterfold {
     /// @notice Emitted when the SlashingManager contract is set.
     /// @param slashingManager The address of the SlashingManager contract.
     event SlashingManagerSet(address indexed slashingManager);
+
+    /// @notice Emitted when request admission is paused or resumed.
+    event RequestsPausedSet(bool paused);
 
     /// @notice Emitted when slashed funds are escrowed for an E3
     /// @param e3Id The E3 ID.
@@ -408,6 +416,15 @@ interface IInterfold {
     /// @param bondingRegistry The invalid bonding registry address.
     error InvalidBondingRegistry(IBondingRegistry bondingRegistry);
 
+    /// @notice New E3 requests are paused while a dependency generation drains.
+    error RequestsPaused();
+
+    /// @notice The configured dependency graph is incomplete or inconsistent.
+    error DependencyConfigurationMismatch();
+
+    /// @notice A dependency generation still owns protocol state.
+    error DependencyGenerationNotDrained();
+
     /// @notice Thrown when attempting to set an invalid fee token address.
     /// @param feeToken The invalid fee token address.
     error InvalidFeeToken(IERC20 feeToken);
@@ -436,6 +453,12 @@ interface IInterfold {
 
     /// @notice Failure condition not yet met
     error FailureConditionNotMet(uint256 e3Id);
+
+    /// @notice Caller is not the requester that created the E3.
+    error NotRequester(uint256 e3Id, address caller);
+
+    /// @notice The E3 is not in an active stage that the requester can cancel.
+    error E3NotCancellable(uint256 e3Id, E3Stage stage);
 
     /// @notice Thrown when a committee publishes its key after the DKG deadline.
     /// @param e3Id The E3 identifier.
@@ -538,6 +561,9 @@ interface IInterfold {
     /// @param paramSet The BFV encryption parameter set to use.
     /// @param computeProviderParams The ABI encoded compute provider parameters.
     /// @param customParams Arbitrary ABI-encoded application-defined parameters.
+    /// @param expectedFeeToken Fee token accepted by the requester.
+    /// @param expectedCryptoConfigId Circuit configuration accepted by the requester.
+    /// @param maxFee Maximum fee accepted for this request.
     struct E3RequestParams {
         CommitteeSize committeeSize;
         uint256[2] inputWindow;
@@ -545,6 +571,9 @@ interface IInterfold {
         uint8 paramSet;
         bytes computeProviderParams;
         bytes customParams;
+        IERC20 expectedFeeToken;
+        bytes32 expectedCryptoConfigId;
+        uint256 maxFee;
     }
 
     ////////////////////////////////////////////////////////////
@@ -658,10 +687,8 @@ interface IInterfold {
         bytes32 encryptionSchemeId
     ) external view returns (address);
 
-    /// @notice Disables a previously enabled encryption scheme.
-    /// @dev This function MUST revert if the encryption scheme is not currently enabled.
-    /// @param encryptionSchemeId The unique identifier for the encryption scheme to disable.
-    function disableEncryptionScheme(bytes32 encryptionSchemeId) external;
+    /// @notice Returns the circuit configuration accepted by new requests.
+    function activeCryptoConfigId() external pure returns (bytes32);
 
     /// @notice Registers ABI-encoded BFV parameters for a param set enum variant.
     /// @param paramSet The param set index to register.
@@ -691,6 +718,16 @@ interface IInterfold {
     /// @notice Returns the full pricing configuration.
     function getPricingConfig() external view returns (PricingConfig memory);
 
+    /// @notice Returns the timeout windows frozen for an E3.
+    function getE3TimeoutConfig(
+        uint256 e3Id
+    ) external view returns (E3TimeoutConfig memory config);
+
+    /// @notice Returns the request-time upper bound for the E3 lifecycle.
+    function getE3LifecycleDeadline(
+        uint256 e3Id
+    ) external view returns (uint256 deadline);
+
     /// @notice Returns the decryption verifier for a given encryption scheme.
     /// @param encryptionSchemeId The unique identifier for the encryption scheme.
     /// @return The decryption verifier contract for the specified encryption scheme.
@@ -716,6 +753,15 @@ interface IInterfold {
 
     /// @notice Returns the current SlashingManager contract.
     function slashingManager() external view returns (ISlashingManager);
+
+    /// @notice Whether new requests are paused for dependency maintenance.
+    function requestsPaused() external view returns (bool);
+
+    /// @notice Number of E3s that have not reached a terminal stage.
+    function activeE3Count() external view returns (uint256);
+
+    /// @notice Pause or resume request admission.
+    function setRequestsPaused(bool paused) external;
 
     /// @notice Called by CiphernodeRegistry when committee is finalized (sortition complete).
     /// @dev Updates E3 lifecycle to CommitteeFinalized stage, starts DKG deadline.
@@ -762,6 +808,12 @@ interface IInterfold {
     /// @param e3Id The E3 ID
     /// @return reason The failure reason
     function markE3Failed(uint256 e3Id) external returns (FailureReason reason);
+
+    /// @notice Cancel an active E3 and preserve payment for completed work.
+    /// @dev Only the original requester can cancel. Refund settlement remains
+    ///      permissionless through {processE3Failure}.
+    /// @param e3Id The E3 ID.
+    function cancelE3(uint256 e3Id) external;
 
     /// @notice Process a failed E3: transfer payment to E3RefundManager and calculate refunds.
     /// @dev Permissionless. Requires E3 to be in Failed stage.

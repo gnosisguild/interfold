@@ -17,7 +17,7 @@ pub struct ComputeResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ComputeRequest {
-    pub e3_id: Option<u64>,
+    pub e3_id: Option<String>,
     pub chain_id: u64,
     pub interfold_address: String,
     #[serde(deserialize_with = "deserialize_hex_string")]
@@ -36,7 +36,7 @@ pub struct ComputeRequest {
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum WebhookPayload {
     Completed {
-        e3_id: u64,
+        e3_id: String,
         #[serde(serialize_with = "serialize_as_hex")]
         #[serde(deserialize_with = "deserialize_hex_string")]
         #[derivative(Debug = "ignore")]
@@ -53,7 +53,7 @@ pub enum WebhookPayload {
         ciphertext_commitment: [u8; 32],
     },
     Failed {
-        e3_id: u64,
+        e3_id: String,
         error: String,
     },
 }
@@ -107,7 +107,7 @@ mod tests {
     fn test_deserialize_compute_request() {
         let json = r#"
         {
-            "e3_id": 12345,
+            "e3_id": "12345",
             "chain_id": 31337,
             "interfold_address": "0x1111111111111111111111111111111111111111",
             "encryption_scheme_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -123,7 +123,7 @@ mod tests {
 
         let payload: ComputeRequest = serde_json::from_str(json).unwrap();
 
-        assert_eq!(payload.e3_id, Some(12345));
+        assert_eq!(payload.e3_id, Some("12345".to_string()));
         assert_eq!(payload.chain_id, 31337);
         assert_eq!(
             payload.interfold_address,
@@ -151,7 +151,7 @@ mod tests {
     fn test_deserialize_compute_request_no_prefix() {
         let json = r#"
         {
-            "e3_id": 12345,
+            "e3_id": "12345",
             "chain_id": 31337,
             "interfold_address": "0x1111111111111111111111111111111111111111",
             "encryption_scheme_id": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -167,7 +167,7 @@ mod tests {
 
         let payload: ComputeRequest = serde_json::from_str(json).unwrap();
 
-        assert_eq!(payload.e3_id, Some(12345));
+        assert_eq!(payload.e3_id, Some("12345".to_string()));
         assert_eq!(payload.encryption_scheme_id, vec![0x22; 32]);
         assert_eq!(payload.committee_public_key_hash, vec![0x33; 32]);
         assert_eq!(payload.params, hex::decode("12345ffa").unwrap());
@@ -190,7 +190,7 @@ mod tests {
     fn test_webhook_payload_serialization_completed() {
         let commitment = [0x11u8; 32];
         let payload = WebhookPayload::Completed {
-            e3_id: 12345,
+            e3_id: "12345".to_string(),
             ciphertext: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
             proof: vec![0xde, 0xad, 0xbe, 0xef],
             ciphertext_commitment: commitment,
@@ -198,7 +198,7 @@ mod tests {
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
         let expected = format!(
-            r#"{{"status":"completed","e3_id":12345,"ciphertext":"0x0123456789abcdef","proof":"0xdeadbeef","ciphertext_commitment":"0x{}"}}"#,
+            r#"{{"status":"completed","e3_id":"12345","ciphertext":"0x0123456789abcdef","proof":"0xdeadbeef","ciphertext_commitment":"0x{}"}}"#,
             hex::encode(commitment),
         );
 
@@ -208,12 +208,12 @@ mod tests {
     #[test]
     fn test_webhook_payload_serialization_failed() {
         let payload = WebhookPayload::Failed {
-            e3_id: 12345,
+            e3_id: "12345".to_string(),
             error: "Computation failed".to_string(),
         };
 
         let json = serde_json::to_string(&payload).expect("Failed to serialize");
-        let expected = r#"{"status":"failed","e3_id":12345,"error":"Computation failed"}"#;
+        let expected = r#"{"status":"failed","e3_id":"12345","error":"Computation failed"}"#;
 
         assert_eq!(json, expected);
     }
@@ -225,6 +225,7 @@ mod tests {
 
         let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
         let request = value.as_object_mut().unwrap();
+        request.insert("e3_id".into(), "0".into());
         request.insert("chain_id".into(), 31337.into());
         request.insert(
             "interfold_address".into(),
