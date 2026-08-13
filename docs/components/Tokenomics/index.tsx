@@ -27,17 +27,22 @@ type Slice = {
 
 // FOLD sold at the CCA sits inside Investors. FOLD left unsold returns to the
 // Foundation but carries no vest, so it is tracked as its own category.
+// Shares are the allocation sheet's exact values, which sum to exactly 100%.
+// Rounding them all to two decimals would print a column summing to 100.01%,
+// because three of them round up and none rounds down. The largest-remainder
+// method settles which one gives up its round-up: Treasury has the smallest
+// remainder of the three (0.0051), so it prints at its floor of 41.28%.
 // Community = vivid brand greens; Other = dark brand neutrals.
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
-  // Community (51.81%)
-  { key: 'Foundation Treasury', pct: 41.4469, color: '#3A7D44', group: 'community' }, // vivid forest
-  { key: 'Unsold CCA Tokens', pct: 6.3615, displayPct: 6.36, color: '#687d71', group: 'community' }, // brand sage
+  // Community (51.65%)
+  { key: 'Foundation Treasury', pct: 41.28512231, displayPct: 41.28, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'Unsold CCA Tokens', pct: 6.36, color: '#687d71', group: 'community' }, // brand sage
   { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
-  // Other (48.19%)
+  // Other (48.35%)
   { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
-  { key: 'Investors', pct: 19.1916, color: '#3A4E42', group: 'other' }, // dark muted forest
-  { key: 'Team and Advisors', pct: 9, color: '#8FAE96', group: 'other' }, // muted sage
+  { key: 'Investors', pct: 18.84799884, color: '#3A4E42', group: 'other' }, // dark muted forest
+  { key: 'Team and Advisors', pct: 9.50687885, color: '#8FAE96', group: 'other' }, // muted sage
 ]
 
 // Ceilings rather than fixed amounts, so their share is shown as "at most".
@@ -46,8 +51,8 @@ const UP_TO = new Set(['Airdrop', 'Unsold CCA Tokens'])
 
 const communitySlices = ALLOCATION.filter((d) => d.group === 'community')
 const otherSlices = ALLOCATION.filter((d) => d.group === 'other')
-const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 51.8084
-const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48.1916
+const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 51.64512231
+const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48.35487769
 
 const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(ALLOCATION.map((s) => [s.key, s.color]))
 
@@ -105,7 +110,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '≤ 27.37%' },
+    { label: 'Circulating Supply at TGE', value: '≤ 25.21%' },
   ]
   return (
     <div className={classes.stats}>
@@ -127,9 +132,9 @@ export function KeyParameters() {
 // so the two colour families read as distinct visual clusters.
 const GROUP_GAP_DEG = 6
 const TOTAL_SLICE_DEG = 360 - 2 * GROUP_GAP_DEG // 348°
-const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG // ≈ 180.29°
-const OTHER_SPAN_DEG = (OTHER_PCT / 100) * TOTAL_SLICE_DEG // ≈ 167.71°
-const OTHER_START_DEG = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG // ≈ 186.29°
+const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG // ≈ 179.73°
+const OTHER_SPAN_DEG = (OTHER_PCT / 100) * TOTAL_SLICE_DEG // ≈ 168.27°
+const OTHER_START_DEG = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG // ≈ 185.73°
 
 export function AllocationPie() {
   const size = 260
@@ -328,22 +333,27 @@ type Vest = {
 
 // Stacking order: bottom → top. Shorter unlock periods at the base so the
 // chart reads as progressively longer commitments toward the top.
+// Token counts come from the allocation sheet and sum to exactly TOTAL_SUPPLY.
+// A vestMonths of 1 marks an allocation with no restrictions: the sheet gives
+// it a single payment at TGE, so it is liquid in full from the start.
 const VESTING: Vest[] = [
-  { key: 'Investors', total: 230_299_242, vestMonths: 1 },
-  { key: 'Unsold CCA Tokens', total: 76_338_059, vestMonths: 1 },
+  { key: 'Investors', total: 226_175_986, vestMonths: 1 },
+  { key: 'Unsold CCA Tokens', total: 76_320_000, vestMonths: 1 },
   { key: 'Airdrop', total: 48_000_000, vestMonths: 24 },
-  { key: 'Team and Advisors', total: 108_000_000, vestMonths: 24 },
+  { key: 'Team and Advisors', total: 114_082_546, vestMonths: 24 },
   { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48 },
-  { key: 'Foundation Treasury', total: 497_362_699, vestMonths: 48 },
+  { key: 'Foundation Treasury', total: 495_421_468, vestMonths: 48 },
 ]
 
+const UNLOCK_START = 'Sep 1, 2026'
+
 const VESTING_TERMS = [
-  { key: 'Foundation Treasury', schedule: '48 month linear unlock from TGE', group: 'community' as Group },
+  { key: 'Foundation Treasury', schedule: `48 month linear unlock from ${UNLOCK_START}`, group: 'community' as Group },
   { key: 'Unsold CCA Tokens', schedule: 'No restrictions from TGE', group: 'community' as Group },
-  { key: 'Airdrop', schedule: '24 month linear unlock from TGE', group: 'community' as Group },
-  { key: 'Gnosis Guild', schedule: '48 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Airdrop', schedule: `24 month linear unlock from ${UNLOCK_START}`, group: 'community' as Group },
+  { key: 'Gnosis Guild', schedule: `48 month linear unlock from ${UNLOCK_START}`, group: 'other' as Group },
   { key: 'Investors', schedule: 'No restrictions from TGE', group: 'other' as Group },
-  { key: 'Team and Advisors', schedule: '24 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Team and Advisors', schedule: `24 month linear unlock from ${UNLOCK_START}`, group: 'other' as Group },
 ]
 
 const MONTHS_AXIS = 48
@@ -353,8 +363,12 @@ const Y_MAX = 1_200_000_000
 const Y_TICKS = [0, 300_000_000, 600_000_000, 900_000_000, 1_200_000_000]
 const Y_LABELS = ['0', '300M', '600M', '900M', '1.2B']
 
+// Linear unlocks start after the TGE, so they release nothing at t = 0 and the
+// curve at TGE is only the unrestricted allocations. This is what puts
+// circulating supply at TGE at 25.21% of total supply.
 function cumulative(v: Vest, t: number): number {
-  return (v.total * Math.min(t + 1, v.vestMonths)) / v.vestMonths
+  if (v.vestMonths <= 1) return v.total
+  return (v.total * Math.min(t, v.vestMonths)) / v.vestMonths
 }
 
 export function VestingSchedule() {
