@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import {
   BigNumberish,
+  MaxUint256,
   ZeroAddress,
   ZeroHash,
   isHexString,
@@ -215,7 +216,7 @@ export const requestCommittee = task(
         computeProviderParams,
       });
 
-      const requestParams = {
+      const quoteParams = {
         committeeSize,
         inputWindow: [inputWindowStart, inputWindowEnd] as [
           BigNumberish,
@@ -226,11 +227,14 @@ export const requestCommittee = task(
         paramSet,
         computeProviderParams,
         customParams,
+        expectedFeeToken: await mockUSDCContract.getAddress(),
+        expectedCryptoConfigId: await interfoldContract.activeCryptoConfigId(),
+        maxFee: MaxUint256,
       };
 
+      const fee = await interfoldContract.getE3Quote(quoteParams);
+      const requestParams = { ...quoteParams, maxFee: fee };
       console.log("Request parameters:", requestParams);
-
-      const fee = await interfoldContract.getE3Quote(requestParams);
       console.log(`E3 fee: ${ethers.formatUnits(fee, 6)} USDC`);
 
       const usdcBalance = await mockUSDCContract.balanceOf(signer.address);
