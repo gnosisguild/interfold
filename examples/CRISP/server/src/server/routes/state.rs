@@ -9,8 +9,8 @@ use std::str::FromStr;
 use crate::server::{
     app_data::AppData,
     models::{
-        e3_id_to_u256, GetRoundRequest, PreviousCiphertextRequest, PreviousCiphertextResponse,
-        RoundRequestWithRequester, WebhookPayload,
+        canonical_e3_id, e3_id_to_u256, GetRoundRequest, PreviousCiphertextRequest,
+        PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
     },
     CONFIG,
 };
@@ -80,6 +80,7 @@ async fn handle_get_previous_ciphertext(
         Ok(e3_id) => e3_id,
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
+    let e3_key = e3_id.to_string();
 
     let slot_index = match contract.get_slot_index_from_address(e3_id, address).await {
         Ok(Some(index)) => index,
@@ -91,11 +92,7 @@ async fn handle_get_previous_ciphertext(
         }
     };
 
-    match store
-        .e3(incoming.round_id)
-        .get_ciphertext_input(slot_index)
-        .await
-    {
+    match store.e3(e3_key).get_ciphertext_input(slot_index).await {
         Ok(Some(ciphertext)) => HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext }),
         Ok(None) => HttpResponse::NotFound().body("Ciphertext not found"),
         Err(e) => {
@@ -221,7 +218,12 @@ async fn get_round_result(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let incoming = data.into_inner();
-    match store.e3(incoming.round_id).get_web_result_request().await {
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+
+    match store.e3(e3_id).get_web_result_request().await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             error!("Error getting E3 state: {:?}", e);
@@ -287,7 +289,12 @@ async fn get_round_state_lite(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let incoming = data.into_inner();
-    match store.e3(incoming.round_id).get_e3_state_lite().await {
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+
+    match store.e3(e3_id).get_e3_state_lite().await {
         Ok(state_lite) => HttpResponse::Ok().json(state_lite),
         Err(_) => HttpResponse::InternalServerError().body("Failed to get E3 state"),
     }
@@ -304,8 +311,12 @@ async fn get_token_holders_hashes(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let incoming = data.into_inner();
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
 
-    match store.e3(incoming.round_id).get_token_holder_hashes().await {
+    match store.e3(e3_id).get_token_holder_hashes().await {
         Ok(hashes) => HttpResponse::Ok().json(hashes),
         Err(e) => {
             error!("Error getting token holders hashes: {:?}", e);
@@ -324,8 +335,12 @@ async fn handle_get_eligible_addresses(
     store: web::Data<AppData>,
 ) -> impl Responder {
     let incoming = data.into_inner();
+    let e3_id = match canonical_e3_id(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
 
-    match store.e3(incoming.round_id).get_eligible_addresses().await {
+    match store.e3(e3_id).get_eligible_addresses().await {
         Ok(addresses) => HttpResponse::Ok().json(addresses),
         Err(e) => {
             error!("Error getting eligible addresses: {:?}", e);

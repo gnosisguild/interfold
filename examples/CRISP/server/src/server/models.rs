@@ -14,6 +14,10 @@ pub fn e3_id_to_u256(e3_id: &str) -> Result<U256> {
     U256::from_str_radix(e3_id, 10).map_err(|e| anyhow::anyhow!("Invalid E3 ID '{}': {}", e3_id, e))
 }
 
+pub fn canonical_e3_id(e3_id: &str) -> Result<String> {
+    Ok(e3_id_to_u256(e3_id)?.to_string())
+}
+
 #[derive(Derivative, Deserialize, Serialize)]
 #[derivative(Debug)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -347,7 +351,7 @@ mod census_mode_tests {
 
 #[cfg(test)]
 mod e3_id_tests {
-    use super::e3_id_to_u256;
+    use super::{canonical_e3_id, e3_id_to_u256};
 
     #[test]
     fn accepts_full_width_decimal_ids() {
@@ -359,5 +363,10 @@ mod e3_id_tests {
     #[test]
     fn rejects_non_decimal_ids() {
         assert!(e3_id_to_u256("not-an-id").is_err());
+    }
+
+    #[test]
+    fn canonicalizes_padded_decimal_ids() {
+        assert_eq!(canonical_e3_id("00042").unwrap(), "42");
     }
 }
