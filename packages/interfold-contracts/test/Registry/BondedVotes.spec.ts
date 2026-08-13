@@ -615,16 +615,33 @@ describe("BondedVotes", function () {
 
   describe("wiring", function () {
     it("rejects a checkpoint contract bound to another registry", async function () {
-      const { bondingRegistry } = await loadFixture(setup);
+      // Deliberately NOT the shared fixture: that one already configures a checkpoint contract,
+      // so the one-shot guard would fire first and this would assert the repoint path instead.
+      // Both revert with InvalidConfiguration, so the mismatch branch would go uncovered.
+      const { bondingRegistry } = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+        mintUsdcTo: [],
+      });
 
       const foreign = await ethers.deployContract("BondedCheckpoints", [
         ethers.Wallet.createRandom().address,
       ]);
 
-      // One-shot setter: a mismatch would make every sync revert and brick bonding for good.
+      // A mismatch would make every sync revert and brick bonding for good.
       await expect(
         bondingRegistry.setBondedCheckpoints(await foreign.getAddress()),
       ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
+
+      // Proves the revert above came from the registry cross-check and not the one-shot guard:
+      // the slot is still unset, so a correctly bound contract is still accepted.
+      const owned = await ethers.deployContract("BondedCheckpoints", [
+        await bondingRegistry.getAddress(),
+      ]);
+      await expect(bondingRegistry.setBondedCheckpoints(await owned.getAddress()))
+        .to.emit(bondingRegistry, "BondedCheckpointsSet")
+        .withArgs(await owned.getAddress());
     });
 
     it("refuses to be repointed once set", async function () {

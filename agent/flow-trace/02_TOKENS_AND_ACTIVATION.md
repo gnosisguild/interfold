@@ -453,12 +453,12 @@ Two contracts restore that weight:
 | Contract                     | Role                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------- |
 | `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.  |
-| `registry/BondedVotes`       | `IERC5805` view summing wallet FOLD and bonded FOLD at the same timepoint. |
+| `registry/BondedVotes`       | `IERC5805` view summing wallet voting power and bonded FOLD at the same timepoint. |
 
 ```
 BondedVotes.getPastVotes(account, t)
 │
-├─ InterfoldToken.getPastVotes(account, t)        ← FOLD held in the wallet
+├─ InterfoldToken.getPastVotes(account, t)        ← wallet voting power (needs delegation)
 └─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
 
 BondedVotes.getPastTotalSupply(t)
@@ -473,7 +473,8 @@ meant to remove.
 
 `BondingRegistry._syncBondedCheckpoint(bondOwner)` sends the owner's **current total**, not a delta,
 so the history mirrors `_bondedByOwner`. A mutation site that forgets to call it is caught by
-comparing the two; a delta-derived history would drift undetected, and it would drift in voting
+comparing `bonded(owner)` against `totalBonded(owner)` at the same instant, or a historical read
+against the total expected at that timepoint; a delta-derived history would drift undetected, and it would drift in voting
 weight. It is called from every site that mutates `_bondedByOwner`:
 
 | Site                            | Trigger                                      |
