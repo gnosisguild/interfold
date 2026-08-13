@@ -218,10 +218,11 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   await page.locator('a:has-text("All Polls")').click()
   log(`asserting that All polls page exists...`)
   await expect(page.locator('h1')).toHaveText('All polls')
+  const pollResult = page.locator(`[data-test-id='poll-${e3id}-0']`)
   log(`asserting that result has 100% on the vote we clicked on...`)
-  await expect(page.locator("[data-test-id='poll-0-0'] [data-test-id='poll-result-0'] .h2")).toHaveText('100%')
+  await expect(pollResult.locator("[data-test-id='poll-result-0'] .h2")).toHaveText('100%')
   log(`asserting that result has 0% on the vote we did not click on...`)
-  await expect(page.locator("[data-test-id='poll-0-0'] [data-test-id='poll-result-1'] .h2")).toHaveText('0%')
+  await expect(pollResult.locator("[data-test-id='poll-result-1'] .h2")).toHaveText('0%')
 
   log('============================================')
   log('        PLAYWRIGHT TEST IS COMPLETE         ')
