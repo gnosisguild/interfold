@@ -375,11 +375,13 @@ fn verify_pk_generation_bounds() {
 /// Verifies e_sm_bound (smudging noise bound).
 ///
 /// The smudging noise bound is critical for threshold decryption security.
-/// It's computed as: e_sm_bound = 2^lambda * N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
-/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 80.
+/// It's computed as: B_sm = 2^(lambda+1) * N * B_C
+/// where B_C = N_CIPHERTEXTS * (b_fresh + Q_MOD_T), b_fresh = N * e_norm + b_enc
+/// + N * b_e * sk_norm, N is the ring degree, and lambda = 45.
 ///
-/// The 2^80 factor provides 80 bits of statistical security, ensuring that
-/// decryption shares don't leak secret key information.
+/// The 2^(lambda+1) * N factor provides 45 bits of statistical security scaled
+/// by the ring degree, ensuring that decryption shares don't leak secret key
+/// information.
 fn verify_e_sm_bound() {
     let n: Field = THRESHOLD_N as Field;
     let e_norm: Field = 20;
@@ -393,11 +395,11 @@ fn verify_e_sm_bound() {
     // b_c = N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
     let b_c = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
 
-    // 2^60
-    let two_pow_60: Field = 0x1000000000000000;
+    // 2^(lambda+1), lambda = 45
+    let two_pow_46: Field = 0x400000000000;
 
-    // e_sm_bound = 2^60 * b_c
-    let expected_e_sm_bound = two_pow_60 * b_c;
+    // e_sm_bound = 2^(lambda+1) * N * b_c
+    let expected_e_sm_bound = two_pow_46 * n * b_c;
 
     assert(expected_e_sm_bound == PK_GENERATION_E_SM_BOUND, "PK_GENERATION_E_SM_BOUND mismatch");
 }
