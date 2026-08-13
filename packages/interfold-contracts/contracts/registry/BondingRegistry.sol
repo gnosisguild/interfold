@@ -187,6 +187,39 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     uint256 public totalLicenseLiability;
 
+    /// @dev Owner authorized by an operator. Zero means unset.
+    mapping(address operator => address bondOwner) private _bondOwnerOf;
+
+    /// @dev Aggregate license collateral owned by an account across operator keys.
+    mapping(address bondOwner => uint256 amount) private _bondedByOwner;
+
+    /// @dev Proposed owner in the two-step bond-owner transfer flow.
+    mapping(address operator => address pendingOwner)
+        private _pendingBondOwnerOf;
+
+    /// @dev Refund manager frozen by each slashing manager for each E3.
+    mapping(address manager => mapping(uint256 e3Id => address refundManager))
+        private _slashRouteDestinations;
+
+    /// @dev Proposal-scoped reservations owned by each slashing manager.
+    mapping(address manager => mapping(uint256 proposalId => SlashedTicketReservation reservation))
+        private _slashedTicketReservations;
+
+    /// @dev Number of proposal-scoped reservations owned by each manager.
+    mapping(address manager => uint256 count) private _pendingSlashRouteCount;
+
+    /// @notice Version shared by the ticket and license asset identities.
+    uint64 public bondingAssetConfigurationVersion;
+
+    /// @notice Expected decimals for the active ticket token.
+    uint8 private _ticketTokenDecimals;
+
+    /// @notice Expected decimals for the active license token.
+    uint8 private _licenseTokenDecimals;
+
+    /// @inheritdoc IBondingRegistry
+    uint256 public numRegisteredOperators;
+
     // ======================
     // Modifiers
     // ======================
@@ -1388,39 +1421,6 @@ contract BondingRegistry is
             interfaceId == type(IBondingRegistry).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
-
-    /// @dev Owner authorized by an operator. Zero means unset.
-    mapping(address operator => address bondOwner) private _bondOwnerOf;
-
-    /// @dev Aggregate license collateral owned by an account across operator keys.
-    mapping(address bondOwner => uint256 amount) private _bondedByOwner;
-
-    /// @dev Proposed owner in the two-step bond-owner transfer flow.
-    mapping(address operator => address pendingOwner)
-        private _pendingBondOwnerOf;
-
-    /// @dev Refund manager frozen by each slashing manager for each E3.
-    mapping(address manager => mapping(uint256 e3Id => address refundManager))
-        private _slashRouteDestinations;
-
-    /// @dev Proposal-scoped reservations owned by each slashing manager.
-    mapping(address manager => mapping(uint256 proposalId => SlashedTicketReservation reservation))
-        private _slashedTicketReservations;
-
-    /// @dev Number of proposal-scoped reservations owned by each manager.
-    mapping(address manager => uint256 count) private _pendingSlashRouteCount;
-
-    /// @notice Version shared by the ticket and license asset identities.
-    uint64 public bondingAssetConfigurationVersion;
-
-    /// @notice Expected decimals for the active ticket token.
-    uint8 private _ticketTokenDecimals;
-
-    /// @notice Expected decimals for the active license token.
-    uint8 private _licenseTokenDecimals;
-
-    /// @inheritdoc IBondingRegistry
-    uint256 public numRegisteredOperators;
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase

@@ -191,6 +191,21 @@ contract CiphernodeRegistryOwnable is
     /// @notice Ticket price frozen for each E3 sortition.
     mapping(uint256 e3Id => uint256 ticketPrice) public sortitionTicketPrices;
 
+    /// @dev Highest committee deadline created by a request.
+    uint256 private _latestCommitteeDeadline;
+
+    /// @notice Future block committed when an E3 requests a committee.
+    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
+
+    /// @notice Whether the committee seed has been stored for an E3.
+    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
+
+    /// @inheritdoc ICiphernodeRegistry
+    uint256 public unreleasedCommitteeCount;
+
+    /// @dev Removed tree slots that can be assigned to future registrations.
+    uint40[] private _freeCiphernodeTreeIndices;
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                     Modifiers                          //
@@ -1396,21 +1411,6 @@ contract CiphernodeRegistryOwnable is
             interfaceId == type(ICiphernodeRegistry).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
-
-    /// @dev Highest committee deadline created by a request.
-    uint256 private _latestCommitteeDeadline;
-
-    /// @notice Future block committed when an E3 requests a committee.
-    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
-
-    /// @notice Whether the committee seed has been stored for an E3.
-    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
-
-    /// @inheritdoc ICiphernodeRegistry
-    uint256 public unreleasedCommitteeCount;
-
-    /// @dev Removed tree slots that can be assigned to future registrations.
-    uint40[] private _freeCiphernodeTreeIndices;
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase

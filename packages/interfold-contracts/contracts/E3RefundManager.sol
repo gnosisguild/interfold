@@ -32,6 +32,21 @@ import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
 contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
+    /// @notice Maximum protocol share within {WorkValueAllocation}.
+    uint16 public constant MAX_PROTOCOL_BPS = 5_000;
+
+    /// @notice Basis-points denominator (100% = 10_000 bps).
+    uint16 internal constant BPS_BASE = 10_000;
+
+    /// @notice Thrown when {renounceOwnership} is called.
+    error RenounceOwnershipDisabled();
+
+    /// @notice Emitted whenever {interfold} is updated.
+    event InterfoldUpdated(address indexed previous, address indexed next);
+
+    /// @notice Emitted whenever {treasury} is updated.
+    event TreasuryUpdated(address indexed previous, address indexed next);
+
     struct PendingSlashedRoute {
         IERC20 token;
         address operator;
@@ -192,21 +207,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
         if (_owner != owner()) _transferOwnership(_owner);
     }
-
-    /// @notice Maximum protocol share within {WorkValueAllocation}.
-    uint16 public constant MAX_PROTOCOL_BPS = 5_000;
-
-    /// @notice Basis-points denominator (100% = 10_000 bps).
-    uint16 internal constant BPS_BASE = 10_000;
-
-    /// @notice Thrown when {renounceOwnership} is called.
-    error RenounceOwnershipDisabled();
-
-    /// @notice Emitted whenever {interfold} is updated.
-    event InterfoldUpdated(address indexed previous, address indexed next);
-
-    /// @notice Emitted whenever {treasury} is updated.
-    event TreasuryUpdated(address indexed previous, address indexed next);
 
     /// @notice Disabled. Reverts unconditionally.
     function renounceOwnership() public view override onlyOwner {

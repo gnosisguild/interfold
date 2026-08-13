@@ -188,6 +188,27 @@ contract Interfold is
     mapping(uint256 e3Id => E3Dependencies dependencies)
         internal _e3Dependencies;
 
+    /// @notice Expected decimals for the active fee token.
+    uint8 public feeTokenDecimals;
+
+    /// @inheritdoc IInterfold
+    bool public requestsPaused;
+
+    /// @inheritdoc IInterfold
+    uint256 public activeE3Count;
+
+    /// @notice Whether the first complete dependency graph has been activated.
+    bool private _dependencyConfigurationActivated;
+
+    /// @notice Timeout windows frozen when each E3 is requested.
+    mapping(uint256 e3Id => E3TimeoutConfig config) private _e3TimeoutConfigs;
+
+    /// @notice Latest possible lifecycle deadline derived at request time.
+    mapping(uint256 e3Id => uint256 deadline) private _e3LifecycleDeadlines;
+
+    /// @notice Circuit configuration frozen for each E3 request.
+    mapping(uint256 e3Id => bytes32 configId) public e3CryptoConfigIds;
+
     /// @notice Emitted when the {markFailedGracePeriod} value is updated.
     event MarkFailedGracePeriodSet(uint256 gracePeriod);
 
@@ -1211,27 +1232,6 @@ contract Interfold is
             interfaceId == type(IInterfold).interfaceId ||
             interfaceId == 0x01ffc9a7; // IERC165.supportsInterface selector
     }
-
-    /// @notice Expected decimals for the active fee token.
-    uint8 public feeTokenDecimals;
-
-    /// @inheritdoc IInterfold
-    bool public requestsPaused;
-
-    /// @inheritdoc IInterfold
-    uint256 public activeE3Count;
-
-    /// @notice Whether the first complete dependency graph has been activated.
-    bool private _dependencyConfigurationActivated;
-
-    /// @notice Timeout windows frozen when each E3 is requested.
-    mapping(uint256 e3Id => E3TimeoutConfig config) private _e3TimeoutConfigs;
-
-    /// @notice Latest possible lifecycle deadline derived at request time.
-    mapping(uint256 e3Id => uint256 deadline) private _e3LifecycleDeadlines;
-
-    /// @notice Circuit configuration frozen for each E3 request.
-    mapping(uint256 e3Id => bytes32 configId) public e3CryptoConfigIds;
 
     /// @dev Reserved storage slots for future upgrades. Adding new state
     ///      variables in derived versions of this contract must reduce this

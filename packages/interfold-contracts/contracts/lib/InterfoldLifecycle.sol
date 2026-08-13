@@ -30,6 +30,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
+    // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
+        0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
+
     /// @notice Checks the fee and circuit values accepted with a quote.
     function validateQuoteLimit(
         address actualFeeToken,
@@ -70,10 +74,6 @@ library InterfoldLifecycle {
             paramsHash
         );
     }
-
-    // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
-        0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
 
     /// @notice Rejects requests unless every dependency points to one graph.
     function validateDependencyGraph(
