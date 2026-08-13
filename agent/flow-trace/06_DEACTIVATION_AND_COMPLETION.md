@@ -145,8 +145,8 @@ Bond owner or operator submits deregisterOperatorFor(operator)
    claimExitsFor(operator, maxTicket, maxLicense)
 ```
 
-Underlying USDC and FOLD are both paid to the bond owner. The queue and slash target remain keyed by
-the operator until the claim completes.
+The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
+remain keyed by the operator until the claim completes.
 
 Deregistration remains an emergency stop for future selection, even when the operator belongs to a
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
@@ -471,11 +471,11 @@ Time ─────────────────────────
 
 │ deregister[For]()│                    │ claimExits[For]()│
 │ or deactivate    │   EXIT DELAY       │                  │
-│                  │  (configured)       │                  │
+│                  │  (configured)      │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ tFOLD burned       │  Cannot cancel     │ USDC returned    │
+│ tFOLD burned     │  Cannot cancel     │ asset returned   │
 │ FOLD locked      │  Can be slashed!   │ FOLD returned to │
-│                  │                    │ withdrawal addr  │
+│                  │                    │ bond owner       │
 │                  │                    │                  │
 
 IMPORTANT: Even during the exit delay, slashing can still
@@ -500,11 +500,13 @@ cannot be paid out until every committee obligation ends.
   `MAX_ACTIVE_TRANCHES (= 64)` live (post-head) tranches would exist for the operator. This bounds
   the unbounded loop in `previewClaimableAmounts` / `_takeAssetsFromQueue` so an attacker cannot
   grief the operator with an ever-growing queue (audit H-21a).
-- **License transfer shortfall.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
-  balance delta around `licenseToken.safeTransfer` and emit
-  `LicenseTransferShortfall(recipient, expectedAmount, actualAmount)` if the recipient received less
-  than expected (e.g. a fee-on-transfer license token). The transfer itself is not reverted —
-  booking is already updated — but indexers can detect the discrepancy (audit M-13).
+- **Exact license transfers.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
+  balance increase and the registry's balance decrease around `licenseToken.safeTransfer`. If either
+  amount differs from the recorded amount, the transaction reverts and restores the liability
+  accounting.
+- **Frozen-deadline floor.** Each committee request raises the registry's latest deadline watermark.
+  `exitDelayFloor()` combines its remaining duration with the current submission window. Exit-delay
+  reductions become available after the older request windows expire.
 
 ---
 

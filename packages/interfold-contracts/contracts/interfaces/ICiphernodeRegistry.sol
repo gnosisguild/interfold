@@ -70,13 +70,13 @@ interface ICiphernodeRegistry {
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
-    /// @param seed Random seed for score computation.
+    /// @param entropyBlock Future block whose hash supplies sortition entropy.
     /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).
     event CommitteeRequested(
         uint256 indexed e3Id,
-        uint256 seed,
+        uint256 entropyBlock,
         uint32[2] threshold,
         uint256 requestBlock,
         uint256 committeeDeadline,
@@ -283,8 +283,17 @@ interface ICiphernodeRegistry {
     /// @notice Committee deadline has been reached for this E3
     error CommitteeDeadlineReached();
 
+    /// @notice The committed block hash is not available yet or is outside the chain's history.
+    error SortitionSeedUnavailable(uint256 e3Id, uint256 entropyBlock);
+
     /// @notice Committee has already been finalized for this E3
     error CommitteeAlreadyFinalized();
+
+    /// @notice Exit collateral could unlock while snapshot tickets remain valid.
+    error ExitDelayMustExceedSortitionWindow(
+        uint256 exitDelay,
+        uint256 requiredDelay
+    );
 
     /// @notice Committee has not been finalized yet for this E3
     error CommitteeNotFinalized();
@@ -340,15 +349,21 @@ interface ICiphernodeRegistry {
     /// @notice A vote-validity commit was attempted before timelock elapsed.
     error AccusationVoteValidityTimelockActive(uint256 readyAt, uint256 nowAt);
 
+    /// @notice A vote-validity commit was attempted after its commit window ended.
+    error AccusationVoteValidityProposalExpired(
+        uint256 expiredAt,
+        uint256 nowAt
+    );
+
     /// @notice `commitAccusationVoteValidity` was called but no proposal is pending.
     error NoPendingAccusationVoteValidityUpdate();
 
     /// @notice `commitAccusationVoteValidity` was called with value that does not match pending.
     error AccusationVoteValidityMismatch(uint256 pending, uint256 provided);
 
-    /// @notice Directly setting `accusationVoteValidity` to zero is disallowed.
+    /// @notice Directly reducing `accusationVoteValidity` is disallowed.
     ///         Use `proposeAccusationVoteValidity` + `commitAccusationVoteValidity`.
-    error AccusationVoteValidityZeroRequiresTimelock();
+    error AccusationVoteValidityDecreaseRequiresTimelock();
 
     /// @notice Node has already submitted a ticket for this E3
     error NodeAlreadySubmitted();
@@ -430,12 +445,12 @@ interface ICiphernodeRegistry {
     /// @notice Initiates the committee selection process for a specified E3.
     /// @dev This function MUST revert when not called by the Interfold contract.
     /// @param e3Id ID of the E3 for which to select the committee.
-    /// @param seed Random seed for score computation.
+    /// @param legacySeed Deprecated E3 computation seed. The registry MUST ignore it for sortition.
     /// @param threshold The viability threshold and total member count [H, N].
     /// @return success True if committee selection was successfully initiated.
     function requestCommittee(
         uint256 e3Id,
-        uint256 seed,
+        uint256 legacySeed,
         uint32[2] calldata threshold
     ) external returns (bool success);
 
@@ -533,7 +548,8 @@ interface ICiphernodeRegistry {
     function setInterfold(IInterfold _interfold) external;
 
     /// @notice Sets the bonding registry contract address
-    /// @dev Only callable by owner
+    /// @dev Only callable by owner. Its exit delay must exceed the current
+    ///      exit-delay floor.
     /// @param _bondingRegistry Address of the bonding registry contract
     function setBondingRegistry(IBondingRegistry _bondingRegistry) external;
 
@@ -541,7 +557,15 @@ interface ICiphernodeRegistry {
     /// @return The sortition submission window in seconds.
     function sortitionSubmissionWindow() external view returns (uint256);
 
+    /// @notice Returns the duration that the exit delay must exceed.
+    /// @dev Includes the current submission window and the remaining time for
+    ///      the latest request-time committee deadline.
+    /// @return floor Required duration in seconds.
+    function exitDelayFloor() external view returns (uint256);
+
     /// @notice This function should be called to set the submission window for the E3 sortition.
+    /// @dev The proposed window and frozen-deadline floor must remain shorter
+    ///      than the bonding registry's exit delay.
     /// @param _sortitionSubmissionWindow The submission window for the E3 sortition in seconds.
     function setSortitionSubmissionWindow(
         uint256 _sortitionSubmissionWindow
@@ -550,8 +574,8 @@ interface ICiphernodeRegistry {
     /// @notice Returns registry-wide accusation vote validity window (seconds).
     function accusationVoteValidity() external view returns (uint256);
 
-    /// @notice Sets nonzero accusation vote validity directly.
-    /// @dev Setting zero requires timelocked propose/commit flow.
+    /// @notice Keeps or increases accusation vote validity without a delay.
+    /// @dev Reductions require the timelocked propose/commit flow.
     function setAccusationVoteValidity(
         uint256 _accusationVoteValidity
     ) external;

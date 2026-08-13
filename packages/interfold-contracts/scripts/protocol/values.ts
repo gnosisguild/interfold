@@ -107,6 +107,9 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
   if (typeof config.feeTokenDecimals !== "number") {
     throw new Error("feeTokenDecimals is required and must be a number");
   }
+  if (typeof config.ticketUnderlyingToken !== "string") {
+    throw new Error("ticketUnderlyingToken is required and must be a string");
+  }
   applyAddressOverride(config, "safe", "safe", "SAFE_ADDRESS");
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
   applyAddressOverride(
@@ -122,6 +125,12 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
     "BONDING_REGISTRY_PROXY_ADMIN",
   );
   applyAddressOverride(config, "feeToken", "fee-token", "FEE_TOKEN");
+  applyAddressOverride(
+    config,
+    "ticketUnderlyingToken",
+    "ticket-underlying-token",
+    "TICKET_UNDERLYING_TOKEN",
+  );
   applyAddressOverride(
     config,
     "protocolTreasury",
@@ -151,6 +160,7 @@ function applyAddressOverride(
     | "bondingRegistryProxy"
     | "bondingRegistryProxyAdmin"
     | "feeToken"
+    | "ticketUnderlyingToken"
     | "protocolTreasury"
     | "slashedFundsTreasury"
     | "slasher"
@@ -177,6 +187,10 @@ function validateConfig(config: ProtocolConfigFile): void {
     "bondingRegistryProxyAdmin",
   );
   config.feeToken = address(config.feeToken, "feeToken");
+  config.ticketUnderlyingToken = address(
+    config.ticketUnderlyingToken,
+    "ticketUnderlyingToken",
+  );
   config.protocolTreasury = address(
     config.protocolTreasury,
     "protocolTreasury",

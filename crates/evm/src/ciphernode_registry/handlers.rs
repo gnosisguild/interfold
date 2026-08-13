@@ -135,6 +135,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
                 );
 
                 let e3_id = msg.e3_id.clone();
+                let log_e3_id = msg.e3_id.clone();
                 let contract_address = self.contract_address;
                 let provider = self.provider.clone();
                 let bus = self.bus.clone();
@@ -146,8 +147,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
                         submit_ticket_to_registry(provider, contract_address, e3_id, ticket_id)
                             .await;
                     match result {
-                        Ok(receipt) => {
+                        Ok(TxOutcome::Mined(receipt)) => {
                             info!(tx=%receipt.transaction_hash, "Ticket submitted to registry");
+                        }
+                        Ok(TxOutcome::AlreadySettled) => {
+                            info!(e3_id = %log_e3_id, "Ticket already recorded on chain; skipping submission");
                         }
                         Err(err) => {
                             error!("Failed to submit ticket: {}", format_evm_error(&err));
@@ -194,10 +198,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteeFinalizeRe
 
             info!("Finalizing committee for E3 {:?}", e3_id);
 
+            let log_e3_id = e3_id.clone();
             let result = finalize_committee_on_registry(provider, contract_address, e3_id).await;
             match result {
-                Ok(receipt) => {
+                Ok(TxOutcome::Mined(receipt)) => {
                     info!(tx=%receipt.transaction_hash, "Committee finalized on registry");
+                }
+                Ok(TxOutcome::AlreadySettled) => {
+                    info!(e3_id = %log_e3_id, "Committee finalized by another sender; nothing left to do");
                 }
                 Err(err) => {
                     error!("Failed to finalize committee: {}", format_evm_error(&err));
@@ -316,7 +324,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
 
             let result: Result<()> = async {
                 if should_publish {
-                    let receipt = publish_committee_to_registry(
+                    let outcome = publish_committee_to_registry(
                         provider.clone(),
                         contract_address,
                         e3_id.clone(),
@@ -325,7 +333,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
                         dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
                     )
                     .await?;
-                    info!(tx=%receipt.transaction_hash, "Committee proof published to registry");
+                    match outcome.receipt() {
+                        Some(receipt) => {
+                            info!(tx=%receipt.transaction_hash, "Committee proof published to registry")
+                        }
+                        None => {
+                            info!(e3_id = %e3_id, "Committee proof published by another aggregator; publishing the key candidate")
+                        }
+                    }
                 }
 
                 let receipt = publish_committee_public_key_to_registry(

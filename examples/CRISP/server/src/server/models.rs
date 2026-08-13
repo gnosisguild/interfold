@@ -172,9 +172,10 @@ pub struct E3StateLite {
 
     pub start_time: u64,
     pub end_time: u64,
-    /// The block the E3 was requested at
+    /// The EIP-6372 timepoint (timestamp) the E3 was requested at
     pub start_block: u64,
-    /// The block the census was built at
+    /// The EIP-6372 timepoint (timestamp) the census was built at. Named for a block
+    /// height for backwards compatibility with stored rounds and the web API.
     pub snapshot_block: u64,
 
     pub committee_public_key: Vec<u8>,
@@ -243,8 +244,9 @@ pub struct E3Crisp {
     pub num_options: String,
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
-    /// The block the census was built at. Defaults to 0 for rounds stored before
-    /// this field existed, which is resolved when the round state is read.
+    /// The EIP-6372 timepoint (timestamp) the census was built at. Defaults to 0 for
+    /// rounds stored before this field existed, which is resolved when the round state
+    /// is read. Named for a block height for backwards compatibility.
     #[serde(default)]
     pub snapshot_block: u64,
 }
@@ -336,5 +338,4 @@ mod census_mode_tests {
         assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
         assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
     }
-
 }

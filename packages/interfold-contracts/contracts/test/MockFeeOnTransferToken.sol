@@ -7,13 +7,11 @@ pragma solidity >=0.8.27;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/// @notice Minimal ERC-20 that redirects a configurable basis-point fee to a
-///         dead-address sink (`0xdead`) on every `transfer` / `transferFrom`
-///         (total supply is unchanged; the fee portion is not actually burned).
-///         Used in tests to validate that the BondingRegistry's license-payout
-///         paths detect short transfers.
+/// @notice Test ERC-20 that redirects a configurable fee to `0xdead`.
+/// @dev The fee can reduce the recipient amount or add an extra sender debit.
 contract MockFeeOnTransferToken is ERC20 {
     uint256 public feeBps;
+    bool public feeIsChargedOnTop;
 
     constructor(uint256 _feeBps) ERC20("FoT", "FoT") {
         require(_feeBps <= 10_000, "fee>100%");
@@ -29,6 +27,14 @@ contract MockFeeOnTransferToken is ERC20 {
         feeBps = newFeeBps;
     }
 
+    function setFeeIsChargedOnTop(bool enabled) external {
+        feeIsChargedOnTop = enabled;
+    }
+
+    function lockedBalanceOf(address) external pure returns (uint256) {
+        return 0;
+    }
+
     function _update(
         address from,
         address to,
@@ -39,6 +45,13 @@ contract MockFeeOnTransferToken is ERC20 {
             return;
         }
         uint256 fee = (value * feeBps) / 10_000;
+        if (feeIsChargedOnTop) {
+            super._update(from, to, value);
+            if (fee > 0) {
+                super._update(from, address(0xdead), fee);
+            }
+            return;
+        }
         uint256 net = value - fee;
         super._update(from, to, net);
         if (fee > 0) {

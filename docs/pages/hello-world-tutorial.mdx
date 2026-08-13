@@ -61,7 +61,7 @@ use fhe_traits::{DeserializeParametrized, Serialize};
 /// Implementation of the CiphertextProcessor function
 pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
     // Decode the FHE parameters
-    let params = decode_bfv_params_arc(&fhe_inputs.params);
+    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
 
     // Start with zero (encrypted)
     let mut sum = Ciphertext::zero(&params);
@@ -96,7 +96,7 @@ use fhe_traits::{DeserializeParametrized, Serialize};
 
 /// Compute: (a + b) * 2
 pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    let params = decode_bfv_params_arc(&fhe_inputs.params);
+    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
 
     // Extract the two input ciphertexts
     if fhe_inputs.ciphertexts.len() != 2 {

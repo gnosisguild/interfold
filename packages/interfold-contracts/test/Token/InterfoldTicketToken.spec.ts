@@ -95,9 +95,8 @@ describe("InterfoldTicketToken", function () {
     });
   });
 
-  // ── H-03 ──────────────────────────────────────────────────────────────────
-  describe("H-03 — fee-on-transfer safe deposit", function () {
-    it("depositFor mints actual amount received, not requested amount", async function () {
+  describe("exact-transfer asset policy", function () {
+    it("rejects a short depositFor receipt", async function () {
       const [deployer, initialOwner, registry, alice] =
         await ethers.getSigners();
       const fot = await new MockFeeOnTransferTokenFactory(deployer).deploy(100); // 1% fee
@@ -111,18 +110,16 @@ describe("InterfoldTicketToken", function () {
       await fot.mint(await registry.getAddress(), amount);
       await fot.connect(registry).approve(await token.getAddress(), amount);
 
-      await token
-        .connect(registry)
-        .depositFor(await alice.getAddress(), amount);
-
-      const expectedNet = (amount * 9900n) / 10_000n; // 1% fee burned to 0xdead
-      expect(await token.balanceOf(await alice.getAddress())).to.equal(
-        expectedNet,
-      );
-      expect(await token.totalSupply()).to.equal(expectedNet);
+      const expectedNet = (amount * 9900n) / 10_000n;
+      await expect(
+        token.connect(registry).depositFor(await alice.getAddress(), amount),
+      )
+        .to.be.revertedWithCustomError(token, "UnderlyingTransferMismatch")
+        .withArgs(amount, expectedNet);
+      expect(await token.totalSupply()).to.equal(0);
     });
 
-    it("depositFrom mints actual amount received from third party", async function () {
+    it("rejects a short depositFrom receipt", async function () {
       const [deployer, initialOwner, registry, alice, bob] =
         await ethers.getSigners();
       const fot = await new MockFeeOnTransferTokenFactory(deployer).deploy(250); // 2.5% fee
@@ -136,14 +133,77 @@ describe("InterfoldTicketToken", function () {
       await fot.mint(await alice.getAddress(), amount);
       await fot.connect(alice).approve(await token.getAddress(), amount);
 
+      const expectedNet = (amount * 9750n) / 10_000n;
+      await expect(
+        token
+          .connect(registry)
+          .depositFrom(
+            await alice.getAddress(),
+            await bob.getAddress(),
+            amount,
+          ),
+      )
+        .to.be.revertedWithCustomError(token, "UnderlyingTransferMismatch")
+        .withArgs(amount, expectedNet);
+    });
+
+    it("rejects a payout when transfer fees are enabled later", async function () {
+      const [deployer, initialOwner, registry, alice] =
+        await ethers.getSigners();
+      const fot = await new MockFeeOnTransferTokenFactory(deployer).deploy(0);
+      const token = await new InterfoldTicketTokenFactory(deployer).deploy(
+        await fot.getAddress(),
+        await registry.getAddress(),
+        await initialOwner.getAddress(),
+      );
+      const amount = ethers.parseEther("100");
+      await fot.mint(await registry.getAddress(), amount);
+      await fot.connect(registry).approve(await token.getAddress(), amount);
       await token
         .connect(registry)
-        .depositFrom(await alice.getAddress(), await bob.getAddress(), amount);
+        .depositFor(await alice.getAddress(), amount);
+      await token
+        .connect(registry)
+        .burnTickets(await alice.getAddress(), amount);
 
-      const expectedNet = (amount * 9750n) / 10_000n;
-      expect(await token.balanceOf(await bob.getAddress())).to.equal(
-        expectedNet,
+      await fot.setFeeBps(100);
+      await expect(token.connect(registry).payout(alice, amount))
+        .to.be.revertedWithCustomError(token, "UnderlyingTransferMismatch")
+        .withArgs(amount, (amount * 9900n) / 10_000n);
+      expect(await token.payableBalance()).to.equal(amount);
+    });
+
+    it("rejects a payout that charges an additional sender fee", async function () {
+      const [deployer, initialOwner, registry, alice] =
+        await ethers.getSigners();
+      const fot = await new MockFeeOnTransferTokenFactory(deployer).deploy(0);
+      const token = await new InterfoldTicketTokenFactory(deployer).deploy(
+        await fot.getAddress(),
+        await registry.getAddress(),
+        await initialOwner.getAddress(),
       );
+      const amount = ethers.parseEther("100");
+      await fot.mint(await registry.getAddress(), amount * 2n);
+      await fot
+        .connect(registry)
+        .approve(await token.getAddress(), amount * 2n);
+      await token
+        .connect(registry)
+        .depositFor(await alice.getAddress(), amount * 2n);
+      await token
+        .connect(registry)
+        .burnTickets(await alice.getAddress(), amount);
+
+      await fot.setFeeBps(100);
+      await fot.setFeeIsChargedOnTop(true);
+      await expect(token.connect(registry).payout(alice, amount))
+        .to.be.revertedWithCustomError(token, "UnderlyingTransferMismatch")
+        .withArgs(amount, amount + amount / 100n);
+      expect(await fot.balanceOf(await token.getAddress())).to.equal(
+        amount * 2n,
+      );
+      expect(await token.totalSupply()).to.equal(amount);
+      expect(await token.payableBalance()).to.equal(amount);
     });
   });
 

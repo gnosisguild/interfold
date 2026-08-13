@@ -17,8 +17,8 @@ import {
     Ownable2StepUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {
-    SafeERC20
-} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+    ReentrancyGuardUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { InterfoldLifecycle } from "./lib/InterfoldLifecycle.sol";
 import { InterfoldPricing } from "./lib/InterfoldPricing.sol";
@@ -30,9 +30,11 @@ import { ActiveCryptoConfig } from "./lib/ActiveCryptoConfig.sol";
  * @dev Coordinates E3 lifecycle including request, activation, input publishing, and output verification
  */
 // solhint-disable-next-line max-states-count
-contract Interfold is IInterfold, Ownable2StepUpgradeable {
-    using SafeERC20 for IERC20;
-
+contract Interfold is
+    IInterfold,
+    Ownable2StepUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     /// @notice Thrown when {renounceOwnership} is called.
     error RenounceOwnershipDisabled();
 
@@ -226,6 +228,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     ) public initializer {
         require(_owner != address(0), "Invalid owner");
         __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
         setMaxDuration(_maxDuration);
         setCiphernodeRegistry(_ciphernodeRegistry);
         setBondingRegistry(_bondingRegistry);
@@ -283,9 +286,8 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
             e3Id,
             address(dependencies.registry)
         );
-        // The seed is only a shared per-E3 input to deterministic ticket
-        // scoring; it is not BFV key material and the protocol does not rely
-        // on it for cryptographic unpredictability.
+        // This seed belongs to the E3 computation. The registry derives a
+        // separate committee seed after this request is final.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
         e3Payments[e3Id] = e3Fee;
@@ -352,7 +354,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         e3s[e3Id] = e3;
 
         // Transfer fee after all validations and state changes
-        feeToken.safeTransferFrom(msg.sender, address(this), e3Fee);
+        InterfoldPricing.transferFromExact(
+            feeToken,
+            msg.sender,
+            address(this),
+            e3Fee
+        );
 
         require(
             dependencies.registry.requestCommittee(e3Id, seed, threshold),
@@ -369,7 +376,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         bytes calldata ciphertextOutput,
         bytes32 ciphertextCommitment,
         bytes calldata proof
-    ) external returns (bool success) {
+    ) external nonReentrant returns (bool success) {
         return
             InterfoldLifecycle.publishCiphertext(
                 e3s,
@@ -389,7 +396,7 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         bytes calldata plaintextOutput,
         bytes calldata proof
-    ) external returns (bool success) {
+    ) external nonReentrant returns (bool success) {
         require(
             e3s[e3Id].e3Program != IE3Program(address(0)),
             E3DoesNotExist(e3Id)
@@ -475,7 +482,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         if (activeLength == 0) {
             address requester = _e3Requesters[e3Id];
             if (requester != address(0)) {
-                paymentToken.safeTransfer(requester, totalAmount);
+                InterfoldPricing.transferExact(
+                    paymentToken,
+                    requester,
+                    totalAmount
+                );
             }
             refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
             return;
@@ -733,7 +744,11 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         IERC20 paymentToken = _e3FeeTokens[e3Id];
 
         IE3RefundManager refundManager = _refundManagerFor(e3Id);
-        paymentToken.safeTransfer(address(refundManager), payment);
+        InterfoldPricing.transferExact(
+            paymentToken,
+            address(refundManager),
+            payment
+        );
         refundManager.calculateRefund(e3Id, payment, honestNodes, paymentToken);
 
         emit E3FailureProcessed(e3Id, payment, honestNodes.length);
@@ -1121,12 +1136,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
         uint256 e3Id,
         address account
     ) internal returns (uint256 amount) {
-        amount = _pendingRewards[e3Id][account];
-        if (amount == 0) return 0;
-        _pendingRewards[e3Id][account] = 0;
-        IERC20 token = _e3FeeTokens[e3Id];
-        token.safeTransfer(account, amount);
-        emit RewardClaimed(e3Id, account, token, amount);
+        return
+            InterfoldPricing.claimReward(
+                _pendingRewards,
+                _e3FeeTokens,
+                e3Id,
+                account
+            );
     }
 
     /// @inheritdoc IInterfold
@@ -1139,11 +1155,12 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
 
     /// @inheritdoc IInterfold
     function treasuryClaim(IERC20 token) external returns (uint256 amount) {
-        amount = _pendingTreasury[msg.sender][token];
+        amount = InterfoldPricing.claimTreasury(
+            _pendingTreasury,
+            msg.sender,
+            token
+        );
         require(amount > 0, NothingToClaim());
-        _pendingTreasury[msg.sender][token] = 0;
-        token.safeTransfer(msg.sender, amount);
-        emit TreasuryClaimed(msg.sender, token, amount);
     }
 
     /// @inheritdoc IInterfold

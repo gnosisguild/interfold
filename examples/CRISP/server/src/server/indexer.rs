@@ -115,9 +115,14 @@ pub async fn register_e3_requested(
 
                 let input_window = [e3.inputWindow[0].to::<u64>(), e3.inputWindow[1].to::<u64>()];
 
-                // The census is built at the block before the request, as the request block
+                // The census is built one tick before the request, as the request timepoint
                 // itself is not final when the E3 is requested.
-                let snapshot_block = event.e3.requestBlock.to::<u64>().saturating_sub(1);
+                //
+                // `requestBlock` is a timestamp, not a block height — the ticket token runs
+                // an EIP-6372 `mode=timestamp` clock, and `Interfold.request` assigns
+                // `block.timestamp` to match the checkpoints it is compared against. The
+                // name is historical.
+                let snapshot_timepoint = event.e3.requestBlock.to::<u64>().saturating_sub(1);
 
                 // Get token holders from Etherscan API or mocked data.
                 // Asked only when the round declared it. Probing every requester and falling back
@@ -194,17 +199,18 @@ pub async fn register_e3_requested(
                             etherscan_client
                             .get_token_holders_with_constant_balance(
                                 token_address,
-                                snapshot_block,
+                                snapshot_timepoint,
+                                &CONFIG.http_rpc_url,
                                 credits_u256
                             )
                             .await
-                            .map_err(|e| eyre::eyre!("Etherscan error: {}", e))?
+                            .context("Etherscan token-holder discovery failed")?
                         }
                         CreditMode::Custom => {
                             etherscan_client
                             .get_token_holders_with_voting_power(
                                 token_address,
-                                snapshot_block,
+                                snapshot_timepoint,
                                 &CONFIG.http_rpc_url,
                                 U256::from_str_radix(&balance_threshold.to_string(), 10).map_err(
                                     |e| {
@@ -217,7 +223,7 @@ pub async fn register_e3_requested(
                                 )?,
                             )
                             .await
-                            .map_err(|e| eyre::eyre!("Etherscan error: {}", e))?
+                            .context("Etherscan token-holder discovery failed")?
                         }
                     }
                 };
@@ -235,7 +241,7 @@ pub async fn register_e3_requested(
                     custom_params,
                     e3.requester.to_string(),
                     input_window[1],
-                    snapshot_block,
+                    snapshot_timepoint,
                 )
                 .await?;
 

@@ -4,6 +4,11 @@
   "sourceName": "contracts/interfaces/ICiphernodeRegistry.sol",
   "abi": [
     {
+      "inputs": [],
+      "name": "AccusationVoteValidityDecreaseRequiresTimelock",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -23,6 +28,22 @@
       "inputs": [
         {
           "internalType": "uint256",
+          "name": "expiredAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "nowAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "AccusationVoteValidityProposalExpired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "readyAt",
           "type": "uint256"
         },
@@ -33,11 +54,6 @@
         }
       ],
       "name": "AccusationVoteValidityTimelockActive",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "AccusationVoteValidityZeroRequiresTimelock",
       "type": "error"
     },
     {
@@ -102,8 +118,46 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeObligationsAlreadyReleased",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "DkgProofRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3NotTerminal",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "exitDelay",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "requiredDelay",
+          "type": "uint256"
+        }
+      ],
+      "name": "ExitDelayMustExceedSortitionWindow",
       "type": "error"
     },
     {
@@ -145,6 +199,22 @@
     {
       "inputs": [],
       "name": "InvalidFoldAttestation",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "supplied",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maximum",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidPublicKeyLength",
       "type": "error"
     },
     {
@@ -227,6 +297,22 @@
     {
       "inputs": [],
       "name": "PkCommitmentRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "entropyBlock",
+          "type": "uint256"
+        }
+      ],
+      "name": "SortitionSeedUnavailable",
       "type": "error"
     },
     {
@@ -485,6 +571,37 @@
         },
         {
           "indexed": false,
+          "internalType": "bytes32",
+          "name": "pkCommitment",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "CommitteeProofPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address[]",
+          "name": "nodes",
+          "type": "address[]"
+        },
+        {
+          "indexed": false,
           "internalType": "bytes",
           "name": "publicKey",
           "type": "bytes"
@@ -517,7 +634,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "seed",
+          "name": "entropyBlock",
           "type": "uint256"
         },
         {
@@ -536,6 +653,12 @@
           "indexed": false,
           "internalType": "uint256",
           "name": "committeeDeadline",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ticketPrice",
           "type": "uint256"
         }
       ],
@@ -847,6 +970,19 @@
           "internalType": "contract IDkgFoldAttestationVerifier",
           "name": "",
           "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "exitDelayFloor",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -1201,11 +1337,6 @@
           "type": "uint256"
         },
         {
-          "internalType": "bytes",
-          "name": "publicKey",
-          "type": "bytes"
-        },
-        {
           "internalType": "bytes32",
           "name": "pkCommitment",
           "type": "bytes32"
@@ -1222,6 +1353,37 @@
         }
       ],
       "name": "publishCommittee",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "publicKey",
+          "type": "bytes"
+        }
+      ],
+      "name": "publishCommitteePublicKey",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "releaseCommittee",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1248,7 +1410,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "seed",
+          "name": "legacySeed",
           "type": "uint256"
         },
         {
@@ -1403,5 +1565,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-cc4ef405e46c0d79d4e49bd03d30b46f575c43f3"
+  "buildInfoId": "solc-0_8_28-0db228c3bd2b99b41cbc08984c918b0d7bbc1f68"
 }

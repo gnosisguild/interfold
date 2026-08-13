@@ -153,16 +153,24 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
         _: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
-        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            self.node_state.try_mutate(&ec, |mut state_map| {
-                NodeRegistry::record_sortition_snapshot(
-                    &mut state_map,
-                    &msg.e3_id,
-                    msg.request_block,
-                    msg.ticket_price,
-                );
-                Ok(state_map)
-            })
-        })
+        let e3_id = msg.e3_id.clone();
+        let result = self.node_state.try_mutate(&ec, |mut state_map| {
+            NodeRegistry::record_sortition_snapshot(
+                &mut state_map,
+                &e3_id,
+                msg.request_block,
+                msg.ticket_price,
+            );
+            Ok(state_map)
+        });
+        if let Err(error) = result {
+            self.bus.with_ec(&ec).err(EType::Sortition, error);
+            return;
+        }
+
+        self.sortition_seeds.insert(e3_id.clone(), msg.seed);
+        if let Some(request) = self.pending_requests.remove(&e3_id) {
+            self.perform_sortition(request);
+        }
     }
 }

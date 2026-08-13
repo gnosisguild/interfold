@@ -56,6 +56,8 @@ export async function actionValidate(): Promise<void> {
   const checks: Array<[string, Promise<unknown>, unknown]> = [
     ["ticket.owner", ticket.owner(), config.safe],
     ["ticket.registry", ticket.registry(), deployment.bondingRegistryProxy],
+    ["ticket.underlying", ticket.underlying(), config.ticketUnderlyingToken],
+    ["ticket.decimals", ticket.decimals(), config.bonding.ticketTokenDecimals],
     ["registry.owner", registry.owner(), config.safe],
     ["registry.interfold", registry.interfold(), deployment.interfold],
     [
@@ -69,6 +71,12 @@ export async function actionValidate(): Promise<void> {
       deployment.slashingManager,
     ],
     ["interfold.owner", interfold.owner(), config.safe],
+    ["interfold.feeToken", interfold.feeToken(), config.feeToken],
+    [
+      "interfold.feeTokenDecimals",
+      interfold.feeTokenDecimals(),
+      config.feeTokenDecimals,
+    ],
     [
       "interfold.bondingRegistry",
       interfold.bondingRegistry(),

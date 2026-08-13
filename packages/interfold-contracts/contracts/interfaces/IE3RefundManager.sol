@@ -16,6 +16,9 @@ interface IE3RefundManager {
     /// @notice The E3 request does not have a configured slashing manager.
     error InvalidSlashingManager();
 
+    /// @notice A settlement transfer delivered a different amount than requested.
+    error AssetTransferMismatch(IERC20 token, uint256 expected, uint256 actual);
+
     /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
     enum FailurePayer {
         None,

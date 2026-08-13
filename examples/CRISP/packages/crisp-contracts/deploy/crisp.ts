@@ -70,6 +70,7 @@ export const deployCRISPContracts = async () => {
     },
   })
   const honkVerifier = await honkVerifierFactory.deploy()
+  await honkVerifier.waitForDeployment()
   const honkVerifierAddress = await honkVerifier.getAddress()
 
   storeDeploymentArgs(
@@ -90,6 +91,7 @@ export const deployCRISPContracts = async () => {
   )
 
   const crisp = await crispFactory.deploy(interfoldAddress, verifier, honkVerifierAddress, IMAGE_ID)
+  await crisp.waitForDeployment()
 
   const crispAddress = await crisp.getAddress()
   storeDeploymentArgs(

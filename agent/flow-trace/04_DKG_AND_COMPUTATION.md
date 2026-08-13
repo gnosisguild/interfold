@@ -673,6 +673,9 @@ phase.
   ├─ Calls contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
+  │  └─ If that transaction is mined with a failed receipt, the writer reads the
+  │     commitment again. An equal commitment from another aggregator completes
+  │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
         │
@@ -796,9 +799,11 @@ parameter hash, and input root in one ABI-encoded proof.
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
 program reconstructs the application fields from its state. Both contracts verify the same receipt.
 An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
-The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
-commitments, with a minimum depth of one. The compute provider and E3 program must use this same
-leaf value, order, zero value, and depth rule.
+The RISC Zero wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
+cannot satisfy the verifier's void-return call with empty return data. The input root uses the
+smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commitments, with a
+minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
+value, and depth rule.
 
 ```
 Compute provider runs computation on encrypted data:
@@ -808,6 +813,7 @@ Compute provider runs computation on encrypted data:
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
 │  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
+    │  │    0. enter the shared publication reentrancy guard      │
     │  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
@@ -825,8 +831,10 @@ Compute provider runs computation on encrypted data:
 │  │    8. e3Program.verify(...)                              │
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
-│  │    9. Emit CiphertextOutputPublished(...)                │
-│  │   10. Emit E3StageChanged(CiphertextReady)               │
+│  │       → Cannot re-enter ciphertext or plaintext publication│
+│  │    9. Confirm the stage is still CiphertextReady          │
+│  │   10. Emit CiphertextOutputPublished(...)                 │
+│  │   11. Emit E3StageChanged(CiphertextReady)                │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```

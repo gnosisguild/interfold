@@ -8,8 +8,20 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
     type Result = ();
     fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
+        if !self.sortition_seeds.contains_key(&e3_id) {
+            info!(e3_id = %e3_id, "Waiting for the delayed sortition seed");
+            self.pending_requests.insert(e3_id, msg);
+            return;
+        }
+        self.perform_sortition(msg);
+    }
+}
+
+impl Sortition {
+    pub(super) fn perform_sortition(&mut self, msg: TypedEvent<E3Requested>) {
+        let e3_id = msg.e3_id.clone();
         let chain_id = msg.e3_id.chain_id();
-        let seed = msg.seed;
+        let seed = self.sortition_seeds[&e3_id];
         let threshold_m = msg.threshold_m;
         let threshold_n = msg.threshold_n;
         let buffer = ticket_sortition::calculate_buffer_size(threshold_m, threshold_n);

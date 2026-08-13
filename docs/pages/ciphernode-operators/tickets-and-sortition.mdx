@@ -81,16 +81,19 @@ Look for the "Ticket balance" and "available" fields in the output.
 
 ## Sortition Algorithm
 
-The sortition process selects committees deterministically from a shared per-E3 seed:
+The sortition process selects committees deterministically from a committee seed that becomes
+available only after the paid E3 request is committed:
 
 ```mermaid
 flowchart TD
-    A[E3Requested event] --> B[Snapshot balances at requestBlock - 1]
-    B --> C[Filter eligible operators]
-    C --> D[Calculate ticket scores]
-    D --> E[Submit winning tickets on-chain]
-    E --> F[Finalize committee after deadline]
-    F --> G[Generate and publish key shares]
+    A[E3Requested event] --> B[Wait for the committed entropy block]
+    B --> C[Read the committee seed]
+    C --> D[Snapshot balances at requestBlock - 1]
+    D --> E[Filter eligible operators]
+    E --> F[Calculate ticket scores]
+    F --> G[Submit winning tickets on-chain]
+    G --> H[Finalize committee after deadline]
+    H --> I[Generate and publish key shares]
 ```
 
 ### 1. Eligibility Check
@@ -110,18 +113,23 @@ score = keccak256(node, ticketNumber, e3Id, seed)
 ```
 
 The **lowest** score wins — each node submits its single best (lowest-scoring) ticket. The same
-inputs always produce the same scores, so all honest nodes converge on the same committee.
+inputs always produce the same scores, so all honest nodes converge on the same committee. The E3
+computation seed is separate and does not affect ticket ranking.
 
 ### 3. Ticket Submission
 
-Operators submit their winning tickets during the submission window (10 seconds on Sepolia):
+Operators submit their winning tickets during the configured submission window:
 
 ```bash
 # The CLI handles this automatically when running
 submitTicket(e3Id, ticketNumber)
 ```
 
-Each submission emits `TicketSubmitted(e3Id, node, ticketId, score)`.
+Each submission emits `TicketSubmitted(e3Id, node, ticketId, score)`. The first submission also
+stores the seed derived from the committed block hash. It does not need a separate seed transaction.
+Deployments must leave enough time for the entropy block to be sealed and for operators to submit
+before the deadline. Chains with EIP-2935 retain 8191 block hashes. Other EVM chains retain only the
+most recent 256 block hashes.
 
 > The sortition algorithm actually selects `threshold_n + buffer` nodes, where the buffer provides
 > backup nodes in case of failures. The buffer size depends on the `threshold_m / threshold_n`
@@ -143,13 +151,13 @@ After the window closes and ≥ `threshold_n` tickets are present:
 
 ## Parameters
 
-| Parameter                   | Sepolia Value | Description                         |
-| --------------------------- | ------------- | ----------------------------------- |
-| `ticketPrice`               | 10 USDC       | Cost per ticket                     |
-| `minTicketBalance`          | 1 ticket      | Minimum to be active                |
-| `sortitionSubmissionWindow` | 10 seconds    | Time to submit winning tickets      |
-| `threshold_m`               | Varies        | Minimum operators needed for duties |
-| `threshold_n`               | Varies        | Total committee size                |
+| Parameter                   | Sepolia Value       | Description                                 |
+| --------------------------- | ------------------- | ------------------------------------------- |
+| `ticketPrice`               | 10 USDC             | Cost per ticket                             |
+| `minTicketBalance`          | 1 ticket            | Minimum to be active                        |
+| `sortitionSubmissionWindow` | Deployment-specific | Time to resolve the seed and submit tickets |
+| `threshold_m`               | Varies              | Minimum operators needed for duties         |
+| `threshold_n`               | Varies              | Total committee size                        |
 
 ## Monitoring
 

@@ -650,6 +650,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit SlashedFundsApplied(e3Id, token, 0, toHonestNodes);
     }
 
+    /// @dev Each proposal is split independently. Percentage division rounds
+    ///      down the node share, so the treasury receives that route's remainder.
     function _settleSuccessfulE3Slash(
         uint256 e3Id,
         IERC20 token,
@@ -669,6 +671,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         emit SlashedFundsDistributedOnSuccess(e3Id, token, toNodes, toProtocol);
     }
 
+    /// @dev The committee array uses canonical address order. The final eligible
+    ///      entry receives the node-division remainder for this proposal.
     function _creditNodeSlashedClaims(
         uint256 e3Id,
         IERC20 token,
@@ -1086,7 +1090,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
             operator
         ];
-        proposal.holdsBaseReward = !_distributions[e3Id].calculated;
+        proposal.holdsBaseReward = !_honestNodeClaimed[e3Id][operator];
         entitlement.pendingExpulsions++;
         if (proposal.holdsBaseReward) entitlement.baseRiskExpulsions++;
         emit ExpulsionProposalStatusChanged(
@@ -1298,7 +1302,23 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address recipient,
         uint256 amount
     ) internal {
+        uint256 custodyBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
         token.safeTransfer(recipient, amount);
+        uint256 recipientAfter = token.balanceOf(recipient);
+        uint256 received = recipientAfter > recipientBefore
+            ? recipientAfter - recipientBefore
+            : 0;
+        if (received != amount) {
+            revert AssetTransferMismatch(token, amount, received);
+        }
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != amount) {
+            revert AssetTransferMismatch(token, amount, spent);
+        }
         _assertTokenSolvent(token);
     }
 

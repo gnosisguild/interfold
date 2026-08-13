@@ -30,7 +30,7 @@ import {
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, time } = networkHelpers;
+const { loadFixture, mine, time } = networkHelpers;
 
 describe("Committee Expulsion & Fault Tolerance", function () {
   const INSUFFICIENT_COMMITTEE_MEMBERS = 2;
@@ -157,6 +157,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const fee = await interfold.getE3Quote(requestParams);
       await usdcToken.connect(requester).approve(interfoldAddress, fee);
       await interfold.connect(requester).request(requestParams);
+      await mine(1);
     }
 
     async function finalizeCommittee(e3Id: number, operators: Signer[]) {

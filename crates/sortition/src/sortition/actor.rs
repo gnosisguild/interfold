@@ -47,6 +47,10 @@ pub struct Sortition {
     /// committee was finalized (e.g. out-of-order live delivery or a reorg). Drained when the
     /// `CommitteeFinalized` event for the same E3 is processed so early expulsions are not lost.
     pending_expulsions: HashMap<E3id, Vec<(CommitteeMemberExpelled, EventContext<Sequenced>)>>,
+    /// Committee seeds rebuilt from registry replay before effects are enabled.
+    sortition_seeds: HashMap<E3id, Seed>,
+    /// Live E3 requests that arrived before their delayed committee seed.
+    pending_requests: HashMap<E3id, TypedEvent<E3Requested>>,
 }
 
 /// Parameters for constructing a `Sortition` actor.
@@ -76,6 +80,8 @@ impl Sortition {
             ciphernode_selector: params.ciphernode_selector,
             address: params.address,
             pending_expulsions: HashMap::new(),
+            sortition_seeds: HashMap::new(),
+            pending_requests: HashMap::new(),
         }
     }
 

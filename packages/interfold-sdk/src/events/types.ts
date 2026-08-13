@@ -85,7 +85,7 @@ export interface CiphernodeRemovedData {
 
 export interface CommitteeRequestedData {
   e3Id: bigint
-  seed: bigint
+  entropyBlock: bigint
   threshold: [bigint, bigint]
   requestBlock: bigint
   committeeDeadline: bigint

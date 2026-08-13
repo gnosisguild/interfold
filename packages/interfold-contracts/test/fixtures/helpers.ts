@@ -45,6 +45,7 @@ export const setupAndPublishCommittee = async (
   committeeProof: string = "0x",
   dkgAttestationBundle: string = "0x",
 ): Promise<void> => {
+  await networkHelpers.mine(1);
   for (const operator of operators) {
     await registry.connect(operator).submitTicket(e3Id, 1);
   }

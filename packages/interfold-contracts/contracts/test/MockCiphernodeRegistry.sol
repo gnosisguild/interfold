@@ -190,6 +190,10 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         return 0;
     }
 
+    function exitDelayFloor() external pure returns (uint256) {
+        return 0;
+    }
+
     function accusationVoteValidity() external view returns (uint256) {
         return _accusationVoteValidity;
     }
@@ -386,6 +390,10 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
     function setBondingRegistry(IBondingRegistry) external pure {}
 
     function sortitionSubmissionWindow() external pure returns (uint256) {
+        return 0;
+    }
+
+    function exitDelayFloor() external pure returns (uint256) {
         return 0;
     }
 

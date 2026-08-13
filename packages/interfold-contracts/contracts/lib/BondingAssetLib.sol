@@ -72,7 +72,8 @@ library BondingAssetLib {
             currentTicket,
             currentTicketDecimals,
             config.ticketToken,
-            config.expectedTicketDecimals
+            config.expectedTicketDecimals,
+            registry
         );
         _validateLicenseAsset(
             currentLicense,
@@ -105,12 +106,20 @@ library BondingAssetLib {
         address current,
         uint8 currentDecimals,
         address next,
-        uint8 expectedDecimals
+        uint8 expectedDecimals,
+        address registry
     ) private view {
         if (next.code.length == 0) {
             revert IBondingRegistry.InvalidBondingAsset(next);
         }
         _validateDecimals(next, expectedDecimals);
+        address configuredRegistry = _ticketRegistry(next);
+        if (configuredRegistry != registry && current != address(0)) {
+            revert IBondingRegistry.TicketTokenRegistryMismatch(
+                configuredRegistry,
+                registry
+            );
+        }
         if (
             current == address(0) ||
             (current == next && currentDecimals == expectedDecimals)
@@ -124,6 +133,16 @@ library BondingAssetLib {
                 liabilities
             );
         }
+    }
+
+    function _ticketRegistry(address token) private view returns (address) {
+        (bool success, bytes memory result) = token.staticcall(
+            abi.encodeWithSignature("registry()")
+        );
+        if (!success || result.length != 32) {
+            revert IBondingRegistry.InvalidBondingAsset(token);
+        }
+        return abi.decode(result, (address));
     }
 
     function _validateLicenseAsset(
@@ -233,23 +252,63 @@ library BondingAssetLib {
         return abi.decode(result, (uint256));
     }
 
-    function transferWithDeltaCheck(
+    function transferExact(
         address tokenAddress,
         address recipient,
         uint256 amount
     ) external {
+        _transferExact(tokenAddress, recipient, amount);
+    }
+
+    function sweepLicenseSurplus(
+        address tokenAddress,
+        address registry,
+        address treasury,
+        uint256 liabilities
+    ) external returns (uint256 amount) {
+        if (tokenAddress == address(0)) return 0;
         IERC20 token = IERC20(tokenAddress);
-        uint256 beforeBalance = token.balanceOf(recipient);
+        uint256 balance = token.balanceOf(registry);
+        if (balance <= liabilities) return 0;
+
+        amount = balance - liabilities;
+        _transferExact(tokenAddress, treasury, amount);
+        emit IBondingRegistry.LicenseSurplusSwept(
+            tokenAddress,
+            treasury,
+            amount
+        );
+    }
+
+    function _transferExact(
+        address tokenAddress,
+        address recipient,
+        uint256 amount
+    ) private {
+        IERC20 token = IERC20(tokenAddress);
+        uint256 custodyBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
         token.safeTransfer(recipient, amount);
-        uint256 afterBalance = token.balanceOf(recipient);
-        uint256 received = afterBalance > beforeBalance
-            ? afterBalance - beforeBalance
+        uint256 recipientAfter = token.balanceOf(recipient);
+        uint256 received = recipientAfter > recipientBefore
+            ? recipientAfter - recipientBefore
             : 0;
         if (received != amount) {
-            emit IBondingRegistry.LicenseTransferShortfall(
-                recipient,
+            revert IBondingRegistry.AssetTransferMismatch(
+                tokenAddress,
                 amount,
                 received
+            );
+        }
+        uint256 custodyAfter = token.balanceOf(address(this));
+        uint256 spent = custodyBefore > custodyAfter
+            ? custodyBefore - custodyAfter
+            : 0;
+        if (spent != amount) {
+            revert IBondingRegistry.AssetTransferMismatch(
+                tokenAddress,
+                amount,
+                spent
             );
         }
     }

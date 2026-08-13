@@ -24,7 +24,7 @@ const { loadFixture } = networkHelpers;
 
 const data = "0xda7a";
 const dataHash = ethers.id(data);
-const SORTITION_SUBMISSION_WINDOW = 3;
+const SORTITION_SUBMISSION_WINDOW = 60;
 
 describe("CiphernodeRegistryOwnable", function () {
   async function finalizeCommitteeAfterWindow(
@@ -75,6 +75,7 @@ describe("CiphernodeRegistryOwnable", function () {
     mockE3Program: any,
     mockDecryptionVerifier: any,
     signer?: Signer,
+    mineEntropyBlock: boolean = true,
   ) {
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -99,7 +100,9 @@ describe("CiphernodeRegistryOwnable", function () {
     const interfoldContract = signer ? interfold.connect(signer) : interfold;
 
     await tokenContract.approve(await interfold.getAddress(), fee);
-    return interfoldContract.request(requestParams);
+    const tx = await interfoldContract.request(requestParams);
+    if (mineEntropyBlock) await networkHelpers.mine(1);
+    return tx;
   }
 
   describe("constructor / initialize()", function () {
@@ -204,6 +207,104 @@ describe("CiphernodeRegistryOwnable", function () {
       // Should emit CommitteeRequested from registry
       await expect(tx).to.emit(registry, "CommitteeRequested");
     });
+
+    it("reveals the committee seed only after the committed future block", async function () {
+      const {
+        registry,
+        interfold,
+        operator1,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+
+      const tx = await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        undefined,
+        false,
+      );
+      const receipt = await tx.wait();
+      if (!receipt) throw new Error("request receipt missing");
+
+      const entropyBlock = await registry.sortitionEntropyBlocks(0);
+      expect(entropyBlock).to.equal(receipt.blockNumber + 1);
+      expect(await registry.sortitionSeed(0)).to.deep.equal([false, 0n]);
+
+      await networkHelpers.mine(2);
+      const entropy = await ethers.provider.getBlock(Number(entropyBlock));
+      if (!entropy) throw new Error("entropy block missing");
+      const expectedSeed = BigInt(
+        ethers.keccak256(
+          ethers.AbiCoder.defaultAbiCoder().encode(
+            ["bytes32", "uint256"],
+            [entropy.hash, 0],
+          ),
+        ),
+      );
+
+      expect(await registry.sortitionSeed(0)).to.deep.equal([
+        true,
+        expectedSeed,
+      ]);
+
+      const expectedScore = BigInt(
+        ethers.keccak256(
+          ethers.solidityPacked(
+            ["address", "uint256", "uint256", "uint256"],
+            [await operator1.getAddress(), 1, 0, expectedSeed],
+          ),
+        ),
+      );
+      await expect(registry.connect(operator1).submitTicket(0, 1))
+        .to.emit(registry, "TicketSubmitted")
+        .withArgs(0, await operator1.getAddress(), 1, expectedScore);
+    });
+
+    it("uses EIP-2935 after the recent block-hash window closes", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      const entropyBlock = await registry.sortitionEntropyBlocks(0);
+      const entropy = await ethers.provider.getBlock(Number(entropyBlock));
+      if (!entropy?.hash) throw new Error("entropy block hash missing");
+      const entropyHash = entropy.hash;
+
+      await networkHelpers.mine(257);
+      expect(await registry.sortitionSeed(0)).to.deep.equal([false, 0n]);
+
+      const runtimeCode = `0x7f${entropyHash.slice(2)}60005260206000f3`;
+      await ethers.provider.send("hardhat_setCode", [
+        await registry.BLOCKHASH_HISTORY(),
+        runtimeCode,
+      ]);
+
+      const expectedSeed = BigInt(
+        ethers.keccak256(
+          ethers.AbiCoder.defaultAbiCoder().encode(
+            ["bytes32", "uint256"],
+            [entropyHash, 0],
+          ),
+        ),
+      );
+      expect(await registry.sortitionSeed(0)).to.deep.equal([
+        true,
+        expectedSeed,
+      ]);
+    });
     it("returns true if the request is successful", async function () {
       const {
         registry,
@@ -242,7 +343,7 @@ describe("CiphernodeRegistryOwnable", function () {
         request,
       } = await loadFixture(setup);
 
-      await registry.connect(owner).setSortitionSubmissionWindow(30);
+      await registry.connect(owner).setSortitionSubmissionWindow(60);
       await request();
       expect(await registry.sortitionTicketPrices(0)).to.equal(TICKET_PRICE);
 
@@ -846,6 +947,73 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
+    });
+  });
+
+  describe("exit timing", function () {
+    const ONE_DAY = 24 * 60 * 60;
+
+    it("rejects a zero registry pointer in BondingRegistry", async function () {
+      const { bondingRegistry } = await loadFixture(setup);
+      await expect(
+        bondingRegistry.setRegistry(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(bondingRegistry, "ZeroAddress");
+    });
+
+    it("keeps exit claims behind request-time committee deadlines", async function () {
+      const {
+        owner,
+        operator1,
+        registry,
+        interfold,
+        bondingRegistry,
+        ticketToken,
+        usdcToken,
+        request,
+      } = await loadFixture(setup);
+      const oldSubmissionWindow = 2 * ONE_DAY;
+      const oldExitDelay = 3 * ONE_DAY;
+
+      await interfold.setTimeoutConfig({
+        dkgWindow: ONE_DAY,
+        computeWindow: 3 * ONE_DAY,
+        decryptionWindow: ONE_DAY,
+      });
+      await bondingRegistry.setExitDelay(oldExitDelay);
+      await registry.setSortitionSubmissionWindow(oldSubmissionWindow);
+      await request();
+      const oldDeadline = await registry.getCommitteeDeadline(0);
+
+      await registry.setSortitionSubmissionWindow(60);
+      await expect(
+        bondingRegistry.setExitDelay(ONE_DAY),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "ExitDelayMustExceedSortitionWindow",
+      );
+
+      await networkHelpers.time.increaseTo(oldDeadline + 1n);
+      await bondingRegistry.setExitDelay(ONE_DAY);
+
+      const operatorAddress = await operator1.getAddress();
+      const exitAmount = ethers.parseUnits("1", 6);
+      await bondingRegistry
+        .connect(owner)
+        .removeTicketBalanceFor(operatorAddress, exitAmount);
+      await networkHelpers.time.increase(ONE_DAY + 1);
+
+      const ownerAddress = await owner.getAddress();
+      const balanceBefore = await usdcToken.balanceOf(ownerAddress);
+      await bondingRegistry
+        .connect(owner)
+        .claimExitsFor(operatorAddress, exitAmount, 0);
+      expect(await usdcToken.balanceOf(ownerAddress)).to.equal(
+        balanceBefore + exitAmount,
+      );
+      expect(await ticketToken.balanceOf(operatorAddress)).to.be.gt(0);
+      await expect(
+        registry.connect(operator1).submitTicket(0, 1),
+      ).to.be.revertedWithCustomError(registry, "CommitteeDeadlineReached");
     });
   });
 

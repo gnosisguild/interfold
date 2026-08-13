@@ -81,7 +81,7 @@ export function syncProtocolDeploymentRecords(
       address: deployment.ticketToken,
       blockNumber,
       constructorArgs: {
-        baseToken: config.feeToken,
+        baseToken: config.ticketUnderlyingToken,
         registry: ADDRESS_ONE,
         owner: config.safe,
       },

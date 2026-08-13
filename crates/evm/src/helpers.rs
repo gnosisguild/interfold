@@ -351,6 +351,71 @@ where
     .await
 }
 
+/// Result of a transaction that a concurrent sender can make unnecessary.
+#[derive(Debug)]
+pub enum TxOutcome {
+    /// The transaction was mined and its receipt reports success.
+    Mined(Box<TransactionReceipt>),
+    /// The transaction failed, but the wanted on-chain state is already there.
+    AlreadySettled,
+}
+
+impl TxOutcome {
+    /// The receipt of a mined transaction, or `None` when another sender
+    /// produced the wanted state.
+    pub fn receipt(&self) -> Option<&TransactionReceipt> {
+        match self {
+            TxOutcome::Mined(receipt) => Some(receipt),
+            TxOutcome::AlreadySettled => None,
+        }
+    }
+}
+
+/// Send a transaction whose effect another sender can produce first.
+///
+/// Preflights before the transaction cannot close the window between the
+/// preflight and the block that includes the transaction. A transaction that
+/// loses that race is mined with a failed receipt, and the receipt carries no
+/// revert reason, so [`send_tx_with_retry`] classifies it as a hard failure.
+///
+/// `settled` runs after such a failure. It must report whether the wanted
+/// on-chain state is there now. If it is, the failure is benign and the
+/// operation returns [`TxOutcome::AlreadySettled`]. In all other cases the
+/// original transaction error propagates.
+pub async fn send_tx_idempotent<F, Fut, S, SFut>(
+    operation_name: &str,
+    retry_on_errors: &[&str],
+    settled: S,
+    tx_fn: F,
+) -> Result<TxOutcome>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<TransactionReceipt>>,
+    S: FnOnce() -> SFut,
+    SFut: Future<Output = Result<bool>>,
+{
+    let error = match send_tx_with_retry(operation_name, retry_on_errors, tx_fn).await {
+        Ok(receipt) => return Ok(TxOutcome::Mined(Box::new(receipt))),
+        Err(error) => error,
+    };
+
+    match settled().await {
+        Ok(true) => {
+            info!(
+                "{}: another sender produced the wanted state; treating the failure as benign: {}",
+                operation_name,
+                decode_error_from_str(&format!("{error:#}"))
+                    .unwrap_or_else(|| format!("{error:#}"))
+            );
+            Ok(TxOutcome::AlreadySettled)
+        }
+        Ok(false) => Err(error),
+        Err(check_error) => Err(error.context(format!(
+            "the on-chain state check after the failure also failed: {check_error:#}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +518,64 @@ mod tests {
             task.await.expect("nonce-lock task must not panic");
         }
         assert_eq!(maximum.load(Ordering::SeqCst), 1);
+    }
+
+    /// A mined but reverted transaction. Its message carries no revert reason,
+    /// which is what makes the state check after the failure necessary.
+    fn reverted_transaction() -> anyhow::Error {
+        anyhow::anyhow!("finalize committee transaction 0xabcd reverted on chain")
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_accepts_a_state_another_sender_produced() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
+
+        let outcome = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Ok(true) },
+            || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async { Err(reverted_transaction()) }
+            },
+        )
+        .await
+        .expect("a state that another sender produced is not a failure");
+
+        assert!(matches!(outcome, TxOutcome::AlreadySettled));
+        assert!(outcome.receipt().is_none());
+        // The reason is not retryable, so the transaction runs one time.
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_reports_a_failure_that_left_work_to_do() {
+        let error = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Ok(false) },
+            || async { Err(reverted_transaction()) },
+        )
+        .await
+        .expect_err("an incomplete operation must stay an error");
+
+        assert!(format!("{error:#}").contains("reverted on chain"));
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_keeps_the_transaction_error_when_the_check_fails() {
+        let error = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Err(anyhow::anyhow!("RPC unavailable")) },
+            || async { Err(reverted_transaction()) },
+        )
+        .await
+        .expect_err("an unreadable state must not hide the transaction failure");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("reverted on chain"), "got: {message}");
+        assert!(message.contains("RPC unavailable"), "got: {message}");
     }
 }

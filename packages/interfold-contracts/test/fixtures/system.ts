@@ -359,6 +359,7 @@ export async function deployInterfoldSystem(
     owner,
   );
   const bondingRegistryAddress = await bondingRegistry.getAddress();
+  await ticketToken.setRegistry(bondingRegistryAddress);
 
   // ── InterfoldToken (deployed after BondingRegistry for immutable ref) ──
   const deployTime = BigInt(await time.latest());
@@ -428,6 +429,7 @@ export async function deployInterfoldSystem(
   const interfold = InterfoldFactory.connect(interfoldAddress, owner);
   const interfoldLifecycle = await _interfoldLifecycle.getAddress();
   const interfoldPricing = await _interfoldPricing.getAddress();
+  await e3Program.setInterfold(interfoldAddress);
 
   const { e3RefundManager: _e3RefundManager } = await ignition.deploy(
     E3RefundManagerModule,
@@ -460,7 +462,6 @@ export async function deployInterfoldSystem(
   await registryForWiring.setBondingRegistry(
     await bondingRegistry.getAddress(),
   );
-  await ticketToken.setRegistry(await bondingRegistry.getAddress());
   await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
   await bondingRegistry.setSlashingManager(await slashingManager.getAddress());
   await bondingRegistry.setRewardDistributor(interfoldAddress);

@@ -928,6 +928,45 @@ describe("Interfold", function () {
         .to.emit(interfold, "CiphertextOutputPublished")
         .withArgs(e3Id, data, ciphertextCommitment);
     });
+
+    it("blocks plaintext publication during ciphertext verification", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = 0;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await mocks.e3Program.setReentrantPlaintextPublication(data, proof);
+
+      await expect(
+        interfold.publishCiphertextOutput(
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "ReentrancyGuardReentrantCall",
+      );
+      expect(await interfold.getE3Stage(e3Id)).to.equal(3);
+    });
   });
 
   describe("publishPlaintextOutput()", function () {
