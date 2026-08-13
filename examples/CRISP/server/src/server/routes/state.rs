@@ -57,6 +57,12 @@ async fn handle_get_previous_ciphertext(
 ) -> impl Responder {
     let incoming = data.into_inner();
 
+    let e3_id = match e3_id_to_u256(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+    let e3_key = e3_id.to_string();
+
     let contract =
         match CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
             .await
@@ -75,12 +81,6 @@ async fn handle_get_previous_ciphertext(
             return HttpResponse::BadRequest().body("Invalid address format");
         }
     };
-
-    let e3_id = match e3_id_to_u256(&incoming.round_id) {
-        Ok(e3_id) => e3_id,
-        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-    };
-    let e3_key = e3_id.to_string();
 
     let slot_index = match contract.get_slot_index_from_address(e3_id, address).await {
         Ok(Some(index)) => index,
