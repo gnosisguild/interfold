@@ -173,6 +173,37 @@ describe("Sortition & E3 lifecycle", function () {
       interfold,
       "CommitteeFinalized",
     );
+
+    const { dkgWindow } = await interfold.getE3TimeoutConfig(firstE3Id);
+    expect((await interfold.getDeadlines(firstE3Id)).dkgDeadline).to.equal(
+      deadline + dkgWindow,
+    );
+  });
+
+  it("expires a ready committee at its request-time DKG cutoff", async function () {
+    const ctx = await loadFixture(deployStack);
+    const { interfold, ciphernodeRegistry, other, op1, op2, op3 } = ctx;
+
+    await ctx.makeRequest();
+    for (const operator of [op1, op2, op3]) {
+      await ciphernodeRegistry.connect(operator).submitTicket(firstE3Id, 1);
+    }
+
+    const committeeDeadline =
+      await ciphernodeRegistry.getCommitteeDeadline(firstE3Id);
+    const { dkgWindow } = await interfold.getE3TimeoutConfig(firstE3Id);
+    const dkgCutoff = committeeDeadline + dkgWindow;
+
+    expect((await interfold.getDeadlines(firstE3Id)).dkgDeadline).to.equal(0);
+    await time.increaseTo(dkgCutoff + 1n);
+
+    await expect(ciphernodeRegistry.finalizeCommittee(firstE3Id))
+      .to.be.revertedWithCustomError(interfold, "DKGDeadlinePassed")
+      .withArgs(firstE3Id, dkgCutoff);
+
+    await expect(interfold.connect(other).markE3Failed(firstE3Id))
+      .to.emit(interfold, "E3Failed")
+      .withArgs(firstE3Id, 1, 1);
   });
 
   describe("Committee.requestBlock uses block.timestamp", function () {

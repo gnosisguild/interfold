@@ -93,8 +93,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
   activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
-- `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
-  successful call locks the canonical on-chain committee order. — `flow-trace/03`
+- `finalizeCommittee()` requires the submission window to have closed. The first successful call
+  locks the canonical on-chain committee order. A ready committee must finalize by its absolute
+  request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`
 - **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
   `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
   setters enforce the relationship; equality is invalid because ticket submission includes the
@@ -120,10 +121,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### Deadlines
 
 - Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
-  The request snapshots all timeout windows. The DKG deadline starts when the committee is
-  finalized. The compute deadline starts at the later of key publication and the end of the input
-  window. Request validation reserves the full worst-case sortition, DKG, compute, and decryption
-  lifecycle. — `flow-trace/03`
+  The request snapshots all timeout windows. The DKG deadline equals the request-time committee
+  deadline plus the DKG window. The compute deadline starts at the later of key publication and the
+  end of the input window. Request validation reserves the full worst-case sortition, DKG, compute,
+  and decryption lifecycle. — `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 

@@ -394,8 +394,8 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │                                                         │
     │  │  finalizeCommittee(e3Id) {                              │
     │  │    1. require(initialized && !finalized)                │
-    │  │    2. require(block.timestamp >= committeeDeadline)     │
-    │  │       → Submission window must have closed (>= not >)  │
+    │  │    2. require(block.timestamp > committeeDeadline)      │
+    │  │       → Submission window must have closed              │
     │  │                                                         │
     │  │    3. if topNodes.length < threshold[1]:                │
     │  │       → NOT ENOUGH NODES submitted tickets              │
@@ -421,7 +421,9 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       │  │  onCommitteeFinalized(e3Id) {            │  │
     │  │       │  │    require(stage == Requested)            │  │
     │  │       │  │    stage = CommitteeFinalized             │  │
-    │  │       │  │    dkgDeadline = now + dkgWindow          │  │
+    │  │       │  │    dkgDeadline = committeeDeadline        │  │
+    │  │       │  │                  + dkgWindow               │  │
+    │  │       │  │    require(now <= dkgDeadline)             │  │
     │  │       │  │    snapshot each member's reward          │  │
     │  │       │  │      recipient in E3RefundManager         │  │
     │  │       │  │    Emit E3StageChanged(e3Id,              │  │
@@ -501,7 +503,7 @@ Time ─────────────────────────
 │                │ ───►DKG starts  │               │
 
 If a stage deadline is missed → anyone can call `markE3Failed()`.
-The registry must finalize a ready committee.
+A ready committee must finalize before its absolute DKG deadline.
 ```
 
 ---
@@ -528,12 +530,14 @@ The registry must finalize a ready committee.
    finalized committee plus enriched `CommitteeMemberExpelled` events. The active aggregator is the
    lowest non-expelled `party_id` in the address-sorted runtime committee.
 
-5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the deadline — no
-   single point of failure. Because the staggered timers can overlap, more than one node can send
+5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
+   deadline and before the absolute DKG deadline. Delayed finalization reduces the remaining DKG
+   time instead of extending the paid lifecycle. After the DKG deadline, anyone can fail an
+   unfinalized ready committee. Because staggered timers can overlap, more than one node can send
    the transaction. The losing transaction reverts with `CommitteeAlreadyFinalized`; the writer
-   re-reads the committee after the failure and treats the revert as a completed operation only when
-   the registry reports a finalized committee. A committee that another sender finalized into the
-   `Failed` stage produces the same revert and stays an error.
+   re-reads the committee after the failure and treats the revert as complete only when the registry
+   reports a finalized committee. A committee that another sender finalized into the `Failed` stage
+   produces the same revert and stays an error.
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee. A removed node's current-tree slot can be

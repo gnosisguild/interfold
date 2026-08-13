@@ -158,8 +158,9 @@ library InterfoldLifecycle {
         address registryAddress,
         address refundManagerAddress,
         uint256 e3Id,
-        uint8 current
-    ) external {
+        uint8 current,
+        uint256 dkgWindow
+    ) external returns (uint256 dkgDeadline) {
         if (caller != registryAddress)
             revert IInterfold.OnlyCiphernodeRegistry();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -169,6 +170,11 @@ library InterfoldLifecycle {
                 IInterfold.E3Stage.Requested,
                 stage
             );
+        dkgDeadline =
+            ICiphernodeRegistry(registryAddress).getCommitteeDeadline(e3Id) +
+            dkgWindow;
+        if (block.timestamp > dkgDeadline)
+            revert IInterfold.DKGDeadlinePassed(e3Id, dkgDeadline);
         (address[] memory nodes, ) = ICiphernodeRegistry(registryAddress)
             .getActiveCommitteeNodes(e3Id);
         IE3RefundManager(refundManagerAddress).snapshotRewardRecipients(
@@ -453,12 +459,16 @@ library InterfoldLifecycle {
 
     // prettier-ignore
     function failureCondition(
-        address registryAddress, uint256 e3Id, uint8 current, IInterfold.E3Deadlines calldata deadlines
+        address registryAddress, uint256 e3Id, uint8 current,
+        IInterfold.E3Deadlines calldata deadlines, uint256 dkgWindow
     ) external view returns (bool canFail, uint8 reason, uint256 deadline) {
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
         if (stage == IInterfold.E3Stage.Requested) {
-            deadline = ICiphernodeRegistry(registryAddress)
-                .getCommitteeDeadline(e3Id);
+            ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+            deadline = registry.getCommitteeDeadline(e3Id);
+            if (registry.committeeThresholdMet(e3Id)) {
+                deadline += dkgWindow;
+            }
             reason = uint8(
                 IInterfold.FailureReason.CommitteeFormationTimeout
             );
@@ -474,13 +484,6 @@ library InterfoldLifecycle {
         }
 
         canFail = deadline != 0 && block.timestamp > deadline;
-        if (
-            canFail &&
-            stage == IInterfold.E3Stage.Requested &&
-            ICiphernodeRegistry(registryAddress).committeeThresholdMet(e3Id)
-        ) {
-            return (false, uint8(IInterfold.FailureReason.None), deadline);
-        }
         if (!canFail) reason = uint8(IInterfold.FailureReason.None);
     }
 
