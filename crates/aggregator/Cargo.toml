@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode Aggregators"
-repository = "https://github.com/theinterfold/interfold/crates/aggregator"
+repository.workspace = true
 
 [dependencies]
 alloy = { workspace = true }
