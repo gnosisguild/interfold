@@ -235,7 +235,7 @@ the generator would produce.
 
 ### Prerequisites
 
-- `nargo` - Noir compiler ([install](https://noir-lang.org/docs/getting_started/installation/))
+- `nargo` - Noir compiler ([install](https://noir-lang.org/docs/installation))
 - `bb` - Barretenberg prover (for verification keys)
 
 ## Circuit Artifacts
@@ -405,7 +405,7 @@ The `generate:verifiers` script in package.json passes `--circuits` with the on-
 
 ### Prerequisites
 
-- `nargo` - Noir compiler ([install](https://noir-lang.org/docs/getting_started/installation/))
+- `nargo` - Noir compiler ([install](https://noir-lang.org/docs/installation))
 - `bb` - Barretenberg CLI for proof system operations
 
 ### Output Example

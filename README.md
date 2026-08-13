@@ -80,7 +80,7 @@ The monorepo provides several test scripts for different components:
 
 - **`pnpm noir:test`** - Runs tests for Noir circuits in the `circuits/` directory using
   `nargo test`. Requires the
-  [Noir toolchain](https://noir-lang.org/docs/getting_started/installation) (`nargo`) and
+  [Noir toolchain](https://noir-lang.org/docs/installation) (`nargo`) and
   [Barretenberg](https://github.com/AztecProtocol/aztec-packages/tree/master/barretenberg) (`bb`) to
   be installed and on your `PATH`.
 

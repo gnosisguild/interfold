@@ -5,7 +5,7 @@ decision-making, leveraging fully homomorphic encryption (FHE) and distributed t
 cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
 democratic systems and decision-making applications against coercion, manipulation, and other
 vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.interfold.network/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
+[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
 the [documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
@@ -43,7 +43,7 @@ Before getting started, ensure you have installed:
 - [pnpm](https://pnpm.io)
 - [MetaMask](https://metamask.io)
 - [`yq`](https://github.com/mikefarah/yq) — `scripts/dev_cipher.sh` reads node addresses with it
-- Noir toolchain: [`nargo`](https://noir-lang.org/docs/getting_started/quick_start) and
+- Noir toolchain: [`nargo`](https://noir-lang.org/docs/installation) and
   [`bb`](https://barretenberg.aztec.network/docs/getting_started). Install the versions CI pins,
   since other versions may not compile the circuits:
   - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
