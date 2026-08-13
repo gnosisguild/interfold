@@ -118,6 +118,11 @@ export function syncProtocolDeploymentRecords(
     opts.chain,
   );
   storeDeploymentArgs(
+    { address: deployment.registrySortitionLib, blockNumber },
+    "RegistrySortitionLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
     { address: config.feeToken, blockNumber },
     "MockUSDC",
     opts.chain,
@@ -148,6 +153,10 @@ export function syncProtocolDeploymentRecords(
         proxyAddress: deployment.ciphernodeRegistry,
         proxyAdminAddress: deployment.ciphernodeRegistryProxyAdmin,
         implementationAddress: deployment.ciphernodeRegistryImplementation,
+      },
+      libraries: {
+        PoseidonT3: deployment.poseidonT3,
+        RegistrySortitionLib: deployment.registrySortitionLib,
       },
     },
     "CiphernodeRegistryOwnable",

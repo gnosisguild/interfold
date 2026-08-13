@@ -22,6 +22,7 @@ import {
     IERC165
 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
+import { RegistrySortitionLib } from "../lib/RegistrySortitionLib.sol";
 import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
@@ -649,8 +650,13 @@ contract CiphernodeRegistryOwnable is
         // Store submission
         c.submitted[msg.sender] = true;
 
-        // Insert into top-N (ascending score)
-        _insertTopN(c, msg.sender, score);
+        RegistrySortitionLib.insertCandidate(
+            c,
+            _bondingFor(e3Id),
+            e3Id,
+            msg.sender,
+            score
+        );
 
         emit TicketSubmitted(e3Id, msg.sender, ticketNumber, score);
     }
@@ -738,7 +744,7 @@ contract CiphernodeRegistryOwnable is
                 uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
             );
             c.obligationsReleased = true;
-            _setCommitteeObligations(e3Id, c, false);
+            _releaseCommitteeObligations(e3Id, c);
             unreleasedCommitteeCount--;
             return false;
         }
@@ -755,8 +761,6 @@ contract CiphernodeRegistryOwnable is
             c.memberStatus[node] = ICiphernodeRegistry.MemberStatus.Active;
             scores[i] = c.scoreOf[node];
         }
-
-        _setCommitteeObligations(e3Id, c, true);
 
         _interfoldFor(e3Id).onCommitteeFinalized(e3Id);
         emit SortitionCommitteeFinalized(e3Id, c.topNodes, scores);
@@ -786,24 +790,21 @@ contract CiphernodeRegistryOwnable is
         if (c.stage == ICiphernodeRegistry.CommitteeStage.Requested) {
             c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
         }
-        _setCommitteeObligations(e3Id, c, false);
+        _releaseCommitteeObligations(e3Id, c);
         unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
     }
 
-    function _setCommitteeObligations(
+    function _releaseCommitteeObligations(
         uint256 e3Id,
-        Committee storage c,
-        bool active
+        Committee storage c
     ) internal {
         IBondingRegistry e3Bonding = _bondingFor(e3Id);
         uint256 length = c.topNodes.length;
         for (uint256 i = 0; i < length; ++i) {
-            e3Bonding.setCommitteeObligation(e3Id, c.topNodes[i], active);
+            e3Bonding.setCommitteeObligation(e3Id, c.topNodes[i], false);
         }
-        if (!active) {
-            e3Bonding.setCommitteeObligation(e3Id, address(0), false);
-        }
+        e3Bonding.setCommitteeObligation(e3Id, address(0), false);
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -1352,48 +1353,6 @@ contract CiphernodeRegistryOwnable is
                 }
             }
         }
-    }
-
-    /// @notice Inserts a node into the top-N list - Smallest scores
-    /// @dev O(N) linear scan per insertion to find the worst score. For a committee of size N
-    ///      with S total submissions, total gas is O(N * S). With N=20 and S=1000, this is ~20K
-    ///      iterations at ~200 gas each (≈ 4M gas total), which is acceptable for current
-    ///      parameters. Will not scale to N > ~50 without switching to a heap or sorted
-    ///      data structure.
-    /// @param c Committee storage reference
-    /// @param node Address of the node
-    /// @param score Score of the node
-    /// @return entered Whether the node was inserted into the top-N
-    function _insertTopN(
-        Committee storage c,
-        address node,
-        uint256 score
-    ) internal returns (bool entered) {
-        address[] storage top = c.topNodes;
-        uint256 cap = c.threshold[1];
-
-        if (top.length < cap) {
-            top.push(node);
-            c.scoreOf[node] = score;
-            return true;
-        }
-
-        uint256 worstIdx = 0;
-        uint256 worstScore = c.scoreOf[top[0]];
-        for (uint256 i = 1; i < top.length; ++i) {
-            uint256 s = c.scoreOf[top[i]];
-            if (s > worstScore) {
-                worstScore = s;
-                worstIdx = i;
-            }
-        }
-
-        if (score >= worstScore) return false;
-
-        top[worstIdx] = node;
-        c.scoreOf[node] = score;
-
-        return true;
     }
 
     ////////////////////////////////////////////////////////////

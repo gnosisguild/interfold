@@ -67,11 +67,21 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
     return { ciphernodeRegistry: ciphernodeRegistryContract };
   }
 
+  const registrySortitionLibFactory = await ethers.getContractFactory(
+    "RegistrySortitionLib",
+    signer,
+  );
+  const registrySortitionLib = await registrySortitionLibFactory.deploy();
+  await registrySortitionLib.waitForDeployment();
+  const registrySortitionLibAddress = await registrySortitionLib.getAddress();
+
   const ciphernodeRegistryFactory = await ethers.getContractFactory(
     CiphernodeRegistryOwnableFactory.abi,
     CiphernodeRegistryOwnableFactory.linkBytecode({
       "npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3":
         poseidonT3Address,
+      "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
+        registrySortitionLibAddress,
     }),
     signer,
   );
@@ -112,10 +122,19 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
         proxyAdminAddress,
         implementationAddress: ciphernodeRegistryAddress,
       },
+      libraries: {
+        PoseidonT3: poseidonT3Address,
+        RegistrySortitionLib: registrySortitionLibAddress,
+      },
       blockNumber,
       address: proxyAddress,
     },
     "CiphernodeRegistryOwnable",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: registrySortitionLibAddress, blockNumber },
+    "RegistrySortitionLib",
     chain,
   );
 
@@ -161,11 +180,21 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
   );
   console.log("Auto-deployed ProxyAdmin address:", autoProxyAdminAddress);
 
+  const registrySortitionLibFactory = await ethers.getContractFactory(
+    "RegistrySortitionLib",
+    signer,
+  );
+  const registrySortitionLib = await registrySortitionLibFactory.deploy();
+  await registrySortitionLib.waitForDeployment();
+  const registrySortitionLibAddress = await registrySortitionLib.getAddress();
+
   const ciphernodeRegistryFactory = await ethers.getContractFactory(
     CiphernodeRegistryOwnableFactory.abi,
     CiphernodeRegistryOwnableFactory.linkBytecode({
       "npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3":
         poseidonT3Address,
+      "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
+        registrySortitionLibAddress,
     }),
     signer,
   );
@@ -210,8 +239,22 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
   }
 
   storeDeploymentArgs(
-    { ...preDeployedArgs, proxyRecords },
+    {
+      ...preDeployedArgs,
+      proxyRecords,
+      libraries: {
+        ...preDeployedArgs.libraries,
+        PoseidonT3: poseidonT3Address,
+        RegistrySortitionLib: registrySortitionLibAddress,
+      },
+    },
     "CiphernodeRegistryOwnable",
+    chain,
+  );
+  const blockNumber = await ethers.provider.getBlockNumber();
+  storeDeploymentArgs(
+    { address: registrySortitionLibAddress, blockNumber },
+    "RegistrySortitionLib",
     chain,
   );
 

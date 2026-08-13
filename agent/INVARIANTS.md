@@ -104,11 +104,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   requests and drain all E3s, committees, operators, bans, and slash routes before it replaces any
   graph member. Old and new generations never serve requests at the same time. — `flow-trace/03`,
   `05`
-- **Selected-member collateral remains slashable:** committee requests assign their request-time
-  registry in `BondingRegistry`, and successful finalization records one unresolved obligation per
-  member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
-  registry observes a terminal E3 and releases the complete committee. — `flow-trace/03`, `06`;
-  INDEX concern Z-04
+- **Candidate and member collateral remains slashable:** committee requests assign their
+  request-time registry in `BondingRegistry`. A top-N ticket submission locks its candidate, and a
+  better ticket releases the displaced candidate. Finalization retains each winner's obligation.
+  `claimExitsFor` cannot pay a locked candidate or member until displacement or terminal committee
+  release. — `flow-trace/03`, `06`; INDEX concerns Z-04, Z-37
 - **Exit timing covers frozen requests:** `exitDelay` must exceed the current submission window and
   the remaining time for the latest request-time committee deadline. Each request raises a monotonic
   deadline watermark. The time-based floor decreases after old windows expire, and the

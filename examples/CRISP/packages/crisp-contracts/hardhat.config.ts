@@ -131,6 +131,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/lib/BondingAssetLib.sol',
       '@interfold/contracts/contracts/lib/BondingEligibilityLib.sol',
       '@interfold/contracts/contracts/lib/BondingSlashingLib.sol',
+      '@interfold/contracts/contracts/lib/RegistrySortitionLib.sol',
       '@interfold/contracts/contracts/lib/SlashingEvidenceLib.sol',
       '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
       '@interfold/contracts/contracts/registry/BondingRegistry.sol',
@@ -153,9 +154,13 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
     ],
     settings: {
+      evmVersion: 'paris',
       optimizer: {
         enabled: true,
-        runs: 100, // Minimum runs value maximizes bytecode size reduction (optimizes for deployment cost)
+        runs: 1,
+      },
+      debug: {
+        revertStrings: 'strip',
       },
       metadata: {
         bytecodeHash: 'none',

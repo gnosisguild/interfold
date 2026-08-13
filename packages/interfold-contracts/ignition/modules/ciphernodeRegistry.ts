@@ -10,10 +10,12 @@ export default buildModule("CiphernodeRegistry", (m) => {
   const submissionWindow = m.getParameter("submissionWindow");
 
   const poseidonT3 = m.library("PoseidonT3");
+  const registrySortitionLib = m.library("RegistrySortitionLib");
 
   const cipherNodeRegistryImpl = m.contract("CiphernodeRegistryOwnable", [], {
     libraries: {
       PoseidonT3: poseidonT3,
+      RegistrySortitionLib: registrySortitionLib,
     },
   });
 
@@ -28,5 +30,5 @@ export default buildModule("CiphernodeRegistry", (m) => {
     initData,
   ]);
 
-  return { cipherNodeRegistry };
+  return { cipherNodeRegistry, registrySortitionLib };
 }) as any;
