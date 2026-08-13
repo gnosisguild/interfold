@@ -60,7 +60,7 @@ Proof generation is delegated to [Boundless](https://boundless.network) (a Risc0
 
 - **Development / local:** The program can run the Risc0 guest directly (no Boundless needed).
 - **Production:** Set the `BOUNDLESS_RPC_URL` and `BOUNDLESS_PRIVATE_KEY` environment variables to
-  submit jobs to the Boundless network. See [Boundless configuration](../README.md#configuration) in
+  submit jobs to the Boundless network. See [Boundless configuration](../Readme.md#configuration) in
   the CRISP root README.
 
 ## Environment Variables

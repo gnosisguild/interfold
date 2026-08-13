@@ -273,4 +273,4 @@ This project is provided **WITHOUT ANY WARRANTY**; without even the implied warr
 
 ## License
 
-This repository is licensed under the [LGPL-3.0+ license](LICENSE).
+This repository is licensed under the [LGPL-3.0+ license](../../LICENSE.md).

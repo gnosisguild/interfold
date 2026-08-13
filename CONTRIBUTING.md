@@ -5,7 +5,7 @@ Interfold better.
 
 This guide will discuss how the Interfold team handles [Commits](#commits),
 [Pull Requests](#pull-requests), [Merging](#merging), [Releases](#releases), and the
-[Changelog](#changelog).
+[Changelog](CHANGELOG.md).
 
 **Note:** We won't force external contributors to follow this verbatim, but following these
 guidelines definitely helps us in accepting your contributions.

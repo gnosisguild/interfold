@@ -484,7 +484,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 ## License
 
-This repo created under the [LGPL-3.0+ license](LICENSE).
+This repo created under the [LGPL-3.0+ license](LICENSE.md).
 
 [gha]: https://github.com/gnosisguild/interfold/actions
 [gha-badge]: https://github.com/gnosisguild/interfold/actions/workflows/ci.yml/badge.svg
