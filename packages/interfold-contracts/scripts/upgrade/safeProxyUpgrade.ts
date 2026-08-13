@@ -38,6 +38,8 @@ interface UpgradePlan {
   assetLibrary?: string;
   eligibilityLibrary?: string;
   slashingLibrary?: string;
+  registrationLibrary?: string;
+  ownershipLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
@@ -104,6 +106,8 @@ export async function proposeProxyUpgrade(
     assetLibrary: deployed.assetLibrary,
     eligibilityLibrary: deployed.eligibilityLibrary,
     slashingLibrary: deployed.slashingLibrary,
+    registrationLibrary: deployed.registrationLibrary,
+    ownershipLibrary: deployed.ownershipLibrary,
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     sortitionLibrary: deployed.sortitionLibrary,
@@ -130,6 +134,8 @@ async function deployImplementation(
   assetLibrary?: string;
   eligibilityLibrary?: string;
   slashingLibrary?: string;
+  registrationLibrary?: string;
+  ownershipLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
@@ -235,6 +241,8 @@ async function deployImplementation(
       assetLibrary,
       eligibilityLibrary,
       slashingLibrary,
+      registrationLibrary,
+      ownershipLibrary,
     };
   }
 
@@ -291,6 +299,8 @@ Protocol upgrade prepared
   assetLibrary:    ${plan.assetLibrary ?? "(not applicable)"}
   eligibilityLibrary: ${plan.eligibilityLibrary ?? "(not applicable)"}
   slashingLibrary: ${plan.slashingLibrary ?? "(not applicable)"}
+  registrationLibrary: ${plan.registrationLibrary ?? "(not applicable)"}
+  ownershipLibrary: ${plan.ownershipLibrary ?? "(not applicable)"}
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   sortitionLibrary: ${plan.sortitionLibrary ?? "(not applicable)"}

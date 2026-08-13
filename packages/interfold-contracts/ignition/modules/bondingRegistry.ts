@@ -60,5 +60,7 @@ export default buildModule("BondingRegistry", (m) => {
     bondingEligibilityLib,
     bondingRegistry,
     bondingSlashingLib,
+    bondingRegistrationLib,
+    bondingOwnershipLib,
   };
 }) as any;
