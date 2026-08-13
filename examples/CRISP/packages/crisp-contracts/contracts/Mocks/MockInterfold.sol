@@ -30,6 +30,35 @@ contract MockInterfold {
     _request(program, numOptions);
   }
 
+  /// @notice Request an E3 with caller-supplied program params.
+  /// @dev `_request` hardcodes a TOKEN-census round. `CensusMode.ONCHAIN` needs a token, a credit
+  /// mode and a census mode that only the caller knows, and the snapshot is taken during
+  /// `validate`, so the params have to reach it here rather than being patched afterwards.
+  function requestWithParams(address program, uint256 numOptions, bytes memory params) external {
+    e3s[nextE3Id] = E3({
+      seed: 0,
+      committeeSize: IInterfold.CommitteeSize.Minimum,
+      requestBlock: 0,
+      inputWindow: [uint256(0), uint256(0)],
+      encryptionSchemeId: ENCRYPTION_SCHEME_ID,
+      e3Program: IE3Program(address(0)),
+      paramSet: 0, // Insecure512
+      customParams: params,
+      decryptionVerifier: IDecryptionVerifier(address(0)),
+      pkVerifier: IPkVerifier(address(0)),
+      committeePublicKey: committeePublicKey,
+      ciphertextOutput: bytes32(0),
+      plaintextOutput: plaintextOutput,
+      requester: address(0),
+      ciphertextCommitment: bytes32(0)
+    });
+
+    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), params);
+
+    nextE3Id++;
+    numOptions; // silence unused-parameter warning; the count travels inside `params`
+  }
+
   function _request(address program, uint256 numOptions) internal {
     e3s[nextE3Id] = E3({
       seed: 0,

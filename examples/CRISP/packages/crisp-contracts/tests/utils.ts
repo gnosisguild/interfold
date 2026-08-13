@@ -76,6 +76,28 @@ export async function deployHonkVerifier() {
   return honkVerifier as unknown as HonkVerifier
 }
 
+/**
+ * Deploy the `CensusMode.ONCHAIN` HonkVerifier, generated from the `crisp_onchain` circuit.
+ * @returns The deployed verifier.
+ */
+export async function deployOnchainHonkVerifier() {
+  const zkTranscriptLib = await deployContract('contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib')
+  const relationsLib = await deployContract('contracts/CRISPOnchainVerifier.sol:RelationsLib')
+
+  const HonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPOnchainVerifier.sol:HonkVerifier', {
+    libraries: {
+      'project/contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
+      'project/contracts/CRISPOnchainVerifier.sol:RelationsLib': await relationsLib.getAddress(),
+    },
+  })
+
+  const honkVerifier = await HonkVerifierFactory.deploy()
+
+  await honkVerifier.waitForDeployment()
+
+  return honkVerifier as unknown as HonkVerifier
+}
+
 export async function deployCRISPProgram(
   contracts: {
     mockInterfold?: MockInterfold

@@ -165,6 +165,7 @@ export const deployCRISPContracts = async () => {
       Risc0Verifier: ${verifier}
       Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
+      OnchainHonkVerifier: ${onchainHonkVerifierAddress}
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}
       `)
