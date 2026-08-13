@@ -18,7 +18,7 @@ const Footer: React.FC = () => {
           <a href='https://github.com/gnosisguild/interfold' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
             <GithubLogo size={18} />
           </a>
-          <a href='https://x.com/InterfoldE3' target='_blank' rel='noopener noreferrer' aria-label='X'>
+          <a href='https://x.com/theinterfold' target='_blank' rel='noopener noreferrer' aria-label='X'>
             <TwitterLogo size={18} />
           </a>
           <a href='https://t.me/enclave_e3' target='_blank' rel='noopener noreferrer' aria-label='Telegram'>

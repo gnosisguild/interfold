@@ -28,7 +28,7 @@ export default {
   project: {
     link: 'https://github.com/gnosisguild/interfold',
   },
-  docsRepositoryBase: 'https://github.com/gnosisguild/interfold-docs',
+  docsRepositoryBase: 'https://github.com/theinterfold/interfold/tree/main/docs',
   darkMode: false,
   nextThemes: {
     defaultTheme: 'light',

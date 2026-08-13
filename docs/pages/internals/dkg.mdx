@@ -276,7 +276,7 @@ This circuit runs once, executed by the aggregator.
 ## P3: User Encryption
 
 With the threshold public key published, users encrypt their private inputs using a specialisation
-of the [GRECO](https://blog.theinterfold.com/interfold-cryptography-greco-fhe-zk/) circuit. This
+of the [GRECO](https://blog.theinterfold.com/enclave-cryptography-greco-fhe-zk/) circuit. This
 proves each ciphertext was formed correctly under the threshold public key without revealing the
 plaintext or encryption randomness. The circuit verifies `commit(pk_threshold)` from C5 before
 validating the encryption.
