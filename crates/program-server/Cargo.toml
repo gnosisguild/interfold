@@ -18,3 +18,4 @@ reqwest.workspace = true
 anyhow.workspace = true
 hex.workspace = true
 derivative.workspace = true
+alloy-primitives.workspace = true

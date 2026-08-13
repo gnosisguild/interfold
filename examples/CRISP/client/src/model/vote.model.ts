@@ -7,16 +7,16 @@
 import { CreditMode } from '@crisp-e3/sdk'
 
 export interface VotingRound {
-  round_id: number
+  round_id: string
   pk_bytes: number[]
 }
 
 export interface CurrentRound {
-  id: number
+  id: string
 }
 
 export interface BroadcastVoteRequest {
-  round_id: number
+  round_id: string
   encoded_proof: string
   address: string
 }
@@ -30,19 +30,19 @@ export interface BroadcastVoteResponse {
 }
 
 export interface VoteStatusRequest {
-  round_id: number
+  round_id: string
   address: string
 }
 
 export interface VoteStatusResponse {
-  round_id: number
+  round_id: string
   address: string
   has_voted: boolean
   round_status?: string
 }
 
 export interface VoteStateLite {
-  id: number
+  id: string
   chain_id: number
   interfold_address: string
 

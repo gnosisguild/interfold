@@ -17,27 +17,26 @@ const RoundPoll: React.FC = () => {
   const { roundState, getRoundStateLite, isLoading, currentRoundId } = useVoteManagementContext()
   const [loading, setLoading] = useState(true)
 
-  const parsedRoundId = roundId ? parseInt(roundId, 10) : null
-  const isValidRoundId = parsedRoundId !== null && !isNaN(parsedRoundId)
+  const isValidRoundId = roundId !== undefined && /^\d+$/.test(roundId)
 
   // If this is the current round, redirect to /current
   useEffect(() => {
-    if (isValidRoundId && currentRoundId !== null && parsedRoundId === currentRoundId) {
+    if (isValidRoundId && currentRoundId !== null && roundId === currentRoundId) {
       navigate('/current', { replace: true })
     }
-  }, [isValidRoundId, parsedRoundId, currentRoundId, navigate])
+  }, [isValidRoundId, roundId, currentRoundId, navigate])
 
   // Load the specific round
   useEffect(() => {
     const loadRound = async () => {
-      if (isValidRoundId && parsedRoundId !== null) {
+      if (isValidRoundId && roundId !== undefined) {
         setLoading(true)
-        await getRoundStateLite(parsedRoundId)
+        await getRoundStateLite(roundId)
         setLoading(false)
       }
     }
     loadRound()
-  }, [isValidRoundId, parsedRoundId, getRoundStateLite])
+  }, [isValidRoundId, roundId, getRoundStateLite])
 
   const endTime = useMemo(() => (roundState ? convertTimestampToDate(roundState.end_time) : null), [roundState])
 

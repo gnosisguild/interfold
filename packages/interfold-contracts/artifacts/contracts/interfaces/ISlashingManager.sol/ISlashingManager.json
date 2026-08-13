@@ -5,6 +5,32 @@
   "abi": [
     {
       "inputs": [],
+      "name": "AccusationIssuedInFuture",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "AccusationSlashingDisabled",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "closesAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "AccusationWindowOpen",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "AlreadyAppealed",
       "type": "error"
     },
@@ -81,6 +107,11 @@
     {
       "inputs": [],
       "name": "InsufficientRoutingGas",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAccusationWindow",
       "type": "error"
     },
     {
@@ -162,6 +193,11 @@
     {
       "inputs": [],
       "name": "SlashReasonNotFound",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SlashSubmissionDeadlinePassed",
       "type": "error"
     },
     {
@@ -709,6 +745,32 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "activeBanCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "activeE3Assignments",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -846,6 +908,30 @@
       "name": "fileAppeal",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3AccusationWindow",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "voteValidity",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "submissionDeadline",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -1511,5 +1597,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-2669d7c5659f9a42878527352413c8338ef4bc08"
+  "buildInfoId": "solc-0_8_28-237c02391cd3c59ddd3267c5dcdd3f53101f06d8"
 }

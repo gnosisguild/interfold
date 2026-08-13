@@ -10,13 +10,13 @@ import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
+import { SlashingEvidenceLib } from "../lib/SlashingEvidenceLib.sol";
 
 /**
  * @title SlashingManager
@@ -52,6 +52,9 @@ contract SlashingManager is
     /// @notice Maximum time governance has after the appeal window closes to
     ///         resolve a filed appeal. Expiry is fail-safe in the operator's favour.
     uint64 public constant APPEAL_RESOLUTION_GRACE = 7 days;
+
+    /// @notice Time after the latest possible E3 lifecycle deadline for Lane A reports.
+    uint64 public constant ACCUSATION_REPORTING_WINDOW = 1 days;
 
     /// @notice Emitted when {bondingRegistry} is updated.
     event BondingRegistryUpdated(
@@ -95,6 +98,8 @@ contract SlashingManager is
         ICiphernodeRegistry registry;
         IInterfold interfoldContract;
         IE3RefundManager refundManager;
+        uint64 accusationVoteValidity;
+        uint64 slashSubmissionDeadline;
         bool initialized;
     }
 
@@ -147,6 +152,12 @@ contract SlashingManager is
     mapping(bytes32 reason => SlashPolicyAssetContext context)
         public slashPolicyAssetContexts;
 
+    /// @inheritdoc ISlashingManager
+    uint256 public activeE3Assignments;
+
+    /// @inheritdoc ISlashingManager
+    uint256 public activeBanCount;
+
     // ======================
     // Constants
     // ======================
@@ -162,13 +173,13 @@ contract SlashingManager is
     /// @notice EIP-712 typehash for committee attestation votes.
     /// @dev Cross-chain replay is prevented by the EIP-712 domain separator's chainId
     ///      (no need to fold chainId into the struct hash). `agrees` is dropped (always
-    ///      true for an accusation), and `deadline` is added so stale signatures are
-    ///      rejected by `_verifyAttestationEvidence`. `dataHash` is retained so all
-    ///      voters' hashes can be compared for equivocation detection.
+    ///      true for an accusation). `issuedAt` and `deadline` bind the vote to the
+    ///      E3's snapshotted validity window. `dataHash` is retained so all voters'
+    ///      hashes can be compared for equivocation detection.
     bytes32 public constant VOTE_TYPEHASH =
         keccak256(
             "AccusationVote(uint256 e3Id,bytes32 accusationId,"
-            "address voter,bytes32 dataHash,uint256 deadline)"
+            "address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
         );
 
     /// @dev `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`.
@@ -299,6 +310,17 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
+    function getE3AccusationWindow(
+        uint256 e3Id
+    ) external view returns (uint64 voteValidity, uint64 submissionDeadline) {
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        return (
+            dependencies.accusationVoteValidity,
+            dependencies.slashSubmissionDeadline
+        );
+    }
+
+    /// @inheritdoc ISlashingManager
     function getPendingSlashRoute(
         uint256 proposalId
     ) external view returns (PendingSlashRoute memory) {
@@ -326,7 +348,22 @@ contract SlashingManager is
         dependencies.registry = ciphernodeRegistry;
         dependencies.interfoldContract = interfold;
         dependencies.refundManager = e3RefundManager;
+        uint256 voteValidity = dependencies.registry.accusationVoteValidity();
+        uint256 lifecycleDeadline = dependencies
+            .interfoldContract
+            .getE3LifecycleDeadline(e3Id);
+        require(
+            voteValidity <= type(uint64).max &&
+                lifecycleDeadline <=
+                type(uint64).max - ACCUSATION_REPORTING_WINDOW,
+            InvalidProposal()
+        );
+        dependencies.accusationVoteValidity = uint64(voteValidity);
+        dependencies.slashSubmissionDeadline =
+            uint64(lifecycleDeadline) +
+            ACCUSATION_REPORTING_WINDOW;
         dependencies.initialized = true;
+        activeE3Assignments++;
         dependencies.bonding.snapshotSlashRouteDestination(
             e3Id,
             address(dependencies.refundManager),
@@ -337,8 +374,15 @@ contract SlashingManager is
     /// @inheritdoc ISlashingManager
     function closeE3(uint256 e3Id) external onlyGovernance {
         E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        if (block.timestamp <= dependencies.slashSubmissionDeadline) {
+            revert AccusationWindowOpen(
+                e3Id,
+                dependencies.slashSubmissionDeadline
+            );
+        }
         dependencies.bonding.releaseSlashRouteDestination(e3Id);
         delete _e3Dependencies[e3Id];
+        activeE3Assignments--;
         emit E3DependenciesReleased(e3Id);
     }
 
@@ -396,6 +440,7 @@ contract SlashingManager is
         IBondingRegistry newBondingRegistry
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(newBondingRegistry) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(bondingRegistry));
         address oldValue = address(bondingRegistry);
         bondingRegistry = newBondingRegistry;
         emit BondingRegistryUpdated(oldValue, address(newBondingRegistry));
@@ -407,6 +452,7 @@ contract SlashingManager is
         ICiphernodeRegistry newCiphernodeRegistry
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(newCiphernodeRegistry) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(ciphernodeRegistry));
         address oldValue = address(ciphernodeRegistry);
         ciphernodeRegistry = newCiphernodeRegistry;
         emit CiphernodeRegistryUpdated(
@@ -421,6 +467,7 @@ contract SlashingManager is
         IInterfold newInterfold
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(newInterfold) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(interfold));
         address oldValue = address(interfold);
         interfold = newInterfold;
         emit InterfoldUpdated(oldValue, address(newInterfold));
@@ -431,6 +478,7 @@ contract SlashingManager is
         IE3RefundManager newRefundManager
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(newRefundManager) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(e3RefundManager));
         address oldValue = address(e3RefundManager);
         e3RefundManager = newRefundManager;
         emit E3RefundManagerUpdated(oldValue, address(newRefundManager));
@@ -459,7 +507,8 @@ contract SlashingManager is
     ///      Execution is atomic when `policy.appealWindow == 0`, otherwise deferred so
     ///      the accused can {fileAppeal}. Evidence format:
     ///      `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
-    ///      bytes evidence, uint256 deadline, bytes[] signatures)`. Voters sign the EIP-712
+    ///      bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`.
+    ///      Voters sign the EIP-712
     ///      `AccusationVote` against this contract's domain; all `dataHash` values
     ///      must be identical and equal `keccak256(evidence)`.
     function proposeSlash(
@@ -691,113 +740,24 @@ contract SlashingManager is
 
     /// @dev Verifies Lane A attestation evidence: decodes, checks quorum (>= M), verifies
     ///      each EIP-712 `AccusationVote` signature, confirms voters are active committee
-    ///      members, enforces the shared `deadline`, and rejects equivocation (all
-    ///      `dataHash` values must match and bind to `keccak256(evidence)`).
+    ///      members, enforces the shared issue time and deadline, and rejects equivocation
+    ///      (all `dataHash` values must match and bind to `keccak256(evidence)`).
     ///      Voters must be sorted ascending (no duplicates).
     function _verifyAttestationEvidence(
         bytes calldata proof,
         uint256 e3Id,
         address operator
     ) internal view {
-        (
-            uint256 proofType,
-            address[] memory voters,
-            bytes32[] memory dataHashes,
-            bytes memory evidence,
-            uint256 deadline,
-            bytes[] memory signatures
-        ) = abi.decode(
-                proof,
-                (uint256, address[], bytes32[], bytes, uint256, bytes[])
-            );
-
-        uint256 numVotes = voters.length;
-        require(
-            numVotes == dataHashes.length && numVotes == signatures.length,
-            InvalidProof()
+        E3Dependencies memory dependencies = _dependenciesFor(e3Id);
+        SlashingEvidenceLib.verifyAttestationEvidence(
+            proof,
+            e3Id,
+            operator,
+            address(dependencies.registry),
+            dependencies.accusationVoteValidity,
+            dependencies.slashSubmissionDeadline,
+            _domainSeparatorV4()
         );
-        require(block.timestamp <= deadline, SignatureExpired());
-
-        // Compute accusation ID matching AccusationManager::accusation_id() on the Rust side
-        bytes32 accusationId = keccak256(
-            abi.encodePacked(block.chainid, e3Id, operator, proofType)
-        );
-
-        // Get committee threshold — need at least M agreeing votes
-        {
-            uint32 thresholdM = _committeeThresholdM(e3Id);
-            require(thresholdM > 0, InvalidProposal());
-            require(numVotes >= thresholdM, InsufficientAttestations());
-        }
-
-        // detect equivocation across voters — the entire committee must agree
-        // on the exact `dataHash` they witnessed. Divergent hashes indicate at least
-        // one voter is signing inconsistent statements and the attestation must not be
-        // accepted as a single fault witness.
-        bytes32 sharedDataHash = dataHashes[0];
-        require(keccak256(evidence) == sharedDataHash, InvalidProof());
-
-        // Verify each vote signature and membership
-        address prevVoter = address(0);
-        for (uint256 i = 0; i < numVotes; i++) {
-            address voter = voters[i];
-
-            // Sorted ascending order prevents duplicate voters
-            require(voter > prevVoter, DuplicateVoter());
-            prevVoter = voter;
-
-            // The accused cannot vote on their own accusation (conflict of interest)
-            require(voter != operator, VoterIsAccused());
-
-            // every voter must witness the same data hash
-            require(dataHashes[i] == sharedDataHash, EquivocationDetected());
-
-            // Verify voter is an active committee member for this E3
-            require(
-                _isCommitteeMemberActive(e3Id, voter),
-                VoterNotInCommittee()
-            );
-
-            // EIP-712 vote digest — cross-chain replay is prevented by the domain
-            // separator's chainId, and cross-contract replay by `verifyingContract`.
-            // Scoped block avoids stack-too-deep.
-            {
-                bytes32 structHash = keccak256(
-                    abi.encode(
-                        VOTE_TYPEHASH,
-                        e3Id,
-                        accusationId,
-                        voter,
-                        dataHashes[i],
-                        deadline
-                    )
-                );
-                bytes32 digest = _hashTypedDataV4(structHash);
-                require(
-                    ECDSA.recover(digest, signatures[i]) == voter,
-                    InvalidVoteSignature()
-                );
-            }
-        }
-    }
-
-    function _committeeThresholdM(
-        uint256 e3Id
-    ) internal view returns (uint32 thresholdM) {
-        (, thresholdM, , ) = _dependenciesFor(e3Id)
-            .registry
-            .getCommitteeViability(e3Id);
-    }
-
-    function _isCommitteeMemberActive(
-        uint256 e3Id,
-        address voter
-    ) internal view returns (bool) {
-        return
-            _dependenciesFor(e3Id).registry.isCommitteeMemberActive(
-                e3Id,
-                voter
-            );
     }
 
     /// @dev Executes a slash: applies financial penalties, optional ban, and committee expulsion.
@@ -1153,7 +1113,12 @@ contract SlashingManager is
         bytes32 reason,
         address updater
     ) internal {
+        bool previous = banned[operator];
         banned[operator] = status;
+        if (previous != status) {
+            if (status) activeBanCount++;
+            else activeBanCount--;
+        }
         registry.setOperatorBan(operator, status);
         emit NodeBanUpdated(operator, status, reason, updater);
     }
@@ -1171,6 +1136,13 @@ contract SlashingManager is
             context.configurationVersion !=
             e3Bonding.bondingAssetConfigurationVersion()
         ) revert SlashPolicyAssetConfigurationMismatch(reason);
+    }
+
+    function _requireGenerationDrained(address current) private view {
+        if (
+            current != address(0) &&
+            (activeE3Assignments != 0 || activeBanCount != 0)
+        ) revert InvalidProposal();
     }
 
     /// @notice ERC-165 interface detection. Advertises {ISlashingManager}

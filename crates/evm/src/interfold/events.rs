@@ -7,8 +7,8 @@
 //! Pure translation of `Interfold.sol` logs into `InterfoldEventData`.
 
 use crate::contracts::IInterfold;
-use alloy::primitives::{LogData, B256};
-use alloy::sol_types::SolEvent;
+use alloy::primitives::{keccak256, LogData, B256};
+use alloy::sol_types::{SolEvent, SolValue};
 use anyhow::{anyhow, Context as _, Result};
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
@@ -24,6 +24,17 @@ use num_bigint::BigUint;
 use tracing::{info, trace, warn};
 
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
+
+fn crypto_config_id(params: &[u8]) -> B256 {
+    keccak256(
+        (
+            keccak256(b"fhe.rs:BFV"),
+            keccak256(params),
+            keccak256(b"interfold-bfv-v1"),
+        )
+            .abi_encode(),
+    )
+}
 
 impl E3RequestedWithChainId {
     fn try_into_e3_requested(self) -> anyhow::Result<e3_events::E3Requested> {
@@ -57,6 +68,15 @@ impl E3RequestedWithChainId {
         // Build BFV parameters from the preset
         let params_arc = BfvParamSet::from(params_preset).build_arc();
         let params_bytes = encode_bfv_params(&params_arc);
+        let expected_config_id = crypto_config_id(&params_bytes);
+        if self.0.cryptoConfigId != expected_config_id {
+            anyhow::bail!(
+                "Unsupported crypto configuration {} for E3 {}; this ciphernode was built for {}",
+                self.0.cryptoConfigId,
+                self.0.e3Id,
+                expected_config_id
+            );
+        }
 
         // Lambda is secure or insecure depending on the preset's security tier.
         let lambda = params_preset
@@ -597,7 +617,9 @@ mod tests {
                 requester: Address::ZERO,
                 ciphertextCommitment: B256::ZERO,
             },
-            e3Program: Address::ZERO,
+            cryptoConfigId: crypto_config_id(&encode_bfv_params(
+                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
+            )),
         };
 
         let converted = E3RequestedWithChainId(event, 100)
@@ -628,7 +650,9 @@ mod tests {
                 requester: Address::ZERO,
                 ciphertextCommitment: B256::ZERO,
             },
-            e3Program: Address::ZERO,
+            cryptoConfigId: crypto_config_id(&encode_bfv_params(
+                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
+            )),
         };
         let log = event.encode_log_data();
 

@@ -24,6 +24,7 @@ fn reference_vote_digest(
     accusation_id: [u8; 32],
     voter: Address,
     data_hash: [u8; 32],
+    issued_at: u64,
     deadline: u64,
 ) -> [u8; 32] {
     let domain_typehash: [u8; 32] = keccak256(
@@ -52,6 +53,7 @@ fn reference_vote_digest(
             FixedBytes::<32>::from(accusation_id),
             voter,
             FixedBytes::<32>::from(data_hash),
+            U256::from(issued_at),
             U256::from(deadline),
         )
             .abi_encode(),
@@ -78,6 +80,7 @@ fn vote_digest_matches_reference() {
         .unwrap();
     let accusation_id = [0xab; 32];
     let data_hash = [0xcd; 32];
+    let issued_at = 1_699_999_000;
     let deadline: u64 = 1_700_000_000;
 
     let vote = AccusationVote {
@@ -85,6 +88,7 @@ fn vote_digest_matches_reference() {
         accusation_id,
         voter,
         data_hash,
+        issued_at,
         deadline,
         signature: ArcBytes::default(),
     };
@@ -97,6 +101,7 @@ fn vote_digest_matches_reference() {
         accusation_id,
         voter,
         data_hash,
+        issued_at,
         deadline,
     );
 
@@ -126,6 +131,7 @@ fn actor_signature_recovers_to_voter() {
         accusation_id: [0x07; 32],
         voter,
         data_hash: [0x08; 32],
+        issued_at: 1_699_999_000,
         deadline: 1_700_000_000,
         signature: ArcBytes::default(),
     };
@@ -157,6 +163,7 @@ fn accusation_digest_binds_deadline() {
         accused_party_id: 1,
         proof_type: ProofType::C1PkGeneration,
         data_hash: [0x42; 32],
+        issued_at: 1_699_999_000,
         deadline,
         signed_payload: None,
         signature: ArcBytes::default(),
@@ -171,26 +178,33 @@ fn peer_deadline_acceptance_enforces_local_window() {
     let now = 1_700_000_000u64;
     let validity = 1_800u64;
     let skew = DEFAULT_ACCUSATION_DEADLINE_SKEW_SECS;
-    let max_ok = now + validity + skew;
+    let issued_at = now + skew;
+    let max_ok = issued_at + validity;
 
     assert!(
-        !AccusationVoting::is_peer_deadline_acceptable(now, now, validity, skew),
+        !AccusationVoting::is_peer_deadline_acceptable(now, now, now, validity, skew),
         "deadline equal to now must be rejected"
     );
     assert!(
-        !AccusationVoting::is_peer_deadline_acceptable(now - 1, now, validity, skew),
+        !AccusationVoting::is_peer_deadline_acceptable(
+            now - validity,
+            now - 1,
+            now,
+            validity,
+            skew
+        ),
         "expired deadline must be rejected"
     );
     assert!(
-        AccusationVoting::is_peer_deadline_acceptable(max_ok, now, validity, skew),
+        AccusationVoting::is_peer_deadline_acceptable(issued_at, max_ok, now, validity, skew),
         "deadline at upper bound must be accepted"
     );
     assert!(
-        !AccusationVoting::is_peer_deadline_acceptable(max_ok + 1, now, validity, skew),
+        !AccusationVoting::is_peer_deadline_acceptable(issued_at, max_ok + 1, now, validity, skew),
         "far-future deadline must be rejected"
     );
     assert!(
-        !AccusationVoting::is_peer_deadline_acceptable(now + 10, now, 0, skew),
+        !AccusationVoting::is_peer_deadline_acceptable(now, now + 10, now, 0, skew),
         "vote_validity_secs=0 must reject peer accusations"
     );
 }

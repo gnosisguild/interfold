@@ -7,7 +7,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignMessage } from 'wagmi'
-import { CrispSDK, encodeSolidityProof } from '@crisp-e3/sdk'
+import { encodeSolidityProof, generateMaskVoteProof, generateVoteProof } from '@crisp-e3/sdk'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
@@ -20,6 +20,30 @@ import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
+
+const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uint8Array | undefined> => {
+  const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ round_id: e3Id, address }),
+  })
+
+  if (response.status === 404) return undefined
+  if (!response.ok) throw new Error(`Failed to fetch previous ciphertext: ${response.statusText}`)
+
+  const body: unknown = await response.json()
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('ciphertext' in body) ||
+    !Array.isArray(body.ciphertext) ||
+    !body.ciphertext.every((value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255)
+  ) {
+    throw new Error('Previous ciphertext response contains invalid bytes')
+  }
+
+  return new Uint8Array(body.ciphertext)
+}
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
 
@@ -95,27 +119,27 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       if (!votingRound) throw new Error('No voting round available for proof generation')
 
       try {
-        const sdk = new CrispSDK(INTERFOLD_API)
         const publicKey = new Uint8Array(votingRound.pk_bytes)
+        const previousCiphertext = await getPreviousCiphertext(votingRound.round_id, address)
 
         const proof = isAMask
-          ? await sdk.generateMaskVoteProof({
-              e3Id: votingRound.round_id,
+          ? await generateMaskVoteProof({
               publicKey,
               balance,
               slotAddress: address,
               merkleLeaves,
               numOptions: NUM_OPTIONS,
+              previousCiphertext,
             })
-          : await sdk.generateVoteProof({
+          : await generateVoteProof({
               vote,
-              e3Id: votingRound.round_id,
               publicKey,
               signature: signature as `0x${string}`,
               merkleLeaves,
               balance,
               messageHash,
               slotAddress: address,
+              previousCiphertext,
             })
 
         return encodeSolidityProof(proof)

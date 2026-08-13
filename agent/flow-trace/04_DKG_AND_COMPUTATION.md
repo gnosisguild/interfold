@@ -713,6 +713,9 @@ phase.
         │  │       │  │    require(now <= dkgDeadline)       │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
+        │  │       │  │    computeDeadline = max(now,         │  │
+        │  │       │  │      inputWindowEnd) + snapshotted    │  │
+        │  │       │  │      computeWindow                    │  │
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
@@ -838,6 +841,12 @@ Compute provider runs computation on encrypted data:
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+`onCommitteePublished` stores the committee key and starts the compute clock. The compute deadline
+is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key publication does
+not consume the compute provider's allotted window, and publication still waits until the input
+window closes. The request-time timeout snapshot prevents later governance changes from changing an
+active E3's deadlines.
 
 ---
 

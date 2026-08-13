@@ -61,6 +61,8 @@ export interface E3RequestParams extends RequestParams {
   paramSet: number
   computeProviderParams: `0x${string}`
   customParams?: `0x${string}`
+  /** Maximum fee token amount accepted. Defaults to a fresh quote. */
+  maxFee?: bigint
 }
 
 export enum E3Stage {

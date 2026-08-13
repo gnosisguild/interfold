@@ -8,6 +8,7 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -161,14 +162,14 @@ library InterfoldPricing {
     /// @dev Integer-division dust goes to the slot selected by `e3Id % n`.
     /// @dev Runs through a linked library call to keep the accounting loop out
     ///      of Interfold's size-constrained runtime bytecode.
-    function computeAndCreditRewards(
+    function _computeAndCreditRewards(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
         IE3RefundManager refundManager,
         uint256 cnAmount,
         uint256 e3Id,
         address[] memory nodes,
         IERC20 token
-    ) external returns (uint256[] memory amounts) {
+    ) private returns (uint256[] memory amounts) {
         uint256 n = nodes.length;
         amounts = new uint256[](n);
         uint256 per = cnAmount / n;
@@ -189,6 +190,71 @@ library InterfoldPricing {
                 );
             }
         }
+    }
+
+    /// @notice Settles one successful E3 into pull-payment ledgers.
+    function distributeRewards(
+        mapping(uint256 e3Id => uint256 amount) storage e3Payments,
+        mapping(uint256 e3Id => IERC20 token) storage feeTokens,
+        mapping(uint256 e3Id => address requester) storage requesters,
+        mapping(uint256 e3Id => uint16 bps) storage protocolShareBps,
+        mapping(uint256 e3Id => address treasury) storage protocolTreasuries,
+        mapping(address treasury => mapping(IERC20 token => uint256 amount))
+            storage pendingTreasury,
+        mapping(uint256 e3Id => mapping(address account => uint256 amount))
+            storage pendingRewards,
+        address registryAddress,
+        IE3RefundManager refundManager,
+        uint256 e3Id
+    ) external {
+        (address[] memory activeNodes, ) = ICiphernodeRegistry(registryAddress)
+            .getActiveCommitteeNodes(e3Id);
+        uint256 totalAmount = e3Payments[e3Id];
+        e3Payments[e3Id] = 0;
+        IERC20 paymentToken = feeTokens[e3Id];
+
+        if (totalAmount == 0) {
+            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
+            return;
+        }
+
+        uint256 activeLength = activeNodes.length;
+        if (activeLength == 0) {
+            address requester = requesters[e3Id];
+            if (requester == address(0)) revert IInterfold.E3DoesNotExist(e3Id);
+            _transferExact(paymentToken, requester, totalAmount);
+            refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
+            return;
+        }
+
+        uint256 protocolAmount;
+        uint16 shareBps = protocolShareBps[e3Id];
+        address treasury = protocolTreasuries[e3Id];
+        if (shareBps > 0 && treasury != address(0)) {
+            protocolAmount =
+                (totalAmount * uint256(shareBps)) /
+                uint256(BPS_BASE);
+            if (protocolAmount > 0) {
+                pendingTreasury[treasury][paymentToken] += protocolAmount;
+                emit IInterfold.TreasuryCredited(
+                    e3Id,
+                    treasury,
+                    paymentToken,
+                    protocolAmount
+                );
+            }
+        }
+
+        uint256[] memory amounts = _computeAndCreditRewards(
+            pendingRewards,
+            refundManager,
+            totalAmount - protocolAmount,
+            e3Id,
+            activeNodes,
+            paymentToken
+        );
+        emit IInterfold.RewardsDistributed(e3Id, activeNodes, amounts);
+        refundManager.distributeSlashedFundsOnSuccess(e3Id, paymentToken);
     }
 
     function _creditReward(
@@ -269,13 +335,7 @@ library InterfoldPricing {
         uint256 inputWindowStart,
         uint256 inputWindowEnd
     ) external pure returns (uint256 fee) {
-        _validateQuoteWindow(
-            tc,
-            sortitionWindow,
-            requestTime,
-            inputWindowStart,
-            inputWindowEnd
-        );
+        _validateQuoteWindow(requestTime, inputWindowStart, inputWindowEnd);
 
         if (paramSet != ActiveCryptoConfig.PARAM_SET)
             revert IInterfold.UnsupportedCryptoConfig();
@@ -311,8 +371,6 @@ library InterfoldPricing {
     }
 
     function _validateQuoteWindow(
-        IInterfold.E3TimeoutConfig calldata tc,
-        uint256 sortitionWindow,
         uint256 requestTime,
         uint256 inputWindowStart,
         uint256 inputWindowEnd
@@ -321,14 +379,6 @@ library InterfoldPricing {
             revert IInterfold.InvalidInputDeadlineStart(inputWindowStart);
         if (inputWindowEnd < inputWindowStart)
             revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
-
-        uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
-        uint256 committeeDeadline = requestTime + sortitionWindow;
-        if (computeDeadline <= committeeDeadline)
-            revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
-                computeDeadline,
-                committeeDeadline
-            );
     }
 
     function _baseFee(

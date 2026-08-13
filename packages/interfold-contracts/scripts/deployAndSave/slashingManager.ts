@@ -58,13 +58,13 @@ export const deployAndSaveSlashingManager = async ({
   }
 
   const preDeployedArgs = readDeploymentArgs("SlashingManager", chain);
+  const evidenceLibAddress = preDeployedArgs?.libraries?.SlashingEvidenceLib;
+  const argumentsMatch =
+    preDeployedArgs?.constructorArgs?.admin === admin &&
+    String(preDeployedArgs?.constructorArgs?.initialDelay ?? "") ===
+      String(delay);
 
-  if (
-    !admin ||
-    (preDeployedArgs?.constructorArgs?.admin === admin &&
-      String(preDeployedArgs?.constructorArgs?.initialDelay ?? "") ===
-        String(delay))
-  ) {
+  if ((!admin || argumentsMatch) && evidenceLibAddress) {
     if (!preDeployedArgs?.address) {
       throw new Error(
         "SlashingManager address not found, it must be deployed first",
@@ -77,8 +77,34 @@ export const deployAndSaveSlashingManager = async ({
     return { slashingManager: slashingManagerContract };
   }
 
-  const slashingManagerFactory =
-    await ethers.getContractFactory("SlashingManager");
+  if (!admin) {
+    throw new Error(
+      "SlashingManager deployment is missing SlashingEvidenceLib metadata; redeploy with an admin address",
+    );
+  }
+
+  const evidenceFactory = await ethers.getContractFactory(
+    "SlashingEvidenceLib",
+  );
+  const evidenceLib = await evidenceFactory.deploy();
+  await evidenceLib.waitForDeployment();
+  const deployedEvidenceLibAddress = await evidenceLib.getAddress();
+  storeDeploymentArgs(
+    {
+      blockNumber: await ethers.provider.getBlockNumber(),
+      address: deployedEvidenceLibAddress,
+    },
+    "SlashingEvidenceLib",
+    chain,
+  );
+  const slashingManagerFactory = await ethers.getContractFactory(
+    "SlashingManager",
+    {
+      libraries: {
+        SlashingEvidenceLib: deployedEvidenceLibAddress,
+      },
+    },
+  );
   const slashingManager = await slashingManagerFactory.deploy(delay, admin);
 
   await slashingManager.waitForDeployment();
@@ -92,6 +118,9 @@ export const deployAndSaveSlashingManager = async ({
       constructorArgs: {
         initialDelay: delay.toString(),
         admin,
+      },
+      libraries: {
+        SlashingEvidenceLib: deployedEvidenceLibAddress,
       },
       blockNumber,
       address: slashingManagerAddress,

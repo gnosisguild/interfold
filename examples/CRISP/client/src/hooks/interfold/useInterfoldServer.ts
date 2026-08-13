@@ -37,16 +37,16 @@ export const useInterfoldServer = () => {
   const { GetCurrentRound, GetWebAllResult, BroadcastVote, GetRoundStateLite, GetWebResult, GetVoteStatus } = InterfoldEndpoints
   const { fetchData, isLoading } = useApi()
   const getCurrentRound = () => fetchData<CurrentRound, { requesters: string[] }>(GetCurrentRound, 'post', { requesters: ROUND_REQUESTERS })
-  const getRoundStateLite = (round_id: number) => fetchData<VoteStateLite, { round_id: number }>(GetRoundStateLite, 'post', { round_id })
+  const getRoundStateLite = (round_id: string) => fetchData<VoteStateLite, { round_id: string }>(GetRoundStateLite, 'post', { round_id })
   const broadcastVote = (vote: BroadcastVoteRequest) => fetchData<BroadcastVoteResponse, BroadcastVoteRequest>(BroadcastVote, 'post', vote)
   const getWebResult = () =>
     fetchData<PollRequestResult[], { requesters: string[] }>(GetWebAllResult, 'post', { requesters: ROUND_REQUESTERS })
-  const getWebResultByRound = (round_id: number) => fetchData<PollRequestResult, { round_id: number }>(GetWebResult, 'post', { round_id })
+  const getWebResultByRound = (round_id: string) => fetchData<PollRequestResult, { round_id: string }>(GetWebResult, 'post', { round_id })
   const getVoteStatus = (request: VoteStatusRequest) => fetchData<VoteStatusResponse, VoteStatusRequest>(GetVoteStatus, 'post', request)
-  const getEligibleVoters = (round_id: number) =>
-    fetchData<EligibleVoter[], { round_id: number }>(InterfoldEndpoints.GetEligibleVoters, 'post', { round_id })
-  const getMerkleLeaves = (round_id: number) =>
-    fetchData<string[], { round_id: number }>(InterfoldEndpoints.GetMerkleLeaves, 'post', { round_id })
+  const getEligibleVoters = (round_id: string) =>
+    fetchData<EligibleVoter[], { round_id: string }>(InterfoldEndpoints.GetEligibleVoters, 'post', { round_id })
+  const getMerkleLeaves = (round_id: string) =>
+    fetchData<string[], { round_id: string }>(InterfoldEndpoints.GetMerkleLeaves, 'post', { round_id })
 
   return {
     isLoading,

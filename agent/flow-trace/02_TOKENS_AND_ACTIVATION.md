@@ -376,22 +376,25 @@ Bond owner submits removeTicketBalanceFor(operator, rawAmount)
 
 ## Step 5: Claim Exits
 
-The owner calls `claimExitsFor(operator, ...)`; both ticket underlying and FOLD are paid to
-`bondOwnerOf(operator)`, which may be the operator itself. The exit queue remains keyed by operator
-so queued assets remain slashable against the correct protocol identity.
+Both assets are always paid to `bondOwnerOf(operator)`, which may be the operator itself. Anyone can
+settle matured ticket exits by passing `maxLicense = 0`. A claim that includes license collateral
+must come from the bond owner. The exit queue remains keyed by operator, so queued assets stay
+slashable against the correct protocol identity.
 
-```
-Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
+```text
+Caller submits claimExitsFor(operator, maxTicket, maxLicense)
 │
 ├─ BondingRegistry.claimExitsFor(operator, maxTicket, maxLicense)
 │     │
 │     │  ┌─── ON-CHAIN ─────────────────────────────────────────┐
 │     │  │                                                       │
 │     │  │  claimExitsFor(operator, maxTicket, maxLicense) {     │
-│     │  │    1. require(msg.sender == bondOwnerOf(operator))    │
-│     │  │    2. (ticketAmount, _) =                             │
+│     │  │    1. if maxLicense != 0:                             │
+│     │  │         require(msg.sender == bondOwnerOf(operator))  │
+│     │  │    2. Reject active committee or slash obligations   │
+│     │  │    3. (ticketAmount, licenseAmount) =                 │
 │     │  │       _exits.claimAssets(                             │
-│     │  │         operator, maxTicket, 0                        │
+│     │  │         operator, maxTicket, maxLicense               │
 │     │  │       )                                               │
 │     │  │       │                                               │
 │     │  │       │  ┌─ ExitQueueLib.claimAssets() ───────────┐  │
@@ -405,8 +408,9 @@ Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 │     │  │       │  │  Update pendingTotals                  │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    3. if ticketAmount > 0:                            │
-│     │  │       ticketToken.payout(msg.sender, ticketAmount)    │
+│     │  │    4. recipient = bondOwnerOf(operator)               │
+│     │  │    5. if ticketAmount > 0:                            │
+│     │  │       ticketToken.payout(recipient, ticketAmount)     │
 │     │  │       │                                               │
 │     │  │       │  ┌─ InterfoldTicketToken.payout() ──────────┐  │
 │     │  │       │  │  Transfers collateral from             │  │
@@ -416,10 +420,10 @@ Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 │     │  │       │  │  require owner receives exactly amount  │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    4. if licenseAmount > 0:                           │
+│     │  │    6. if licenseAmount > 0:                           │
 │     │  │       totalLicenseLiability -= licenseAmount          │
 │     │  │       licenseToken.safeTransfer(                       │
-│     │  │         msg.sender, licenseAmount)                     │
+│     │  │         recipient, licenseAmount)                      │
 │     │  │       → require owner receives exactly licenseAmount   │
 │     │  │       → require registry spends exactly licenseAmount  │
 │     │  │       → Pending FOLD is removed from totalBonded()    │
@@ -429,6 +433,11 @@ Bond owner submits claimExitsFor(operator, maxTicket, maxLicense)
 │
 └─ Both assets are paid to the bond owner
 ```
+
+Permissionless ticket settlement lets governance clear a matured ticket exit even when an operator
+does not submit the payout transaction. A ticket-token registry change also requires both
+`totalSupply()` and `payableBalance()` to be zero. A pending registry change freezes new deposits
+and burns until governance activates or cancels it.
 
 ---
 
@@ -499,7 +508,8 @@ The token contracts were hardened against the following audit findings. All chan
   `RegistryLockAlreadySet` on repeat) further registry swaps must go through
   `requestRegistryChange(addr)` → wait `REGISTRY_CHANGE_DELAY = 1 day` → `activateRegistryChange()`.
   Errors: `RegistryNotLocked`, `RegistryChangeNotReady`, `NoPendingRegistry`,
-  `RegistryAlreadyLocked`. `cancelRegistryChange()` clears the pending swap.
+  `RegistryAlreadyLocked`. `cancelRegistryChange()` clears the pending swap. The swap requires zero
+  live ticket supply and zero payable balance. The pending period freezes new ticket liabilities.
 - **M-11 — permit disabled.** `permit()` always reverts `PermitDisabled` so non-transferable tickets
   cannot be moved via off-chain signatures.
 - **M-12 — rescueERC20.** `rescueERC20(token, to, amount)` lets the owner recover stray ERC-20s but

@@ -18,7 +18,7 @@ import type { CreditMode, OnChainRoundData, RoundDetails, TokenDetails } from '.
  * @param e3Id - The e3Id of the round
  * @returns The round details
  */
-export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<RoundDetails> => {
+export const getRoundDetails = async (serverUrl: string, e3Id: bigint): Promise<RoundDetails> => {
   const data = await getRoundStateLite(serverUrl, e3Id)
 
   return {
@@ -48,7 +48,7 @@ export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<
  * @param e3Id - The e3Id of the round
  * @returns The token address, balance threshold and snapshot block
  */
-export const getRoundTokenDetails = async (serverUrl: string, e3Id: number): Promise<TokenDetails> => {
+export const getRoundTokenDetails = async (serverUrl: string, e3Id: bigint): Promise<TokenDetails> => {
   const roundDetails = await getRoundDetails(serverUrl, e3Id)
   return {
     tokenAddress: roundDetails.tokenAddress,
@@ -69,7 +69,7 @@ export const getRoundTokenDetails = async (serverUrl: string, e3Id: number): Pro
  * @param chainId - The chain ID of the network the program is deployed on
  * @returns The on chain round data
  */
-export const getOnChainRoundData = async (programAddress: string, e3Id: number, chainId: number): Promise<OnChainRoundData> => {
+export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, chainId: number): Promise<OnChainRoundData> => {
   const publicClient = getPublicClient(chainId)
 
   const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await publicClient.readContract({
@@ -78,7 +78,7 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: number, 
       'function getRoundData(uint256 e3Id) view returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, uint8 creditMode, uint256 inputRoot, uint40 numberOfVotes)',
     ]),
     functionName: 'getRoundData',
-    args: [BigInt(e3Id)],
+    args: [e3Id],
   })
 
   return {
@@ -100,13 +100,13 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: number, 
  * @param address - The address of the slot
  * @returns The previous ciphertext for the slot, or undefined if the slot is empty
  */
-export const getPreviousCiphertext = async (serverUrl: string, e3Id: number, address: string): Promise<Uint8Array | undefined> => {
+export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, address: string): Promise<Uint8Array | undefined> => {
   const response = await fetch(`${serverUrl}/${CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ round_id: e3Id, address }),
+    body: JSON.stringify({ round_id: e3Id.toString(), address }),
   })
 
   if (response.status === 404) {

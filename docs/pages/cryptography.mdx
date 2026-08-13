@@ -268,30 +268,29 @@ call. The on-chain check enforces, in `_verifyAttestationEvidence`:
 
 1. **Voter quorum and signatures**: ≥ `M` committee-member voters (sorted ascending, accused
    excluded), each signing the canonical EIP-712 typed-data hash over
-   `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 deadline)`.
+   `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 issuedAt, uint256 deadline)`.
    `chainId` and `verifyingContract = address(SlashingManager)` live in the EIP-712 domain, not the
    struct — so signatures can't be replayed across chains or against a different contract.
 2. **Same evidence across voters**: all `dataHashes[i]` must equal a common `dataHash`. Without this
    each voter could be agreeing to "something bad" of their own — the quorum would not actually
    agree on what they observed.
-3. **Shared signature deadline**: every voter signs the same `deadline` (chosen by the accuser), and
-   the contract enforces `block.timestamp <= deadline`. Stolen signatures can't be replayed
-   indefinitely; the validity window is governance-mutable via the registry's
-   `accusationVoteValidity`.
+3. **Bounded signature window**: every voter signs the same `issuedAt` and `deadline`. The contract
+   limits the window to the E3's request-time policy, rejects expired or far-future votes, and
+   rejects submissions after the E3's objective reporting deadline. A live zero
+   `accusationVoteValidity` pauses new attestation slashes.
 4. **Agreement is implicit**: the gossip wire no longer carries disagreement — a peer who finds the
    disputed proof passes simply stays silent. Every signature submitted in evidence is an agreement,
    so an `agrees` flag is no longer signed or transported.
 
-The faulty-proof bytes themselves are kept as off-chain audit metadata on the
-`AccusationQuorumReached` event so any observer can independently re-derive each voter's `dataHash`;
-they are intentionally not on chain (the `dataHash` equality check is all the contract needs for
-attribution, and dropping the preimage saves significant calldata).
+The faulty-proof bytes are included in the slash proposal and retained on the off-chain
+`AccusationQuorumReached` event. The contract hashes those bytes and requires the result to match
+the value signed by every voter.
 
 Combined with the fold-attestation chain, the slashing flow still forms a complete attribution
 chain: operator → registered address at `topNodes[partyId]` → EIP-712 signature on a specific
-`(e3Id, accusationId, dataHash, deadline)` tuple → off-chain audit bytes recovering the original
-proof. Both the DKG fault-attribution side and the slashing-evidence side are cryptographically
-bound on chain.
+`(e3Id, accusationId, dataHash, issuedAt, deadline)` tuple → submitted evidence bytes recovering the
+original proof. Both the DKG fault-attribution side and the slashing-evidence side are
+cryptographically bound on chain.
 
 #### Committee hash binding
 

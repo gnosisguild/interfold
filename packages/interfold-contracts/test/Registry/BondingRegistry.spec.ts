@@ -13,6 +13,7 @@ import {
   SEVEN_DAYS,
   TICKET_PRICE,
   deployInterfoldSystem,
+  deploySlashingManager,
   ethers,
   networkHelpers,
   setBondingAssetConfig,
@@ -1351,6 +1352,73 @@ describe("BondingRegistry", function () {
       );
     });
 
+    it("lets anyone settle matured ticket exits to the bond owner", async function () {
+      const {
+        bondingRegistry,
+        ticketToken,
+        licenseToken,
+        usdcToken,
+        operator1,
+        notTheOwner,
+      } = await loadFixture(setup);
+      const ticketAmount = ethers.parseUnits("100", 6);
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, LICENSE_REQUIRED_BOND);
+      await bondingRegistry
+        .connect(operator1)
+        .registerOperatorFor(operator1Address);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .addTicketBalanceFor(operator1Address, ticketAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .removeTicketBalanceFor(operator1Address, ticketAmount);
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+
+      const ownerBalanceBefore = await usdcToken.balanceOf(
+        operator1OwnerAddress,
+      );
+      await bondingRegistry
+        .connect(notTheOwner)
+        .claimExitsFor(operator1Address, ticketAmount, 0);
+
+      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
+        ownerBalanceBefore + ticketAmount,
+      );
+      expect(await ticketToken.payableBalance()).to.equal(0);
+    });
+
+    it("keeps license-exit settlement restricted to the bond owner", async function () {
+      const { bondingRegistry, licenseToken, operator1, notTheOwner } =
+        await loadFixture(setup);
+      const bondAmount = LICENSE_REQUIRED_BOND;
+
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .bondLicenseFor(operator1Address, bondAmount);
+      await bondingRegistry
+        .connect(operator1)
+        .unbondLicenseFor(operator1Address, bondAmount);
+      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .claimExitsFor(operator1Address, 0, bondAmount),
+      ).to.be.revertedWithCustomError(bondingRegistry, "NotBondOwner");
+    });
+
     it("reverts if exit not ready", async function () {
       const { bondingRegistry, licenseToken, operator1 } =
         await loadFixture(setup);
@@ -1528,10 +1596,10 @@ describe("BondingRegistry", function () {
           )
           .withArgs(eoa);
 
-        const candidate = await ethers.deployContract("SlashingManager", [
+        const candidate = await deploySlashingManager(
           0,
           await owner.getAddress(),
-        ]);
+        );
         const candidateAddress = await candidate.getAddress();
         await expect(bondingRegistry.setSlashingManager(candidateAddress))
           .to.be.revertedWithCustomError(
@@ -1577,10 +1645,10 @@ describe("BondingRegistry", function () {
           .setOperatorBan(operator1Address, true);
         await networkHelpers.stopImpersonatingAccount(oldManager);
 
-        const replacement = await ethers.deployContract("SlashingManager", [
+        const replacement = await deploySlashingManager(
           0,
           await owner.getAddress(),
-        ]);
+        );
         await replacement.setBondingRegistry(
           await bondingRegistry.getAddress(),
         );
@@ -1706,19 +1774,16 @@ describe("BondingRegistry", function () {
           .withArgs(AddressTwo, await bondingRegistry.getAddress());
       });
 
-      it("keeps license slashing live after ticket registry drift", async function () {
+      it("blocks ticket registry drift while collateral is outstanding", async function () {
         const {
           bondingRegistry,
           ticketToken,
           licenseToken,
           usdcToken,
           operator1,
-          slashingManager,
         } = await loadFixture(setup);
         const bondAmount = LICENSE_REQUIRED_BOND;
         const ticketAmount = TICKET_PRICE * BigInt(MIN_TICKET_BALANCE);
-        const slashAmount = 1n;
-        const slashReason = ethers.encodeBytes32String("TEST_SLASH");
 
         await licenseToken
           .connect(operator1)
@@ -1737,26 +1802,9 @@ describe("BondingRegistry", function () {
           .addTicketBalanceFor(operator1Address, ticketAmount);
         expect(await bondingRegistry.isActive(operator1Address)).to.be.true;
 
-        await ticketToken.setRegistry(AddressTwo);
-        const slashSigner = await impersonateSlashingManager(slashingManager);
-        await expect(
-          bondingRegistry
-            .connect(slashSigner)
-            .slashLicenseBond(operator1Address, slashAmount, slashReason),
-        )
-          .to.emit(bondingRegistry, "LicenseBondUpdated")
-          .withArgs(
-            operator1Address,
-            -slashAmount,
-            bondAmount - slashAmount,
-            slashReason,
-          );
-        await networkHelpers.stopImpersonatingAccount(
-          await slashingManager.getAddress(),
-        );
-
-        expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
-        expect(await bondingRegistry.numActiveOperators()).to.equal(0);
+        await expect(ticketToken.setRegistry(AddressTwo))
+          .to.be.revertedWithCustomError(ticketToken, "OutstandingTicketSupply")
+          .withArgs(ticketAmount);
       });
     });
 

@@ -47,8 +47,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   balance above `totalLicenseLiability` to the treasury before validating the replacement, so an
   unsolicited transfer cannot interleave with rotation. — `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
-  Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale only; it
-  does not establish the token's economic value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+  Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
+  time. Decimal validation checks the unit scale only; it does not establish the token's economic
+  value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
 - **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
   license token must transfer exact amounts and must not rebase account balances. Every custody
   deposit checks the custody increase. Every outbound transfer checks the recipient increase and
@@ -71,11 +72,16 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### E3 request and committee selection
 
+- E3 IDs include the Interfold controller address in their high 160 bits. The low 96 bits form the
+  controller-local sequence. On-chain snapshots, signed payloads, Rust persistence, and indexer keys
+  must preserve the complete `uint256`. — `Interfold.initialize`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
   `pnpm build:circuits` generates that binding from the active preset. Governance cannot enable a
   different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
-  contracts. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
-  `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
+  contracts. The request supplies the expected configuration ID, which binds the scheme, parameter
+  hash, and circuit version. Solidity snapshots it, and Rust rejects an event or stored E3 whose ID
+  differs from its local build. Pricing uses circuit threshold `T`, not on-chain viability value
+  `H`. `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
   `seed = uint256(keccak256(blockhash(entropyBlock), e3Id))`; top-N lowest win. `entropyBlock` is
@@ -93,9 +99,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
   setters enforce the relationship; equality is invalid because ticket submission includes the
   deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`; `flow-trace/02`, `03`
-- **Per-E3 dependency freeze:** each request snapshots the addresses of Interfold, registries,
-  slashing manager, refund manager, treasury, and the policy version; in-flight E3s drain through
-  their request-time deployments regardless of later governance rotation. — `flow-trace/03`, `05`
+- **One coherent dependency generation:** each request validates and snapshots the complete
+  Interfold, registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause
+  requests and drain all E3s, committees, operators, bans, and slash routes before it replaces any
+  graph member. Old and new generations never serve requests at the same time. — `flow-trace/03`,
+  `05`
 - **Selected-member collateral remains slashable:** committee requests assign their request-time
   registry in `BondingRegistry`, and successful finalization records one unresolved obligation per
   member. Deregistration may queue collateral, but `claimExitsFor` cannot pay it out until that
@@ -111,9 +119,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 ### Deadlines
 
-- Every stage has a deadline; once missed, **anyone** may call `markE3Failed(e3Id)`.
-  `computeDeadline = inputWindow.end + computeWindow`; `dkgDeadline = now + dkgWindow`. —
-  `flow-trace/03`
+- Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
+  The request snapshots all timeout windows. The DKG deadline starts when the committee is
+  finalized. The compute deadline starts at the later of key publication and the end of the input
+  window. Request validation reserves the full worst-case sortition, DKG, compute, and decryption
+  lifecycle. — `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
@@ -131,6 +141,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
   snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
   the protected reserve. — `flow-trace/05`
+- Only the original requester can cancel an active E3. Cancellation records the pre-failure stage;
+  nodes receive only fully completed milestone allocations, while the requester receives the
+  remaining work allocation. Cancellation does not wait for refund processing. — `flow-trace/05`
 - Dual-role accounts (requester + honest node) claim via independent ledgers, each once. —
   `flow-trace/05`
 - Committee finalization freezes each operator's reward recipient for that E3. Success rewards,

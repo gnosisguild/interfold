@@ -16,7 +16,7 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
 
     // Empty `votes_for` only reaches this point if upstream invariants broke
     // — `check_quorum` requires `len >= threshold_m >= 1` before emitting
-    // `AccusedFaulted`/`Equivocation`. Refuse to submit malformed calldata
+    // `AccusedFaulted`. Refuse to submit malformed calldata
     // and surface a structured warning so an operator can debug the upstream
     // gossip/quorum path rather than seeing a generic ABI-decode revert
     // on chain.

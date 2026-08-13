@@ -18,6 +18,9 @@ import { IE3RefundManager } from "./IE3RefundManager.sol";
  *      Lane B (evidence-based): SLASHER_ROLE required, appeal window
  */
 interface ISlashingManager {
+    function activeE3Assignments() external view returns (uint256);
+
+    function activeBanCount() external view returns (uint256);
     /// @notice API version required by BondingRegistry manager authorization.
     // solhint-disable-next-line func-name-mixedcase
     function SLASHING_MANAGER_API_VERSION() external view returns (uint256);
@@ -229,6 +232,19 @@ interface ISlashingManager {
 
     /// @notice Thrown when the attestation `deadline` has passed at the time of submission
     error SignatureExpired();
+
+    /// @notice Lane A is disabled for the E3 or by the current live pause.
+    error AccusationSlashingDisabled();
+
+    /// @notice The signed accusation window is malformed or exceeds its snapshot.
+    error InvalidAccusationWindow();
+
+    /// @notice The signed issue time is too far ahead of the chain clock.
+    error AccusationIssuedInFuture();
+
+    /// @notice The objective E3 accusation reporting period has ended.
+    error SlashSubmissionDeadlinePassed();
+    error AccusationWindowOpen(uint256 e3Id, uint256 closesAt);
 
     /// @notice Thrown when an operator action is gated by any unresolved slash proposal
     error OperatorUnderSlash();
@@ -487,6 +503,11 @@ interface ISlashingManager {
             address refundManager
         );
 
+    /// @notice Returns the vote-validity and objective submission deadline frozen for an E3.
+    function getE3AccusationWindow(
+        uint256 e3Id
+    ) external view returns (uint64 voteValidity, uint64 submissionDeadline);
+
     /// @notice Return a slash route that remains pending after an initial failure.
     function getPendingSlashRoute(
         uint256 proposalId
@@ -590,9 +611,12 @@ interface ISlashingManager {
      *      cross-reason replay attacks.
      *      Evidence format:
      *        abi.encode(uint256 proofType,
-     *          address[] voters, bytes32[] dataHashes, bytes evidence, uint256 deadline, bytes[] signatures)
-     *      Each voter must have signed: personal_sign(keccak256(abi.encode(VOTE_TYPEHASH,
-     *        e3Id, accusationId, voter, dataHash, deadline)))
+     *          address[] voters, bytes32[] dataHashes, bytes evidence,
+     *          uint256 issuedAt, uint256 deadline, bytes[] signatures)
+     *      Each voter must have signed the EIP-712 digest
+     *      `keccak256("\x19\x01" || domainSeparator || structHash)`, where
+     *      `structHash = keccak256(abi.encode(VOTE_TYPEHASH, e3Id,
+     *      accusationId, voter, dataHash, issuedAt, deadline))`.
      *      where accusationId = keccak256(abi.encodePacked(block.chainid, e3Id, operator, proofType))
      *      Verifications performed:
      *        1. Number of votes >= committee threshold M
@@ -601,10 +625,13 @@ interface ISlashingManager {
      *        4. Each vote signature recovers to the declared voter
      *        5. All votes carry the same `dataHash` (no equivocation)
      *        6. `keccak256(evidence) == dataHash`
+     *        7. The signed window fits the E3 snapshot and neither the vote nor
+     *           the E3's objective slash-submission deadline has expired
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param proof Attestation evidence:
-     *              abi.encode(proofType, voters, dataHashes, evidence, deadline, signatures)
+     *              abi.encode(proofType, voters, dataHashes, evidence,
+     *              issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */
     function proposeSlash(
@@ -620,7 +647,8 @@ interface ISlashingManager {
      *      This provides an explicit on-chain chain from DKG fold row/slot attribution to operator.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param partyId Canonical committee slot / DKG party identifier
-     * @param proof Attestation evidence: abi.encode(proofType, voters, dataHashes, deadline, signatures)
+     * @param proof Attestation evidence: abi.encode(proofType, voters, dataHashes,
+     *              evidence, issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */
     function proposeSlashByDkgParty(

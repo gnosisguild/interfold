@@ -29,6 +29,7 @@ impl AccusationVoting {
 
         let now = self.clock.unix_now_secs();
         if !Self::is_peer_deadline_acceptable(
+            accusation.issued_at,
             accusation.deadline,
             now,
             self.vote_validity_secs,
@@ -237,6 +238,7 @@ impl AccusationVoting {
             accusation_id,
             voter: self.my_address,
             data_hash: our_data_hash,
+            issued_at: accusation.issued_at,
             deadline: accusation.deadline,
             signature: ArcBytes::default(),
         };

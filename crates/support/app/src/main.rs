@@ -12,7 +12,7 @@ use serde::Serialize;
 #[derive(Serialize, Debug)]
 struct ProcessingResponse {
     status: String,
-    e3_id: u64,
+    e3_id: String,
 }
 
 async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::Result<()> {
@@ -23,7 +23,7 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
             ciphertext_commitment,
             proof,
         } => (
-            *e3_id,
+            e3_id,
             "completed",
             ciphertext.len(),
             ciphertext_commitment.len(),
@@ -31,7 +31,7 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
         ),
         WebhookPayload::Failed { e3_id, error } => {
             println!("call_webhook() - status: failed, error: {}", error);
-            (*e3_id, "failed", 0, 0, 0)
+            (e3_id, "failed", 0, 0, 0)
         }
     };
 
@@ -103,7 +103,7 @@ async fn run_computation_async(
 }
 
 async fn process_computation_background(
-    e3_id: u64,
+    e3_id: String,
     callback_url: &str,
     fhe_inputs: FHEInputs,
     domain: ComputeDomain,
@@ -113,7 +113,7 @@ async fn process_computation_background(
             println!("computation finished!");
             println!("handling webhook delivery...");
             let payload = WebhookPayload::Completed {
-                e3_id,
+                e3_id: e3_id.clone(),
                 ciphertext,
                 ciphertext_commitment,
                 proof,
@@ -127,7 +127,7 @@ async fn process_computation_background(
             eprintln!("Computation failed for E3 {}: {}", e3_id, error_msg);
 
             let payload = WebhookPayload::Failed {
-                e3_id,
+                e3_id: e3_id.clone(),
                 error: format!("Compute failed: {}", error_msg),
             };
             call_webhook(callback_url, &payload).await?;
@@ -141,6 +141,7 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     println!("Processing computation...");
     let e3_id = req
         .e3_id
+        .clone()
         .ok_or_else(|| actix_web::error::ErrorBadRequest("e3_id is required"))?;
     let callback_url = req
         .callback_url
@@ -153,7 +154,7 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     let domain = ComputeDomain::new(
         req.chain_id,
         &req.interfold_address,
-        e3_id,
+        &e3_id,
         &req.encryption_scheme_id,
         &req.committee_public_key_hash,
     )
@@ -165,11 +166,20 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
         .replace("127.0.0.1", "host.local");
 
     // Process computation in background
+    let background_e3_id = e3_id.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            process_computation_background(e3_id, &callback_url, fhe_inputs, domain).await
+        if let Err(e) = process_computation_background(
+            background_e3_id.clone(),
+            &callback_url,
+            fhe_inputs,
+            domain,
+        )
+        .await
         {
-            eprintln!("✗ Background computation failed for E3 {}: {:?}", e3_id, e);
+            eprintln!(
+                "✗ Background computation failed for E3 {}: {:?}",
+                background_e3_id, e
+            );
         }
     });
     Ok(HttpResponse::Ok().json(ProcessingResponse {
@@ -181,7 +191,7 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
 async fn handle_health_check() -> ActixResult<HttpResponse> {
     Ok(HttpResponse::Ok().json(ProcessingResponse {
         status: "healthy".to_string(),
-        e3_id: 0,
+        e3_id: "0".to_string(),
     }))
 }
 

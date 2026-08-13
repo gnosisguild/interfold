@@ -44,6 +44,7 @@ export async function actionValidate(): Promise<void> {
     ["bondingAssetLib", deployment.bondingAssetLib],
     ["bondingEligibilityLib", deployment.bondingEligibilityLib],
     ["bondingSlashingLib", deployment.bondingSlashingLib],
+    ["slashingEvidenceLib", deployment.slashingEvidenceLib],
     ["interfoldLifecycle", deployment.interfoldLifecycle],
     ["interfoldPricing", deployment.interfoldPricing],
   ] as const) {

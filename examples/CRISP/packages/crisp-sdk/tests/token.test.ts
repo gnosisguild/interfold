@@ -10,6 +10,8 @@ import { getTreeData } from '../src/token'
 import { CRISP_SERVER_URL } from './constants'
 import { CRISP_SERVER_TOKEN_TREE_ENDPOINT } from '../src/constants'
 
+const GLOBAL_E3_ID = (1n << 200n) + 7n
+
 describe('Token data fetching', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -28,7 +30,7 @@ describe('Token data fetching', () => {
 
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockResponse)
 
-    const data = await getTreeData(CRISP_SERVER_URL, 0)
+    const data = await getTreeData(CRISP_SERVER_URL, GLOBAL_E3_ID)
 
     expect(data).toHaveLength(3)
     expect(data[0]).toBe(BigInt('0x1234'))
@@ -41,7 +43,7 @@ describe('Token data fetching', () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ round_id: 0 }),
+        body: JSON.stringify({ round_id: GLOBAL_E3_ID.toString() }),
       }),
     )
   })
