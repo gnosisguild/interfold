@@ -28,12 +28,7 @@ describe('CRISPProgram census mode', function () {
   let crispProgram: CRISPProgram
   let owner: string
 
-  const encode = (
-    creditMode: number,
-    censusMode?: number,
-    numOptions = 2,
-    opts: { token?: string; credits?: number } = {},
-  ) => {
+  const encode = (creditMode: number, censusMode?: number, numOptions = 2, opts: { token?: string; credits?: number } = {}) => {
     const types = ['address', 'uint256', 'uint256', 'uint256', 'uint256']
     const values: unknown[] = [opts.token ?? ethers.ZeroAddress, 0, numOptions, creditMode, opts.credits ?? 1]
     if (censusMode !== undefined) {
@@ -91,10 +86,7 @@ describe('CRISPProgram census mode', function () {
   /// is refused in the request transaction rather than after the fee is paid.
   describe('onchain census', () => {
     it('rejects ONCHAIN without a token', async () => {
-      await expect(validate(20, encode(CUSTOM, ONCHAIN))).to.be.revertedWithCustomError(
-        crispProgram,
-        'CensusModeRequiresToken',
-      )
+      await expect(validate(20, encode(CUSTOM, ONCHAIN))).to.be.revertedWithCustomError(crispProgram, 'CensusModeRequiresToken')
     })
 
     it('rejects ONCHAIN with an address that holds no code', async () => {
@@ -115,9 +107,10 @@ describe('CRISPProgram census mode', function () {
       // numbers, so without the probe this round would validate and then revert on every input.
       const plain = await ethers.deployContract('MockVotingToken')
 
-      await expect(
-        validate(21, encode(CUSTOM, ONCHAIN, 2, { token: await plain.getAddress() })),
-      ).to.be.revertedWithCustomError(crispProgram, 'CensusModeRequiresToken')
+      await expect(validate(21, encode(CUSTOM, ONCHAIN, 2, { token: await plain.getAddress() }))).to.be.revertedWithCustomError(
+        crispProgram,
+        'CensusModeRequiresToken',
+      )
     })
 
     it('rejects ONCHAIN with constant credits of zero', async () => {
