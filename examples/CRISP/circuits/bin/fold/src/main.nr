@@ -12,10 +12,8 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
     0x104652e4140264c4bf518b0469d4062b9e2d4a9b4567979be7568a010a0db217;
-// TODO: regenerate under the secure-8192 preset. The `crisp` circuit changed when the signature
-// digest became a public input, so the previous secure hash is stale. A zero placeholder fails
-// closed: a secure-preset proof cannot satisfy the assert below until this value is recomputed.
-pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field = 0x00;
+pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
+    0x02068bab950c2f2f8ceb72404c406facc12e658233af8c7d732775bf36962783;
 
 fn main(
     // User Data Encryption Section.

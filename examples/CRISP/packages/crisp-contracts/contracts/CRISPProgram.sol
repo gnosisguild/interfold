@@ -13,25 +13,9 @@ import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import { HonkVerifier } from "./CRISPVerifier.sol";
-
-/// @notice The subset of a Honk verifier that this contract calls.
-/// @dev Declared as an interface so the two census paths can hold verifiers generated from
-/// different circuits. The generated contracts are both named `HonkVerifier`, so importing both
-/// concrete types would collide.
-interface IHonkVerifier {
-  function verify(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
-}
-
-/// @notice The subset of an ERC20Votes token that `CensusMode.ONCHAIN` reads.
-interface IVotesToken {
-  function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
-}
-
-/// @notice The ERC-6372 clock of a token, used to record the snapshot of a round.
-interface IERC6372Clock {
-  function clock() external view returns (uint48);
-}
+import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
+import { IVotesToken } from "./interfaces/IVotesToken.sol";
+import { IERC6372Clock } from "./interfaces/IERC6372Clock.sol";
 
 contract CRISPProgram is IE3Program, Ownable, EIP712 {
   using InternalLazyIMT for LazyIMTData;
@@ -138,8 +122,12 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// @notice A requester-supplied census names who may vote, not how much each vote weighs, so it
   /// only has meaning when every voter carries the same credits.
   error CensusModeRequiresConstantCredits();
-  /// @notice `CensusMode.ONCHAIN` reads voting power from a token, so it cannot run without one.
+  /// @notice `CensusMode.ONCHAIN` reads voting power from a token, so it cannot run without one
+  /// that answers `getPastVotes`.
   error CensusModeRequiresToken();
+  /// @notice An `ONCHAIN` round with constant credits must grant a non-zero allowance, or it
+  /// bounds every ballot to zero and can only accept masks.
+  error InvalidCredits();
   /// @notice The slot holds less voting power than the round requires, so it cannot be written to.
   /// @dev Raised for mask inputs as well as real votes. Under `CensusMode.ONCHAIN` this check
   /// replaces the Merkle membership proof that gates both branches in the other modes.
@@ -311,6 +299,14 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       revert CensusModeRequiresToken();
     }
 
+    // An ONCHAIN round hands `credits` to the circuit as the voting-power bound, so zero credits
+    // bound every ballot to zero: only a mask would be accepted, and the round would tally
+    // nothing. Checked for ONCHAIN only — the Merkle modes take the bound from the census leaf,
+    // where `credits` never reaches the circuit and the contract has nothing to check.
+    if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN && creditMode == CreditMode.CONSTANT && credits == 0) {
+      revert InvalidCredits();
+    }
+
     RoundData storage round = e3Data[e3Id];
     // we need to know the number of options for decoding the tally
     round.numOptions = numOptions;
@@ -327,7 +323,17 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // round, and a requester cannot name a timepoint that suits it. Recording it once also makes
     // every input of the round read the same electorate.
     if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN) {
-      round.snapshot = _previousTimepoint(token);
+      uint48 snapshot = _previousTimepoint(token);
+
+      // Probe the exact call every input will make. `_previousTimepoint` swallows a missing
+      // `clock()` and falls back to block numbers, which is right for a token that predates
+      // ERC-6372 but also lets an address that is not a votes token pass validation — and then
+      // every `publishInput` reverts inside `getPastVotes`, after the fee is paid.
+      try IVotesToken(token).getPastVotes(address(0), snapshot) returns (uint256) {} catch {
+        revert CensusModeRequiresToken();
+      }
+
+      round.snapshot = snapshot;
     }
   }
 

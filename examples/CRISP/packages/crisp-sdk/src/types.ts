@@ -131,18 +131,6 @@ export type ProofData = {
   encryptedVote: Uint8Array
 }
 
-export type ProofInputs = {
-  previousCiphertext?: Uint8Array
-  vote: Vote
-  publicKey: Uint8Array
-  signature: `0x${string}`
-  messageHash: `0x${string}`
-  balance: bigint
-  slotAddress: string
-  merkleProof: MerkleProof
-  isMaskVote: boolean
-}
-
 /**
  * Which circuit a ballot is built for.
  *
@@ -196,46 +184,6 @@ type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K>
  * The SDK resolves `previousCiphertext` from the server, so callers do not pass it.
  */
 export type PrepareBallotRequest = { e3Id: bigint } & DistributiveOmit<PrepareBallotInputs, 'previousCiphertext'>
-
-export type MaskVoteProofInputs = {
-  publicKey: Uint8Array
-  balance: bigint
-  slotAddress: string
-  merkleLeaves: string[] | bigint[]
-  previousCiphertext?: Uint8Array
-  numOptions: number
-}
-
-export type MaskVoteProofRequest = {
-  e3Id: bigint
-  publicKey: Uint8Array
-  balance: bigint
-  slotAddress: string
-  merkleLeaves: string[] | bigint[]
-  numOptions: number
-}
-
-export type VoteProofInputs = {
-  merkleLeaves: string[] | bigint[]
-  publicKey: Uint8Array
-  balance: bigint
-  vote: Vote
-  signature: `0x${string}`
-  messageHash: `0x${string}`
-  slotAddress: string
-  previousCiphertext?: Uint8Array
-}
-
-export type VoteProofRequest = {
-  e3Id: bigint
-  merkleLeaves: string[] | bigint[]
-  publicKey: Uint8Array
-  balance: bigint
-  vote: Vote
-  signature: `0x${string}`
-  messageHash: `0x${string}`
-  slotAddress: string
-}
 
 /**
  * Type representing the current round returned by the CRISP server (`rounds/current`)

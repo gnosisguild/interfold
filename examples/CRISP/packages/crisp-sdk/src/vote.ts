@@ -291,16 +291,24 @@ export const validateVote = (vote: Vote, balance: bigint): void => {
 }
 
 /**
- * Generate a vote proof for the CRISP circuit given the vote proof inputs.
- * @param voteProofInputs - The vote proof inputs.
- * @returns The vote proof.
+ * Phase one: encrypt a ballot, before the voter signs anything.
+ *
+ * A ballot must be encrypted before it can be signed, because the digest binds the ciphertext.
+ * Take `ctCommitment` from the result, read the digest from `CRISPProgram.ballotDigest`, have the
+ * voter sign it, then call {@link finishBallotProof}.
+ *
+ * @param inputs - The ballot to encrypt.
+ * @returns The prepared ballot.
  */
 export const prepareBallot = async (inputs: PrepareBallotInputs): Promise<PreparedBallot> => {
   if (!inputs.isMaskVote) {
     validateVote(inputs.vote, inputs.censusMode === 'onchain' ? inputs.votingPower : inputs.balance)
   }
 
-  return prepareCircuitInputsImpl(inputs)
+  // Through the worker wrapper, not the impl: BFV encryption is the heaviest step in the flow and
+  // running it on the main thread freezes the browser for its duration. The wrapper falls back to
+  // the main thread by itself where `Worker` is unavailable.
+  return prepareCircuitInputs(inputs)
 }
 
 /**
