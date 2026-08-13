@@ -176,6 +176,21 @@ describe("Interfold", function () {
       expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
     });
 
+    it("rejects a replacement registry with existing members", async function () {
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+
+      await replacement.addCiphernode(AddressTwo);
+      await interfold.setRequestsPaused(true);
+
+      await expect(
+        interfold.setCiphernodeRegistry(await replacement.getAddress()),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
+      );
+    });
+
     it("emits CiphernodeRegistrySet event", async function () {
       const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");

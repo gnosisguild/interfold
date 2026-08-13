@@ -536,7 +536,7 @@ contract Interfold is
                 _ciphernodeRegistry != ciphernodeRegistry,
             InvalidCiphernodeRegistry(_ciphernodeRegistry)
         );
-        _requireDependencyReplacementReady(address(ciphernodeRegistry));
+        _requireDependencyReplacementReady(address(_ciphernodeRegistry));
         ciphernodeRegistry = _ciphernodeRegistry;
         emit CiphernodeRegistrySet(address(_ciphernodeRegistry));
     }
@@ -550,7 +550,7 @@ contract Interfold is
                 _bondingRegistry != bondingRegistry,
             InvalidBondingRegistry(_bondingRegistry)
         );
-        _requireDependencyReplacementReady(address(bondingRegistry));
+        _requireDependencyReplacementReady(address(0));
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
     }
@@ -674,7 +674,7 @@ contract Interfold is
         IE3RefundManager _e3RefundManager
     ) public onlyOwner {
         require(address(_e3RefundManager) != address(0));
-        _requireDependencyReplacementReady(address(e3RefundManager));
+        _requireDependencyReplacementReady(address(0));
         e3RefundManager = _e3RefundManager;
         emit E3RefundManagerSet(address(_e3RefundManager));
     }
@@ -685,7 +685,7 @@ contract Interfold is
         ISlashingManager _slashingManager
     ) external onlyOwner {
         require(address(_slashingManager) != address(0));
-        _requireDependencyReplacementReady(address(slashingManager));
+        _requireDependencyReplacementReady(address(0));
         slashingManager = _slashingManager;
         emit SlashingManagerSet(address(_slashingManager));
     }
@@ -1203,15 +1203,17 @@ contract Interfold is
         );
     }
 
-    function _requireDependencyReplacementReady(address current) private view {
+    function _requireDependencyReplacementReady(
+        address replacementRegistry
+    ) private view {
         InterfoldLifecycle.validateGenerationDrained(
-            current,
             _dependencyConfigurationActivated,
             requestsPaused,
             activeE3Count,
             address(ciphernodeRegistry),
             address(bondingRegistry),
-            address(slashingManager)
+            address(slashingManager),
+            replacementRegistry
         );
     }
 

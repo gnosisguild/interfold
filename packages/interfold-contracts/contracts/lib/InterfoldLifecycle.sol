@@ -119,15 +119,24 @@ library InterfoldLifecycle {
 
     /// @notice Requires the current dependency generation to own no live state.
     function validateGenerationDrained(
-        address currentDependency,
         bool configurationActivated,
         bool requestsPaused,
         uint256 activeE3Count,
         address registryAddress,
         address bondingAddress,
-        address slashManagerAddress
+        address slashManagerAddress,
+        address replacementRegistryAddress
     ) external view {
-        if (currentDependency == address(0) || !configurationActivated) return;
+        if (replacementRegistryAddress != address(0)) {
+            ICiphernodeRegistry replacementRegistry = ICiphernodeRegistry(
+                replacementRegistryAddress
+            );
+            if (
+                replacementRegistry.numCiphernodes() != 0 ||
+                replacementRegistry.unreleasedCommitteeCount() != 0
+            ) revert IInterfold.DependencyGenerationNotDrained();
+        }
+        if (!configurationActivated) return;
         if (!requestsPaused) revert IInterfold.RequestsPaused();
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         IBondingRegistry bonding = IBondingRegistry(bondingAddress);

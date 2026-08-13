@@ -783,13 +783,17 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await makeRequest();
 
-      // Create a new interfold with addressOne as lifecycle placeholder (not a real contract)
+      const emptyRegistry = await ethers.deployContract(
+        "MockCiphernodeRegistry",
+      );
+
+      // Create a new Interfold with addressOne as the refund manager placeholder.
       const newInterfoldContract = await ignition.deploy(InterfoldModule, {
         parameters: {
           Interfold: {
             owner: await owner.getAddress(),
             maxDuration: THIRTY_DAYS,
-            registry: await interfold.ciphernodeRegistry(),
+            registry: await emptyRegistry.getAddress(),
             bondingRegistry: await interfold.bondingRegistry(),
             e3RefundManager: addressOne,
             feeToken: await interfold.feeToken(),
