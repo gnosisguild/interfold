@@ -39,4 +39,4 @@ pnpm start
 
 ## License
 
-This documentation is created under the [LGPL-3.0+ license](LICENSE).
+This documentation is created under the [LGPL-3.0+ license](../LICENSE.md).
