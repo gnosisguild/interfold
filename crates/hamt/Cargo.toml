@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - A serializable HAMT implementation"
-repository = "https://github.com/theinterfold/interfold/crates/hamt"
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Canonical EVM domain hashes for DKG / decryption aggregator proofs"
-repository = "https://github.com/theinterfold/interfold/crates/committee-hash"
+repository.workspace = true
 
 [dependencies]
 alloy = { workspace = true }

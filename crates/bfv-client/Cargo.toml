@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - BFV client helpers"
-repository = "https://github.com/theinterfold/interfold/crates/bfv-client"
+repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
