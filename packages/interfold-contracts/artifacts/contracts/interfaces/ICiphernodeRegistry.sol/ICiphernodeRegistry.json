@@ -300,6 +300,11 @@
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "RegistryGenerationNotDrained",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -477,6 +482,25 @@
         }
       ],
       "name": "CiphernodeRemoved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "size",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "capacity",
+          "type": "uint256"
+        }
+      ],
+      "name": "CiphernodeTreeCapacityWarning",
       "type": "event"
     },
     {
@@ -1557,6 +1581,19 @@
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "unreleasedCommitteeCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     }
   ],
   "bytecode": "0x",
@@ -1565,5 +1602,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-0db228c3bd2b99b41cbc08984c918b0d7bbc1f68"
+  "buildInfoId": "solc-0_8_28-237c02391cd3c59ddd3267c5dcdd3f53101f06d8"
 }

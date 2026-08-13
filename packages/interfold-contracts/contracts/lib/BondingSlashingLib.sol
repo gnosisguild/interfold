@@ -34,6 +34,10 @@ library BondingSlashingLib {
         return _layout().activeBans[operator];
     }
 
+    function unresolvedCommitteeCount() external view returns (uint256) {
+        return _layout().unresolvedCommitteeCount;
+    }
+
     function validateExitClaim(address operator) external view {
         BondingSlashingStorage.Layout storage state = _layout();
         if (state.openSlashLocks[operator] != 0) {
@@ -79,6 +83,7 @@ library BondingSlashingLib {
                 revert IBondingRegistry.Unauthorized();
             }
             state.committeeRegistries[e3Id] = msg.sender;
+            state.unresolvedCommitteeCount++;
         } else if (msg.sender != assignedRegistry) {
             revert IBondingRegistry.Unauthorized();
         }
@@ -106,6 +111,7 @@ library BondingSlashingLib {
                 revert IBondingRegistry.InvalidConfiguration();
             }
             delete state.committeeRegistries[e3Id];
+            state.unresolvedCommitteeCount--;
         } else if (state.committeeObligations[e3Id][operator]) {
             delete state.committeeObligations[e3Id][operator];
             state.committeeMemberCounts[e3Id]--;

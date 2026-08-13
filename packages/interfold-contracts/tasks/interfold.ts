@@ -5,6 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import {
   BigNumberish,
+  type Log,
+  MaxUint256,
   ZeroAddress,
   ZeroHash,
   isHexString,
@@ -215,7 +217,7 @@ export const requestCommittee = task(
         computeProviderParams,
       });
 
-      const requestParams = {
+      const quoteParams = {
         committeeSize,
         inputWindow: [inputWindowStart, inputWindowEnd] as [
           BigNumberish,
@@ -226,11 +228,14 @@ export const requestCommittee = task(
         paramSet,
         computeProviderParams,
         customParams,
+        expectedFeeToken: await mockUSDCContract.getAddress(),
+        expectedCryptoConfigId: await interfoldContract.activeCryptoConfigId(),
+        maxFee: MaxUint256,
       };
 
+      const fee = await interfoldContract.getE3Quote(quoteParams);
+      const requestParams = { ...quoteParams, maxFee: fee };
       console.log("Request parameters:", requestParams);
-
-      const fee = await interfoldContract.getE3Quote(requestParams);
       console.log(`E3 fee: ${ethers.formatUnits(fee, 6)} USDC`);
 
       const usdcBalance = await mockUSDCContract.balanceOf(signer.address);
@@ -255,9 +260,34 @@ export const requestCommittee = task(
       const tx = await interfoldContract.request(requestParams);
 
       console.log("Requesting committee... ", tx.hash);
-      await tx.wait();
+      const receipt = await tx.wait();
+      if (!receipt) {
+        throw new Error("Committee request transaction was not mined");
+      }
 
-      console.log(`Committee requested`);
+      const interfoldAddress = (
+        await interfoldContract.getAddress()
+      ).toLowerCase();
+      const requestedTopic =
+        interfoldContract.interface.getEvent("E3Requested").topicHash;
+      const requestedLog = receipt.logs.find(
+        (log: Log) =>
+          log.address.toLowerCase() === interfoldAddress &&
+          log.topics[0] === requestedTopic,
+      );
+      if (!requestedLog) {
+        throw new Error("Committee request did not emit E3Requested");
+      }
+
+      const requestedEvent = interfoldContract.interface.parseLog(requestedLog);
+      if (!requestedEvent) {
+        throw new Error("Unable to decode the E3Requested event");
+      }
+
+      const e3Id = requestedEvent.args.e3Id;
+
+      console.log(`Committee requested for E3 ${e3Id}`);
+      console.log(`E3_ID=${e3Id}`);
     },
   }))
   .build();
@@ -314,8 +344,8 @@ export const publishCommittee = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "nodes",
@@ -441,8 +471,8 @@ export const getCommitteePublicKey = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "outFile",
@@ -487,8 +517,8 @@ export const getActiveAggregator = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .setAction(async () => ({
     default: async ({ e3Id }, hre) => {
@@ -522,8 +552,8 @@ export const publishCiphertext = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "data",
@@ -623,8 +653,8 @@ export const publishPlaintext = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "data",
@@ -689,8 +719,8 @@ export const getPlaintextOutput = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "outFile",

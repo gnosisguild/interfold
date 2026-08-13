@@ -77,18 +77,21 @@ CURRENT_TIMESTAMP=$(get_evm_timestamp)
 INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
 INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + 30))
 
-pnpm committee:new \
+REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
   --input-window-start "$INPUT_WINDOW_START" \
   --input-window-end "$INPUT_WINDOW_END" \
   --e3-params "$ENCODED_PARAMS" \
-  --committee-size 0
+  --committee-size 0)
+printf '%s\n' "$REQUEST_OUTPUT"
 
-wait_for_committee_pubkey 0 "$SCRIPT_DIR/output/pubkey.bin" "$INTEGRATION_DKG_TIMEOUT"
+E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
+
+wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "$INTEGRATION_DKG_TIMEOUT"
 
 if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Verify active aggregator (proof aggregation / DKG path)"
-  ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address 0 "$INTEGRATION_DKG_TIMEOUT")
+  ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address "$E3_ID" "$INTEGRATION_DKG_TIMEOUT")
   echo "Active aggregator: $ACTIVE_AGG_ADDRESS"
 fi
 
@@ -106,25 +109,25 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   waiton "$SCRIPT_DIR/output/output.bin"
 
   heading "Publish E3 input (forwards to publishCiphertextOutput; nodes run decryption with ZK proofs)"
-  pnpm e3-program:publishInput --network localhost --e3-id 0 --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin"
+  pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin"
 
   heading "Wait for on-chain plaintext (BFV decryption verifier)"
-  wait_for_plaintext_output 0 "$SCRIPT_DIR/output/plaintext.txt" "$INTEGRATION_DKG_TIMEOUT"
+  wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt" "$INTEGRATION_DKG_TIMEOUT"
 else
   heading "Mock encrypted plaintext"
   $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
 
   heading "Mock publish input e3-id"
-  pnpm e3-program:publishInput --network localhost  --e3-id 0 --data 0x12345678
+  pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
   sleep 4
 
   waiton "$SCRIPT_DIR/output/output.bin"
 
   heading "Publish ciphertext to EVM"
-  pnpm e3:publishCiphertext --e3-id 0 --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" --proof 0x12345678
+  pnpm e3:publishCiphertext --e3-id "$E3_ID" --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" --proof 0x12345678
 
-  wait_for_plaintext_output 0 "$SCRIPT_DIR/output/plaintext.txt"
+  wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt"
 fi
 
 ACTUAL=$(cut -d',' -f1,2 $SCRIPT_DIR/output/plaintext.txt)

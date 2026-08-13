@@ -20,10 +20,90 @@ import {
     SlashingManagerObligations
 } from "../storage/BondingSlashingStorage.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { ExitQueueLib } from "./ExitQueueLib.sol";
 
 /// @notice Keeps bonding-asset checks outside the size-constrained registry.
 library BondingAssetLib {
     using SafeERC20 for IERC20;
+    using ExitQueueLib for ExitQueueLib.ExitQueueState;
+
+    function claimExits(
+        ExitQueueLib.ExitQueueState storage exits,
+        InterfoldTicketToken ticketToken,
+        IERC20 licenseToken,
+        mapping(address operator => address bondOwner) storage bondOwners,
+        mapping(address bondOwner => uint256 amount) storage bondedByOwner,
+        address operator,
+        uint256 maxTicketAmount,
+        uint256 maxLicenseAmount
+    ) external returns (uint256 licenseClaim) {
+        (uint256 ticketClaim, uint256 claimedLicense) = exits.claimAssets(
+            operator,
+            maxTicketAmount,
+            maxLicenseAmount
+        );
+        if (ticketClaim == 0 && claimedLicense == 0) {
+            revert IBondingRegistry.ExitNotReady();
+        }
+
+        address bondOwner = bondOwners[operator];
+        if (bondOwner == address(0)) revert IBondingRegistry.ZeroAddress();
+        if (ticketClaim != 0) ticketToken.payout(bondOwner, ticketClaim);
+        if (claimedLicense != 0) {
+            bondedByOwner[bondOwner] -= claimedLicense;
+            _transferExact(address(licenseToken), bondOwner, claimedLicense);
+        }
+        return claimedLicense;
+    }
+
+    function validateExitTiming(
+        address registryAddress,
+        uint64 exitDelay
+    ) external view {
+        if (registryAddress == address(0) || exitDelay == 0) return;
+        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
+        uint256 requiredDelay = registry.exitDelayFloor();
+        if (exitDelay <= requiredDelay) {
+            revert IBondingRegistry.ExitDelayMustExceedSortitionWindow(
+                exitDelay,
+                requiredDelay
+            );
+        }
+    }
+
+    function validateRegistryUpdate(
+        address currentRegistryAddress,
+        address newRegistryAddress,
+        uint64 exitDelay,
+        uint256 registeredOperators,
+        uint256 activeOperators,
+        uint256 unresolvedCommittees
+    ) external view {
+        if (newRegistryAddress == address(0)) {
+            revert IBondingRegistry.ZeroAddress();
+        }
+        ICiphernodeRegistry newRegistry = ICiphernodeRegistry(
+            newRegistryAddress
+        );
+        uint256 requiredDelay = newRegistry.exitDelayFloor();
+        if (exitDelay != 0 && exitDelay <= requiredDelay) {
+            revert IBondingRegistry.ExitDelayMustExceedSortitionWindow(
+                exitDelay,
+                requiredDelay
+            );
+        }
+        if (
+            currentRegistryAddress == address(0) ||
+            currentRegistryAddress == newRegistryAddress
+        ) return;
+        if (
+            registeredOperators != 0 ||
+            activeOperators != 0 ||
+            unresolvedCommittees != 0 ||
+            newRegistry.numCiphernodes() != 0
+        ) revert IBondingRegistry.InvalidConfiguration();
+    }
 
     function availableTickets(
         address ticketTokenAddress,
@@ -258,6 +338,27 @@ library BondingAssetLib {
         uint256 amount
     ) external {
         _transferExact(tokenAddress, recipient, amount);
+    }
+
+    function transferFromExact(
+        address tokenAddress,
+        address sender,
+        uint256 amount
+    ) external {
+        IERC20 token = IERC20(tokenAddress);
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(sender, address(this), amount);
+        uint256 balanceAfter = token.balanceOf(address(this));
+        uint256 received = balanceAfter > balanceBefore
+            ? balanceAfter - balanceBefore
+            : 0;
+        if (received != amount) {
+            revert IBondingRegistry.AssetTransferMismatch(
+                tokenAddress,
+                amount,
+                received
+            );
+        }
     }
 
     function sweepLicenseSurplus(

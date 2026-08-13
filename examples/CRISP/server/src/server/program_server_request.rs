@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Debug, Serialize)]
 pub struct ComputeRequest {
-    pub e3_id: Option<u64>,
+    pub e3_id: Option<String>,
     pub chain_id: u64,
     pub interfold_address: String,
     #[serde(serialize_with = "serialize_as_hex")]
@@ -47,7 +47,7 @@ where
 #[derive(Deserialize, Serialize)]
 pub struct ProcessingResponse {
     pub status: String,
-    pub e3_id: u64,
+    pub e3_id: String,
 }
 
 fn build_compute_request(
@@ -61,7 +61,7 @@ fn build_compute_request(
 }
 
 pub async fn run_compute(
-    e3_id: u64,
+    e3_id: &str,
     chain_id: u64,
     interfold_address: String,
     encryption_scheme_id: Vec<u8>,
@@ -69,9 +69,9 @@ pub async fn run_compute(
     params: Vec<u8>,
     ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     webhook_url: String,
-) -> Result<(u64, String)> {
+) -> Result<(String, String)> {
     let request = ComputeRequest {
-        e3_id: Some(e3_id),
+        e3_id: Some(e3_id.to_string()),
         chain_id,
         interfold_address,
         encryption_scheme_id,
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn compute_request_does_not_require_authorization() {
         let request = ComputeRequest {
-            e3_id: Some(7),
+            e3_id: Some("7".to_string()),
             chain_id: 31_337,
             interfold_address: "0x1111111111111111111111111111111111111111".to_string(),
             encryption_scheme_id: vec![0x22; 32],

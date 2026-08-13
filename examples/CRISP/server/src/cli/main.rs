@@ -50,7 +50,7 @@ enum Commands {
     },
     CheckE3Ready {
         #[arg(short, long)]
-        e3id: u64,
+        e3id: String,
     },
 }
 
@@ -75,7 +75,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("{}", e3_id);
         }
         Some(Commands::CheckE3Ready { e3id }) => {
-            let is_ready = check_committee_key_published(e3id).await?;
+            let is_ready = check_committee_key_published(&e3id).await?;
             println!("{}", is_ready);
         }
         None => {

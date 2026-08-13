@@ -74,7 +74,7 @@ Concretely, every E3 that ends in a failed state is tagged with a `FailureReason
 | `ComputeTimeout`               | The compute provider didn't post a result before its deadline. | ~55%                                       |
 | `ComputeProviderExpired`       | The compute provider signalled it couldn't finish.             | ~55%                                       |
 | `ComputeProviderFailed`        | The compute provider returned a verifiable error.              | ~55%                                       |
-| `RequesterCancelled`           | You cancelled the round before the result was produced.        | ~55%                                       |
+| `RequesterCancelled`           | You cancelled the E3 before it completed.                      | The unspent work allocation                |
 | `DecryptionTimeout`            | The committee never published the decryption.                  | ~0% (work was already done)                |
 | `DecryptionInvalidShares`      | An operator submitted bad decryption shares and was caught.    | ~0% — but slashed bonds top up your refund |
 | `VerificationFailed`           | The decryption proof didn't verify.                            | ~0%                                        |
@@ -95,6 +95,18 @@ failed in the same transaction. A few timeout-based failures (the `*Timeout` rea
 need someone to _push_ the round across the finish line by calling `markE3Failed(e3Id)` on the
 Interfold contract. **This call is permissionless** — the application you're using will usually do
 it for you, but you can do it yourself from a block explorer if it's stalled.
+
+### Cancelling your request
+
+The address that submitted an E3 can call `cancelE3(e3Id)` while the E3 is active. Cancellation is
+final. The protocol records the current stage, pays operators only for milestones that finished
+before the cancellation, and returns the remaining work allocation to you. With the default policy,
+you receive about 95% before committee finalization, 85% after committee finalization, and 55% after
+the public key is published. The protocol share is retained in each case.
+
+Cancellation marks the E3 as failed with `RequesterCancelled`. Refund calculation is a separate,
+permissionless step so a temporary registry or token failure cannot prevent the cancellation itself.
+After `processE3Failure(e3Id)` succeeds, claim the refund through the normal flow below.
 
 ### Claiming your refund
 
@@ -123,9 +135,6 @@ A few practical points that catch people out:
   fee, and approve that amount. Don't grant unlimited approvals to the Interfold contract.
 - **You can't top up later.** If the protocol's pricing changes after you submit, your locked fee is
   what runs your round. Don't try to amend an in-flight request — submit a new one if needed.
-- **You can cancel before compute starts.** Cancellation routes through the protocol's standard
-  failure path (`RequesterCancelled`) and gives you the matching partial refund. You will still pay
-  for sortition and key generation that already ran.
 - **Set realistic windows.** If you're configuring the round yourself rather than using a preset,
   give the input window enough time for participants to actually submit, and the compute window
   enough time for your worst observed program runtime.

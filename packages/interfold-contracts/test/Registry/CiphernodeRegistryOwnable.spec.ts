@@ -8,6 +8,7 @@ import type { Signer } from "ethers";
 
 import { CiphernodeRegistryOwnable__factory as CiphernodeRegistryFactory } from "../../types";
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_ONE as AddressOne,
   ADDRESS_TWO as AddressTwo,
   SEVEN_DAYS,
@@ -27,9 +28,10 @@ const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
 
 describe("CiphernodeRegistryOwnable", function () {
+  let firstE3Id: bigint;
   async function finalizeCommitteeAfterWindow(
     registry: any,
-    e3Id: number,
+    e3Id: number | bigint,
   ): Promise<void> {
     await networkHelpers.time.increase(SORTITION_SUBMISSION_WINDOW + 1);
     await registry.finalizeCommittee(e3Id);
@@ -40,6 +42,7 @@ describe("CiphernodeRegistryOwnable", function () {
       submissionWindow: SORTITION_SUBMISSION_WINDOW,
       committeeThresholds: [[0, [2, 3]]],
     });
+    firstE3Id = await sys.interfold.nexte3Id();
     const request = (signer?: Signer) =>
       makeRequest(
         sys.interfold,
@@ -93,6 +96,9 @@ describe("CiphernodeRegistryOwnable", function () {
         ["address"],
         ["0x1234567890123456789012345678901234567890"],
       ),
+      expectedFeeToken: await usdcToken.getAddress(),
+      expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+      maxFee: ethers.MaxUint256,
     };
 
     const fee = await interfold.getE3Quote(requestParams);
@@ -170,7 +176,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      expect(await registry.rootAt(0)).to.equal(await registry.root());
+      expect(await registry.rootAt(firstE3Id)).to.equal(await registry.root());
     });
     it("stores the root of the ciphernode registry at the time of the request", async function () {
       const {
@@ -186,7 +192,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      expect(await registry.rootAt(0)).to.equal(await registry.root());
+      expect(await registry.rootAt(firstE3Id)).to.equal(await registry.root());
     });
     it("emits a CommitteeRequested event", async function () {
       const {
@@ -229,9 +235,12 @@ describe("CiphernodeRegistryOwnable", function () {
       const receipt = await tx.wait();
       if (!receipt) throw new Error("request receipt missing");
 
-      const entropyBlock = await registry.sortitionEntropyBlocks(0);
+      const entropyBlock = await registry.sortitionEntropyBlocks(firstE3Id);
       expect(entropyBlock).to.equal(receipt.blockNumber + 1);
-      expect(await registry.sortitionSeed(0)).to.deep.equal([false, 0n]);
+      expect(await registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
 
       await networkHelpers.mine(2);
       const entropy = await ethers.provider.getBlock(Number(entropyBlock));
@@ -240,12 +249,12 @@ describe("CiphernodeRegistryOwnable", function () {
         ethers.keccak256(
           ethers.AbiCoder.defaultAbiCoder().encode(
             ["bytes32", "uint256"],
-            [entropy.hash, 0],
+            [entropy.hash, firstE3Id],
           ),
         ),
       );
 
-      expect(await registry.sortitionSeed(0)).to.deep.equal([
+      expect(await registry.sortitionSeed(firstE3Id)).to.deep.equal([
         true,
         expectedSeed,
       ]);
@@ -254,13 +263,13 @@ describe("CiphernodeRegistryOwnable", function () {
         ethers.keccak256(
           ethers.solidityPacked(
             ["address", "uint256", "uint256", "uint256"],
-            [await operator1.getAddress(), 1, 0, expectedSeed],
+            [await operator1.getAddress(), 1, firstE3Id, expectedSeed],
           ),
         ),
       );
-      await expect(registry.connect(operator1).submitTicket(0, 1))
+      await expect(registry.connect(operator1).submitTicket(firstE3Id, 1))
         .to.emit(registry, "TicketSubmitted")
-        .withArgs(0, await operator1.getAddress(), 1, expectedScore);
+        .withArgs(firstE3Id, await operator1.getAddress(), 1, expectedScore);
     });
 
     it("uses EIP-2935 after the recent block-hash window closes", async function () {
@@ -278,13 +287,16 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      const entropyBlock = await registry.sortitionEntropyBlocks(0);
+      const entropyBlock = await registry.sortitionEntropyBlocks(firstE3Id);
       const entropy = await ethers.provider.getBlock(Number(entropyBlock));
       if (!entropy?.hash) throw new Error("entropy block hash missing");
       const entropyHash = entropy.hash;
 
       await networkHelpers.mine(257);
-      expect(await registry.sortitionSeed(0)).to.deep.equal([false, 0n]);
+      expect(await registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
 
       const runtimeCode = `0x7f${entropyHash.slice(2)}60005260206000f3`;
       await ethers.provider.send("hardhat_setCode", [
@@ -296,11 +308,11 @@ describe("CiphernodeRegistryOwnable", function () {
         ethers.keccak256(
           ethers.AbiCoder.defaultAbiCoder().encode(
             ["bytes32", "uint256"],
-            [entropyHash, 0],
+            [entropyHash, firstE3Id],
           ),
         ),
       );
-      expect(await registry.sortitionSeed(0)).to.deep.equal([
+      expect(await registry.sortitionSeed(firstE3Id)).to.deep.equal([
         true,
         expectedSeed,
       ]);
@@ -320,15 +332,15 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      expect(await registry.rootAt(0)).to.not.equal(0);
+      expect(await registry.rootAt(firstE3Id)).to.not.equal(0);
     });
 
     it("allows one ticket ID across concurrent E3 requests", async function () {
       const { registry, operator1, request } = await loadFixture(setup);
 
-      for (let e3Id = 0; e3Id < 2; e3Id++) {
+      for (let offset = 0n; offset < 2n; offset++) {
         await request();
-        await registry.connect(operator1).submitTicket(e3Id, 1);
+        await registry.connect(operator1).submitTicket(firstE3Id + offset, 1);
       }
     });
 
@@ -345,7 +357,9 @@ describe("CiphernodeRegistryOwnable", function () {
 
       await registry.connect(owner).setSortitionSubmissionWindow(60);
       await request();
-      expect(await registry.sortitionTicketPrices(0)).to.equal(TICKET_PRICE);
+      expect(await registry.sortitionTicketPrices(firstE3Id)).to.equal(
+        TICKET_PRICE,
+      );
 
       await setBondingAssetConfig(bondingRegistry, {
         ticketPrice: TICKET_PRICE * 2n,
@@ -355,7 +369,7 @@ describe("CiphernodeRegistryOwnable", function () {
         await operator2.getAddress(),
         await operator3.getAddress(),
       ]);
-      await registry.connect(operator1).submitTicket(0, 10);
+      await registry.connect(operator1).submitTicket(firstE3Id, 10);
 
       await setBondingAssetConfig(bondingRegistry, {
         ticketPrice: TICKET_PRICE / 2n,
@@ -367,9 +381,9 @@ describe("CiphernodeRegistryOwnable", function () {
       ]);
 
       await expect(
-        registry.connect(operator2).submitTicket.staticCall(0, 11),
+        registry.connect(operator2).submitTicket.staticCall(firstE3Id, 11),
       ).to.be.revertedWithCustomError(registry, "InvalidTicketNumber");
-      await registry.connect(operator2).submitTicket(0, 10);
+      await registry.connect(operator2).submitTicket(firstE3Id, 10);
     });
 
     it("does not admit an operator activated after the seed is known", async function () {
@@ -426,7 +440,7 @@ describe("CiphernodeRegistryOwnable", function () {
       expect(activeAtRequest).to.equal(false);
 
       await expect(
-        registry.connect(lateOperator).submitTicket(0, 1),
+        registry.connect(lateOperator).submitTicket(firstE3Id, 1),
       ).to.be.revertedWithCustomError(registry, "NodeNotEligible");
     });
 
@@ -470,7 +484,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      expect(await registry.rootAt(0)).to.equal(await registry.root());
+      expect(await registry.rootAt(firstE3Id)).to.equal(await registry.root());
     });
 
     it("rejects tickets from an operator banned after registration", async function () {
@@ -494,6 +508,7 @@ describe("CiphernodeRegistryOwnable", function () {
         .connect(owner)
         .grantRole(governanceRole, await notTheOwner.getAddress());
       await slashingManager.connect(owner).proposeBan(operator, reason);
+      const e3Id = await interfold.nexte3Id();
       await makeRequest(
         interfold,
         usdcToken,
@@ -513,7 +528,7 @@ describe("CiphernodeRegistryOwnable", function () {
       expect(await bondingRegistry.numActiveOperators()).to.equal(2);
       expect(await registry.isCiphernodeEligible(operator)).to.equal(false);
       await expect(
-        registry.connect(operator1).submitTicket(0, 1),
+        registry.connect(operator1).submitTicket(e3Id, 1),
       ).to.be.revertedWithCustomError(registry, "NodeNotEligible");
 
       await expect(slashingManager.connect(owner).unbanNode(operator, reason))
@@ -527,7 +542,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      await registry.connect(operator1).submitTicket(1, 1);
+      await registry.connect(operator1).submitTicket(e3Id + 1n, 1);
     });
   });
 
@@ -571,18 +586,18 @@ describe("CiphernodeRegistryOwnable", function () {
         mockDecryptionVerifier,
       );
 
-      expect(await registry.dkgFoldAttestationVerifierFor(0)).to.equal(
+      expect(await registry.dkgFoldAttestationVerifierFor(firstE3Id)).to.equal(
         oldVerifier,
       );
-      expect(await registry.dkgFoldAttestationVerifierFor(1)).to.equal(
-        await newVerifier.getAddress(),
-      );
+      expect(
+        await registry.dkgFoldAttestationVerifierFor(firstE3Id + 1n),
+      ).to.equal(await newVerifier.getAddress());
       const contextEvents = await registry.queryFilter(
         registry.filters.DkgFoldAttestationContextEstablished(),
       );
       expect(contextEvents.map((event) => event.args.e3Id)).to.deep.equal([
-        0n,
-        1n,
+        firstE3Id,
+        firstE3Id + 1n,
       ]);
       expect(contextEvents.map((event) => event.args.registry)).to.deep.equal([
         await registry.getAddress(),
@@ -610,17 +625,17 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       await expect(
-        registry.publishCommittee(0, dataHash, "0x", "0x"),
+        registry.publishCommittee(firstE3Id, dataHash, "0x", "0x"),
       ).to.be.revertedWithCustomError(registry, "DkgProofRequired");
       await expect(
         registry.publishCommittee(
-          0,
+          firstE3Id,
           dataHash,
           encodeMockDkgProof(dataHash),
           "0x",
@@ -645,17 +660,17 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       const falseProof = ethers.AbiCoder.defaultAbiCoder().encode(
         ["bytes", "bytes32[]"],
         ["0xfafafafa", [dataHash]],
       );
       await expect(
-        registry.publishCommittee(0, dataHash, falseProof, "0x01"),
+        registry.publishCommittee(firstE3Id, dataHash, falseProof, "0x01"),
       ).to.be.revertedWithCustomError(mockPkVerifier, "InvalidProof");
     });
     it("allows any caller to publish a finalized committee proof", async function () {
@@ -677,19 +692,24 @@ describe("CiphernodeRegistryOwnable", function () {
         mockDecryptionVerifier,
       );
 
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       await expect(
         registry
           .connect(notTheOwner)
-          .publishCommittee(0, dataHash, encodeMockDkgProof(dataHash), "0x01"),
+          .publishCommittee(
+            firstE3Id,
+            dataHash,
+            encodeMockDkgProof(dataHash),
+            "0x01",
+          ),
       )
         .to.emit(registry, "CommitteeProofPublished")
         .withArgs(
-          0,
+          firstE3Id,
           [
             await operator3.getAddress(),
             await operator1.getAddress(),
@@ -717,18 +737,18 @@ describe("CiphernodeRegistryOwnable", function () {
         mockDecryptionVerifier,
       );
 
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         dataHash,
         encodeMockDkgProof(dataHash),
         "0x01",
       );
-      expect(await registry.committeePublicKey(0)).to.equal(dataHash);
+      expect(await registry.committeePublicKey(firstE3Id)).to.equal(dataHash);
     });
     it("lets a valid public-key candidate follow an invalid one", async function () {
       const {
@@ -750,35 +770,37 @@ describe("CiphernodeRegistryOwnable", function () {
       );
 
       // Submit tickets from all operators and finalize
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       await registry.publishCommittee(
-        0,
+        firstE3Id,
         dataHash,
         encodeMockDkgProof(dataHash),
         "0x01",
       );
 
       const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
-      await expect(registry.publishCommitteePublicKey(0, "0x"))
+      await expect(registry.publishCommitteePublicKey(firstE3Id, "0x"))
         .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
         .withArgs(0, maxLength);
       const oversizedKey = ethers.hexlify(
         new Uint8Array(Number(maxLength) + 1),
       );
-      await expect(registry.publishCommitteePublicKey(0, oversizedKey))
+      await expect(registry.publishCommitteePublicKey(firstE3Id, oversizedKey))
         .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
         .withArgs(maxLength + 1n, maxLength);
 
       await expect(
-        registry.connect(notTheOwner).publishCommitteePublicKey(0, "0xdead"),
+        registry
+          .connect(notTheOwner)
+          .publishCommitteePublicKey(firstE3Id, "0xdead"),
       )
         .to.emit(registry, "CommitteePublished")
         .withArgs(
-          0,
+          firstE3Id,
           [
             await operator3.getAddress(),
             await operator1.getAddress(),
@@ -789,10 +811,10 @@ describe("CiphernodeRegistryOwnable", function () {
           "0x",
         );
 
-      await expect(registry.publishCommitteePublicKey(0, data))
+      await expect(registry.publishCommitteePublicKey(firstE3Id, data))
         .to.emit(registry, "CommitteePublished")
         .withArgs(
-          0,
+          firstE3Id,
           [
             await operator3.getAddress(),
             await operator1.getAddress(),
@@ -810,11 +832,13 @@ describe("CiphernodeRegistryOwnable", function () {
       const { registry, operator1, request } = await loadFixture(setup);
       await request();
 
-      await registry.connect(operator1).submitTicket(0, 1);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
       const operator = await operator1.getAddress();
 
-      expect(await registry.isCommitteeMember(0, operator)).to.equal(false);
-      const [nodes] = await registry.getActiveCommitteeNodes(0);
+      expect(await registry.isCommitteeMember(firstE3Id, operator)).to.equal(
+        false,
+      );
+      const [nodes] = await registry.getActiveCommitteeNodes(firstE3Id);
       expect(nodes).to.deep.equal([]);
     });
 
@@ -836,24 +860,26 @@ describe("CiphernodeRegistryOwnable", function () {
         mockDecryptionVerifier,
       );
 
-      await registry.connect(operator1).submitTicket(0, 1);
-      await registry.connect(operator2).submitTicket(0, 1);
-      await registry.connect(operator3).submitTicket(0, 1);
-      await finalizeCommitteeAfterWindow(registry, 0);
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
 
       const finalizedEvents = await registry.queryFilter(
-        registry.filters.SortitionCommitteeFinalized(0),
+        registry.filters.SortitionCommitteeFinalized(firstE3Id),
       );
       expect(finalizedEvents.length).to.equal(1);
 
       const finalizedEvent = finalizedEvents[0];
       const [activeNodes, activeScores] =
-        await registry.getActiveCommitteeNodes(0);
+        await registry.getActiveCommitteeNodes(firstE3Id);
 
       expect(activeNodes).to.deep.equal(finalizedEvent.args.committee);
       expect(activeScores).to.deep.equal(finalizedEvent.args.scores);
       for (const node of activeNodes) {
-        expect(await registry.isCommitteeMemberActive(0, node)).to.equal(true);
+        expect(
+          await registry.isCommitteeMemberActive(firstE3Id, node),
+        ).to.equal(true);
       }
     });
   });
@@ -890,6 +916,21 @@ describe("CiphernodeRegistryOwnable", function () {
           numCiphernodes + BigInt(1),
           treeSize + BigInt(1),
         );
+    });
+    it("reuses a removed tree slot before growing the tree", async function () {
+      const { registry, operator3 } = await loadFixture(setup);
+      const removed = await operator3.getAddress();
+      const removedIndex = await registry.ciphernodeTreeIndex(removed);
+      expect(removedIndex).to.be.gt(0);
+      const treeSize = await registry.treeSize();
+
+      await registry.removeCiphernode(removed);
+      await registry.addCiphernode(AddressTwo);
+
+      expect(await registry.ciphernodeTreeIndex(AddressTwo)).to.equal(
+        removedIndex,
+      );
+      expect(await registry.treeSize()).to.equal(treeSize);
     });
   });
 
@@ -938,12 +979,16 @@ describe("CiphernodeRegistryOwnable", function () {
       ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     });
     it("sets the interfold address", async function () {
-      const { registry } = await loadFixture(setup);
+      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
+        setupOperators: 0,
+      });
       expect(await registry.setInterfold(AddressTwo));
       expect(await registry.interfold()).to.equal(AddressTwo);
     });
     it("emits an InterfoldSet event", async function () {
-      const { registry } = await loadFixture(setup);
+      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
+        setupOperators: 0,
+      });
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
@@ -982,7 +1027,7 @@ describe("CiphernodeRegistryOwnable", function () {
       await bondingRegistry.setExitDelay(oldExitDelay);
       await registry.setSortitionSubmissionWindow(oldSubmissionWindow);
       await request();
-      const oldDeadline = await registry.getCommitteeDeadline(0);
+      const oldDeadline = await registry.getCommitteeDeadline(firstE3Id);
 
       await registry.setSortitionSubmissionWindow(60);
       await expect(
@@ -1012,7 +1057,7 @@ describe("CiphernodeRegistryOwnable", function () {
       );
       expect(await ticketToken.balanceOf(operatorAddress)).to.be.gt(0);
       await expect(
-        registry.connect(operator1).submitTicket(0, 1),
+        registry.connect(operator1).submitTicket(firstE3Id, 1),
       ).to.be.revertedWithCustomError(registry, "CommitteeDeadlineReached");
     });
   });
@@ -1029,7 +1074,7 @@ describe("CiphernodeRegistryOwnable", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
       await makeRequest(
         interfold,
         usdcToken,
@@ -1058,7 +1103,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
       await makeRequest(
         interfold,
         usdcToken,
@@ -1109,7 +1154,7 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
       const rootBeforeRequest = await registry.root();
       await makeRequest(
         interfold,

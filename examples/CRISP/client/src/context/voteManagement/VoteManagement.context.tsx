@@ -21,7 +21,7 @@ const generateSessionId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
 }
 
-const getVoteCacheKey = (sessionId: string, roundId: number, address: string): string => {
+const getVoteCacheKey = (sessionId: string, roundId: string, address: string): string => {
   return `crisp-vote-status-${sessionId}-${roundId}-${address.toLowerCase()}`
 }
 
@@ -50,7 +50,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [pastPolls, setPastPolls] = useState<PollResult[]>([])
   const [txUrl, setTxUrl] = useState<string | undefined>(undefined)
   const [pollResult, setPollResult] = useState<PollResult | null>(null)
-  const [currentRoundId, setCurrentRoundId] = useState<number | null>(null)
+  const [currentRoundId, setCurrentRoundId] = useState<string | null>(null)
   const [displayedRoundIsFallback, setDisplayedRoundIsFallback] = useState<boolean>(false)
   const [hasVotedInCurrentRound, setHasVotedInCurrentRound] = useState<boolean>(false)
   const [voteStatusLoading, setVoteStatusLoading] = useState<boolean>(false)
@@ -77,7 +77,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   } = useInterfoldServer()
 
   const checkVoteStatus = useCallback(
-    async (roundId: number, userAddress: string, forceRefresh: boolean = false): Promise<boolean> => {
+    async (roundId: string, userAddress: string, forceRefresh: boolean = false): Promise<boolean> => {
       if (!userAddress || roundId === null || roundId === undefined) return false
 
       const cacheKey = getVoteCacheKey(sessionId, roundId, userAddress)
@@ -113,7 +113,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   )
 
   const markVotedInRound = useCallback(
-    (roundId: number) => {
+    (roundId: string) => {
       if (!userAddress) return
 
       const cacheKey = getVoteCacheKey(sessionId, roundId, userAddress)
@@ -143,7 +143,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     if (!fetched) return
 
     const ended = Number(fetched.end_time) <= nowInSeconds()
-    let fallbackRoundId: number | null = null
+    let fallbackRoundId: string | null = null
 
     if (ended) {
       const currentResult = await getWebResultByRound(currentRound.id)
@@ -152,7 +152,11 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         const all = await getWebResult()
         const latestWithTally = (all ?? [])
           .filter((r) => Array.isArray(r.tally) && r.tally.length > 0)
-          .sort((a, b) => b.round_id - a.round_id)[0]
+          .sort((a, b) => {
+            const aId = BigInt(a.round_id)
+            const bId = BigInt(b.round_id)
+            return aId === bId ? 0 : aId < bId ? 1 : -1
+          })[0]
         if (latestWithTally && latestWithTally.round_id !== currentRound.id) {
           fallbackRoundId = latestWithTally.round_id
         }
@@ -163,8 +167,8 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     await getRoundStateLite(fallbackRoundId ?? currentRound.id)
   }
 
-  const getRoundStateLite = async (roundCount: number) => {
-    const fetchedRoundState = await getRoundStateLiteRequest(roundCount)
+  const getRoundStateLite = async (roundId: string) => {
+    const fetchedRoundState = await getRoundStateLiteRequest(roundId)
 
     if (fetchedRoundState?.committee_public_key.length === 1 && fetchedRoundState.committee_public_key[0] === 0) {
       handleGenericError('getRoundStateLite', {
@@ -205,7 +209,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   useEffect(() => {
     let cancelled = false
     const checkStatus = async () => {
-      if (userAddress && currentRoundId !== null && currentRoundId >= 0) {
+      if (userAddress && currentRoundId !== null) {
         const hasVoted = await checkVoteStatus(currentRoundId, userAddress)
         if (!cancelled) {
           setHasVotedInCurrentRound(hasVoted)

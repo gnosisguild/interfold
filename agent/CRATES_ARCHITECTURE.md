@@ -562,12 +562,14 @@ flowchart TD
     class Deferred residual
 ```
 
-Vote quorum uses the honest threshold rather than the total committee size. Cryptographic
-verification failures must be structurally attributable to a canonical party before they become
-slashing evidence. Replayed `AccusationQuorumReached` events are held until `EffectsEnabled`, then
-coalesced by the contract's semantic replay domain across deferred, in-flight, and completed
-submissions. Retryable submission failures release their key; successful or known-benign terminal
-results retain it.
+Vote quorum uses the honest threshold rather than the total committee size. Each affirmative vote
+signs a shared issue time and deadline. The contract limits that window to the request-time policy
+and rejects submissions after the E3's objective reporting deadline. A live zero-second registry
+window pauses new attestation slashes. Cryptographic verification failures must be structurally
+attributable to a canonical party before they become slashing evidence. Replayed
+`AccusationQuorumReached` events are held until `EffectsEnabled`, then coalesced by the contract's
+semantic replay domain across deferred, in-flight, and completed submissions. Retryable submission
+failures release their key. Successful or known-benign terminal results retain it.
 
 The gate is deliberately described as in-memory: there is no durable external-effect outbox or
 persisted transaction intent. A crash after snapshot advancement but before receipt classification

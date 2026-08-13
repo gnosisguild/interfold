@@ -417,18 +417,15 @@ read to identify which registered operator produced which DKG output. The mappin
 (via committee hash), the attestation binds to the proof commitments and the operator key, and the
 operator key was registered against `topNodes` at committee finalisation.
 
-### Registry-backed runtime config (operator restart requirement)
+### Registry-backed runtime config
 
-Two registry storage values are fetched **once at process startup** and reused for the entire
-process lifetime:
+The node uses two registry values with different lifetimes:
 
-1. `dkgFoldAttestationVerifier` — the EIP-712 `verifyingContract` for fold attestations (see
-   [`fetch_dkg_fold_attestation_verifier`](https://github.com/theinterfold/interfold/blob/main/crates/evm/src/ciphernode_registry_sol.rs)).
-2. `accusationVoteValidity` — the seconds-window applied to accusation vote `deadline`s (see the
-   [Registry-wide vote validity window](#registry-wide-vote-validity-window) subsection).
-
-Both follow the same restart-required lifecycle: governance updates take effect for new processes
-only, and live nodes keep using the value they fetched at startup.
+1. Each E3 stores its request-time registry and DKG verifier. The node reads those E3-specific
+   values when it signs or validates fold attestations, including after a restart.
+2. `accusationVoteValidity` is fetched for each enabled chain at process startup and sets the
+   maximum window used when the node creates and validates accusation votes. See the
+   [Registry-wide vote validity window](#registry-wide-vote-validity-window) subsection.
 
 #### Verifier rotation
 
@@ -437,46 +434,25 @@ The address of the on-chain `DkgFoldAttestationVerifier` is governance-mutable o
 — the verifier is treated as a critical admin key so a compromised owner cannot instantly swap in a
 weakened verifier that bypasses per-party attestation checks.
 
-**Node-operator requirement.** After a successful `commitDkgFoldAttestationVerifier`, signatures
-produced by long-running nodes will be rejected on-chain by the new verifier — different
-`verifyingContract` means a different EIP-712 domain separator, so `ECDSA.recover` returns the wrong
-address, the canonical-slot binding check fails, and aggregators will treat those nodes as dishonest
-until they restart.
-
-The 2-day timelock window exists for exactly this reason: it gives operators time to coordinate a
-rolling restart before the swap becomes effective. Operators MUST restart all ciphernodes within
-`DKG_FOLD_VERIFIER_TIMELOCK` of the propose event being emitted; this is a strict requirement, not a
-recommendation. Nodes that miss the window silently produce invalid attestations until restarted.
-The same rule applies to the one-shot deploy-time `setInitialDkgFoldAttestationVerifier`, except
-that call is only valid when no verifier is yet configured.
+The request-time snapshot prevents verifier rotation from changing an active E3's signature domain.
+The node restores the same per-E3 registry and verifier after a restart. A newly committed verifier
+therefore applies only to later E3 requests. The one-shot `setInitialDkgFoldAttestationVerifier`
+call is only valid when no verifier is configured.
 
 #### Vote validity changes
 
 `setAccusationVoteValidity` applies increases immediately and clears any pending reduction. Every
 reduction uses the two-day `proposeAccusationVoteValidity` and `commitAccusationVoteValidity` path.
-After the delay, governance has two days to commit. The delay gives operators time to restart before
-updated peers enforce shorter local deadlines. See the
+After the delay, governance has two days to commit. Operators must restart before they use a changed
+nonzero window when creating new accusations. The on-chain E3 snapshot still prevents a restarted
+node from extending an older E3's signed window. See the
 [Registry-wide vote validity window](#registry-wide-vote-validity-window) subsection for the
 emergency-stop semantics of a zero-second window.
 
-**Multi-chain caveat.** When `interfold.config.yaml` lists more than one chain, the node reads
-`dkgFoldAttestationVerifier` and `accusationVoteValidity` from the **first enabled** chain only
-(`fetch_dkg_fold_attestation_verifier_from_registry` /
-`fetch_accusation_vote_validity_from_registry` in `ciphernode-builder`). That single value is then
-used for every E3 the node participates in, regardless of which chain the E3 lives on. This is a
-deliberate trade-off:
-
-- **Today most operators run single-chain nodes**, so the practical risk is zero.
-- A multi-chain node whose first-enabled chain has a _stricter_ setter for either knob produces
-  values the other chain's contract may refuse — e.g. a `verifyingContract` on chain A is
-  meaningless when chain B's verifier recomputes the EIP-712 domain against its own address. There
-  is no in-flight fallback.
-- If you add a new chain to a running node's config, or rotate any chain's verifier / vote-validity
-  window, restart the node so all per-chain fetches re-run.
-
-A robust per-E3 lookup (re-fetch from the chain that owns the E3 every time we sign or encode) is
-left as future work — the design is straightforward but the wiring crosses multiple actors and isn't
-worth the surface area until a multi-chain deployment makes the trade-off concrete.
+**Multi-chain behavior.** The node reads `accusationVoteValidity` separately from each enabled
+chain. It selects the value by the E3's chain ID. DKG attestations use the E3's request-time
+verifier instead of a process-wide value. If you add a chain to a running node's configuration or
+change a chain's vote-validity window, restart the node so the per-chain fetch runs again.
 
 ### Keeping the on-chain Honk verifiers in sync
 
@@ -531,12 +507,12 @@ coefficient each, packed into bytes).
 When fault attribution leads to a slash, the off-chain accusation quorum produces a payload that
 [`SlashingManager.proposeSlash`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/slashing/SlashingManager.sol)
 decodes as
-`(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 deadline, bytes[] signatures)`.
+`(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`.
 `_verifyAttestationEvidence` enforces:
 
 - ≥ `M` voters, sorted ascending, accused excluded, each producing a canonical EIP-712 typed-data
   signature over
-  `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 deadline)`.
+  `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 issuedAt, uint256 deadline)`.
   `chainId` and `verifyingContract = address(SlashingManager)` live in the EIP-712 domain — see
   `EIP712_DOMAIN_NAME` ("InterfoldSlashing") and `EIP712_DOMAIN_VERSION` ("1") on the contract; the
   Rust signer reads the exact same strings from `e3_events::VOTE_DOMAIN_NAME` /
@@ -544,33 +520,29 @@ decodes as
 - All `dataHashes[i]` equal a common `dataHash` (voters must agree on the same evidence, not just
   "something bad").
 - `keccak256(evidence) == dataHash` (explicit preimage binding on chain).
-- `block.timestamp <= deadline`. Every voter signs the same `deadline` value — the accuser stamps it
-  at proposal time as `now + accusationVoteValidity` (a registry-wide governance knob, see the
-  subsection below), and `AccusationManager::on_vote_received` rejects peers' votes whose deadline
-  disagrees so the aggregated evidence carries one shared value. Stolen signatures can't be replayed
-  indefinitely.
+- Every voter signs the same `issuedAt` and `deadline`. The contract rejects future issue times
+  outside the clock-skew allowance, windows longer than the E3's request-time policy, expired votes,
+  and submissions after the E3's objective reporting deadline. The live registry value must also be
+  nonzero, so governance can pause new attestation slashes without changing old signatures.
 - Agreement is implicit: there is no `agrees` field on the signed struct or on the gossip wire. A
   peer who finds the disputed proof passes simply stays silent; every signature reaching the
   on-chain decoder is an affirmative attestation. See the
   [`AccusationVote` docstring](https://github.com/theinterfold/interfold/blob/main/crates/events/src/interfold_event/accusation_vote.rs)
   for the rationale and the fast-fail trade-off this design accepts.
 
-The faulty-proof preimage (`abi.encode(proof.data, public_signals)`) is **not** transported on chain
-— the previous `keccak256(evidence) == commonDataHash` check was dropped because the `dataHash`
-equality across voters is sufficient for attribution and the calldata cost of carrying ~16 KB of
-preimage per slash is not. The preimage is kept on the off-chain `AccusationQuorumReached` event as
-audit metadata for observers; populated for every accusation path that leads to a slash (ZK
-verification failures via `ProofVerificationFailed`, forwarded C3a/C3b accusations via the
-re-verification path, and commitment-consistency violations via `CommitmentConsistencyViolation`).
+The faulty-proof preimage (`abi.encode(proof.data, public_signals)`) is transported with the slash
+proposal. The contract requires `keccak256(evidence) == commonDataHash`, which binds every signature
+to the submitted evidence. The same bytes remain available on the off-chain
+`AccusationQuorumReached` event for observers.
 
 #### Registry-wide vote validity window
 
 The `accusationVoteValidity` storage on
 [`CiphernodeRegistryOwnable`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol)
-(default 30 minutes, seeded by `DEFAULT_ACCUSATION_VOTE_VALIDITY` at `initialize`) is the
-seconds-window applied to every accusation vote's `deadline`. Ciphernodes fetch it once at process
-startup via `fetch_accusation_vote_validity_from_registry` and reuse the value for the process
-lifetime — same lifecycle as `dkgFoldAttestationVerifier`.
+(default 30 minutes, seeded by `DEFAULT_ACCUSATION_VOTE_VALIDITY` at `initialize`) is the maximum
+signed window applied to accusation votes. Ciphernodes fetch it for each enabled chain at process
+startup. The slashing manager snapshots the nonzero value for each E3 and also checks the live
+value.
 
 Governance can keep or increase it with `setAccusationVoteValidity(uint256)`. This call clears a
 pending reduction. A reduction must use `proposeAccusationVoteValidity(uint256)`, wait two days, and
@@ -579,17 +551,14 @@ then use `commitAccusationVoteValidity(uint256)` within two days. Two notable va
 - **Shorter window**: tighter freshness — useful if stolen-signature replay becomes a concern, at
   the cost of giving on-chain submitters less slack to land the `proposeSlash` transaction after
   off-chain quorum reaches `M`.
-- **Zero**: practically disables slashing — `accusationVoteValidity = 0` is a zero-second window, so
-  every new vote's `deadline` is stamped as `now` (no slack beyond the current block time).
-  Off-chain nodes still gossip votes; `proposeSlash` succeeds only if `SlashingManager` sees at
-  least **M** agreeing `AccusationVote` signatures and passes `block.timestamp <= deadline`. That
-  comparison is inclusive, so a vote whose `deadline` equals the current block time can still land
-  if `proposeSlash` is included in the **same block** — zero is an emergency brake, not a guaranteed
-  hard stop. Restore a non-zero window quickly to keep the slashing path operational.
+- **Zero**: disables new attestation-based slash proposals. Nodes do not create new votes, and the
+  slashing manager rejects proposals even when they contain signatures from an older nonzero window.
+  Restore a nonzero value to resume this path.
 
-In-flight ciphernodes do not pick up the new value until restart. Operators must complete a rolling
-restart during the two-day delay for a reduction. Updated peers reject accusations whose deadlines
-exceed their local validity window. The on-chain check only rejects a deadline after it expires.
+Running ciphernodes do not pick up a changed nonzero value until restart. Updated peers reject
+accusations whose windows exceed their local policy. On chain, the request-time snapshot prevents
+later increases from extending an E3's window, the live zero value acts as an emergency stop, and
+the objective reporting deadline places a final bound on submissions.
 
 ---
 

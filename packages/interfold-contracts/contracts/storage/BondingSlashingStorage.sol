@@ -36,5 +36,6 @@ abstract contract BondingSlashingStorage {
         mapping(uint256 e3Id => mapping(address operator => bool locked)) committeeObligations;
         mapping(uint256 e3Id => uint256 count) committeeMemberCounts;
         mapping(address operator => uint256 count) unresolvedCommittees;
+        uint256 unresolvedCommitteeCount;
     }
 }

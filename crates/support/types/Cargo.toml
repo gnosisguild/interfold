@@ -10,3 +10,4 @@ anyhow.workspace = true
 hex.workspace = true
 derivative = "=2.2.0"
 e3-compute-provider.workspace = true
+alloy-primitives.workspace = true

@@ -224,7 +224,7 @@ describe('Integration', () => {
     // REQUEST phase
     const timeoutMs = duration * 1000
 
-    await waitForEvent(
+    const requestEvent = await waitForEvent(
       InterfoldEventType.E3_REQUESTED,
       async () => {
         console.log('Requested E3...')
@@ -233,9 +233,9 @@ describe('Integration', () => {
       timeoutMs,
     )
 
-    state = store.get(0n)
+    state = store.get(requestEvent.data.e3Id)
     assert(state, 'store should have E3State but it was falsey')
-    assert.strictEqual(state.e3Id, 0n)
+    assert.strictEqual(state.e3Id, requestEvent.data.e3Id)
     assert.strictEqual(state.type, 'requested')
     console.log('E3 Sucessfully Requested!')
 

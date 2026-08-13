@@ -23,7 +23,7 @@
 //! finalists, say) still gets its option list from the E3's `numOptions` and whatever mapping the
 //! requester publishes separately.
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use alloy::providers::ProviderBuilder;
 use alloy::sol;
 use std::collections::HashSet;
@@ -67,9 +67,16 @@ sol! {
 /// hard error, because the round declared an electorate nobody can produce.
 pub async fn try_fetch_requester_census(
     requester: Address,
-    e3_id: u64,
+    e3_id: &str,
     rpc_url: &str,
 ) -> Option<Vec<Address>> {
+    let e3_id_u256 = match U256::from_str_radix(e3_id, 10) {
+        Ok(e3_id) => e3_id,
+        Err(e) => {
+            log::warn!("[e3_id={}] Invalid E3 ID: {}", e3_id, e);
+            return None;
+        }
+    };
     let url = match rpc_url.parse() {
         Ok(url) => url,
         Err(e) => {
@@ -95,7 +102,7 @@ pub async fn try_fetch_requester_census(
     // Alloy sets no default request timeout, so an unresponsive RPC endpoint would hang this probe
     // indefinitely and stall the indexer on the E3 that triggered it.
     // Bound to a `let` so the builder outlives the future that borrows it.
-    let call_builder = contract.getCensus(alloy::primitives::U256::from(e3_id));
+    let call_builder = contract.getCensus(e3_id_u256);
 
     let census = match tokio::time::timeout(CENSUS_CALL_TIMEOUT, call_builder.call()).await {
         Ok(Ok(census)) => census,

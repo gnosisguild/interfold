@@ -98,7 +98,8 @@ against `BondingRegistry`.
 | `deregisterOperatorFor(operator)`                | Bond owner or operator | Request deregistration and queue all collateral          |
 | `addTicketBalanceFor(operator, amount)`          | Bond owner             | Deposit the fee token and mint tickets                   |
 | `removeTicketBalanceFor(operator, amount)`       | Bond owner             | Burn tickets and queue the underlying for exit           |
-| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner             | Claim matured exits to the bond owner                    |
+| `claimExitsFor(operator, maxTicket, 0)`          | Anyone                 | Settle matured tickets to the bond owner                 |
+| `claimExitsFor(operator, maxTicket, maxLicense)` | Bond owner             | Claim matured tickets and license collateral             |
 | `refreshOperatorStatus(operator)`                | Anyone                 | Recompute one operator's status under the current policy |
 | `refreshOperatorStatuses(operators)`             | Anyone                 | Recompute a batch of operators                           |
 

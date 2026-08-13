@@ -7,6 +7,7 @@
 mod types;
 
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult};
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use e3_bfv_client::compute_ct_commitment;
 use e3_compute_provider::FHEInputs;
@@ -19,7 +20,7 @@ use types::{ComputeRequest, WebhookPayload};
 #[derive(Serialize, Debug)]
 struct ProcessingResponse {
     status: String,
-    e3_id: u64,
+    e3_id: String,
 }
 
 type RunnerResult = Result<(Vec<u8>, Vec<u8>)>;
@@ -30,7 +31,7 @@ type Runner =
 pub struct ComputeDomain {
     pub chain_id: u64,
     pub verifying_contract: [u8; 20],
-    pub e3_id: u64,
+    pub e3_id: [u8; 32],
     pub encryption_scheme_id: [u8; 32],
     pub committee_public_key_hash: [u8; 32],
 }
@@ -39,7 +40,7 @@ impl ComputeDomain {
     fn new(
         chain_id: u64,
         interfold_address: &str,
-        e3_id: u64,
+        e3_id: &str,
         encryption_scheme_id: &[u8],
         committee_public_key_hash: &[u8],
     ) -> Result<Self, String> {
@@ -50,7 +51,10 @@ impl ComputeDomain {
                     .map_err(|error| format!("invalid Interfold address: {error}"))?,
                 "Interfold address",
             )?,
-            e3_id,
+            e3_id: e3_id
+                .parse::<U256>()
+                .map_err(|error| format!("invalid E3 ID: {error}"))?
+                .to_be_bytes(),
             encryption_scheme_id: fixed(encryption_scheme_id, "encryption scheme ID")?,
             committee_public_key_hash: fixed(
                 committee_public_key_hash,
@@ -250,8 +254,8 @@ async fn call_webhook(
     payload: WebhookPayload,
 ) -> Result<()> {
     let e3_id = match &payload {
-        WebhookPayload::Completed { e3_id, .. } => *e3_id,
-        WebhookPayload::Failed { e3_id, .. } => *e3_id,
+        WebhookPayload::Completed { e3_id, .. } => e3_id,
+        WebhookPayload::Failed { e3_id, .. } => e3_id,
     };
 
     match &payload {
@@ -301,7 +305,7 @@ async fn handle_webhook_delivery(
 
 async fn process_computation_background(
     runner: Arc<Runner>,
-    e3_id: u64,
+    e3_id: String,
     webhook_client: reqwest::Client,
     callback_url: reqwest::Url,
     job: ComputeJob,
@@ -324,7 +328,7 @@ async fn process_computation_background(
             .context("failed to compute ciphertext commitment")?;
             println!("handling webhook delivery...");
             let payload = WebhookPayload::Completed {
-                e3_id,
+                e3_id: e3_id.clone(),
                 ciphertext,
                 proof,
                 ciphertext_commitment,
@@ -338,7 +342,7 @@ async fn process_computation_background(
             eprintln!("Computation failed for E3 {}: {}", e3_id, error_msg);
 
             let payload = WebhookPayload::Failed {
-                e3_id,
+                e3_id: e3_id.clone(),
                 error: format!("Compute failed: {}", error_msg),
             };
             handle_webhook_delivery(&webhook_client, &callback_url, payload).await?;
@@ -355,6 +359,7 @@ async fn handle_compute(
     println!("Processing computation...");
     let e3_id = req
         .e3_id
+        .clone()
         .ok_or_else(|| actix_web::error::ErrorBadRequest("e3_id is required"))?;
 
     let callback_url = req
@@ -369,7 +374,7 @@ async fn handle_compute(
     let domain = ComputeDomain::new(
         req.chain_id,
         &req.interfold_address,
-        e3_id,
+        &e3_id,
         &req.encryption_scheme_id,
         &req.committee_public_key_hash,
     )
@@ -386,12 +391,22 @@ async fn handle_compute(
         .map_err(|_| actix_web::error::ErrorTooManyRequests("compute capacity exhausted"))?;
     let runner = config.runner.clone();
     let webhook_client = config.webhook_client.clone();
+    let background_e3_id = e3_id.clone();
     tokio::spawn(async move {
         let _permit = permit;
-        if let Err(e) =
-            process_computation_background(runner, e3_id, webhook_client, callback_url, job).await
+        if let Err(e) = process_computation_background(
+            runner,
+            background_e3_id.clone(),
+            webhook_client,
+            callback_url,
+            job,
+        )
+        .await
         {
-            eprintln!("✗ Background computation failed for E3 {}: {:?}", e3_id, e);
+            eprintln!(
+                "✗ Background computation failed for E3 {}: {:?}",
+                background_e3_id, e
+            );
         }
     });
 
@@ -404,13 +419,29 @@ async fn handle_compute(
 async fn handle_health_check() -> ActixResult<HttpResponse> {
     Ok(HttpResponse::Ok().json(ProcessingResponse {
         status: "healthy".to_string(),
-        e3_id: 0,
+        e3_id: "0".to_string(),
     }))
 }
 
 #[cfg(test)]
 mod server_tests {
     use super::*;
+
+    #[test]
+    fn compute_domain_preserves_ids_larger_than_u64() {
+        let domain = ComputeDomain::new(
+            1,
+            "0x1111111111111111111111111111111111111111",
+            "18446744073709551616",
+            &[0x22; 32],
+            &[0x33; 32],
+        )
+        .unwrap();
+
+        assert_eq!(domain.e3_id[23], 1);
+        assert!(domain.e3_id[..23].iter().all(|byte| *byte == 0));
+        assert!(domain.e3_id[24..].iter().all(|byte| *byte == 0));
+    }
 
     #[test]
     fn callback_validation_accepts_http_origins_and_rejects_unsafe_urls() {

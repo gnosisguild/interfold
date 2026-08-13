@@ -96,7 +96,7 @@ impl RequestRouter {
                 }
                 // E3Failed from on-chain markE3Failed may arrive after a local timeout already
                 // cleaned up the context.
-                InterfoldEventData::E3Failed(data) if data.reason.is_timeout() => true,
+                InterfoldEventData::E3Failed(data) if data.reason.ends_without_slashing() => true,
                 // Settlement receipts (PlaintextOutputPublished, etc.) can arrive in the same
                 // EVM block after E3StageChanged(Complete) already tore down the context.
                 InterfoldEventData::PlaintextOutputPublished(_) => true,
@@ -120,7 +120,7 @@ impl RequestRouter {
             // Timeout failures have no accusation/slashing lifecycle, so the context can be
             // torn down immediately. Misbehaviour failures (DKGInvalidShares, etc.) still need
             // the accusation/slashing lifecycle to complete before teardown.
-            InterfoldEventData::E3Failed(data) if data.reason.is_timeout() => {
+            InterfoldEventData::E3Failed(data) if data.reason.ends_without_slashing() => {
                 PostForward::PublishComplete
             }
             InterfoldEventData::E3RequestComplete(_) => PostForward::Teardown,

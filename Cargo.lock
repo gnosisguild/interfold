@@ -3837,6 +3837,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "url",
@@ -3977,6 +3978,7 @@ name = "e3-program-server"
 version = "0.7.0"
 dependencies = [
  "actix-web",
+ "alloy-primitives",
  "anyhow",
  "derivative",
  "e3-bfv-client",

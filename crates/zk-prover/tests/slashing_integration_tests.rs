@@ -176,6 +176,23 @@ async fn deploy_contract(
         .expect("deploy receipt missing contract address")
 }
 
+async fn current_vote_window(provider: &impl Provider) -> (U256, U256) {
+    let block = provider
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+        .await
+        .expect("latest block lookup should succeed")
+        .expect("latest block should exist");
+    let issued_at = block.header.timestamp;
+    (
+        U256::from(issued_at),
+        U256::from(
+            issued_at
+                .checked_add(1_800)
+                .expect("test deadline overflow"),
+        ),
+    )
+}
+
 /// Create a test ProofPayload with the given parameters.
 fn test_proof_payload(e3_id: u64, chain_id: u64) -> ProofPayload {
     ProofPayload {
@@ -380,8 +397,8 @@ use e3_events::{VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR};
 
 const VOTE_DOMAIN_TYPEHASH_STR: &str =
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
-/// Sentinel deadline matching Hardhat `ethers.MaxUint256` (no expiry in tests).
-const VOTE_NO_EXPIRY: U256 = U256::MAX;
+const TEST_ISSUED_AT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
+const TEST_DEADLINE: U256 = U256::from_limbs([2_800, 0, 0, 0]);
 
 /// Lane A policy key: `keccak256(abi.encodePacked(proofType))` (must match `SlashingManager.proposeSlash`).
 fn reason_for_proof_type(proof_type: u8) -> FixedBytes<32> {
@@ -444,6 +461,7 @@ fn compute_vote_digest(
     accusation_id: FixedBytes<32>,
     voter: Address,
     data_hash: FixedBytes<32>,
+    issued_at: U256,
     deadline: U256,
 ) -> FixedBytes<32> {
     let typehash = keccak256(VOTE_TYPEHASH_STR);
@@ -454,6 +472,7 @@ fn compute_vote_digest(
             accusation_id,
             voter,
             data_hash,
+            issued_at,
             deadline,
         )
             .abi_encode(),
@@ -475,25 +494,7 @@ fn sign_vote(
     e3_id: u64,
     accusation_id: FixedBytes<32>,
     data_hash: FixedBytes<32>,
-) -> (Address, Bytes) {
-    sign_vote_with_deadline(
-        signer,
-        chain_id,
-        verifying_contract,
-        e3_id,
-        accusation_id,
-        data_hash,
-        VOTE_NO_EXPIRY,
-    )
-}
-
-fn sign_vote_with_deadline(
-    signer: &PrivateKeySigner,
-    chain_id: u64,
-    verifying_contract: Address,
-    e3_id: u64,
-    accusation_id: FixedBytes<32>,
-    data_hash: FixedBytes<32>,
+    issued_at: U256,
     deadline: U256,
 ) -> (Address, Bytes) {
     let voter = signer.address();
@@ -504,6 +505,7 @@ fn sign_vote_with_deadline(
         accusation_id,
         voter,
         data_hash,
+        issued_at,
         deadline,
     );
     // EIP-712: sign the typed-data hash directly (no EIP-191 wrapping).
@@ -516,11 +518,13 @@ fn sign_vote_with_deadline(
 /// Encode attestation evidence for `proposeSlash()`.
 ///
 /// Format: `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
-/// uint256 deadline, bytes[] signatures)`. Voters are sorted ascending by address.
+/// uint256 issuedAt, uint256 deadline, bytes[] signatures)`. Voters are sorted
+/// ascending by address.
 fn encode_attestation_evidence(
     proof_type: u8,
     mut votes: Vec<(Address, FixedBytes<32>, Bytes)>,
     evidence: Bytes,
+    issued_at: U256,
     deadline: U256,
 ) -> Bytes {
     votes.sort_by_key(|(addr, _, _)| *addr);
@@ -536,6 +540,7 @@ fn encode_attestation_evidence(
         voters,
         data_hashes,
         evidence,
+        issued_at,
         deadline,
         sigs,
     )
@@ -562,7 +567,7 @@ fn test_reason_for_proof_type_matches_solidity() {
 fn test_vote_typehash() {
     let expected: [u8; 32] = keccak256(VOTE_TYPEHASH_STR).into();
     // Cross-check with the exact string the Solidity contract uses:
-    let sol_str = "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 deadline)";
+    let sol_str = "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)";
     let sol_hash: [u8; 32] = keccak256(sol_str).into();
     assert_eq!(
         expected, sol_hash,
@@ -595,7 +600,8 @@ fn test_vote_digest_manual_computation() {
         accusation_id,
         voter,
         data_hash,
-        VOTE_NO_EXPIRY,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
 
     // Manual EIP-712 computation
@@ -607,7 +613,8 @@ fn test_vote_digest_manual_computation() {
             accusation_id,
             voter,
             data_hash,
-            VOTE_NO_EXPIRY,
+            TEST_ISSUED_AT,
+            TEST_DEADLINE,
         )
             .abi_encode(),
     );
@@ -651,6 +658,8 @@ fn test_vote_signing_roundtrip() {
         e3_id,
         accusation_id,
         data_hash,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
 
     assert_eq!(
@@ -667,7 +676,8 @@ fn test_vote_signing_roundtrip() {
         accusation_id,
         voter,
         data_hash,
-        VOTE_NO_EXPIRY,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
     let sig =
         alloy::primitives::Signature::try_from(sig_bytes.as_ref()).expect("signature should parse");
@@ -705,7 +715,8 @@ fn test_evidence_leading_word_is_proof_type() {
             ),
         ],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
     let leading = U256::from_be_slice(&evidence[..32]);
     assert_eq!(leading, U256::ZERO, "leading word must be proofType");
@@ -740,6 +751,8 @@ fn test_attestation_evidence_encoding() {
         e3_id,
         accusation_id,
         data_hash,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
     let (voter2, sig2) = sign_vote(
         &signer2,
@@ -748,28 +761,41 @@ fn test_attestation_evidence_encoding() {
         e3_id,
         accusation_id,
         data_hash,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
 
     let evidence = encode_attestation_evidence(
         proof_type,
         vec![(voter1, data_hash, sig1), (voter2, data_hash, sig2)],
         raw_evidence.clone(),
-        VOTE_NO_EXPIRY,
+        TEST_ISSUED_AT,
+        TEST_DEADLINE,
     );
 
-    // Decode and verify structure: (uint256, address[], bytes32[], bytes, uint256, bytes[])
+    // Decode and verify structure: proof type, voters, hashes, evidence,
+    // issued-at time, deadline, and signatures.
     type AttestationTuple = (
         U256,
         Vec<Address>,
         Vec<FixedBytes<32>>,
         Bytes,
         U256,
+        U256,
         Vec<Bytes>,
     );
     let decoded =
         AttestationTuple::abi_decode_params(&evidence).expect("evidence should ABI-decode");
 
-    let (dec_proof_type, dec_voters, dec_hashes, dec_evidence, dec_deadline, dec_sigs) = decoded;
+    let (
+        dec_proof_type,
+        dec_voters,
+        dec_hashes,
+        dec_evidence,
+        dec_issued_at,
+        dec_deadline,
+        dec_sigs,
+    ) = decoded;
     assert_eq!(dec_proof_type, U256::from(proof_type), "proofType mismatch");
     assert_eq!(dec_voters.len(), 2, "should have 2 voters");
     assert!(
@@ -778,7 +804,8 @@ fn test_attestation_evidence_encoding() {
     );
     assert_eq!(dec_hashes.len(), 2, "should have 2 data hashes");
     assert_eq!(dec_evidence, raw_evidence, "evidence bytes mismatch");
-    assert_eq!(dec_deadline, VOTE_NO_EXPIRY, "deadline mismatch");
+    assert_eq!(dec_issued_at, TEST_ISSUED_AT, "issued_at mismatch");
+    assert_eq!(dec_deadline, TEST_DEADLINE, "deadline mismatch");
     assert_eq!(dec_sigs.len(), 2, "should have 2 signatures");
     assert!(
         dec_hashes.iter().all(|h| *h == data_hash),
@@ -864,6 +891,7 @@ async fn test_onchain_valid_attestation_executes_slash() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     // Three committee member signers
     let voter_signer1 = PrivateKeySigner::random();
@@ -959,6 +987,8 @@ async fn test_onchain_valid_attestation_executes_slash() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
     let (v2, s2) = sign_vote(
         &voter_signer2,
@@ -967,6 +997,8 @@ async fn test_onchain_valid_attestation_executes_slash() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
     let (v3, s3) = sign_vote(
         &voter_signer3,
@@ -975,6 +1007,8 @@ async fn test_onchain_valid_attestation_executes_slash() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
 
     let evidence = encode_attestation_evidence(
@@ -985,7 +1019,8 @@ async fn test_onchain_valid_attestation_executes_slash() {
             (v3, data_hash, s3),
         ],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
     );
 
     // Verify proposal count before
@@ -1050,6 +1085,7 @@ async fn test_onchain_insufficient_attestations_reverts() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let voter_signer1 = PrivateKeySigner::random();
     let voter_signer2 = PrivateKeySigner::random();
@@ -1129,13 +1165,16 @@ async fn test_onchain_insufficient_attestations_reverts() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
 
     let evidence = encode_attestation_evidence(
         proof_type,
         vec![(v1, data_hash, s1)],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
     );
 
     let result = slashing_mgr
@@ -1175,6 +1214,7 @@ async fn test_onchain_voter_not_in_committee_reverts() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let committee_signer = PrivateKeySigner::random();
     let outsider_signer = PrivateKeySigner::random();
@@ -1248,13 +1288,16 @@ async fn test_onchain_voter_not_in_committee_reverts() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
 
     let evidence = encode_attestation_evidence(
         proof_type,
         vec![(v_out, data_hash, s_out)],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
     );
 
     let result = slashing_mgr
@@ -1294,6 +1337,7 @@ async fn test_onchain_invalid_vote_signature_reverts() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let victim_signer = PrivateKeySigner::random();
     let impersonator_signer = PrivateKeySigner::random();
@@ -1368,7 +1412,8 @@ async fn test_onchain_invalid_vote_signature_reverts() {
         accusation_id,
         victim_signer.address(),
         data_hash,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
     );
     let bad_sig = impersonator_signer
         .sign_hash_sync(&digest)
@@ -1380,7 +1425,8 @@ async fn test_onchain_invalid_vote_signature_reverts() {
         vec![victim_signer.address()],
         vec![data_hash],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
         vec![Bytes::from(bad_sig.as_bytes().to_vec())],
     )
         .abi_encode_params()
@@ -1426,6 +1472,7 @@ async fn test_onchain_duplicate_voter_reverts() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let voter_signer = PrivateKeySigner::random();
 
@@ -1497,6 +1544,8 @@ async fn test_onchain_duplicate_voter_reverts() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
 
     // Submit evidence with duplicate voter entries (bypassing encode_attestation_evidence
@@ -1506,7 +1555,8 @@ async fn test_onchain_duplicate_voter_reverts() {
         vec![voter, voter],
         vec![data_hash, data_hash],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
         vec![sig.clone(), sig],
     )
         .abi_encode_params()
@@ -1549,6 +1599,7 @@ async fn test_onchain_duplicate_evidence_reverts() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let voter_signer1 = PrivateKeySigner::random();
     let voter_signer2 = PrivateKeySigner::random();
@@ -1624,6 +1675,8 @@ async fn test_onchain_duplicate_evidence_reverts() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
     let (v2, s2) = sign_vote(
         &voter_signer2,
@@ -1632,13 +1685,16 @@ async fn test_onchain_duplicate_evidence_reverts() {
         e3_id,
         accusation_id,
         data_hash,
+        issued_at,
+        deadline,
     );
 
     let evidence = encode_attestation_evidence(
         proof_type,
         vec![(v1, data_hash, s1), (v2, data_hash, s2)],
         raw_evidence,
-        VOTE_NO_EXPIRY,
+        issued_at,
+        deadline,
     );
 
     // First submission should succeed
@@ -1709,6 +1765,7 @@ async fn test_onchain_actor_signed_vote_accepted() {
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
+    let (issued_at, deadline) = current_vote_window(&provider).await;
 
     let voter1 = PrivateKeySigner::random();
     let voter2 = PrivateKeySigner::random();
@@ -1778,10 +1835,6 @@ async fn test_onchain_actor_signed_vote_accepted() {
     let raw_evidence_bytes: Bytes = Bytes::from(vec![0xee; 32]);
     let data_hash: FixedBytes<32> = keccak256(&raw_evidence_bytes);
 
-    // Pick a deadline far in the future so the on-chain check passes
-    // regardless of Anvil's block.timestamp at submission time.
-    let deadline: u64 = u64::MAX / 2;
-
     let accusation_id = compute_accusation_id(chain_id, e3_id, operator_addr, proof_type);
 
     // Build & sign three votes via the **production** code path:
@@ -1795,7 +1848,8 @@ async fn test_onchain_actor_signed_vote_accepted() {
             accusation_id: *accusation_id.as_ref(),
             voter,
             data_hash: *data_hash.as_ref(),
-            deadline,
+            issued_at: issued_at.to::<u64>(),
+            deadline: deadline.to::<u64>(),
             signature: ArcBytes::default(),
         };
         let digest = AccusationManager::vote_digest(&vote, sm_addr);

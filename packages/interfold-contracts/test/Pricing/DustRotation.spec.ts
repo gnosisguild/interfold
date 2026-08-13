@@ -11,6 +11,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   SORTITION_SUBMISSION_WINDOW,
   DATA as data,
   deployInterfoldSystem,
@@ -29,7 +30,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
 
   const setupAndPublishCommittee = async (
     registry: any,
-    e3Id: number,
+    e3Id: number | bigint,
     publicKey: string,
     operators: Signer[],
   ) => {
@@ -130,7 +131,8 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       } as any;
     };
 
-    const makeAndRun = async (e3Id: number) => {
+    const firstE3Id = await interfold.nexte3Id();
+    const makeAndRun = async (e3Id: bigint) => {
       const now = await time.latest();
       const req = {
         committeeSize: 0,
@@ -145,6 +147,9 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           ["address"],
           ["0x1234567890123456789012345678901234567890"],
         ),
+        expectedFeeToken: await feeToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
       };
       await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await interfold.request(req);
@@ -158,7 +163,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       await setupAndPublishCommittee(
         ciphernodeRegistryContract,
         e3Id,
-        e3Id === 0 ? "0x1234" : "0x5678",
+        e3Id === firstE3Id ? "0x1234" : "0x5678",
         [operator1, operator2, operator3],
       );
       await time.increase(inputWindowDuration + 200);
@@ -183,22 +188,24 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       feeToken,
       makeRequest,
       makeAndRun,
+      firstE3Id,
     };
   };
 
   it("rotates the per-E3 dust slot deterministically by e3Id", async function () {
     const ctx = await loadFixture(setup);
-    const { interfold, makeAndRun } = ctx;
+    const { interfold, makeAndRun, firstE3Id } = ctx;
 
-    const nodes = await makeAndRun(0);
+    const nodes = await makeAndRun(firstE3Id);
     const pending0 = await Promise.all(
-      nodes.map((n) => interfold.pendingReward(0, n)),
+      nodes.map((n) => interfold.pendingReward(firstE3Id, n)),
     );
 
-    const nodes2 = await makeAndRun(1);
+    const secondE3Id = firstE3Id + 1n;
+    const nodes2 = await makeAndRun(secondE3Id);
     expect(nodes2).to.deep.equal(nodes);
     const pending1 = await Promise.all(
-      nodes.map((n) => interfold.pendingReward(1, n)),
+      nodes.map((n) => interfold.pendingReward(secondE3Id, n)),
     );
 
     // Sanity: cnAmount per E3 should not be divisible by 3 with the chosen
@@ -207,18 +214,19 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     const min0 = pending0.reduce((a, b) => (a < b ? a : b));
     expect(max0, "test config must produce non-zero dust").to.be.gt(min0);
 
-    // The dust slot for e3Id=0 must be slot 0; for e3Id=1, slot 1.
+    const expectedDustSlot0 = Number(firstE3Id % 3n);
+    const expectedDustSlot1 = Number(secondE3Id % 3n);
     const dustSlot0 = pending0.findIndex((p) => p === max0);
     const max1 = pending1.reduce((a, b) => (a > b ? a : b));
     const dustSlot1 = pending1.findIndex((p) => p === max1);
 
-    expect(dustSlot0).to.equal(0);
-    expect(dustSlot1).to.equal(1);
+    expect(dustSlot0).to.equal(expectedDustSlot0);
+    expect(dustSlot1).to.equal(expectedDustSlot1);
 
     // The shortfall (per-node payout) should be identical across both E3s
     // for the non-dust slots — the formula only changed who got the dust.
-    const per0 = pending0[(0 + 1) % 3]; // a non-dust slot for e3Id=0
-    const per1 = pending1[(1 + 1) % 3]; // a non-dust slot for e3Id=1
+    const per0 = pending0[(expectedDustSlot0 + 1) % 3];
+    const per1 = pending1[(expectedDustSlot1 + 1) % 3];
     expect(per0).to.equal(per1);
   });
 });

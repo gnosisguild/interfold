@@ -27,6 +27,7 @@ import type { SlashingManager } from "../../types/contracts/slashing/SlashingMan
 import {
   ADDRESS_ONE,
   deployInterfoldSystem,
+  deploySlashingManager,
   ethers,
   networkHelpers,
   signAndEncodeAttestation,
@@ -121,14 +122,11 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     await slashingManager.setCiphernodeRegistry(
       await mockCiphernodeRegistry.getAddress(),
     );
-    await slashingManager.setInterfold(addressOne);
+    const mockInterfold = await ethers.deployContract("MockSlashingInterfold");
+    await slashingManager.setInterfold(await mockInterfold.getAddress());
     await slashingManager.setE3RefundManager(addressOne);
-    await networkHelpers.setBalance(addressOne, ethers.parseEther("1"));
-    await networkHelpers.impersonateAccount(addressOne);
-    await slashingManager
-      .connect(await ethers.getSigner(addressOne))
-      .snapshotE3Dependencies(0);
-    await networkHelpers.stopImpersonatingAccount(addressOne);
+    const now = await time.latest();
+    await mockInterfold.snapshotDependencies(slashingManager, 0, now + 3600);
     await mockCiphernodeRegistry.setCommitteeNodes(0, [operatorAddress]);
 
     return {
@@ -146,6 +144,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       interfoldToken,
       ticketToken,
       mockCiphernodeRegistry,
+      mockInterfold,
     };
   }
 
@@ -269,10 +268,10 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
           ethers.toUtf8Bytes("rotation"),
         );
 
-      const replacement = await ethers.deployContract("SlashingManager", [
+      const replacement = await deploySlashingManager(
         DEFAULT_ADMIN_DELAY,
         await owner.getAddress(),
-      ]);
+      );
       await replacement.setBondingRegistry(await bondingRegistry.getAddress());
       await bondingRegistry.setSlashingManager(await replacement.getAddress());
 

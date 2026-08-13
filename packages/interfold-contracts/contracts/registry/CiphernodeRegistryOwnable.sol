@@ -96,10 +96,13 @@ contract CiphernodeRegistryOwnable is
     uint8 public constant TREE_DEPTH = 20;
 
     /// @notice Maximum number of leaves the underlying LazyIMT can hold.
-    /// @dev Slots freed by {removeCiphernode} are NOT reused (`_update(0, index)` zeroes
-    ///      the slot but never decrements the leaf count), so {addCiphernode} reverts
-    ///      with {CiphernodeTreeExhausted} once `numberOfLeaves` reaches this cap.
+    /// @dev New slots cannot be allocated after the tree reaches this cap. Removed
+    ///      slots are reused before the registry allocates another leaf.
     uint256 public constant MAX_CIPHERNODE_LEAVES = uint256(1) << TREE_DEPTH;
+
+    /// @notice Lifetime insertion count at which operators must prepare a new tree generation.
+    uint256 public constant CIPHERNODE_TREE_WARNING_THRESHOLD =
+        (MAX_CIPHERNODE_LEAVES * 4) / 5;
 
     /// @notice Maximum serialized public-key candidate size.
     /// @dev Covers every currently supported BFV preset, including SecureThreshold8192.
@@ -146,15 +149,14 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Registry-wide validity window (seconds) for accusation vote deadlines.
     ///         Ciphernodes use it to create deadlines and validate peer accusations.
-    ///         The on-chain slashing manager only checks that the signed deadline
-    ///         has not expired.
+    ///         The slashing manager snapshots the value for each E3 and bounds the
+    ///         signed issue time, validity window, and objective submission deadline.
     ///
     /// @dev Set with [`setAccusationVoteValidity`] by `owner()`. Defaults to the
     ///      [`DEFAULT_ACCUSATION_VOTE_VALIDITY`] constant on initialize so newly-
     ///      deployed registries are operational without an extra setter call.
-    ///      Setting to zero disables the off-chain freshness window (deadlines
-    ///      collapse to "now", effectively rejecting every vote on chain) — intentionally
-    ///      allowed so governance can hard-stop slashing in an emergency.
+    ///      Setting the live value to zero makes the slashing manager reject new
+    ///      attestation-based proposals. Governance can use this as an emergency stop.
     uint256 public accusationVoteValidity;
 
     /// @notice Default value for `accusationVoteValidity` applied at `initialize`.
@@ -188,6 +190,21 @@ contract CiphernodeRegistryOwnable is
 
     /// @notice Ticket price frozen for each E3 sortition.
     mapping(uint256 e3Id => uint256 ticketPrice) public sortitionTicketPrices;
+
+    /// @dev Highest committee deadline created by a request.
+    uint256 private _latestCommitteeDeadline;
+
+    /// @notice Future block committed when an E3 requests a committee.
+    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
+
+    /// @notice Whether the committee seed has been stored for an E3.
+    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
+
+    /// @inheritdoc ICiphernodeRegistry
+    uint256 public unreleasedCommitteeCount;
+
+    /// @dev Removed tree slots that can be assigned to future registrations.
+    uint40[] private _freeCiphernodeTreeIndices;
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -277,6 +294,7 @@ contract CiphernodeRegistryOwnable is
         dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
         dependencies.bonding.setCommitteeObligation(e3Id, address(0), true);
+        unreleasedCommitteeCount++;
         emit DkgFoldAttestationContextEstablished(
             e3Id,
             address(this),
@@ -528,15 +546,28 @@ contract CiphernodeRegistryOwnable is
             return;
         }
 
-        uint40 index = ciphernodes.numberOfLeaves;
-        // cap insertions before LazyIMT depth is exhausted. Slots
-        // freed by {removeCiphernode} are not reclaimed, so monotonic
-        // register/deregister churn would otherwise brick the registry.
-        require(
-            uint256(index) < MAX_CIPHERNODE_LEAVES,
-            CiphernodeTreeExhausted()
-        );
-        ciphernodes._insert(uint160(node));
+        uint40 index;
+        uint256 freeCount = _freeCiphernodeTreeIndices.length;
+        if (freeCount == 0) {
+            index = ciphernodes.numberOfLeaves;
+            require(
+                uint256(index) < MAX_CIPHERNODE_LEAVES,
+                CiphernodeTreeExhausted()
+            );
+            ciphernodes._insert(uint160(node));
+            if (
+                ciphernodes.numberOfLeaves == CIPHERNODE_TREE_WARNING_THRESHOLD
+            ) {
+                emit CiphernodeTreeCapacityWarning(
+                    ciphernodes.numberOfLeaves,
+                    MAX_CIPHERNODE_LEAVES
+                );
+            }
+        } else {
+            index = _freeCiphernodeTreeIndices[freeCount - 1];
+            _freeCiphernodeTreeIndices.pop();
+            ciphernodes._update(uint160(node), index);
+        }
         ciphernodeEnabled[node] = true;
         ciphernodeTreeIndex[node] = index;
         numCiphernodes++;
@@ -554,6 +585,7 @@ contract CiphernodeRegistryOwnable is
 
         uint40 index = ciphernodeTreeIndex[node];
         ciphernodes._update(0, index);
+        _freeCiphernodeTreeIndices.push(index);
         ciphernodeEnabled[node] = false;
         numCiphernodes--;
         emit CiphernodeRemoved(
@@ -707,6 +739,7 @@ contract CiphernodeRegistryOwnable is
             );
             c.obligationsReleased = true;
             _setCommitteeObligations(e3Id, c, false);
+            unreleasedCommitteeCount--;
             return false;
         }
 
@@ -735,7 +768,8 @@ contract CiphernodeRegistryOwnable is
     function releaseCommittee(uint256 e3Id) external {
         Committee storage c = committees[e3Id];
         require(
-            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
+            c.stage == ICiphernodeRegistry.CommitteeStage.Requested ||
+                c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
             CommitteeNotFinalized()
         );
         if (c.obligationsReleased) {
@@ -749,7 +783,11 @@ contract CiphernodeRegistryOwnable is
         ) revert E3NotTerminal(e3Id);
 
         c.obligationsReleased = true;
+        if (c.stage == ICiphernodeRegistry.CommitteeStage.Requested) {
+            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
+        }
         _setCommitteeObligations(e3Id, c, false);
+        unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
     }
 
@@ -787,6 +825,7 @@ contract CiphernodeRegistryOwnable is
     /// @param _interfold Address of the Interfold contract
     function setInterfold(IInterfold _interfold) public onlyOwner {
         require(address(_interfold) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(interfold));
         interfold = _interfold;
         emit InterfoldSet(address(_interfold));
     }
@@ -798,6 +837,7 @@ contract CiphernodeRegistryOwnable is
         IBondingRegistry _bondingRegistry
     ) public onlyOwner {
         require(address(_bondingRegistry) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(bondingRegistry));
         _validateExitTiming(_bondingRegistry, exitDelayFloor());
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
@@ -810,6 +850,7 @@ contract CiphernodeRegistryOwnable is
         ISlashingManager _slashingManager
     ) public onlyOwner {
         require(address(_slashingManager) != address(0), ZeroAddress());
+        _requireGenerationDrained(address(slashingManager));
         slashingManager = _slashingManager;
         emit RegistrySlashingManagerSet(address(_slashingManager));
     }
@@ -859,6 +900,13 @@ contract CiphernodeRegistryOwnable is
                 requiredDelay
             );
         }
+    }
+
+    function _requireGenerationDrained(address current) private view {
+        if (
+            current != address(0) &&
+            (numCiphernodes != 0 || unreleasedCommitteeCount != 0)
+        ) revert RegistryGenerationNotDrained();
     }
 
     /// @notice Update the registry-wide vote validity window used by accusers
@@ -1364,16 +1412,7 @@ contract CiphernodeRegistryOwnable is
             interfaceId == type(IERC165).interfaceId;
     }
 
-    /// @dev Highest committee deadline created by a request.
-    uint256 private _latestCommitteeDeadline;
-
-    /// @notice Future block committed when an E3 requests a committee.
-    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
-
-    /// @notice Whether the committee seed has been stored for an E3.
-    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
-
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[46] private __gap;
+    uint256[44] private __gap;
 }

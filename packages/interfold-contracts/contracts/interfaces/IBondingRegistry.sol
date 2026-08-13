@@ -15,6 +15,9 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
  * @notice Interface for the main bonding registry that holds operator balance and license bonds
  */
 interface IBondingRegistry {
+    function numRegisteredOperators() external view returns (uint256);
+
+    function unresolvedCommitteeCount() external view returns (uint256);
     /// @notice Bonding assets and every raw-unit value denominated in them.
     struct BondingAssetConfig {
         address ticketToken;
@@ -171,6 +174,13 @@ interface IBondingRegistry {
     // ======================
     // Events (Protocol-Named)
     // ======================
+
+    /// @notice Emitted when matured assets leave an operator's exit queue.
+    event AssetsClaimed(
+        address indexed operator,
+        uint256 ticketAmount,
+        uint256 licenseAmount
+    );
 
     /**
      * @notice Emitted when operator's ticket balance changes
@@ -665,7 +675,8 @@ interface IBondingRegistry {
     // ======================
 
     /**
-     * @notice Claim an operator's matured exits to its bond owner.
+     * @notice Claim matured exits to an operator's bond owner.
+     * @dev Anyone may settle tickets. Only the bond owner may settle licenses.
      */
     function claimExitsFor(
         address operator,

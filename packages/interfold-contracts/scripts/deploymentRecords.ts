@@ -91,12 +91,21 @@ export function syncProtocolDeploymentRecords(
   );
 
   storeDeploymentArgs(
+    { address: deployment.slashingEvidenceLib, blockNumber },
+    "SlashingEvidenceLib",
+    opts.chain,
+  );
+
+  storeDeploymentArgs(
     {
       address: deployment.slashingManager,
       blockNumber,
       constructorArgs: {
         initialDelay: config.slashing.initialDelay,
         admin: config.safe,
+      },
+      libraries: {
+        SlashingEvidenceLib: deployment.slashingEvidenceLib,
       },
     },
     "SlashingManager",

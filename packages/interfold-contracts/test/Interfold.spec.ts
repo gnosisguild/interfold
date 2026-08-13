@@ -6,6 +6,7 @@
 import { expect } from "chai";
 
 import {
+  ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
   buildMockAggregationPublishArgs,
@@ -20,7 +21,11 @@ import {
 
 const { loadFixture, time, mine } = networkHelpers;
 
+const uint256ControllerPrefix = (controller: string): bigint =>
+  BigInt(controller) << 96n;
+
 describe("Interfold", function () {
+  let firstE3Id: bigint;
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const newEncryptionSchemeId =
     "0x0000000000000000000000000000000000000000000000000000000000000002";
@@ -33,6 +38,7 @@ describe("Interfold", function () {
 
   const setup = async () => {
     const sys = await deployInterfoldSystem({ wireSlashingManager: true });
+    firstE3Id = await sys.interfold.nexte3Id();
     return {
       owner: sys.owner,
       notTheOwner: sys.notTheOwner,
@@ -79,6 +85,20 @@ describe("Interfold", function () {
     it("correctly sets max duration", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
+    });
+
+    it("namespaces E3 IDs by the controller address", async function () {
+      const { interfold } = await loadFixture(setup);
+      expect(await interfold.nexte3Id()).to.equal(
+        uint256ControllerPrefix(await interfold.getAddress()),
+      );
+    });
+
+    it("exposes the crypto configuration accepted by new requests", async function () {
+      const { interfold } = await loadFixture(setup);
+      expect(await interfold.activeCryptoConfigId()).to.equal(
+        ACTIVE_CRYPTO_CONFIG_ID,
+      );
     });
 
     it("registers the initial E3 Program", async function () {
@@ -147,19 +167,39 @@ describe("Interfold", function () {
     });
 
     it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+      const replacementAddress = await replacement.getAddress();
 
-      expect(await interfold.ciphernodeRegistry()).to.not.equal(AddressTwo);
-      await interfold.setCiphernodeRegistry(AddressTwo);
-      expect(await interfold.ciphernodeRegistry()).to.equal(AddressTwo);
+      await interfold.setRequestsPaused(true);
+      await interfold.setCiphernodeRegistry(replacementAddress);
+      expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
+    });
+
+    it("rejects a replacement registry with existing members", async function () {
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+
+      await replacement.addCiphernode(AddressTwo);
+      await interfold.setRequestsPaused(true);
+
+      await expect(
+        interfold.setCiphernodeRegistry(await replacement.getAddress()),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
+      );
     });
 
     it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+      const replacementAddress = await replacement.getAddress();
 
-      await expect(interfold.setCiphernodeRegistry(AddressTwo))
+      await interfold.setRequestsPaused(true);
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
         .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(AddressTwo);
+        .withArgs(replacementAddress);
     });
   });
 
@@ -221,13 +261,16 @@ describe("Interfold", function () {
         customParams: request.customParams,
       });
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
 
       expect(e3.committeeSize).to.equal(request.committeeSize);
       expect(e3.inputWindow[0]).to.equal(request.inputWindow[0]);
       expect(e3.inputWindow[1]).to.equal(request.inputWindow[1]);
       expect(e3.e3Program).to.equal(request.e3Program);
       expect(e3.paramSet).to.equal(request.paramSet);
+      expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
+        ACTIVE_CRYPTO_CONFIG_ID,
+      );
       expect(e3.decryptionVerifier).to.equal(
         abiCoder.decode(["address"], request.computeProviderParams)[0],
       );
@@ -348,42 +391,6 @@ describe("Interfold", function () {
     });
   });
 
-  describe("disableEncryptionScheme()", function () {
-    it("reverts if caller is not owner", async function () {
-      const { interfold, notTheOwner } = await loadFixture(setup);
-
-      await expect(
-        interfold
-          .connect(notTheOwner)
-          .disableEncryptionScheme(encryptionSchemeId),
-      )
-        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
-        .withArgs(notTheOwner);
-    });
-    it("reverts if encryption scheme is not already enabled", async function () {
-      const { interfold } = await loadFixture(setup);
-
-      await expect(interfold.disableEncryptionScheme(newEncryptionSchemeId))
-        .to.be.revertedWithCustomError(interfold, "InvalidEncryptionScheme")
-        .withArgs(newEncryptionSchemeId);
-    });
-    it("disables encryption scheme", async function () {
-      const { interfold } = await loadFixture(setup);
-
-      expect(await interfold.disableEncryptionScheme(encryptionSchemeId));
-      expect(
-        await interfold.getDecryptionVerifier(encryptionSchemeId),
-      ).to.equal(ethers.ZeroAddress);
-    });
-    it("emits EncryptionSchemeDisabled", async function () {
-      const { interfold } = await loadFixture(setup);
-
-      await expect(await interfold.disableEncryptionScheme(encryptionSchemeId))
-        .to.emit(interfold, "EncryptionSchemeDisabled")
-        .withArgs(encryptionSchemeId);
-    });
-  });
-
   describe("registerE3Program()", function () {
     it("reverts if not called by owner", async function () {
       const { interfold, notTheOwner } = await loadFixture(setup);
@@ -432,6 +439,30 @@ describe("Interfold", function () {
   });
 
   describe("request()", function () {
+    it("rejects a fee token that differs from the accepted quote", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await expect(
+        interfold.request({ ...request, expectedFeeToken: AddressTwo }),
+      ).to.be.revertedWithCustomError(interfold, "FeeTokenChanged");
+    });
+
+    it("rejects a quote above the requester's fee limit", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await expect(
+        interfold.request({ ...request, maxFee: 0 }),
+      ).to.be.revertedWithCustomError(interfold, "FeeExceedsMaximum");
+    });
+
+    it("rejects a circuit configuration that changed after quoting", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await expect(
+        interfold.request({
+          ...request,
+          expectedCryptoConfigId: ethers.ZeroHash,
+        }),
+      ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
+    });
+
     it("reverts if USDC allowance is insufficient", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
       await expect(
@@ -442,6 +473,9 @@ describe("Interfold", function () {
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,
           customParams: request.customParams,
+          expectedFeeToken: request.expectedFeeToken,
+          expectedCryptoConfigId: request.expectedCryptoConfigId,
+          maxFee: request.maxFee,
         }),
       ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
     });
@@ -455,6 +489,9 @@ describe("Interfold", function () {
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
+        expectedFeeToken: request.expectedFeeToken,
+        expectedCryptoConfigId: request.expectedCryptoConfigId,
+        maxFee: request.maxFee,
       };
       await expect(interfold.getE3Quote.staticCall(unconfiguredParams))
         .to.be.revertedWithCustomError(interfold, "CommitteeSizeNotConfigured")
@@ -494,9 +531,10 @@ describe("Interfold", function () {
       await time.setNextBlockTimestamp(requestAt);
 
       await interfold.request(exactDurationRequest);
-      expect(await interfold.nexte3Id()).to.equal(1);
+      const e3Id = uint256ControllerPrefix(await interfold.getAddress());
+      expect(await interfold.nexte3Id()).to.equal(e3Id + 1n);
     });
-    it("rejects a schedule whose compute deadline cannot follow committee finalization", async function () {
+    it("allows compute to start after a late committee finalization", async function () {
       const { interfold, ciphernodeRegistryContract, request, usdcToken } =
         await loadFixture(setup);
       const sortitionWindow = time.duration.days(1);
@@ -510,20 +548,12 @@ describe("Interfold", function () {
         sortitionWindow,
       );
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      const balanceBefore = await usdcToken.balanceOf(
-        await interfold.getAddress(),
+      await interfold.request(impossibleRequest);
+      const e3Id = uint256ControllerPrefix(await interfold.getAddress());
+      expect(await interfold.nexte3Id()).to.equal(e3Id + 1n);
+      expect(await interfold.getE3LifecycleDeadline(e3Id)).to.be.gt(
+        impossibleRequest.inputWindow[1],
       );
-
-      await expect(
-        interfold.request(impossibleRequest),
-      ).to.be.revertedWithCustomError(
-        interfold,
-        "ComputeDeadlinePrecedesCommitteeFinalization",
-      );
-      expect(await usdcToken.balanceOf(await interfold.getAddress())).to.equal(
-        balanceBefore,
-      );
-      expect(await interfold.nexte3Id()).to.equal(0);
     });
     it("reverts if E3 Program is not enabled", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
@@ -541,22 +571,6 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(ethers.ZeroAddress);
     });
-    it("reverts if given encryption scheme is not enabled", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
-      await interfold.disableEncryptionScheme(encryptionSchemeId);
-      await expect(
-        makeRequest(interfold, usdcToken, {
-          committeeSize: request.committeeSize,
-          inputWindow: request.inputWindow,
-          e3Program: request.e3Program,
-          paramSet: request.paramSet,
-          computeProviderParams: request.computeProviderParams,
-          customParams: request.customParams,
-        }),
-      )
-        .to.be.revertedWithCustomError(interfold, "InvalidEncryptionScheme")
-        .withArgs(encryptionSchemeId);
-    });
     it("instantiates a new E3", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
 
@@ -569,7 +583,7 @@ describe("Interfold", function () {
         customParams: request.customParams,
       });
 
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
       const block = await ethers.provider.getBlock("latest").catch((e) => e);
 
       expect(e3.committeeSize).to.equal(request.committeeSize);
@@ -598,11 +612,11 @@ describe("Interfold", function () {
         computeProviderParams: request.computeProviderParams,
         customParams: request.customParams,
       });
-      const e3 = await interfold.getE3(0);
+      const e3 = await interfold.getE3(firstE3Id);
 
       await expect(tx)
         .to.emit(interfold, "E3Requested")
-        .withArgs(0, e3, request.e3Program);
+        .withArgs(firstE3Id, e3, ACTIVE_CRYPTO_CONFIG_ID);
     });
   });
 
@@ -627,7 +641,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         committeeSize: request.committeeSize,
@@ -672,7 +686,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -706,7 +720,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         committeeSize: request.committeeSize,
@@ -738,7 +752,7 @@ describe("Interfold", function () {
         operator3,
         mocks,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -777,7 +791,7 @@ describe("Interfold", function () {
         mocks,
       } = await loadFixture(setup);
       const replacement = await ethers.deployContract("MockCiphertextVerifier");
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -826,7 +840,7 @@ describe("Interfold", function () {
         operator3,
         mocks,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -872,7 +886,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -904,7 +918,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -940,7 +954,7 @@ describe("Interfold", function () {
         operator3,
         mocks,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -972,7 +986,7 @@ describe("Interfold", function () {
   describe("publishPlaintextOutput()", function () {
     it("reverts if E3 does not exist", async function () {
       const { interfold } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await expect(interfold.publishPlaintextOutput(e3Id, data, "0x"))
         .to.be.revertedWithCustomError(interfold, "E3DoesNotExist")
@@ -989,7 +1003,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1015,7 +1029,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1049,7 +1063,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1082,7 +1096,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1130,7 +1144,7 @@ describe("Interfold", function () {
         operator3,
         mocks,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1163,7 +1177,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1197,7 +1211,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,
@@ -1230,7 +1244,7 @@ describe("Interfold", function () {
         operator2,
         operator3,
       } = await loadFixture(setup);
-      const e3Id = 0;
+      const e3Id = firstE3Id;
 
       await makeRequest(interfold, usdcToken, {
         ...request,

@@ -30,7 +30,7 @@ pub const VOTE_DOMAIN_VERSION: &str = "1";
 /// or renaming fields here without updating Solidity (or vice versa) silently
 /// breaks signature recovery on chain.
 pub const VOTE_TYPEHASH_STR: &str =
-    "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 deadline)";
+    "AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)";
 
 /// Broadcast via gossip: a committee member's vote agreeing with an accusation.
 ///
@@ -60,9 +60,11 @@ pub struct AccusationVote {
     pub voter: Address,
     /// keccak256 hash of the data as this node received it — for equivocation detection.
     pub data_hash: [u8; 32],
+    /// Unix time at which the accuser created the shared vote window.
+    pub issued_at: u64,
     /// Unix-seconds deadline shared across all voters for this accusation.
-    /// Bound into the EIP-712 vote digest and re-checked on-chain by
-    /// `SlashingManager._verifyAttestationEvidence` via `block.timestamp <= deadline`.
+    /// The EIP-712 vote digest binds this deadline. On-chain checks enforce
+    /// the E3's signed-window limit, objective reporting deadline, and expiry.
     pub deadline: u64,
     /// ECDSA signature of the voter over the EIP-712 vote digest.
     pub signature: ArcBytes,

@@ -162,7 +162,7 @@ impl AccusationVoting {
         }
 
         // Pick the on-chain validity deadline once per accusation.
-        let deadline = self.compute_deadline();
+        let (issued_at, deadline) = self.compute_vote_window();
 
         // Create the accusation
         let mut accusation = ProofFailureAccusation {
@@ -172,6 +172,7 @@ impl AccusationVoting {
             accused_party_id,
             proof_type,
             data_hash,
+            issued_at,
             deadline,
             signed_payload: forwarded_payload,
             signature: ArcBytes::default(),
@@ -205,6 +206,7 @@ impl AccusationVoting {
             accusation_id,
             voter: self.my_address,
             data_hash,
+            issued_at,
             deadline,
             signature: ArcBytes::default(),
         };
