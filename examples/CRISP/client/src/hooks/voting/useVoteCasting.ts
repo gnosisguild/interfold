@@ -30,7 +30,19 @@ const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uin
 
   if (response.status === 404) return undefined
   if (!response.ok) throw new Error(`Failed to fetch previous ciphertext: ${response.statusText}`)
-  return new Uint8Array(await response.json())
+
+  const body: unknown = await response.json()
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('ciphertext' in body) ||
+    !Array.isArray(body.ciphertext) ||
+    !body.ciphertext.every((value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255)
+  ) {
+    throw new Error('Previous ciphertext response contains invalid bytes')
+  }
+
+  return new Uint8Array(body.ciphertext)
 }
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
