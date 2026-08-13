@@ -59,8 +59,16 @@ and **bb** versions.
 
 ## Toolchain
 
-Install **nargo** (or rely on CI / Docker). The installer only places `noirup` on your `PATH`; run
-`noirup` afterwards to get the pinned toolchain:
+Building the circuits needs two tools, and each has its own installer (or rely on CI / Docker):
+
+- **nargo** — the Noir compiler, installed through `noirup`
+- **bb** — the [Barretenberg](https://barretenberg.aztec.network/docs/getting_started) proving
+  backend, installed through the Interfold CLI
+
+### nargo
+
+The script below installs `noirup`, the version manager. Run `noirup` afterwards to get the pinned
+compiler:
 
 ```bash
 curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
@@ -68,9 +76,10 @@ noirup -v v1.0.0-beta.26   # NOIR_TOOLCHAIN in .github/workflows/ci.yml
 nargo --version
 ```
 
-**bb** does not come from `noirup`. Use the Interfold CLI, which installs the Barretenberg version
-pinned in `crates/zk-prover/versions.json` (`required_bb_version`) under `~/.interfold/noir` so it
-matches the prover:
+### bb
+
+`interfold noir setup` fetches the Barretenberg version pinned in `crates/zk-prover/versions.json`
+(`required_bb_version`), so your prover and your local builds agree:
 
 ```bash
 interfold noir status
@@ -78,8 +87,8 @@ interfold noir setup
 interfold noir setup --force   # reinstall
 ```
 
-That copy is managed by the CLI rather than added to your `PATH`, so use `interfold noir status` to
-check it instead of `bb --version`.
+The CLI keeps this copy under `~/.interfold/noir` instead of on your `PATH`, so
+`interfold noir status` is what reports the installed version.
 
 ## Compile, format, test
 
