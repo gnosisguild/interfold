@@ -141,11 +141,27 @@ export async function deployProtocolContracts(
   await bondingSlashing.waitForDeployment();
   const bondingSlashingLib = await deployedAddress(bondingSlashing);
 
+  const bondingRegistrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+  );
+  const bondingRegistration = await bondingRegistrationFactory.deploy();
+  await bondingRegistration.waitForDeployment();
+  const bondingRegistrationLib = await deployedAddress(bondingRegistration);
+
+  const bondingOwnershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+  );
+  const bondingOwnership = await bondingOwnershipFactory.deploy();
+  await bondingOwnership.waitForDeployment();
+  const bondingOwnershipLib = await deployedAddress(bondingOwnership);
+
   const bondingFactory = await ethers.getContractFactory("BondingRegistry", {
     libraries: {
       BondingAssetLib: bondingAssetLib,
       BondingEligibilityLib: bondingEligibilityLib,
       BondingSlashingLib: bondingSlashingLib,
+      BondingRegistrationLib: bondingRegistrationLib,
+      BondingOwnershipLib: bondingOwnershipLib,
     },
   });
   const bondingImpl = await bondingFactory.deploy();
@@ -173,6 +189,8 @@ export async function deployProtocolContracts(
       bondingEligibilityLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),
       bondingSlashingLib,
+      bondingRegistrationLib,
+      bondingOwnershipLib,
     },
     interfaces: {
       ticket: ticketFactory.interface,

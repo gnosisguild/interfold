@@ -83,6 +83,8 @@ export interface ProtocolDeployment {
   bondingAssetLib: string;
   bondingEligibilityLib: string;
   bondingSlashingLib: string;
+  bondingRegistrationLib: string;
+  bondingOwnershipLib: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -144,6 +146,8 @@ export interface ProtocolContracts {
   bondingAssetLib: string;
   bondingEligibilityLib: string;
   bondingSlashingLib: string;
+  bondingRegistrationLib: string;
+  bondingOwnershipLib: string;
 }
 
 export interface ProtocolInterfaces {

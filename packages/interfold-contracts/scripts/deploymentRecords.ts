@@ -196,6 +196,16 @@ export function syncProtocolDeploymentRecords(
     "BondingSlashingLib",
     opts.chain,
   );
+  storeDeploymentArgs(
+    { address: deployment.bondingRegistrationLib, blockNumber },
+    "BondingRegistrationLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    { address: deployment.bondingOwnershipLib, blockNumber },
+    "BondingOwnershipLib",
+    opts.chain,
+  );
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
@@ -313,6 +323,8 @@ export function syncProtocolDeploymentRecords(
         BondingAssetLib: deployment.bondingAssetLib,
         BondingEligibilityLib: deployment.bondingEligibilityLib,
         BondingSlashingLib: deployment.bondingSlashingLib,
+        BondingRegistrationLib: deployment.bondingRegistrationLib,
+        BondingOwnershipLib: deployment.bondingOwnershipLib,
       },
       proxyRecords: {
         initData: bondingInitData,

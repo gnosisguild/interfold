@@ -588,6 +588,19 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "address",
+          "name": "checkpoints",
+          "type": "address"
+        }
+      ],
+      "name": "BondedCheckpointsSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "contract InterfoldTicketToken",
           "name": "ticketToken",
           "type": "address"
@@ -1941,6 +1954,19 @@
     {
       "inputs": [
         {
+          "internalType": "contract IBondedCheckpoints",
+          "name": "newCheckpoints",
+          "type": "address"
+        }
+      ],
+      "name": "setBondedCheckpoints",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "components": [
             {
               "internalType": "address",
@@ -2362,5 +2388,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-237c02391cd3c59ddd3267c5dcdd3f53101f06d8"
+  "buildInfoId": "solc-0_8_28-359afc20abfdf436001a52ceb18f2c0cd09399f2"
 }

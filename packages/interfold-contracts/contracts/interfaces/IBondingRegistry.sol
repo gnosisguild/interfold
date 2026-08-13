@@ -9,6 +9,7 @@ pragma solidity 0.8.28;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { IBondedCheckpoints } from "./IBondedCheckpoints.sol";
 
 /**
  * @title IBondingRegistry
@@ -33,6 +34,9 @@ interface IBondingRegistry {
     // ======================
 
     // General
+    /// @notice Emitted when the bonded-history contract is configured.
+    event BondedCheckpointsSet(address indexed checkpoints);
+
     error ZeroAddress();
     error ZeroAmount();
     error CiphernodeBanned();
@@ -447,6 +451,16 @@ interface IBondingRegistry {
      * @return Active plus pending license-bond amount
      */
     function totalBonded(address account) external view returns (uint256);
+
+    /**
+     * @notice Point this registry at the contract that records bonded history.
+     * @dev Settable once. Bonded FOLD is transferred to this registry and never delegated, so
+     * without a recorded history an operator's bonded weight is invisible to governance. The
+     * history lives off this contract because it is within a few hundred bytes of the EIP-170
+     * limit.
+     * @param newCheckpoints The checkpoint contract, which must name this registry.
+     */
+    function setBondedCheckpoints(IBondedCheckpoints newCheckpoints) external;
 
     /**
      * @notice Get current ticket price

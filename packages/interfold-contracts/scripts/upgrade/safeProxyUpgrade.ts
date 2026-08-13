@@ -205,11 +205,27 @@ async function deployImplementation(
     await slashing.waitForDeployment();
     const slashingLibrary = await deployedAddress(slashing);
 
+    const registrationFactory = await ethers.getContractFactory(
+      "BondingRegistrationLib",
+    );
+    const registration = await registrationFactory.deploy();
+    await registration.waitForDeployment();
+    const registrationLibrary = await deployedAddress(registration);
+
+    const ownershipFactory = await ethers.getContractFactory(
+      "BondingOwnershipLib",
+    );
+    const ownership = await ownershipFactory.deploy();
+    await ownership.waitForDeployment();
+    const ownershipLibrary = await deployedAddress(ownership);
+
     const factory = await ethers.getContractFactory("BondingRegistry", {
       libraries: {
         BondingAssetLib: assetLibrary,
         BondingEligibilityLib: eligibilityLibrary,
         BondingSlashingLib: slashingLibrary,
+        BondingRegistrationLib: registrationLibrary,
+        BondingOwnershipLib: ownershipLibrary,
       },
     });
     const implementation = await factory.deploy();

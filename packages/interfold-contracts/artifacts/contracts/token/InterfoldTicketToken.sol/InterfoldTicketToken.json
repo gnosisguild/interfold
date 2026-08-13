@@ -1388,7 +1388,7 @@
   "linkReferences": {},
   "deployedLinkReferences": {},
   "immutableReferences": {
-    "3996": [
+    "4579": [
       {
         "length": 32,
         "start": 3379
@@ -1402,13 +1402,13 @@
         "start": 6234
       }
     ],
-    "7063": [
+    "7928": [
       {
         "length": 32,
         "start": 6686
       }
     ],
-    "7066": [
+    "7931": [
       {
         "length": 32,
         "start": 6731
@@ -1416,5 +1416,5 @@
     ]
   },
   "inputSourceName": "project/contracts/token/InterfoldTicketToken.sol",
-  "buildInfoId": "solc-0_8_28-da5eb083bbf5fcda5a970cc157fc4efd5b570ae7"
+  "buildInfoId": "solc-0_8_28-f6b6c0cf694049e4b7e792a2d47d80084ac4703e"
 }
