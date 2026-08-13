@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Copmute Provider"
-repository = "https://github.com/theinterfold/interfold/crates/compute-provider"
+repository.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive", "std"] }
