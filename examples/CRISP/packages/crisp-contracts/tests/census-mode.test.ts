@@ -77,7 +77,7 @@ describe('CRISPProgram census mode', function () {
   /// An unrecognised mode is a coordinator that would not know what to do. Better to refuse the
   /// round than to have it silently treated as a token vote.
   it('rejects an unknown census mode', async () => {
-    await expect(validate(6, encode(CONSTANT, 2))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
+    await expect(validate(6, encode(CONSTANT, 3))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
   })
 
   /// The circuit asserts `num_options <= MAX_OPTIONS`, so a round above the cap accepts no ballot:

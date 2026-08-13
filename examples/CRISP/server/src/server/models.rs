@@ -304,6 +304,9 @@ pub enum CreditMode {
 pub enum CensusMode {
     Token = 0,
     ByRequester = 1,
+    /// No census at all. `CRISPProgram` reads voting power from the token per input, so the
+    /// coordinator enumerates nothing and posts no root.
+    Onchain = 2,
 }
 
 impl TryFrom<u64> for CensusMode {
@@ -313,6 +316,7 @@ impl TryFrom<u64> for CensusMode {
         match value {
             0 => Ok(CensusMode::Token),
             1 => Ok(CensusMode::ByRequester),
+            2 => Ok(CensusMode::Onchain),
             _ => Err(eyre::eyre!("Unknown census mode: {}", value)),
         }
     }
@@ -338,14 +342,18 @@ mod census_mode_tests {
     fn unknown_values_are_rejected_rather_than_defaulted() {
         // A mode the coordinator does not understand must stop the round, not quietly become a
         // token vote — which is the failure this enum exists to prevent.
-        assert!(CensusMode::try_from(2u64).is_err());
+        assert!(CensusMode::try_from(3u64).is_err());
         assert!(CensusMode::try_from(u64::MAX).is_err());
     }
 
     #[test]
     fn known_values_round_trip() {
+        // Values must match `CRISPProgram.CensusMode`, which the contract range-checks against
+        // `type(CensusMode).max`. A discriminant that drifts from Solidity would route a round
+        // down the wrong census path rather than failing.
         assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
         assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
+        assert_eq!(CensusMode::try_from(2u64).unwrap(), CensusMode::Onchain);
     }
 }
 
