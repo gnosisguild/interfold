@@ -344,8 +344,8 @@ export const publishCommittee = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "nodes",
@@ -471,8 +471,8 @@ export const getCommitteePublicKey = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "outFile",
@@ -517,8 +517,8 @@ export const getActiveAggregator = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .setAction(async () => ({
     default: async ({ e3Id }, hre) => {
@@ -552,8 +552,8 @@ export const publishCiphertext = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "data",
@@ -653,8 +653,8 @@ export const publishPlaintext = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "data",
@@ -719,8 +719,8 @@ export const getPlaintextOutput = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "outFile",

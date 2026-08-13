@@ -17,8 +17,8 @@ export const publishInput = task(
   .addOption({
     name: "e3Id",
     description: "Id of the E3 program",
-    defaultValue: 0,
-    type: ArgumentType.INT,
+    defaultValue: "0",
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "data",
