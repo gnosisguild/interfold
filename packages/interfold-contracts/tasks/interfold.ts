@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import {
   BigNumberish,
+  type Log,
   MaxUint256,
   ZeroAddress,
   ZeroHash,
@@ -259,9 +260,34 @@ export const requestCommittee = task(
       const tx = await interfoldContract.request(requestParams);
 
       console.log("Requesting committee... ", tx.hash);
-      await tx.wait();
+      const receipt = await tx.wait();
+      if (!receipt) {
+        throw new Error("Committee request transaction was not mined");
+      }
 
-      console.log(`Committee requested`);
+      const interfoldAddress = (
+        await interfoldContract.getAddress()
+      ).toLowerCase();
+      const requestedTopic =
+        interfoldContract.interface.getEvent("E3Requested").topicHash;
+      const requestedLog = receipt.logs.find(
+        (log: Log) =>
+          log.address.toLowerCase() === interfoldAddress &&
+          log.topics[0] === requestedTopic,
+      );
+      if (!requestedLog) {
+        throw new Error("Committee request did not emit E3Requested");
+      }
+
+      const requestedEvent = interfoldContract.interface.parseLog(requestedLog);
+      if (!requestedEvent) {
+        throw new Error("Unable to decode the E3Requested event");
+      }
+
+      const e3Id = requestedEvent.args.e3Id;
+
+      console.log(`Committee requested for E3 ${e3Id}`);
+      console.log(`E3_ID=${e3Id}`);
     },
   }))
   .build();
