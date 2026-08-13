@@ -1069,6 +1069,7 @@ contract BondingRegistry is
         BondingAssetConfig calldata config
     ) internal {
         _sweepLicenseSurplus();
+        bool licenseChanged = address(licenseToken) != config.licenseToken;
         bool assetChanged = BondingAssetLib.validateBondingAssetConfig(
             address(ticketToken),
             address(licenseToken),
@@ -1088,6 +1089,17 @@ contract BondingRegistry is
         _ticketTokenDecimals = config.expectedTicketDecimals;
         _licenseTokenDecimals = config.expectedLicenseDecimals;
         if (assetChanged) bondingAssetConfigurationVersion++;
+        if (licenseChanged && address(bondedCheckpoints) != address(0)) {
+            // The recorded history counts license-token units, and `BondedVotes` adds them to the
+            // voting power of one fixed token. Bonds of a replacement token would enter the same
+            // history and be counted as that token, so summed voting power could exceed its total
+            // supply. Rotation already requires every old bond to be drained, so each owner's last
+            // recorded total is zero: detaching freezes a settled history rather than truncating a
+            // live one. Governance may then attach a checkpoint contract for the new token, and
+            // the old contract keeps answering correctly for the timepoints it covers.
+            emit BondedCheckpointsDetached(address(bondedCheckpoints));
+            delete bondedCheckpoints;
+        }
         _invalidateEligibilityStatuses();
     }
 
@@ -1114,14 +1126,21 @@ contract BondingRegistry is
             InvalidConfiguration()
         );
         // Subsumes a zero-address check: a call to an address with no code returns nothing, so
-        // decoding the result reverts. The cross-check itself is what matters — with one-shot
-        // semantics, an address whose `sync` rejects this registry would brick bonding for good.
+        // decoding the result reverts.
         require(
             newCheckpoints.registry() == address(this),
             InvalidConfiguration()
         );
 
         bondedCheckpoints = newCheckpoints;
+
+        // Exercise the write path before the one-shot slot is spent. `registry()` alone does not
+        // establish it: other protocol contracts answer `registry()` with this address, so an
+        // address mixed up with one of them passes that check and then reverts on every bond,
+        // slash, exit claim and owner transfer, with the slot consumed and no way to correct it.
+        // The probe writes the zero address, whose bonded total is always zero, so it leaves no
+        // state any real owner can read.
+        _syncBondedCheckpoint(address(0));
 
         emit BondedCheckpointsSet(address(newCheckpoints));
     }
@@ -1442,10 +1461,11 @@ contract BondingRegistry is
             interfaceId == type(IERC165).interfaceId;
     }
 
-    /// @notice Records historical bonded totals so bonded collateral can carry voting power.
+    /// @inheritdoc IBondingRegistry
     /// @dev Held off this contract because it is within a few hundred bytes of the EIP-170 limit.
     /// Unset until configured, and writes are skipped while it is — see {_syncBondedCheckpoint}.
-    IBondedCheckpoints internal bondedCheckpoints;
+    /// Readable so a deployment can verify the wiring it just configured.
+    IBondedCheckpoints public bondedCheckpoints;
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase

@@ -46,6 +46,14 @@ export interface ProtocolConfigFile {
     minTicketBalance: string;
     exitDelay: string;
   };
+  /**
+   * Bond owners to resynchronize when a `bondingRegistry` upgrade first attaches
+   * `BondedCheckpoints`. Configuring the contract does not backfill, so an owner that bonded
+   * beforehand reads as zero bonded voting power until its next bond, slash, exit claim or owner
+   * transfer. Collect the list off-chain from `BondOwnerSet` and `LicenseBondUpdated` logs. Only
+   * needed on a deployment that already has bonds; a first-time deployment has none.
+   */
+  bondedResyncOwners?: string[];
   registry: { sortitionSubmissionWindow: string };
   slashing: { initialDelay: string };
   interfold: {
@@ -85,6 +93,8 @@ export interface ProtocolDeployment {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  bondedCheckpoints: string;
+  bondedVotes: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -148,6 +158,8 @@ export interface ProtocolContracts {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  bondedCheckpoints: string;
+  bondedVotes: string;
 }
 
 export interface ProtocolInterfaces {

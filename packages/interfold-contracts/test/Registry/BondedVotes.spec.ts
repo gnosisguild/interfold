@@ -10,6 +10,7 @@ import {
   deployInterfoldSystem,
   ethers,
   networkHelpers,
+  setBondingAssetConfig,
 } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -597,7 +598,9 @@ describe("BondedVotes", function () {
         .resyncBondedCheckpoint(bondOwnerAddress);
 
       expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND);
-      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(BOND);
+      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(
+        BOND,
+      );
     });
 
     it("is idempotent", async function () {
@@ -639,7 +642,9 @@ describe("BondedVotes", function () {
       const owned = await ethers.deployContract("BondedCheckpoints", [
         await bondingRegistry.getAddress(),
       ]);
-      await expect(bondingRegistry.setBondedCheckpoints(await owned.getAddress()))
+      await expect(
+        bondingRegistry.setBondedCheckpoints(await owned.getAddress()),
+      )
         .to.emit(bondingRegistry, "BondedCheckpointsSet")
         .withArgs(await owned.getAddress());
     });
@@ -657,6 +662,38 @@ describe("BondedVotes", function () {
       ).to.be.revertedWithCustomError(bondingRegistry, "InvalidConfiguration");
     });
 
+    it("rejects an address that names this registry but cannot record history", async function () {
+      // `registry()` is not unique to a checkpoint contract: InterfoldTicketToken answers it with
+      // this same address, so an ordinary address mix-up passes that check. With one-shot
+      // semantics the slot would then be spent on a contract that cannot record anything, and
+      // every bond, slash, exit claim and owner transfer would revert with no way to correct it.
+      const { bondingRegistry, ticketToken } = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+        mintUsdcTo: [],
+      });
+
+      expect(await ticketToken.registry()).to.equal(
+        await bondingRegistry.getAddress(),
+      );
+      await expect(
+        bondingRegistry.setBondedCheckpoints(await ticketToken.getAddress()),
+      ).to.be.revert(ethers);
+
+      // The slot survived the rejection, so the mistake is correctable.
+      expect(await bondingRegistry.bondedCheckpoints()).to.equal(
+        ethers.ZeroAddress,
+      );
+      const owned = await ethers.deployContract("BondedCheckpoints", [
+        await bondingRegistry.getAddress(),
+      ]);
+      await bondingRegistry.setBondedCheckpoints(await owned.getAddress());
+      expect(await bondingRegistry.bondedCheckpoints()).to.equal(
+        await owned.getAddress(),
+      );
+    });
+
     it("only lets the registry write history", async function () {
       const { checkpoints, bondOwnerAddress, otherHolder } =
         await loadFixture(setup);
@@ -667,6 +704,123 @@ describe("BondedVotes", function () {
           BOND,
         ),
       ).to.be.revertedWithCustomError(checkpoints, "OnlyRegistry");
+    });
+  });
+
+  /// The history counts license-token units, but `BondedVotes` adds them to the voting power of
+  /// one fixed token chosen at construction. A replacement license token would otherwise write
+  /// into the same history and be counted as FOLD, so an operator could hold voting power the
+  /// token's total supply does not back.
+  describe("license-token rotation", function () {
+    async function newLicenseToken() {
+      return (
+        await ethers.getContractFactory("MockLockAwareLicenseToken")
+      ).deploy(0);
+    }
+
+    async function rotate(bondingRegistry: any) {
+      const replacement = await newLicenseToken();
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseToken: await replacement.getAddress(),
+      });
+      return replacement;
+    }
+
+    it("detaches the history the previous token's votes are read through", async function () {
+      const { bondingRegistry, checkpoints } = await loadFixture(setup);
+
+      const replacement = await newLicenseToken();
+
+      // Rotation already requires every old bond to be drained, so nothing live is truncated.
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          licenseToken: await replacement.getAddress(),
+        }),
+      )
+        .to.emit(bondingRegistry, "BondedCheckpointsDetached")
+        .withArgs(await checkpoints.getAddress());
+
+      expect(await bondingRegistry.bondedCheckpoints()).to.equal(
+        ethers.ZeroAddress,
+      );
+    });
+
+    it("keeps a replacement token's bonds out of the previous token's voting power", async function () {
+      const {
+        bondingRegistry,
+        bondOwner,
+        bondOwnerAddress,
+        operatorAddress,
+        registryAddress,
+        settledVotes,
+      } = await loadFixture(setup);
+
+      const walletVotes = await settledVotes(bondOwnerAddress);
+      const replacement = await rotate(bondingRegistry);
+
+      await replacement.mint(bondOwnerAddress, BOND);
+      await replacement.connect(bondOwner).getFunction("approve")(
+        registryAddress,
+        BOND,
+      );
+      await bondingRegistry
+        .connect(bondOwner)
+        .bondLicenseFor(operatorAddress, BOND);
+
+      // Bonded in a different token, so it must not add to FOLD voting power. Before the
+      // detachment this bond entered the FOLD history and pushed the owner's votes above what
+      // FOLD's own supply backs.
+      expect(await settledVotes(bondOwnerAddress)).to.equal(walletVotes);
+    });
+
+    it("leaves bonding working while no history is attached", async function () {
+      const { bondingRegistry, bondOwner, operatorAddress, registryAddress } =
+        await loadFixture(setup);
+
+      const replacement = await rotate(bondingRegistry);
+      await replacement.mint(await bondOwner.getAddress(), BOND);
+      await replacement.connect(bondOwner).getFunction("approve")(
+        registryAddress,
+        BOND,
+      );
+
+      // The sync is a no-op while unconfigured, so detaching must not freeze bonding.
+      await bondingRegistry
+        .connect(bondOwner)
+        .bondLicenseFor(operatorAddress, BOND);
+      expect(
+        await bondingRegistry.totalBonded(await bondOwner.getAddress()),
+      ).to.equal(BOND);
+    });
+
+    it("lets governance attach a history for the replacement token", async function () {
+      const { bondingRegistry, registryAddress } = await loadFixture(setup);
+
+      await rotate(bondingRegistry);
+
+      // The one-shot guard is per license token, not per registry lifetime: the previous contract
+      // keeps answering for the timepoints it covers, and the new era gets its own history.
+      const fresh = await ethers.deployContract("BondedCheckpoints", [
+        registryAddress,
+      ]);
+      await expect(
+        bondingRegistry.setBondedCheckpoints(await fresh.getAddress()),
+      )
+        .to.emit(bondingRegistry, "BondedCheckpointsSet")
+        .withArgs(await fresh.getAddress());
+    });
+
+    it("leaves the history attached when the license token is unchanged", async function () {
+      const { bondingRegistry, checkpoints } = await loadFixture(setup);
+
+      // Re-stating the same assets is a routine reprice and must not cost the recorded history.
+      await setBondingAssetConfig(bondingRegistry, {
+        licenseRequiredBond: ethers.parseEther("2"),
+      });
+
+      expect(await bondingRegistry.bondedCheckpoints()).to.equal(
+        await checkpoints.getAddress(),
+      );
     });
   });
 });

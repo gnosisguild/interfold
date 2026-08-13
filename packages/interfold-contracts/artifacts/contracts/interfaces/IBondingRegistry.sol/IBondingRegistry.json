@@ -589,6 +589,19 @@
         {
           "indexed": true,
           "internalType": "address",
+          "name": "previousCheckpoints",
+          "type": "address"
+        }
+      ],
+      "name": "BondedCheckpointsDetached",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
           "name": "checkpoints",
           "type": "address"
         }
@@ -1227,6 +1240,19 @@
       "outputs": [
         {
           "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "bondedCheckpoints",
+      "outputs": [
+        {
+          "internalType": "contract IBondedCheckpoints",
           "name": "",
           "type": "address"
         }
@@ -2401,5 +2427,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-1f96deb9873ee21c60afe0a34c020be251b11d6f"
+  "buildInfoId": "solc-0_8_28-33abaf88dee61bb23c45df8a139333f26829375c"
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { ethers as ethersLib } from "ethers";
 import path from "path";
 
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
@@ -29,9 +30,18 @@ export type UpgradeTarget =
   | "interfold"
   | "e3RefundManager";
 
+interface BondedVotingDeployment {
+  bondedCheckpoints: string;
+  bondedVotes: string;
+  resyncOwners: string[];
+}
+
 interface UpgradePlan {
   name: string;
   target: UpgradeTarget;
+  bondedCheckpoints?: string;
+  bondedVotes?: string;
+  bondedResyncOwners?: string[];
   proxy: string;
   proxyAdmin: string;
   implementation: string;
@@ -91,6 +101,12 @@ export async function proposeProxyUpgrade(
       ]),
     ),
   ];
+
+  let bonded: BondedVotingDeployment | undefined;
+  if (target === "bondingRegistry") {
+    bonded = await appendBondedVotingTxs(ethers, config, proxy, txs);
+  }
+
   const batchFile = upgradeBatchPath(config, target);
   const batch = safeBatch(config, txs);
   batch.meta.name = `${config.name} ${target} upgrade`;
@@ -103,6 +119,9 @@ export async function proposeProxyUpgrade(
     proxy,
     proxyAdmin,
     implementation: deployed.implementation,
+    bondedCheckpoints: bonded?.bondedCheckpoints,
+    bondedVotes: bonded?.bondedVotes,
+    bondedResyncOwners: bonded?.resyncOwners,
     assetLibrary: deployed.assetLibrary,
     eligibilityLibrary: deployed.eligibilityLibrary,
     slashingLibrary: deployed.slashingLibrary,
@@ -122,6 +141,68 @@ export async function proposeProxyUpgrade(
   writeJson(upgradePlanPath(config, target), plan);
 
   printPlan(plan, txs);
+}
+
+/**
+ * Attach the bonded-voting contracts, unless the registry already has a history attached.
+ *
+ * The upgrade alone does not enable bonded voting: the sync is a no-op while unconfigured, so
+ * without this every operator keeps reading as zero bonded voting power. The transactions go after
+ * the upgrade in the batch, because the function they call only exists on the new implementation.
+ *
+ * Skipped when a history is already attached, so re-running the upgrade neither redeploys the
+ * contracts nor queues a call the one-shot setter would reject.
+ */
+async function appendBondedVotingTxs(
+  ethers: any,
+  config: ProtocolConfigFile,
+  proxy: string,
+  txs: SafeTransaction[],
+): Promise<BondedVotingDeployment | undefined> {
+  const registry = await ethers.getContractAt("BondingRegistry", proxy);
+  const attached: string = await registry.bondedCheckpoints();
+  if (attached !== ethersLib.ZeroAddress) {
+    console.log(`  bonded history already attached at ${attached}`);
+    return undefined;
+  }
+
+  // Bound to the proxy: that is the address that calls `sync`.
+  const checkpointsFactory =
+    await ethers.getContractFactory("BondedCheckpoints");
+  const checkpoints = await checkpointsFactory.deploy(proxy);
+  await checkpoints.waitForDeployment();
+  const bondedCheckpoints = await deployedAddress(checkpoints);
+
+  const votesFactory = await ethers.getContractFactory("BondedVotes");
+  const votes = await votesFactory.deploy(config.fold, bondedCheckpoints);
+  await votes.waitForDeployment();
+  const bondedVotes = await deployedAddress(votes);
+
+  txs.push(
+    safeTx(
+      proxy,
+      registry.interface.encodeFunctionData("setBondedCheckpoints", [
+        bondedCheckpoints,
+      ]),
+    ),
+  );
+
+  // Attaching does not backfill, so owners that bonded before this upgrade would read as zero
+  // until their next mutation. `resyncBondedCheckpoint` is permissionless and idempotent — it can
+  // only write the owner's true current total — so it is safe to batch here.
+  const resyncOwners = config.bondedResyncOwners ?? [];
+  for (const owner of resyncOwners) {
+    txs.push(
+      safeTx(
+        proxy,
+        registry.interface.encodeFunctionData("resyncBondedCheckpoint", [
+          owner,
+        ]),
+      ),
+    );
+  }
+
+  return { bondedCheckpoints, bondedVotes, resyncOwners };
 }
 
 async function deployImplementation(
@@ -296,6 +377,9 @@ Protocol upgrade prepared
   proxy:           ${plan.proxy}
   proxyAdmin:      ${plan.proxyAdmin}
   implementation:  ${plan.implementation}
+  bondedCheckpoints: ${plan.bondedCheckpoints ?? "(not applicable)"}
+  bondedVotes:     ${plan.bondedVotes ?? "(not applicable)"}
+  bonded resyncs:  ${plan.bondedResyncOwners?.length ?? 0}
   assetLibrary:    ${plan.assetLibrary ?? "(not applicable)"}
   eligibilityLibrary: ${plan.eligibilityLibrary ?? "(not applicable)"}
   slashingLibrary: ${plan.slashingLibrary ?? "(not applicable)"}

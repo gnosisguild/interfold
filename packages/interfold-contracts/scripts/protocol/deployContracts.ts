@@ -167,6 +167,27 @@ export async function deployProtocolContracts(
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
 
+  // Bound to the proxy, not the implementation: the proxy is the address that calls `sync`, and
+  // `BondedCheckpoints` accepts writes from exactly one address. The registry is pointed at this
+  // contract by a `setBondedCheckpoints` transaction in the Safe batch, after `initialize`.
+  const checkpointsFactory =
+    await ethers.getContractFactory("BondedCheckpoints");
+  const checkpoints = await checkpointsFactory.deploy(
+    config.bondingRegistryProxy,
+  );
+  await checkpoints.waitForDeployment();
+  const bondedCheckpoints = await deployedAddress(checkpoints);
+
+  // The view that governance reads. It holds no state and no privileges, so it is deployed here
+  // and needs no configuration transaction.
+  const bondedVotesFactory = await ethers.getContractFactory("BondedVotes");
+  const bondedVotesContract = await bondedVotesFactory.deploy(
+    config.fold,
+    bondedCheckpoints,
+  );
+  await bondedVotesContract.waitForDeployment();
+  const bondedVotes = await deployedAddress(bondedVotesContract);
+
   return {
     contracts: {
       ticketToken,
@@ -191,6 +212,8 @@ export async function deployProtocolContracts(
       bondingSlashingLib,
       bondingRegistrationLib,
       bondingOwnershipLib,
+      bondedCheckpoints,
+      bondedVotes,
     },
     interfaces: {
       ticket: ticketFactory.interface,

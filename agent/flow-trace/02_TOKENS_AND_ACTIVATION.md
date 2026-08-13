@@ -450,9 +450,9 @@ quorum denominator while being unable to help meet it.
 
 Two contracts restore that weight:
 
-| Contract                     | Role                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.  |
+| Contract                     | Role                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.          |
 | `registry/BondedVotes`       | `IERC5805` view summing wallet voting power and bonded FOLD at the same timepoint. |
 
 ```
@@ -474,8 +474,8 @@ meant to remove.
 `BondingRegistry._syncBondedCheckpoint(bondOwner)` sends the owner's **current total**, not a delta,
 so the history mirrors `_bondedByOwner`. A mutation site that forgets to call it is caught by
 comparing `bonded(owner)` against `totalBonded(owner)` at the same instant, or a historical read
-against the total expected at that timepoint; a delta-derived history would drift undetected, and it would drift in voting
-weight. It is called from every site that mutates `_bondedByOwner`:
+against the total expected at that timepoint; a delta-derived history would drift undetected, and it
+would drift in voting weight. It is called from every site that mutates `_bondedByOwner`:
 
 | Site                            | Trigger                                      |
 | ------------------------------- | -------------------------------------------- |
@@ -495,19 +495,34 @@ slashed. Voting power therefore stays with the owner for the duration of the exi
 mismatch: summing a timestamp-keyed history with a block-numbered one would answer for two unrelated
 points in time, and nothing downstream could detect it.
 
-`setBondedCheckpoints` is settable **once**, and requires the checkpoint contract to name this
-registry — with one-shot semantics an address whose `sync` rejects the registry would brick bonding
-permanently. While unset, `_syncBondedCheckpoint` is a no-op rather than a revert: the registry is
-upgradeable, so the upgrade lands before the contract can be pointed at it, and reverting in that
-window would freeze bonding, unbonding and slashing.
+`setBondedCheckpoints` is settable **once per license token**, and verifies the candidate two ways
+before the slot is spent. It must name this registry, and it must accept a write from it, which the
+setter checks by synchronizing the zero address — whose bonded total is always zero, so a successful
+probe leaves no readable state. Both checks are needed: `registry()` is not unique to a checkpoint
+contract, and `InterfoldTicketToken` answers it with this same address, so an address mix-up would
+otherwise consume the slot on a contract that cannot record anything and revert every later bond,
+slash, exit claim and owner transfer with no way to correct it. While unset, `_syncBondedCheckpoint`
+is a no-op rather than a revert: the registry is upgradeable, so the upgrade lands before the
+contract can be pointed at it, and reverting in that window would freeze bonding, unbonding and
+slashing.
+
+Rotating the license token **detaches** the history, emitting `BondedCheckpointsDetached`. The
+history counts license-token units, but `BondedVotes` adds them to the voting power of one token
+fixed at construction; a replacement token's bonds would enter the same history, be counted as the
+old token, and let summed voting power exceed that token's total supply. Rotation already requires
+every old bond to be drained (`_validateLicenseAsset` rejects a non-zero registry balance), so each
+owner's last recorded total is zero and detaching freezes a settled history rather than truncating a
+live one. The detached contract keeps answering correctly for the timepoints it covers, and
+governance may attach a fresh `BondedCheckpoints` — with a fresh `BondedVotes` bound to the new
+token — for the next era. Repointing while one is attached is still refused.
 
 Configuration does **not** backfill. An owner that bonded beforehand has no recorded history until
 something mutates its total again, so until then it reads as holding nothing and votes only its
 wallet balance. `resyncBondedCheckpoint(bondOwner)` records the owner's current total without
-waiting for that mutation. It is permissionless and idempotent — it can only write the true
-current total at the current timepoint, and cannot rewrite any past entry — so a third party may
-repair an owner's history. Either call it for every existing owner after configuring, or configure
-the checkpoint contract in the same transaction that upgrades the registry, before any bonding.
+waiting for that mutation. It is permissionless and idempotent — it can only write the true current
+total at the current timepoint, and cannot rewrite any past entry — so a third party may repair an
+owner's history. Either call it for every existing owner after configuring, or configure the
+checkpoint contract in the same transaction that upgrades the registry, before any bonding.
 
 Bonded weight is **not delegatable** — the registry owns the position — so it always sits with the
 bond owner, including for an owner that never self-delegated. Wallet-held FOLD keeps its normal

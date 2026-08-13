@@ -206,6 +206,27 @@ export function syncProtocolDeploymentRecords(
     "BondingOwnershipLib",
     opts.chain,
   );
+  storeDeploymentArgs(
+    {
+      address: deployment.bondedCheckpoints,
+      blockNumber,
+      constructorArgs: { registry: config.bondingRegistryProxy },
+    },
+    "BondedCheckpoints",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    {
+      address: deployment.bondedVotes,
+      blockNumber,
+      constructorArgs: {
+        token: config.fold,
+        checkpoints: deployment.bondedCheckpoints,
+      },
+    },
+    "BondedVotes",
+    opts.chain,
+  );
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",

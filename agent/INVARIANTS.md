@@ -43,26 +43,37 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   of a bond-owner transfer, and exit claim (which mutates through a storage pointer inside
   `BondingAssetLib`, so the checkpoint is taken by the caller). Unbonding is deliberately not a
   write site — the FOLD stays with the registry until claimed. A missed site is caught by
-  `bonded(owner) == totalBonded(owner)`, which compares the checkpoint's current value against
-  the mapping at the same instant, and holds for every owner that has been
-  synchronized at least once — configuring `BondedCheckpoints` does not backfill, so an owner that
-  bonded beforehand reads as zero until its next mutation or a `resyncBondedCheckpoint` call. A
-  delta-derived history would drift silently instead, and it would drift in voting weight. —
-  `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
+  `bonded(owner) == totalBonded(owner)`, which compares the checkpoint's current value against the
+  mapping at the same instant, and holds for every owner that has been synchronized at least once —
+  configuring `BondedCheckpoints` does not backfill, so an owner that bonded beforehand reads as
+  zero until its next mutation or a `resyncBondedCheckpoint` call. A delta-derived history would
+  drift silently instead, and it would drift in voting weight. — `BondingRegistry.sol`;
+  `BondedCheckpoints.sol`; `flow-trace/02`
 - **Bonded voting power is additive to the token, never to its supply.** `BondedVotes.getPastVotes`
-  sums wallet voting power and bonded FOLD, but `getPastTotalSupply` passes through unchanged: bonded FOLD
-  was transferred, not burned, so it is already counted. Adding it again would inflate every quorum
-  denominator. Summed voting power must never exceed total supply. — `BondedVotes.sol`;
+  sums wallet voting power and bonded FOLD, but `getPastTotalSupply` passes through unchanged:
+  bonded FOLD was transferred, not burned, so it is already counted. Adding it again would inflate
+  every quorum denominator. Summed voting power must never exceed total supply. — `BondedVotes.sol`;
   `flow-trace/02`
 - **Bonded history and the token must share a clock.** `BondedCheckpoints` keys by `block.timestamp`
   to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes` compares both clocks at
   construction. Summing a timestamp-keyed history with a block-numbered one answers for two
   unrelated points in time and is undetectable downstream. — `BondedVotes.sol`; `flow-trace/02`
-- **`setBondedCheckpoints` is one-shot and self-verifying.** It requires the checkpoint contract to
-  name this registry, because with one-shot semantics an address whose `sync` rejects the registry
-  would brick bonding permanently. Repointing is refused: it would abandon recorded history and
-  silently change every past answer. While unset the sync is a no-op, not a revert, so an upgrade
-  cannot freeze bonding before the contract is configured. — `BondingRegistry.sol`; `flow-trace/02`
+- **`setBondedCheckpoints` is one-shot per license token, and self-verifying.** It requires the
+  checkpoint contract to name this registry **and** to accept a write from it, checked by syncing
+  the zero address, whose bonded total is always zero. `registry()` alone is insufficient:
+  `InterfoldTicketToken` answers it with the registry address, so a mix-up would spend the slot on a
+  contract with no `sync` and revert every later bond, slash, claim and owner transfer. Repointing
+  while one is attached is refused: it would abandon recorded history and silently change every past
+  answer. While unset the sync is a no-op, not a revert, so an upgrade cannot freeze bonding before
+  the contract is configured. — `BondingRegistry.sol`; `flow-trace/02`
+- **License-token rotation detaches the bonded history.** The history counts license-token units,
+  but `BondedVotes` adds them to the voting power of one token fixed at construction, so a
+  replacement token's bonds entering the same history would be counted as the old token and could
+  push summed voting power above its total supply. Rotation already requires every old bond to be
+  drained, so each owner's last recorded total is zero and detaching freezes a settled history. The
+  detached contract stays correct for the timepoints it covers; a new era needs a fresh
+  `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
+  `BondingRegistry._setBondingAssetConfig`; `flow-trace/02`
 - **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 256 bytes of headroom by
   `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
   `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib` for that reason. Every
@@ -389,6 +400,15 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry license token)
   plus the BondingRegistry reward-distributor authorization for Interfold, and throws with the full
   list of mismatches. Add a read-back for each new cross-contract setter.
+- **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
+  `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and
+  `BondedVotes` (bound to FOLD and those checkpoints), the Safe batch calls `setBondedCheckpoints`
+  after `initialize`, and `protocol/validate` reads back `bonding.bondedCheckpoints()`,
+  `bondedCheckpoints.registry()`, `bondedVotes.token()` and `bondedVotes.checkpoints()`. Upgrading
+  an existing deployment through `upgrade/safeProxyUpgrade` deploys and attaches the pair when none
+  is attached yet, and appends a `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry —
+  attaching does not backfill, so owners that bonded earlier read as zero until then. Without the
+  attachment the upgrade silently ships a disabled feature: the sync is a no-op while unconfigured.
 
 ## Known open issues (check before assuming current behavior is correct)
 

@@ -37,6 +37,9 @@ interface IBondingRegistry {
     /// @notice Emitted when the bonded-history contract is configured.
     event BondedCheckpointsSet(address indexed checkpoints);
 
+    /// @notice Emitted when license-token rotation detaches the bonded-history contract.
+    event BondedCheckpointsDetached(address indexed previousCheckpoints);
+
     error ZeroAddress();
     error ZeroAmount();
     error CiphernodeBanned();
@@ -453,11 +456,27 @@ interface IBondingRegistry {
     function totalBonded(address account) external view returns (uint256);
 
     /**
+     * @notice Get the contract that records bonded history.
+     * @dev Zero while unconfigured, and again after a license-token rotation detaches it.
+     * @return The checkpoint contract, or the zero address.
+     */
+    function bondedCheckpoints() external view returns (IBondedCheckpoints);
+
+    /**
      * @notice Point this registry at the contract that records bonded history.
-     * @dev Settable once. Bonded FOLD is transferred to this registry and never delegated, so
-     * without a recorded history an operator's bonded weight is invisible to governance. The
-     * history lives off this contract because it is within a few hundred bytes of the EIP-170
-     * limit.
+     * @dev Settable once per license token. Bonded FOLD is transferred to this registry and never
+     * delegated, so without a recorded history an operator's bonded weight is invisible to
+     * governance. The history lives off this contract because it is within a few hundred bytes of
+     * the EIP-170 limit.
+     *
+     * Repointing while one is attached is refused: it would abandon the recorded history and
+     * silently change every past answer. Rotating the license token detaches the current contract,
+     * because the history counts license-token units and a replacement token's bonds must not be
+     * added to the previous token's voting power.
+     *
+     * The candidate must name this registry and must accept a write from it, which is checked by
+     * synchronizing the zero address. Both are needed: other protocol contracts also answer
+     * `registry()` with this address.
      * @param newCheckpoints The checkpoint contract, which must name this registry.
      */
     function setBondedCheckpoints(IBondedCheckpoints newCheckpoints) external;

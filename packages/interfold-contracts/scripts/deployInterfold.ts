@@ -299,6 +299,32 @@ export const deployInterfold = async (
     await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
   ).wait();
 
+  // ── Bonded voting ───────────────────────────────────────────────────────
+  // Bonded FOLD is transferred to BondingRegistry and never delegated, so without a recorded
+  // history an operator's bonded weight is invisible to governance while still counting in the
+  // quorum denominator. Attached after the license token is set: rotating it detaches the history.
+  console.log("Deploying BondedCheckpoints...");
+  const bondedCheckpoints = await ethers.deployContract("BondedCheckpoints", [
+    bondingRegistryAddress,
+  ]);
+  await bondedCheckpoints.waitForDeployment();
+  const bondedCheckpointsAddress = await bondedCheckpoints.getAddress();
+  console.log("BondedCheckpoints deployed to:", bondedCheckpointsAddress);
+
+  console.log("Deploying BondedVotes...");
+  const bondedVotes = await ethers.deployContract("BondedVotes", [
+    interfoldTokenAddress,
+    bondedCheckpointsAddress,
+  ]);
+  await bondedVotes.waitForDeployment();
+  const bondedVotesAddress = await bondedVotes.getAddress();
+  console.log("BondedVotes deployed to:", bondedVotesAddress);
+
+  console.log("Attaching BondedCheckpoints to BondingRegistry...");
+  await (
+    await bondingRegistry.setBondedCheckpoints(bondedCheckpointsAddress)
+  ).wait();
+
   // ── Testnet faucet (sepolia only) ───────────────────────────────────────
   // Deploy a public Faucet pre-funded with FOLD + mock USDC so testers can
   // self-serve tokens. FOLD is in the Virtual phase here (CCA_START is ~1h
@@ -795,6 +821,22 @@ export const deployInterfold = async (
       bondingRegistryAddress,
     ],
     [
+      "bondingRegistry.bondedCheckpoints",
+      bondingRegistry.bondedCheckpoints(),
+      bondedCheckpointsAddress,
+    ],
+    [
+      "bondedCheckpoints.registry",
+      bondedCheckpoints.registry(),
+      bondingRegistryAddress,
+    ],
+    ["bondedVotes.token", bondedVotes.token(), interfoldTokenAddress],
+    [
+      "bondedVotes.checkpoints",
+      bondedVotes.checkpoints(),
+      bondedCheckpointsAddress,
+    ],
+    [
       "slashingManager.interfold",
       slashingManager.interfold(),
       interfoldAddress,
@@ -854,6 +896,8 @@ export const deployInterfold = async (
     InterfoldTicketToken: ${interfoldTicketTokenAddress}
     SlashingManager: ${slashingManagerAddress}
     BondingRegistry: ${bondingRegistryAddress}
+    BondedCheckpoints: ${bondedCheckpointsAddress}
+    BondedVotes: ${bondedVotesAddress}
     CiphernodeRegistry: ${ciphernodeRegistryAddress}
     E3RefundManager: ${e3RefundManagerAddress}
     Interfold: ${interfoldAddress}
