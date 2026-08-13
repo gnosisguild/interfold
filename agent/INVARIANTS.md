@@ -199,6 +199,14 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   public-input layout and must be redeployed on committee change.
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
+- The config circuit's `verify_e_sm_bound()` (`circuits/bin/config/src/main.nr`) recomputes the
+  smudging-noise bound and asserts it against the generated `PK_GENERATION_E_SM_BOUND` constant. As
+  of this change, the formula is `B_sm = 2^(lambda+1) * N * B_C` with `lambda = 45` and `N` the ring
+  degree. `PK_GENERATION_E_SM_BOUND` is generated on the Rust side by `SmudgingBoundCalculator` in
+  the pinned `fhe` crate (`gnosisguild/fhe.rs@v0.2.2`), which still implements the older
+  `B_sm = 2^lambda * B_C` formula with no `N` factor. Until the pinned crate is updated to match,
+  `verify_e_sm_bound()` fails against the currently generated constant — the parameter set and
+  generator update are tracked as follow-up work.
 
 ### Noir / Barretenberg compatibility
 
