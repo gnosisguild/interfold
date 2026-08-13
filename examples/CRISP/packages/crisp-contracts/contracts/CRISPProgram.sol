@@ -323,6 +323,12 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // round, and a requester cannot name a timepoint that suits it. Recording it once also makes
     // every input of the round read the same electorate.
     if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN) {
+      // Checked before any call is attempted. A call to an address with no code succeeds and
+      // returns nothing, so `clock()` fails while decoding the empty return data rather than
+      // inside the call — and a decode failure is not what `try/catch` is there to catch. An EOA
+      // would otherwise be refused by a bare panic instead of a named error.
+      if (token.code.length == 0) revert CensusModeRequiresToken();
+
       uint48 snapshot = _previousTimepoint(token);
 
       // Probe the exact call every input will make. `_previousTimepoint` swallows a missing

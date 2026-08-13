@@ -97,6 +97,19 @@ describe('CRISPProgram census mode', function () {
       )
     })
 
+    it('rejects ONCHAIN with an address that holds no code', async () => {
+      // An EOA. A call to a codeless address succeeds and returns nothing, so `clock()` fails
+      // while decoding rather than inside the call — which `try/catch` does not cover. Without an
+      // explicit code check the round is still refused, but by a bare panic rather than a named
+      // error, which tells a requester nothing about what to fix.
+      const eoa = (await ethers.getSigners())[1].address
+
+      await expect(validate(25, encode(CUSTOM, ONCHAIN, 2, { token: eoa }))).to.be.revertedWithCustomError(
+        crispProgram,
+        'CensusModeRequiresToken',
+      )
+    })
+
     it('rejects ONCHAIN with a token that is not an ERC20Votes', async () => {
       // A plain ERC20. `_previousTimepoint` swallows the missing `clock()` and falls back to block
       // numbers, so without the probe this round would validate and then revert on every input.
