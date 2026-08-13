@@ -40,6 +40,7 @@ interface UpgradePlan {
   slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
+  sortitionLibrary?: string;
   operator: string;
   safe: string;
   safeTransactions: string;
@@ -105,6 +106,7 @@ export async function proposeProxyUpgrade(
     slashingLibrary: deployed.slashingLibrary,
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
+    sortitionLibrary: deployed.sortitionLibrary,
     operator: operatorAddress,
     safe: config.safe,
     safeTransactions: batchFile,
@@ -130,6 +132,7 @@ async function deployImplementation(
   slashingLibrary?: string;
   lifecycleLibrary?: string;
   pricingLibrary?: string;
+  sortitionLibrary?: string;
 }> {
   if (target === "interfold") {
     const pricingFactory = await ethers.getContractFactory("InterfoldPricing");
@@ -159,17 +162,28 @@ async function deployImplementation(
   }
 
   if (target === "ciphernodeRegistry") {
+    const sortitionFactory = await ethers.getContractFactory(
+      "RegistrySortitionLib",
+    );
+    const sortition = await sortitionFactory.deploy();
+    await sortition.waitForDeployment();
+    const sortitionLibrary = await deployedAddress(sortition);
     const factory = await ethers.getContractFactory(
       RegistryFactory.abi,
       RegistryFactory.linkBytecode({
         "npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3":
           deployment.poseidonT3,
+        "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
+          sortitionLibrary,
       }),
       operator,
     );
     const implementation = await factory.deploy();
     await implementation.waitForDeployment();
-    return { implementation: await deployedAddress(implementation) };
+    return {
+      implementation: await deployedAddress(implementation),
+      sortitionLibrary,
+    };
   }
 
   if (target === "bondingRegistry") {
@@ -263,6 +277,7 @@ Protocol upgrade prepared
   slashingLibrary: ${plan.slashingLibrary ?? "(not applicable)"}
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
+  sortitionLibrary: ${plan.sortitionLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}
   Safe owner:      ${plan.safe}
   Safe batch:      ${plan.safeTransactions}

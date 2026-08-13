@@ -38,10 +38,19 @@ export async function deployProtocolContracts(
   await slashing.waitForDeployment();
   const slashingManager = await deployedAddress(slashing);
 
+  const registrySortitionFactory = await ethers.getContractFactory(
+    "RegistrySortitionLib",
+  );
+  const registrySortition = await registrySortitionFactory.deploy();
+  await registrySortition.waitForDeployment();
+  const registrySortitionLib = await deployedAddress(registrySortition);
+
   const registryFactory = await ethers.getContractFactory(
     RegistryFactory.abi,
     RegistryFactory.linkBytecode({
       "npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3": poseidonT3,
+      "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
+        registrySortitionLib,
     }),
     operator,
   );
@@ -148,6 +157,7 @@ export async function deployProtocolContracts(
       slashingManager,
       slashingEvidenceLib,
       poseidonT3,
+      registrySortitionLib,
       ciphernodeRegistry: registryProxy.proxy,
       ciphernodeRegistryImplementation,
       ciphernodeRegistryProxyAdmin: registryProxy.proxyAdmin,

@@ -21,6 +21,9 @@ Each transition has a deadline. Missing a deadline allows anyone to call `markE3
 committee deadline. Therefore, queued ticket collateral cannot become claimable while an older
 request accepts snapshot-weighted ticket submissions.
 
+A ticket that enters the current top-N opens a collateral obligation immediately. A better ticket
+releases the displaced candidate. Finalization retains the winners' obligations until the E3 ends.
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 decimals check confirms the unit scale only; it does not prove that two tokens have the same
@@ -434,13 +437,14 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  └─────────────────────────────────────────────────────────┘
 ```
 
-Ticket submission changes only the provisional `topNodes` set. Successful finalization grants
-membership and `Active` status to the final address-sorted members. Failed formation grants neither.
-Finalization also freezes each member's current bond owner as its reward recipient for this E3.
-Later bond-owner transfers apply to later committees, not to payments earned by this committee. It
-also locks each member's queued collateral against withdrawal. Once Interfold reports `Complete` or
-`Failed`, anyone can call `releaseCommittee(e3Id)` on the request-time registry to release all
-member obligations atomically.
+Ticket submission updates the provisional `topNodes` set. A new top-N candidate receives a
+collateral obligation, and the same transaction releases a displaced candidate. Successful
+finalization grants membership and `Active` status to the final address-sorted members. Failed
+formation grants neither and releases all remaining candidate obligations. Finalization also freezes
+each member's current bond owner as its reward recipient for this E3. Later bond-owner transfers
+apply to later committees, not to payments earned by this committee. Once Interfold reports
+`Complete` or `Failed`, anyone can call `releaseCommittee(e3Id)` on the request-time registry to
+release all member obligations atomically.
 
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
@@ -542,8 +546,9 @@ The registry must finalize a ready committee.
    complete new graph and enables requests. No request can observe a partly updated graph.
 
 8. **Committee collateral follows the E3**: The request-time registry owns the E3's collateral
-   obligations. Successful finalization locks every member. The generation cannot rotate until all
-   request-time committee obligations are released.
+   obligations. Top-N submissions lock candidates, displacement releases the previous candidate, and
+   finalization retains every winner's lock. The generation cannot rotate until all request-time
+   committee obligations are released.
 
 9. **Operator identity is unchanged by delegated bonding**: tFOLD is minted to the operator, and
    `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,

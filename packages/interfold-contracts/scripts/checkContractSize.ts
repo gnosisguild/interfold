@@ -8,6 +8,7 @@ const MAX_RUNTIME_BYTES = EIP170_LIMIT_BYTES - REQUIRED_HEADROOM_BYTES;
 const RELEASE_CONTRACTS = [
   "Interfold",
   "BondingRegistry",
+  "CiphernodeRegistryOwnable",
   "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
   "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
 ] as const;

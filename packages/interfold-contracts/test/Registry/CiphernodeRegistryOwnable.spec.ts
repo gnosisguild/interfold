@@ -117,6 +117,12 @@ describe("CiphernodeRegistryOwnable", function () {
       const poseidonDeployment = await poseidonFactory.deploy();
       await poseidonDeployment.waitForDeployment();
       const poseidonAddress = await poseidonDeployment.getAddress();
+      const sortitionFactory = await ethers.getContractFactory(
+        "RegistrySortitionLib",
+      );
+      const sortitionDeployment = await sortitionFactory.deploy();
+      await sortitionDeployment.waitForDeployment();
+      const sortitionAddress = await sortitionDeployment.getAddress();
       const [deployer] = await ethers.getSigners();
       if (!deployer) throw new Error("Bad getSigners() output");
 
@@ -125,6 +131,7 @@ describe("CiphernodeRegistryOwnable", function () {
         {
           libraries: {
             PoseidonT3: poseidonAddress,
+            RegistrySortitionLib: sortitionAddress,
           },
         },
       );
@@ -1059,6 +1066,79 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(
         registry.connect(operator1).submitTicket(firstE3Id, 1),
       ).to.be.revertedWithCustomError(registry, "CommitteeDeadlineReached");
+    });
+
+    it("locks top candidates and releases a displaced candidate", async function () {
+      const {
+        owner,
+        operator1,
+        operator2,
+        operator3,
+        registry,
+        bondingRegistry,
+        licenseToken,
+        ticketToken,
+        usdcToken,
+        request,
+      } = await loadFixture(setup);
+      const operator4 = (await ethers.getSigners())[5]!;
+      await setupOperatorForSortition(
+        operator4,
+        owner,
+        bondingRegistry,
+        licenseToken,
+        usdcToken,
+        ticketToken,
+        registry,
+      );
+      const candidates = [operator1, operator2, operator3, operator4];
+      const exitAmount = ethers.parseUnits("1", 6);
+
+      await bondingRegistry.setExitDelay(ONE_DAY);
+      for (const candidate of candidates) {
+        await bondingRegistry
+          .connect(owner)
+          .removeTicketBalanceFor(await candidate.getAddress(), exitAmount);
+      }
+      await networkHelpers.time.increase(ONE_DAY + 1);
+      await request();
+      await networkHelpers.mine(1);
+
+      const [, seed] = await registry.sortitionSeed(firstE3Id);
+      const ranked = await Promise.all(
+        candidates.map(async (candidate) => ({
+          candidate,
+          score: BigInt(
+            ethers.keccak256(
+              ethers.solidityPacked(
+                ["address", "uint256", "uint256", "uint256"],
+                [await candidate.getAddress(), 1, firstE3Id, seed],
+              ),
+            ),
+          ),
+        })),
+      );
+      ranked.sort((left, right) =>
+        left.score < right.score ? -1 : left.score > right.score ? 1 : 0,
+      );
+      const best = ranked[0]!.candidate;
+      for (const entry of ranked.slice(1)) {
+        await registry.connect(entry.candidate).submitTicket(firstE3Id, 1);
+      }
+      await registry.connect(best).submitTicket(firstE3Id, 1);
+
+      await networkHelpers.time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await bondingRegistry.claimExitsFor(
+        await ranked[3]!.candidate.getAddress(),
+        exitAmount,
+        0,
+      );
+      await expect(
+        bondingRegistry.claimExitsFor(await best.getAddress(), exitAmount, 0),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "OperatorInActiveCommittee",
+      );
     });
   });
 
