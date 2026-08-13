@@ -21,6 +21,10 @@ import { ballotTypedData, getBallotDigest, getCrispProgramAddress } from '@/util
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
+/// Shared so the guard in `castVoteWithProof` and the one in `handleProofGeneration` cannot drift
+/// into telling a voter two different things about the same round.
+const ONCHAIN_UNSUPPORTED = 'This round uses an on-chain census, which this client cannot vote in yet.'
+
 const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uint8Array | undefined> => {
   const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
     method: 'POST',
@@ -125,12 +129,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       if (!roundState) throw new Error('No round state available for proof generation')
       if (!publicClient) throw new Error('No RPC client available for proof generation')
 
-      // This path builds a Merkle witness. An ONCHAIN round has no census tree and needs the
-      // `crisp_onchain` circuit with the voting power the contract read, so a ballot built here
-      // would be rejected by a verifier it was never meant for. Refused explicitly rather than
-      // producing a proof that cannot be published.
+      // Defence in depth. `castVoteWithProof` refuses these rounds before fetching a census, but
+      // this path builds a Merkle witness and must not do so for a round whose ballots are
+      // verified by `crisp_onchain` — that proof could never be published.
       if (roundState.census_mode === CensusMode.Onchain) {
-        throw new Error('This round uses an on-chain census, which this client cannot vote in yet.')
+        throw new Error(ONCHAIN_UNSUPPORTED)
       }
 
       try {
@@ -286,6 +289,13 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
         if (voteData.error) {
           throw new Error(voteData.error)
+        }
+
+        // Checked before the census is fetched. An ONCHAIN round has no Merkle census, so the
+        // empty-leaves error below would fire first and blame the coordinator for a round this
+        // client simply cannot vote in.
+        if (roundState.census_mode === CensusMode.Onchain) {
+          throw new Error(ONCHAIN_UNSUPPORTED)
         }
 
         // Step 2: Encrypting vote

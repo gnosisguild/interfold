@@ -344,6 +344,59 @@ impl TryFrom<u64> for CreditMode {
 }
 
 #[cfg(test)]
+mod persisted_round_tests {
+    use super::{CensusMode, CreditMode, E3Crisp};
+
+    /// A round written before `census_mode` existed. Kept verbatim rather than generated, so a
+    /// change to the struct cannot quietly change what "legacy" means.
+    const LEGACY_ROUND: &str = r#"{
+        "emojis": ["a", "b"],
+        "has_voted": [],
+        "start_time": 1,
+        "end_time": 2,
+        "status": "Active",
+        "tally": [],
+        "token_holder_hashes": [],
+        "eligible_addresses": [],
+        "token_address": "0x0",
+        "balance_threshold": "0",
+        "ciphertext_inputs": [],
+        "requester": "0x0",
+        "num_options": "2",
+        "credit_mode": 1,
+        "credits": null
+    }"#;
+
+    /// `E3Crisp` carries no schema version, and `census_mode` was added with `#[serde(default)]`
+    /// alongside `snapshot_block`, which was added the same way. The default is sound for the only
+    /// population that can lack the field: every stored round predates `Onchain`, so it was a
+    /// token census by construction. This pins that, so a future variant reordering — which would
+    /// silently move the default — fails here instead of at a vote.
+    #[test]
+    fn a_round_stored_before_census_mode_reads_as_token() {
+        let round: E3Crisp =
+            serde_json::from_str(LEGACY_ROUND).expect("legacy round must still decode");
+
+        assert_eq!(round.census_mode, CensusMode::Token);
+        assert_eq!(round.snapshot_block, 0);
+        assert_eq!(round.credit_mode, CreditMode::Custom);
+    }
+
+    #[test]
+    fn every_census_mode_round_trips_through_storage() {
+        for mode in [CensusMode::Token, CensusMode::ByRequester, CensusMode::Onchain] {
+            let mut round: E3Crisp = serde_json::from_str(LEGACY_ROUND).unwrap();
+            round.census_mode = mode;
+
+            let encoded = serde_json::to_string(&round).unwrap();
+            let decoded: E3Crisp = serde_json::from_str(&encoded).unwrap();
+
+            assert_eq!(decoded.census_mode, mode, "mode did not survive storage");
+        }
+    }
+}
+
+#[cfg(test)]
 mod census_mode_tests {
     use super::CensusMode;
 

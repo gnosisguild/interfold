@@ -28,10 +28,15 @@ pub struct CiphertextAdditionWitness {
     pub prev_ct_commitment: BigInt,
     /// Commitment to the ciphertext being added, which is the ballot itself.
     ///
-    /// The crisp circuit computes this value internally and returns it, so it is not a circuit
-    /// input. It is published here because a voter has to sign a digest that binds this exact
-    /// ballot, and the signature is an input to that same circuit. Recomputing it in TypeScript
-    /// would have to match `compute_ciphertext_commitment` exactly, so it is exported instead.
+    /// Exported to break a cycle in the voting flow. The voter signs a digest that commits to the
+    /// ballot, and that signature is then an input to the crisp circuit — so the commitment has to
+    /// be known *before* the circuit runs. The circuit computes the same value internally and
+    /// returns it, but by then it is too late to sign.
+    ///
+    /// The alternative is recomputing it in TypeScript, which would have to reproduce
+    /// `compute_ciphertext_commitment` exactly. A mismatch there is silent: the ballot proves
+    /// fine and is rejected on chain, because the digest the contract rebuilds does not match the
+    /// one that was signed.
     pub ct_commitment: BigInt,
 }
 
