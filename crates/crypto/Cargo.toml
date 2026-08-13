@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode Cryptography Library"
-repository = "https://github.com/theinterfold/interfold/crates/cryptography"
+repository.workspace = true
 
 [dependencies]
 aes-gcm = { workspace = true }
