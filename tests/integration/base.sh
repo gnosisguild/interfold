@@ -85,13 +85,7 @@ REQUEST_OUTPUT=$(pnpm committee:new \
   --committee-size 0)
 printf '%s\n' "$REQUEST_OUTPUT"
 
-E3_ID=$(printf '%s\n' "$REQUEST_OUTPUT" | sed -n 's/^E3_ID=//p' | tail -n 1)
-case "$E3_ID" in
-  ''|*[!0-9]*)
-    echo "Committee request did not return a valid E3 ID" >&2
-    exit 1
-    ;;
-esac
+E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 
 wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "$INTEGRATION_DKG_TIMEOUT"
 
