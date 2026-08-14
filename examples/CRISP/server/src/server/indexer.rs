@@ -255,11 +255,22 @@ pub async fn register_e3_requested(
                                         )
                                     },
                                 )?,
-                                // A round may name its own divisor; the contract enforces that
-                                // value, so the served balances have to use it too.
-                                match U256::from_str_radix(&custom_params.voting_power_divisor, 10) {
-                                    Ok(d) if !d.is_zero() => Some(d),
-                                    _ => None,
+                                // Honoured only for an on-chain census, mirroring the contract:
+                                // `_initRound` records the divisor for ONCHAIN rounds and ignores
+                                // the field otherwise, because a Merkle round's bound comes from
+                                // the census leaf. Applying it there would scale the census by one
+                                // factor while `_tallyScale()` reads the results back assuming
+                                // another, and the tally would be wrong with nothing to show it.
+                                if is_onchain_census {
+                                    match U256::from_str_radix(
+                                        &custom_params.voting_power_divisor,
+                                        10,
+                                    ) {
+                                        Ok(d) if !d.is_zero() => Some(d),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
                                 },
                             )
                             .await
