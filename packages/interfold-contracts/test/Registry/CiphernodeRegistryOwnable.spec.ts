@@ -279,15 +279,19 @@ describe("CiphernodeRegistryOwnable", function () {
         .withArgs(firstE3Id, await operator1.getAddress(), 1, expectedScore);
     });
 
-    it("uses EIP-2935 after the recent block-hash window closes", async function () {
+    it("uses retained entropy through the maximum submission window", async function () {
       const {
         registry,
         interfold,
+        operator1,
         usdcToken,
         mockE3Program,
         mockDecryptionVerifier,
       } = await loadFixture(setup);
 
+      const maximumWindow = await registry.MAX_SORTITION_SUBMISSION_WINDOW();
+      expect(maximumWindow).to.equal(24n * 60n * 60n);
+      await registry.setSortitionSubmissionWindow(maximumWindow);
       await makeRequest(
         interfold,
         usdcToken,
@@ -323,7 +327,21 @@ describe("CiphernodeRegistryOwnable", function () {
         true,
         expectedSeed,
       ]);
+      const expectedScore = BigInt(
+        ethers.keccak256(
+          ethers.solidityPacked(
+            ["address", "uint256", "uint256", "uint256"],
+            [await operator1.getAddress(), 1, firstE3Id, expectedSeed],
+          ),
+        ),
+      );
+      const deadline = await registry.getCommitteeDeadline(firstE3Id);
+      await networkHelpers.time.setNextBlockTimestamp(deadline);
+      await expect(registry.connect(operator1).submitTicket(firstE3Id, 1))
+        .to.emit(registry, "TicketSubmitted")
+        .withArgs(firstE3Id, await operator1.getAddress(), 1, expectedScore);
     });
+
     it("returns true if the request is successful", async function () {
       const {
         registry,
@@ -1023,8 +1041,8 @@ describe("CiphernodeRegistryOwnable", function () {
         usdcToken,
         request,
       } = await loadFixture(setup);
-      const oldSubmissionWindow = 2 * ONE_DAY;
-      const oldExitDelay = 3 * ONE_DAY;
+      const oldSubmissionWindow = ONE_DAY;
+      const oldExitDelay = 2 * ONE_DAY;
 
       await interfold.setTimeoutConfig({
         dkgWindow: ONE_DAY,
@@ -1036,7 +1054,6 @@ describe("CiphernodeRegistryOwnable", function () {
       await request();
       const oldDeadline = await registry.getCommitteeDeadline(firstE3Id);
 
-      await registry.setSortitionSubmissionWindow(60);
       await expect(
         bondingRegistry.setExitDelay(ONE_DAY),
       ).to.be.revertedWithCustomError(
@@ -1044,7 +1061,7 @@ describe("CiphernodeRegistryOwnable", function () {
         "ExitDelayMustExceedSortitionWindow",
       );
 
-      await networkHelpers.time.increaseTo(oldDeadline + 1n);
+      await registry.setSortitionSubmissionWindow(60);
       await bondingRegistry.setExitDelay(ONE_DAY);
 
       const operatorAddress = await operator1.getAddress();
@@ -1053,6 +1070,9 @@ describe("CiphernodeRegistryOwnable", function () {
         .connect(owner)
         .removeTicketBalanceFor(operatorAddress, exitAmount);
       await networkHelpers.time.increase(ONE_DAY + 1);
+      expect(BigInt(await networkHelpers.time.latest())).to.be.greaterThan(
+        oldDeadline,
+      );
 
       const ownerAddress = await owner.getAddress();
       const balanceBefore = await usdcToken.balanceOf(ownerAddress);
@@ -1252,5 +1272,52 @@ describe("CiphernodeRegistryOwnable", function () {
       // Three operators registered in setup
       expect(await registry.treeSize()).to.equal(3);
     });
+  });
+});
+
+describe("RegistrySortitionLib entropy", function () {
+  const ARBSYS = "0x0000000000000000000000000000000000000064";
+  const BLOCKHASH_HISTORY = "0x0000F90827F1C53a10cb7A02335B175320002935";
+
+  async function setupEntropyHarness() {
+    const factory = await ethers.getContractFactory("RegistrySortitionLib");
+    const library = await factory.deploy();
+    await library.waitForDeployment();
+    return { library };
+  }
+
+  it("uses Arbitrum L2 block numbers and L2 block-hash history", async function () {
+    const { library } = await loadFixture(setupEntropyHarness);
+
+    await networkHelpers.mine(2);
+    const currentBlock = await ethers.provider.getBlockNumber();
+    const recentBlock = await ethers.provider.getBlock(currentBlock - 1);
+    if (!recentBlock?.hash) throw new Error("recent block hash missing");
+
+    const l2BlockNumber = currentBlock + 100;
+    const encodedL2BlockNumber = ethers
+      .zeroPadValue(ethers.toBeHex(l2BlockNumber), 32)
+      .slice(2);
+    await ethers.provider.send("hardhat_setCode", [
+      ARBSYS,
+      `0x7f${encodedL2BlockNumber}60005260206000f3`,
+    ]);
+    expect(await library.currentBlockNumber(42161)).to.equal(l2BlockNumber);
+    expect(await library.currentBlockNumber(42170)).to.equal(l2BlockNumber);
+    expect(await library.currentBlockNumber(421614)).to.equal(l2BlockNumber);
+
+    const l2BlockHash = `0x${"11".repeat(32)}`;
+    await ethers.provider.send("hardhat_setCode", [
+      BLOCKHASH_HISTORY,
+      `0x7f${l2BlockHash.slice(2)}60005260206000f3`,
+    ]);
+
+    expect(await library.entropyBlockHash(1, currentBlock - 1)).to.deep.equal([
+      true,
+      recentBlock.hash,
+    ]);
+    expect(
+      await library.entropyBlockHash(42161, currentBlock - 1),
+    ).to.deep.equal([true, l2BlockHash]);
   });
 });

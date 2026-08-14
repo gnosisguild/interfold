@@ -744,18 +744,19 @@ contract Interfold is
 
     /// @inheritdoc IInterfold
     function onCommitteeFinalized(uint256 e3Id) external {
-        InterfoldLifecycle.validateAndSnapshotCommitteeFinalization(
-            msg.sender,
-            address(_registryFor(e3Id)),
-            address(_refundManagerFor(e3Id)),
-            e3Id,
-            uint8(_e3Stages[e3Id])
-        );
-        // Update E3 lifecycle stage - committee finalized, DKG starting
+        uint256 dkgDeadline = InterfoldLifecycle
+            .validateAndSnapshotCommitteeFinalization(
+                msg.sender,
+                address(_registryFor(e3Id)),
+                address(_refundManagerFor(e3Id)),
+                e3Id,
+                uint8(_e3Stages[e3Id]),
+                _e3TimeoutConfigs[e3Id].dkgWindow
+            );
+        // Keep DKG inside the request-time lifecycle bound. Delayed
+        // finalization reduces the remaining DKG window instead of moving it.
         _e3Stages[e3Id] = E3Stage.CommitteeFinalized;
-        _e3Deadlines[e3Id].dkgDeadline =
-            block.timestamp +
-            _e3TimeoutConfigs[e3Id].dkgWindow;
+        _e3Deadlines[e3Id].dkgDeadline = dkgDeadline;
 
         emit CommitteeFinalized(e3Id);
         emit E3StageChanged(
@@ -906,7 +907,8 @@ contract Interfold is
             address(_registryFor(e3Id)),
             e3Id,
             uint8(stage),
-            _e3Deadlines[e3Id]
+            _e3Deadlines[e3Id],
+            _e3TimeoutConfigs[e3Id].dkgWindow
         );
         reason = FailureReason(rawReason);
     }

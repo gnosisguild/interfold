@@ -46,7 +46,8 @@ contract CiphernodeRegistryOwnable is
     uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 60;
 
     /// @notice Maximum permitted value for {sortitionSubmissionWindow}.
-    uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 7 days;
+    /// @dev One day fits inside Arbitrum's approximately 27-hour L2 hash history.
+    uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
     /// @notice EIP-2935 block-hash history contract.
     address public constant BLOCKHASH_HISTORY =
@@ -317,7 +318,9 @@ contract CiphernodeRegistryOwnable is
         sortitionTicketPrices[e3Id] = ticketPrice;
 
         c.stage = ICiphernodeRegistry.CommitteeStage.Requested;
-        uint256 entropyBlock = block.number + 1;
+        uint256 entropyBlock = RegistrySortitionLib.currentBlockNumber(
+            block.chainid
+        ) + 1;
         sortitionEntropyBlocks[e3Id] = entropyBlock;
         // NOTE: `requestBlock` stores a timepoint per EIP-6372 (mode=timestamp) — its name
         // is kept for storage/event compatibility but it must be compared to
@@ -672,28 +675,14 @@ contract CiphernodeRegistryOwnable is
         if (sortitionSeedResolved[e3Id]) return (true, c.seed);
 
         uint256 entropyBlock = sortitionEntropyBlocks[e3Id];
-        if (entropyBlock == 0 || block.number <= entropyBlock) {
-            return (false, 0);
-        }
-
-        bytes32 entropy = _blockHashAt(entropyBlock);
-        if (entropy == bytes32(0)) return (false, 0);
-
-        return (true, uint256(keccak256(abi.encode(entropy, e3Id))));
-    }
-
-    function _blockHashAt(
-        uint256 blockNumber
-    ) internal view returns (bytes32 blockHash) {
-        blockHash = blockhash(blockNumber);
-        if (blockHash != bytes32(0)) return blockHash;
-
-        (bool success, bytes memory result) = BLOCKHASH_HISTORY.staticcall(
-            abi.encode(blockNumber)
+        bytes32 entropy;
+        (ready, entropy) = RegistrySortitionLib.entropyBlockHash(
+            block.chainid,
+            entropyBlock
         );
-        if (success && result.length == 32) {
-            blockHash = abi.decode(result, (bytes32));
-        }
+        if (!ready) return (false, 0);
+
+        seed = uint256(keccak256(abi.encode(entropy, e3Id)));
     }
 
     function _resolveSortitionSeed(

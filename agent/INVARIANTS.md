@@ -84,17 +84,20 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `H`. `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
-  `seed = uint256(keccak256(blockhash(entropyBlock), e3Id))`; top-N lowest win. `entropyBlock` is
-  the block after the request. The requester must commit the paid request before that block hash
-  exists. EIP-2935 extends the lookup window where the chain supports it. The E3 computation seed
-  remains separate. — `flow-trace/03`
+  `seed = uint256(keccak256(chainBlockHash(entropyBlock), e3Id))`; top-N lowest win. `entropyBlock`
+  is the chain block after the request. Public Arbitrum chains use the L2 block number from `ArbSys`
+  and read its L2 hash from EIP-2935. Other chains use the execution block number and prefer the
+  `BLOCKHASH` opcode. The one-day submission cap fits inside Arbitrum's approximately 27-hour L2
+  hash history. The requester must commit the paid request before that block hash exists. The E3
+  computation seed remains separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
   activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
-- `finalizeCommittee()` requires the submission window to have **closed** (`>=` deadline); the first
-  successful call locks the canonical on-chain committee order. — `flow-trace/03`
+- `finalizeCommittee()` requires the submission window to have closed. The first successful call
+  locks the canonical on-chain committee order. A ready committee must finalize by its absolute
+  request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`
 - **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
   `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
   setters enforce the relationship; equality is invalid because ticket submission includes the
@@ -120,10 +123,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### Deadlines
 
 - Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
-  The request snapshots all timeout windows. The DKG deadline starts when the committee is
-  finalized. The compute deadline starts at the later of key publication and the end of the input
-  window. Request validation reserves the full worst-case sortition, DKG, compute, and decryption
-  lifecycle. — `flow-trace/03`
+  The request snapshots all timeout windows. The DKG deadline equals the request-time committee
+  deadline plus the DKG window. The compute deadline starts at the later of key publication and the
+  end of the input window. Request validation reserves the full worst-case sortition, DKG, compute,
+  and decryption lifecycle. — `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
