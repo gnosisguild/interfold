@@ -41,7 +41,7 @@ sequenceDiagram
     BondingRegistry->>EventBus: CiphernodeBondUpdated
 
     Operator->>BondingRegistry: registerOperatorFor(operator)
-    BondingRegistry->>BondingRegistry: Check isCiphernodeBonded()
+    BondingRegistry->>BondingRegistry: Check ciphernodeBond >= requiredCiphernodeBond
     BondingRegistry->>CiphernodeRegistry: addCiphernode(operator)
     CiphernodeRegistry->>EventBus: CiphernodeAdded(operator, index, numNodes, chainId)
     EventBus->>NodeStateManager: CiphernodeAdded
@@ -315,7 +315,7 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 | Event                       | Parameters                                   | Purpose                             |
 | --------------------------- | -------------------------------------------- | ----------------------------------- |
-| `CiphernodeBondUpdated`     | operator, delta, newBalance, reason          | Track ciphernode bond token bonding |
+| `CiphernodeBondUpdated`     | operator, delta, newBond, reason, chainId    | Track ciphernode bond token bonding |
 | `TicketBalanceUpdated`      | operator, delta, newBalance, reason, chainId | Track ticket balance changes        |
 | `OperatorActivationChanged` | operator, active, chainId                    | Node activation status              |
 | `ConfigurationUpdated`      | parameter, oldValue, newValue                | System parameter changes            |

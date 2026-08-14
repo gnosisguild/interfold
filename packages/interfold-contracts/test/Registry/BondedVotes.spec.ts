@@ -72,7 +72,9 @@ describe("BondedVotes", function () {
     ]);
 
     const bond = async (amount: bigint) => {
-      await ciphernodeBondToken.connect(bondOwner).approve(registryAddress, amount);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, amount);
       await bondingRegistry
         .connect(bondOwner)
         .bondCiphernodeFor(operatorAddress, amount);
@@ -171,9 +173,9 @@ describe("BondedVotes", function () {
       expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
 
       const at = (await time.latest()) - 1;
-      expect(await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at)).to.equal(
-        MINTED - BOND,
-      );
+      expect(
+        await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at),
+      ).to.equal(MINTED - BOND);
       expect(await bondedVotes.getPastVotes(bondOwnerAddress, at)).to.equal(
         MINTED,
       );
@@ -247,9 +249,9 @@ describe("BondedVotes", function () {
       expect(await checkpoints.getPastBonded(bondOwnerAddress, at)).to.equal(
         0n,
       );
-      expect(await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at)).to.equal(
-        MINTED,
-      );
+      expect(
+        await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at),
+      ).to.equal(MINTED);
     });
   });
 
@@ -441,8 +443,13 @@ describe("BondedVotes", function () {
     /// Worth pinning: an owner who never self-delegated still gets its bonded weight, because
     /// that weight never passes through the token's delegation at all.
     it("counts bonded weight for an owner that never self-delegated", async function () {
-      const { ciphernodeBondToken, bondOwner, bondOwnerAddress, bond, settledVotes } =
-        await loadFixture(setup);
+      const {
+        ciphernodeBondToken,
+        bondOwner,
+        bondOwnerAddress,
+        bond,
+        settledVotes,
+      } = await loadFixture(setup);
 
       await bond(BOND);
       await ciphernodeBondToken.connect(bondOwner).delegate(ethers.ZeroAddress);
@@ -464,7 +471,8 @@ describe("BondedVotes", function () {
     /// Bonded FOLD was transferred, not burned, so it is already in the supply. Adding it again
     /// would inflate every quorum denominator — the opposite of the problem being fixed.
     it("passes total supply through unchanged while bonded", async function () {
-      const { bondedVotes, ciphernodeBondToken, bond } = await loadFixture(setup);
+      const { bondedVotes, ciphernodeBondToken, bond } =
+        await loadFixture(setup);
 
       const before = await ciphernodeBondToken.totalSupply();
       await bond(BOND);
@@ -577,7 +585,9 @@ describe("BondedVotes", function () {
       await bondingRegistry.connect(operatorKey).setBondOwner(bondOwnerAddress);
 
       // Bond first, with no checkpoint contract configured.
-      await ciphernodeBondToken.connect(bondOwner).approve(registryAddress, BOND);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, BOND);
       await bondingRegistry
         .connect(bondOwner)
         .bondCiphernodeFor(operatorAddress, BOND);
@@ -675,8 +685,12 @@ describe("BondedVotes", function () {
       expect(await bondedVotes.decimals()).to.equal(
         await ciphernodeBondToken.decimals(),
       );
-      expect(await bondedVotes.name()).to.equal(await ciphernodeBondToken.name());
-      expect(await bondedVotes.symbol()).to.equal(await ciphernodeBondToken.symbol());
+      expect(await bondedVotes.name()).to.equal(
+        await ciphernodeBondToken.name(),
+      );
+      expect(await bondedVotes.symbol()).to.equal(
+        await ciphernodeBondToken.symbol(),
+      );
       expect(await bondedVotes.totalSupply()).to.equal(
         await ciphernodeBondToken.totalSupply(),
       );
@@ -695,7 +709,8 @@ describe("BondedVotes", function () {
     });
 
     it("keeps total supply a pass-through so bonded FOLD is never counted twice", async function () {
-      const { bondedVotes, ciphernodeBondToken, bond } = await loadFixture(setup);
+      const { bondedVotes, ciphernodeBondToken, bond } =
+        await loadFixture(setup);
 
       const before = await ciphernodeBondToken.totalSupply();
       await bond(BOND);
@@ -766,7 +781,9 @@ describe("BondedVotes", function () {
       await bond(BOND);
 
       // The registry's raw balance holds the bond; its attributable balance must not.
-      expect(await ciphernodeBondToken.balanceOf(registryAddress)).to.equal(BOND);
+      expect(await ciphernodeBondToken.balanceOf(registryAddress)).to.equal(
+        BOND,
+      );
       expect(await bondedVotes.balanceOf(registryAddress)).to.equal(0);
 
       // The bond is attributed once, to the owner.
@@ -798,12 +815,19 @@ describe("BondedVotes", function () {
         summed += await bondedVotes.balanceOf(who);
       }
 
-      expect(summed).to.be.lessThanOrEqual(await ciphernodeBondToken.totalSupply());
+      expect(summed).to.be.lessThanOrEqual(
+        await ciphernodeBondToken.totalSupply(),
+      );
     });
 
     it("leaves surplus sent to the registry visible", async function () {
-      const { bondedVotes, ciphernodeBondToken, otherHolder, registryAddress, bond } =
-        await loadFixture(setup);
+      const {
+        bondedVotes,
+        ciphernodeBondToken,
+        otherHolder,
+        registryAddress,
+        bond,
+      } = await loadFixture(setup);
 
       await bond(BOND);
       const surplus = ethers.parseEther("7");
@@ -850,7 +874,9 @@ describe("BondedVotes", function () {
       await bond(BOND);
       await time.increase(60);
 
-      await ciphernodeBondToken.connect(bondOwner).approve(registryAddress, BOND);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, BOND);
       await expect(
         bondingRegistry
           .connect(bondOwner)

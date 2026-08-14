@@ -26,7 +26,7 @@ Collateral ownership and operator identity are separate namespaces:
 
 ## Token Architecture
 
-```
+```text
 ┌───────────────────────────────────────────────────────────┐
 │                    InterfoldToken (FOLD)                   │
 │  ERC20 + ERC20Permit + ERC20Votes + AccessControl          │
@@ -109,23 +109,25 @@ Collateral ownership and operator identity are separate namespaces:
 `setBondingAssetConfig()` updates both tokens, their expected decimals, `ticketPrice`, and
 `requiredCiphernodeBond` in one transaction. Decimal checks confirm the raw-unit scale but do not
 establish either token's economic value. Both assets must transfer exact amounts and must not rebase
-account balances. Deposits verify the custody increase. Exits, payouts, and ciphernode bond transfers verify
-the recipient increase and custody decrease. A mismatch reverts the complete transaction.
+account balances. Deposits verify the custody increase. Exits, payouts, and ciphernode bond
+transfers verify the recipient increase and custody decrease. A mismatch reverts the complete
+transaction.
 
 The protocol deployment configuration keeps `feeToken` separate from `ticketUnderlyingToken`. The
 planned launch uses USDS for fees and sUSDS for ticket collateral. A fixed `ticketPrice` or ticket
 slash penalty represents a fixed number of sUSDS shares, not a fixed USDS redemption value.
 
 Bonding-asset rotation is liability-gated. A replacement ticket wrapper cannot be configured while
-the old wrapper has issued tickets or a payable balance. The registry tracks `totalCiphernodeBondLiability`
-across active FOLD bonds, queued exits, and slashed funds; it decreases only when a claim or
-treasury withdrawal actually consumes an obligation. Unsolicited old-token dust is therefore
-distinguishable from operator liabilities. `setBondingAssetConfig()` sends that surplus to
-`slashedFundsTreasury` before it validates and applies the replacement in the same transaction, so a
-new donation cannot interleave and block rotation. `sweepCiphernodeBondSurplus()` remains available for
-standalone cleanup. Rotation also waits for every E3 assignment, slash lock, and pending slash route
-to close. Replacement assets must be deployed contracts; the only zero exception is the one-time
-ciphernode-bond-token placeholder used to resolve the circular FOLD/BondingRegistry deployment.
+the old wrapper has issued tickets or a payable balance. The registry tracks
+`totalCiphernodeBondLiability` across active FOLD bonds, queued exits, and slashed funds; it
+decreases only when a claim or treasury withdrawal actually consumes an obligation. Unsolicited
+old-token dust is therefore distinguishable from operator liabilities. `setBondingAssetConfig()`
+sends that surplus to `slashedFundsTreasury` before it validates and applies the replacement in the
+same transaction, so a new donation cannot interleave and block rotation.
+`sweepCiphernodeBondSurplus()` remains available for standalone cleanup. Rotation also waits for
+every E3 assignment, slash lock, and pending slash route to close. Replacement assets must be
+deployed contracts; the only zero exception is the one-time ciphernode-bond-token placeholder used
+to resolve the circular FOLD/BondingRegistry deployment.
 
 The exit delay must exceed the current sortition submission window and every unexpired request-time
 deadline. Each request raises a monotonic deadline watermark. `exitDelayFloor()` returns the larger
@@ -142,7 +144,7 @@ The owner wallet or Safe approves FOLD and calls `bondCiphernodeFor(operator, am
 pulls from the owner, credits the operator's ciphernode bond position, and credits
 `totalBonded(owner)`.
 
-```
+```text
 Bond owner submits bondCiphernodeFor(operator, 50000)
 │
 ├─ 1. Approve FOLD spend:
@@ -191,7 +193,7 @@ holder remains empty.
 
 ### Activation check after bonding:
 
-```
+```text
 _updateOperatorStatus(operator):
   wasActive = operators[operator].active
 
@@ -243,7 +245,7 @@ tickets — see [01_REGISTRATION.md](01_REGISTRATION.md#step-3-owner-funded-regi
 > (`balanceOf / ticketPrice >= minTicketBalance`) and in sortition eligibility — it is NOT used to
 > multiply the deposit amount.
 
-```
+```text
 Bond owner submits addTicketBalanceFor(operator, amount)
 │
 ├─ 1. Approve collateral spend:
@@ -300,7 +302,7 @@ tFOLD tokens cannot be transferred between addresses. This ensures:
 Only the configured owner may call `unbondCiphernodeFor(operator, amount)`. With a separate owner,
 the operator's hot key cannot queue the owner's FOLD for exit.
 
-```
+```text
 Bond owner submits unbondCiphernodeFor(operator, 10000)
 │
 ├─ BondingRegistry.unbondCiphernodeFor(operator, 10000)
@@ -336,7 +338,7 @@ Only the owner may call `removeTicketBalanceFor(operator, amount)`.
 > **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw underlying token units**
 > (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication.
 
-```
+```text
 Bond owner submits removeTicketBalanceFor(operator, rawAmount)
 │
 ├─ BondingRegistry.removeTicketBalanceFor(operator, rawAmount)
@@ -378,9 +380,9 @@ Bond owner submits removeTicketBalanceFor(operator, rawAmount)
 ## Step 5: Claim Exits
 
 Both assets are always paid to `bondOwnerOf(operator)`, which may be the operator itself. Anyone can
-settle matured ticket exits by passing `maxCiphernodeBond = 0`. A claim that includes ciphernode bond collateral
-must come from the bond owner. The exit queue remains keyed by operator, so queued assets stay
-slashable against the correct protocol identity.
+settle matured ticket exits by passing `maxCiphernodeBond = 0`. A claim that includes ciphernode
+bond collateral must come from the bond owner. The exit queue remains keyed by operator, so queued
+assets stay slashable against the correct protocol identity.
 
 ```text
 Caller submits claimExitsFor(operator, maxTicket, maxCiphernodeBond)
@@ -456,7 +458,7 @@ Two contracts restore that weight:
 | `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.          |
 | `registry/BondedVotes`       | `IERC5805` view summing wallet voting power and bonded FOLD at the same timepoint. |
 
-```
+```text
 BondedVotes.getPastVotes(account, t)
 │
 ├─ InterfoldToken.getPastVotes(account, t)        ← wallet voting power (needs delegation)
@@ -557,7 +559,7 @@ doing nothing.
 
 ### Activation formula:
 
-```
+```text
 active = registered
   AND ciphernodeBond >= ceil(requiredCiphernodeBond * ciphernodeBondActiveBps / 10000)
   AND (ticketToken.balanceOf(operator) / ticketPrice) >= minTicketBalance
@@ -567,7 +569,7 @@ active = registered
 
 ## Token Flow Diagram
 
-```
+```text
                 BOND CIPHERNODE BOND                          BUY TICKETS
                 ────────────                          ───────────
   Bond owner                               Bond owner

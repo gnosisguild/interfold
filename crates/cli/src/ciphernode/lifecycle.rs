@@ -234,7 +234,7 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     );
     log!(
         out,
-        "  Requirements: minTickets={}, ticketPrice={} EKT, ciphernodeBond={} FOLD",
+        "  Requirements: minTickets={}, ticketPrice={} tFOLD, ciphernodeBond={} FOLD",
         min_ticket_balance,
         format_amount(ticket_price, ticket_decimals),
         format_amount(required_ciphernode_bond, ciphernode_bond_decimals)

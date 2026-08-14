@@ -38,11 +38,8 @@ library BondingAssetLib {
         uint256 maxTicketAmount,
         uint256 maxCiphernodeBondAmount
     ) external returns (uint256 ciphernodeBondClaim) {
-        (uint256 ticketClaim, uint256 claimedCiphernodeBond) = exits.claimAssets(
-            operator,
-            maxTicketAmount,
-            maxCiphernodeBondAmount
-        );
+        (uint256 ticketClaim, uint256 claimedCiphernodeBond) = exits
+            .claimAssets(operator, maxTicketAmount, maxCiphernodeBondAmount);
         if (ticketClaim == 0 && claimedCiphernodeBond == 0) {
             revert IBondingRegistry.ExitNotReady();
         }
@@ -52,7 +49,11 @@ library BondingAssetLib {
         if (ticketClaim != 0) ticketToken.payout(bondOwner, ticketClaim);
         if (claimedCiphernodeBond != 0) {
             bondedByOwner[bondOwner] -= claimedCiphernodeBond;
-            _transferExact(address(ciphernodeBondToken), bondOwner, claimedCiphernodeBond);
+            _transferExact(
+                address(ciphernodeBondToken),
+                bondOwner,
+                claimedCiphernodeBond
+            );
         }
         return claimedCiphernodeBond;
     }

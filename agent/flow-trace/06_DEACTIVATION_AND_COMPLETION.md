@@ -9,7 +9,8 @@ slashable until claimed.
 Collateral withdrawals are bond-owner actions: `removeTicketBalanceFor(operator)` and
 `unbondCiphernodeFor(operator)`. Deregistration is callable by either the owner or the operator key,
 which gives the running node an emergency kill switch. Anyone can settle a matured ticket-only exit
-to the bond owner. A claim that includes ciphernode bond collateral remains restricted to the bond owner.
+to the bond owner. A claim that includes ciphernode bond collateral remains restricted to the bond
+owner.
 
 ---
 
@@ -17,7 +18,7 @@ to the bond owner. A claim that includes ciphernode bond collateral remains rest
 
 ### Via Ticket Withdrawal
 
-```
+```text
 Bond owner submits removeTicketBalanceFor(operator, 50)
 │
 └─ BondingRegistry.removeTicketBalanceFor(operator, 50)
@@ -45,9 +46,9 @@ Bond owner submits removeTicketBalanceFor(operator, 50)
     │  └─────────────────────────────────────────────────────────┘
 ```
 
-### Via Ciphernode bond Withdrawal
+### Via Ciphernode Bond Withdrawal
 
-```
+```text
 Bond owner submits unbondCiphernodeFor(operator, 20000)
 │
 └─ BondingRegistry.unbondCiphernodeFor(operator, 20000)
@@ -74,7 +75,7 @@ Bond owner submits unbondCiphernodeFor(operator, 20000)
 
 ### Combined Deactivation
 
-```
+```text
 Bond owner submits both owner-authorized calls
 │
 ├─ Calls removeTicketBalanceFor(operator, 50) first
@@ -87,7 +88,7 @@ Bond owner submits both owner-authorized calls
 
 ## Full Deregistration
 
-```
+```text
 Bond owner or operator submits deregisterOperatorFor(operator)
 │
 └─ BondingRegistry.deregisterOperatorFor(operator)
@@ -110,15 +111,15 @@ Bond owner or operator submits deregisterOperatorFor(operator)
     │  │       ticketToken.burnTickets(op, fullTicketBalance)    │
     │  │                                                         │
     │  │    8. Queue ALL collateral for exit:                    │
-    │  │       ciphernodeBondAmount = operators[op].ciphernodeBond     │
-    │  │       operators[op].ciphernodeBond = 0                     │
+    │  │       ciphernodeBondAmount = operators[op].ciphernodeBond│
+    │  │       operators[op].ciphernodeBond = 0                  │
+    │  │       // One combined call; queueing tickets twice would │
+    │  │       // double the queued balance.                      │
     │  │       _exits.queueAssetsForExit(                        │
-    │  │         op, exitDelay,                                   │
-    │  │         fullTicketBalance,  // tickets                   │
-    │  │         0                   // ciphernode bond handled below     │
-    │  │       )                                                  │
-    │  │       _exits.queueAssetsForExit(                        │
-    │  │         op, exitDelay, fullTicketBalance, ciphernodeBondAmount)│
+    │  │         op, exitDelay,                                  │
+    │  │         fullTicketBalance,    // tickets                │
+    │  │         ciphernodeBondAmount  // ciphernode bond        │
+    │  │       )                                                 │
     │  │                                                         │
     │  │    9. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(operator)               │
@@ -164,7 +165,7 @@ path also lets governance clear old ticket liabilities before a registry generat
 
 When an E3 completes successfully:
 
-```
+```text
 publishPlaintextOutput() succeeds
 │
 ├─ ON-CHAIN:
@@ -226,7 +227,7 @@ publishPlaintextOutput() succeeds
 
 ## Rust-Side: Node Shutdown
 
-```
+```text
 interfold start → running node
 │
 ├─ Ctrl+C / SIGINT / SIGTERM
@@ -430,7 +431,7 @@ single component that _drives_ the protocol. The `E3LifecycleCoordinator` (in `e
 E3 at?". It never emits protocol events and never drives subsystems; it records stage and supports
 restart-resume and shutdown awareness subject to the asynchronous persistence caveats above.
 
-```
+```text
 E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build())
 │
 ├─ Loads persisted stage map from Repository(StoreKeys::e3_lifecycle())
@@ -472,7 +473,7 @@ history.
 
 ## Exit Queue Timing
 
-```
+```text
 Time ──────────────────────────────────────────────────────►
 
 │ deregister[For]()│                    │ claimExits[For]()│
@@ -506,10 +507,10 @@ cannot be paid out until every committee obligation ends.
   `MAX_ACTIVE_TRANCHES (= 64)` live (post-head) tranches would exist for the operator. This bounds
   the unbounded loop in `previewClaimableAmounts` / `_takeAssetsFromQueue` so an attacker cannot
   grief the operator with an ever-growing queue (audit H-21a).
-- **Exact ciphernode bond transfers.** `claimExits` and `withdrawSlashedFunds` measure the recipient's
-  balance increase and the registry's balance decrease around `ciphernodeBondToken.safeTransfer`. If either
-  amount differs from the recorded amount, the transaction reverts and restores the liability
-  accounting.
+- **Exact ciphernode bond transfers.** `claimExits` and `withdrawSlashedFunds` measure the
+  recipient's balance increase and the registry's balance decrease around
+  `ciphernodeBondToken.safeTransfer`. If either amount differs from the recorded amount, the
+  transaction reverts and restores the liability accounting.
 - **Frozen-deadline floor.** Each committee request raises the registry's latest deadline watermark.
   `exitDelayFloor()` combines its remaining duration with the current submission window. Exit-delay
   reductions become available after the older request windows expire.
@@ -518,7 +519,7 @@ cannot be paid out until every committee obligation ends.
 
 ## Ban & Unban
 
-```
+```text
 SLASHING → operator banned:
   banned[operator] = true
     → SlashingManager records its manager-scoped ban in BondingRegistry

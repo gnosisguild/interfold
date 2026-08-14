@@ -227,7 +227,7 @@ export default function Operator() {
         <h1 className='opguide__title'>Run a ciphernode on Interfold.</h1>
         <p className='opguide__lede'>
           Ciphernodes hold key shares for encrypted computations and are selected into committees by sortition. To take part, a node needs a
-          bonded ciphernodeBond and a ticket balance. This guide walks the on-chain setup step by step, against the live{' '}
+          bonded ciphernode bond and a ticket balance. This guide walks the on-chain setup step by step, against the live{' '}
           <a className='link-inline' href={explorerAddress(CONTRACTS.BondingRegistry)} target='_blank' rel='noreferrer'>
             bonding registry
           </a>
@@ -410,10 +410,10 @@ export default function Operator() {
               {errFor('setBondOwner')}
             </StepCard>
 
-            {/* ── 3. Bond the ciphernodeBond ────────────────────────────────── */}
+            {/* ── 3. Bond the ciphernode bond ────────────────────────────────── */}
             <StepCard
               num={3}
-              title={`Bond the ${config.ciphernodeBondSymbol} ciphernodeBond`}
+              title={`Bond the ${config.ciphernodeBondSymbol} ciphernode bond`}
               lede={`A ciphernode bond of ${fmtToken(config.requiredCiphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)} is the collateral that makes the node eligible to register. It is slashable, and unbonding is subject to the exit delay.`}
               state={stateOf(2)}
             >
@@ -497,7 +497,7 @@ export default function Operator() {
                     )
                   }
                 >
-                  {label('bondCiphernode', 'Bond ciphernodeBond')}
+                  {label('bondCiphernode', 'Bond ciphernode bond')}
                 </button>
               </div>
               {!bondOwnerSet && <Note>Complete step 2 first — the registry only accepts collateral from an authorized bond owner.</Note>}
@@ -514,7 +514,7 @@ export default function Operator() {
             >
               <dl className='dl'>
                 <dt>Bonded for registration</dt>
-                <dd>{bonded ? 'Yes' : 'Not yet — bond the full ciphernodeBond first'}</dd>
+                <dd>{bonded ? 'Yes' : 'Not yet — bond the full ciphernode bond first'}</dd>
                 <dt>Registered</dt>
                 <dd>{registered ? 'Yes' : 'No'}</dd>
               </dl>

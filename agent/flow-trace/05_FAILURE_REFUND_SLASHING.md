@@ -43,7 +43,7 @@ supplier-side timeout.
 > window durations). This may be intentional (grace already baked into the window sizes) or a
 > missing feature.
 
-```
+```text
 Anyone calls: Interfold.markE3Failed(e3Id)
 │
 ├─ Revert if stage == None, Complete, or Failed
@@ -79,7 +79,7 @@ Anyone calls: Interfold.markE3Failed(e3Id)
 
 ### Contract-Triggered Failure
 
-```
+```text
 CiphernodeRegistry or SlashingManager calls:
   Interfold.onE3Failed(e3Id, reason)
 │
@@ -135,7 +135,7 @@ may auto-submit it from any effects-enabled node on the same chain, and it must 
 active-aggregator designation because failures can happen before committee finalization or while the
 current aggregator is offline.
 
-```
+```text
 Anyone calls: Interfold.processE3Failure(e3Id)
 │
 ├─ require(stage == Failed)
@@ -227,7 +227,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 
 ### Step 2: Claim Refunds
 
-```
+```text
 REQUESTER claims:
   E3RefundManager.claimRequesterRefund(e3Id)
 │
@@ -278,7 +278,7 @@ SLASH RECIPIENT claims a token-specific entitlement:
 
 ### Refund Example: Requester/Compute-Provider Fault
 
-```
+```text
 Scenario: E3 fails at KeyPublished stage (compute timeout)
   Payment: 1,000,000 fee-token units (one token with 6 decimals)
   Honest nodes: 3 (out of 5 committee members, 2 were slashed)
@@ -296,7 +296,7 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
 
 ### Refund Example: Ciphernode Fault
 
-```
+```text
 Scenario: E3 fails during DKG because one member supplied invalid shares
   Fee escrow: 1,000,000 fee-token units
   Honest nodes after expulsion: 2
@@ -333,7 +333,7 @@ The AccusationManager is a per-E3 ephemeral actor created when `SortitionCommitt
 `ICiphernodeRegistry` event) fires. It bridges proof verification failures to on-chain slashing
 through an off-chain committee quorum protocol.
 
-```
+```text
 LIFECYCLE:
   Created by AccusationManagerExtension on SortitionCommitteeFinalized
   → Stores committee list, threshold_m, this node's address + signer
@@ -343,7 +343,7 @@ LIFECYCLE:
 
 #### Step 1: Local Proof Failure Detection
 
-```
+```text
 ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │
 ├─ For ProofVerificationFailed:
@@ -398,7 +398,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 
 #### Step 2: Incoming Accusation Handling
 
-```
+```text
 ProofFailureAccusation arrives via P2P from another committee member
 │
 ├─ 1. Verify accuser is a committee member
@@ -453,7 +453,7 @@ slashing manager before that submission deadline passes.
 
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
 
-```
+```text
 Accusation ID (deterministic, same on Rust + Solidity):
   accusation_id = keccak256(abi.encodePacked(
     chainId, e3Id, accused_address, proofType
@@ -481,7 +481,7 @@ CRITICAL: These type hashes MUST match the Solidity constants:
 
 #### Step 4: Quorum Decision Logic
 
-```
+```text
 check_quorum(accusation_id):
 │
 ├─ Count affirmative votes
@@ -505,7 +505,7 @@ check_quorum(accusation_id):
 
 #### Step 5: On-Chain Slash Submission
 
-```
+```text
 AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │
 ├─ Continue only for AccusedFaulted
@@ -551,7 +551,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 
 ### Lane A: Attestation-Based Slashing (Permissionless, Atomic)
 
-```
+```text
 Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │
 ├─ 1. Decode proof:
@@ -646,7 +646,7 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 
 ### Lane B: Evidence-Based Slashing (Delayed, With Appeals)
 
-```
+```text
 SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
   e3Id, operator, reason, evidence
 )
@@ -729,7 +729,7 @@ Anyone calls: SlashingManager.executeSlash(proposalId)
 
 ### Slash Execution (Both Lanes)
 
-```
+```text
 _executeSlash(proposalId):
 │
 ├─ 1. SLASH TICKET BALANCE (if ticketAmount > 0):
@@ -902,9 +902,9 @@ _executeSlash(proposalId):
 ```
 
 > **Asset transfer policy.** Fee and bonding assets must transfer exact amounts and must not rebase
-> account balances. Ticket payouts, ciphernode bond transfers, refund-manager funding, and every claimant
-> payment measure the recipient increase and custody decrease. A mismatch reverts the complete
-> accounting transaction and preserves the other pooled liabilities.
+> account balances. Ticket payouts, ciphernode bond transfers, refund-manager funding, and every
+> claimant payment measure the recipient increase and custody decrease. A mismatch reverts the
+> complete accounting transaction and preserves the other pooled liabilities.
 
 ### Proposal-Aware Slashed Funds Settlement (Failure Path)
 
@@ -943,7 +943,7 @@ Design rationale:
 
 ### Slashed Funds Distribution (Success Path): distributeSlashedFundsOnSuccess()
 
-```
+```text
 distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 │
 ├─ Called by Interfold._distributeRewards() when E3 completes successfully
@@ -1061,7 +1061,7 @@ Case 4: E3 completes successfully with escrowed slashed funds
 
 ### Slash Policy Configuration
 
-```
+```text
 SlashPolicy {
   ticketPenalty:    uint256   // tickets to slash (in base units)
   ciphernodeBondPenalty:   uint256   // FOLD to slash
@@ -1097,7 +1097,7 @@ Slash Reasons (derived from ProofType for Lane A):
 
 ### End-to-End: Proof Failure → On-Chain Slash
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │              Complete Proof-to-Slash Pipeline                    │
 ├─────────────────────────────────────────────────────────────────┤
@@ -1218,7 +1218,7 @@ Ciphernode bond slashes always go to treasury (no escrow routing for FOLD).
 
 ## Rust-Side Handling
 
-```
+```text
 When CommitteeMemberExpelled event arrives from EVM:
 │
 ├─ Event initially has party_id: None (not resolved yet)

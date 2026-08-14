@@ -2597,14 +2597,19 @@ describe("BondingRegistry", function () {
       const replacement = await (
         await ethers.getContractFactory("MockLockAwareCiphernodeBondToken")
       ).deploy(0);
-      const treasuryBefore = await ciphernodeBondToken.balanceOf(treasuryAddress);
+      const treasuryBefore =
+        await ciphernodeBondToken.balanceOf(treasuryAddress);
       await expect(
         setBondingAssetConfig(bondingRegistry, {
           ciphernodeBondToken: await replacement.getAddress(),
         }),
       )
         .to.emit(bondingRegistry, "CiphernodeBondSurplusSwept")
-        .withArgs(await ciphernodeBondToken.getAddress(), treasuryAddress, dust);
+        .withArgs(
+          await ciphernodeBondToken.getAddress(),
+          treasuryAddress,
+          dust,
+        );
       expect(await ciphernodeBondToken.balanceOf(treasury)).to.equal(
         treasuryBefore + dust,
       );

@@ -39,13 +39,13 @@ var nu = { exports: {} },
   ru = { exports: {} },
   R = {}
 /**
- * @ciphernode bond React
+ * @license React
  * react.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * CIPHERNODE BOND file in the root directory of this source tree.
+ * LICENSE file in the root directory of this source tree.
  */ var Zn = Symbol.for('react.element'),
   wc = Symbol.for('react.portal'),
   kc = Symbol.for('react.fragment'),
@@ -370,13 +370,13 @@ ru.exports = R
 var T = ru.exports
 const Ic = xc(T)
 /**
- * @ciphernode bond React
+ * @license React
  * react-jsx-runtime.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * CIPHERNODE BOND file in the root directory of this source tree.
+ * LICENSE file in the root directory of this source tree.
  */ var $c = T,
   Dc = Symbol.for('react.element'),
   Fc = Symbol.for('react.fragment'),
@@ -404,13 +404,13 @@ var o = nu.exports,
   hu = { exports: {} },
   mu = {}
 /**
- * @ciphernode bond React
+ * @license React
  * scheduler.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * CIPHERNODE BOND file in the root directory of this source tree.
+ * LICENSE file in the root directory of this source tree.
  */ ;(function (e) {
   function t(S, L) {
     var z = S.length
@@ -663,13 +663,13 @@ var o = nu.exports,
 hu.exports = mu
 var Bc = hu.exports
 /**
- * @ciphernode bond React
+ * @license React
  * react-dom.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
- * CIPHERNODE BOND file in the root directory of this source tree.
+ * LICENSE file in the root directory of this source tree.
  */ var Hc = T,
   xe = Bc
 function w(e) {
