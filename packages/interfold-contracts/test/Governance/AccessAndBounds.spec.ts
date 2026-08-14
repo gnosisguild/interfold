@@ -181,15 +181,18 @@ describe("Governance — access control, bounds & events", function () {
 
     it("keeps exit delay longer than the sortition window", async function () {
       const { bondingRegistry, ciphernodeRegistry } = await deployAll();
-      const exitDelay = await bondingRegistry.exitDelay();
-      await expect(ciphernodeRegistry.setSortitionSubmissionWindow(exitDelay))
+      const minimumExitDelay = await bondingRegistry.MIN_EXIT_DELAY();
+      await bondingRegistry.setExitDelay(minimumExitDelay);
+      await expect(
+        ciphernodeRegistry.setSortitionSubmissionWindow(minimumExitDelay),
+      )
         .to.be.revertedWithCustomError(
           ciphernodeRegistry,
           "ExitDelayMustExceedSortitionWindow",
         )
-        .withArgs(exitDelay, exitDelay);
+        .withArgs(minimumExitDelay, minimumExitDelay);
 
-      const minimumExitDelay = await bondingRegistry.MIN_EXIT_DELAY();
+      await bondingRegistry.setExitDelay(minimumExitDelay + 1n);
       await ciphernodeRegistry.setSortitionSubmissionWindow(minimumExitDelay);
       await expect(bondingRegistry.setExitDelay(minimumExitDelay))
         .to.be.revertedWithCustomError(

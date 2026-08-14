@@ -764,7 +764,7 @@ interface IInterfold {
     function setRequestsPaused(bool paused) external;
 
     /// @notice Called by CiphernodeRegistry when committee is finalized (sortition complete).
-    /// @dev Updates E3 lifecycle to CommitteeFinalized stage, starts DKG deadline.
+    /// @dev Updates the E3 lifecycle and applies the request-time DKG deadline.
     /// @param e3Id ID of the E3.
     function onCommitteeFinalized(uint256 e3Id) external;
 

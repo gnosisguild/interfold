@@ -19,8 +19,8 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed. A ready committee cannot fail through
-this function. The registry must finalize it.
+Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
+through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
 
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
@@ -50,7 +50,9 @@ Anyone calls: Interfold.markE3Failed(e3Id)
 │
 ├─ CHECK 1: Committee Formation Timeout
 │   stage == Requested
-│   AND block.timestamp > committeeDeadline
+│   AND either:
+│     - threshold is not met and block.timestamp > committeeDeadline
+│     - threshold is met and block.timestamp > committeeDeadline + dkgWindow
 │   → Reason: CommitteeFormationTimeout
 │
 ├─ CHECK 2: DKG Timeout
