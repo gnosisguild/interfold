@@ -251,6 +251,11 @@ pub async fn initialize_crisp_round(
     // Census mode 0 = Token: the CLI has no application contract to ask, so the coordinator derives
     // the electorate from token balances as it always has.
     let census_mode = U256::from(0);
+    // Seventh field: the ONCHAIN voting-power divisor. Zero here for two reasons — a TOKEN round
+    // never reads it, and zero is also the "derive it from the token's decimals" sentinel. It is
+    // not optional: `_initRound` decodes exactly seven fields, so a six-field encoding reverts the
+    // request with empty data rather than defaulting to anything.
+    let voting_power_divisor = U256::from(0);
     let custom_params_bytes = Bytes::from(
         (
             token_address,
@@ -259,6 +264,7 @@ pub async fn initialize_crisp_round(
             credit_mode,
             credits,
             census_mode,
+            voting_power_divisor,
         )
             .abi_encode(),
     );

@@ -27,6 +27,29 @@ sol! {
         function decimals() external view returns (uint8);
         function CLOCK_MODE() external view returns (string);
     }
+
+    /// The `BondedVotes` adapter, which sums wallet voting power and bonded collateral.
+    /// @dev A pure view: it emits nothing itself, so candidate discovery has to follow these
+    /// three references to the contracts that do emit.
+    #[sol(rpc)]
+    contract BondedVotes {
+        function token() external view returns (address);
+        function checkpoints() external view returns (address);
+        function registry() external view returns (address);
+    }
+}
+
+/// Where a round's voting power is emitted from, resolved from the token the round names.
+#[derive(Debug, Clone)]
+pub struct VotingPowerSources {
+    /// The ERC20Votes token whose `DelegateVotesChanged` logs carry wallet voting power. Equal to
+    /// the round's token for a plain token, or the adapter's underlying one.
+    pub token: Address,
+    /// The bonding registry emitting `BondOwnerSet`. `None` when the round's token is not an
+    /// adapter, in which case there is no bonded power to find.
+    pub registry: Option<Address>,
+    /// The checkpoint contract emitting `BondedCheckpointed`, when one is configured.
+    pub checkpoints: Option<Address>,
 }
 
 /// Which unit a census token's `getPastVotes` timepoint is denominated in.
@@ -82,6 +105,14 @@ pub struct DelegateVotesChangedLog {
     pub transaction_index: String,
     pub block_hash: String,
     pub log_index: String,
+}
+
+/// A log reduced to what candidate discovery needs: which contract, and its indexed topics.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicLog {
+    pub address: String,
+    pub topics: Vec<String>,
 }
 
 /// Represents an address that may have voting power
@@ -390,7 +421,7 @@ impl EtherscanClient {
 
         // DelegateVotesChanged event signature
         let delegate_votes_changed_topic =
-            "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f";
+            "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724";
 
         loop {
             let url = format!(
@@ -420,6 +451,187 @@ impl EtherscanClient {
         }
 
         Ok(all_logs)
+    }
+
+    /// Resolve where a round's voting power is emitted from.
+    ///
+    /// Structural, not configured: a `BondedVotes` adapter exposes `token()`, `checkpoints()` and
+    /// `registry()` as public immutables, so probing them tells us whether bonded collateral is in
+    /// play without the server being told which deployment is "the governance one". A plain
+    /// ERC20Votes token answers none of them and scans exactly as before.
+    ///
+    /// # Arguments
+    /// * `round_token` - The token the round was requested against
+    /// * `rpc_url` - The RPC endpoint
+    pub async fn resolve_voting_power_sources(
+        round_token: Address,
+        rpc_url: &str,
+    ) -> VotingPowerSources {
+        let plain = VotingPowerSources {
+            token: round_token,
+            registry: None,
+            checkpoints: None,
+        };
+
+        let Ok(url) = rpc_url.parse() else {
+            // Not the same as "plain token": we could not look. Said out loud because the
+            // consequence is a census missing every bond owner, which otherwise looks identical
+            // to a token that simply has none.
+            log::warn!(
+                "Could not parse the RPC URL while resolving voting-power sources for {}; \
+                 treating it as a plain token, so any bonded voters will be missing",
+                round_token
+            );
+            return plain;
+        };
+        let provider = ProviderBuilder::new().connect_http(url);
+        let adapter = BondedVotes::new(round_token, provider);
+
+        // `token()` is the discriminator. Anything that answers it while also answering
+        // `registry()` is an adapter over bonded collateral.
+        let (underlying, registry) = match (
+            adapter.token().call().await,
+            adapter.registry().call().await,
+        ) {
+            (Ok(underlying), Ok(registry)) => (underlying, registry),
+            // A plain ERC20Votes token does not implement these, so a revert here is the expected
+            // negative answer and only worth a debug line.
+            (Err(token_err), _) | (_, Err(token_err)) => {
+                log::debug!(
+                    "{} does not answer token()/registry() ({}); treating it as a plain \
+                     ERC20Votes token",
+                    round_token,
+                    token_err
+                );
+                return plain;
+            }
+        };
+
+        VotingPowerSources {
+            token: underlying,
+            registry: Some(registry),
+            // Optional: the registry may not have been pointed at a checkpoint contract yet, in
+            // which case `BondOwnerSet` alone still names every bond owner.
+            checkpoints: adapter.checkpoints().call().await.ok(),
+        }
+    }
+
+    /// Fetch every log for one contract and one `topic0`, paging until the source is exhausted.
+    ///
+    /// # Arguments
+    /// * `address` - The contract emitting the event
+    /// * `topic0` - The event signature hash
+    /// * `from_block` - First block to scan
+    /// * `to_block` - Last block to scan
+    pub async fn get_logs_by_topic(
+        &self,
+        address: &str,
+        topic0: &str,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<TopicLog>> {
+        let mut all_logs = Vec::new();
+        let mut page = 1;
+
+        loop {
+            let url = format!(
+                "{}?module=logs&action=getLogs&address={}&fromBlock={}&toBlock={}&topic0={}&page={}&offset=10000&chainid={}&apikey={}",
+                ETHERSCAN_API_URL, address, from_block, to_block, topic0, page, self.chain_id, self.api_key
+            );
+
+            let logs: Vec<TopicLog> = match self
+                .fetch_page::<Vec<TopicLog>>(&url, "topic logs")
+                .await
+                .with_context(|| format!("Logs page {} for {}", page, address))?
+            {
+                Some(logs) if !logs.is_empty() => logs,
+                _ => break,
+            };
+
+            let log_count = logs.len();
+            all_logs.extend(logs);
+
+            if log_count < 10000 {
+                break;
+            }
+
+            page += 1;
+        }
+
+        Ok(all_logs)
+    }
+
+    /// Fetch the addresses named as `bondOwner` by a `BondingRegistry`, and by the
+    /// `BondedCheckpoints` it writes to.
+    ///
+    /// Bonded FOLD carries voting power through a `BondedVotes` adapter, which is a pure view:
+    /// it emits nothing. Its power comes from two places the adapter merely reads, so an address
+    /// can hold bonded weight while appearing in no `Transfer` and no `DelegateVotesChanged` log
+    /// at all — scanning only the token would miss every operator.
+    ///
+    /// `BondOwnerSet` is the complete source. It is emitted both when an operator first names an
+    /// owner and when ownership is transferred (`acceptBondOwner` emits it too), and there is no
+    /// other way to become a bond owner. It also holds where `BondedCheckpointed` does not:
+    /// configuring the checkpoint contract does not backfill, so an owner that bonded beforehand
+    /// has no checkpoint event until its next mutation. `BondedCheckpointed` is scanned as well
+    /// because it is the cheaper filter for the common case.
+    ///
+    /// Over-inclusion is free — every candidate is verified against `getPastVotes` afterwards and
+    /// dropped if it has no power — so both sources are scanned rather than one being trusted.
+    ///
+    /// # Arguments
+    /// * `registry` - The bonding registry emitting `BondOwnerSet`
+    /// * `checkpoints` - The bonded checkpoints contract, or `None` if unset
+    /// * `from_block` - First block to scan
+    /// * `to_block` - Last block to scan
+    pub async fn get_bond_owner_candidates(
+        &self,
+        registry: &str,
+        checkpoints: Option<&str>,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<Address>> {
+        // keccak256("BondOwnerSet(address,address)")
+        const BOND_OWNER_SET_TOPIC: &str =
+            "0xf09dc4a8a4e1c9233bcb1d32c04ad4c9d516f140c23aa44f9e0d680f70799e08";
+        // keccak256("BondedCheckpointed(address,uint48,uint256)")
+        const BONDED_CHECKPOINTED_TOPIC: &str =
+            "0xb6241efac9a4f02e4f1ba6a30a3a5fc5ba4b23a47f181eca3055466c775eb32c";
+
+        let mut owners: HashSet<Address> = HashSet::new();
+
+        // `bondOwner` is the second indexed parameter of `BondOwnerSet(operator, bondOwner)` and
+        // the first of `BondedCheckpointed(bondOwner, timepoint, amount)`.
+        for (address, topic, owner_topic_index) in [
+            (Some(registry), BOND_OWNER_SET_TOPIC, 2usize),
+            (checkpoints, BONDED_CHECKPOINTED_TOPIC, 1usize),
+        ] {
+            let Some(address) = address else { continue };
+
+            let logs = self
+                .get_logs_by_topic(address, topic, from_block, to_block)
+                .await
+                .with_context(|| format!("Bond owner logs for {}", address))?;
+
+            for log in logs {
+                if let Some(raw) = log.topics.get(owner_topic_index) {
+                    if let Ok(owner) = Self::address_from_topic(raw) {
+                        owners.insert(owner);
+                    }
+                }
+            }
+        }
+
+        Ok(owners.into_iter().collect())
+    }
+
+    /// Decode an address from a 32-byte indexed log topic (left-padded).
+    fn address_from_topic(topic: &str) -> Result<Address> {
+        let hex = topic.trim_start_matches("0x");
+        if hex.len() < 40 {
+            return Err(eyre::eyre!("topic too short to hold an address: {}", topic));
+        }
+        Ok(format!("0x{}", &hex[hex.len() - 40..]).parse::<Address>()?)
     }
 
     /// Get all potential voters by combining token holders and delegates
@@ -471,6 +683,9 @@ impl EtherscanClient {
         timepoint: u64,
         rpc_url: &str,
         threshold: U256,
+        // The round's explicit divisor, when it named one. `None` derives from the token's
+        // decimals, matching what the contract does for a zero divisor.
+        divisor_override: Option<U256>,
     ) -> Result<Vec<TokenHolder>> {
         let mut token_holders: Vec<TokenHolder> = Vec::new();
 
@@ -479,7 +694,27 @@ impl EtherscanClient {
         // we want to keep some precision but want to deal with as small as numbers as possible
         let precision = if decimals > 1 { decimals - 1 } else { 0 };
 
-        let scale_factor = U256::from(10u128.pow(precision as u32));
+        // A round that names its own divisor must be scaled by that, not by the decimals: the
+        // contract enforces the round's value, so deriving here would serve balances in units the
+        // chain disagrees with, and a mask built from one would fail in the verifier.
+        let scale_factor = match divisor_override {
+            Some(divisor) if !divisor.is_zero() => divisor,
+            _ => U256::from(10u128.pow(precision as u32)),
+        };
+
+        log::info!(
+            "Verifying {} candidates against {} at timepoint {} (decimals={}, divisor={}, \
+             threshold={})",
+            potential_voters.len(),
+            token_address,
+            timepoint,
+            decimals,
+            scale_factor,
+            threshold
+        );
+
+        let mut below_threshold = 0usize;
+        let mut rounds_to_zero = 0usize;
 
         for voter in potential_voters {
             match Self::get_past_votes(token_address, voter.address, timepoint, rpc_url).await {
@@ -487,10 +722,44 @@ impl EtherscanClient {
                     if votes >= threshold {
                         let scaled_votes = votes / scale_factor;
 
+                        // Both values, because they answer different questions. The raw one is
+                        // what the chain reports and what a holder recognises as their balance;
+                        // the scaled one is what the ballot is bounded by, and a mismatch between
+                        // a census and a tally is almost always a scaling mismatch.
+                        log::info!(
+                            "  eligible {} raw={} scaled={}",
+                            voter.address,
+                            votes,
+                            scaled_votes
+                        );
+
+                        // Above the threshold but worth nothing once scaled: the leaf bounds every
+                        // ballot to zero, so this address is in the census and can still only cast
+                        // an empty vote. Worth saying out loud — it looks like eligibility from
+                        // every angle except the one that counts.
+                        if scaled_votes.is_zero() {
+                            rounds_to_zero += 1;
+                            log::warn!(
+                                "  {} clears the threshold but scales to zero (raw={}, \
+                                 divisor={}): it can vote, but carries no weight",
+                                voter.address,
+                                votes,
+                                scale_factor
+                            );
+                        }
+
                         token_holders.push(TokenHolder {
                             address: voter.address.to_string(),
                             balance: scaled_votes.to_string(),
                         });
+                    } else {
+                        below_threshold += 1;
+                        log::debug!(
+                            "  skipped {} raw={} below threshold {}",
+                            voter.address,
+                            votes,
+                            threshold
+                        );
                     }
                 }
                 Err(e) => {
@@ -501,6 +770,13 @@ impl EtherscanClient {
             // Rate limiting - small delay between RPC calls
             sleep(Duration::from_millis(50)).await;
         }
+
+        log::info!(
+            "Verified: {} eligible, {} below threshold, {} scale to zero",
+            token_holders.len(),
+            below_threshold,
+            rounds_to_zero
+        );
 
         Ok(token_holders)
     }
@@ -705,12 +981,28 @@ impl EtherscanClient {
         snapshot_timepoint: u64,
         rpc_url: &str,
         threshold: U256,
+        // The round's explicit voting-power divisor, or `None` to derive it from the decimals.
+        divisor_override: Option<U256>,
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
+        // Where the power is actually emitted from. For a `BondedVotes` adapter the round's token
+        // emits nothing at all: wallet power comes from the underlying token's logs and bonded
+        // power from the registry's, so scanning `token_address` alone would find nobody.
+        let sources = Self::resolve_voting_power_sources(token_address, rpc_url).await;
+        if sources.registry.is_some() {
+            log::info!(
+                "{} is a bonded-votes adapter: scanning token {} and registry {:?}",
+                token_address,
+                sources.token,
+                sources.registry
+            );
+        }
+        let scan_token = sources.token;
+
         // Step 1: Determine the block range
         let start_block = self
-            .get_deployment_block(&token_address.to_string())
+            .get_deployment_block(&scan_token.to_string())
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
@@ -731,7 +1023,7 @@ impl EtherscanClient {
             snapshot_block
         );
         let transfer_logs = self
-            .get_transfer_logs(&token_address.to_string(), start_block, snapshot_block)
+            .get_transfer_logs(&scan_token.to_string(), start_block, snapshot_block)
             .await
             .context("Failed to fetch transfer logs")?;
         log::info!("Found {} transfer events", transfer_logs.len());
@@ -739,18 +1031,42 @@ impl EtherscanClient {
         // Step 3: Fetch delegation logs
         log::info!("Fetching delegation logs...");
         let delegation_logs = self
-            .get_delegate_votes_changed_logs(
-                &token_address.to_string(),
-                start_block,
-                snapshot_block,
-            )
+            .get_delegate_votes_changed_logs(&scan_token.to_string(), start_block, snapshot_block)
             .await
             .context("Failed to fetch delegation logs")?;
         log::info!("Found {} delegation events", delegation_logs.len());
 
         // Step 4: Identify potential voters
         log::info!("Identifying potential voters...");
-        let potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
+        let mut potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
+
+        // Bond owners hold power through the adapter without necessarily appearing in the token's
+        // own logs, so they are unioned in as candidates. Over-inclusion is harmless: each is
+        // verified against `getPastVotes` below and dropped if it has none.
+        if let Some(registry) = sources.registry {
+            let known: HashSet<Address> = potential_voters.iter().map(|v| v.address).collect();
+            let bond_owners = self
+                .get_bond_owner_candidates(
+                    &registry.to_string(),
+                    sources.checkpoints.map(|c| c.to_string()).as_deref(),
+                    start_block,
+                    snapshot_block,
+                )
+                .await
+                .context("Failed to fetch bond owner candidates")?;
+
+            log::info!("Found {} bond-owner candidates", bond_owners.len());
+            for owner in bond_owners {
+                if !known.contains(&owner) {
+                    potential_voters.push(PotentialVoter {
+                        address: owner,
+                        token_balance: U256::ZERO,
+                        has_delegation: false,
+                    });
+                }
+            }
+        }
+
         log::info!("Found {} potential voters", potential_voters.len());
 
         // Step 5: Verify actual voting power. The unit of the `getPastVotes` timepoint is
@@ -773,6 +1089,7 @@ impl EtherscanClient {
                 vote_timepoint,
                 rpc_url,
                 threshold,
+                divisor_override,
             )
             .await
             .context("Failed to verify voting power")?;
@@ -955,7 +1272,7 @@ mod tests {
             DelegateVotesChangedLog {
                 address: "0xtoken".to_string(),
                 topics: vec![
-                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f".to_string(),
+                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724".to_string(),
                     "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
                 ],
                 data: "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064".to_string(),
@@ -1056,7 +1373,7 @@ mod tests {
             DelegateVotesChangedLog {
                 address: "0xtoken".to_string(),
                 topics: vec![
-                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f".to_string(),
+                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724".to_string(),
                     "0x000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7".to_string(), // delegate B
                 ],
                 data: "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064".to_string(),
@@ -1184,6 +1501,8 @@ mod tests {
                 snapshot_timepoint,
                 rpc_url,
                 threshold,
+                // Derive from the token's decimals, as a round with a zero divisor does.
+                None,
             )
             .await
             .unwrap();
@@ -1236,5 +1555,47 @@ mod tests {
 
         assert!(at.header.timestamp <= snapshot_timepoint);
         assert!(next.header.timestamp > snapshot_timepoint);
+    }
+}
+
+/// Candidate discovery is only as good as its topic constants and its topic decoding: a wrong
+/// hash matches no logs and a wrong index reads the wrong address, and both fail by silently
+/// finding nobody rather than by erroring.
+#[cfg(test)]
+mod bond_owner_discovery_tests {
+    use super::EtherscanClient;
+    use alloy::primitives::{address, keccak256, Address};
+
+    /// Pinned against the signatures the contracts actually declare. Computed here rather than
+    /// copied, so a signature change breaks the test instead of quietly zeroing the census.
+    #[test]
+    fn topic_constants_match_the_event_signatures() {
+        assert_eq!(
+            format!("{:?}", keccak256(b"BondOwnerSet(address,address)")),
+            "0xf09dc4a8a4e1c9233bcb1d32c04ad4c9d516f140c23aa44f9e0d680f70799e08"
+        );
+        assert_eq!(
+            format!("{:?}", keccak256(b"BondedCheckpointed(address,uint48,uint256)")),
+            "0xb6241efac9a4f02e4f1ba6a30a3a5fc5ba4b23a47f181eca3055466c775eb32c"
+        );
+        // The one that was wrong in this file: it matched nothing, so delegation logs always came
+        // back empty and a pure delegatee never became a candidate.
+        assert_eq!(
+            format!("{:?}", keccak256(b"DelegateVotesChanged(address,uint256,uint256)")),
+            "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724"
+        );
+    }
+
+    #[test]
+    fn decodes_an_address_from_a_padded_topic() {
+        let expected: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let topic = "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+
+        assert_eq!(EtherscanClient::address_from_topic(topic).unwrap(), expected);
+    }
+
+    #[test]
+    fn refuses_a_topic_too_short_to_hold_an_address() {
+        assert!(EtherscanClient::address_from_topic("0xdeadbeef").is_err());
     }
 }

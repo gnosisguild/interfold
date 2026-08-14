@@ -28,12 +28,24 @@ describe('CRISPProgram census mode', function () {
   let crispProgram: CRISPProgram
   let owner: string
 
-  const encode = (creditMode: number, censusMode?: number, numOptions = 2, opts: { token?: string; credits?: number } = {}) => {
+  const encode = (
+    creditMode: number,
+    censusMode?: number,
+    numOptions = 2,
+    opts: { token?: string; credits?: number; divisor?: number; minVotingPower?: bigint } = {},
+  ) => {
     const types = ['address', 'uint256', 'uint256', 'uint256', 'uint256']
-    const values: unknown[] = [opts.token ?? ethers.ZeroAddress, 0, numOptions, creditMode, opts.credits ?? 1]
+    const values: unknown[] = [
+      opts.token ?? ethers.ZeroAddress,
+      opts.minVotingPower ?? 0n,
+      numOptions,
+      creditMode,
+      opts.credits ?? 1,
+    ]
     if (censusMode !== undefined) {
-      types.push('uint256')
-      values.push(censusMode)
+      types.push('uint256', 'uint256')
+      // 0 means "derive the divisor from the token's decimals".
+      values.push(censusMode, opts.divisor ?? 0)
     }
     return ethers.AbiCoder.defaultAbiCoder().encode(types, values)
   }
@@ -113,6 +125,39 @@ describe('CRISPProgram census mode', function () {
       )
     })
 
+    /// The floor is raw and the circuit bound is scaled, so they only agree when the floor is
+    /// worth at least one ballot unit. Enforced when the round is requested rather than per input:
+    /// a slot that cleared a sub-unit floor could publish (an all-zero ballot satisfies
+    /// `vote <= 0`) but could never carry weight, which is disenfranchisement nothing would report.
+    /// Checking per input would also break masking, which runs the same eligibility check.
+    it('rejects an ONCHAIN floor below one ballot unit', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+      await votes.waitForDeployment()
+      const token = await votes.getAddress()
+
+      // Derived divisor is 10 ** (18 - 1); a floor under that admits sub-unit voters.
+      await expect(
+        validate(40, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n - 1n })),
+      ).to.be.revertedWithCustomError(crispProgram, 'MinVotingPowerBelowScale')
+
+      // Exactly one ballot unit is enough.
+      await validate(41, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n }))
+      expect(await crispProgram.votingPowerDivisorOf(41)).to.equal(10n ** 17n)
+    })
+
+    /// `10 ** 78` overflows a uint256, and the exponentiation sits in the success body of a
+    /// `try`, where a revert is not caught — so without an explicit bound an absurd `decimals`
+    /// surfaces as a bare arithmetic panic rather than a named error.
+    it('refuses a token whose decimals a divisor cannot be derived from', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+      await votes.waitForDeployment()
+      const token = await votes.getAddress()
+
+      // 18 decimals derives fine; the bound only bites well past any real token.
+      await validate(45, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n }))
+      expect(await crispProgram.votingPowerDivisorOf(45)).to.equal(10n ** 17n)
+    })
+
     it('rejects ONCHAIN with constant credits of zero', async () => {
       // `credits` becomes the voting-power bound the circuit enforces, so zero accepts only masks.
       const votes = await ethers.deployContract('MockVotesToken')
@@ -125,7 +170,8 @@ describe('CRISPProgram census mode', function () {
     it('accepts ONCHAIN with a votes token', async () => {
       const votes = await ethers.deployContract('MockVotesToken')
 
-      await validate(23, encode(CUSTOM, ONCHAIN, 2, { token: await votes.getAddress() }))
+      // CUSTOM credits take the bound from scaled power, so the floor must be worth a ballot unit.
+      await validate(23, encode(CUSTOM, ONCHAIN, 2, { token: await votes.getAddress(), minVotingPower: 10n ** 17n }))
 
       expect(await crispProgram.censusModeOf(23)).to.equal(ONCHAIN)
     })

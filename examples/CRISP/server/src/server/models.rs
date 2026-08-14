@@ -150,6 +150,11 @@ pub struct CustomParams {
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
     pub census_mode: CensusMode,
+    /// Divides raw token power into ballot units for a `CensusMode::Onchain` round. `"0"` means
+    /// the contract derives it from the token's decimals. Recorded because a round may name its
+    /// own: scaling by the decimals then puts every served balance in different units from the
+    /// ones `publishInput` will enforce.
+    pub voting_power_divisor: String,
 }
 
 #[derive(Debug, Deserialize)]

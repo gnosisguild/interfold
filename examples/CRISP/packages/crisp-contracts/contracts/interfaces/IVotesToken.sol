@@ -14,4 +14,10 @@ interface IVotesToken {
   /// @param timepoint The timepoint, in the ERC-6372 clock units of the token.
   /// @return The voting power at that timepoint.
   function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
+
+  /// @notice The token's decimals, used to derive the default voting-power divisor.
+  /// @dev Optional: a token without it falls back to a divisor of 1, so the probe must not be
+  /// treated as a requirement the way `getPastVotes` is.
+  /// @return The number of decimals.
+  function decimals() external view returns (uint8);
 }

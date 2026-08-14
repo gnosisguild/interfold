@@ -66,8 +66,13 @@ pub async fn register_e3_requested(
                 .map_err(|e| eyre::eyre!("{}", e))?;
 
                 // Use sol_data types instead of primitives
+                // Seven fields. The seventh is the ONCHAIN voting-power divisor: the contract
+                // scales raw token power by it before handing the value to the circuit, so a
+                // six-field decode would fail outright on every round requested after that field
+                // was added.
                 type CustomParamsTuple = (
                     sol_data::Address,
+                    sol_data::Uint<256>,
                     sol_data::Uint<256>,
                     sol_data::Uint<256>,
                     sol_data::Uint<256>,
@@ -103,6 +108,7 @@ pub async fn register_e3_requested(
                     credit_mode,
                     credits,
                     census_mode,
+                    voting_power_divisor: decoded.6.to_string(),
                 };
 
                 let balance_threshold =
@@ -129,22 +135,23 @@ pub async fn register_e3_requested(
                 // there is no holder list to enumerate and no root to post — `setMerkleRoot` is
                 // not just unnecessary here, it is unused: `_eligibility` never reads it in this
                 // mode. The round is still recorded, because the API serves its metadata.
-                if custom_params.census_mode == CensusMode::Onchain {
+                // An on-chain census is not an eligibility input: `_eligibility` reads each
+                // voter's power with `getPastVotes` when the input is published and never looks at
+                // `merkleRoot`. The holder list is still discovered and stored, because clients
+                // need somewhere to draw mask targets from — a mask is written to someone else's
+                // slot, so without a list of who holds power there is nobody to mask.
+                //
+                // The distinction matters for what a wrong list can do. For a Merkle round the
+                // list *is* the electorate, so an omission disenfranchises. Here it is an index
+                // over what the chain already decides, so an omission costs mask cover and nothing
+                // else — it can never enfranchise anyone the contract would refuse.
+                let is_onchain_census = custom_params.census_mode == CensusMode::Onchain;
+                if is_onchain_census {
                     info!(
-                        "[e3_id={}] CensusMode::Onchain — no census to build, skipping token \
-                         holder discovery and setMerkleRoot",
+                        "[e3_id={}] CensusMode::Onchain — discovering holders for mask targets; \
+                         no merkle root will be posted",
                         e3_id
                     );
-
-                    repo.initialize_round(
-                        custom_params,
-                        e3.requester.to_string(),
-                        input_window[1],
-                        snapshot_timepoint,
-                    )
-                    .await?;
-
-                    return Ok(());
                 }
 
                 // Get token holders from Etherscan API or mocked data.
@@ -154,7 +161,11 @@ pub async fn register_e3_requested(
                 //
                 // Checked before the local-network branch because a declared census is exact on any
                 // network, including a devnet where the mock holders would otherwise be substituted.
-                let token_holders = if custom_params.census_mode == CensusMode::ByRequester {
+                // Wrapped so a discovery failure can be downgraded for ONCHAIN rounds below.
+                // Etherscan being down carries no eligibility meaning there: the contract reads
+                // power per input, so the only cost is mask cover.
+                let discovery: eyre::Result<Vec<TokenHolder>> = async {
+                Ok(if custom_params.census_mode == CensusMode::ByRequester {
                     let credits_str = match custom_params.credit_mode {
                         CreditMode::Constant => credits_clone
                             .clone()
@@ -244,19 +255,68 @@ pub async fn register_e3_requested(
                                         )
                                     },
                                 )?,
+                                // Honoured only for an on-chain census, mirroring the contract:
+                                // `_initRound` records the divisor for ONCHAIN rounds and ignores
+                                // the field otherwise, because a Merkle round's bound comes from
+                                // the census leaf. Applying it there would scale the census by one
+                                // factor while `_tallyScale()` reads the results back assuming
+                                // another, and the tally would be wrong with nothing to show it.
+                                if is_onchain_census {
+                                    match U256::from_str_radix(
+                                        &custom_params.voting_power_divisor,
+                                        10,
+                                    ) {
+                                        Ok(d) if !d.is_zero() => Some(d),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                },
                             )
                             .await
                             .context("Etherscan token-holder discovery failed")?
                         }
                     }
+                })
+                }
+                .await;
+
+                // Fatal only where the list decides who may vote. For a Merkle round an empty
+                // census means nobody can ever cast a ballot, so failing loudly is right. For an
+                // on-chain census the list is an index over what the contract already decides:
+                // failing here would skip `initialize_round`, leaving a perfectly votable round
+                // unrecorded and invisible to every client, because discovery happened to come
+                // back empty — a missing API key or a rate limit would be enough.
+
+                let token_holders = match discovery {
+                    Ok(holders) => holders,
+                    Err(e) if is_onchain_census => {
+                        warn!(
+                            "[e3_id={}] CensusMode::Onchain holder discovery failed: {:#}. The \
+                             round is still recorded and votable — eligibility is read from the \
+                             token at publish time — but clients have no mask targets.",
+                            e3_id, e
+                        );
+                        Vec::new()
+                    }
+                    Err(e) => return Err(e),
                 };
 
                 if token_holders.is_empty() {
-                    return Err(eyre::eyre!(
-                        "[e3_id={}] No eligible token holders found for token address {}.",
-                        e3_id,
-                        token_address
-                    ));
+                    if !is_onchain_census {
+                        return Err(eyre::eyre!(
+                            "[e3_id={}] No eligible token holders found for token address {}.",
+                            e3_id,
+                            token_address
+                        ));
+                    }
+
+                    warn!(
+                        "[e3_id={}] CensusMode::Onchain discovery found no holders for {}. The \
+                         round is still recorded and votable — eligibility is read from the token \
+                         at publish time — but clients have no mask targets to draw from.",
+                        e3_id, token_address
+                    );
                 }
 
                 // save the e3 details
@@ -272,59 +332,72 @@ pub async fn register_e3_requested(
                 repo.set_eligible_addresses(token_holders.clone())
                     .await?;
 
-                // Compute Poseidon hashes for token holder address + balance pairs.
-                let token_holder_hashes = compute_token_holder_hashes(&token_holders)
-                    .with_context(|| "Failed to compute token holder hashes")?;
+                // Poseidon hashes exist to build the census tree, and an on-chain census has no
+                // tree: `_eligibility` reads power from the token per input. The addresses are
+                // stored above and that is all a client needs here — a mask is written to someone
+                // else's slot, so it needs a list of who holds power, not a membership proof.
+                let token_holder_hashes = if is_onchain_census {
+                    Vec::new()
+                } else {
+                    let hashes = compute_token_holder_hashes(&token_holders)
+                        .with_context(|| "Failed to compute token holder hashes")?;
 
-                repo.set_token_holder_hashes(token_holder_hashes.clone())
-                    .await?;
+                    repo.set_token_holder_hashes(hashes.clone()).await?;
+
+                    hashes
+                };
 
                 CurrentRoundRepository::new(store.clone())
                     .record_round(&e3_id)
                     .await?;
 
-                let tree =
-                    build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
-                let merkle_root = tree
-                    .root()
-                    .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
+                // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
+                // that mode, so posting one would spend gas to publish a value nothing consults —
+                // and would imply the list gates eligibility when it does not.
+                if !is_onchain_census {
+                    let tree =
+                        build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
+                    let merkle_root = tree
+                        .root()
+                        .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
 
-                info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
+                    info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
 
-                // Convert merkle root from hex string to U256.
-                let merkle_root_bytes = hex::decode(&merkle_root)
-                    .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
-                let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
+                    // Convert merkle root from hex string to U256.
+                    let merkle_root_bytes = hex::decode(&merkle_root)
+                        .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
+                    let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
 
-                let e3_id_u256 = U256::from_str_radix(&e3_id, 10)
-                    .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
+                    let e3_id_u256 = U256::from_str_radix(&e3_id, 10)
+                        .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
 
-                info!(
-                    "[e3_id={}] Calling setMerkleRoot with root: {}",
-                    e3_id, merkle_root_u256
-                );
+                    info!(
+                        "[e3_id={}] Calling setMerkleRoot with root: {}",
+                        e3_id, merkle_root_u256
+                    );
 
-                let contract = CRISPContractFactory::create_write(
-                    &CONFIG.http_rpc_url,
-                    &CONFIG.e3_program_address,
-                    &CONFIG.private_key,
-                )
-                .await
-                .with_context(|| {
-                    format!("[e3_id={}] Failed to create CRISP contract", e3_id)
-                })?;
-
-                let receipt = contract
-                    .set_merkle_root(e3_id_u256, merkle_root_u256)
+                    let contract = CRISPContractFactory::create_write(
+                        &CONFIG.http_rpc_url,
+                        &CONFIG.e3_program_address,
+                        &CONFIG.private_key,
+                    )
                     .await
                     .with_context(|| {
-                        format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
+                        format!("[e3_id={}] Failed to create CRISP contract", e3_id)
                     })?;
 
-                info!(
-                    "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
-                    e3_id, receipt.transaction_hash
-                );
+                    let receipt = contract
+                        .set_merkle_root(e3_id_u256, merkle_root_u256)
+                        .await
+                        .with_context(|| {
+                            format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
+                        })?;
+
+                    info!(
+                        "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
+                        e3_id, receipt.transaction_hash
+                    );
+                }
 
                 Ok(())
             }
@@ -575,6 +648,7 @@ mod custom_params_decoding_tests {
         sol_data::Uint<256>,
         sol_data::Uint<256>,
         sol_data::Uint<256>,
+        sol_data::Uint<256>,
     );
 
     fn encode(census_mode: u64) -> Vec<u8> {
@@ -585,7 +659,29 @@ mod custom_params_decoding_tests {
             U256::from(0),
             U256::from(1),
             U256::from(census_mode),
+            // Voting-power divisor; 0 means the contract derives it from the token decimals.
+            U256::from(0),
         ))
+    }
+
+    /// Every producer of `customParams` must encode exactly what `CRISPProgram._initRound`
+    /// decodes. A short encoding does not degrade — `abi.decode` reverts with empty data, so
+    /// `request_e3` fails with nothing to read, which is how this surfaced in crisp_e2e after the
+    /// divisor field was added. Pins the arity so a future field breaks a test instead of a round.
+    #[test]
+    fn the_encoded_tuple_has_the_arity_the_contract_decodes() {
+        // Seven: token, threshold, numOptions, creditMode, credits, censusMode, divisor.
+        const CONTRACT_FIELD_COUNT: usize = 7;
+
+        let encoded = encode(0);
+
+        // Each static field occupies one 32-byte word.
+        assert_eq!(
+            encoded.len(),
+            CONTRACT_FIELD_COUNT * 32,
+            "encoded params must be {} words; a mismatch reverts request_e3 with empty data",
+            CONTRACT_FIELD_COUNT
+        );
     }
 
     #[test]

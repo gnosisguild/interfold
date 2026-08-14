@@ -73,6 +73,9 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     /// @notice The timepoint that voting power is read at, in the ERC-6372 clock units of the
     /// token. Recorded when the round is requested, so it is the same for every input.
     uint48 snapshot;
+    /// @notice Divides raw token voting power into the units the ballot is encoded in. Only used
+    /// by `CensusMode.ONCHAIN`. Never zero for such a round.
+    uint256 votingPowerDivisor;
   }
 
   // Constants
@@ -89,6 +92,9 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
   /// vote proof fails. Must stay aligned with the SDK constant of the same name.
   uint256 constant MAX_VOTE_OPTIONS = 10;
+  /// @notice Largest `decimals` a divisor can be derived from: `10 ** 77` is the last power of ten
+  /// that fits in a uint256.
+  uint8 constant MAX_DERIVABLE_DECIMALS = 78;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -133,6 +139,17 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// replaces the Merkle membership proof that gates both branches in the other modes.
   error SlotNotEligible();
   error InvalidCensusMode();
+
+  /// @notice A token reports more decimals than a divisor can be derived from.
+  /// @dev `10 ** (decimals - 1)` must fit in a uint256. Pass an explicit divisor for such a token.
+  error UnsupportedTokenDecimals(uint8 decimals);
+
+  /// @notice An ONCHAIN round's floor is below one ballot unit.
+  /// @dev `minVotingPower` must be at least the divisor, so every slot that clears the floor
+  /// carries at least one unit of weight. Below that, a slot could be eligible to write yet scale
+  /// to zero — able to publish, but unable to carry any weight, which is disenfranchisement that
+  /// nothing on-chain would report.
+  error MinVotingPowerBelowScale();
   error SlotIsEmpty();
   error MerkleRootNotSet();
   error InvalidNumOptions();
@@ -237,6 +254,36 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     numberOfVotes = round.votes.numberOfLeaves;
   }
 
+  /// @notice The divisor applied to raw token voting power for a `CensusMode.ONCHAIN` round.
+  /// @dev A client must divide by exactly this before proving, because the contract passes the
+  /// scaled value to the circuit as public input 4 and the proof is checked against it. Zero for
+  /// rounds that are not ONCHAIN, where no scaling happens.
+  /// @param e3Id The E3 to look up.
+  /// @return The divisor recorded at validation.
+  function votingPowerDivisorOf(uint256 e3Id) external view returns (uint256) {
+    return e3Data[e3Id].votingPowerDivisor;
+  }
+
+  /// @notice The voting power a slot may spend in an ONCHAIN round, in ballot units.
+  /// @dev The value `publishInput` will hand the circuit as public input 4, computed by the same
+  /// contract that will check the proof. A client must prove against exactly this: recomputing it
+  /// off-chain means re-deriving the snapshot, the divisor and the rounding, and any drift only
+  /// shows up as an opaque verifier failure. Returns 0 for a round that is not ONCHAIN, where the
+  /// bound comes from the census leaf instead.
+  ///
+  /// Does not apply the eligibility floor — it answers "how much weight", not "may this slot
+  /// write". `publishInput` still enforces the floor.
+  /// @param e3Id The round.
+  /// @param slot The slot address.
+  /// @return The spendable voting power, in ballot units.
+  function votingPowerOf(uint256 e3Id, address slot) external view returns (uint256) {
+    RoundData storage round = e3Data[e3Id];
+    if (round.censusMode != CensusMode.ONCHAIN) return 0;
+    if (round.creditMode == CreditMode.CONSTANT) return round.credits;
+
+    return IVotesToken(round.token).getPastVotes(slot, round.snapshot) / round.votingPowerDivisor;
+  }
+
   /// @notice The census source a round was requested with.
   /// @dev A separate getter rather than a sixth return value on `getRoundData`, whose tuple is
   /// already consumed by the server and the SDK — widening it would break them for a field most
@@ -277,10 +324,15 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// @param e3Id The E3 being configured.
   /// @param customParams The ABI-encoded round configuration.
   function _initRound(uint256 e3Id, bytes calldata customParams) internal {
-    (address token, uint256 minVotingPower, uint256 numOptions, CreditMode creditMode, uint256 credits, uint256 rawCensusMode) = abi.decode(
-      customParams,
-      (address, uint256, uint256, CreditMode, uint256, uint256)
-    );
+    (
+      address token,
+      uint256 minVotingPower,
+      uint256 numOptions,
+      CreditMode creditMode,
+      uint256 credits,
+      uint256 rawCensusMode,
+      uint256 votingPowerDivisor
+    ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256, uint256, uint256));
 
     // The circuit asserts `num_options <= MAX_OPTIONS`, so a round configured above it accepts no
     // ballot at all. Reject at request time rather than stranding a round nobody can vote in.
@@ -340,6 +392,26 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       }
 
       round.snapshot = snapshot;
+
+      // Derived only after the code check above. `decimals()` on a codeless address returns empty
+      // data, and the failure happens while decoding rather than inside the call, which `try` does
+      // not catch — deriving any earlier would refuse an EOA with a bare panic instead of the
+      // named error the check above raises.
+      uint256 divisor = votingPowerDivisor == 0 ? _defaultVotingPowerDivisor(token) : votingPowerDivisor;
+
+      // Only CUSTOM credits take the circuit bound from scaled power; a CONSTANT round hands the
+      // circuit `credits` and never reads the scaled value, so the floor and the divisor have
+      // nothing to agree about there.
+      //
+      // Where they do meet, the floor is raw and the bound is scaled, so they only agree when the
+      // floor is worth at least one ballot unit. Requiring it here means every slot that passes
+      // `_eligibility` carries weight, and it costs nothing: this reverts in the transaction that
+      // requests the E3, not per input after the fee is paid. It also keeps masks working — they
+      // run the same eligibility check as real votes, so a slot that scaled to zero could not be
+      // masked without revealing which inputs were masks.
+      if (creditMode == CreditMode.CUSTOM && minVotingPower < divisor) revert MinVotingPowerBelowScale();
+
+      round.votingPowerDivisor = divisor;
     }
   }
 
@@ -419,17 +491,47 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       return (bytes32(round.merkleRoot), honkVerifier);
     }
 
-    uint256 power = IVotesToken(round.token).getPastVotes(slotAddress, round.snapshot);
+    uint256 rawPower = IVotesToken(round.token).getPastVotes(slotAddress, round.snapshot);
 
-    // A slot with no power is never writable, whatever the round configured. Without this floor a
-    // round with `minVotingPower == 0` would let anyone mask any address, including addresses that
-    // never held the token.
+    // The floor is compared against RAW power, in the token's own units. `minVotingPower` is a
+    // governance setting ("you need N tokens to vote") written the way every other token plugin
+    // writes it, so scaling it here would reinterpret a configured value by the divisor.
     uint256 threshold = round.minVotingPower == 0 ? 1 : round.minVotingPower;
-    if (power < threshold) revert SlotNotEligible();
+    if (rawPower < threshold) revert SlotNotEligible();
+
+    // Scaled only for the circuit. It enforces `vote <= voting_power`, and the BFV encoding caps
+    // each choice at `2**(100/numOptions) - 1` — about 8.6e9 for three options. Raw power from an
+    // 18-decimal token is ~1e18 per token, so handing it over unscaled would put every holder
+    // above the cap and collapse token weighting into a flat ceiling. Dividing mirrors what the
+    // coordinator does when it builds a Merkle census (`balance / 10**(decimals - 1)`), so both
+    // census families encode ballots in the same units and a tally decodes the same way.
+    uint256 power = rawPower / round.votingPowerDivisor;
+
 
     // Eligibility comes from the power at the snapshot. The weight the circuit enforces comes from
     // the credit mode, so a CONSTANT round gives every eligible slot the same credits.
     return (bytes32(round.creditMode == CreditMode.CONSTANT ? round.credits : power), onchainHonkVerifier);
+  }
+
+  /// @notice The divisor to apply to raw voting power when the requester does not name one.
+  /// @dev Mirrors the coordinator's census scaling (`balance / 10**(decimals - 1)`), so an ONCHAIN
+  /// round and a Merkle round over the same token encode ballots in identical units. `decimals()`
+  /// is optional on an ERC20, so a token without it is left unscaled rather than rejected — a
+  /// requester that needs scaling for such a token passes an explicit divisor.
+  /// @param token The token voting power is read from.
+  /// @return The divisor, never zero.
+  function _defaultVotingPowerDivisor(address token) internal view returns (uint256) {
+    try IVotesToken(token).decimals() returns (uint8 dec) {
+      // `10 ** 78` does not fit in a uint256, and the exponentiation happens in the success body
+      // of the `try`, where a revert is NOT caught — an absurd `decimals` would surface as a bare
+      // arithmetic panic instead of a named error, which is the failure mode the code check above
+      // exists to avoid. Refused explicitly; such a token can still be used by naming a divisor.
+      if (dec > MAX_DERIVABLE_DECIMALS) revert UnsupportedTokenDecimals(dec);
+
+      return dec > 1 ? 10 ** (uint256(dec) - 1) : 1;
+    } catch {
+      return 1;
+    }
   }
 
   /// @notice The last finalized timepoint of a token, in its ERC-6372 clock units.
