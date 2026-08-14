@@ -8,7 +8,7 @@ pragma solidity 0.8.28;
 
 /**
  * @title ExitQueueLib
- * @notice Library for managing time-locked exit queues for tickets and licenses
+ * @notice Library for managing time-locked exit queues for tickets and ciphernode bonds
  * @dev Implements a queue system where assets are locked for a delay period before they can be claimed or slashed.
  *      Assets are organized into tranches based on unlock timestamps, allowing efficient batch operations.
  */
@@ -18,40 +18,40 @@ library ExitQueueLib {
      * @dev Multiple assets queued at the same time are merged into the same tranche for efficiency
      * @param unlockTimestamp The timestamp when assets in this tranche become claimable
      * @param ticketAmount The amount of tickets in this tranche
-     * @param licenseAmount The amount of licenses in this tranche
+     * @param ciphernodeBondAmount The amount of ciphernode bonds in this tranche
      */
     struct ExitTranche {
         uint64 unlockTimestamp;
         uint256 ticketAmount;
-        uint256 licenseAmount;
+        uint256 ciphernodeBondAmount;
     }
 
     /**
      * @notice Tracks total pending amounts for an operator across all tranches
      * @param ticketAmount Total pending tickets waiting in the exit queue
-     * @param licenseAmount Total pending licenses waiting in the exit queue
+     * @param ciphernodeBondAmount Total pending ciphernode bonds waiting in the exit queue
      */
     struct PendingAmounts {
         uint256 ticketAmount;
-        uint256 licenseAmount;
+        uint256 ciphernodeBondAmount;
     }
 
     /**
      * @notice Main state structure for the exit queue system
      * @dev Contains all per-operator queue data and pending totals.
-     *      The queue head index is tracked PER ASSET (tickets vs licenses) so that
+     *      The queue head index is tracked PER ASSET (tickets vs ciphernode bonds) so that
      *      consuming one asset class from a tranche does not strand the other asset
      *      class still pending in the same tranche.
      * @param operatorQueues Maps operator addresses to their arrays of exit tranches
      * @param queueHeadIndexTicket Maps operator addresses to the head index for tickets
-     * @param queueHeadIndexLicense Maps operator addresses to the head index for licenses
+     * @param queueHeadIndexCiphernodeBond Maps operator addresses to the head index for ciphernode bonds
      * @param pendingTotals Maps operator addresses to their total pending amounts
      * @param liveTrancheCount Maps operators to the number of non-empty tranches.
      */
     struct ExitQueueState {
         mapping(address operator => ExitTranche[] operatorQueues) operatorQueues;
         mapping(address operator => uint256 queueHeadIndexTicket) queueHeadIndexTicket;
-        mapping(address operator => uint256 queueHeadIndexLicense) queueHeadIndexLicense;
+        mapping(address operator => uint256 queueHeadIndexCiphernodeBond) queueHeadIndexCiphernodeBond;
         mapping(address operator => PendingAmounts operatorPendings) pendingTotals;
         mapping(address operator => uint256 count) liveTrancheCount;
     }
@@ -67,24 +67,24 @@ library ExitQueueLib {
 
     /**
      * @notice Types of assets that can be queued for exit
-     * @dev Used internally to differentiate between ticket and license operations
+     * @dev Used internally to differentiate between ticket and ciphernode bond operations
      */
     enum AssetType {
         Ticket,
-        License
+        CiphernodeBond
     }
 
     /**
      * @notice Emitted when assets are queued for exit
      * @param operator The operator whose assets were queued
      * @param ticketAmount The amount of tickets queued
-     * @param licenseAmount The amount of licenses queued
+     * @param ciphernodeBondAmount The amount of ciphernode bonds queued
      * @param unlockTimestamp The timestamp when these assets will become claimable
      */
     event AssetsQueuedForExit(
         address indexed operator,
         uint256 ticketAmount,
-        uint256 licenseAmount,
+        uint256 ciphernodeBondAmount,
         uint64 unlockTimestamp
     );
 
@@ -92,25 +92,25 @@ library ExitQueueLib {
      * @notice Emitted when assets are claimed from the exit queue
      * @param operator The operator who claimed the assets
      * @param ticketAmount The amount of tickets claimed
-     * @param licenseAmount The amount of licenses claimed
+     * @param ciphernodeBondAmount The amount of ciphernode bonds claimed
      */
     event AssetsClaimed(
         address indexed operator,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     );
 
     /**
      * @notice Emitted when pending assets are slashed
      * @param operator The operator whose assets were slashed
      * @param ticketAmount The amount of tickets slashed
-     * @param licenseAmount The amount of licenses slashed
+     * @param ciphernodeBondAmount The amount of ciphernode bonds slashed
      * @param includedLockedAssets Whether locked (not yet unlocked) assets were included in the slash
      */
     event PendingAssetsSlashed(
         address indexed operator,
         uint256 ticketAmount,
-        uint256 licenseAmount,
+        uint256 ciphernodeBondAmount,
         bool includedLockedAssets
     );
 
@@ -130,23 +130,23 @@ library ExitQueueLib {
     error TooManyTranches();
 
     /**
-     * @notice Queues both tickets and licenses for exit with a time delay
+     * @notice Queues both tickets and ciphernode bonds for exit with a time delay
      * @dev Assets are added to the operator's queue and will be claimable after exitDelaySeconds.
      *      If a tranche with the same unlock timestamp already exists, amounts are merged into it.
      * @param state The exit queue state storage
      * @param operator The operator whose assets are being queued
      * @param exitDelaySeconds The number of seconds until assets become claimable
      * @param ticketAmount The amount of tickets to queue (can be 0)
-     * @param licenseAmount The amount of licenses to queue (can be 0)
+     * @param ciphernodeBondAmount The amount of ciphernode bonds to queue (can be 0)
      */
     function queueAssetsForExit(
         ExitQueueState storage state,
         address operator,
         uint64 exitDelaySeconds,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) internal {
-        if (ticketAmount == 0 && licenseAmount == 0) {
+        if (ticketAmount == 0 && ciphernodeBondAmount == 0) {
             return;
         }
 
@@ -161,7 +161,7 @@ library ExitQueueLib {
 
         // Keep both asset heads canonical before enforcing the scan-span cap.
         // An asset-specific head may otherwise lag behind ticket-only or
-        // license-only tranches that the other asset's operation drained.
+        // ciphernode bond-only tranches that the other asset's operation drained.
         _advanceEmptyHeads(state, operator);
         _pruneEmptyTail(state, operator);
 
@@ -171,15 +171,17 @@ library ExitQueueLib {
             operator,
             unlockTimestamp,
             ticketAmount,
-            licenseAmount
+            ciphernodeBondAmount
         );
 
         if (!merged) {
             uint256 ticketHead = state.queueHeadIndexTicket[operator];
-            uint256 licenseHead = state.queueHeadIndexLicense[operator];
-            uint256 earliestHead = ticketHead < licenseHead
+            uint256 ciphernodeBondHead = state.queueHeadIndexCiphernodeBond[
+                operator
+            ];
+            uint256 earliestHead = ticketHead < ciphernodeBondHead
                 ? ticketHead
-                : licenseHead;
+                : ciphernodeBondHead;
             require(
                 state.liveTrancheCount[operator] < MAX_ACTIVE_TRANCHES &&
                     len - earliestHead < MAX_ACTIVE_TRANCHES,
@@ -189,7 +191,7 @@ library ExitQueueLib {
             ExitTranche storage t = operatorQueue.push();
             t.unlockTimestamp = unlockTimestamp;
             t.ticketAmount = ticketAmount;
-            t.licenseAmount = licenseAmount;
+            t.ciphernodeBondAmount = ciphernodeBondAmount;
             state.liveTrancheCount[operator]++;
         }
 
@@ -197,14 +199,14 @@ library ExitQueueLib {
             state,
             operator,
             ticketAmount,
-            licenseAmount,
+            ciphernodeBondAmount,
             true
         );
 
         emit AssetsQueuedForExit(
             operator,
             ticketAmount,
-            licenseAmount,
+            ciphernodeBondAmount,
             unlockTimestamp
         );
     }
@@ -219,7 +221,7 @@ library ExitQueueLib {
         address operator,
         uint64 unlockTimestamp,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) private returns (bool merged) {
         ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
         uint256 len = operatorQueue.length;
@@ -228,7 +230,7 @@ library ExitQueueLib {
         uint256 lastIndex = len - 1;
         ExitTranche storage lastTranche = operatorQueue[lastIndex];
         bool lastTrancheIsLive = lastTranche.ticketAmount != 0 ||
-            lastTranche.licenseAmount != 0;
+            lastTranche.ciphernodeBondAmount != 0;
         if (
             !lastTrancheIsLive || lastTranche.unlockTimestamp != unlockTimestamp
         ) return false;
@@ -239,18 +241,18 @@ library ExitQueueLib {
             }
             lastTranche.ticketAmount += ticketAmount;
         }
-        if (licenseAmount != 0) {
-            if (state.queueHeadIndexLicense[operator] > lastIndex) {
-                state.queueHeadIndexLicense[operator] = lastIndex;
+        if (ciphernodeBondAmount != 0) {
+            if (state.queueHeadIndexCiphernodeBond[operator] > lastIndex) {
+                state.queueHeadIndexCiphernodeBond[operator] = lastIndex;
             }
-            lastTranche.licenseAmount += licenseAmount;
+            lastTranche.ciphernodeBondAmount += ciphernodeBondAmount;
         }
         return true;
     }
 
     /**
      * @notice Queues only tickets for exit with a time delay
-     * @dev Convenience function that calls queueAssetsForExit with licenseAmount = 0
+     * @dev Convenience function that calls queueAssetsForExit with ciphernodeBondAmount = 0
      * @param state The exit queue state storage
      * @param operator The operator whose tickets are being queued
      * @param exitDelaySeconds The number of seconds until tickets become claimable
@@ -266,20 +268,26 @@ library ExitQueueLib {
     }
 
     /**
-     * @notice Queues only licenses for exit with a time delay
+     * @notice Queues only ciphernode bonds for exit with a time delay
      * @dev Convenience function that calls queueAssetsForExit with ticketAmount = 0
      * @param state The exit queue state storage
-     * @param operator The operator whose licenses are being queued
-     * @param exitDelaySeconds The number of seconds until licenses become claimable
-     * @param licenseAmount The amount of licenses to queue
+     * @param operator The operator whose ciphernode bonds are being queued
+     * @param exitDelaySeconds The number of seconds until ciphernode bonds become claimable
+     * @param ciphernodeBondAmount The amount of ciphernode bonds to queue
      */
-    function queueLicensesForExit(
+    function queueCiphernodeBondsForExit(
         ExitQueueState storage state,
         address operator,
         uint64 exitDelaySeconds,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) internal {
-        queueAssetsForExit(state, operator, exitDelaySeconds, 0, licenseAmount);
+        queueAssetsForExit(
+            state,
+            operator,
+            exitDelaySeconds,
+            0,
+            ciphernodeBondAmount
+        );
     }
 
     /**
@@ -288,14 +296,18 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator to query
      * @return ticketAmount Total pending tickets in the exit queue
-     * @return licenseAmount Total pending licenses in the exit queue
+     * @return ciphernodeBondAmount Total pending ciphernode bonds in the exit queue
      */
     function getPendingAmounts(
         ExitQueueState storage state,
         address operator
-    ) internal view returns (uint256 ticketAmount, uint256 licenseAmount) {
+    )
+        internal
+        view
+        returns (uint256 ticketAmount, uint256 ciphernodeBondAmount)
+    {
         PendingAmounts storage pending = state.pendingTotals[operator];
-        return (pending.ticketAmount, pending.licenseAmount);
+        return (pending.ticketAmount, pending.ciphernodeBondAmount);
     }
 
     /**
@@ -308,15 +320,19 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator to query
      * @return ticketAmount Total claimable tickets at current timestamp
-     * @return licenseAmount Total claimable licenses at current timestamp
+     * @return ciphernodeBondAmount Total claimable ciphernode bonds at current timestamp
      */
     function previewClaimableAmounts(
         ExitQueueState storage state,
         address operator
-    ) internal view returns (uint256 ticketAmount, uint256 licenseAmount) {
+    )
+        internal
+        view
+        returns (uint256 ticketAmount, uint256 ciphernodeBondAmount)
+    {
         ExitTranche[] storage operatorQueue = state.operatorQueues[operator];
         uint256 headT = state.queueHeadIndexTicket[operator];
-        uint256 headL = state.queueHeadIndexLicense[operator];
+        uint256 headL = state.queueHeadIndexCiphernodeBond[operator];
         uint256 startIdx = headT < headL ? headT : headL;
         uint256 len = operatorQueue.length;
 
@@ -328,7 +344,8 @@ library ExitQueueLib {
             }
 
             if (i >= headT) ticketAmount += tranche.ticketAmount;
-            if (i >= headL) licenseAmount += tranche.licenseAmount;
+            if (i >= headL)
+                ciphernodeBondAmount += tranche.ciphernodeBondAmount;
         }
     }
 
@@ -339,16 +356,19 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator claiming assets
      * @param maxTicketAmount Maximum tickets to claim (actual claimed may be less if queue has fewer)
-     * @param maxLicenseAmount Maximum licenses to claim (actual claimed may be less if queue has fewer)
+     * @param maxCiphernodeBondAmount Maximum ciphernode bonds to claim (actual claimed may be less if queue has fewer)
      * @return ticketsClaimed Actual amount of tickets claimed
-     * @return licensesClaimed Actual amount of licenses claimed
+     * @return ciphernodeBondsClaimed Actual amount of ciphernode bonds claimed
      */
     function claimAssets(
         ExitQueueState storage state,
         address operator,
         uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
-    ) internal returns (uint256 ticketsClaimed, uint256 licensesClaimed) {
+        uint256 maxCiphernodeBondAmount
+    )
+        internal
+        returns (uint256 ticketsClaimed, uint256 ciphernodeBondsClaimed)
+    {
         if (maxTicketAmount > 0) {
             ticketsClaimed = _takeAssetsFromQueue(
                 state,
@@ -362,21 +382,27 @@ library ExitQueueLib {
             }
         }
 
-        if (maxLicenseAmount > 0) {
-            licensesClaimed = _takeAssetsFromQueue(
+        if (maxCiphernodeBondAmount > 0) {
+            ciphernodeBondsClaimed = _takeAssetsFromQueue(
                 state,
                 operator,
-                maxLicenseAmount,
-                AssetType.License,
+                maxCiphernodeBondAmount,
+                AssetType.CiphernodeBond,
                 false
             );
-            if (licensesClaimed > 0) {
-                state.pendingTotals[operator].licenseAmount -= licensesClaimed;
+            if (ciphernodeBondsClaimed > 0) {
+                state
+                    .pendingTotals[operator]
+                    .ciphernodeBondAmount -= ciphernodeBondsClaimed;
             }
         }
 
-        if (ticketsClaimed > 0 || licensesClaimed > 0) {
-            emit AssetsClaimed(operator, ticketsClaimed, licensesClaimed);
+        if (ticketsClaimed > 0 || ciphernodeBondsClaimed > 0) {
+            emit AssetsClaimed(
+                operator,
+                ticketsClaimed,
+                ciphernodeBondsClaimed
+            );
         }
     }
 
@@ -387,18 +413,21 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator whose assets are being slashed
      * @param ticketAmountToSlash Maximum tickets to slash
-     * @param licenseAmountToSlash Maximum licenses to slash
+     * @param ciphernodeBondAmountToSlash Maximum ciphernode bonds to slash
      * @param includeLockedAssets If true, slashes locked assets; if false, only slashes unlocked assets
      * @return ticketsSlashed Actual amount of tickets slashed
-     * @return licensesSlashed Actual amount of licenses slashed
+     * @return ciphernodeBondsSlashed Actual amount of ciphernode bonds slashed
      */
     function slashPendingAssets(
         ExitQueueState storage state,
         address operator,
         uint256 ticketAmountToSlash,
-        uint256 licenseAmountToSlash,
+        uint256 ciphernodeBondAmountToSlash,
         bool includeLockedAssets
-    ) internal returns (uint256 ticketsSlashed, uint256 licensesSlashed) {
+    )
+        internal
+        returns (uint256 ticketsSlashed, uint256 ciphernodeBondsSlashed)
+    {
         if (ticketAmountToSlash > 0) {
             ticketsSlashed = _takeAssetsFromQueue(
                 state,
@@ -412,24 +441,26 @@ library ExitQueueLib {
             }
         }
 
-        if (licenseAmountToSlash > 0) {
-            licensesSlashed = _takeAssetsFromQueue(
+        if (ciphernodeBondAmountToSlash > 0) {
+            ciphernodeBondsSlashed = _takeAssetsFromQueue(
                 state,
                 operator,
-                licenseAmountToSlash,
-                AssetType.License,
+                ciphernodeBondAmountToSlash,
+                AssetType.CiphernodeBond,
                 includeLockedAssets
             );
-            if (licensesSlashed > 0) {
-                state.pendingTotals[operator].licenseAmount -= licensesSlashed;
+            if (ciphernodeBondsSlashed > 0) {
+                state
+                    .pendingTotals[operator]
+                    .ciphernodeBondAmount -= ciphernodeBondsSlashed;
             }
         }
 
-        if (ticketsSlashed > 0 || licensesSlashed > 0) {
+        if (ticketsSlashed > 0 || ciphernodeBondsSlashed > 0) {
             emit PendingAssetsSlashed(
                 operator,
                 ticketsSlashed,
-                licensesSlashed,
+                ciphernodeBondsSlashed,
                 includeLockedAssets
             );
         }
@@ -441,17 +472,17 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator whose pending totals are being updated
      * @param ticketAmountDelta The change in ticket amount
-     * @param licenseAmountDelta The change in license amount
+     * @param ciphernodeBondAmountDelta The change in ciphernode bond amount
      * @param isIncrease If true, increases totals; if false, decreases totals
      */
     function _updatePendingTotals(
         ExitQueueState storage state,
         address operator,
         uint256 ticketAmountDelta,
-        uint256 licenseAmountDelta,
+        uint256 ciphernodeBondAmountDelta,
         bool isIncrease
     ) private {
-        if ((ticketAmountDelta | licenseAmountDelta) == 0) return;
+        if ((ticketAmountDelta | ciphernodeBondAmountDelta) == 0) return;
 
         PendingAmounts storage pending = state.pendingTotals[operator];
 
@@ -459,15 +490,15 @@ library ExitQueueLib {
             if (ticketAmountDelta != 0) {
                 pending.ticketAmount += ticketAmountDelta;
             }
-            if (licenseAmountDelta != 0) {
-                pending.licenseAmount += licenseAmountDelta;
+            if (ciphernodeBondAmountDelta != 0) {
+                pending.ciphernodeBondAmount += ciphernodeBondAmountDelta;
             }
         } else {
             if (ticketAmountDelta != 0) {
                 pending.ticketAmount -= ticketAmountDelta;
             }
-            if (licenseAmountDelta != 0) {
-                pending.licenseAmount -= licenseAmountDelta;
+            if (ciphernodeBondAmountDelta != 0) {
+                pending.ciphernodeBondAmount -= ciphernodeBondAmountDelta;
             }
         }
     }
@@ -484,7 +515,7 @@ library ExitQueueLib {
      * @param state The exit queue state storage
      * @param operator The operator whose assets are being taken
      * @param wantedAmount The maximum amount to take
-     * @param assetType Whether to take tickets or licenses
+     * @param assetType Whether to take tickets or ciphernode bonds
      * @param includeLockedAssets If true, takes locked assets; if false, only takes unlocked assets
      * @return takenAmount The actual amount taken (may be less than wantedAmount if queue has fewer assets)
      */
@@ -504,7 +535,7 @@ library ExitQueueLib {
         bool isTicket = assetType == AssetType.Ticket;
         uint256 head = isTicket
             ? state.queueHeadIndexTicket[operator]
-            : state.queueHeadIndexLicense[operator];
+            : state.queueHeadIndexCiphernodeBond[operator];
         uint256 queueLength = operatorQueue.length;
         uint256 remainingWanted = wantedAmount;
 
@@ -513,7 +544,7 @@ library ExitQueueLib {
 
             uint256 availableAmount = isTicket
                 ? tranche.ticketAmount
-                : tranche.licenseAmount;
+                : tranche.ciphernodeBondAmount;
 
             if (availableAmount == 0) {
                 // Empty for this asset class — advance the per-asset head only
@@ -544,10 +575,12 @@ library ExitQueueLib {
             if (isTicket) {
                 tranche.ticketAmount -= amountToTake;
             } else {
-                tranche.licenseAmount -= amountToTake;
+                tranche.ciphernodeBondAmount -= amountToTake;
             }
 
-            if (tranche.ticketAmount == 0 && tranche.licenseAmount == 0) {
+            if (
+                tranche.ticketAmount == 0 && tranche.ciphernodeBondAmount == 0
+            ) {
                 state.liveTrancheCount[operator]--;
             }
 
@@ -558,14 +591,14 @@ library ExitQueueLib {
             // has been fully drained of THIS asset.
             bool nowEmpty = isTicket
                 ? tranche.ticketAmount == 0
-                : tranche.licenseAmount == 0;
+                : tranche.ciphernodeBondAmount == 0;
             if (nowEmpty && i == head) head++;
         }
 
         if (isTicket) {
             state.queueHeadIndexTicket[operator] = head;
         } else {
-            state.queueHeadIndexLicense[operator] = head;
+            state.queueHeadIndexCiphernodeBond[operator] = head;
         }
         _advanceEmptyHeads(state, operator);
         _pruneEmptyTail(state, operator);
@@ -588,13 +621,16 @@ library ExitQueueLib {
         }
         state.queueHeadIndexTicket[operator] = ticketHead;
 
-        uint256 licenseHead = state.queueHeadIndexLicense[operator];
+        uint256 ciphernodeBondHead = state.queueHeadIndexCiphernodeBond[
+            operator
+        ];
         while (
-            licenseHead < len && operatorQueue[licenseHead].licenseAmount == 0
+            ciphernodeBondHead < len &&
+            operatorQueue[ciphernodeBondHead].ciphernodeBondAmount == 0
         ) {
-            licenseHead++;
+            ciphernodeBondHead++;
         }
-        state.queueHeadIndexLicense[operator] = licenseHead;
+        state.queueHeadIndexCiphernodeBond[operator] = ciphernodeBondHead;
     }
 
     /// @dev Remove fully drained tail entries so repeated queue/claim cycles
@@ -609,7 +645,7 @@ library ExitQueueLib {
         uint256 len = operatorQueue.length;
         while (len != 0) {
             ExitTranche storage tail = operatorQueue[len - 1];
-            if (tail.ticketAmount != 0 || tail.licenseAmount != 0) break;
+            if (tail.ticketAmount != 0 || tail.ciphernodeBondAmount != 0) break;
             operatorQueue.pop();
             len--;
         }
@@ -617,8 +653,8 @@ library ExitQueueLib {
         if (state.queueHeadIndexTicket[operator] > len) {
             state.queueHeadIndexTicket[operator] = len;
         }
-        if (state.queueHeadIndexLicense[operator] > len) {
-            state.queueHeadIndexLicense[operator] = len;
+        if (state.queueHeadIndexCiphernodeBond[operator] > len) {
+            state.queueHeadIndexCiphernodeBond[operator] = len;
         }
     }
 }

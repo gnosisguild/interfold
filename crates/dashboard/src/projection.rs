@@ -176,7 +176,7 @@ pub struct ChainOperatorView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ticket_balance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub license_bond: Option<String>,
+    pub ciphernode_bond: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bond_owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,7 +199,7 @@ struct ChainState {
     registered: BTreeSet<String>,
     active: BTreeSet<String>,
     ticket_balance: Option<String>,
-    license_bond: Option<String>,
+    ciphernode_bond: Option<String>,
     bond_owner: Option<String>,
     exit_unlock_at: Option<u64>,
     rewards: Vec<ChainReward>,
@@ -281,7 +281,7 @@ impl TelemetryProjection {
                     operator_registered: state.registered.contains(&self.local_address),
                     operator_active: state.active.contains(&self.local_address),
                     ticket_balance: state.ticket_balance.clone(),
-                    license_bond: state.license_bond.clone(),
+                    ciphernode_bond: state.ciphernode_bond.clone(),
                     bond_owner: state.bond_owner.clone(),
                     exit_unlock_at: state.exit_unlock_at,
                     rewards_credited: state
@@ -340,11 +340,13 @@ impl TelemetryProjection {
                     .or_default()
                     .ticket_balance = Some(event.new_balance.to_string());
             }
-            InterfoldEventData::LicenseBondUpdated(event)
+            InterfoldEventData::CiphernodeBondUpdated(event)
                 if normalize_address(&event.operator) == self.local_address =>
             {
-                self.chains.entry(event.chain_id).or_default().license_bond =
-                    Some(event.new_bond.to_string());
+                self.chains
+                    .entry(event.chain_id)
+                    .or_default()
+                    .ciphernode_bond = Some(event.new_bond.to_string());
             }
             InterfoldEventData::BondOwnerSet(event)
                 if normalize_address(&event.operator) == self.local_address =>

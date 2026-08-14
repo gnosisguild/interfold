@@ -11,30 +11,30 @@ use e3_utils::require_successful_receipt;
 
 use super::context::ChainContext;
 use super::utils::{ensure_allowance, parse_amount};
-use super::LicenseCommands;
+use super::BondCommands;
 
 pub(crate) async fn execute(
     out: Console,
     ctx: &ChainContext,
     operator: Address,
-    command: LicenseCommands,
+    command: BondCommands,
 ) -> Result<()> {
     match command {
-        LicenseCommands::Bond { amount } => {
-            bond_license(out, ctx, operator, &amount).await?;
+        BondCommands::Bond { amount } => {
+            bond_ciphernode(out, ctx, operator, &amount).await?;
         }
-        LicenseCommands::Unbond { amount } => {
-            let license = ctx.license_token_address().await?;
-            let decimals = ctx.erc20(license).decimals().call().await?;
+        BondCommands::Unbond { amount } => {
+            let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
+            let decimals = ctx.erc20(ciphernode_bond).decimals().call().await?;
             let parsed = parse_amount(&amount, decimals)?;
             let receipt = ctx
                 .bonding()
-                .unbondLicenseFor(operator, parsed)
+                .unbondCiphernodeFor(operator, parsed)
                 .send()
                 .await?
                 .get_receipt()
                 .await?;
-            require_successful_receipt("unbond license", &receipt)?;
+            require_successful_receipt("unbond FOLD", &receipt)?;
             log!(
                 out,
                 "Queued {} FOLD for operator {:#x} (tx: {:#x})",
@@ -43,17 +43,17 @@ pub(crate) async fn execute(
                 receipt.transaction_hash
             );
         }
-        LicenseCommands::Claim {
+        BondCommands::Claim {
             max_ticket,
-            max_license,
+            max_bond,
         } => {
             let ticket_decimals = ctx
                 .erc20(ctx.ticket_token_address().await?)
                 .decimals()
                 .call()
                 .await?;
-            let license_decimals = ctx
-                .erc20(ctx.license_token_address().await?)
+            let ciphernode_bond_decimals = ctx
+                .erc20(ctx.ciphernode_bond_token_address().await?)
                 .decimals()
                 .call()
                 .await?;
@@ -63,14 +63,14 @@ pub(crate) async fn execute(
             } else {
                 U256::MAX
             };
-            let license = if let Some(value) = max_license {
-                parse_amount(&value, license_decimals)?
+            let ciphernode_bond = if let Some(value) = max_bond {
+                parse_amount(&value, ciphernode_bond_decimals)?
             } else {
                 U256::MAX
             };
             let receipt = ctx
                 .bonding()
-                .claimExitsFor(operator, ticket, license)
+                .claimExitsFor(operator, ticket, ciphernode_bond)
                 .send()
                 .await?
                 .get_receipt()
@@ -88,25 +88,25 @@ pub(crate) async fn execute(
     Ok(())
 }
 
-async fn bond_license(
+async fn bond_ciphernode(
     out: Console,
     ctx: &ChainContext,
     operator: Address,
     amount: &str,
 ) -> Result<()> {
-    let license = ctx.license_token_address().await?;
-    let erc20 = ctx.erc20(license);
+    let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
+    let erc20 = ctx.erc20(ciphernode_bond);
     let decimals = erc20.decimals().call().await?;
     let parsed = parse_amount(amount, decimals)?;
-    ensure_allowance(ctx, license, ctx.bonding_registry(), parsed).await?;
+    ensure_allowance(ctx, ciphernode_bond, ctx.bonding_registry(), parsed).await?;
     let receipt = ctx
         .bonding()
-        .bondLicenseFor(operator, parsed)
+        .bondCiphernodeFor(operator, parsed)
         .send()
         .await?
         .get_receipt()
         .await?;
-    require_successful_receipt("bond license", &receipt)?;
+    require_successful_receipt("bond FOLD", &receipt)?;
     log!(
         out,
         "Bonded {} FOLD for operator {:#x} (tx: {:#x})",

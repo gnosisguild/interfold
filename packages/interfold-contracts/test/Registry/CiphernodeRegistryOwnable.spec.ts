@@ -61,7 +61,7 @@ describe("CiphernodeRegistryOwnable", function () {
       interfold: sys.interfold,
       slashingManager: sys.slashingManager,
       bondingRegistry: sys.bondingRegistry,
-      licenseToken: sys.licenseToken,
+      ciphernodeBondToken: sys.ciphernodeBondToken,
       ticketToken: sys.ticketToken,
       usdcToken: sys.usdcToken,
       mockE3Program: sys.mocks.e3Program,
@@ -416,7 +416,7 @@ describe("CiphernodeRegistryOwnable", function () {
         owner,
         registry,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         ticketToken,
         usdcToken,
         request,
@@ -429,14 +429,14 @@ describe("CiphernodeRegistryOwnable", function () {
         lateOperator,
         owner,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         usdcToken,
         ticketToken,
         registry,
       );
       await bondingRegistry
         .connect(owner)
-        .unbondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+        .unbondCiphernodeFor(lateOperatorAddress, ethers.parseEther("1000"));
       await networkHelpers.time.increase(SEVEN_DAYS + 1);
 
       const tx = await request();
@@ -454,7 +454,7 @@ describe("CiphernodeRegistryOwnable", function () {
 
       await bondingRegistry
         .connect(owner)
-        .bondLicenseFor(lateOperatorAddress, ethers.parseEther("1000"));
+        .bondCiphernodeFor(lateOperatorAddress, ethers.parseEther("1000"));
       expect(await bondingRegistry.isActive(lateOperatorAddress)).to.equal(
         true,
       );
@@ -482,7 +482,7 @@ describe("CiphernodeRegistryOwnable", function () {
         operator3,
       } = await loadFixture(setup);
 
-      await bondingRegistry.setLicenseActiveBps(9_000);
+      await bondingRegistry.setCiphernodeBondActiveBps(9_000);
       expect(await bondingRegistry.numActiveOperators()).to.equal(0);
 
       await expect(
@@ -1096,7 +1096,7 @@ describe("CiphernodeRegistryOwnable", function () {
         operator3,
         registry,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         ticketToken,
         usdcToken,
         request,
@@ -1106,7 +1106,7 @@ describe("CiphernodeRegistryOwnable", function () {
         operator4,
         owner,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         usdcToken,
         ticketToken,
         registry,

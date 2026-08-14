@@ -64,8 +64,8 @@ import {
   COMMITTEE_THRESHOLDS_DEFAULT,
   DEFAULT_TIMEOUT_CONFIG,
   ENCRYPTION_SCHEME_ID,
-  LICENSE_REQUIRED_BOND,
   MIN_TICKET_BALANCE,
+  REQUIRED_CIPHERNODE_BOND,
   SEVEN_DAYS,
   SORTITION_SUBMISSION_WINDOW,
   THIRTY_DAYS,
@@ -188,7 +188,7 @@ export interface InterfoldSystem {
   slashingManager: SlashingManager;
   e3RefundManager: E3RefundManager;
   // Tokens
-  licenseToken: InterfoldToken;
+  ciphernodeBondToken: InterfoldToken;
   ticketToken: InterfoldTicketToken;
   usdcToken: MockUSDC;
   // Mocks
@@ -342,13 +342,13 @@ export async function deployInterfoldSystem(
         BondingRegistry: {
           owner: ownerAddress,
           ticketToken: await ticketToken.getAddress(),
-          licenseToken: ethers.ZeroAddress, // one-time placeholder — fixed below
+          ciphernodeBondToken: ethers.ZeroAddress, // one-time placeholder — fixed below
           registry: effectiveRegistryAddress,
           slashedFundsTreasury: slashedFundsTreasuryAddress,
           ticketPrice: TICKET_PRICE,
-          licenseRequiredBond: LICENSE_REQUIRED_BOND,
+          requiredCiphernodeBond: REQUIRED_CIPHERNODE_BOND,
           expectedTicketDecimals: 6,
-          expectedLicenseDecimals: 0,
+          expectedCiphernodeBondDecimals: 0,
           minTicketBalance: MIN_TICKET_BALANCE,
           exitDelay: SEVEN_DAYS,
         },
@@ -380,20 +380,20 @@ export async function deployInterfoldSystem(
       },
     },
   });
-  const licenseToken = InterfoldTokenFactory.connect(
+  const ciphernodeBondToken = InterfoldTokenFactory.connect(
     await interfoldToken.getAddress(),
     owner,
   );
-  await (await licenseToken.setClaimSource(claimSource)).wait();
+  await (await ciphernodeBondToken.setClaimSource(claimSource)).wait();
 
-  // Fix the BondingRegistry licenseToken placeholder.
+  // Fix the BondingRegistry ciphernodeBondToken placeholder.
   await bondingRegistry.setBondingAssetConfig({
     ticketToken: await ticketToken.getAddress(),
-    licenseToken: await licenseToken.getAddress(),
+    ciphernodeBondToken: await ciphernodeBondToken.getAddress(),
     ticketPrice: TICKET_PRICE,
-    licenseRequiredBond: LICENSE_REQUIRED_BOND,
+    requiredCiphernodeBond: REQUIRED_CIPHERNODE_BOND,
     expectedTicketDecimals: 6,
-    expectedLicenseDecimals: 18,
+    expectedCiphernodeBondDecimals: 18,
   });
 
   // Deploy the default program before Interfold so initialization can validate it.
@@ -561,7 +561,7 @@ export async function deployInterfoldSystem(
         operator,
         owner,
         bondingRegistry,
-        licenseToken,
+        ciphernodeBondToken,
         usdcToken,
         ticketToken,
         // The mock registry exposes `addCiphernode` as a no-op so the
@@ -610,7 +610,7 @@ export async function deployInterfoldSystem(
     bondingRegistry,
     slashingManager,
     e3RefundManager,
-    licenseToken,
+    ciphernodeBondToken,
     ticketToken,
     usdcToken,
     mocks: {

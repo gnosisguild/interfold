@@ -64,11 +64,12 @@ function bondingInitData(
     config.safe,
     {
       ticketToken: c.ticketToken,
-      licenseToken: config.fold,
+      ciphernodeBondToken: config.fold,
       ticketPrice: BigInt(config.bonding.ticketPrice),
-      licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+      requiredCiphernodeBond: BigInt(config.bonding.requiredCiphernodeBond),
       expectedTicketDecimals: config.bonding.ticketTokenDecimals,
-      expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+      expectedCiphernodeBondDecimals:
+        config.bonding.ciphernodeBondTokenDecimals,
     },
     c.ciphernodeRegistry,
     config.slashedFundsTreasury,

@@ -32,7 +32,7 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Tickets (tFOLD) are **non-transferable**: `permit`/`delegateBySig` always revert; transfers
   restricted to mint/burn/bonding/whitelist. Collateral cannot be moved to dodge slashing; snapshot
   eligibility at `requestBlock-1` stays attributable. — `flow-trace/02`
-- `totalBonded(account)` = active FOLD license bond + pending-but-still-slashable exits; FOLD
+- `totalBonded(account)` = active FOLD ciphernode bond + pending-but-still-slashable exits; FOLD
   `_update` enforces locked-floor accounting. — `flow-trace/02`
 - A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
   plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
@@ -61,9 +61,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   construction. Summing a timestamp-keyed history with a block-numbered one answers for two
   unrelated points in time and is undetectable downstream. — `BondedVotes.sol`; `flow-trace/02`
 - **`BondedVotes` binds token, registry and history as one unit.** The constructor reads
-  `checkpoints.registry()` and requires that registry's `getLicenseToken()` to equal the token it
-  reads votes from. The clock check alone proves the history speaks the token's units, not that it
-  is _about_ that token: a history written by a registry custodying something else would add
+  `checkpoints.registry()` and requires that registry's `getCiphernodeBondToken()` to equal the
+  token it reads votes from. The clock check alone proves the history speaks the token's units, not
+  that it is _about_ that token: a history written by a registry custodying something else would add
   unbacked weight, and no reader downstream could tell. Because the check calls the registry,
   `BondedVotes` can only be constructed after the registry is configured —
   `protocol/deployContracts` therefore deploys `BondedCheckpoints` only, and
@@ -72,24 +72,24 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **`BondedVotes.balanceOf` nets the registry down to its own surplus.** Bonding moves FOLD into the
   registry while the adapter attributes it to the bond owner, so counting it at both addresses would
   place the same tokens twice and push summed balances above total supply — the denominator every
-  holder-percentage view divides by. The registry's entry subtracts `totalLicenseLiability`,
+  holder-percentage view divides by. The registry's entry subtracts `totalCiphernodeBondLiability`,
   saturating at zero. `getVotes` needs no such adjustment: the registry never delegates, so bonded
   FOLD carries no wallet votes to double. — `BondedVotes.sol`; `flow-trace/02`
-- **`setBondedCheckpoints` is one-shot per license token, and self-verifying.** It requires the
-  checkpoint contract to name this registry **and** to accept a write from it, checked by syncing
-  the zero address, whose bonded total is always zero. `registry()` alone is insufficient:
+- **`setBondedCheckpoints` is one-shot per ciphernode bond token, and self-verifying.** It requires
+  the checkpoint contract to name this registry **and** to accept a write from it, checked by
+  syncing the zero address, whose bonded total is always zero. `registry()` alone is insufficient:
   `InterfoldTicketToken` answers it with the registry address, so a mix-up would spend the slot on a
   contract with no `sync` and revert every later bond, slash, claim and owner transfer. Repointing
   while one is attached is refused: it would abandon recorded history and silently change every past
   answer. While unset the sync is a no-op, not a revert, so an upgrade cannot freeze bonding before
   the contract is configured. — `BondingRegistry.sol`; `flow-trace/02`
-- **License-token rotation detaches the bonded history.** The history counts license-token units,
-  but `BondedVotes` adds them to the voting power of one token fixed at construction, so a
-  replacement token's bonds entering the same history would be counted as the old token and could
-  push summed voting power above its total supply. Rotation already requires every old bond to be
-  drained, so each owner's last recorded total is zero and detaching freezes a settled history. The
-  detached contract stays correct for the timepoints it covers; a new era needs a fresh
-  `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
+- **Ciphernode-bond-token rotation detaches the bonded history.** The history counts
+  ciphernode-bond-token units, but `BondedVotes` adds them to the voting power of one token fixed at
+  construction, so a replacement token's bonds entering the same history would be counted as the old
+  token and could push summed voting power above its total supply. Rotation already requires every
+  old bond to be drained, so each owner's last recorded total is zero and detaching freezes a
+  settled history. The detached contract stays correct for the timepoints it covers; a new era needs
+  a fresh `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
   `BondingRegistry._setBondingAssetConfig`; `flow-trace/02`
 - **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 256 bytes of headroom by
   `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
@@ -99,34 +99,35 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   deployment, not at compile. The `Operator` struct stays declared in `BondingRegistry`: the upgrade
   baseline compares type labels, so relocating it reads as a type change on an unchanged layout. —
   `BondingRegistry.sol`; INDEX concern #22
-- Ticket and license tokens, expected decimals, `ticketPrice`, and `licenseRequiredBond` change as
-  one configuration. Asset identity changes only after old balances, E3 assignments, slash locks,
-  and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
-  replacement license token must return a valid value from `lockedBalanceOf`. Slash policies are
-  bound to the exact BondingRegistry and asset-configuration version. Asset activation requires the
-  ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive without
-  blocking license slashes, bans, or exit bookkeeping. License-token rotation atomically sends any
-  balance above `totalLicenseLiability` to the treasury before validating the replacement, so an
-  unsolicited transfer cannot interleave with rotation. — `flow-trace/02`, `05`; INDEX concern #23
+- Ticket and ciphernode bond tokens, expected decimals, `ticketPrice`, and `requiredCiphernodeBond`
+  change as one configuration. Asset identity changes only after old balances, E3 assignments, slash
+  locks, and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
+  replacement ciphernode bond token must return a valid value from `lockedBalanceOf`. Slash policies
+  are bound to the exact BondingRegistry and asset-configuration version. Asset activation requires
+  the ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive
+  without blocking ciphernode bond slashes, bans, or exit bookkeeping. Ciphernode-bond-token
+  rotation atomically sends any balance above `totalCiphernodeBondLiability` to the treasury before
+  validating the replacement, so an unsolicited transfer cannot interleave with rotation. —
+  `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
   Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
   time. Decimal validation checks the unit scale only; it does not establish the token's economic
   value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
 - **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
-  license token must transfer exact amounts and must not rebase account balances. Every custody
-  deposit checks the custody increase. Every outbound transfer checks the recipient increase and
-  custody decrease. A mismatch reverts the complete accounting transaction and preserves all other
-  pooled liabilities. — `InterfoldPricing.sol`; `InterfoldTicketToken.sol`; `BondingAssetLib.sol`;
-  `E3RefundManager.sol`; `flow-trace/02`, `03`, `05`
+  ciphernode bond token must transfer exact amounts and must not rebase account balances. Every
+  custody deposit checks the custody increase. Every outbound transfer checks the recipient increase
+  and custody decrease. A mismatch reverts the complete accounting transaction and preserves all
+  other pooled liabilities. — `InterfoldPricing.sol`; `InterfoldTicketToken.sol`;
+  `BondingAssetLib.sol`; `E3RefundManager.sol`; `flow-trace/02`, `03`, `05`
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
-- Operator active ⇔ `registered` AND `licenseBond >= licenseRequiredBond × licenseActiveBps/10000`
-  (default 80%) AND `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`;
-  `flow-trace/01`, `02`
+- Operator active ⇔ `registered` AND
+  `ciphernodeBond >= requiredCiphernodeBond × ciphernodeBondActiveBps/10000` (default 80%) AND
+  `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`; `flow-trace/01`, `02`
 - `minTicketBalance` must remain nonzero. — `flow-trace/02`
 - **Eligibility policy version is monotonic and fail-closed:** any effective change to `ticketPrice`
-  / `licenseRequiredBond` / `licenseActiveBps` / `minTicketBalance` bumps
+  / `requiredCiphernodeBond` / `ciphernodeBondActiveBps` / `minTicketBalance` bumps
   `eligibilityConfigurationVersion`, resets `numActiveOperators`, and invalidates all cached
   statuses in O(1). Rust sortition consumes the same `ConfigurationUpdated` event and marks
   operators inactive until a matching `OperatorActivationChanged` arrives. — `BondingRegistry.sol`;
@@ -202,7 +203,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   different decimals never mix. — `flow-trace/05`
 - Slashed **ticket** funds are always escrowed first; destination depends on terminal outcome
   (failure → honest nodes; none → snapshotted treasury; success → split by `successSlashedNodeBps`).
-  **License-bond** slashes go straight to treasury. — `flow-trace/05`
+  **Ciphernode-bond** slashes do not leave the registry at execution: the amount is recorded in
+  `slashedCiphernodeBond` and the FOLD stays in registry custody. Only `withdrawSlashedFunds`
+  (owner-called) moves it to `slashedFundsTreasury`, releasing the matching
+  `totalCiphernodeBondLiability` as it goes — so custody and liability are retired together. —
+  `BondingRegistry.slashCiphernodeBond`, `BondingRegistry.withdrawSlashedFunds`; `flow-trace/05`
 - Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
   snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
   the protected reserve. — `flow-trace/05`
@@ -239,10 +244,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Staggered slash submission: agreeing voters ranked by ascending address, rank N waits `N × skew`
   (default 30 s); restarts must not reset the fallback delay. — `flow-trace/05`
 - **Deferred-slash collateral gate:** every manager atomically records proposal locks in
-  `BondingRegistry`. Ticket withdrawal, license unbonding, deregistration, and exit claims read the
-  registry's aggregate lock count and stay blocked until resolution. User exits must not call a
-  slashing manager. A retained manager cannot be revoked until its E3 assignments, locks, bans, and
-  fund routes are clear. — INDEX concerns #1, #26, Z-44; `flow-trace/06`
+  `BondingRegistry`. Ticket withdrawal, ciphernode bond unbonding, deregistration, and exit claims
+  read the registry's aggregate lock count and stay blocked until resolution. User exits must not
+  call a slashing manager. A retained manager cannot be revoked until its E3 assignments, locks,
+  bans, and fund routes are clear. — INDEX concerns #1, #26, Z-44; `flow-trace/06`
 - Exit queue caps explicit non-empty tranche count; drained single-asset tranches release capacity.
   — INDEX concern #18
 
@@ -414,16 +419,18 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   dropped write leaves the reference at `address(0)` while the script still exits zero.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
   reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
-  InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry license token)
-  plus the BondingRegistry reward-distributor authorization for Interfold, and throws with the full
-  list of mismatches. Add a read-back for each new cross-contract setter.
+  InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry ciphernode
+  bond token) plus the BondingRegistry reward-distributor authorization for Interfold, and throws
+  with the full list of mismatches. Add a read-back for each new cross-contract setter.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
-  `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and
-  `BondedVotes` (bound to FOLD and those checkpoints), the Safe batch calls `setBondedCheckpoints`
-  after `initialize`, and `protocol/validate` reads back `bonding.bondedCheckpoints()`,
-  `bondedCheckpoints.registry()`, `bondedVotes.token()` and `bondedVotes.checkpoints()`. Upgrading
-  an existing deployment through `upgrade/safeProxyUpgrade` deploys and attaches the pair when none
-  is attached yet, and appends a `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry —
+  `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the Safe
+  batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
+  `--action activate-voting`: its constructor asks the registry which token it bonds, so it cannot
+  be built until that batch has executed. `protocol/validate` reads back
+  `bonding.bondedCheckpoints()` and `bondedCheckpoints.registry()`, and adds `bondedVotes.token()`,
+  `bondedVotes.checkpoints()` and `bondedVotes.registry()` once the adapter exists. Upgrading an
+  existing deployment through `upgrade/safeProxyUpgrade` deploys and attaches the pair when none is
+  attached yet, and appends a `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry —
   attaching does not backfill, so owners that bonded earlier read as zero until then. Without the
   attachment the upgrade silently ships a disabled feature: the sync is a no-op while unconfigured.
 

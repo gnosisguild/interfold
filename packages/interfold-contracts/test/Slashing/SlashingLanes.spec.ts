@@ -58,7 +58,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
   ) {
     await slashingManager.setSlashPolicy(REASON_PT_0, {
       ticketPenalty: ethers.parseUnits("50", 6),
-      licensePenalty: ethers.parseEther("100"),
+      ciphernodeBondPenalty: ethers.parseEther("100"),
       requiresProof: true,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -72,7 +72,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
   async function setupLaneBPolicy(slashingManager: SlashingManager) {
     await slashingManager.setSlashPolicy(REASON_INACTIVITY, {
       ticketPenalty: ethers.parseUnits("20", 6),
-      licensePenalty: ethers.parseEther("50"),
+      ciphernodeBondPenalty: ethers.parseEther("50"),
       requiresProof: false,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -107,7 +107,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
     const {
       slashingManager,
       bondingRegistry,
-      licenseToken: interfoldToken,
+      ciphernodeBondToken: interfoldToken,
       ticketToken,
       mockCiphernodeRegistry: mockCiphernodeRegistryOpt,
     } = sys;
@@ -206,17 +206,17 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         operatorAddress,
         owner,
       } = ctx;
-      // Bond the license required to register.
-      const licenseAmount = ethers.parseEther("1000");
+      // Bond the ciphernode bond required to register.
+      const ciphernodeBondAmount = ethers.parseEther("1000");
       await bondingRegistry
         .connect(operator)
         .setBondOwner(await owner.getAddress());
       await interfoldToken
         .connect(owner)
-        .approve(await bondingRegistry.getAddress(), licenseAmount);
+        .approve(await bondingRegistry.getAddress(), ciphernodeBondAmount);
       await bondingRegistry
         .connect(owner)
-        .bondLicenseFor(operatorAddress, licenseAmount);
+        .bondCiphernodeFor(operatorAddress, ciphernodeBondAmount);
       await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
     }
 
@@ -301,16 +301,18 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         .withArgs(await slashingManager.getAddress(), 1);
 
       await expect(
-        bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1),
+        bondingRegistry.connect(owner).unbondCiphernodeFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
       await time.increase(APPEAL_WINDOW + 1);
       await slashingManager.executeSlash(0);
 
-      expect(await bondingRegistry.getLicenseBond(operatorAddress)).to.equal(
+      expect(await bondingRegistry.getCiphernodeBond(operatorAddress)).to.equal(
         ethers.parseEther("950"),
       );
-      await bondingRegistry.connect(owner).unbondLicenseFor(operatorAddress, 1);
+      await bondingRegistry
+        .connect(owner)
+        .unbondCiphernodeFor(operatorAddress, 1);
 
       await expect(
         bondingRegistry.revokeSlashingManager(
@@ -457,11 +459,11 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         operator,
         operatorAddress,
       } = ctx;
-      const licenseAmount = ethers.parseEther("1000");
+      const ciphernodeBondAmount = ethers.parseEther("1000");
       const queuedAmount = ethers.parseEther("100");
       await interfoldToken.mint(
         await newAdmin.getAddress(),
-        licenseAmount,
+        ciphernodeBondAmount,
         ethers.encodeBytes32String("Test allocation"),
       );
       await bondingRegistry
@@ -469,16 +471,16 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
         .setBondOwner(await newAdmin.getAddress());
       await interfoldToken
         .connect(newAdmin)
-        .approve(await bondingRegistry.getAddress(), licenseAmount);
+        .approve(await bondingRegistry.getAddress(), ciphernodeBondAmount);
       await bondingRegistry
         .connect(newAdmin)
-        .bondLicenseFor(operatorAddress, licenseAmount);
+        .bondCiphernodeFor(operatorAddress, ciphernodeBondAmount);
       await bondingRegistry
         .connect(newAdmin)
         .registerOperatorFor(operatorAddress);
       await bondingRegistry
         .connect(newAdmin)
-        .unbondLicenseFor(operatorAddress, queuedAmount);
+        .unbondCiphernodeFor(operatorAddress, queuedAmount);
       return queuedAmount;
     }
 
@@ -558,7 +560,9 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
           .removeTicketBalanceFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
       await expect(
-        bondingRegistry.connect(newAdmin).unbondLicenseFor(operatorAddress, 1),
+        bondingRegistry
+          .connect(newAdmin)
+          .unbondCiphernodeFor(operatorAddress, 1),
       ).to.be.revertedWithCustomError(bondingRegistry, "OperatorUnderSlash");
 
       await time.increase(APPEAL_WINDOW + 1);
@@ -835,7 +839,7 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       expect(executedLog).to.not.be.undefined;
       const parsed = slashingManager.interface.parseLog(executedLog!);
       // SlashExecuted args: (proposalId, e3Id, operator, reason, ticket,
-      //                     license, executor, lane)
+      //                     ciphernode bond, executor, lane)
       expect(parsed!.args[7]).to.equal(0n);
     });
 

@@ -51,7 +51,7 @@ export const ciphernodeAdd = task(
   "Register a ciphernode to the bonding registry and ciphernode registry",
 )
   .addOption({
-    name: "licenseBondAmount",
+    name: "ciphernodeBondAmount",
     description:
       "amount of FOLD to bond (in wei, e.g., 1000000000000000000000 for 1000 FOLD)",
     defaultValue: "1000000000000000000000",
@@ -63,7 +63,7 @@ export const ciphernodeAdd = task(
     defaultValue: "1000000000",
   })
   .setAction(async () => ({
-    default: async ({ licenseBondAmount, ticketAmount }, hre) => {
+    default: async ({ ciphernodeBondAmount, ticketAmount }, hre) => {
       const connection = await hre.network.connect();
       const { ethers } = connection;
 
@@ -90,25 +90,27 @@ export const ciphernodeAdd = task(
       });
       const { mockStableToken } = await deployAndSaveMockStableToken({ hre });
 
-      const licenseToken = interfoldToken.connect(bondOwner);
+      const ciphernodeBondToken = interfoldToken.connect(bondOwner);
       const ticketToken = interfoldTicketToken.connect(bondOwner);
       const usdcToken = mockStableToken.connect(bondOwner);
       const bondingRegistryConnected = bondingRegistry.connect(bondOwner);
 
       try {
         console.log("Step 1: Checking balances...");
-        const foldBalance = await licenseToken.balanceOf(bondOwner.address);
+        const foldBalance = await ciphernodeBondToken.balanceOf(
+          bondOwner.address,
+        );
         const usdcBalance = await usdcToken.balanceOf(bondOwner.address);
 
         console.log(`FOLD balance: ${ethers.formatEther(foldBalance)}`);
         console.log(`USDC balance: ${ethers.formatUnits(usdcBalance, 6)}`);
 
-        const licenseBondAmountBigInt = BigInt(licenseBondAmount);
+        const ciphernodeBondAmountBigInt = BigInt(ciphernodeBondAmount);
         const ticketAmountBigInt = BigInt(ticketAmount);
 
-        if (foldBalance < licenseBondAmountBigInt) {
+        if (foldBalance < ciphernodeBondAmountBigInt) {
           throw new Error(
-            `Insufficient FOLD balance. Need: ${ethers.formatEther(licenseBondAmountBigInt)}, Have: ${ethers.formatEther(foldBalance)}`,
+            `Insufficient FOLD balance. Need: ${ethers.formatEther(ciphernodeBondAmountBigInt)}, Have: ${ethers.formatEther(foldBalance)}`,
           );
         }
 
@@ -118,27 +120,27 @@ export const ciphernodeAdd = task(
           );
         }
 
-        console.log("Step 2: Approving FOLD for license bond...");
-        const approveTx = await licenseToken.approve(
+        console.log("Step 2: Approving FOLD for ciphernode bond...");
+        const approveTx = await ciphernodeBondToken.approve(
           await bondingRegistry.getAddress(),
-          licenseBondAmountBigInt,
+          ciphernodeBondAmountBigInt,
         );
         await approveTx.wait();
         console.log("FOLD approved");
 
-        console.log("Step 3: Bonding license...");
+        console.log("Step 3: Bonding ciphernodeBond...");
         await (
           await bondingRegistry
             .connect(operator)
             .setBondOwner(bondOwner.address)
         ).wait();
-        const bondTx = await bondingRegistryConnected.bondLicenseFor(
+        const bondTx = await bondingRegistryConnected.bondCiphernodeFor(
           operator.address,
-          licenseBondAmountBigInt,
+          ciphernodeBondAmountBigInt,
         );
         await bondTx.wait();
         console.log(
-          `Licensed bonded: ${ethers.formatEther(licenseBondAmountBigInt)} FOLD`,
+          `Ciphernode bonded: ${ethers.formatEther(ciphernodeBondAmountBigInt)} FOLD`,
         );
 
         console.log("Step 4: Registering as operator...");
@@ -176,7 +178,7 @@ export const ciphernodeAdd = task(
         );
 
         const isActive = await bondingRegistry.isActive(operator.address);
-        const licenseBond = await bondingRegistry.getLicenseBond(
+        const ciphernodeBond = await bondingRegistry.getCiphernodeBond(
           operator.address,
         );
         const ticketBalance = await bondingRegistry.getTicketBalance(
@@ -187,7 +189,9 @@ export const ciphernodeAdd = task(
         console.log(`Ciphernode: ${operator.address}`);
         console.log(`Registered: ${isRegistered}`);
         console.log(`Active: ${isActive}`);
-        console.log(`License Bond: ${ethers.formatEther(licenseBond)} FOLD`);
+        console.log(
+          `Ciphernode Bond: ${ethers.formatEther(ciphernodeBond)} FOLD`,
+        );
         console.log(
           `Ticket Balance: ${ethers.formatUnits(ticketBalance, 6)} USDC worth`,
         );
@@ -352,7 +356,7 @@ export const ciphernodeAdminAdd = task(
     defaultValue: "",
   })
   .addOption({
-    name: "licenseBondAmount",
+    name: "ciphernodeBondAmount",
     description:
       "amount of FOLD to bond (in ether units, e.g., 1000 for 1000 FOLD)",
     defaultValue: "1000",
@@ -365,7 +369,12 @@ export const ciphernodeAdminAdd = task(
   })
   .setAction(async () => ({
     default: async (
-      { ciphernodeAddress, adminPrivateKey, licenseBondAmount, ticketAmount },
+      {
+        ciphernodeAddress,
+        adminPrivateKey,
+        ciphernodeBondAmount,
+        ticketAmount,
+      },
       hre,
     ) => {
       const connection = await hre.network.connect();
@@ -429,14 +438,14 @@ export const ciphernodeAdminAdd = task(
       const ticketTokenAddress = await interfoldTicketToken.getAddress();
 
       try {
-        const licenseBondWei = ethers.parseEther(licenseBondAmount);
+        const ciphernodeBondWei = ethers.parseEther(ciphernodeBondAmount);
         const ticketAmountWei = ethers.parseUnits(ticketAmount, 6);
 
         console.log("Step 1: Minting FOLD to the bond owner...");
 
         const foldTx = await interfoldTokenConnected.mint(
           adminWallet.address,
-          licenseBondWei,
+          ciphernodeBondWei,
           ethers.encodeBytes32String("admin-cn-reg"),
         );
         await foldTx.wait();
@@ -476,17 +485,17 @@ export const ciphernodeAdminAdd = task(
 
         const approveTx = await interfoldTokenConnected.approve(
           await bondingRegistry.getAddress(),
-          licenseBondWei,
+          ciphernodeBondWei,
         );
         await approveTx.wait();
 
         const bondingRegistryAsOwner = bondingRegistry.connect(adminWallet);
-        const bondTx = await bondingRegistryAsOwner.bondLicenseFor(
+        const bondTx = await bondingRegistryAsOwner.bondCiphernodeFor(
           ciphernodeAddress,
-          licenseBondWei,
+          ciphernodeBondWei,
         );
         await bondTx.wait();
-        console.log(`License bonded: ${licenseBondAmount} FOLD`);
+        console.log(`Ciphernode bonded: ${ciphernodeBondAmount} FOLD`);
 
         const registerTx =
           await bondingRegistryAsOwner.registerOperatorFor(ciphernodeAddress);
@@ -519,8 +528,8 @@ export const ciphernodeAdminAdd = task(
         const isRegistered =
           await bondingRegistry.isRegistered(ciphernodeAddress);
         const isActive = await bondingRegistry.isActive(ciphernodeAddress);
-        const licenseBond =
-          await bondingRegistry.getLicenseBond(ciphernodeAddress);
+        const ciphernodeBond =
+          await bondingRegistry.getCiphernodeBond(ciphernodeAddress);
         const ticketBalance =
           await bondingRegistry.getTicketBalance(ciphernodeAddress);
 
@@ -528,7 +537,9 @@ export const ciphernodeAdminAdd = task(
         console.log(`Ciphernode: ${ciphernodeAddress}`);
         console.log(`Registered: ${isRegistered}`);
         console.log(`Active: ${isActive}`);
-        console.log(`License Bond: ${ethers.formatEther(licenseBond)} FOLD`);
+        console.log(
+          `Ciphernode Bond: ${ethers.formatEther(ciphernodeBond)} FOLD`,
+        );
         console.log(
           `Ticket Balance: ${ethers.formatUnits(ticketBalance, 6)} USDC worth`,
         );

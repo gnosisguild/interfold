@@ -7,7 +7,7 @@ pragma solidity 0.8.28;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract MockLockAwareLicenseToken is ERC20 {
+contract MockLockAwareCiphernodeBondToken is ERC20 {
     enum ResponseMode {
         Valid,
         Revert,
@@ -16,7 +16,7 @@ contract MockLockAwareLicenseToken is ERC20 {
 
     ResponseMode public responseMode;
 
-    constructor(ResponseMode mode) ERC20("Lock-aware license", "LOCK") {
+    constructor(ResponseMode mode) ERC20("Lock-aware ciphernodeBond", "LOCK") {
         responseMode = mode;
     }
 

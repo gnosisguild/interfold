@@ -24,9 +24,9 @@ library BondingEligibilityLib {
     struct OperatorRequirements {
         bool registered;
         bool banned;
-        uint256 licenseBond;
-        uint256 licenseRequiredBond;
-        uint256 licenseActiveBps;
+        uint256 ciphernodeBond;
+        uint256 requiredCiphernodeBond;
+        uint256 ciphernodeBondActiveBps;
         address ticketToken;
         uint256 ticketPrice;
         uint256 minTicketBalance;
@@ -66,10 +66,10 @@ library BondingEligibilityLib {
             ticketToken.registry() == address(this) &&
             requirements.registered &&
             !requirements.banned &&
-            isLicensed(
-                requirements.licenseBond,
-                requirements.licenseRequiredBond,
-                requirements.licenseActiveBps
+            isCiphernodeBonded(
+                requirements.ciphernodeBond,
+                requirements.requiredCiphernodeBond,
+                requirements.ciphernodeBondActiveBps
             ) &&
             ticketToken.balanceOf(operator) / requirements.ticketPrice >=
             requirements.minTicketBalance;
@@ -92,16 +92,16 @@ library BondingEligibilityLib {
         emit IBondingRegistry.OperatorActivationChanged(operator, newActive);
     }
 
-    function isLicensed(
-        uint256 licenseBond,
-        uint256 licenseRequiredBond,
-        uint256 licenseActiveBps
+    function isCiphernodeBonded(
+        uint256 ciphernodeBond,
+        uint256 requiredCiphernodeBond,
+        uint256 ciphernodeBondActiveBps
     ) public pure returns (bool) {
         return
-            licenseBond >=
+            ciphernodeBond >=
             Math.mulDiv(
-                licenseRequiredBond,
-                licenseActiveBps,
+                requiredCiphernodeBond,
+                ciphernodeBondActiveBps,
                 10_000,
                 Math.Rounding.Ceil
             );

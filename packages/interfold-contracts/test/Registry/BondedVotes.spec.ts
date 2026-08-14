@@ -39,7 +39,7 @@ describe("BondedVotes", function () {
       wireSlashingManager: false,
       mintUsdcTo: [],
     });
-    const { bondingRegistry, licenseToken, slashingManager } = sys;
+    const { bondingRegistry, ciphernodeBondToken, slashingManager } = sys;
 
     const bondOwnerAddress = await bondOwner.getAddress();
     const operatorAddress = await operatorKey.getAddress();
@@ -48,7 +48,7 @@ describe("BondedVotes", function () {
     const registryAddress = await bondingRegistry.getAddress();
 
     for (const who of [bondOwnerAddress, otherHolderAddress, newOwnerAddress]) {
-      await licenseToken.mint(
+      await ciphernodeBondToken.mint(
         who,
         MINTED,
         ethers.encodeBytes32String("Test allocation"),
@@ -57,9 +57,9 @@ describe("BondedVotes", function () {
     await bondingRegistry.connect(operatorKey).setBondOwner(bondOwnerAddress);
 
     // Self-delegate, or the wallet half of the sum is zero and nothing is being measured.
-    await licenseToken.connect(bondOwner).delegate(bondOwnerAddress);
-    await licenseToken.connect(otherHolder).delegate(otherHolderAddress);
-    await licenseToken.connect(newOwner).delegate(newOwnerAddress);
+    await ciphernodeBondToken.connect(bondOwner).delegate(bondOwnerAddress);
+    await ciphernodeBondToken.connect(otherHolder).delegate(otherHolderAddress);
+    await ciphernodeBondToken.connect(newOwner).delegate(newOwnerAddress);
 
     const checkpoints = await ethers.deployContract("BondedCheckpoints", [
       registryAddress,
@@ -67,21 +67,23 @@ describe("BondedVotes", function () {
     await bondingRegistry.setBondedCheckpoints(await checkpoints.getAddress());
 
     const bondedVotes = await ethers.deployContract("BondedVotes", [
-      await licenseToken.getAddress(),
+      await ciphernodeBondToken.getAddress(),
       await checkpoints.getAddress(),
     ]);
 
     const bond = async (amount: bigint) => {
-      await licenseToken.connect(bondOwner).approve(registryAddress, amount);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, amount);
       await bondingRegistry
         .connect(bondOwner)
-        .bondLicenseFor(operatorAddress, amount);
+        .bondCiphernodeFor(operatorAddress, amount);
     };
 
     const unbond = (amount: bigint) =>
       bondingRegistry
         .connect(bondOwner)
-        .unbondLicenseFor(operatorAddress, amount);
+        .unbondCiphernodeFor(operatorAddress, amount);
 
     const claim = (amount: bigint) =>
       bondingRegistry
@@ -95,7 +97,7 @@ describe("BondedVotes", function () {
       const signer = await ethers.getSigner(managerAddress);
       await bondingRegistry
         .connect(signer)
-        .slashLicenseBond(
+        .slashCiphernodeBond(
           operatorAddress,
           amount,
           ethers.encodeBytes32String("TEST_SLASH"),
@@ -112,7 +114,7 @@ describe("BondedVotes", function () {
 
     return {
       bondingRegistry,
-      licenseToken,
+      ciphernodeBondToken,
       checkpoints,
       bondedVotes,
       bondOwner,
@@ -134,12 +136,12 @@ describe("BondedVotes", function () {
 
   describe("holders who never bond", function () {
     it("counts wallet FOLD exactly as the token does", async function () {
-      const { licenseToken, otherHolderAddress, settledVotes } =
+      const { ciphernodeBondToken, otherHolderAddress, settledVotes } =
         await loadFixture(setup);
 
       expect(await settledVotes(otherHolderAddress)).to.equal(MINTED);
       expect(
-        await licenseToken.getPastVotes(
+        await ciphernodeBondToken.getPastVotes(
           otherHolderAddress,
           (await time.latest()) - 1,
         ),
@@ -157,7 +159,7 @@ describe("BondedVotes", function () {
     it("keeps an operator's total power unchanged when it bonds", async function () {
       const {
         bondedVotes,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwnerAddress,
         bond,
         settledVotes,
@@ -171,23 +173,23 @@ describe("BondedVotes", function () {
       expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
 
       const at = (await time.latest()) - 1;
-      expect(await licenseToken.getPastVotes(bondOwnerAddress, at)).to.equal(
-        MINTED - BOND,
-      );
+      expect(
+        await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at),
+      ).to.equal(MINTED - BOND);
       expect(await bondedVotes.getPastVotes(bondOwnerAddress, at)).to.equal(
         MINTED,
       );
     });
 
     it("counts an owner whose FOLD is entirely bonded", async function () {
-      const { licenseToken, bondOwnerAddress, bond, settledVotes } =
+      const { ciphernodeBondToken, bondOwnerAddress, bond, settledVotes } =
         await loadFixture(setup);
 
       await bond(MINTED);
 
       expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
       expect(
-        await licenseToken.getPastVotes(
+        await ciphernodeBondToken.getPastVotes(
           bondOwnerAddress,
           (await time.latest()) - 1,
         ),
@@ -227,7 +229,7 @@ describe("BondedVotes", function () {
     it("moves power back to the wallet once the exit is claimed", async function () {
       const {
         checkpoints,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwnerAddress,
         bond,
         unbond,
@@ -247,9 +249,9 @@ describe("BondedVotes", function () {
       expect(await checkpoints.getPastBonded(bondOwnerAddress, at)).to.equal(
         0n,
       );
-      expect(await licenseToken.getPastVotes(bondOwnerAddress, at)).to.equal(
-        MINTED,
-      );
+      expect(
+        await ciphernodeBondToken.getPastVotes(bondOwnerAddress, at),
+      ).to.equal(MINTED);
     });
   });
 
@@ -421,7 +423,7 @@ describe("BondedVotes", function () {
     /// holds it — so it stays with the bond owner regardless.
     it("sends wallet weight to the delegate but keeps bonded weight", async function () {
       const {
-        licenseToken,
+        ciphernodeBondToken,
         bondOwner,
         bondOwnerAddress,
         otherHolderAddress,
@@ -430,7 +432,7 @@ describe("BondedVotes", function () {
       } = await loadFixture(setup);
 
       await bond(BOND);
-      await licenseToken.connect(bondOwner).delegate(otherHolderAddress);
+      await ciphernodeBondToken.connect(bondOwner).delegate(otherHolderAddress);
 
       expect(await settledVotes(bondOwnerAddress)).to.equal(BOND);
       expect(await settledVotes(otherHolderAddress)).to.equal(
@@ -441,11 +443,16 @@ describe("BondedVotes", function () {
     /// Worth pinning: an owner who never self-delegated still gets its bonded weight, because
     /// that weight never passes through the token's delegation at all.
     it("counts bonded weight for an owner that never self-delegated", async function () {
-      const { licenseToken, bondOwner, bondOwnerAddress, bond, settledVotes } =
-        await loadFixture(setup);
+      const {
+        ciphernodeBondToken,
+        bondOwner,
+        bondOwnerAddress,
+        bond,
+        settledVotes,
+      } = await loadFixture(setup);
 
       await bond(BOND);
-      await licenseToken.connect(bondOwner).delegate(ethers.ZeroAddress);
+      await ciphernodeBondToken.connect(bondOwner).delegate(ethers.ZeroAddress);
 
       expect(await settledVotes(bondOwnerAddress)).to.equal(BOND);
     });
@@ -464,16 +471,17 @@ describe("BondedVotes", function () {
     /// Bonded FOLD was transferred, not burned, so it is already in the supply. Adding it again
     /// would inflate every quorum denominator — the opposite of the problem being fixed.
     it("passes total supply through unchanged while bonded", async function () {
-      const { bondedVotes, licenseToken, bond } = await loadFixture(setup);
+      const { bondedVotes, ciphernodeBondToken, bond } =
+        await loadFixture(setup);
 
-      const before = await licenseToken.totalSupply();
+      const before = await ciphernodeBondToken.totalSupply();
       await bond(BOND);
       await time.increase(1);
 
       const at = (await time.latest()) - 1;
       expect(await bondedVotes.getPastTotalSupply(at)).to.equal(before);
       expect(await bondedVotes.getPastTotalSupply(at)).to.equal(
-        await licenseToken.getPastTotalSupply(at),
+        await ciphernodeBondToken.getPastTotalSupply(at),
       );
     });
 
@@ -482,7 +490,7 @@ describe("BondedVotes", function () {
     it("never lets summed power exceed total supply", async function () {
       const {
         bondedVotes,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwnerAddress,
         otherHolderAddress,
         newOwnerAddress,
@@ -499,7 +507,7 @@ describe("BondedVotes", function () {
         (await bondedVotes.getPastVotes(newOwnerAddress, at));
 
       expect(summed).to.be.lessThanOrEqual(
-        await licenseToken.getPastTotalSupply(at),
+        await ciphernodeBondToken.getPastTotalSupply(at),
       );
     });
   });
@@ -563,13 +571,13 @@ describe("BondedVotes", function () {
         wireSlashingManager: false,
         mintUsdcTo: [],
       });
-      const { bondingRegistry, licenseToken } = sys;
+      const { bondingRegistry, ciphernodeBondToken } = sys;
 
       const bondOwnerAddress = await bondOwner.getAddress();
       const operatorAddress = await operatorKey.getAddress();
       const registryAddress = await bondingRegistry.getAddress();
 
-      await licenseToken.mint(
+      await ciphernodeBondToken.mint(
         bondOwnerAddress,
         MINTED,
         ethers.encodeBytes32String("Test allocation"),
@@ -577,10 +585,12 @@ describe("BondedVotes", function () {
       await bondingRegistry.connect(operatorKey).setBondOwner(bondOwnerAddress);
 
       // Bond first, with no checkpoint contract configured.
-      await licenseToken.connect(bondOwner).approve(registryAddress, BOND);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, BOND);
       await bondingRegistry
         .connect(bondOwner)
-        .bondLicenseFor(operatorAddress, BOND);
+        .bondCiphernodeFor(operatorAddress, BOND);
 
       const checkpoints = await ethers.deployContract("BondedCheckpoints", [
         registryAddress,
@@ -670,34 +680,39 @@ describe("BondedVotes", function () {
     });
 
     it("exposes the metadata the governance app renders amounts with", async function () {
-      const { bondedVotes, licenseToken } = await loadFixture(setup);
+      const { bondedVotes, ciphernodeBondToken } = await loadFixture(setup);
 
       expect(await bondedVotes.decimals()).to.equal(
-        await licenseToken.decimals(),
+        await ciphernodeBondToken.decimals(),
       );
-      expect(await bondedVotes.name()).to.equal(await licenseToken.name());
-      expect(await bondedVotes.symbol()).to.equal(await licenseToken.symbol());
+      expect(await bondedVotes.name()).to.equal(
+        await ciphernodeBondToken.name(),
+      );
+      expect(await bondedVotes.symbol()).to.equal(
+        await ciphernodeBondToken.symbol(),
+      );
       expect(await bondedVotes.totalSupply()).to.equal(
-        await licenseToken.totalSupply(),
+        await ciphernodeBondToken.totalSupply(),
       );
     });
 
     it("counts wallet and bonded FOLD in the balance, ignoring delegation", async function () {
-      const { bondedVotes, licenseToken, bondOwnerAddress, bond } =
+      const { bondedVotes, ciphernodeBondToken, bondOwnerAddress, bond } =
         await loadFixture(setup);
 
       await bond(BOND);
 
       // Delegation moves votes, never the balance, so this stays the full attributable amount.
       expect(await bondedVotes.balanceOf(bondOwnerAddress)).to.equal(
-        (await licenseToken.balanceOf(bondOwnerAddress)) + BOND,
+        (await ciphernodeBondToken.balanceOf(bondOwnerAddress)) + BOND,
       );
     });
 
     it("keeps total supply a pass-through so bonded FOLD is never counted twice", async function () {
-      const { bondedVotes, licenseToken, bond } = await loadFixture(setup);
+      const { bondedVotes, ciphernodeBondToken, bond } =
+        await loadFixture(setup);
 
-      const before = await licenseToken.totalSupply();
+      const before = await ciphernodeBondToken.totalSupply();
       await bond(BOND);
 
       // Bonding moves FOLD to the registry; it is not burned, so supply is unchanged.
@@ -729,17 +744,17 @@ describe("BondedVotes", function () {
     /// Without the registry binding, a history written by a registry custodying something else
     /// added unbacked weight: 500,000,000 votes against a 100,000 supply, undetectable downstream.
     it("refuses a history whose registry bonds a different token", async function () {
-      const { licenseToken } = await loadFixture(setup);
+      const { ciphernodeBondToken } = await loadFixture(setup);
       const [signer] = await ethers.getSigners();
 
-      // Registry is an EOA here — it custodies no FOLD and cannot answer for a license token.
+      // Registry is an EOA here — it custodies no FOLD and cannot answer for a ciphernode bond token.
       const foreign = await ethers.deployContract("BondedCheckpoints", [
         await signer.getAddress(),
       ]);
 
       await expect(
         ethers.deployContract("BondedVotes", [
-          await licenseToken.getAddress(),
+          await ciphernodeBondToken.getAddress(),
           await foreign.getAddress(),
         ]),
       ).to.be.revert(ethers);
@@ -757,7 +772,7 @@ describe("BondedVotes", function () {
     it("nets the registry down by what it only custodies", async function () {
       const {
         bondedVotes,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwnerAddress,
         registryAddress,
         bond,
@@ -766,19 +781,21 @@ describe("BondedVotes", function () {
       await bond(BOND);
 
       // The registry's raw balance holds the bond; its attributable balance must not.
-      expect(await licenseToken.balanceOf(registryAddress)).to.equal(BOND);
+      expect(await ciphernodeBondToken.balanceOf(registryAddress)).to.equal(
+        BOND,
+      );
       expect(await bondedVotes.balanceOf(registryAddress)).to.equal(0);
 
       // The bond is attributed once, to the owner.
       expect(await bondedVotes.balanceOf(bondOwnerAddress)).to.equal(
-        (await licenseToken.balanceOf(bondOwnerAddress)) + BOND,
+        (await ciphernodeBondToken.balanceOf(bondOwnerAddress)) + BOND,
       );
     });
 
     it("keeps summed balances within total supply while bonded", async function () {
       const {
         bondedVotes,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwnerAddress,
         otherHolderAddress,
         newOwnerAddress,
@@ -798,16 +815,23 @@ describe("BondedVotes", function () {
         summed += await bondedVotes.balanceOf(who);
       }
 
-      expect(summed).to.be.lessThanOrEqual(await licenseToken.totalSupply());
+      expect(summed).to.be.lessThanOrEqual(
+        await ciphernodeBondToken.totalSupply(),
+      );
     });
 
     it("leaves surplus sent to the registry visible", async function () {
-      const { bondedVotes, licenseToken, otherHolder, registryAddress, bond } =
-        await loadFixture(setup);
+      const {
+        bondedVotes,
+        ciphernodeBondToken,
+        otherHolder,
+        registryAddress,
+        bond,
+      } = await loadFixture(setup);
 
       await bond(BOND);
       const surplus = ethers.parseEther("7");
-      await licenseToken
+      await ciphernodeBondToken
         .connect(otherHolder)
         .transfer(registryAddress, surplus);
 
@@ -839,7 +863,7 @@ describe("BondedVotes", function () {
       const {
         bondingRegistry,
         checkpoints,
-        licenseToken,
+        ciphernodeBondToken,
         bondOwner,
         bondOwnerAddress,
         operatorAddress,
@@ -850,11 +874,13 @@ describe("BondedVotes", function () {
       await bond(BOND);
       await time.increase(60);
 
-      await licenseToken.connect(bondOwner).approve(registryAddress, BOND);
+      await ciphernodeBondToken
+        .connect(bondOwner)
+        .approve(registryAddress, BOND);
       await expect(
         bondingRegistry
           .connect(bondOwner)
-          .bondLicenseFor(operatorAddress, BOND),
+          .bondCiphernodeFor(operatorAddress, BOND),
       ).to.emit(checkpoints, "BondedCheckpointed");
 
       expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND * 2n);
@@ -975,21 +1001,21 @@ describe("BondedVotes", function () {
     });
   });
 
-  /// The history counts license-token units, but `BondedVotes` adds them to the voting power of
-  /// one fixed token chosen at construction. A replacement license token would otherwise write
+  /// The history counts ciphernode-bond-token units, but `BondedVotes` adds them to the voting power of
+  /// one fixed token chosen at construction. A replacement ciphernode bond token would otherwise write
   /// into the same history and be counted as FOLD, so an operator could hold voting power the
   /// token's total supply does not back.
-  describe("license-token rotation", function () {
-    async function newLicenseToken() {
+  describe("ciphernode-bond-token rotation", function () {
+    async function newCiphernodeBondToken() {
       return (
-        await ethers.getContractFactory("MockLockAwareLicenseToken")
+        await ethers.getContractFactory("MockLockAwareCiphernodeBondToken")
       ).deploy(0);
     }
 
     async function rotate(bondingRegistry: any) {
-      const replacement = await newLicenseToken();
+      const replacement = await newCiphernodeBondToken();
       await setBondingAssetConfig(bondingRegistry, {
-        licenseToken: await replacement.getAddress(),
+        ciphernodeBondToken: await replacement.getAddress(),
       });
       return replacement;
     }
@@ -997,12 +1023,12 @@ describe("BondedVotes", function () {
     it("detaches the history the previous token's votes are read through", async function () {
       const { bondingRegistry, checkpoints } = await loadFixture(setup);
 
-      const replacement = await newLicenseToken();
+      const replacement = await newCiphernodeBondToken();
 
       // Rotation already requires every old bond to be drained, so nothing live is truncated.
       await expect(
         setBondingAssetConfig(bondingRegistry, {
-          licenseToken: await replacement.getAddress(),
+          ciphernodeBondToken: await replacement.getAddress(),
         }),
       )
         .to.emit(bondingRegistry, "BondedCheckpointsDetached")
@@ -1033,7 +1059,7 @@ describe("BondedVotes", function () {
       );
       await bondingRegistry
         .connect(bondOwner)
-        .bondLicenseFor(operatorAddress, BOND);
+        .bondCiphernodeFor(operatorAddress, BOND);
 
       // Bonded in a different token, so it must not add to FOLD voting power. Before the
       // detachment this bond entered the FOLD history and pushed the owner's votes above what
@@ -1055,7 +1081,7 @@ describe("BondedVotes", function () {
       // The sync is a no-op while unconfigured, so detaching must not freeze bonding.
       await bondingRegistry
         .connect(bondOwner)
-        .bondLicenseFor(operatorAddress, BOND);
+        .bondCiphernodeFor(operatorAddress, BOND);
       expect(
         await bondingRegistry.totalBonded(await bondOwner.getAddress()),
       ).to.equal(BOND);
@@ -1066,7 +1092,7 @@ describe("BondedVotes", function () {
 
       await rotate(bondingRegistry);
 
-      // The one-shot guard is per license token, not per registry lifetime: the previous contract
+      // The one-shot guard is per ciphernode bond token, not per registry lifetime: the previous contract
       // keeps answering for the timepoints it covers, and the new era gets its own history.
       const fresh = await ethers.deployContract("BondedCheckpoints", [
         registryAddress,
@@ -1078,12 +1104,12 @@ describe("BondedVotes", function () {
         .withArgs(await fresh.getAddress());
     });
 
-    it("leaves the history attached when the license token is unchanged", async function () {
+    it("leaves the history attached when the ciphernode bond token is unchanged", async function () {
       const { bondingRegistry, checkpoints } = await loadFixture(setup);
 
       // Re-stating the same assets is a routine reprice and must not cost the recorded history.
       await setBondingAssetConfig(bondingRegistry, {
-        licenseRequiredBond: ethers.parseEther("2"),
+        requiredCiphernodeBond: ethers.parseEther("2"),
       });
 
       expect(await bondingRegistry.bondedCheckpoints()).to.equal(

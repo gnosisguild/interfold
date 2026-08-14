@@ -32,11 +32,12 @@ action requires the configured owner; after funding or registration, rotation is
 FOLD credit would leave the previous owner's wallet-plus-remaining-bonds below its current locked
 FOLD balance.
 
-Only that owner can call the financial/lifecycle `...For(operator)` entry points: `bondLicenseFor`,
-`addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`, `unbondLicenseFor`, and
-`claimExitsFor`. `deregisterOperatorFor` is also callable by the operator as an emergency kill
-switch, but payouts remain owner-only. The CLI exposes owner-aware bond, ticket, registration, and
-exit commands with an explicit `--operator`; self-owned positions may omit it.
+Only that owner can call the financial/lifecycle `...For(operator)` entry points:
+`bondCiphernodeFor`, `addTicketBalanceFor`, `registerOperatorFor`, `removeTicketBalanceFor`,
+`unbondCiphernodeFor`, and `claimExitsFor`. `deregisterOperatorFor` is also callable by the operator
+as an emergency kill switch, but payouts remain owner-only. The CLI exposes owner-aware bond,
+ticket, registration, and exit commands with an explicit `--operator`; self-owned positions may omit
+it.
 
 ---
 
@@ -133,9 +134,9 @@ uses the signer from the selected owner config and targets the node with `--oper
 ```
 Bond owner
 │
-├─ CLI: ciphernode license --operator OP bond --amount N
-├─ licenseToken.approve(BondingRegistry, bondAmount)
-├─ BondingRegistry.bondLicenseFor(operator, bondAmount)
+├─ CLI: ciphernode bond --operator OP bond --amount N
+├─ ciphernodeBondToken.approve(BondingRegistry, bondAmount)
+├─ BondingRegistry.bondCiphernodeFor(operator, bondAmount)
 ├─ CLI: ciphernode register --operator OP
 ├─ BondingRegistry.registerOperatorFor(operator)
 │  ├─ Verifies msg.sender == bondOwnerOf(operator)
@@ -158,8 +159,9 @@ Bond owner
 
 Registration must precede the ticket purchase. `_addTicketBalance` requires
 `operators[operator].registered`, so funding tickets first reverts with `NotRegistered()`. The
-license bond is the reverse: `registerOperatorFor` requires `licenseBond >= licenseRequiredBond`, so
-the bond must already be in place. The only valid order is bond, register, tickets.
+ciphernode bond is the reverse: `registerOperatorFor` requires
+`ciphernodeBond >= requiredCiphernodeBond`, so the bond must already be in place. The only valid
+order is bond, register, tickets.
 
 The node's address—not the bond owner's—is inserted into the IMT, owns the tFOLD balance, and
 remains the committee and slashing identity.
@@ -180,13 +182,13 @@ User runs: interfold ciphernode status
 │   ├─ operator.active
 │   ├─ operator.exitRequested
 │   ├─ ticketToken.balanceOf(address) → ticket balance
-│   ├─ operator.licenseBond → license bond amount
+│   ├─ operator.ciphernodeBond → ciphernode bond amount
 │   ├─ bondingRegistry.bondOwnerOf(address) → collateral owner
 │   ├─ bondingRegistry.pendingBondOwnerOf(address) → proposed replacement owner
-│   ├─ pendingExits.ticketAmount, pendingExits.licenseAmount
+│   ├─ pendingExits.ticketAmount, pendingExits.ciphernodeBondAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket
-│   └─ bondingRegistry.licenseRequiredBond → required bond
+│   └─ bondingRegistry.requiredCiphernodeBond → required bond
 │
 └─ OUTPUT:
    Operator Key:     0x1234...
@@ -195,9 +197,9 @@ User runs: interfold ciphernode status
    Active:           true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
-   License Bond:     50000 FOLD
-   Pending Exits:    tickets=0, license=0
-   Requirements:     minTickets=10, ticketPrice=1000000, licenseBond=50000
+   Ciphernode Bond:     50000 FOLD
+   Pending Exits:    tickets=0, ciphernode bond=0
+   Requirements:     minTickets=10, ticketPrice=1000000, ciphernodeBond=50000
 ```
 
 ---

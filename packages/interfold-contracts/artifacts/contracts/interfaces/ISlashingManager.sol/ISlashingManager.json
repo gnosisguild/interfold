@@ -498,7 +498,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "licenseAmount",
+          "name": "ciphernodeBondAmount",
           "type": "uint256"
         },
         {
@@ -535,7 +535,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "licensePenalty",
+              "name": "ciphernodeBondPenalty",
               "type": "uint256"
             },
             {
@@ -619,7 +619,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "licenseAmount",
+          "name": "ciphernodeBondAmount",
           "type": "uint256"
         },
         {
@@ -1033,7 +1033,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "licensePenalty",
+              "name": "ciphernodeBondPenalty",
               "type": "uint256"
             },
             {
@@ -1114,7 +1114,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "licenseAmount",
+              "name": "ciphernodeBondAmount",
               "type": "uint256"
             },
             {
@@ -1450,7 +1450,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "licensePenalty",
+              "name": "ciphernodeBondPenalty",
               "type": "uint256"
             },
             {
@@ -1597,5 +1597,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-33abaf88dee61bb23c45df8a139333f26829375c"
+  "buildInfoId": "solc-0_8_28-7d174de86a308108eba85a8ebc2203ff44654d12"
 }

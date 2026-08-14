@@ -11,7 +11,7 @@ use std::fmt::{self, Display};
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
-pub struct LicenseBondUpdated {
+pub struct CiphernodeBondUpdated {
     pub operator: String,
     pub delta: I256,
     pub new_bond: U256,
@@ -19,11 +19,11 @@ pub struct LicenseBondUpdated {
     pub chain_id: u64,
 }
 
-impl Display for LicenseBondUpdated {
+impl Display for CiphernodeBondUpdated {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "LicenseBondUpdated {{ operator: {}, new_bond: {}, chain_id: {} }}",
+            "CiphernodeBondUpdated {{ operator: {}, new_bond: {}, chain_id: {} }}",
             self.operator, self.new_bond, self.chain_id
         )
     }

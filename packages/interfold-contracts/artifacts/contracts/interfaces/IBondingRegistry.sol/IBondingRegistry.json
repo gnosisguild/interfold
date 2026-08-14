@@ -206,7 +206,7 @@
           "type": "address"
         }
       ],
-      "name": "IncompatibleLicenseToken",
+      "name": "IncompatibleCiphernodeBondToken",
       "type": "error"
     },
     {
@@ -338,7 +338,7 @@
     },
     {
       "inputs": [],
-      "name": "NotLicensed",
+      "name": "NotCiphernodeBonded",
       "type": "error"
     },
     {
@@ -532,7 +532,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "licenseAmount",
+          "name": "ciphernodeBondAmount",
           "type": "uint256"
         }
       ],
@@ -621,7 +621,7 @@
         {
           "indexed": true,
           "internalType": "contract IERC20",
-          "name": "licenseToken",
+          "name": "ciphernodeBondToken",
           "type": "address"
         },
         {
@@ -633,7 +633,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "licenseRequiredBond",
+          "name": "requiredCiphernodeBond",
           "type": "uint256"
         },
         {
@@ -645,7 +645,7 @@
         {
           "indexed": false,
           "internalType": "uint8",
-          "name": "expectedLicenseDecimals",
+          "name": "expectedCiphernodeBondDecimals",
           "type": "uint8"
         },
         {
@@ -656,6 +656,62 @@
         }
       ],
       "name": "BondingAssetConfigUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "CiphernodeBondSurplusSwept",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "int256",
+          "name": "delta",
+          "type": "int256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newBond",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "reason",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CiphernodeBondUpdated",
       "type": "event"
     },
     {
@@ -744,62 +800,6 @@
         }
       ],
       "name": "EligibilityConfigurationVersionUpdated",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "operator",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "int256",
-          "name": "delta",
-          "type": "int256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "newBond",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "reason",
-          "type": "bytes32"
-        }
-      ],
-      "name": "LicenseBondUpdated",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "token",
-          "type": "address"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "to",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
-      "name": "LicenseSurplusSwept",
       "type": "event"
     },
     {
@@ -1015,7 +1015,7 @@
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "licenseAmount",
+          "name": "ciphernodeBondAmount",
           "type": "uint256"
         }
       ],
@@ -1223,7 +1223,7 @@
           "type": "uint256"
         }
       ],
-      "name": "bondLicenseFor",
+      "name": "bondCiphernodeFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1287,7 +1287,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "maxLicenseAmount",
+          "name": "maxCiphernodeBondAmount",
           "type": "uint256"
         }
       ],
@@ -1431,7 +1431,7 @@
           "type": "address"
         }
       ],
-      "name": "getLicenseBond",
+      "name": "getCiphernodeBond",
       "outputs": [
         {
           "internalType": "uint256",
@@ -1444,7 +1444,7 @@
     },
     {
       "inputs": [],
-      "name": "getLicenseToken",
+      "name": "getCiphernodeBondToken",
       "outputs": [
         {
           "internalType": "address",
@@ -1610,7 +1610,7 @@
           "type": "address"
         }
       ],
-      "name": "isLicensed",
+      "name": "isCiphernodeBonded",
       "outputs": [
         {
           "internalType": "bool",
@@ -1635,19 +1635,6 @@
           "internalType": "bool",
           "name": "",
           "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "licenseRequiredBond",
-      "outputs": [
-        {
-          "internalType": "uint256",
-          "name": "",
-          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -1751,7 +1738,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "license",
+          "name": "ciphernodeBond",
           "type": "uint256"
         }
       ],
@@ -1794,7 +1781,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "license",
+          "name": "ciphernodeBond",
           "type": "uint256"
         }
       ],
@@ -1900,6 +1887,19 @@
       "name": "removeTicketBalanceFor",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "requiredCiphernodeBond",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -2014,7 +2014,7 @@
             },
             {
               "internalType": "address",
-              "name": "licenseToken",
+              "name": "ciphernodeBondToken",
               "type": "address"
             },
             {
@@ -2024,7 +2024,7 @@
             },
             {
               "internalType": "uint256",
-              "name": "licenseRequiredBond",
+              "name": "requiredCiphernodeBond",
               "type": "uint256"
             },
             {
@@ -2034,7 +2034,7 @@
             },
             {
               "internalType": "uint8",
-              "name": "expectedLicenseDecimals",
+              "name": "expectedCiphernodeBondDecimals",
               "type": "uint8"
             }
           ],
@@ -2044,6 +2044,19 @@
         }
       ],
       "name": "setBondingAssetConfig",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "newBps",
+          "type": "uint256"
+        }
+      ],
+      "name": "setCiphernodeBondActiveBps",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2080,19 +2093,6 @@
         }
       ],
       "name": "setExitDelay",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "newBps",
-          "type": "uint256"
-        }
-      ],
-      "name": "setLicenseActiveBps",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2198,7 +2198,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "slashLicenseBond",
+      "name": "slashCiphernodeBond",
       "outputs": [
         {
           "internalType": "uint256",
@@ -2240,12 +2240,12 @@
     },
     {
       "inputs": [],
-      "name": "slashedFundsTreasury",
+      "name": "slashedCiphernodeBond",
       "outputs": [
         {
-          "internalType": "address",
+          "internalType": "uint256",
           "name": "",
-          "type": "address"
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -2253,12 +2253,12 @@
     },
     {
       "inputs": [],
-      "name": "slashedLicenseBond",
+      "name": "slashedFundsTreasury",
       "outputs": [
         {
-          "internalType": "uint256",
+          "internalType": "address",
           "name": "",
-          "type": "uint256"
+          "type": "address"
         }
       ],
       "stateMutability": "view",
@@ -2302,7 +2302,7 @@
     },
     {
       "inputs": [],
-      "name": "sweepLicenseSurplus",
+      "name": "sweepCiphernodeBondSurplus",
       "outputs": [
         {
           "internalType": "uint256",
@@ -2360,7 +2360,7 @@
     },
     {
       "inputs": [],
-      "name": "totalLicenseLiability",
+      "name": "totalCiphernodeBondLiability",
       "outputs": [
         {
           "internalType": "uint256",
@@ -2384,7 +2384,7 @@
           "type": "uint256"
         }
       ],
-      "name": "unbondLicenseFor",
+      "name": "unbondCiphernodeFor",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2411,7 +2411,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "licenseAmount",
+          "name": "ciphernodeBondAmount",
           "type": "uint256"
         }
       ],
@@ -2427,5 +2427,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-33abaf88dee61bb23c45df8a139333f26829375c"
+  "buildInfoId": "solc-0_8_28-7d174de86a308108eba85a8ebc2203ff44654d12"
 }

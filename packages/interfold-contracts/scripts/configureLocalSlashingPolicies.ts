@@ -36,7 +36,7 @@ function localAttestationSlashPolicy(
   // `proofVerifier` is unused (reserved for future ZK verifier wiring). ZeroAddress is intentional.
   return {
     ticketPenalty: ethers.parseUnits("10", 6),
-    licensePenalty: ethers.parseEther("50"),
+    ciphernodeBondPenalty: ethers.parseEther("50"),
     requiresProof: true,
     proofVerifier: ethers.ZeroAddress,
     banNode: false,

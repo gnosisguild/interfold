@@ -43,7 +43,7 @@ supplier-side timeout.
 > window durations). This may be intentional (grace already baked into the window sizes) or a
 > missing feature.
 
-```
+```text
 Anyone calls: Interfold.markE3Failed(e3Id)
 │
 ├─ Revert if stage == None, Complete, or Failed
@@ -79,7 +79,7 @@ Anyone calls: Interfold.markE3Failed(e3Id)
 
 ### Contract-Triggered Failure
 
-```
+```text
 CiphernodeRegistry or SlashingManager calls:
   Interfold.onE3Failed(e3Id, reason)
 │
@@ -135,7 +135,7 @@ may auto-submit it from any effects-enabled node on the same chain, and it must 
 active-aggregator designation because failures can happen before committee finalization or while the
 current aggregator is offline.
 
-```
+```text
 Anyone calls: Interfold.processE3Failure(e3Id)
 │
 ├─ require(stage == Failed)
@@ -227,7 +227,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 
 ### Step 2: Claim Refunds
 
-```
+```text
 REQUESTER claims:
   E3RefundManager.claimRequesterRefund(e3Id)
 │
@@ -278,7 +278,7 @@ SLASH RECIPIENT claims a token-specific entitlement:
 
 ### Refund Example: Requester/Compute-Provider Fault
 
-```
+```text
 Scenario: E3 fails at KeyPublished stage (compute timeout)
   Payment: 1,000,000 fee-token units (one token with 6 decimals)
   Honest nodes: 3 (out of 5 committee members, 2 were slashed)
@@ -296,7 +296,7 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
 
 ### Refund Example: Ciphernode Fault
 
-```
+```text
 Scenario: E3 fails during DKG because one member supplied invalid shares
   Fee escrow: 1,000,000 fee-token units
   Honest nodes after expulsion: 2
@@ -333,7 +333,7 @@ The AccusationManager is a per-E3 ephemeral actor created when `SortitionCommitt
 `ICiphernodeRegistry` event) fires. It bridges proof verification failures to on-chain slashing
 through an off-chain committee quorum protocol.
 
-```
+```text
 LIFECYCLE:
   Created by AccusationManagerExtension on SortitionCommitteeFinalized
   → Stores committee list, threshold_m, this node's address + signer
@@ -343,7 +343,7 @@ LIFECYCLE:
 
 #### Step 1: Local Proof Failure Detection
 
-```
+```text
 ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │
 ├─ For ProofVerificationFailed:
@@ -398,7 +398,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 
 #### Step 2: Incoming Accusation Handling
 
-```
+```text
 ProofFailureAccusation arrives via P2P from another committee member
 │
 ├─ 1. Verify accuser is a committee member
@@ -453,7 +453,7 @@ slashing manager before that submission deadline passes.
 
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
 
-```
+```text
 Accusation ID (deterministic, same on Rust + Solidity):
   accusation_id = keccak256(abi.encodePacked(
     chainId, e3Id, accused_address, proofType
@@ -481,7 +481,7 @@ CRITICAL: These type hashes MUST match the Solidity constants:
 
 #### Step 4: Quorum Decision Logic
 
-```
+```text
 check_quorum(accusation_id):
 │
 ├─ Count affirmative votes
@@ -505,7 +505,7 @@ check_quorum(accusation_id):
 
 #### Step 5: On-Chain Slash Submission
 
-```
+```text
 AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │
 ├─ Continue only for AccusedFaulted
@@ -551,7 +551,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 
 ### Lane A: Attestation-Based Slashing (Permissionless, Atomic)
 
-```
+```text
 Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │
 ├─ 1. Decode proof:
@@ -616,7 +616,7 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │     │  │         hash = EIP712Hash(                            │
 │     │  │           e3Id, accusationId, voter,                  │
 │     │  │           dataHashes[i], issuedAt, deadline           │
-│     │  │         )                                              │
+│     │  │         )                                             │
 │     │  │         require(ECDSA.recover(hash, sig) == voter)    │
 │     │  │         → Proves voter actually signed this vote      │
 │     │  │                                                       │
@@ -626,7 +626,7 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │     proposal = SlashProposal {
 │       e3Id, operator, reason,
 │       ticketAmount: policy.ticketPenalty,
-│       licenseAmount: policy.licensePenalty,
+│       ciphernodeBondAmount: policy.ciphernodeBondPenalty,
 │       proofVerified: true,          // Lane A marker
 │       executableAt: block.timestamp + policy.appealWindow,
 │       banNode: policy.banNode,
@@ -646,7 +646,7 @@ Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 
 ### Lane B: Evidence-Based Slashing (Delayed, With Appeals)
 
-```
+```text
 SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
   e3Id, operator, reason, evidence
 )
@@ -669,7 +669,7 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 │     proposal = SlashProposal {
 │       e3Id, operator, reason,
 │       ticketAmount: policy.ticketPenalty,
-│       licenseAmount: policy.licensePenalty,
+│       ciphernodeBondAmount: policy.ciphernodeBondPenalty,
 │       proofVerified: false,
 │       executableAt: block.timestamp + policy.appealWindow,
 │       banNode: policy.banNode,
@@ -729,7 +729,7 @@ Anyone calls: SlashingManager.executeSlash(proposalId)
 
 ### Slash Execution (Both Lanes)
 
-```
+```text
 _executeSlash(proposalId):
 │
 ├─ 1. SLASH TICKET BALANCE (if ticketAmount > 0):
@@ -744,7 +744,7 @@ _executeSlash(proposalId):
 │     │  │     activeBalance = ticketToken.balanceOf(operator)   │
 │     │  │     slashFromActive = min(amount, activeBalance)      │
 │     │  │     ticketToken.burnTickets(operator, slashFromActive)│
-│     │  │     → Burns tFOLD, underlying stays as payableBalance   │
+│     │  │     → Burns tFOLD, underlying stays as payableBalance │
 │     │  │                                                       │
 │     │  │  2. Remaining from EXIT QUEUE:                        │
 │     │  │     remaining = amount - slashFromActive              │
@@ -753,7 +753,7 @@ _executeSlash(proposalId):
 │     │  │         operator, remaining, 0,                       │
 │     │  │         includeLockedAssets=true                      │
 │     │  │       )                                               │
-│     │  │       require(actualPendingSlash == remaining)         │
+│     │  │       require(actualPendingSlash == remaining)        │
 │     │  │       → Can slash EVEN LOCKED exit tranches           │
 │     │  │       → No escaping via queued exits                  │
 │     │  │                                                       │
@@ -764,26 +764,26 @@ _executeSlash(proposalId):
 │     │  │     → May deactivate if below thresholds              │
 │     │  └───────────────────────────────────────────────────────┘
 │
-├─ 2. SLASH LICENSE BOND (if licenseAmount > 0):
-│     actualLicenseSlashed = bondingRegistry.slashLicenseBond(
-│       operator, proposal.licenseAmount, reason
+├─ 2. SLASH CIPHERNODE BOND (if ciphernodeBondAmount > 0):
+│     actualCiphernodeBondSlashed = bondingRegistry.slashCiphernodeBond(
+│       operator, proposal.ciphernodeBondAmount, reason
 │     )
 │     → Returns ACTUAL amount slashed (may be less if balance insufficient)
 │     │
-│     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
-│     │  │                                                       │
-│     │  │  1. Compute active + pending FOLD total               │
-│     │  │                                                       │
-│     │  │  2. Slash active bond first, then pending exits       │
-│     │  │     → Active slash decrements operators[op].licenseBond│
-│     │  │     → Pending slash decrements pending license totals │
-│     │  │     → totalBonded(bondOwner) drops immediately; if   │
-│     │  │       the owner has token locks, wallet FOLD may become│
-│     │  │       encumbered until the locked floor decays/top-up │
-│     │  │                                                       │
-│     │  │  3. slashedLicenseBond += totalSlashed                │
-│     │  │  4. _updateOperatorStatus(operator)                   │
-│     │  └───────────────────────────────────────────────────────┘
+│     │  ┌─── BondingRegistry.slashCiphernodeBond() ─────────────────────┐
+│     │  │                                                               │
+│     │  │  1. Compute active + pending FOLD total                       │
+│     │  │                                                               │
+│     │  │  2. Slash active bond first, then pending exits               │
+│     │  │     → Active slash decrements operators[op].ciphernodeBond    │
+│     │  │     → Pending slash decrements pending ciphernode bond totals │
+│     │  │     → totalBonded(bondOwner) drops immediately; if            │
+│     │  │       the owner has token locks, wallet FOLD may become       │
+│     │  │       encumbered until the locked floor decays/top-up         │
+│     │  │                                                               │
+│     │  │  3. slashedCiphernodeBond += totalSlashed                     │
+│     │  │  4. _updateOperatorStatus(operator)                           │
+│     │  └───────────────────────────────────────────────────────────────┘
 │
 ├─ 3. BAN NODE (if proposal.banNode):
 │     banned[operator] = true
@@ -845,46 +845,46 @@ _executeSlash(proposalId):
 │     │  │  ┌─── routePendingSlashFunds() ───────────────────────┐
 │     │  │  │  require(msg.sender == address(this))              │
 │     │  │  │  → Self-call only (for try/catch atomicity)        │
-│     │  │  │  require(route.pending)                             │
+│     │  │  │  require(route.pending)                            │
 │     │  │  │  route.pending = false before interactions         │
 │     │  │  │  → Callback cannot consume the reserve twice       │
 │     │  │  │  → Any later revert restores pending=true          │
 │     │  │  │                                                    │
 │     │  │  │  Step A: Move collateral from BondingRegistry      │
 │     │  │  │    bondingRegistry.redirectReservedSlashedTicketFunds(
-│     │  │  │      proposalId                                    │
-│     │  │  │    )                                               │
-│     │  │  │    ├─ Load the exact amount and frozen destination │
-│     │  │  │    │  for (manager, proposalId)                    │
+│     │  │  │      proposalId                                     │
+│     │  │  │    )                                                │
+│     │  │  │    ├─ Load the exact amount and frozen destination  │
+│     │  │  │    │  for (manager, proposalId)                     │
 │     │  │  │    ├─ reservedSlashedTicketBalance -= amount        │
 │     │  │  │    ├─ slashedTicketBalance -= amount                │
 │     │  │  │    └─ ticketToken.payout(e3RefundManager, amount)   │
 │     │  │  │       → Transfers the underlying collateral asset   │
 │     │  │  │         to the E3RefundManager contract             │
-│     │  │  │       → Reverts unless the manager receives the      │
-│     │  │  │         complete amount                              │
+│     │  │  │       → Reverts unless the manager receives the     │
+│     │  │  │         complete amount                             │
 │     │  │  │       → Uses payableBalance incremented by          │
 │     │  │  │         burnTickets() during slashTicketBalance     │
-│     │  │  │                                                    │
-│     │  │  │  Step B: Update escrow accounting                  │
+│     │  │  │                                                     │
+│     │  │  │  Step B: Update escrow accounting                   │
 │     │  │  │    interfold.escrowSlashedFunds(                    │
-│     │  │  │      e3Id, proposalId, operator, token, amount     │
-│     │  │  │    )                                               │
+│     │  │  │      e3Id, proposalId, operator, token, amount      │
+│     │  │  │    )                                                │
 │     │  │  │    → e3RefundManager.escrowSlashedFunds(            │
 │     │  │  │        e3Id, proposalId, operator, token, amount)   │
-│     │  │  │      │                                             │
+│     │  │  │      │                                              │
 │     │  │  │      ├─ Record the proposal target, token, and amount│
 │     │  │  │      ├─ _pendingSlashedByToken[e3Id][token] += amt  │
 │     │  │  │      ├─ tokenLiability[token] += amount             │
 │     │  │  │      │   → Require balance >= protected liability   │
-│     │  │  │      │                                             │
+│     │  │  │      │                                              │
 │     │  │  │      └─ If refund distribution IS calculated:       │
 │     │  │  │          settle this proposal's pull claims now     │
 │     │  │  │          → Never mutate fee-token refund buckets    │
-│     │  │  │                                                    │
-│     │  │  │  If EITHER step reverts → both revert together     │
+│     │  │  │                                                     │
+│     │  │  │  If EITHER step reverts → both revert together      │
 │     │  │  │  → Route remains pending and funds stay reserved    │
-│     │  │  │  → Slash itself still proceeds                     │
+│     │  │  │  → Slash itself still proceeds                      │
 │     │  │  │  On success emit SlashRouteCompleted                │
 │     │  │  └────────────────────────────────────────────────────┘
 │     │
@@ -898,13 +898,13 @@ _executeSlash(proposalId):
 │        → transfer + accounting succeed atomically, or all state reverts
 │
 └─ 7. Emit SlashExecuted(proposalId, e3Id, operator, reason,
-       actualTicketSlashed, actualLicenseSlashed, banned)
+       actualTicketSlashed, actualCiphernodeBondSlashed, banned)
 ```
 
 > **Asset transfer policy.** Fee and bonding assets must transfer exact amounts and must not rebase
-> account balances. Ticket payouts, license transfers, refund-manager funding, and every claimant
-> payment measure the recipient increase and custody decrease. A mismatch reverts the complete
-> accounting transaction and preserves the other pooled liabilities.
+> account balances. Ticket payouts, ciphernode bond transfers, refund-manager funding, and every
+> claimant payment measure the recipient increase and custody decrease. A mismatch reverts the
+> complete accounting transaction and preserves the other pooled liabilities.
 
 ### Proposal-Aware Slashed Funds Settlement (Failure Path)
 
@@ -943,7 +943,7 @@ Design rationale:
 
 ### Slashed Funds Distribution (Success Path): distributeSlashedFundsOnSuccess()
 
-```
+```text
 distributeSlashedFundsOnSuccess(e3Id, paymentToken):
 │
 ├─ Called by Interfold._distributeRewards() when E3 completes successfully
@@ -1061,10 +1061,10 @@ Case 4: E3 completes successfully with escrowed slashed funds
 
 ### Slash Policy Configuration
 
-```
+```text
 SlashPolicy {
   ticketPenalty:    uint256   // tickets to slash (in base units)
-  licensePenalty:   uint256   // FOLD to slash
+  ciphernodeBondPenalty:   uint256   // FOLD to slash
   requiresProof:   bool      // Lane A (true) or Lane B (false)
   proofVerifier:    address   // verifier address (Lane A: used in policy lookup)
   banNode:          bool      // permanently ban operator
@@ -1097,39 +1097,39 @@ Slash Reasons (derived from ProofType for Lane A):
 
 ### End-to-End: Proof Failure → On-Chain Slash
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │              Complete Proof-to-Slash Pipeline                    │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
+│                                                                │
 │  1. PROOF GENERATION (each committee member)                   │
 │     ProofRequestActor generates & signs C0-C7 proofs           │
 │     → Broadcasts signed proofs via P2P gossip                  │
-│                                                                 │
+│                                                                │
 │  2. PROOF VERIFICATION (each receiving committee member)       │
 │     ProofVerificationActor (C0) / ShareVerificationActor       │
 │     (C2/C3/C4/C6)                                              │
 │     ├─ Phase 1: ECDSA signature validation (inline)            │
 │     └─ Phase 2: ZK proof verification (multithread)            │
-│                                                                 │
+│                                                                │
 │  3. FAILURE DETECTION                                          │
 │     If verification fails → SignedProofFailed event            │
-│                                                                 │
+│                                                                │
 │  4. ACCUSATION (AccusationManager, per-E3 actor)               │
 │     ├─ Create ProofFailureAccusation (signed, broadcast)       │
 │     ├─ Cast own vote (agrees=true)                             │
 │     └─ Start 300s timeout                                      │
-│                                                                 │
+│                                                                │
 │  5. VOTING (all committee members)                             │
 │     ├─ Receive accusation via P2P                              │
 │     ├─ Check own verification cache                            │
 │     ├─ Cast AccusationVote (signed, broadcast)                 │
 │     └─ Each vote independently verified by all nodes           │
-│                                                                 │
+│                                                                │
 │  6. QUORUM (AccusationManager)                                 │
 │     ├─ votes_for >= threshold_m → AccusedFaulted/Equivocation  │
 │     └─ AccusationQuorumReached event published                 │
-│                                                                 │
+│                                                                │
 │  7. ON-CHAIN SUBMISSION (SlashingManagerSolWriter)             │
 │     ├─ Defers replayed intents until EffectsEnabled            │
 │     ├─ Coalesces the contract replay tuple while in flight     │
@@ -1137,20 +1137,20 @@ Slash Reasons (derived from ProofType for Lane A):
 │     │   ranks 1+ wait rank×30s as fallback                     │
 │     ├─ Encodes attestation evidence (votes + signatures)       │
 │     └─ Calls SlashingManager.proposeSlash(e3Id, operator, proof)│
-│                                                                 │
+│                                                                │
 │  8. ON-CHAIN VERIFICATION (Lane A, atomic)                     │
-│     ├─ Verify each voter's ECDSA signature                    │
+│     ├─ Verify each voter's ECDSA signature                     │
 │     ├─ Verify quorum (numVotes >= threshold_m)                 │
 │     ├─ Verify voters are active committee members              │
 │     └─ Execute slash immediately (no appeal)                   │
-│                                                                 │
+│                                                                │
 │  9. PENALTIES                                                  │
 │     ├─ Ticket balance slashed (active + exit queue)            │
-│     ├─ License bond slashed (active + exit queue)              │
+│     ├─ Ciphernode bond slashed (active + exit queue)           │
 │     ├─ Node banned (if policy requires)                        │
 │     ├─ Committee member expelled                               │
 │     └─ Slashed ticket collateral escrowed in E3RefundManager   │
-│                                                                 │
+│                                                                │
 │  10. FUND DISTRIBUTION (at E3 terminal state)                  │
 │      ├─ Failure: fee refund is fault-attributed; slashes pay   │
 │      │           active honest nodes                           │
@@ -1211,14 +1211,14 @@ FALLBACK: RETRY, NOT OWNER RELABELING
   protected slash liability after base refunds and treasury claims, and it
   reverts unless each claimant receives the complete recorded amount.
 
-License bond slashes always go to treasury (no escrow routing for FOLD).
+Ciphernode bond slashes always go to treasury (no escrow routing for FOLD).
 ```
 
 ---
 
 ## Rust-Side Handling
 
-```
+```text
 When CommitteeMemberExpelled event arrives from EVM:
 │
 ├─ Event initially has party_id: None (not resolved yet)
@@ -1314,13 +1314,14 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 - `SlashingManager` tracks `_openProposalCount[operator]` for observability. It also opens one
   proposal-scoped lock in `BondingRegistry`. Successful execution, an upheld appeal, or terminal
   appeal expiry closes both records atomically.
-- `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondLicense`,
+- `BondingRegistry` reverts `OperatorUnderSlash()` on `removeTicketBalance`, `unbondCiphernode`,
   `deregisterOperator`, and `claimExits` while the gate is raised. Both active collateral and assets
   already queued for exit therefore remain slashable.
 - For a split position, the equivalent owner-only `...For(operator)` calls have the same gate.
   Proposals, bans, evidence signatures, and slash execution remain keyed by the hot operator
-  address; a license slash reduces the authorized owner's aggregate `totalBonded` credit. Separating
-  keys therefore protects withdrawal authority but does not create a slashing escape hatch.
+  address; a ciphernode bond slash reduces the authorized owner's aggregate `totalBonded` credit.
+  Separating keys therefore protects withdrawal authority but does not create a slashing escape
+  hatch.
 - The registry checks one local aggregate. It does not call current or retained managers during an
   exit. Rotation therefore cannot release collateral for an old manager's in-flight proposal, and a
   broken manager cannot freeze unrelated operators. Governance revokes an old manager only after its

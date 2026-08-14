@@ -188,7 +188,7 @@ pnpm ciphernode:add --network [network]
 
 Options:
 
-- `--license-bond-amount`: Amount of FOLD to bond (default: 1000 FOLD)
+- `--ciphernode-bond-amount`: Amount of FOLD to bond (default: 1000 FOLD)
 - `--ticket-amount`: Amount of the configured ticket collateral token
 
 For testing/development, you can also use the admin task to register any

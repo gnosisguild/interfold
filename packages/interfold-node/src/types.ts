@@ -57,7 +57,7 @@ export interface ChainOperatorView {
   operator_registered: boolean
   operator_active: boolean
   ticket_balance?: string
-  license_bond?: string
+  ciphernode_bond?: string
   exit_unlock_at?: number
   rewards_credited: RewardView[]
 }
@@ -81,7 +81,7 @@ export interface OperatorChainStatus {
   exit_in_progress: boolean
   ticket_balance: string
   available_tickets: string
-  license_bond: string
+  ciphernode_bond: string
 }
 
 export interface OperatorStatusSnapshot {

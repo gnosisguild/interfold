@@ -71,7 +71,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       ciphernodeRegistry: registry,
       slashingManager,
       bondingRegistry,
-      licenseToken: foldToken,
+      ciphernodeBondToken: foldToken,
       ticketToken,
       usdcToken,
       mocks,
@@ -88,7 +88,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     // ── Slash Policies ─────────────────────────────────────────────────────
     const baseSlashPolicy = {
       ticketPenalty: ethers.parseUnits("10", 6),
-      licensePenalty: ethers.parseEther("50"),
+      ciphernodeBondPenalty: ethers.parseEther("50"),
       requiresProof: true,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -124,7 +124,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
         .connect(owner)
-        .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+        .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
       await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
 
       const ticketAmount = ethers.parseUnits("100", 6);
@@ -237,7 +237,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const reason = ethers.keccak256(ethers.toUtf8Bytes(label));
       await slashingManager.setSlashPolicy(reason, {
         ticketPenalty: ethers.parseUnits("10", 6),
-        licensePenalty: ethers.parseEther("50"),
+        ciphernodeBondPenalty: ethers.parseEther("50"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -431,7 +431,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       );
       await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
         ticketPenalty: ethers.parseUnits("10", 6),
-        licensePenalty: ethers.parseEther("50"),
+        ciphernodeBondPenalty: ethers.parseEther("50"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -661,7 +661,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       );
       await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
         ticketPenalty: ethers.parseUnits("10", 6),
-        licensePenalty: ethers.parseEther("50"),
+        ciphernodeBondPenalty: ethers.parseEther("50"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -806,7 +806,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
 
       const operator = await operator2.getAddress();
       const ticketsBefore = await bondingRegistry.getTicketBalance(operator);
-      const licenseBefore = await bondingRegistry.getLicenseBond(operator);
+      const ciphernodeBondBefore =
+        await bondingRegistry.getCiphernodeBond(operator);
       const mock = await ethers.deployContract("MockFailingInterfold");
       await mock.waitForDeployment();
       await ethers.provider.send("hardhat_setCode", [
@@ -831,8 +832,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       expect(await bondingRegistry.getTicketBalance(operator)).to.equal(
         ticketsBefore,
       );
-      expect(await bondingRegistry.getLicenseBond(operator)).to.equal(
-        licenseBefore,
+      expect(await bondingRegistry.getCiphernodeBond(operator)).to.equal(
+        ciphernodeBondBefore,
       );
       expect((await slashingManager.getSlashProposal(proposalId)).executed).to
         .be.false;
@@ -995,7 +996,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         op1Addr,
         REASON_PT_0,
         ethers.parseUnits("10", 6), // ticketPenalty
-        ethers.parseEther("50"), // licensePenalty
+        ethers.parseEther("50"), // ciphernodeBondPenalty
         true, // executed
         0, // lane: LaneA (attestation/proof-based via proposeSlash)
       );

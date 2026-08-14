@@ -8,8 +8,8 @@ use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use e3_config::AppConfig;
 
+mod bond;
 mod context;
-mod license;
 mod lifecycle;
 pub mod setup;
 mod tickets;
@@ -96,10 +96,10 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Manage FOLD license bonding for an operator
-    License {
+    /// Manage FOLD ciphernode bonding for an operator
+    Bond {
         #[command(subcommand)]
-        command: LicenseCommands,
+        command: BondCommands,
         /// Target operator; defaults to the configured signer for self-owned positions
         #[arg(long = "operator", value_name = "ADDRESS")]
         operator: Option<String>,
@@ -140,12 +140,12 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Intentionally deactivate by withdrawing tickets and/or license stake
+    /// Intentionally deactivate by withdrawing tickets and/or ciphernode bond
     Deactivate {
         #[arg(long = "tickets", value_name = "AMOUNT")]
         ticket_amount: Option<String>,
-        #[arg(long = "license", value_name = "AMOUNT")]
-        license_amount: Option<String>,
+        #[arg(long = "bond", value_name = "AMOUNT")]
+        ciphernode_bond_amount: Option<String>,
         /// Target operator; defaults to the configured signer for self-owned positions
         #[arg(long = "operator", value_name = "ADDRESS")]
         operator: Option<String>,
@@ -163,7 +163,7 @@ pub enum CiphernodeCommands {
 }
 
 #[derive(Subcommand, Clone, Debug)]
-pub enum LicenseCommands {
+pub enum BondCommands {
     /// Bond FOLD into an operator position
     Bond {
         #[arg(long = "amount")]
@@ -174,12 +174,12 @@ pub enum LicenseCommands {
         #[arg(long = "amount")]
         amount: String,
     },
-    /// Claim unlocked ticket and license exits
+    /// Claim unlocked ticket and ciphernode bond exits
     Claim {
         #[arg(long = "max-ticket")]
         max_ticket: Option<String>,
-        #[arg(long = "max-license")]
-        max_license: Option<String>,
+        #[arg(long = "max-bond")]
+        max_bond: Option<String>,
     },
 }
 
@@ -215,14 +215,14 @@ pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConf
             let ctx = ChainContext::new(config, chain.selection()).await?;
             lifecycle::accept_bond_owner(out, &ctx, &operator).await?
         }
-        CiphernodeCommands::License {
+        CiphernodeCommands::Bond {
             chain,
             operator,
             command,
         } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
             let operator = ctx.resolve_operator(operator.as_deref())?;
-            license::execute(out, &ctx, operator, command).await?
+            bond::execute(out, &ctx, operator, command).await?
         }
         CiphernodeCommands::Tickets {
             chain,
@@ -252,11 +252,12 @@ pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConf
             chain,
             operator,
             ticket_amount,
-            license_amount,
+            ciphernode_bond_amount,
         } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
             let operator = ctx.resolve_operator(operator.as_deref())?;
-            lifecycle::deactivate(out, &ctx, operator, ticket_amount, license_amount).await?
+            lifecycle::deactivate(out, &ctx, operator, ticket_amount, ciphernode_bond_amount)
+                .await?
         }
         CiphernodeCommands::Status { chain, operator } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;

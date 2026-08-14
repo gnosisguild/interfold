@@ -40,20 +40,24 @@ export async function setBondingAssetConfig(
   registry: BondingRegistry,
   overrides: Partial<{
     ticketToken: AddressLike;
-    licenseToken: AddressLike;
+    ciphernodeBondToken: AddressLike;
     ticketPrice: BigNumberish;
-    licenseRequiredBond: BigNumberish;
+    requiredCiphernodeBond: BigNumberish;
     expectedTicketDecimals: BigNumberish;
-    expectedLicenseDecimals: BigNumberish;
+    expectedCiphernodeBondDecimals: BigNumberish;
   }> = {},
 ) {
   return registry.setBondingAssetConfig({
     ticketToken: overrides.ticketToken ?? (await registry.getTicketToken()),
-    licenseToken: overrides.licenseToken ?? (await registry.getLicenseToken()),
+    ciphernodeBondToken:
+      overrides.ciphernodeBondToken ??
+      (await registry.getCiphernodeBondToken()),
     ticketPrice: overrides.ticketPrice ?? (await registry.ticketPrice()),
-    licenseRequiredBond:
-      overrides.licenseRequiredBond ?? (await registry.licenseRequiredBond()),
+    requiredCiphernodeBond:
+      overrides.requiredCiphernodeBond ??
+      (await registry.requiredCiphernodeBond()),
     expectedTicketDecimals: overrides.expectedTicketDecimals ?? 6,
-    expectedLicenseDecimals: overrides.expectedLicenseDecimals ?? 18,
+    expectedCiphernodeBondDecimals:
+      overrides.expectedCiphernodeBondDecimals ?? 18,
   });
 }

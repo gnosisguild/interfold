@@ -30,13 +30,13 @@ interfold ciphernode status
 
 Look for:
 
-| Field            | Expected                | Problem if                                  |
-| ---------------- | ----------------------- | ------------------------------------------- |
-| `isActive`       | `true`                  | `false` — you're not eligible for selection |
-| `Ticket balance` | ≥ `minTicketBalance`    | Below minimum — buy more tickets            |
-| `License bond`   | ≥ `licenseRequiredBond` | Below minimum — top up your bond            |
-| `Exit pending`   | `false`                 | `true` — you've requested deregistration    |
-| `Banned`         | `false`                 | `true` — you've been slashed and banned     |
+| Field             | Expected                   | Problem if                                  |
+| ----------------- | -------------------------- | ------------------------------------------- |
+| `isActive`        | `true`                     | `false` — you're not eligible for selection |
+| `Ticket balance`  | ≥ `minTicketBalance`       | Below minimum — buy more tickets            |
+| `Ciphernode bond` | ≥ `requiredCiphernodeBond` | Below minimum — top up your bond            |
+| `Exit pending`    | `false`                    | `true` — you've requested deregistration    |
+| `Banned`          | `false`                    | `true` — you've been slashed and banned     |
 
 ### Common causes
 
@@ -49,10 +49,10 @@ interfold --config /path/to/owner.yaml ciphernode tickets \
 ```
 
 **Bond dropped below minimum.** If you were slashed, your bond may have fallen below
-`licenseRequiredBond`. The bond owner can top it up:
+`requiredCiphernodeBond`. The bond owner can top it up:
 
 ```bash
-interfold --config /path/to/owner.yaml ciphernode license \
+interfold --config /path/to/owner.yaml ciphernode bond \
   --operator 0xOPERATOR bond --amount 100
 ```
 

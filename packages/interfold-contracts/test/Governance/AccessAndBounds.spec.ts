@@ -71,11 +71,11 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("InterfoldToken: renounceOwnership reverts", async function () {
-      const { licenseToken } = await deployAll();
+      const { ciphernodeBondToken } = await deployAll();
       await expect(
-        licenseToken.renounceOwnership(),
+        ciphernodeBondToken.renounceOwnership(),
       ).to.be.revertedWithCustomError(
-        licenseToken,
+        ciphernodeBondToken,
         "RenounceOwnershipDisabled",
       );
     });

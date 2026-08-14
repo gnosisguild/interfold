@@ -33,6 +33,7 @@ impl EvmEventDefinition {
 pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefinition> {
     catalog(contract)
         .iter()
+        .chain(retired_catalog(contract).iter())
         .find(|event| keccak256(event.signature.as_bytes()) == topic0)
 }
 
@@ -45,6 +46,31 @@ fn catalog(contract: &str) -> &'static [EvmEventDefinition] {
         _ => &[],
     }
 }
+
+/// Signatures that the current ABIs no longer emit, kept so already-mined logs stay readable.
+///
+/// Renaming a Solidity event changes its `topic0`, but the contracts sit behind proxies: the
+/// address survives the upgrade and so does everything it has already emitted. Without these,
+/// a node syncing from before the rename would fail to decode its own history.
+///
+/// Deliberately separate from [`catalog`], which is asserted to match the current ABIs exactly.
+/// Entries here are append-only — a signature that was once on chain is on chain forever.
+fn retired_catalog(contract: &str) -> &'static [EvmEventDefinition] {
+    match contract {
+        "BondingRegistry" => RETIRED_BONDING_REGISTRY,
+        _ => &[],
+    }
+}
+
+const RETIRED_BONDING_REGISTRY: &[EvmEventDefinition] = &[
+    // Renamed to `CiphernodeBondUpdated`. Same field layout, so the decoded record is identical;
+    // only the name the signature hashes from changed.
+    EvmEventDefinition::new(
+        "CiphernodeBondUpdated",
+        "LicenseBondUpdated(address,int256,uint256,bytes32)",
+        None,
+    ),
+];
 
 const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("BondingRegistrySet", "BondingRegistrySet(address)", None),
@@ -213,13 +239,13 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
-        "LicenseBondUpdated",
-        "LicenseBondUpdated(address,int256,uint256,bytes32)",
+        "CiphernodeBondUpdated",
+        "CiphernodeBondUpdated(address,int256,uint256,bytes32)",
         None,
     ),
     EvmEventDefinition::new(
-        "LicenseSurplusSwept",
-        "LicenseSurplusSwept(address,address,uint256)",
+        "CiphernodeBondSurplusSwept",
+        "CiphernodeBondSurplusSwept(address,address,uint256)",
         None,
     ),
     EvmEventDefinition::new(
@@ -653,6 +679,50 @@ mod tests {
         let definition = find("Interfold", treasury).unwrap();
         assert_eq!(definition.name, "TreasuryCredited");
         assert_eq!(definition.e3_id_topic, Some(1));
+    }
+
+    /// A rename changes `topic0`, but the contracts are proxies — the address and everything it
+    /// already emitted survive the upgrade. A node syncing from before the rename must still be
+    /// able to read its own history.
+    #[test]
+    fn retired_signatures_still_decode_to_their_current_name() {
+        let retired = keccak256("LicenseBondUpdated(address,int256,uint256,bytes32)");
+        assert_eq!(
+            find("BondingRegistry", retired).map(|event| event.name),
+            Some("CiphernodeBondUpdated"),
+            "pre-rename logs must still decode"
+        );
+
+        // The current signature resolves to the same record, so both eras read alike.
+        let current = keccak256("CiphernodeBondUpdated(address,int256,uint256,bytes32)");
+        assert_eq!(
+            find("BondingRegistry", current).map(|event| event.name),
+            Some("CiphernodeBondUpdated")
+        );
+    }
+
+    /// Retired entries must never collide with a live one, or a current log would decode as the
+    /// wrong event.
+    #[test]
+    fn retired_signatures_never_shadow_a_live_one() {
+        for contract in [
+            "Interfold",
+            "BondingRegistry",
+            "CiphernodeRegistry",
+            "SlashingManager",
+        ] {
+            let live: HashSet<B256> = catalog(contract)
+                .iter()
+                .map(|event| keccak256(event.signature.as_bytes()))
+                .collect();
+            for event in retired_catalog(contract) {
+                assert!(
+                    !live.contains(&keccak256(event.signature.as_bytes())),
+                    "{contract}: retired signature {} is still live",
+                    event.signature
+                );
+            }
+        }
     }
 
     #[test]

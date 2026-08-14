@@ -22,13 +22,13 @@ import {
 export interface BondingRegistryArgs {
   owner?: string;
   ticketToken?: string;
-  licenseToken?: string;
+  ciphernodeBondToken?: string;
   registry?: string;
   slashedFundsTreasury?: string;
   ticketPrice?: string;
-  licenseRequiredBond?: string;
+  requiredCiphernodeBond?: string;
   ticketTokenDecimals?: number;
-  licenseTokenDecimals?: number;
+  ciphernodeBondTokenDecimals?: number;
   minTicketBalance?: number;
   exitDelay?: number;
   hre: HardhatRuntimeEnvironment;
@@ -42,13 +42,13 @@ export interface BondingRegistryArgs {
 export const deployAndSaveBondingRegistry = async ({
   owner,
   ticketToken,
-  licenseToken,
+  ciphernodeBondToken,
   registry,
   slashedFundsTreasury,
   ticketPrice,
-  licenseRequiredBond,
+  requiredCiphernodeBond,
   ticketTokenDecimals = 6,
-  licenseTokenDecimals = 0,
+  ciphernodeBondTokenDecimals = 0,
   minTicketBalance,
   exitDelay,
   hre,
@@ -64,26 +64,27 @@ export const deployAndSaveBondingRegistry = async ({
   if (
     !owner ||
     !ticketToken ||
-    !licenseToken ||
+    !ciphernodeBondToken ||
     !registry ||
     !slashedFundsTreasury ||
     !ticketPrice ||
-    !licenseRequiredBond ||
+    !requiredCiphernodeBond ||
     minTicketBalance === undefined ||
     exitDelay === undefined ||
     (preDeployedArgs?.constructorArgs?.owner === owner &&
       preDeployedArgs?.constructorArgs?.ticketToken === ticketToken &&
-      preDeployedArgs?.constructorArgs?.licenseToken === licenseToken &&
+      preDeployedArgs?.constructorArgs?.ciphernodeBondToken ===
+        ciphernodeBondToken &&
       preDeployedArgs?.constructorArgs?.registry === registry &&
       preDeployedArgs?.constructorArgs?.slashedFundsTreasury ===
         slashedFundsTreasury &&
       preDeployedArgs?.constructorArgs?.ticketPrice === ticketPrice &&
-      preDeployedArgs?.constructorArgs?.licenseRequiredBond ===
-        licenseRequiredBond &&
+      preDeployedArgs?.constructorArgs?.requiredCiphernodeBond ===
+        requiredCiphernodeBond &&
       preDeployedArgs?.constructorArgs?.ticketTokenDecimals ===
         ticketTokenDecimals.toString() &&
-      preDeployedArgs?.constructorArgs?.licenseTokenDecimals ===
-        licenseTokenDecimals.toString() &&
+      preDeployedArgs?.constructorArgs?.ciphernodeBondTokenDecimals ===
+        ciphernodeBondTokenDecimals.toString() &&
       preDeployedArgs?.constructorArgs?.minTicketBalance ===
         minTicketBalance.toString() &&
       preDeployedArgs?.constructorArgs?.exitDelay === exitDelay.toString())
@@ -156,11 +157,11 @@ export const deployAndSaveBondingRegistry = async ({
       owner,
       {
         ticketToken,
-        licenseToken,
+        ciphernodeBondToken,
         ticketPrice,
-        licenseRequiredBond,
+        requiredCiphernodeBond,
         expectedTicketDecimals: ticketTokenDecimals,
-        expectedLicenseDecimals: licenseTokenDecimals,
+        expectedCiphernodeBondDecimals: ciphernodeBondTokenDecimals,
       },
       registry,
       slashedFundsTreasury,
@@ -209,13 +210,13 @@ export const deployAndSaveBondingRegistry = async ({
       constructorArgs: {
         owner,
         ticketToken,
-        licenseToken,
+        ciphernodeBondToken,
         registry,
         slashedFundsTreasury,
         ticketPrice,
-        licenseRequiredBond,
+        requiredCiphernodeBond,
         ticketTokenDecimals: ticketTokenDecimals.toString(),
-        licenseTokenDecimals: licenseTokenDecimals.toString(),
+        ciphernodeBondTokenDecimals: ciphernodeBondTokenDecimals.toString(),
         minTicketBalance: minTicketBalance.toString(),
         exitDelay: exitDelay.toString(),
       },

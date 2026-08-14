@@ -49,7 +49,7 @@ contract BondedVotes is IERC5805 {
     error ClockMismatch(uint48 tokenClock, uint48 checkpointsClock);
 
     /// @notice Thrown when the history records bonds of a token other than the one read for votes.
-    error TokenMismatch(address licenseToken, address votingToken);
+    error TokenMismatch(address ciphernodeBondToken, address votingToken);
 
     /// @notice Thrown for the delegation entry points, which this view cannot honour.
     error DelegationNotSupported();
@@ -84,10 +84,10 @@ contract BondedVotes is IERC5805 {
         //
         // A registry with no code fails this too: the call returns nothing and decoding reverts.
         address boundRegistry = _checkpoints.registry();
-        address licenseToken = IBondingRegistry(boundRegistry)
-            .getLicenseToken();
-        if (licenseToken != address(_token)) {
-            revert TokenMismatch(licenseToken, address(_token));
+        address ciphernodeBondToken = IBondingRegistry(boundRegistry)
+            .getCiphernodeBondToken();
+        if (ciphernodeBondToken != address(_token)) {
+            revert TokenMismatch(ciphernodeBondToken, address(_token));
         }
 
         token = _token;
@@ -179,7 +179,7 @@ contract BondedVotes is IERC5805 {
 
         if (account == registry) {
             uint256 custodied = IBondingRegistry(registry)
-                .totalLicenseLiability();
+                .totalCiphernodeBondLiability();
             // Saturating: an accounting drift must not make the balance unreadable.
             held = held > custodied ? held - custodied : 0;
         }

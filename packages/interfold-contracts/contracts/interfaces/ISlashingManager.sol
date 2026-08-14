@@ -48,7 +48,7 @@ interface ISlashingManager {
      * @notice Slashing policy configuration for different slash reasons
      * @dev Defines penalties, proof requirements, and appeal mechanisms for each slash type
      * @param ticketPenalty Amount of ticket collateral to slash (in wei)
-     * @param licensePenalty Amount of license bond to slash (in wei)
+     * @param ciphernodeBondPenalty Amount of ciphernode bond to slash (in wei)
      * @param requiresProof Whether this slash type requires cryptographic proof verification
      * @param proofVerifier Optional ISlashVerifier for ZK-based slashes; Lane A (`proposeSlash`)
      *        uses on-chain attestation verification and may leave this as `address(0)`.
@@ -61,7 +61,7 @@ interface ISlashingManager {
      */
     struct SlashPolicy {
         uint256 ticketPenalty;
-        uint256 licensePenalty;
+        uint256 ciphernodeBondPenalty;
         bool requiresProof;
         address proofVerifier;
         bool banNode;
@@ -84,7 +84,7 @@ interface ISlashingManager {
      * @param operator Address of the ciphernode operator being slashed
      * @param reason Hash of the slash reason (maps to SlashPolicy configuration)
      * @param ticketAmount Amount of ticket collateral to slash (copied from policy at proposal time)
-     * @param licenseAmount Amount of license bond to slash (copied from policy at proposal time)
+     * @param ciphernodeBondAmount Amount of ciphernode bond to slash (copied from policy at proposal time)
      * @param executed Whether the slashing penalties have been executed
      * @param appealed Whether the operator has filed an appeal
      * @param resolved Whether the appeal has been resolved by governance
@@ -100,7 +100,7 @@ interface ISlashingManager {
         address operator;
         bytes32 reason;
         uint256 ticketAmount;
-        uint256 licenseAmount;
+        uint256 ciphernodeBondAmount;
         bool executed;
         bool appealed;
         bool resolved;
@@ -277,7 +277,7 @@ interface ISlashingManager {
      * @param operator Address of the ciphernode operator being slashed
      * @param reason Hash of the slash reason
      * @param ticketAmount Amount of ticket collateral to be slashed
-     * @param licenseAmount Amount of license bond to be slashed
+     * @param ciphernodeBondAmount Amount of ciphernode bond to be slashed
      * @param executableAt Timestamp when the slash can be executed (after appeal window)
      * @param proposer Address that created the proposal
      */
@@ -287,7 +287,7 @@ interface ISlashingManager {
         address indexed operator,
         bytes32 reason,
         uint256 ticketAmount,
-        uint256 licenseAmount,
+        uint256 ciphernodeBondAmount,
         uint256 executableAt,
         address proposer,
         Lane lane
@@ -300,7 +300,7 @@ interface ISlashingManager {
      * @param operator Address of the slashed operator
      * @param reason Hash of the slash reason
      * @param ticketAmount Amount of ticket collateral slashed
-     * @param licenseAmount Amount of license bond slashed
+     * @param ciphernodeBondAmount Amount of ciphernode bond slashed
      * @param executed Execution status (should always be true)
      */
     event SlashExecuted(
@@ -309,7 +309,7 @@ interface ISlashingManager {
         address indexed operator,
         bytes32 indexed reason,
         uint256 ticketAmount,
-        uint256 licenseAmount,
+        uint256 ciphernodeBondAmount,
         bool executed,
         Lane lane
     );
@@ -560,7 +560,7 @@ interface ISlashingManager {
      * Requirements:
      * - reason must not be bytes32(0)
      * - policy.enabled must be true
-     * - At least one of ticketPenalty or licensePenalty must be non-zero
+     * - At least one of ticketPenalty or ciphernodeBondPenalty must be non-zero
      * - If requiresProof is true (Lane A), appealWindow may be 0 (immediate execute) or > 0
      * - If requiresProof is false (Lane B), appealWindow must be greater than 0
      */

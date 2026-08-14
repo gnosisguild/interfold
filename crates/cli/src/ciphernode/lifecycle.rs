@@ -127,11 +127,11 @@ pub(crate) async fn deactivate(
     ctx: &ChainContext,
     operator: Address,
     ticket_amount: Option<String>,
-    license_amount: Option<String>,
+    ciphernode_bond_amount: Option<String>,
 ) -> Result<()> {
-    if ticket_amount.is_none() && license_amount.is_none() {
+    if ticket_amount.is_none() && ciphernode_bond_amount.is_none() {
         bail!(
-            "Provide --tickets and/or --license to specify what should be withdrawn for deactivation"
+            "Provide --tickets and/or --bond to specify what should be withdrawn for deactivation"
         );
     }
 
@@ -156,18 +156,18 @@ pub(crate) async fn deactivate(
         );
     }
 
-    if let Some(amount) = license_amount {
-        let license = ctx.license_token_address().await?;
-        let decimals = ctx.erc20(license).decimals().call().await?;
+    if let Some(amount) = ciphernode_bond_amount {
+        let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
+        let decimals = ctx.erc20(ciphernode_bond).decimals().call().await?;
         let parsed = parse_amount(&amount, decimals)?;
         let receipt = ctx
             .bonding()
-            .unbondLicenseFor(operator, parsed)
+            .unbondCiphernodeFor(operator, parsed)
             .send()
             .await?
             .get_receipt()
             .await?;
-        require_successful_receipt("unbond license", &receipt)?;
+        require_successful_receipt("unbond FOLD", &receipt)?;
         log!(
             out,
             "Queued {} FOLD from {:#x} (tx: {:#x})",
@@ -185,22 +185,22 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     let bond_owner = contract.bondOwnerOf(operator).call().await?;
     let pending_owner = contract.pendingBondOwnerOf(operator).call().await?;
     let ticket_balance: U256 = contract.getTicketBalance(operator).call().await?;
-    let license_bond: U256 = contract.getLicenseBond(operator).call().await?;
+    let ciphernode_bond: U256 = contract.getCiphernodeBond(operator).call().await?;
     let available_tickets: U256 = contract.availableTickets(operator).call().await?;
     let is_registered: bool = contract.isRegistered(operator).call().await?;
     let is_active: bool = contract.isActive(operator).call().await?;
     let has_exit: bool = contract.hasExitInProgress(operator).call().await?;
     let pending = contract.pendingExits(operator).call().await?;
     let pending_tickets = pending.ticket;
-    let pending_license = pending.license;
+    let pending_ciphernode_bond = pending.ciphernodeBond;
     let ticket_price: U256 = contract.ticketPrice().call().await?;
     let min_ticket_balance: U256 = contract.minTicketBalance().call().await?;
-    let license_required: U256 = contract.licenseRequiredBond().call().await?;
+    let required_ciphernode_bond: U256 = contract.requiredCiphernodeBond().call().await?;
 
     let ticket_token = ctx.ticket_token_address().await?;
-    let license_token = ctx.license_token_address().await?;
+    let ciphernode_bond_token = ctx.ciphernode_bond_token_address().await?;
     let ticket_decimals = ctx.erc20(ticket_token).decimals().call().await?;
-    let license_decimals = ctx.erc20(license_token).decimals().call().await?;
+    let ciphernode_bond_decimals = ctx.erc20(ciphernode_bond_token).decimals().call().await?;
 
     log!(out, "Ciphernode status on {}:", ctx.chain_label());
     log!(out, "  Operator key: {:#x}", operator);
@@ -223,21 +223,21 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     );
     log!(
         out,
-        "  License bond: {}",
-        format_amount(license_bond, license_decimals)
+        "  Ciphernode bond: {}",
+        format_amount(ciphernode_bond, ciphernode_bond_decimals)
     );
     log!(
         out,
-        "  Pending exits: tickets={}, license={}",
+        "  Pending exits: tickets={}, bond={}",
         format_amount(pending_tickets, ticket_decimals),
-        format_amount(pending_license, license_decimals)
+        format_amount(pending_ciphernode_bond, ciphernode_bond_decimals)
     );
     log!(
         out,
-        "  Requirements: minTickets={}, ticketPrice={} EKT, licenseBond={} FOLD",
+        "  Requirements: minTickets={}, ticketPrice={} tFOLD, ciphernodeBond={} FOLD",
         min_ticket_balance,
         format_amount(ticket_price, ticket_decimals),
-        format_amount(license_required, license_decimals)
+        format_amount(required_ciphernode_bond, ciphernode_bond_decimals)
     );
     Ok(())
 }

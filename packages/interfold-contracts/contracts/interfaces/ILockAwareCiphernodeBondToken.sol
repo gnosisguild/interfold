@@ -6,6 +6,6 @@
 
 pragma solidity 0.8.28;
 
-interface ILockAwareLicenseToken {
+interface ILockAwareCiphernodeBondToken {
     function lockedBalanceOf(address account) external view returns (uint256);
 }
