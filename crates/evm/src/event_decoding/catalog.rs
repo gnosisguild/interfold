@@ -176,6 +176,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new(
+        "BondedCheckpointsDetached",
+        "BondedCheckpointsDetached(address)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "BondingAssetConfigUpdated",
         "BondingAssetConfigUpdated(address,address,uint256,uint256,uint8,uint8,uint64)",
         None,

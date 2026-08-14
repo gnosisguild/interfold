@@ -10,6 +10,8 @@ import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
 import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
+import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
 import { deployAndSaveCiphernodeRegistryOwnable } from "./deployAndSave/ciphernodeRegistryOwnable";
 import { deployAndSaveDkgFoldAttestationVerifier } from "./deployAndSave/dkgFoldAttestationVerifier";
@@ -304,19 +306,19 @@ export const deployInterfold = async (
   // history an operator's bonded weight is invisible to governance while still counting in the
   // quorum denominator. Attached after the license token is set: rotating it detaches the history.
   console.log("Deploying BondedCheckpoints...");
-  const bondedCheckpoints = await ethers.deployContract("BondedCheckpoints", [
-    bondingRegistryAddress,
-  ]);
-  await bondedCheckpoints.waitForDeployment();
+  const { bondedCheckpoints } = await deployAndSaveBondedCheckpoints({
+    registry: bondingRegistryAddress,
+    hre,
+  });
   const bondedCheckpointsAddress = await bondedCheckpoints.getAddress();
   console.log("BondedCheckpoints deployed to:", bondedCheckpointsAddress);
 
   console.log("Deploying BondedVotes...");
-  const bondedVotes = await ethers.deployContract("BondedVotes", [
-    interfoldTokenAddress,
-    bondedCheckpointsAddress,
-  ]);
-  await bondedVotes.waitForDeployment();
+  const { bondedVotes } = await deployAndSaveBondedVotes({
+    token: interfoldTokenAddress,
+    checkpoints: bondedCheckpointsAddress,
+    hre,
+  });
   const bondedVotesAddress = await bondedVotes.getAddress();
   console.log("BondedVotes deployed to:", bondedVotesAddress);
 

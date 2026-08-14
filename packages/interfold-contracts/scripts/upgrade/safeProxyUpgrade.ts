@@ -144,6 +144,45 @@ export async function proposeProxyUpgrade(
 }
 
 /**
+ * Read the attached bonded history, tolerating an implementation that predates the getter.
+ *
+ * This reads the proxy while it still runs the *old* implementation, which is the one this upgrade
+ * replaces. Every deployment that needs the upgrade is therefore on a build with no
+ * `bondedCheckpoints()`, where the call finds no matching selector and a plain typed read throws —
+ * aborting the script before it writes the batch, on exactly the deployments this exists to serve.
+ *
+ * A missing selector means nothing is attached yet. Transport failures stay fatal: reading one as
+ * "unattached" would queue a second `setBondedCheckpoints` that the one-shot setter rejects, and
+ * the whole Safe batch would revert on execution.
+ *
+ * The two cases are told apart by re-reading the proxy's code rather than by matching an error
+ * code: providers disagree on what they attach to a missing selector — Hardhat's in-process
+ * provider reports no code at all — so matching on one silently stops working against another. A
+ * successful second read proves the transport is healthy, which leaves the missing selector as the
+ * only explanation. A failing one rethrows and stays fatal.
+ */
+async function readAttachedCheckpoints(
+  ethers: any,
+  registry: any,
+  proxy: string,
+): Promise<string> {
+  try {
+    return await registry.bondedCheckpoints();
+  } catch (readError) {
+    let code: string;
+    try {
+      code = await ethers.provider.getCode(proxy);
+    } catch {
+      throw readError;
+    }
+    // `proposeProxyUpgrade` already required code here, so an empty result means the chain moved
+    // under the script rather than that the getter is missing.
+    if (code === "0x") throw readError;
+    return ethersLib.ZeroAddress;
+  }
+}
+
+/**
  * Attach the bonded-voting contracts, unless the registry already has a history attached.
  *
  * The upgrade alone does not enable bonded voting: the sync is a no-op while unconfigured, so
@@ -160,7 +199,7 @@ async function appendBondedVotingTxs(
   txs: SafeTransaction[],
 ): Promise<BondedVotingDeployment | undefined> {
   const registry = await ethers.getContractAt("BondingRegistry", proxy);
-  const attached: string = await registry.bondedCheckpoints();
+  const attached = await readAttachedCheckpoints(ethers, registry, proxy);
   if (attached !== ethersLib.ZeroAddress) {
     console.log(`  bonded history already attached at ${attached}`);
     return undefined;
