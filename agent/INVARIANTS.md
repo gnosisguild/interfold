@@ -203,7 +203,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   different decimals never mix. — `flow-trace/05`
 - Slashed **ticket** funds are always escrowed first; destination depends on terminal outcome
   (failure → honest nodes; none → snapshotted treasury; success → split by `successSlashedNodeBps`).
-  **Ciphernode-bond** slashes go straight to treasury. — `flow-trace/05`
+  **Ciphernode-bond** slashes do not leave the registry at execution: the amount is recorded in
+  `slashedCiphernodeBond` and the FOLD stays in registry custody. Only `withdrawSlashedFunds`
+  (owner-called) moves it to `slashedFundsTreasury`, releasing the matching
+  `totalCiphernodeBondLiability` as it goes — so custody and liability are retired together. —
+  `BondingRegistry.slashCiphernodeBond`, `BondingRegistry.withdrawSlashedFunds`; `flow-trace/05`
 - Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
   snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
   the protected reserve. — `flow-trace/05`

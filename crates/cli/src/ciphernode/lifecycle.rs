@@ -167,7 +167,7 @@ pub(crate) async fn deactivate(
             .await?
             .get_receipt()
             .await?;
-        require_successful_receipt("unbond ciphernode bond", &receipt)?;
+        require_successful_receipt("unbond FOLD", &receipt)?;
         log!(
             out,
             "Queued {} FOLD from {:#x} (tx: {:#x})",

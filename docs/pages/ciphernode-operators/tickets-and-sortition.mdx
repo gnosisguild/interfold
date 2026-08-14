@@ -184,12 +184,12 @@ Watch your node logs for:
 
 ## Troubleshooting
 
-| Symptom                         | Possible Cause                           | Solution                                 |
-| ------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| Never being selected            | Low ticket count relative to peers       | Add more tickets                         |
-| `isActive` is false             | Below minimum tickets or ciphernode bond | Top up tickets or rebond ciphernode bond |
-| `SubmissionWindowClosed` errors | RPC latency or slow submission           | Use faster RPC, check network            |
-| Committee missing your operator | Submission didn't succeed                | Check logs, retry next round             |
+| Symptom                         | Possible Cause                           | Solution                         |
+| ------------------------------- | ---------------------------------------- | -------------------------------- |
+| Never being selected            | Low ticket count relative to peers       | Add more tickets                 |
+| `isActive` is false             | Below minimum tickets or ciphernode bond | Top up tickets or bond more FOLD |
+| `SubmissionWindowClosed` errors | RPC latency or slow submission           | Use faster RPC, check network    |
+| Committee missing your operator | Submission didn't succeed                | Check logs, retry next round     |
 
 ## Best Practices
 

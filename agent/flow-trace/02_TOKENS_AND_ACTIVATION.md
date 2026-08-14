@@ -138,7 +138,7 @@ deadline.
 
 ---
 
-## Step 1: Bond Ciphernode bond
+## Step 1: Bond FOLD
 
 The owner wallet or Safe approves FOLD and calls `bondCiphernodeFor(operator, amount)`. The registry
 pulls from the owner, credits the operator's ciphernode bond position, and credits
@@ -297,7 +297,7 @@ tFOLD tokens cannot be transferred between addresses. This ensures:
 
 ---
 
-## Step 3: Unbond Ciphernode bond
+## Step 3: Unbond FOLD
 
 Only the configured owner may call `unbondCiphernodeFor(operator, amount)`. With a separate owner,
 the operator's hot key cannot queue the owner's FOLD for exit.
@@ -570,15 +570,15 @@ active = registered
 ## Token Flow Diagram
 
 ```text
-                BOND CIPHERNODE BOND                          BUY TICKETS
-                ────────────                          ───────────
+                BOND FOLD                                     BUY TICKETS
+                ─────────                                     ───────────
   Bond owner                               Bond owner
   FOLD wallet ──→ BondingRegistry          collateral wallet ──→ InterfoldTicketToken
                   (operator ciphernodeBond++)                        (wraps asset → mints tFOLD)
                                                            tFOLD → Operator balance
 
-               UNBOND CIPHERNODE BOND                         BURN TICKETS
-               ──────────────                         ────────────
+                UNBOND FOLD                                   BURN TICKETS
+                ───────────                                   ────────────
   ciphernodeBond -= amount                    tFOLD burned from operator
   amount → ExitQueue (locked)              collateral stays in tFOLD contract (payableBalance)
                                            amount → ExitQueue (locked)

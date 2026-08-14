@@ -510,7 +510,7 @@ describe("BondingRegistry", function () {
   });
 
   describe("bondCiphernodeFor()", function () {
-    it("allows operators to bond ciphernode bond tokens", async function () {
+    it("allows operators to bond FOLD", async function () {
       const { bondingRegistry, ciphernodeBondToken, operator1 } =
         await loadFixture(setup);
 
@@ -625,7 +625,7 @@ describe("BondingRegistry", function () {
   });
 
   describe("unbondCiphernodeFor()", function () {
-    it("allows operators to unbond ciphernode bond tokens", async function () {
+    it("allows operators to unbond FOLD", async function () {
       const { bondingRegistry, ciphernodeBondToken, operator1 } =
         await loadFixture(setup);
 
@@ -2577,7 +2577,7 @@ describe("BondingRegistry", function () {
         .withArgs(await ciphernodeBondToken.getAddress(), bondAmount);
     });
 
-    it("atomically sweeps donated license surplus during rotation", async function () {
+    it("atomically sweeps donated ciphernode bond surplus during rotation", async function () {
       const {
         bondingRegistry,
         ciphernodeBondToken,
