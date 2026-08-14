@@ -128,6 +128,8 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/Interfold.sol',
       '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
       '@interfold/contracts/contracts/registry/BondingRegistry.sol',
+      '@interfold/contracts/contracts/registry/BondedCheckpoints.sol',
+      '@interfold/contracts/contracts/registry/BondedVotes.sol',
       '@interfold/contracts/contracts/slashing/SlashingManager.sol',
       '@interfold/contracts/contracts/E3RefundManager.sol',
       '@interfold/contracts/contracts/token/InterfoldToken.sol',
