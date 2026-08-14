@@ -122,7 +122,7 @@ Protocol contracts deployed
   bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
   bondedCheckpoints:      ${deployment.bondedCheckpoints}
-  bondedVotes:            ${deployment.bondedVotes}
+  bondedVotes:            (run --action activate-voting after the Safe batch)
 
 Safe batch required
   file: ${batchFile}

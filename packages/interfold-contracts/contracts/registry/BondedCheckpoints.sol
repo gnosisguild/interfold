@@ -51,10 +51,20 @@ contract BondedCheckpoints is IBondedCheckpoints {
     function sync(address bondOwner, uint256 amount) external {
         if (msg.sender != registry) revert OnlyRegistry(msg.sender);
 
+        Checkpoints.Trace208 storage history = _history[bondOwner];
+
+        // A write that records the value already there still costs a fresh slot once the timestamp
+        // has moved on, and `BondingRegistry.resyncBondedCheckpoint` is permissionless — so
+        // without this anyone could grow any owner's history by a checkpoint per block, for as
+        // long as they cared to pay. Skipping is exact, not an approximation: a lookup at the
+        // skipped timepoint resolves to the preceding entry, which carries the same value. An
+        // empty history reads as zero, so a first sync of zero is correctly a no-op too.
+        if (history.latest() == amount) return;
+
         uint48 timepoint = clock();
         // Pushing twice at one timestamp overwrites rather than appends, so several mutations in
         // a block collapse to the final value.
-        _history[bondOwner].push(timepoint, SafeCast.toUint208(amount));
+        history.push(timepoint, SafeCast.toUint208(amount));
 
         emit BondedCheckpointed(bondOwner, timepoint, amount);
     }

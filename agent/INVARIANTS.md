@@ -47,8 +47,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   mapping at the same instant, and holds for every owner that has been synchronized at least once —
   configuring `BondedCheckpoints` does not backfill, so an owner that bonded beforehand reads as
   zero until its next mutation or a `resyncBondedCheckpoint` call. A delta-derived history would
-  drift silently instead, and it would drift in voting weight. — `BondingRegistry.sol`;
-  `BondedCheckpoints.sol`; `flow-trace/02`
+  drift silently instead, and it would drift in voting weight. `sync` skips a write that records the
+  value already latest — exact, because a lookup at the skipped timepoint resolves to the preceding
+  entry — so the permissionless `resyncBondedCheckpoint` cannot be used to grow an owner's history
+  by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
 - **Bonded voting power is additive to the token, never to its supply.** `BondedVotes.getPastVotes`
   sums wallet voting power and bonded FOLD, but `getPastTotalSupply` passes through unchanged:
   bonded FOLD was transferred, not burned, so it is already counted. Adding it again would inflate
@@ -58,6 +60,21 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes` compares both clocks at
   construction. Summing a timestamp-keyed history with a block-numbered one answers for two
   unrelated points in time and is undetectable downstream. — `BondedVotes.sol`; `flow-trace/02`
+- **`BondedVotes` binds token, registry and history as one unit.** The constructor reads
+  `checkpoints.registry()` and requires that registry's `getLicenseToken()` to equal the token it
+  reads votes from. The clock check alone proves the history speaks the token's units, not that it
+  is _about_ that token: a history written by a registry custodying something else would add
+  unbacked weight, and no reader downstream could tell. Because the check calls the registry,
+  `BondedVotes` can only be constructed after the registry is configured —
+  `protocol/deployContracts` therefore deploys `BondedCheckpoints` only, and
+  `--action activate-voting` deploys `BondedVotes` once the Safe batch has run. — `BondedVotes.sol`;
+  `protocol/activateVoting.ts`; `flow-trace/02`
+- **`BondedVotes.balanceOf` nets the registry down to its own surplus.** Bonding moves FOLD into the
+  registry while the adapter attributes it to the bond owner, so counting it at both addresses would
+  place the same tokens twice and push summed balances above total supply — the denominator every
+  holder-percentage view divides by. The registry's entry subtracts `totalLicenseLiability`,
+  saturating at zero. `getVotes` needs no such adjustment: the registry never delegates, so bonded
+  FOLD carries no wallet votes to double. — `BondedVotes.sol`; `flow-trace/02`
 - **`setBondedCheckpoints` is one-shot per license token, and self-verifying.** It requires the
   checkpoint contract to name this registry **and** to accept a write from it, checked by syncing
   the zero address, whose bonded total is always zero. `registry()` alone is insufficient:

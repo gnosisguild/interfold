@@ -94,7 +94,11 @@ export interface ProtocolDeployment {
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
   bondedCheckpoints: string;
-  bondedVotes: string;
+  /**
+   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
+   */
+  bondedVotes?: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -159,7 +163,11 @@ export interface ProtocolContracts {
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
   bondedCheckpoints: string;
-  bondedVotes: string;
+  /**
+   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
+   */
+  bondedVotes?: string;
 }
 
 export interface ProtocolInterfaces {

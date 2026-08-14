@@ -495,6 +495,21 @@ slashed. Voting power therefore stays with the owner for the duration of the exi
 mismatch: summing a timestamp-keyed history with a block-numbered one would answer for two unrelated
 points in time, and nothing downstream could detect it.
 
+The constructor also reads `checkpoints.registry()` and requires that registry to bond the same
+token it reads votes from. Matching clocks prove the history speaks the token's units, not that it
+is _about_ that token — a history written by a registry custodying something else would add unbacked
+weight to every vote. Because this calls the registry, `BondedVotes` cannot be built before the
+registry is configured: `protocol/deployContracts` deploys `BondedCheckpoints` only, and
+`--action activate-voting` deploys `BondedVotes` after the Safe batch executes.
+
+`BondedVotes` also carries a read-only ERC-20 surface — `balanceOf`, `totalSupply`, `decimals`,
+`name`, `symbol` — because Aragon's `TokenVotingSetup` gates installation on a `balanceOf` probe and
+the governance app renders amounts from the metadata. There is no `transfer`, `transferFrom`,
+`approve` or `allowance`: the contract owns no position, so a spend attempt reverts on a missing
+selector. `balanceOf` subtracts `totalLicenseLiability` for the registry itself, because bonding
+moves FOLD into the registry while the adapter attributes it to the bond owner, and counting it at
+both addresses would put summed balances above total supply.
+
 `setBondedCheckpoints` is settable **once per license token**, and verifies the candidate two ways
 before the slot is spent. It must name this registry, and it must accept a write from it, which the
 setter checks by synchronizing the zero address — whose bonded total is always zero, so a successful

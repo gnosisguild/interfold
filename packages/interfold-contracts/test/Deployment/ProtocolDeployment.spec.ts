@@ -80,16 +80,13 @@ describe("Protocol deployment", function () {
       "BondedCheckpoints",
       result.contracts.bondedCheckpoints,
     );
-    const bondedVotes = await ethers.getContractAt(
-      "BondedVotes",
-      result.contracts.bondedVotes,
-    );
     // Bound to the proxy, not the implementation: the proxy is what calls `sync`.
     expect(await checkpoints.registry()).to.equal(config.bondingRegistryProxy);
-    expect(await bondedVotes.token()).to.equal(config.fold);
-    expect(await bondedVotes.checkpoints()).to.equal(
-      result.contracts.bondedCheckpoints,
-    );
+
+    // `BondedVotes` is deliberately absent here. Its constructor asks the registry which token it
+    // bonds, and the registry is only initialized by the Safe batch this step writes — so it is
+    // deployed by `--action activate-voting` afterwards.
+    expect(result.contracts).to.not.have.property("bondedVotes");
 
     // The batch must carry the call that attaches the history, or none of the above is reachable.
     const txs = buildSafeTransactions(

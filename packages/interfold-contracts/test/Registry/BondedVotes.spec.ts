@@ -710,7 +710,7 @@ describe("BondedVotes", function () {
 
       const names = bondedVotes.interface.fragments
         .filter((f) => f.type === "function")
-        .map((f) => (f as { name: string }).name);
+        .map((f) => (f as unknown as { name: string }).name);
 
       for (const absent of [
         "transfer",
@@ -720,6 +720,167 @@ describe("BondedVotes", function () {
       ]) {
         expect(names).to.not.include(absent);
       }
+    });
+  });
+
+  /// Findings from the bonded-voting audit. Each of these failed before the fix that follows it.
+  describe("audit regressions", function () {
+    /// The clock check proves the history speaks the token's units, not that it is about the token.
+    /// Without the registry binding, a history written by a registry custodying something else
+    /// added unbacked weight: 500,000,000 votes against a 100,000 supply, undetectable downstream.
+    it("refuses a history whose registry bonds a different token", async function () {
+      const { licenseToken } = await loadFixture(setup);
+      const [signer] = await ethers.getSigners();
+
+      // Registry is an EOA here — it custodies no FOLD and cannot answer for a license token.
+      const foreign = await ethers.deployContract("BondedCheckpoints", [
+        await signer.getAddress(),
+      ]);
+
+      await expect(
+        ethers.deployContract("BondedVotes", [
+          await licenseToken.getAddress(),
+          await foreign.getAddress(),
+        ]),
+      ).to.be.revert(ethers);
+    });
+
+    it("binds itself to the registry that writes the history", async function () {
+      const { bondedVotes, registryAddress } = await loadFixture(setup);
+
+      expect(await bondedVotes.registry()).to.equal(registryAddress);
+    });
+
+    /// The registry holds every operator's bond while this contract attributes it to the owner.
+    /// Counting it at both addresses put the same FOLD in two places, so summed balances exceeded
+    /// total supply — the denominator every holder-percentage view divides by.
+    it("nets the registry down by what it only custodies", async function () {
+      const {
+        bondedVotes,
+        licenseToken,
+        bondOwnerAddress,
+        registryAddress,
+        bond,
+      } = await loadFixture(setup);
+
+      await bond(BOND);
+
+      // The registry's raw balance holds the bond; its attributable balance must not.
+      expect(await licenseToken.balanceOf(registryAddress)).to.equal(BOND);
+      expect(await bondedVotes.balanceOf(registryAddress)).to.equal(0);
+
+      // The bond is attributed once, to the owner.
+      expect(await bondedVotes.balanceOf(bondOwnerAddress)).to.equal(
+        (await licenseToken.balanceOf(bondOwnerAddress)) + BOND,
+      );
+    });
+
+    it("keeps summed balances within total supply while bonded", async function () {
+      const {
+        bondedVotes,
+        licenseToken,
+        bondOwnerAddress,
+        otherHolderAddress,
+        newOwnerAddress,
+        registryAddress,
+        bond,
+      } = await loadFixture(setup);
+
+      await bond(BOND);
+
+      let summed = 0n;
+      for (const who of [
+        bondOwnerAddress,
+        otherHolderAddress,
+        newOwnerAddress,
+        registryAddress,
+      ]) {
+        summed += await bondedVotes.balanceOf(who);
+      }
+
+      expect(summed).to.be.lessThanOrEqual(await licenseToken.totalSupply());
+    });
+
+    it("leaves surplus sent to the registry visible", async function () {
+      const { bondedVotes, licenseToken, otherHolder, registryAddress, bond } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      const surplus = ethers.parseEther("7");
+      await licenseToken
+        .connect(otherHolder)
+        .transfer(registryAddress, surplus);
+
+      // Only the custodied portion is netted out, so an unsolicited transfer still shows.
+      expect(await bondedVotes.balanceOf(registryAddress)).to.equal(surplus);
+    });
+
+    /// `resyncBondedCheckpoint` is permissionless, so a no-op write that still consumed a slot let
+    /// anyone grow any owner's history by one checkpoint per block for as long as they paid.
+    it("does not record a checkpoint when the total is unchanged", async function () {
+      const { bondingRegistry, checkpoints, bondOwnerAddress, bond } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      await time.increase(60);
+
+      await expect(
+        bondingRegistry.resyncBondedCheckpoint(bondOwnerAddress),
+      ).to.not.emit(checkpoints, "BondedCheckpointed");
+
+      // Skipping is exact: the reads still answer with the value already recorded.
+      expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND);
+      expect(await bondingRegistry.totalBonded(bondOwnerAddress)).to.equal(
+        BOND,
+      );
+    });
+
+    it("still records a checkpoint when the total actually moves", async function () {
+      const {
+        bondingRegistry,
+        checkpoints,
+        licenseToken,
+        bondOwner,
+        bondOwnerAddress,
+        operatorAddress,
+        registryAddress,
+        bond,
+      } = await loadFixture(setup);
+
+      await bond(BOND);
+      await time.increase(60);
+
+      await licenseToken.connect(bondOwner).approve(registryAddress, BOND);
+      await expect(
+        bondingRegistry
+          .connect(bondOwner)
+          .bondLicenseFor(operatorAddress, BOND),
+      ).to.emit(checkpoints, "BondedCheckpointed");
+
+      expect(await checkpoints.bonded(bondOwnerAddress)).to.equal(BOND * 2n);
+    });
+
+    it("keeps history readable across a skipped write", async function () {
+      const { bondingRegistry, checkpoints, bondOwnerAddress, bond } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+      await time.increase(60);
+      const before = await time.latest();
+
+      // A skipped write must not create a hole: the timepoint resolves to the previous entry.
+      await bondingRegistry.resyncBondedCheckpoint(bondOwnerAddress);
+      await time.increase(60);
+
+      expect(
+        await checkpoints.getPastBonded(bondOwnerAddress, before),
+      ).to.equal(BOND);
+      expect(
+        await checkpoints.getPastBonded(
+          bondOwnerAddress,
+          (await time.latest()) - 1,
+        ),
+      ).to.equal(BOND);
     });
   });
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { actionDeploy, actionProposeSafe } from "./actions";
+import { actionActivateVoting } from "./activateVoting";
 import { arg } from "./cli";
 import { actionValidate } from "./validate";
 
@@ -10,6 +11,7 @@ Interfold protocol deployment
 Actions:
   --action deploy       Deploy protocol contracts and write one Safe wiring batch
   --action propose-safe Propose the written Safe batch through the Safe SDK
+  --action activate-voting  Deploy BondedVotes once the Safe batch has configured the registry
   --action validate     Validate after the Safe batch executes
 
 Examples:
@@ -36,6 +38,7 @@ export async function main(): Promise<void> {
   if (action === "help") return printHelp();
   if (action === "deploy") return actionDeploy();
   if (action === "propose-safe") return actionProposeSafe();
+  if (action === "activate-voting") return actionActivateVoting();
   if (action === "validate") return actionValidate();
   throw new Error(`Unknown --action: ${action}`);
 }

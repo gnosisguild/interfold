@@ -178,15 +178,10 @@ export async function deployProtocolContracts(
   await checkpoints.waitForDeployment();
   const bondedCheckpoints = await deployedAddress(checkpoints);
 
-  // The view that governance reads. It holds no state and no privileges, so it is deployed here
-  // and needs no configuration transaction.
-  const bondedVotesFactory = await ethers.getContractFactory("BondedVotes");
-  const bondedVotesContract = await bondedVotesFactory.deploy(
-    config.fold,
-    bondedCheckpoints,
-  );
-  await bondedVotesContract.waitForDeployment();
-  const bondedVotes = await deployedAddress(bondedVotesContract);
+  // `BondedVotes` is deliberately NOT deployed here. Its constructor asks the registry which token
+  // it bonds and refuses to build unless that matches the token it will read votes from — and the
+  // registry is only initialized later, by the Safe batch this script writes. It is deployed by
+  // `--action activate-voting`, once that batch has executed.
 
   return {
     contracts: {
@@ -213,7 +208,6 @@ export async function deployProtocolContracts(
       bondingRegistrationLib,
       bondingOwnershipLib,
       bondedCheckpoints,
-      bondedVotes,
     },
     interfaces: {
       ticket: ticketFactory.interface,

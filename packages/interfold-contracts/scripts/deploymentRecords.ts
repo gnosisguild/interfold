@@ -215,18 +215,22 @@ export function syncProtocolDeploymentRecords(
     "BondedCheckpoints",
     opts.chain,
   );
-  storeDeploymentArgs(
-    {
-      address: deployment.bondedVotes,
-      blockNumber,
-      constructorArgs: {
-        token: config.fold,
-        checkpoints: deployment.bondedCheckpoints,
+  // Absent until `--action activate-voting`, which cannot run before the Safe batch configures the
+  // registry the constructor validates against.
+  if (deployment.bondedVotes) {
+    storeDeploymentArgs(
+      {
+        address: deployment.bondedVotes,
+        blockNumber,
+        constructorArgs: {
+          token: config.fold,
+          checkpoints: deployment.bondedCheckpoints,
+        },
       },
-    },
-    "BondedVotes",
-    opts.chain,
-  );
+      "BondedVotes",
+      opts.chain,
+    );
+  }
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",

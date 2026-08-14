@@ -11,6 +11,7 @@ import {
     IERC20Metadata
 } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
+import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 
 /**
  * @title BondedVotes
@@ -38,11 +39,17 @@ contract BondedVotes is IERC5805 {
     /// @notice Records bonded totals over time for the registry holding bonded FOLD.
     IBondedCheckpoints public immutable checkpoints;
 
+    /// @notice The registry that custodies the bonded FOLD and writes the history.
+    address public immutable registry;
+
     /// @notice Thrown when a constructor argument is the zero address.
     error ZeroAddress();
 
     /// @notice Thrown when the token and the history do not agree on what a timepoint means.
     error ClockMismatch(uint48 tokenClock, uint48 checkpointsClock);
+
+    /// @notice Thrown when the history records bonds of a token other than the one read for votes.
+    error TokenMismatch(address licenseToken, address votingToken);
 
     /// @notice Thrown for the delegation entry points, which this view cannot honour.
     error DelegationNotSupported();
@@ -69,8 +76,23 @@ contract BondedVotes is IERC5805 {
             revert ClockMismatch(tokenClock, registryClock);
         }
 
+        // The clock check proves the history speaks the same units as the token. It does not prove
+        // the history is *about* this token. A checkpoint contract written by a registry that
+        // custodies something else would add unbacked weight to this token's votes, and no reader
+        // downstream could tell — summed voting power would simply exceed total supply. Binding
+        // token, registry and history here is what makes that unrepresentable.
+        //
+        // A registry with no code fails this too: the call returns nothing and decoding reverts.
+        address boundRegistry = _checkpoints.registry();
+        address licenseToken = IBondingRegistry(boundRegistry)
+            .getLicenseToken();
+        if (licenseToken != address(_token)) {
+            revert TokenMismatch(licenseToken, address(_token));
+        }
+
         token = _token;
         checkpoints = _checkpoints;
+        registry = boundRegistry;
     }
 
     /// @notice Get the current timepoint, in ERC-6372 clock units.
@@ -144,12 +166,25 @@ contract BondedVotes is IERC5805 {
     /// delegation, so it answers "how much FOLD is this account's" rather than "how much can it
     /// vote with". A holder that never delegated reads a balance above its votes, which is the
     /// intended signal.
+    ///
+    /// The registry is netted down by what it merely custodies. Bonding moves FOLD into the
+    /// registry while this contract attributes it to the bond owner, so counting it at both
+    /// addresses would place the same tokens twice and push the summed balances above total
+    /// supply — which is exactly what any holder-percentage view divides by. What remains for the
+    /// registry is genuine surplus it holds on its own account.
     /// @param account The account to read.
-    /// @return Wallet balance plus bonded total.
+    /// @return Attributable wallet balance plus bonded total.
     function balanceOf(address account) external view returns (uint256) {
-        return
-            IERC20Metadata(address(token)).balanceOf(account) +
-            checkpoints.bonded(account);
+        uint256 held = IERC20Metadata(address(token)).balanceOf(account);
+
+        if (account == registry) {
+            uint256 custodied = IBondingRegistry(registry)
+                .totalLicenseLiability();
+            // Saturating: an accounting drift must not make the balance unreadable.
+            held = held > custodied ? held - custodied : 0;
+        }
+
+        return held + checkpoints.bonded(account);
     }
 
     /// @notice Get the token's total supply.
