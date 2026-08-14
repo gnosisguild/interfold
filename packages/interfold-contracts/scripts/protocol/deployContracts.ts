@@ -141,15 +141,47 @@ export async function deployProtocolContracts(
   await bondingSlashing.waitForDeployment();
   const bondingSlashingLib = await deployedAddress(bondingSlashing);
 
+  const bondingRegistrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+  );
+  const bondingRegistration = await bondingRegistrationFactory.deploy();
+  await bondingRegistration.waitForDeployment();
+  const bondingRegistrationLib = await deployedAddress(bondingRegistration);
+
+  const bondingOwnershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+  );
+  const bondingOwnership = await bondingOwnershipFactory.deploy();
+  await bondingOwnership.waitForDeployment();
+  const bondingOwnershipLib = await deployedAddress(bondingOwnership);
+
   const bondingFactory = await ethers.getContractFactory("BondingRegistry", {
     libraries: {
       BondingAssetLib: bondingAssetLib,
       BondingEligibilityLib: bondingEligibilityLib,
       BondingSlashingLib: bondingSlashingLib,
+      BondingRegistrationLib: bondingRegistrationLib,
+      BondingOwnershipLib: bondingOwnershipLib,
     },
   });
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
+
+  // Bound to the proxy, not the implementation: the proxy is the address that calls `sync`, and
+  // `BondedCheckpoints` accepts writes from exactly one address. The registry is pointed at this
+  // contract by a `setBondedCheckpoints` transaction in the Safe batch, after `initialize`.
+  const checkpointsFactory =
+    await ethers.getContractFactory("BondedCheckpoints");
+  const checkpoints = await checkpointsFactory.deploy(
+    config.bondingRegistryProxy,
+  );
+  await checkpoints.waitForDeployment();
+  const bondedCheckpoints = await deployedAddress(checkpoints);
+
+  // `BondedVotes` is deliberately NOT deployed here. Its constructor asks the registry which token
+  // it bonds and refuses to build unless that matches the token it will read votes from — and the
+  // registry is only initialized later, by the Safe batch this script writes. It is deployed by
+  // `--action activate-voting`, once that batch has executed.
 
   return {
     contracts: {
@@ -173,6 +205,9 @@ export async function deployProtocolContracts(
       bondingEligibilityLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),
       bondingSlashingLib,
+      bondingRegistrationLib,
+      bondingOwnershipLib,
+      bondedCheckpoints,
     },
     interfaces: {
       ticket: ticketFactory.interface,

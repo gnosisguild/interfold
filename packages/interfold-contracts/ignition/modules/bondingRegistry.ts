@@ -21,11 +21,15 @@ export default buildModule("BondingRegistry", (m) => {
   const bondingAssetLib = m.library("BondingAssetLib");
   const bondingEligibilityLib = m.library("BondingEligibilityLib");
   const bondingSlashingLib = m.library("BondingSlashingLib");
+  const bondingRegistrationLib = m.library("BondingRegistrationLib");
+  const bondingOwnershipLib = m.library("BondingOwnershipLib");
   const bondingRegistryImpl = m.contract("BondingRegistry", [], {
     libraries: {
       BondingAssetLib: bondingAssetLib,
       BondingEligibilityLib: bondingEligibilityLib,
       BondingSlashingLib: bondingSlashingLib,
+      BondingRegistrationLib: bondingRegistrationLib,
+      BondingOwnershipLib: bondingOwnershipLib,
     },
   });
 
@@ -56,5 +60,7 @@ export default buildModule("BondingRegistry", (m) => {
     bondingEligibilityLib,
     bondingRegistry,
     bondingSlashingLib,
+    bondingRegistrationLib,
+    bondingOwnershipLib,
   };
 }) as any;

@@ -39,6 +39,10 @@ export async function actionValidate(): Promise<void> {
     "SlashingManager",
     deployment.slashingManager,
   );
+  const checkpoints = await ethers.getContractAt(
+    "BondedCheckpoints",
+    deployment.bondedCheckpoints,
+  );
 
   for (const [label, address] of [
     ["bondingAssetLib", deployment.bondingAssetLib],
@@ -48,6 +52,7 @@ export async function actionValidate(): Promise<void> {
     ["registrySortitionLib", deployment.registrySortitionLib],
     ["interfoldLifecycle", deployment.interfoldLifecycle],
     ["interfoldPricing", deployment.interfoldPricing],
+    ["bondedCheckpoints", deployment.bondedCheckpoints],
   ] as const) {
     if ((await ethers.provider.getCode(address)) === "0x") {
       throw new Error(`${label}: no contract at ${address}`);
@@ -125,7 +130,44 @@ export async function actionValidate(): Promise<void> {
       slashing.e3RefundManager(),
       deployment.e3RefundManager,
     ],
+    // The bonded-voting graph. `bonding.bondedCheckpoints` is the one configured reference; the
+    // rest is fixed at construction and is checked so a pair deployed against the wrong registry
+    // or the wrong token cannot pass validation.
+    [
+      "bonding.bondedCheckpoints",
+      bonding.bondedCheckpoints(),
+      deployment.bondedCheckpoints,
+    ],
+    [
+      "bondedCheckpoints.registry",
+      checkpoints.registry(),
+      deployment.bondingRegistryProxy,
+    ],
   ];
+
+  // Only after `--action activate-voting`. Its constructor already enforces the token and registry
+  // binding, so these read-backs confirm the deployment file names the contract that was built.
+  if (deployment.bondedVotes) {
+    const bondedVotes = await ethers.getContractAt(
+      "BondedVotes",
+      deployment.bondedVotes,
+    );
+    checks.push(
+      ["bondedVotes.token", bondedVotes.token(), config.fold],
+      [
+        "bondedVotes.checkpoints",
+        bondedVotes.checkpoints(),
+        deployment.bondedCheckpoints,
+      ],
+      [
+        "bondedVotes.registry",
+        bondedVotes.registry(),
+        deployment.bondingRegistryProxy,
+      ],
+    );
+  } else {
+    console.log("  -- bondedVotes not deployed yet (--action activate-voting)");
+  }
 
   for (const [label, actualPromise, expected] of checks) {
     const actual = await actualPromise;

@@ -9,6 +9,7 @@ pragma solidity 0.8.28;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { IBondedCheckpoints } from "./IBondedCheckpoints.sol";
 
 /**
  * @title IBondingRegistry
@@ -33,6 +34,12 @@ interface IBondingRegistry {
     // ======================
 
     // General
+    /// @notice Emitted when the bonded-history contract is configured.
+    event BondedCheckpointsSet(address indexed checkpoints);
+
+    /// @notice Emitted when license-token rotation detaches the bonded-history contract.
+    event BondedCheckpointsDetached(address indexed previousCheckpoints);
+
     error ZeroAddress();
     error ZeroAmount();
     error CiphernodeBanned();
@@ -447,6 +454,45 @@ interface IBondingRegistry {
      * @return Active plus pending license-bond amount
      */
     function totalBonded(address account) external view returns (uint256);
+
+    /**
+     * @notice Get the contract that records bonded history.
+     * @dev Zero while unconfigured, and again after a license-token rotation detaches it.
+     * @return The checkpoint contract, or the zero address.
+     */
+    function bondedCheckpoints() external view returns (IBondedCheckpoints);
+
+    /**
+     * @notice Point this registry at the contract that records bonded history.
+     * @dev Settable once per license token. Bonded FOLD is transferred to this registry and never
+     * delegated, so without a recorded history an operator's bonded weight is invisible to
+     * governance. The history lives off this contract because it is within a few hundred bytes of
+     * the EIP-170 limit.
+     *
+     * Repointing while one is attached is refused: it would abandon the recorded history and
+     * silently change every past answer. Rotating the license token detaches the current contract,
+     * because the history counts license-token units and a replacement token's bonds must not be
+     * added to the previous token's voting power.
+     *
+     * The candidate must name this registry and must accept a write from it, which is checked by
+     * synchronizing the zero address. Both are needed: other protocol contracts also answer
+     * `registry()` with this address.
+     * @param newCheckpoints The checkpoint contract, which must name this registry.
+     */
+    function setBondedCheckpoints(IBondedCheckpoints newCheckpoints) external;
+
+    /**
+     * @notice Record an owner's current bonded total in the checkpoint contract.
+     * @dev Bonding that happened before `setBondedCheckpoints` left no history, because the sync
+     * is a no-op while unconfigured. Without this, such an owner stays invisible to governance
+     * until its next bond, slash, transfer or exit claim happens to record it.
+     *
+     * Permissionless and idempotent: it can only write the owner's true current total at the
+     * current timepoint, so there is nothing to gain by calling it and no past entry it can
+     * rewrite. Anyone may repair an owner's history, including a third party.
+     * @param bondOwner The owner to record.
+     */
+    function resyncBondedCheckpoint(address bondOwner) external;
 
     /**
      * @notice Get current ticket price

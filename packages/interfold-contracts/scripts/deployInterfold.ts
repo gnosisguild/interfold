@@ -10,6 +10,8 @@ import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
 import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
+import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
 import { deployAndSaveCiphernodeRegistryOwnable } from "./deployAndSave/ciphernodeRegistryOwnable";
 import { deployAndSaveDkgFoldAttestationVerifier } from "./deployAndSave/dkgFoldAttestationVerifier";
@@ -297,6 +299,32 @@ export const deployInterfold = async (
   console.log("Whitelisting BondingRegistry in FOLD...");
   await (
     await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
+  ).wait();
+
+  // ── Bonded voting ───────────────────────────────────────────────────────
+  // Bonded FOLD is transferred to BondingRegistry and never delegated, so without a recorded
+  // history an operator's bonded weight is invisible to governance while still counting in the
+  // quorum denominator. Attached after the license token is set: rotating it detaches the history.
+  console.log("Deploying BondedCheckpoints...");
+  const { bondedCheckpoints } = await deployAndSaveBondedCheckpoints({
+    registry: bondingRegistryAddress,
+    hre,
+  });
+  const bondedCheckpointsAddress = await bondedCheckpoints.getAddress();
+  console.log("BondedCheckpoints deployed to:", bondedCheckpointsAddress);
+
+  console.log("Deploying BondedVotes...");
+  const { bondedVotes } = await deployAndSaveBondedVotes({
+    token: interfoldTokenAddress,
+    checkpoints: bondedCheckpointsAddress,
+    hre,
+  });
+  const bondedVotesAddress = await bondedVotes.getAddress();
+  console.log("BondedVotes deployed to:", bondedVotesAddress);
+
+  console.log("Attaching BondedCheckpoints to BondingRegistry...");
+  await (
+    await bondingRegistry.setBondedCheckpoints(bondedCheckpointsAddress)
   ).wait();
 
   // ── Testnet faucet (sepolia only) ───────────────────────────────────────
@@ -795,6 +823,22 @@ export const deployInterfold = async (
       bondingRegistryAddress,
     ],
     [
+      "bondingRegistry.bondedCheckpoints",
+      bondingRegistry.bondedCheckpoints(),
+      bondedCheckpointsAddress,
+    ],
+    [
+      "bondedCheckpoints.registry",
+      bondedCheckpoints.registry(),
+      bondingRegistryAddress,
+    ],
+    ["bondedVotes.token", bondedVotes.token(), interfoldTokenAddress],
+    [
+      "bondedVotes.checkpoints",
+      bondedVotes.checkpoints(),
+      bondedCheckpointsAddress,
+    ],
+    [
       "slashingManager.interfold",
       slashingManager.interfold(),
       interfoldAddress,
@@ -854,6 +898,8 @@ export const deployInterfold = async (
     InterfoldTicketToken: ${interfoldTicketTokenAddress}
     SlashingManager: ${slashingManagerAddress}
     BondingRegistry: ${bondingRegistryAddress}
+    BondedCheckpoints: ${bondedCheckpointsAddress}
+    BondedVotes: ${bondedVotesAddress}
     CiphernodeRegistry: ${ciphernodeRegistryAddress}
     E3RefundManager: ${e3RefundManagerAddress}
     Interfold: ${interfoldAddress}

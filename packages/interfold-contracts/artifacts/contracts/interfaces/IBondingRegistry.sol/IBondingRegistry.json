@@ -588,6 +588,32 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "address",
+          "name": "previousCheckpoints",
+          "type": "address"
+        }
+      ],
+      "name": "BondedCheckpointsDetached",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "checkpoints",
+          "type": "address"
+        }
+      ],
+      "name": "BondedCheckpointsSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "contract InterfoldTicketToken",
           "name": "ticketToken",
           "type": "address"
@@ -1214,6 +1240,19 @@
       "outputs": [
         {
           "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "bondedCheckpoints",
+      "outputs": [
+        {
+          "internalType": "contract IBondedCheckpoints",
           "name": "",
           "type": "address"
         }
@@ -1903,6 +1942,19 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "bondOwner",
+          "type": "address"
+        }
+      ],
+      "name": "resyncBondedCheckpoint",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "distributor",
           "type": "address"
         }
@@ -1934,6 +1986,19 @@
         }
       ],
       "name": "setBondOwner",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IBondedCheckpoints",
+          "name": "newCheckpoints",
+          "type": "address"
+        }
+      ],
+      "name": "setBondedCheckpoints",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2362,5 +2427,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-237c02391cd3c59ddd3267c5dcdd3f53101f06d8"
+  "buildInfoId": "solc-0_8_28-33abaf88dee61bb23c45df8a139333f26829375c"
 }

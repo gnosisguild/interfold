@@ -121,6 +121,8 @@ Protocol contracts deployed
   bondingEligibilityLib:  ${deployment.bondingEligibilityLib}
   bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
+  bondedCheckpoints:      ${deployment.bondedCheckpoints}
+  bondedVotes:            (run --action activate-voting after the Safe batch)
 
 Safe batch required
   file: ${batchFile}

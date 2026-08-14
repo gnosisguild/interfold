@@ -119,6 +119,20 @@ export const deployAndSaveBondingRegistry = async ({
   await slashingLibrary.waitForDeployment();
   const slashingLibraryAddress = await slashingLibrary.getAddress();
 
+  const registrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+  );
+  const registrationLibrary = await registrationFactory.deploy();
+  await registrationLibrary.waitForDeployment();
+  const registrationLibraryAddress = await registrationLibrary.getAddress();
+
+  const ownershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+  );
+  const ownershipLibrary = await ownershipFactory.deploy();
+  await ownershipLibrary.waitForDeployment();
+  const ownershipLibraryAddress = await ownershipLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
     {
@@ -126,6 +140,8 @@ export const deployAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
     },
   );
@@ -177,6 +193,16 @@ export const deployAndSaveBondingRegistry = async ({
     "BondingSlashingLib",
     chain,
   );
+  storeDeploymentArgs(
+    { address: registrationLibraryAddress, blockNumber },
+    "BondingRegistrationLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: ownershipLibraryAddress, blockNumber },
+    "BondingOwnershipLib",
+    chain,
+  );
 
   storeDeploymentArgs(
     {
@@ -197,6 +223,8 @@ export const deployAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
       proxyRecords: {
         initData,
@@ -278,6 +306,22 @@ export const upgradeAndSaveBondingRegistry = async ({
   await slashingLibrary.waitForDeployment();
   const slashingLibraryAddress = await slashingLibrary.getAddress();
 
+  const registrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+    signer,
+  );
+  const registrationLibrary = await registrationFactory.deploy();
+  await registrationLibrary.waitForDeployment();
+  const registrationLibraryAddress = await registrationLibrary.getAddress();
+
+  const ownershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+    signer,
+  );
+  const ownershipLibrary = await ownershipFactory.deploy();
+  await ownershipLibrary.waitForDeployment();
+  const ownershipLibraryAddress = await ownershipLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
     {
@@ -286,6 +330,8 @@ export const upgradeAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
     },
   );
@@ -335,6 +381,8 @@ export const upgradeAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
       proxyRecords,
     },

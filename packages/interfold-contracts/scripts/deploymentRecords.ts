@@ -196,6 +196,41 @@ export function syncProtocolDeploymentRecords(
     "BondingSlashingLib",
     opts.chain,
   );
+  storeDeploymentArgs(
+    { address: deployment.bondingRegistrationLib, blockNumber },
+    "BondingRegistrationLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    { address: deployment.bondingOwnershipLib, blockNumber },
+    "BondingOwnershipLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    {
+      address: deployment.bondedCheckpoints,
+      blockNumber,
+      constructorArgs: { registry: config.bondingRegistryProxy },
+    },
+    "BondedCheckpoints",
+    opts.chain,
+  );
+  // Absent until `--action activate-voting`, which cannot run before the Safe batch configures the
+  // registry the constructor validates against.
+  if (deployment.bondedVotes) {
+    storeDeploymentArgs(
+      {
+        address: deployment.bondedVotes,
+        blockNumber,
+        constructorArgs: {
+          token: config.fold,
+          checkpoints: deployment.bondedCheckpoints,
+        },
+      },
+      "BondedVotes",
+      opts.chain,
+    );
+  }
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
@@ -313,6 +348,8 @@ export function syncProtocolDeploymentRecords(
         BondingAssetLib: deployment.bondingAssetLib,
         BondingEligibilityLib: deployment.bondingEligibilityLib,
         BondingSlashingLib: deployment.bondingSlashingLib,
+        BondingRegistrationLib: deployment.bondingRegistrationLib,
+        BondingOwnershipLib: deployment.bondingOwnershipLib,
       },
       proxyRecords: {
         initData: bondingInitData,
