@@ -474,6 +474,14 @@ impl EtherscanClient {
         };
 
         let Ok(url) = rpc_url.parse() else {
+            // Not the same as "plain token": we could not look. Said out loud because the
+            // consequence is a census missing every bond owner, which otherwise looks identical
+            // to a token that simply has none.
+            log::warn!(
+                "Could not parse the RPC URL while resolving voting-power sources for {}; \
+                 treating it as a plain token, so any bonded voters will be missing",
+                round_token
+            );
             return plain;
         };
         let provider = ProviderBuilder::new().connect_http(url);
@@ -481,11 +489,22 @@ impl EtherscanClient {
 
         // `token()` is the discriminator. Anything that answers it while also answering
         // `registry()` is an adapter over bonded collateral.
-        let (Ok(underlying), Ok(registry)) = (
+        let (underlying, registry) = match (
             adapter.token().call().await,
             adapter.registry().call().await,
-        ) else {
-            return plain;
+        ) {
+            (Ok(underlying), Ok(registry)) => (underlying, registry),
+            // A plain ERC20Votes token does not implement these, so a revert here is the expected
+            // negative answer and only worth a debug line.
+            (Err(token_err), _) | (_, Err(token_err)) => {
+                log::debug!(
+                    "{} does not answer token()/registry() ({}); treating it as a plain \
+                     ERC20Votes token",
+                    round_token,
+                    token_err
+                );
+                return plain;
+            }
         };
 
         VotingPowerSources {
@@ -664,6 +683,9 @@ impl EtherscanClient {
         timepoint: u64,
         rpc_url: &str,
         threshold: U256,
+        // The round's explicit divisor, when it named one. `None` derives from the token's
+        // decimals, matching what the contract does for a zero divisor.
+        divisor_override: Option<U256>,
     ) -> Result<Vec<TokenHolder>> {
         let mut token_holders: Vec<TokenHolder> = Vec::new();
 
@@ -672,16 +694,22 @@ impl EtherscanClient {
         // we want to keep some precision but want to deal with as small as numbers as possible
         let precision = if decimals > 1 { decimals - 1 } else { 0 };
 
-        let scale_factor = U256::from(10u128.pow(precision as u32));
+        // A round that names its own divisor must be scaled by that, not by the decimals: the
+        // contract enforces the round's value, so deriving here would serve balances in units the
+        // chain disagrees with, and a mask built from one would fail in the verifier.
+        let scale_factor = match divisor_override {
+            Some(divisor) if !divisor.is_zero() => divisor,
+            _ => U256::from(10u128.pow(precision as u32)),
+        };
 
         log::info!(
-            "Verifying {} candidates against {} at timepoint {} (decimals={}, scale=10^{}, \
+            "Verifying {} candidates against {} at timepoint {} (decimals={}, divisor={}, \
              threshold={})",
             potential_voters.len(),
             token_address,
             timepoint,
             decimals,
-            precision,
+            scale_factor,
             threshold
         );
 
@@ -713,10 +741,10 @@ impl EtherscanClient {
                             rounds_to_zero += 1;
                             log::warn!(
                                 "  {} clears the threshold but scales to zero (raw={}, \
-                                 scale=10^{}): it can vote, but carries no weight",
+                                 divisor={}): it can vote, but carries no weight",
                                 voter.address,
                                 votes,
-                                precision
+                                scale_factor
                             );
                         }
 
@@ -953,6 +981,8 @@ impl EtherscanClient {
         snapshot_timepoint: u64,
         rpc_url: &str,
         threshold: U256,
+        // The round's explicit voting-power divisor, or `None` to derive it from the decimals.
+        divisor_override: Option<U256>,
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
@@ -1059,6 +1089,7 @@ impl EtherscanClient {
                 vote_timepoint,
                 rpc_url,
                 threshold,
+                divisor_override,
             )
             .await
             .context("Failed to verify voting power")?;
@@ -1470,6 +1501,8 @@ mod tests {
                 snapshot_timepoint,
                 rpc_url,
                 threshold,
+                // Derive from the token's decimals, as a round with a zero divisor does.
+                None,
             )
             .await
             .unwrap();

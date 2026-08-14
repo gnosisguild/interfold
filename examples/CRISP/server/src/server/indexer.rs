@@ -108,6 +108,7 @@ pub async fn register_e3_requested(
                     credit_mode,
                     credits,
                     census_mode,
+                    voting_power_divisor: decoded.6.to_string(),
                 };
 
                 let balance_threshold =
@@ -160,7 +161,11 @@ pub async fn register_e3_requested(
                 //
                 // Checked before the local-network branch because a declared census is exact on any
                 // network, including a devnet where the mock holders would otherwise be substituted.
-                let token_holders = if custom_params.census_mode == CensusMode::ByRequester {
+                // Wrapped so a discovery failure can be downgraded for ONCHAIN rounds below.
+                // Etherscan being down carries no eligibility meaning there: the contract reads
+                // power per input, so the only cost is mask cover.
+                let discovery: eyre::Result<Vec<TokenHolder>> = async {
+                Ok(if custom_params.census_mode == CensusMode::ByRequester {
                     let credits_str = match custom_params.credit_mode {
                         CreditMode::Constant => credits_clone
                             .clone()
@@ -250,12 +255,20 @@ pub async fn register_e3_requested(
                                         )
                                     },
                                 )?,
+                                // A round may name its own divisor; the contract enforces that
+                                // value, so the served balances have to use it too.
+                                match U256::from_str_radix(&custom_params.voting_power_divisor, 10) {
+                                    Ok(d) if !d.is_zero() => Some(d),
+                                    _ => None,
+                                },
                             )
                             .await
                             .context("Etherscan token-holder discovery failed")?
                         }
                     }
-                };
+                })
+                }
+                .await;
 
                 // Fatal only where the list decides who may vote. For a Merkle round an empty
                 // census means nobody can ever cast a ballot, so failing loudly is right. For an
@@ -263,6 +276,21 @@ pub async fn register_e3_requested(
                 // failing here would skip `initialize_round`, leaving a perfectly votable round
                 // unrecorded and invisible to every client, because discovery happened to come
                 // back empty — a missing API key or a rate limit would be enough.
+
+                let token_holders = match discovery {
+                    Ok(holders) => holders,
+                    Err(e) if is_onchain_census => {
+                        warn!(
+                            "[e3_id={}] CensusMode::Onchain holder discovery failed: {:#}. The \
+                             round is still recorded and votable — eligibility is read from the \
+                             token at publish time — but clients have no mask targets.",
+                            e3_id, e
+                        );
+                        Vec::new()
+                    }
+                    Err(e) => return Err(e),
+                };
+
                 if token_holders.is_empty() {
                     if !is_onchain_census {
                         return Err(eyre::eyre!(
