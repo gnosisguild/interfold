@@ -8,9 +8,18 @@ pragma solidity 0.8.28;
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { IArbSys } from "../interfaces/external/IArbSys.sol";
 
-/// @notice Updates a committee's top-N candidates and their collateral obligations.
+/// @notice Resolves entropy and updates candidate rankings for registry sortition.
 library RegistrySortitionLib {
+    uint256 private constant ARBITRUM_ONE_CHAIN_ID = 42161;
+    uint256 private constant ARBITRUM_NOVA_CHAIN_ID = 42170;
+    uint256 private constant ARBITRUM_SEPOLIA_CHAIN_ID = 421614;
+
+    IArbSys private constant ARBSYS = IArbSys(address(100));
+    address private constant BLOCKHASH_HISTORY =
+        0x0000F90827F1C53a10cb7A02335B175320002935;
+
     function insertCandidate(
         ICiphernodeRegistry.Committee storage committee,
         IBondingRegistry bondingRegistry,
@@ -45,5 +54,50 @@ library RegistrySortitionLib {
         if (displaced != address(0)) {
             bondingRegistry.setCommitteeObligation(e3Id, displaced, false);
         }
+    }
+
+    /// @notice Returns the chain block number that identifies RPC block hashes.
+    function currentBlockNumber(
+        uint256 chainId
+    ) external view returns (uint256) {
+        if (_usesArbitrumBlockNumbers(chainId)) {
+            return ARBSYS.arbBlockNumber();
+        }
+        return block.number;
+    }
+
+    /// @notice Returns the committed chain block hash when it is available.
+    function entropyBlockHash(
+        uint256 chainId,
+        uint256 entropyBlock
+    ) external view returns (bool ready, bytes32 blockHash) {
+        uint256 currentBlock = block.number;
+        bool usesArbitrumBlocks = _usesArbitrumBlockNumbers(chainId);
+        if (usesArbitrumBlocks) currentBlock = ARBSYS.arbBlockNumber();
+        if (entropyBlock == 0 || currentBlock <= entropyBlock) {
+            return (false, bytes32(0));
+        }
+
+        if (!usesArbitrumBlocks) {
+            blockHash = blockhash(entropyBlock);
+            if (blockHash != bytes32(0)) return (true, blockHash);
+        }
+
+        (bool success, bytes memory result) = BLOCKHASH_HISTORY.staticcall(
+            abi.encode(entropyBlock)
+        );
+        if (success && result.length == 32) {
+            blockHash = abi.decode(result, (bytes32));
+        }
+        ready = blockHash != bytes32(0);
+    }
+
+    function _usesArbitrumBlockNumbers(
+        uint256 chainId
+    ) private pure returns (bool) {
+        return
+            chainId == ARBITRUM_ONE_CHAIN_ID ||
+            chainId == ARBITRUM_NOVA_CHAIN_ID ||
+            chainId == ARBITRUM_SEPOLIA_CHAIN_ID;
     }
 }

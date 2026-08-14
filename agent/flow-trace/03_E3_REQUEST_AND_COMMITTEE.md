@@ -145,7 +145,9 @@ Requester calls: Interfold.request({
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: unresolved,                           │
-│   │   │  │         entropyBlock: block.number + 1,             │
+│   │   │  │         entropyBlock: chainBlockNumber + 1,         │
+│   │   │  │           → ArbSys L2 block on Arbitrum             │
+│   │   │  │           → execution block on other chains         │
 │   │   │  │         requestBlock: block.timestamp, // H-26      │
 │   │   │  │         committeeDeadline:                          │
 │   │   │  │           block.timestamp + sortitionWindow,        │
@@ -196,7 +198,8 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 └─ Stores the E3's request-time registry and verifier for signing, validation, and publication
 │
 ├─ Decodes CommitteeRequested and waits until entropyBlock has the configured confirmations
-├─ Reads the entropy block through the execution RPC and derives
+│  → Arbitrum RPC block numbers and the committed ArbSys block number both identify L2 blocks
+├─ Reads the matching chain block through the execution RPC and derives
 │  keccak256(blockHash, e3Id) without sending a transaction
 └─ Publishes CommitteeRequested with the resolved committee seed
 
@@ -318,8 +321,12 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │                                                         │
     │  │    7. If this is the first ticket, resolve and store:  │
     │  │       seed = keccak256(                                │
-    │  │         blockhash(sortitionEntropyBlocks[e3Id]), e3Id │
+    │  │         chainBlockHash(sortitionEntropyBlocks[e3Id]), │
+    │  │         e3Id                                          │
     │  │       )                                                │
+    │  │       → Arbitrum reads the L2 hash from EIP-2935      │
+    │  │       → Other chains prefer BLOCKHASH and then        │
+    │  │         fall back to EIP-2935                         │
     │  │       → The entropy block is after the paid request    │
     │  │       → No separate seed transaction is required       │
     │  │                                                         │
@@ -512,9 +519,10 @@ A ready committee must finalize before its absolute DKG deadline.
 
 1. **Deterministic sortition**: Both Rust and Solidity compute
    `keccak256(address, ticket, e3Id, seed)`. The on-chain contract verifies what the off-chain node
-   computed. The seed comes from the committed next-block hash. The requester cannot inspect it and
-   revert the request in the same transaction. The first ticket stores the seed, so no separate
-   randomness transaction is needed.
+   computed. The seed comes from the committed next-chain-block hash. Arbitrum uses its L2 block
+   number and L2 block hash. The requester cannot inspect the seed and revert the request in the
+   same transaction. The first ticket stores the seed, so no separate randomness transaction is
+   needed.
 
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
@@ -576,10 +584,12 @@ score. A requester can revert the request or learn the committee seed, but it ca
 transaction.
 
 The basic EVM source uses a block hash, so the seed must be resolved while that hash remains in the
-chain's history. The contract first uses the EVM's recent-block lookup and then tries the EIP-2935
-history contract. Chains without EIP-2935 retain the 256-block limit. This removes requester-side
-conditional-revert grinding. It does not claim the stronger proposer-resistance of a verifiable
-randomness service.
+chain's history. Public Arbitrum chains commit the next L2 block number through `ArbSys`. The
+contract reads that L2 block hash directly from EIP-2935 and never mixes it with the L1-oriented
+`BLOCKHASH` opcode. Rust reads the same L2 block from the Arbitrum execution RPC. Other chains use
+the EVM's recent-block lookup and then try the EIP-2935 history contract. Chains without EIP-2935
+retain the 256-block limit. This removes requester-side conditional-revert grinding. It does not
+claim the stronger proposer-resistance of a verifiable randomness service.
 
 The registry event keeps its existing ABI. The Rust reader recognizes older events, where the same
 field contains the request-time seed, and replays them with the previous seed encoding. New events

@@ -1254,3 +1254,50 @@ describe("CiphernodeRegistryOwnable", function () {
     });
   });
 });
+
+describe("RegistrySortitionLib entropy", function () {
+  const ARBSYS = "0x0000000000000000000000000000000000000064";
+  const BLOCKHASH_HISTORY = "0x0000F90827F1C53a10cb7A02335B175320002935";
+
+  async function setupEntropyHarness() {
+    const factory = await ethers.getContractFactory("RegistrySortitionLib");
+    const library = await factory.deploy();
+    await library.waitForDeployment();
+    return { library };
+  }
+
+  it("uses Arbitrum L2 block numbers and L2 block-hash history", async function () {
+    const { library } = await loadFixture(setupEntropyHarness);
+
+    await networkHelpers.mine(2);
+    const currentBlock = await ethers.provider.getBlockNumber();
+    const recentBlock = await ethers.provider.getBlock(currentBlock - 1);
+    if (!recentBlock?.hash) throw new Error("recent block hash missing");
+
+    const l2BlockNumber = currentBlock + 100;
+    const encodedL2BlockNumber = ethers
+      .zeroPadValue(ethers.toBeHex(l2BlockNumber), 32)
+      .slice(2);
+    await ethers.provider.send("hardhat_setCode", [
+      ARBSYS,
+      `0x7f${encodedL2BlockNumber}60005260206000f3`,
+    ]);
+    expect(await library.currentBlockNumber(42161)).to.equal(l2BlockNumber);
+    expect(await library.currentBlockNumber(42170)).to.equal(l2BlockNumber);
+    expect(await library.currentBlockNumber(421614)).to.equal(l2BlockNumber);
+
+    const l2BlockHash = `0x${"11".repeat(32)}`;
+    await ethers.provider.send("hardhat_setCode", [
+      BLOCKHASH_HISTORY,
+      `0x7f${l2BlockHash.slice(2)}60005260206000f3`,
+    ]);
+
+    expect(await library.entropyBlockHash(1, currentBlock - 1)).to.deep.equal([
+      true,
+      recentBlock.hash,
+    ]);
+    expect(
+      await library.entropyBlockHash(42161, currentBlock - 1),
+    ).to.deep.equal([true, l2BlockHash]);
+  });
+});
