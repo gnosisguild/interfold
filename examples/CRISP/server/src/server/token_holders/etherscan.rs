@@ -674,16 +674,64 @@ impl EtherscanClient {
 
         let scale_factor = U256::from(10u128.pow(precision as u32));
 
+        log::info!(
+            "Verifying {} candidates against {} at timepoint {} (decimals={}, scale=10^{}, \
+             threshold={})",
+            potential_voters.len(),
+            token_address,
+            timepoint,
+            decimals,
+            precision,
+            threshold
+        );
+
+        let mut below_threshold = 0usize;
+        let mut rounds_to_zero = 0usize;
+
         for voter in potential_voters {
             match Self::get_past_votes(token_address, voter.address, timepoint, rpc_url).await {
                 Ok(votes) => {
                     if votes >= threshold {
                         let scaled_votes = votes / scale_factor;
 
+                        // Both values, because they answer different questions. The raw one is
+                        // what the chain reports and what a holder recognises as their balance;
+                        // the scaled one is what the ballot is bounded by, and a mismatch between
+                        // a census and a tally is almost always a scaling mismatch.
+                        log::info!(
+                            "  eligible {} raw={} scaled={}",
+                            voter.address,
+                            votes,
+                            scaled_votes
+                        );
+
+                        // Above the threshold but worth nothing once scaled: the leaf bounds every
+                        // ballot to zero, so this address is in the census and can still only cast
+                        // an empty vote. Worth saying out loud — it looks like eligibility from
+                        // every angle except the one that counts.
+                        if scaled_votes.is_zero() {
+                            rounds_to_zero += 1;
+                            log::warn!(
+                                "  {} clears the threshold but scales to zero (raw={}, \
+                                 scale=10^{}): it can vote, but carries no weight",
+                                voter.address,
+                                votes,
+                                precision
+                            );
+                        }
+
                         token_holders.push(TokenHolder {
                             address: voter.address.to_string(),
                             balance: scaled_votes.to_string(),
                         });
+                    } else {
+                        below_threshold += 1;
+                        log::debug!(
+                            "  skipped {} raw={} below threshold {}",
+                            voter.address,
+                            votes,
+                            threshold
+                        );
                     }
                 }
                 Err(e) => {
@@ -694,6 +742,13 @@ impl EtherscanClient {
             // Rate limiting - small delay between RPC calls
             sleep(Duration::from_millis(50)).await;
         }
+
+        log::info!(
+            "Verified: {} eligible, {} below threshold, {} scale to zero",
+            token_holders.len(),
+            below_threshold,
+            rounds_to_zero
+        );
 
         Ok(token_holders)
     }
