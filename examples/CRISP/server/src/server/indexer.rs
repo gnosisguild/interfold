@@ -66,8 +66,13 @@ pub async fn register_e3_requested(
                 .map_err(|e| eyre::eyre!("{}", e))?;
 
                 // Use sol_data types instead of primitives
+                // Seven fields. The seventh is the ONCHAIN voting-power divisor: the contract
+                // scales raw token power by it before handing the value to the circuit, so a
+                // six-field decode would fail outright on every round requested after that field
+                // was added.
                 type CustomParamsTuple = (
                     sol_data::Address,
+                    sol_data::Uint<256>,
                     sol_data::Uint<256>,
                     sol_data::Uint<256>,
                     sol_data::Uint<256>,
@@ -129,22 +134,23 @@ pub async fn register_e3_requested(
                 // there is no holder list to enumerate and no root to post — `setMerkleRoot` is
                 // not just unnecessary here, it is unused: `_eligibility` never reads it in this
                 // mode. The round is still recorded, because the API serves its metadata.
-                if custom_params.census_mode == CensusMode::Onchain {
+                // An on-chain census is not an eligibility input: `_eligibility` reads each
+                // voter's power with `getPastVotes` when the input is published and never looks at
+                // `merkleRoot`. The holder list is still discovered and stored, because clients
+                // need somewhere to draw mask targets from — a mask is written to someone else's
+                // slot, so without a list of who holds power there is nobody to mask.
+                //
+                // The distinction matters for what a wrong list can do. For a Merkle round the
+                // list *is* the electorate, so an omission disenfranchises. Here it is an index
+                // over what the chain already decides, so an omission costs mask cover and nothing
+                // else — it can never enfranchise anyone the contract would refuse.
+                let is_onchain_census = custom_params.census_mode == CensusMode::Onchain;
+                if is_onchain_census {
                     info!(
-                        "[e3_id={}] CensusMode::Onchain — no census to build, skipping token \
-                         holder discovery and setMerkleRoot",
+                        "[e3_id={}] CensusMode::Onchain — discovering holders for mask targets; \
+                         no merkle root will be posted",
                         e3_id
                     );
-
-                    repo.initialize_round(
-                        custom_params,
-                        e3.requester.to_string(),
-                        input_window[1],
-                        snapshot_timepoint,
-                    )
-                    .await?;
-
-                    return Ok(());
                 }
 
                 // Get token holders from Etherscan API or mocked data.
@@ -283,48 +289,53 @@ pub async fn register_e3_requested(
                     .record_round(&e3_id)
                     .await?;
 
-                let tree =
-                    build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
-                let merkle_root = tree
-                    .root()
-                    .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
+                // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
+                // that mode, so posting one would spend gas to publish a value nothing consults —
+                // and would imply the list gates eligibility when it does not.
+                if !is_onchain_census {
+                    let tree =
+                        build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
+                    let merkle_root = tree
+                        .root()
+                        .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
 
-                info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
+                    info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
 
-                // Convert merkle root from hex string to U256.
-                let merkle_root_bytes = hex::decode(&merkle_root)
-                    .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
-                let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
+                    // Convert merkle root from hex string to U256.
+                    let merkle_root_bytes = hex::decode(&merkle_root)
+                        .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
+                    let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
 
-                let e3_id_u256 = U256::from_str_radix(&e3_id, 10)
-                    .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
+                    let e3_id_u256 = U256::from_str_radix(&e3_id, 10)
+                        .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
 
-                info!(
-                    "[e3_id={}] Calling setMerkleRoot with root: {}",
-                    e3_id, merkle_root_u256
-                );
+                    info!(
+                        "[e3_id={}] Calling setMerkleRoot with root: {}",
+                        e3_id, merkle_root_u256
+                    );
 
-                let contract = CRISPContractFactory::create_write(
-                    &CONFIG.http_rpc_url,
-                    &CONFIG.e3_program_address,
-                    &CONFIG.private_key,
-                )
-                .await
-                .with_context(|| {
-                    format!("[e3_id={}] Failed to create CRISP contract", e3_id)
-                })?;
-
-                let receipt = contract
-                    .set_merkle_root(e3_id_u256, merkle_root_u256)
+                    let contract = CRISPContractFactory::create_write(
+                        &CONFIG.http_rpc_url,
+                        &CONFIG.e3_program_address,
+                        &CONFIG.private_key,
+                    )
                     .await
                     .with_context(|| {
-                        format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
+                        format!("[e3_id={}] Failed to create CRISP contract", e3_id)
                     })?;
 
-                info!(
-                    "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
-                    e3_id, receipt.transaction_hash
-                );
+                    let receipt = contract
+                        .set_merkle_root(e3_id_u256, merkle_root_u256)
+                        .await
+                        .with_context(|| {
+                            format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
+                        })?;
+
+                    info!(
+                        "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
+                        e3_id, receipt.transaction_hash
+                    );
+                }
 
                 Ok(())
             }
@@ -575,6 +586,7 @@ mod custom_params_decoding_tests {
         sol_data::Uint<256>,
         sol_data::Uint<256>,
         sol_data::Uint<256>,
+        sol_data::Uint<256>,
     );
 
     fn encode(census_mode: u64) -> Vec<u8> {
@@ -585,6 +597,8 @@ mod custom_params_decoding_tests {
             U256::from(0),
             U256::from(1),
             U256::from(census_mode),
+            // Voting-power divisor; 0 means the contract derives it from the token decimals.
+            U256::from(0),
         ))
     }
 

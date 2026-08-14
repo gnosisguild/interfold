@@ -92,6 +92,37 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, 
 }
 
 /**
+ * Get the voting power a slot may spend in a `CensusMode.ONCHAIN` round, in ballot units.
+ *
+ * Read from the CRISP program rather than derived here. The contract scales raw token power by a
+ * per-round divisor before handing it to the circuit as public input 4, and it is the same
+ * contract that verifies the proof — so recomputing the value client-side would mean re-deriving
+ * the round's snapshot, its divisor and the rounding, and any drift surfaces only as an opaque
+ * verifier failure.
+ *
+ * @param programAddress - The CRISP program address
+ * @param e3Id - The e3Id of the round
+ * @param slot - The slot address the ballot is written to
+ * @param chainId - The chain the program is deployed on
+ * @returns The spendable voting power in ballot units, or 0 for a round that is not ONCHAIN
+ */
+export const getOnchainVotingPower = async (
+  programAddress: string,
+  e3Id: bigint,
+  slot: string,
+  chainId: number,
+): Promise<bigint> => {
+  const publicClient = getPublicClient(chainId)
+
+  return publicClient.readContract({
+    address: programAddress as `0x${string}`,
+    abi: parseAbi(['function votingPowerOf(uint256 e3Id, address slot) view returns (uint256)']),
+    functionName: 'votingPowerOf',
+    args: [e3Id, slot as `0x${string}`],
+  })
+}
+
+/**
  * Get the previous ciphertext for a slot from the CRISP server.
  * Returns undefined when the slot is empty (404).
  *

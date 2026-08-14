@@ -40,6 +40,8 @@ describe('CRISP on-chain census', function () {
   let slotAddress: string
   let e3Id: bigint
   let votingPower: bigint
+  let divisor: bigint
+  let rawPower: bigint
   let voteProof: ProofData
 
   const numOptions = 2
@@ -53,10 +55,20 @@ describe('CRISP on-chain census', function () {
     creditMode: number
     credits: bigint
     censusMode: number
+    /// 0 means "derive the divisor from the token's decimals".
+    votingPowerDivisor?: bigint
   }) =>
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
-      [opts.token, opts.minVotingPower, opts.numOptions, opts.creditMode, opts.credits, opts.censusMode],
+      ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+      [
+        opts.token,
+        opts.minVotingPower,
+        opts.numOptions,
+        opts.creditMode,
+        opts.credits,
+        opts.censusMode,
+        opts.votingPowerDivisor ?? 0n,
+      ],
     )
 
   before(async function () {
@@ -84,7 +96,7 @@ describe('CRISP on-chain census', function () {
       numOptions,
       encodeParams({
         token: await token.getAddress(),
-        minVotingPower: 1n,
+        minVotingPower: 10n ** 17n,
         numOptions,
         creditMode: CUSTOM,
         credits: 1n,
@@ -98,8 +110,16 @@ describe('CRISP on-chain census', function () {
     const requestBlock = await ethers.provider.getBlock(receipt!.blockNumber)
     const snapshot = BigInt(requestBlock!.timestamp) - 1n
 
-    votingPower = await token.getPastVotes(slotAddress, snapshot)
-    expect(votingPower, 'voter must hold power at the snapshot').to.be.greaterThan(0n)
+    rawPower = await token.getPastVotes(slotAddress, snapshot)
+    expect(rawPower, 'voter must hold power at the snapshot').to.be.greaterThan(0n)
+
+    // The contract scales raw power into ballot units before handing it to the circuit, so the
+    // prover has to use the same value. Read the divisor from the round rather than recomputing
+    // it, which also pins the getter clients depend on.
+    divisor = await crispProgram.votingPowerDivisorOf(e3Id)
+    expect(divisor, 'derived from the token decimals: 10 ** (18 - 1)').to.equal(10n ** 17n)
+
+    votingPower = rawPower / divisor
 
     voteProof = await buildOnchainProof(votingPower)
   })
@@ -154,7 +174,7 @@ describe('CRISP on-chain census', function () {
         numOptions,
         encodeParams({
           token: await token.getAddress(),
-          minVotingPower: 1n,
+          minVotingPower: 10n ** 17n,
           numOptions,
           creditMode: CUSTOM,
           credits: 1n,
@@ -183,6 +203,16 @@ describe('CRISP on-chain census', function () {
     expect(pi[6], 'num_options').to.eq(BigInt(numOptions))
   })
 
+  /// The contract is the single source of truth for the bound. A client proves against this
+  /// number, so if it ever disagreed with what `publishInput` hands the circuit, every ballot
+  /// would fail with nothing naming the cause.
+  it('exposes the same power the circuit is given', async function () {
+    const exposed = await crispProgram.votingPowerOf(e3Id, slotAddress)
+
+    expect(exposed).to.equal(votingPower)
+    expect(exposed).to.equal(BigInt(voteProof.publicInputs[4]))
+  })
+
   it('publishes an ONCHAIN ballot end to end', async function () {
     await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
 
@@ -207,6 +237,56 @@ describe('CRISP on-chain census', function () {
     const honest = await buildOnchainProof(votingPower, round)
     await (await mockInterfold.setCommitteePublicKey(honest.publicInputs[8])).wait()
     await crispProgram.publishInput(round, encodeSolidityProof(honest))
+  })
+
+  /// The divisor is what keeps token weighting meaningful. The circuit enforces
+  /// `vote <= voting_power`, and the BFV encoding caps each choice at `2**(100/numOptions) - 1`
+  /// (about 8.6e9 for three options). Raw power from an 18-decimal token is ~1e18 per token, so
+  /// unscaled every holder would sit above that cap and weighting would flatten silently.
+  it('scales raw power into ballot units', async function () {
+    const perChoiceCap = 2n ** 33n - 1n
+
+    expect(divisor, 'derived as 10 ** (18 - 1)').to.equal(10n ** 17n)
+    expect(votingPower).to.equal(rawPower / divisor)
+
+    // The point of the divisor: the raw value is orders of magnitude past the cap, the scaled one
+    // is comfortably inside it. Without scaling every holder would be pinned at the cap and the
+    // weighting would carry no information.
+    expect(rawPower, 'raw power breaches the cap').to.be.greaterThan(perChoiceCap)
+    expect(votingPower, 'scaled power fits under it').to.be.lessThan(perChoiceCap)
+  })
+
+  /// A requester that needs different precision names its own divisor; 0 means "derive it".
+  it('honours an explicit divisor', async function () {
+    const id = await mockInterfold.nextE3Id()
+    await (
+      await mockInterfold.requestWithParams(
+        await crispProgram.getAddress(),
+        numOptions,
+        encodeParams({
+          token: await token.getAddress(),
+          // A coarser divisor demands a proportionally higher floor: the round is refused unless
+          // clearing it is worth at least one ballot unit.
+          minVotingPower: 10n ** 18n,
+          numOptions,
+          creditMode: CUSTOM,
+          credits: 1n,
+          censusMode: ONCHAIN,
+          votingPowerDivisor: 10n ** 18n,
+        }),
+      )
+    ).wait()
+
+    expect(await crispProgram.votingPowerDivisorOf(id)).to.equal(10n ** 18n)
+  })
+
+  /// Only ONCHAIN scales. A Merkle round records no divisor, because its bound comes from the
+  /// census leaf the coordinator has already scaled.
+  it('records no divisor for a non-ONCHAIN round', async function () {
+    const id = await mockInterfold.nextE3Id()
+    await (await mockInterfold.request(await crispProgram.getAddress())).wait()
+
+    expect(await crispProgram.votingPowerDivisorOf(id)).to.equal(0n)
   })
 
   /// The check the shared-verifier substitution can never make: the two verifiers are not
