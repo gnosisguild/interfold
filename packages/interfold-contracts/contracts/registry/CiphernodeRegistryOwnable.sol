@@ -46,7 +46,8 @@ contract CiphernodeRegistryOwnable is
     uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 60;
 
     /// @notice Maximum permitted value for {sortitionSubmissionWindow}.
-    uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 7 days;
+    /// @dev One day fits inside Arbitrum's approximately 27-hour L2 hash history.
+    uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
     /// @notice EIP-2935 block-hash history contract.
     address public constant BLOCKHASH_HISTORY =

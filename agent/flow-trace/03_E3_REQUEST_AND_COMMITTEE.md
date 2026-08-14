@@ -510,7 +510,7 @@ Time ─────────────────────────
 │                │ ───►DKG starts  │               │
 
 If a stage deadline is missed → anyone can call `markE3Failed()`.
-A ready committee must finalize before its absolute DKG deadline.
+A ready committee must finalize at or before its absolute DKG deadline.
 ```
 
 ---
@@ -539,7 +539,7 @@ A ready committee must finalize before its absolute DKG deadline.
    lowest non-expelled `party_id` in the address-sorted runtime committee.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
-   deadline and before the absolute DKG deadline. Delayed finalization reduces the remaining DKG
+   deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG
    time instead of extending the paid lifecycle. After the DKG deadline, anyone can fail an
    unfinalized ready committee. Because staggered timers can overlap, more than one node can send
    the transaction. The losing transaction reverts with `CommitteeAlreadyFinalized`; the writer
@@ -588,8 +588,9 @@ chain's history. Public Arbitrum chains commit the next L2 block number through 
 contract reads that L2 block hash directly from EIP-2935 and never mixes it with the L1-oriented
 `BLOCKHASH` opcode. Rust reads the same L2 block from the Arbitrum execution RPC. Other chains use
 the EVM's recent-block lookup and then try the EIP-2935 history contract. Chains without EIP-2935
-retain the 256-block limit. This removes requester-side conditional-revert grinding. It does not
-claim the stronger proposer-resistance of a verifiable randomness service.
+retain the 256-block limit. The one-day submission cap fits inside Arbitrum's approximately 27-hour
+L2 hash history. This removes requester-side conditional-revert grinding. It does not claim the
+stronger proposer-resistance of a verifiable randomness service.
 
 The registry event keeps its existing ABI. The Rust reader recognizes older events, where the same
 field contains the request-time seed, and replays them with the previous seed encoding. New events
