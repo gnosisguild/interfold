@@ -616,6 +616,113 @@ describe("BondedVotes", function () {
     });
   });
 
+  /// Aragon's `TokenVotingSetup` and the CRISP fork of it decide what a voting token is by probing
+  /// it, not by asking for an ERC-165 answer. These reproduce those exact probes, so the adapter
+  /// cannot drift out of installability without a test failing.
+  describe("Aragon plugin compatibility", function () {
+    /// `TokenVotingSetup._isERC20` staticcalls `balanceOf(address)` and rejects the token unless it
+    /// returns 32 bytes. Failing this reverts installation with `TokenNotERC20`.
+    it("passes the ERC-20 probe the plugin setup gates installation on", async function () {
+      const { bondedVotes, bondOwnerAddress } = await loadFixture(setup);
+
+      const raw = await ethers.provider.call({
+        to: await bondedVotes.getAddress(),
+        data: bondedVotes.interface.encodeFunctionData("balanceOf", [
+          bondOwnerAddress,
+        ]),
+      });
+
+      expect(ethers.dataLength(raw)).to.equal(32);
+    });
+
+    /// `supportsIVotesInterface` staticcalls these three with a zero timepoint. ERC-165 is never
+    /// consulted. If any of them reverts or returns short, the setup silently wraps the token in
+    /// `GovernanceWrappedERC20`, which would drop the bonded half entirely.
+    it("answers all three IVotes probes at timepoint zero", async function () {
+      const { bondedVotes, bondOwnerAddress } = await loadFixture(setup);
+      const to = await bondedVotes.getAddress();
+
+      for (const data of [
+        bondedVotes.interface.encodeFunctionData("getPastTotalSupply", [0]),
+        bondedVotes.interface.encodeFunctionData("getVotes", [
+          bondOwnerAddress,
+        ]),
+        bondedVotes.interface.encodeFunctionData("getPastVotes", [
+          bondOwnerAddress,
+          0,
+        ]),
+      ]) {
+        expect(
+          ethers.dataLength(await ethers.provider.call({ to, data })),
+        ).to.equal(32);
+      }
+    });
+
+    /// `TokenVoting._detectTokenClock` reads both and reverts `TokenClockMismatch` when they
+    /// disagree. Agreeing on timestamp is what makes the plugin snapshot with `block.timestamp - 1`
+    /// instead of `block.number - 1` — the difference between counting bonded weight and reading
+    /// zero for everyone.
+    it("reports a clock and a CLOCK_MODE that agree on timestamp", async function () {
+      const { bondedVotes } = await loadFixture(setup);
+
+      expect(await bondedVotes.CLOCK_MODE()).to.equal("mode=timestamp");
+      expect(await bondedVotes.clock()).to.equal(await time.latest());
+    });
+
+    it("exposes the metadata the governance app renders amounts with", async function () {
+      const { bondedVotes, licenseToken } = await loadFixture(setup);
+
+      expect(await bondedVotes.decimals()).to.equal(
+        await licenseToken.decimals(),
+      );
+      expect(await bondedVotes.name()).to.equal(await licenseToken.name());
+      expect(await bondedVotes.symbol()).to.equal(await licenseToken.symbol());
+      expect(await bondedVotes.totalSupply()).to.equal(
+        await licenseToken.totalSupply(),
+      );
+    });
+
+    it("counts wallet and bonded FOLD in the balance, ignoring delegation", async function () {
+      const { bondedVotes, licenseToken, bondOwnerAddress, bond } =
+        await loadFixture(setup);
+
+      await bond(BOND);
+
+      // Delegation moves votes, never the balance, so this stays the full attributable amount.
+      expect(await bondedVotes.balanceOf(bondOwnerAddress)).to.equal(
+        (await licenseToken.balanceOf(bondOwnerAddress)) + BOND,
+      );
+    });
+
+    it("keeps total supply a pass-through so bonded FOLD is never counted twice", async function () {
+      const { bondedVotes, licenseToken, bond } = await loadFixture(setup);
+
+      const before = await licenseToken.totalSupply();
+      await bond(BOND);
+
+      // Bonding moves FOLD to the registry; it is not burned, so supply is unchanged.
+      expect(await bondedVotes.totalSupply()).to.equal(before);
+    });
+
+    /// The wrapper must never look spendable: it owns no position and could not honour a transfer.
+    it("exposes no way to move tokens", async function () {
+      const { bondedVotes } = await loadFixture(setup);
+
+      const names = bondedVotes.interface.fragments
+        .filter((f) => f.type === "function")
+        .map((f) => (f as { name: string }).name);
+
+      for (const absent of [
+        "transfer",
+        "transferFrom",
+        "approve",
+        "allowance",
+      ]) {
+        expect(names).to.not.include(absent);
+      }
+    });
+  });
+
   describe("wiring", function () {
     it("rejects a checkpoint contract bound to another registry", async function () {
       // Deliberately NOT the shared fixture: that one already configures a checkpoint contract,

@@ -7,6 +7,9 @@ pragma solidity 0.8.28;
 
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { IERC5805 } from "@openzeppelin/contracts/interfaces/IERC5805.sol";
+import {
+    IERC20Metadata
+} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 
 /**
@@ -120,6 +123,59 @@ contract BondedVotes is IERC5805 {
     /// bond owner regardless of what this returns.
     function delegates(address account) external view returns (address) {
         return token.delegates(account);
+    }
+
+    ////////////////////////////////////////////////////////////
+    //                                                        //
+    //                  ERC-20 read surface                   //
+    //                                                        //
+    ////////////////////////////////////////////////////////////
+    //
+    // Read-only on purpose. `transfer`, `transferFrom`, `approve` and `allowance` are deliberately
+    // absent: this contract owns no position and can move nothing, so a caller that tries to spend
+    // through it reverts on a missing selector instead of believing a transfer happened.
+    //
+    // The read half exists because Aragon's plugin setups gate installation on a `balanceOf` probe
+    // — `TokenVotingSetup._isERC20` staticcalls `balanceOf(address)` and rejects the token unless
+    // it returns 32 bytes — and because the governance app reads the metadata to render amounts.
+
+    /// @notice Get the FOLD attributable to an account: held in its wallet plus bonded under it.
+    /// @dev Not a spendable balance, and nothing here can move it. Unlike {getVotes} this ignores
+    /// delegation, so it answers "how much FOLD is this account's" rather than "how much can it
+    /// vote with". A holder that never delegated reads a balance above its votes, which is the
+    /// intended signal.
+    /// @param account The account to read.
+    /// @return Wallet balance plus bonded total.
+    function balanceOf(address account) external view returns (uint256) {
+        return
+            IERC20Metadata(address(token)).balanceOf(account) +
+            checkpoints.bonded(account);
+    }
+
+    /// @notice Get the token's total supply.
+    /// @dev Passed through for the same reason as {getPastTotalSupply}: bonded FOLD was
+    /// transferred, not burned, so it is already counted and must not be added again.
+    /// @return The token's total supply.
+    function totalSupply() external view returns (uint256) {
+        return IERC20Metadata(address(token)).totalSupply();
+    }
+
+    /// @notice Get the token's decimals.
+    /// @return Decimals, as reported by the token.
+    function decimals() external view returns (uint8) {
+        return IERC20Metadata(address(token)).decimals();
+    }
+
+    /// @notice Get the token's name.
+    /// @return Name, as reported by the token.
+    function name() external view returns (string memory) {
+        return IERC20Metadata(address(token)).name();
+    }
+
+    /// @notice Get the token's symbol.
+    /// @return Symbol, as reported by the token.
+    function symbol() external view returns (string memory) {
+        return IERC20Metadata(address(token)).symbol();
     }
 
     /// @inheritdoc IVotes
