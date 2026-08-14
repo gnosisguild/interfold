@@ -10,6 +10,8 @@ import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
 import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
+import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
 import { deployAndSaveCiphernodeRegistryOwnable } from "./deployAndSave/ciphernodeRegistryOwnable";
 import { deployAndSaveDkgFoldAttestationVerifier } from "./deployAndSave/dkgFoldAttestationVerifier";
@@ -232,19 +234,19 @@ export const deployInterfold = async (
   console.log("CiphernodeRegistry deployed to:", ciphernodeRegistryAddress);
 
   // BondingRegistry is deployed before FOLD so its address can be passed to
-  // the token constructor.  The license token is set to address(0) temporarily
+  // the token constructor.  The ciphernode bond token is set to address(0) temporarily
   // and fixed after FOLD is deployed with the complete asset configuration.
   console.log("Deploying BondingRegistry...");
   const { bondingRegistry } = await deployAndSaveBondingRegistry({
     owner: ownerAddress,
     ticketToken: interfoldTicketTokenAddress,
-    licenseToken: ethers.ZeroAddress,
+    ciphernodeBondToken: ethers.ZeroAddress,
     registry: ciphernodeRegistryAddress,
     slashedFundsTreasury: ownerAddress,
     ticketPrice: ethers.parseUnits("10", 6).toString(),
-    licenseRequiredBond: ethers.parseEther("100").toString(),
+    requiredCiphernodeBond: ethers.parseEther("100").toString(),
     ticketTokenDecimals: 6,
-    licenseTokenDecimals: 0,
+    ciphernodeBondTokenDecimals: 0,
     minTicketBalance: 1,
     exitDelay: 7 * 24 * 60 * 60,
     hre,
@@ -272,16 +274,16 @@ export const deployInterfold = async (
   const interfoldTokenAddress = await interfoldToken.getAddress();
   console.log("InterfoldToken deployed to:", interfoldTokenAddress);
 
-  // Fix up BondingRegistry's license token now that FOLD exists.
-  console.log("Setting license token in BondingRegistry...");
+  // Fix up BondingRegistry's ciphernode bond token now that FOLD exists.
+  console.log("Setting ciphernode bond token in BondingRegistry...");
   await (
     await bondingRegistry.setBondingAssetConfig({
       ticketToken: interfoldTicketTokenAddress,
-      licenseToken: interfoldTokenAddress,
+      ciphernodeBondToken: interfoldTokenAddress,
       ticketPrice: ethers.parseUnits("10", 6),
-      licenseRequiredBond: ethers.parseEther("100"),
+      requiredCiphernodeBond: ethers.parseEther("100"),
       expectedTicketDecimals: 6,
-      expectedLicenseDecimals: 18,
+      expectedCiphernodeBondDecimals: 18,
     })
   ).wait();
 
@@ -297,6 +299,32 @@ export const deployInterfold = async (
   console.log("Whitelisting BondingRegistry in FOLD...");
   await (
     await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
+  ).wait();
+
+  // ── Bonded voting ───────────────────────────────────────────────────────
+  // Bonded FOLD is transferred to BondingRegistry and never delegated, so without a recorded
+  // history an operator's bonded weight is invisible to governance while still counting in the
+  // quorum denominator. Attached after the license token is set: rotating it detaches the history.
+  console.log("Deploying BondedCheckpoints...");
+  const { bondedCheckpoints } = await deployAndSaveBondedCheckpoints({
+    registry: bondingRegistryAddress,
+    hre,
+  });
+  const bondedCheckpointsAddress = await bondedCheckpoints.getAddress();
+  console.log("BondedCheckpoints deployed to:", bondedCheckpointsAddress);
+
+  console.log("Deploying BondedVotes...");
+  const { bondedVotes } = await deployAndSaveBondedVotes({
+    token: interfoldTokenAddress,
+    checkpoints: bondedCheckpointsAddress,
+    hre,
+  });
+  const bondedVotesAddress = await bondedVotes.getAddress();
+  console.log("BondedVotes deployed to:", bondedVotesAddress);
+
+  console.log("Attaching BondedCheckpoints to BondingRegistry...");
+  await (
+    await bondingRegistry.setBondedCheckpoints(bondedCheckpointsAddress)
   ).wait();
 
   // ── Testnet faucet (sepolia only) ───────────────────────────────────────
@@ -785,14 +813,30 @@ export const deployInterfold = async (
       slashingManagerAddress,
     ],
     [
-      "bondingRegistry.licenseToken",
-      bondingRegistry.licenseToken(),
+      "bondingRegistry.ciphernodeBondToken",
+      bondingRegistry.ciphernodeBondToken(),
       interfoldTokenAddress,
     ],
     [
       "ticketToken.registry",
       interfoldTicketToken.registry(),
       bondingRegistryAddress,
+    ],
+    [
+      "bondingRegistry.bondedCheckpoints",
+      bondingRegistry.bondedCheckpoints(),
+      bondedCheckpointsAddress,
+    ],
+    [
+      "bondedCheckpoints.registry",
+      bondedCheckpoints.registry(),
+      bondingRegistryAddress,
+    ],
+    ["bondedVotes.token", bondedVotes.token(), interfoldTokenAddress],
+    [
+      "bondedVotes.checkpoints",
+      bondedVotes.checkpoints(),
+      bondedCheckpointsAddress,
     ],
     [
       "slashingManager.interfold",
@@ -854,6 +898,8 @@ export const deployInterfold = async (
     InterfoldTicketToken: ${interfoldTicketTokenAddress}
     SlashingManager: ${slashingManagerAddress}
     BondingRegistry: ${bondingRegistryAddress}
+    BondedCheckpoints: ${bondedCheckpointsAddress}
+    BondedVotes: ${bondedVotesAddress}
     CiphernodeRegistry: ${ciphernodeRegistryAddress}
     E3RefundManager: ${e3RefundManagerAddress}
     Interfold: ${interfoldAddress}

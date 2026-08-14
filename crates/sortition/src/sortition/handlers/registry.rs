@@ -125,7 +125,10 @@ impl Handler<TypedEvent<ConfigurationUpdated>> for Sortition {
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             let eligibility_parameter = matches!(
                 msg.parameter.as_str(),
-                "ticketPrice" | "licenseRequiredBond" | "licenseActiveBps" | "minTicketBalance"
+                "ticketPrice"
+                    | "requiredCiphernodeBond"
+                    | "ciphernodeBondActiveBps"
+                    | "minTicketBalance"
             );
 
             if !eligibility_parameter {

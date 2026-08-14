@@ -18,7 +18,7 @@ import {
   requestNewRound,
 } from './api'
 import { getOnChainRoundData, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
-import { generateMaskVoteProof, generateVoteProof } from './vote'
+import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
   BroadcastVoteRequest,
@@ -26,14 +26,14 @@ import type {
   CurrentRoundResponse,
   E3StateLiteResponse,
   JsonResponse,
-  MaskVoteProofRequest,
   NewRoundRequest,
   OnChainRoundData,
+  PrepareBallotRequest,
+  PreparedBallot,
   ProofData,
   RoundDetails,
   TokenDetails,
   TokenHolder,
-  VoteProofRequest,
   VoteStatusResponse,
   WebResultResponse,
 } from './types'
@@ -57,36 +57,42 @@ export class CrispSDK {
   }
 
   /**
-   * Generate a proof for a vote masking.
-   * @param maskProofInputs - The inputs required to generate the mask vote proof.
-   * @returns A promise that resolves to the generated proof data.
+   * Phase one: encrypt a ballot, before the voter signs anything.
+   *
+   * A ballot has to be encrypted before it can be signed, because the digest binds the ciphertext.
+   * Take `ctCommitment` from the result, read the digest from
+   * `CRISPProgram.ballotDigest(e3Id, slot, ctCommitment)`, have the voter sign it, then call
+   * {@link finishBallot}.
+   *
+   * Masks and real votes take the same path. This method calls the same server API
+   * (previous-ciphertext) for both, so the server cannot infer the ballot type from the request
+   * pattern, and the encryption is identical either way.
+   *
+   * @param request - The ballot to encrypt.
+   * @returns A promise that resolves to the prepared ballot.
    */
-  async generateMaskVoteProof(maskProofInputs: MaskVoteProofRequest): Promise<ProofData> {
-    const previousCiphertext = await getPreviousCiphertext(this.serverUrl, maskProofInputs.e3Id, maskProofInputs.slotAddress)
+  async prepareBallot(request: PrepareBallotRequest): Promise<PreparedBallot> {
+    const previousCiphertext = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
 
-    return generateMaskVoteProof({
-      ...maskProofInputs,
+    return prepareBallot({
+      ...request,
       previousCiphertext,
     })
   }
 
   /**
-   * Generate a proof for a vote.
+   * Phase two: prove a prepared ballot.
    *
-   * Note: The previous ciphertext is not used in the proof computation. This method still calls
-   * the same server API (previous-ciphertext) as {@link generateMaskVoteProof} to prevent the
-   * server from inferring the vote type (mask vs normal) from the client's API usage pattern.
+   * A mask passes no signature and gets the placeholder. It still carries the same digest as a
+   * real vote, because the contract computes the digest for every input.
    *
-   * @param voteProofInputs - The inputs required to generate the vote proof.
+   * @param prepared - The output of {@link prepareBallot}.
+   * @param digest - The digest read from `CRISPProgram.ballotDigest`.
+   * @param signature - The voter signature, omitted for a mask.
    * @returns A promise that resolves to the generated proof data.
    */
-  async generateVoteProof(voteProofInputs: VoteProofRequest): Promise<ProofData> {
-    const previousCiphertext = await getPreviousCiphertext(this.serverUrl, voteProofInputs.e3Id, voteProofInputs.slotAddress)
-
-    return generateVoteProof({
-      ...voteProofInputs,
-      previousCiphertext,
-    })
+  async finishBallot(prepared: PreparedBallot, digest: `0x${string}`, signature?: `0x${string}`): Promise<ProofData> {
+    return signature ? finishBallotProof(prepared, digest, signature) : finishMaskProof(prepared, digest)
   }
 
   /**

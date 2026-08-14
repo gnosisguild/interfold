@@ -151,10 +151,10 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("InterfoldToken: CLOCK_MODE() and clock() report timestamp mode", async function () {
-      const { licenseToken } = await deployAll();
-      expect(await licenseToken.CLOCK_MODE()).to.equal("mode=timestamp");
+      const { ciphernodeBondToken } = await deployAll();
+      expect(await ciphernodeBondToken.CLOCK_MODE()).to.equal("mode=timestamp");
       const latest = (await ethers.provider.getBlock("latest"))!;
-      const onchain = await licenseToken.clock();
+      const onchain = await ciphernodeBondToken.clock();
       expect(onchain).to.equal(BigInt(latest.timestamp));
     });
   });

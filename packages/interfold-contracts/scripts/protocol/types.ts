@@ -40,12 +40,20 @@ export interface ProtocolConfigFile {
   ticketToken: { lockRegistry: boolean };
   bonding: {
     ticketPrice: string;
-    licenseRequiredBond: string;
+    requiredCiphernodeBond: string;
     ticketTokenDecimals: number;
-    licenseTokenDecimals: number;
+    ciphernodeBondTokenDecimals: number;
     minTicketBalance: string;
     exitDelay: string;
   };
+  /**
+   * Bond owners to resynchronize when a `bondingRegistry` upgrade first attaches
+   * `BondedCheckpoints`. Configuring the contract does not backfill, so an owner that bonded
+   * beforehand reads as zero bonded voting power until its next bond, slash, exit claim or owner
+   * transfer. Collect the list off-chain from `BondOwnerSet` and `CiphernodeBondUpdated` logs. Only
+   * needed on a deployment that already has bonds; a first-time deployment has none.
+   */
+  bondedResyncOwners?: string[];
   registry: { sortitionSubmissionWindow: string };
   slashing: { initialDelay: string };
   interfold: {
@@ -83,6 +91,14 @@ export interface ProtocolDeployment {
   bondingAssetLib: string;
   bondingEligibilityLib: string;
   bondingSlashingLib: string;
+  bondingRegistrationLib: string;
+  bondingOwnershipLib: string;
+  bondedCheckpoints: string;
+  /**
+   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
+   */
+  bondedVotes?: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -144,6 +160,14 @@ export interface ProtocolContracts {
   bondingAssetLib: string;
   bondingEligibilityLib: string;
   bondingSlashingLib: string;
+  bondingRegistrationLib: string;
+  bondingOwnershipLib: string;
+  bondedCheckpoints: string;
+  /**
+   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
+   */
+  bondedVotes?: string;
 }
 
 export interface ProtocolInterfaces {

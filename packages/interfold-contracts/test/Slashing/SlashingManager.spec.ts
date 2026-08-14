@@ -9,7 +9,7 @@ import SlashingManagerModule from "../../ignition/modules/slashingManager";
 import type { MockCircuitVerifier } from "../../types";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import {
-  LICENSE_REQUIRED_BOND,
+  REQUIRED_CIPHERNODE_BOND,
   deployInterfoldSystem,
   ethers,
   ignition,
@@ -53,7 +53,7 @@ describe("SlashingManager", function () {
   function buildProofPolicy(
     overrides: Partial<{
       ticketPenalty: bigint;
-      licensePenalty: bigint;
+      ciphernodeBondPenalty: bigint;
       requiresProof: boolean;
       proofVerifier: string;
       banNode: boolean;
@@ -65,7 +65,7 @@ describe("SlashingManager", function () {
   ) {
     return {
       ticketPenalty: ethers.parseUnits("50", 6),
-      licensePenalty: ethers.parseEther("100"),
+      ciphernodeBondPenalty: ethers.parseEther("100"),
       requiresProof: true,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -85,7 +85,7 @@ describe("SlashingManager", function () {
 
     const evidencePolicy = {
       ticketPenalty: ethers.parseUnits("20", 6),
-      licensePenalty: ethers.parseEther("50"),
+      ciphernodeBondPenalty: ethers.parseEther("50"),
       requiresProof: false,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -97,7 +97,7 @@ describe("SlashingManager", function () {
 
     const banPolicy = buildProofPolicy({
       ticketPenalty: ethers.parseUnits("100", 6),
-      licensePenalty: ethers.parseEther("500"),
+      ciphernodeBondPenalty: ethers.parseEther("500"),
       banNode: true,
     });
 
@@ -130,7 +130,7 @@ describe("SlashingManager", function () {
     const {
       slashingManager,
       bondingRegistry,
-      licenseToken: interfoldToken,
+      ciphernodeBondToken: interfoldToken,
       ticketToken,
       usdcToken,
       mocks,
@@ -226,7 +226,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: await _mockVerifier.getAddress(),
         banNode: false,
@@ -242,7 +242,9 @@ describe("SlashingManager", function () {
 
       const storedPolicy = await slashingManager.getSlashPolicy(REASON_PT_0);
       expect(storedPolicy.ticketPenalty).to.equal(policy.ticketPenalty);
-      expect(storedPolicy.licensePenalty).to.equal(policy.licensePenalty);
+      expect(storedPolicy.ciphernodeBondPenalty).to.equal(
+        policy.ciphernodeBondPenalty,
+      );
       expect(storedPolicy.requiresProof).to.equal(policy.requiresProof);
       expect(storedPolicy.enabled).to.equal(policy.enabled);
     });
@@ -346,7 +348,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("20", 6),
-        licensePenalty: ethers.parseEther("50"),
+        ciphernodeBondPenalty: ethers.parseEther("50"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -366,7 +368,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -391,7 +393,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -415,7 +417,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -436,7 +438,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: 0,
-        licensePenalty: 0,
+        ciphernodeBondPenalty: 0,
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -457,7 +459,7 @@ describe("SlashingManager", function () {
       await expect(
         slashingManager.setSlashPolicy(REASON_PT_0, {
           ticketPenalty: ethers.parseUnits("50", 6),
-          licensePenalty: 0,
+          ciphernodeBondPenalty: 0,
           requiresProof: true,
           proofVerifier: ethers.ZeroAddress,
           banNode: false,
@@ -475,7 +477,7 @@ describe("SlashingManager", function () {
       await expect(
         slashingManager.setSlashPolicy(REASON_PT_0, {
           ticketPenalty: ethers.parseUnits("50", 6),
-          licensePenalty: 0,
+          ciphernodeBondPenalty: 0,
           requiresProof: true,
           proofVerifier: ethers.ZeroAddress,
           banNode: false,
@@ -494,7 +496,7 @@ describe("SlashingManager", function () {
         slashingManager.setSlashPolicy(
           REASON_PT_0,
           buildProofPolicy({
-            licensePenalty: 0n,
+            ciphernodeBondPenalty: 0n,
             affectsCommittee: true,
             failureReason: 6,
           }),
@@ -507,7 +509,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -531,7 +533,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: await _mockVerifier.getAddress(),
         banNode: false,
@@ -552,7 +554,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1209,11 +1211,11 @@ describe("SlashingManager", function () {
         .connect(owner)
         .approve(
           await bondingRegistry.getAddress(),
-          LICENSE_REQUIRED_BOND * 2n,
+          REQUIRED_CIPHERNODE_BOND * 2n,
         );
       await bondingRegistry
         .connect(owner)
-        .bondLicenseFor(operatorAddress, LICENSE_REQUIRED_BOND * 2n);
+        .bondCiphernodeFor(operatorAddress, REQUIRED_CIPHERNODE_BOND * 2n);
       await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
 
       const ticketAmount = ethers.parseUnits("200", 6);
@@ -1482,19 +1484,19 @@ describe("SlashingManager", function () {
         usdcToken,
       } = await loadFixture(setup);
       const actualTicket = ethers.parseUnits("5", 6);
-      const actualLicense = ethers.parseEther("10");
+      const actualCiphernodeBond = ethers.parseEther("10");
       const ownerAddress = await owner.getAddress();
 
       await setBondingAssetConfig(bondingRegistry, {
-        licenseRequiredBond: actualLicense,
+        requiredCiphernodeBond: actualCiphernodeBond,
       });
       await bondingRegistry.connect(operator).setBondOwner(ownerAddress);
       await interfoldToken
         .connect(owner)
-        .approve(await bondingRegistry.getAddress(), actualLicense);
+        .approve(await bondingRegistry.getAddress(), actualCiphernodeBond);
       await bondingRegistry
         .connect(owner)
-        .bondLicenseFor(operatorAddress, actualLicense);
+        .bondCiphernodeFor(operatorAddress, actualCiphernodeBond);
       await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
       await usdcToken.mint(ownerAddress, actualTicket);
       await usdcToken
@@ -1522,7 +1524,7 @@ describe("SlashingManager", function () {
           operatorAddress,
           REASON_INACTIVITY,
           actualTicket,
-          actualLicense,
+          actualCiphernodeBond,
           true,
           1,
         );
@@ -2025,7 +2027,7 @@ describe("SlashingManager", function () {
 
       const policy = {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: await _mockVerifier.getAddress(),
         banNode: true,
@@ -2039,7 +2041,9 @@ describe("SlashingManager", function () {
 
       const retrieved = await slashingManager.getSlashPolicy(REASON_PT_0);
       expect(retrieved.ticketPenalty).to.equal(policy.ticketPenalty);
-      expect(retrieved.licensePenalty).to.equal(policy.licensePenalty);
+      expect(retrieved.ciphernodeBondPenalty).to.equal(
+        policy.ciphernodeBondPenalty,
+      );
       expect(retrieved.requiresProof).to.equal(policy.requiresProof);
       expect(retrieved.proofVerifier).to.equal(policy.proofVerifier);
       expect(retrieved.banNode).to.equal(policy.banNode);
@@ -2083,7 +2087,7 @@ describe("SlashingManager", function () {
       expect(proposal.operator).to.equal(operatorAddress);
       expect(proposal.reason).to.equal(REASON_PT_0);
       expect(proposal.ticketAmount).to.equal(ethers.parseUnits("50", 6));
-      expect(proposal.licenseAmount).to.equal(ethers.parseEther("100"));
+      expect(proposal.ciphernodeBondAmount).to.equal(ethers.parseEther("100"));
       expect(proposal.proposer).to.equal(await proposer.getAddress());
       expect(proposal.proofHash).to.equal(ethers.keccak256(proof));
       expect(proposal.proofVerified).to.be.true;

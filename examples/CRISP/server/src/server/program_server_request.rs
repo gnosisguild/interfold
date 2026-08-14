@@ -83,16 +83,26 @@ pub async fn run_compute(
 
     println!("Sending request");
 
-    let response: ProcessingResponse = build_compute_request(
+    let response = build_compute_request(
         &reqwest::Client::new(),
         &CONFIG.program_server_url,
         &request,
     )
     .send()
-    .await?
-    .error_for_status()?
-    .json()
     .await?;
+
+    // `error_for_status()` reports the code and drops the body, but the program server puts the
+    // actual reason there (actix returns the handler's message as the payload): a missing field,
+    // a params blob over the size limit, an address that is not 20 bytes. Without the body a
+    // schema mismatch between this server and the program server is indistinguishable from a
+    // malformed E3 record, and both read as a bare "400 Bad Request".
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("program server rejected the compute request ({status}): {body}");
+    }
+
+    let response: ProcessingResponse = response.json().await?;
 
     Ok((response.e3_id, response.status))
 }

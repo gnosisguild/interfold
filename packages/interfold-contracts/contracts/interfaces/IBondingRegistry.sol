@@ -9,10 +9,11 @@ pragma solidity 0.8.28;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ICiphernodeRegistry } from "./ICiphernodeRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { IBondedCheckpoints } from "./IBondedCheckpoints.sol";
 
 /**
  * @title IBondingRegistry
- * @notice Interface for the main bonding registry that holds operator balance and license bonds
+ * @notice Interface for the main bonding registry that holds operator balance and ciphernode bonds
  */
 interface IBondingRegistry {
     function numRegisteredOperators() external view returns (uint256);
@@ -21,11 +22,11 @@ interface IBondingRegistry {
     /// @notice Bonding assets and every raw-unit value denominated in them.
     struct BondingAssetConfig {
         address ticketToken;
-        address licenseToken;
+        address ciphernodeBondToken;
         uint256 ticketPrice;
-        uint256 licenseRequiredBond;
+        uint256 requiredCiphernodeBond;
         uint8 expectedTicketDecimals;
-        uint8 expectedLicenseDecimals;
+        uint8 expectedCiphernodeBondDecimals;
     }
 
     // ======================
@@ -33,12 +34,18 @@ interface IBondingRegistry {
     // ======================
 
     // General
+    /// @notice Emitted when the bonded-history contract is configured.
+    event BondedCheckpointsSet(address indexed checkpoints);
+
+    /// @notice Emitted when ciphernode-bond-token rotation detaches the bonded-history contract.
+    event BondedCheckpointsDetached(address indexed previousCheckpoints);
+
     error ZeroAddress();
     error ZeroAmount();
     error CiphernodeBanned();
     error Unauthorized();
     error InsufficientBalance();
-    error NotLicensed();
+    error NotCiphernodeBonded();
     error AlreadyRegistered();
     error NotRegistered();
     error ExitInProgress();
@@ -53,11 +60,11 @@ interface IBondingRegistry {
     );
 
     /// @notice A bonding asset must be a deployed contract (except the one-time
-    ///         zero license-token placeholder used during circular deployment).
+    ///         zero ciphernode-bond-token placeholder used during circular deployment).
     error InvalidBondingAsset(address asset);
 
-    /// @notice The configured license token does not provide a valid locked balance.
-    error IncompatibleLicenseToken(address token);
+    /// @notice The configured ciphernode bond token does not provide a valid locked balance.
+    error IncompatibleCiphernodeBondToken(address token);
 
     /// @notice A bonding asset cannot rotate while balances remain denominated in it.
     error OutstandingAssetLiabilities(address asset, uint256 amount);
@@ -163,7 +170,7 @@ interface IBondingRegistry {
     /// @notice Thrown when an operator attempts to replace an already-authorized bond owner.
     error BondOwnerAlreadySet(address operator, address bondOwner);
 
-    /// @notice Moving a license position would leave the previous owner with
+    /// @notice Moving a ciphernode bond position would leave the previous owner with
     ///         less wallet-plus-bonded FOLD than its current locked balance.
     error BondOwnerTransferViolatesLock(
         address bondOwner,
@@ -179,7 +186,7 @@ interface IBondingRegistry {
     event AssetsClaimed(
         address indexed operator,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     );
 
     /**
@@ -197,13 +204,13 @@ interface IBondingRegistry {
     );
 
     /**
-     * @notice Emitted when operator's license bond changes
+     * @notice Emitted when operator's ciphernode bond changes
      * @param operator Address of the operator
      * @param delta Change in bond (positive for increase, negative for decrease)
-     * @param newBond New total license bond
+     * @param newBond New total ciphernode bond
      * @param reason Reason for the change (e.g., "BOND", "UNBOND", slash reason)
      */
-    event LicenseBondUpdated(
+    event CiphernodeBondUpdated(
         address indexed operator,
         int256 delta,
         uint256 newBond,
@@ -259,12 +266,12 @@ interface IBondingRegistry {
      * @notice Emitted when treasury withdraws slashed funds
      * @param to Treasury address
      * @param ticketAmount Amount of slashed ticket balance withdrawn
-     * @param licenseAmount Amount of slashed license bond withdrawn
+     * @param ciphernodeBondAmount Amount of slashed ciphernode bond withdrawn
      */
     event SlashedFundsWithdrawn(
         address indexed to,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     );
 
     /**
@@ -276,22 +283,22 @@ interface IBondingRegistry {
     /// @notice Emitted when both bonding asset configurations are updated.
     event BondingAssetConfigUpdated(
         InterfoldTicketToken indexed ticketToken,
-        IERC20 indexed licenseToken,
+        IERC20 indexed ciphernodeBondToken,
         uint256 ticketPrice,
-        uint256 licenseRequiredBond,
+        uint256 requiredCiphernodeBond,
         uint8 expectedTicketDecimals,
-        uint8 expectedLicenseDecimals,
+        uint8 expectedCiphernodeBondDecimals,
         uint64 indexed configurationVersion
     );
 
     /**
-     * @notice Emitted when governance removes license tokens that are not
+     * @notice Emitted when governance removes ciphernode bond tokens that are not
      *         backing any active bond, pending exit, or slashed-fund claim.
-     * @param token License token whose surplus was swept
+     * @param token Ciphernode bond token whose surplus was swept
      * @param to Slashed-funds treasury that received the surplus
      * @param amount Amount requested for transfer
      */
-    event LicenseSurplusSwept(
+    event CiphernodeBondSurplusSwept(
         address indexed token,
         address indexed to,
         uint256 amount
@@ -395,17 +402,17 @@ interface IBondingRegistry {
     // ======================
 
     /**
-     * @notice Get license token address
-     * @return License token address
+     * @notice Get ciphernode bond token address
+     * @return Ciphernode bond token address
      */
-    function getLicenseToken() external view returns (address);
+    function getCiphernodeBondToken() external view returns (address);
 
     /**
-     * @notice Total license-token obligations held by the registry.
+     * @notice Total ciphernode-bond-token obligations held by the registry.
      * @dev Covers active bonds, queued exits, and slashed funds awaiting
      *      treasury withdrawal.
      */
-    function totalLicenseLiability() external view returns (uint256);
+    function totalCiphernodeBondLiability() external view returns (uint256);
 
     /**
      * @notice Get ticket token address
@@ -421,11 +428,13 @@ interface IBondingRegistry {
     function getTicketBalance(address operator) external view returns (uint256);
 
     /**
-     * @notice Get operator's current license bond
+     * @notice Get operator's current ciphernode bond
      * @param operator Address of the operator
-     * @return Current license bond
+     * @return Current ciphernode bond
      */
-    function getLicenseBond(address operator) external view returns (uint256);
+    function getCiphernodeBond(
+        address operator
+    ) external view returns (uint256);
 
     /**
      * @notice Get the wallet that owns and controls an operator's collateral.
@@ -442,11 +451,50 @@ interface IBondingRegistry {
 
     /**
      * @notice Get FOLD that still counts toward an account's locked-floor collateral.
-     * @dev Includes active license bond plus pending FOLD exits that remain slashable/not returned.
+     * @dev Includes active ciphernode bond plus pending FOLD exits that remain slashable/not returned.
      * @param account Bond owner whose aggregate FOLD bond credit is queried
-     * @return Active plus pending license-bond amount
+     * @return Active plus pending ciphernode-bond amount
      */
     function totalBonded(address account) external view returns (uint256);
+
+    /**
+     * @notice Get the contract that records bonded history.
+     * @dev Zero while unconfigured, and again after a ciphernode-bond-token rotation detaches it.
+     * @return The checkpoint contract, or the zero address.
+     */
+    function bondedCheckpoints() external view returns (IBondedCheckpoints);
+
+    /**
+     * @notice Point this registry at the contract that records bonded history.
+     * @dev Settable once per ciphernode bond token. Bonded FOLD is transferred to this registry and never
+     * delegated, so without a recorded history an operator's bonded weight is invisible to
+     * governance. The history lives off this contract because it is within a few hundred bytes of
+     * the EIP-170 limit.
+     *
+     * Repointing while one is attached is refused: it would abandon the recorded history and
+     * silently change every past answer. Rotating the ciphernode bond token detaches the current contract,
+     * because the history counts ciphernode-bond-token units and a replacement token's bonds must not be
+     * added to the previous token's voting power.
+     *
+     * The candidate must name this registry and must accept a write from it, which is checked by
+     * synchronizing the zero address. Both are needed: other protocol contracts also answer
+     * `registry()` with this address.
+     * @param newCheckpoints The checkpoint contract, which must name this registry.
+     */
+    function setBondedCheckpoints(IBondedCheckpoints newCheckpoints) external;
+
+    /**
+     * @notice Record an owner's current bonded total in the checkpoint contract.
+     * @dev Bonding that happened before `setBondedCheckpoints` left no history, because the sync
+     * is a no-op while unconfigured. Without this, such an owner stays invisible to governance
+     * until its next bond, slash, transfer or exit claim happens to record it.
+     *
+     * Permissionless and idempotent: it can only write the owner's true current total at the
+     * current timepoint, so there is nothing to gain by calling it and no past entry it can
+     * rewrite. Anyone may repair an owner's history, including a third party.
+     * @param bondOwner The owner to record.
+     */
+    function resyncBondedCheckpoint(address bondOwner) external;
 
     /**
      * @notice Get current ticket price
@@ -462,11 +510,11 @@ interface IBondingRegistry {
     function availableTickets(address operator) external view returns (uint256);
 
     /**
-     * @notice Check if operator is licensed
+     * @notice Check if operator is bonded
      * @param operator Address of the operator
-     * @return True if operator has sufficient license bond
+     * @return True if operator has sufficient ciphernode bond
      */
-    function isLicensed(address operator) external view returns (bool);
+    function isCiphernodeBonded(address operator) external view returns (bool);
 
     /**
      * @notice Check if operator is registered
@@ -478,7 +526,7 @@ interface IBondingRegistry {
     /**
      * @notice Check if operator is active
      * @param operator Address of the operator
-     * @return True if operator is active (licensed, registered, and has min tickets)
+     * @return True if operator is active (bonded, registered, and has min tickets)
      */
     function isActive(address operator) external view returns (bool);
 
@@ -524,10 +572,10 @@ interface IBondingRegistry {
     function hasExitInProgress(address operator) external view returns (bool);
 
     /**
-     * @notice Get license bond price required
-     * @return License bond price amount
+     * @notice Get ciphernode bond price required
+     * @return Ciphernode bond price amount
      */
-    function licenseRequiredBond() external view returns (uint256);
+    function requiredCiphernodeBond() external view returns (uint256);
 
     /// @notice Returns the current bonding-asset identity version.
     function bondingAssetConfigurationVersion() external view returns (uint64);
@@ -560,21 +608,21 @@ interface IBondingRegistry {
      * @notice Get operator's total pending exit amounts
      * @param operator Address of the operator
      * @return ticket Total pending ticket balance in exit queue
-     * @return license Total pending license bond in exit queue
+     * @return ciphernodeBond Total pending ciphernode bond in exit queue
      */
     function pendingExits(
         address operator
-    ) external view returns (uint256 ticket, uint256 license);
+    ) external view returns (uint256 ticket, uint256 ciphernodeBond);
 
     /**
      * @notice Preview how much an operator can currently claim
      * @param operator Address of the operator
      * @return ticket Claimable ticket balance
-     * @return license Claimable license bond
+     * @return ciphernodeBond Claimable ciphernode bond
      */
     function previewClaimable(
         address operator
-    ) external view returns (uint256 ticket, uint256 license);
+    ) external view returns (uint256 ticket, uint256 ciphernodeBond);
 
     /**
      * @notice Get slashed funds treasury address
@@ -609,10 +657,10 @@ interface IBondingRegistry {
     function ticketToken() external view returns (InterfoldTicketToken);
 
     /**
-     * @notice Get total slashed license bond
-     * @return Amount of license bond slashed and available for treasury withdrawal
+     * @notice Get total slashed ciphernode bond
+     * @return Amount of ciphernode bond slashed and available for treasury withdrawal
      */
-    function slashedLicenseBond() external view returns (uint256);
+    function slashedCiphernodeBond() external view returns (uint256);
 
     // ======================
     // Operator Functions
@@ -640,14 +688,14 @@ interface IBondingRegistry {
     function removeTicketBalanceFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Bond license tokens for an operator using the bond owner's funds.
+     * @notice Bond collateral for an operator using the bond owner's funds.
      */
-    function bondLicenseFor(address operator, uint256 amount) external;
+    function bondCiphernodeFor(address operator, uint256 amount) external;
 
     /**
-     * @notice Queue license collateral owned by the caller for withdrawal.
+     * @notice Queue ciphernode bond collateral owned by the caller for withdrawal.
      */
-    function unbondLicenseFor(address operator, uint256 amount) external;
+    function unbondCiphernodeFor(address operator, uint256 amount) external;
 
     /**
      * @notice Authorize a bond owner for the caller's operator key.
@@ -665,7 +713,7 @@ interface IBondingRegistry {
 
     /**
      * @notice Accept a proposed operator position from its current bond owner.
-     * @dev Moves ownership accounting for active and pending license collateral
+     * @dev Moves ownership accounting for active and pending ciphernode bond collateral
      *      only when doing so preserves the previous owner's locked-FOLD coverage.
      */
     function acceptBondOwner(address operator) external;
@@ -676,12 +724,12 @@ interface IBondingRegistry {
 
     /**
      * @notice Claim matured exits to an operator's bond owner.
-     * @dev Anyone may settle tickets. Only the bond owner may settle licenses.
+     * @dev Anyone may settle tickets. Only the bond owner may settle ciphernode bonds.
      */
     function claimExitsFor(
         address operator,
         uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
+        uint256 maxCiphernodeBondAmount
     ) external;
 
     /// @notice Snapshot, open, or release an E3's committee obligations.
@@ -711,14 +759,14 @@ interface IBondingRegistry {
     ) external returns (uint256 actualAmount);
 
     /**
-     * @notice Slash operator's license bond by absolute amount
+     * @notice Slash operator's ciphernode bond by absolute amount
      * @param operator Address of the operator to slash
      * @param amount Amount to slash
      * @param reason Reason for slashing (stored in event)
      * @dev Only callable by authorized slashing manager
-     * @return actualAmount Amount removed from active and pending license collateral
+     * @return actualAmount Amount removed from active and pending ciphernode bond collateral
      */
-    function slashLicenseBond(
+    function slashCiphernodeBond(
         address operator,
         uint256 amount,
         bytes32 reason
@@ -787,17 +835,17 @@ interface IBondingRegistry {
 
     /// @notice Sets both bonding tokens and their raw-unit values atomically.
     /// @dev Both underlying assets must transfer exact amounts and must not
-    ///      rebase account balances. Before validation, any old license-token
+    ///      rebase account balances. Before validation, any old ciphernode-bond
     ///      balance above recorded liabilities is sent to the treasury in this
     ///      same transaction.
     function setBondingAssetConfig(BondingAssetConfig calldata config) external;
 
     /**
-     * @notice Set license active BPS
-     * @param newBps New license active BPS
+     * @notice Set ciphernode bond active BPS
+     * @param newBps New ciphernode bond active BPS
      * @dev Only callable by contract owner. Invalidates cached operator status.
      */
-    function setLicenseActiveBps(uint256 newBps) external;
+    function setCiphernodeBondActiveBps(uint256 newBps) external;
 
     /**
      * @notice Set minimum ticket balance required for activation
@@ -815,12 +863,12 @@ interface IBondingRegistry {
     function setExitDelay(uint64 newExitDelay) external;
 
     /**
-     * @notice Send unaccounted license-token surplus to the slashed-funds treasury.
+     * @notice Send unaccounted ciphernode-bond-token surplus to the slashed-funds treasury.
      * @dev Never transfers active bonds, queued exits, or slashed-fund liabilities.
      *      {setBondingAssetConfig} invokes the same cleanup automatically.
      * @return amount Amount requested for transfer
      */
-    function sweepLicenseSurplus() external returns (uint256 amount);
+    function sweepCiphernodeBondSurplus() external returns (uint256 amount);
 
     /**
      * @notice Set slashed funds treasury address
@@ -887,11 +935,11 @@ interface IBondingRegistry {
     /**
      * @notice Withdraw slashed funds to treasury
      * @param ticketAmount Amount of slashed ticket balance to withdraw
-     * @param licenseAmount Amount of slashed license bond to withdraw
+     * @param ciphernodeBondAmount Amount of slashed ciphernode bond to withdraw
      * @dev Only callable by contract owner, sends to treasury address
      */
     function withdrawSlashedFunds(
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) external;
 }

@@ -8,7 +8,9 @@ import fs from "fs";
 import { network } from "hardhat";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import { buildSafeTransactions } from "../../scripts/protocol/transactions";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
+import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
 
@@ -30,6 +32,11 @@ describe("Protocol deployment", function () {
     const programFactory = await ethers.getContractFactory("MockE3Program");
     const program = await programFactory.deploy();
     await program.waitForDeployment();
+    // FOLD has to be a real votes token: the deployment builds `BondedVotes` against it, and that
+    // constructor compares the token's ERC-6372 clock with the bonded history's.
+    const foldFactory = await ethers.getContractFactory("MockVotesToken");
+    const fold = await foldFactory.deploy();
+    await fold.waitForDeployment();
 
     const config = JSON.parse(
       fs.readFileSync(
@@ -41,7 +48,7 @@ describe("Protocol deployment", function () {
       ),
     ) as ProtocolConfigFile;
     config.safe = await safe.getAddress();
-    config.fold = await operator.getAddress();
+    config.fold = await fold.getAddress();
     config.bondingRegistryProxy = await bondingProxy.getAddress();
     config.bondingRegistryProxyAdmin = await bondingProxyAdmin.getAddress();
     config.feeToken = await feeToken.getAddress();
@@ -65,5 +72,39 @@ describe("Protocol deployment", function () {
       await ticketUnderlyingToken.getAddress(),
     );
     expect(await interfold.feeToken()).to.equal(await feeToken.getAddress());
+
+    // Bonded voting has to be deployed and wired by the deployment itself. Shipping the registry
+    // without it leaves the feature silently disabled: the sync is a no-op while unconfigured, so
+    // every operator would read as holding no bonded voting power.
+    const checkpoints = await ethers.getContractAt(
+      "BondedCheckpoints",
+      result.contracts.bondedCheckpoints,
+    );
+    // Bound to the proxy, not the implementation: the proxy is what calls `sync`.
+    expect(await checkpoints.registry()).to.equal(config.bondingRegistryProxy);
+
+    // `BondedVotes` is deliberately absent here. Its constructor asks the registry which token it
+    // bonds, and the registry is only initialized by the Safe batch this step writes — so it is
+    // deployed by `--action activate-voting` afterwards.
+    expect(result.contracts).to.not.have.property("bondedVotes");
+
+    // The batch must carry the call that attaches the history, or none of the above is reachable.
+    const txs = buildSafeTransactions(
+      config,
+      result.contracts,
+      result.interfaces,
+    );
+    const selector = BondingRegistryFactory.createInterface().getFunction(
+      "setBondedCheckpoints",
+    ).selector;
+    const attach = txs.filter(
+      (tx) =>
+        tx.to.toLowerCase() === config.bondingRegistryProxy.toLowerCase() &&
+        tx.data.startsWith(selector),
+    );
+    expect(attach).to.have.lengthOf(1);
+    expect(attach[0].data.toLowerCase()).to.contain(
+      result.contracts.bondedCheckpoints.slice(2).toLowerCase(),
+    );
   });
 });

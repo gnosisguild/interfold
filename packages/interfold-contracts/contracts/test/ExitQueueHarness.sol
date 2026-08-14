@@ -17,21 +17,29 @@ contract ExitQueueHarness {
         address operator,
         uint64 delay,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) external {
-        _state.queueAssetsForExit(operator, delay, ticketAmount, licenseAmount);
+        _state.queueAssetsForExit(
+            operator,
+            delay,
+            ticketAmount,
+            ciphernodeBondAmount
+        );
     }
 
     function slash(
         address operator,
         uint256 ticketAmount,
-        uint256 licenseAmount
-    ) external returns (uint256 ticketsSlashed, uint256 licensesSlashed) {
+        uint256 ciphernodeBondAmount
+    )
+        external
+        returns (uint256 ticketsSlashed, uint256 ciphernodeBondsSlashed)
+    {
         return
             _state.slashPendingAssets(
                 operator,
                 ticketAmount,
-                licenseAmount,
+                ciphernodeBondAmount,
                 true
             );
     }
@@ -39,9 +47,12 @@ contract ExitQueueHarness {
     function claim(
         address operator,
         uint256 ticketAmount,
-        uint256 licenseAmount
-    ) external returns (uint256 ticketsClaimed, uint256 licensesClaimed) {
-        return _state.claimAssets(operator, ticketAmount, licenseAmount);
+        uint256 ciphernodeBondAmount
+    )
+        external
+        returns (uint256 ticketsClaimed, uint256 ciphernodeBondsClaimed)
+    {
+        return _state.claimAssets(operator, ticketAmount, ciphernodeBondAmount);
     }
 
     function queueSlashQueue(
@@ -55,14 +66,18 @@ contract ExitQueueHarness {
         _state.queueTicketsForExit(operator, delay, secondTicketAmount);
     }
 
-    function queueTicketThenLicense(
+    function queueTicketThenCiphernodeBond(
         address operator,
         uint64 delay,
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) external {
         _state.queueTicketsForExit(operator, delay, ticketAmount);
-        _state.queueLicensesForExit(operator, delay, licenseAmount);
+        _state.queueCiphernodeBondsForExit(
+            operator,
+            delay,
+            ciphernodeBondAmount
+        );
     }
 
     function liveTrancheCount(

@@ -34,15 +34,22 @@ export function appendBondingTxs(
       config.bondingRegistryProxy,
       i.bonding.encodeFunctionData("setSlashingManager", [c.slashingManager]),
     ),
+    // `setRewardDistributor` authorizes; revoking is a separate call. Passing a second argument
+    // made `encodeFunctionData` throw, so the batch could not be built at all.
     safeTx(
       config.bondingRegistryProxy,
-      i.bonding.encodeFunctionData("setRewardDistributor", [c.interfold, true]),
+      i.bonding.encodeFunctionData("setRewardDistributor", [c.interfold]),
     ),
     safeTx(
       config.bondingRegistryProxy,
-      i.bonding.encodeFunctionData("setRewardDistributor", [
-        c.e3RefundManager,
-        true,
+      i.bonding.encodeFunctionData("setRewardDistributor", [c.e3RefundManager]),
+    ),
+    // Without this the bonded half of governance weight is never recorded: the sync is a no-op
+    // while unconfigured, so every operator reads as zero bonded voting power.
+    safeTx(
+      config.bondingRegistryProxy,
+      i.bonding.encodeFunctionData("setBondedCheckpoints", [
+        c.bondedCheckpoints,
       ]),
     ),
   );
@@ -57,11 +64,12 @@ function bondingInitData(
     config.safe,
     {
       ticketToken: c.ticketToken,
-      licenseToken: config.fold,
+      ciphernodeBondToken: config.fold,
       ticketPrice: BigInt(config.bonding.ticketPrice),
-      licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+      requiredCiphernodeBond: BigInt(config.bonding.requiredCiphernodeBond),
       expectedTicketDecimals: config.bonding.ticketTokenDecimals,
-      expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+      expectedCiphernodeBondDecimals:
+        config.bonding.ciphernodeBondTokenDecimals,
     },
     c.ciphernodeRegistry,
     config.slashedFundsTreasury,

@@ -46,7 +46,7 @@ describe("ExitQueueLib", function () {
     const harness = await ethers.deployContract("ExitQueueHarness");
     const operatorAddress = await operator.getAddress();
 
-    await harness.queueTicketThenLicense(operatorAddress, 0, 10, 20);
+    await harness.queueTicketThenCiphernodeBond(operatorAddress, 0, 10, 20);
     expect(await harness.queueLength(operatorAddress)).to.equal(1);
     expect(
       await harness.claim.staticCall(operatorAddress, 10, 20),

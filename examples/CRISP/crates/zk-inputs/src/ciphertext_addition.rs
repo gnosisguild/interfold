@@ -26,6 +26,18 @@ pub struct CiphertextAdditionWitness {
     pub r0is: CrtPolynomial,
     pub r1is: CrtPolynomial,
     pub prev_ct_commitment: BigInt,
+    /// Commitment to the ciphertext being added, which is the ballot itself.
+    ///
+    /// Exported to break a cycle in the voting flow. The voter signs a digest that commits to the
+    /// ballot, and that signature is then an input to the crisp circuit — so the commitment has to
+    /// be known *before* the circuit runs. The circuit computes the same value internally and
+    /// returns it, but by then it is too late to sign.
+    ///
+    /// The alternative is recomputing it in TypeScript, which would have to reproduce
+    /// `compute_ciphertext_commitment` exactly. A mismatch there is silent: the ballot proves
+    /// fine and is rejected on chain, because the digest the contract rebuilds does not match the
+    /// one that was signed.
+    pub ct_commitment: BigInt,
 }
 
 impl CiphertextAdditionWitness {
@@ -84,6 +96,7 @@ impl CiphertextAdditionWitness {
         // Coefficients are centered per modulus; no zkp reduce. The circuit reduces mod r when needed.
         let pk_bit = compute_modulus_bit(params);
         let prev_ct_commitment = compute_ciphertext_commitment(&prev_ct0, &prev_ct1, pk_bit);
+        let ct_commitment = compute_ciphertext_commitment(&ct0, &ct1, pk_bit);
 
         Ok(CiphertextAdditionWitness {
             prev_ct0is: prev_ct0,
@@ -93,6 +106,7 @@ impl CiphertextAdditionWitness {
             r0is: r0,
             r1is: r1,
             prev_ct_commitment,
+            ct_commitment,
         })
     }
 
@@ -171,6 +185,7 @@ impl CiphertextAdditionWitness {
         let r0is = crt_polynomial_to_toml_json(&self.r0is);
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
         let prev_ct_commitment = self.prev_ct_commitment.to_string();
+        let ct_commitment = self.ct_commitment.to_string();
 
         let json = serde_json::json!({
             "prev_ct0is": prev_ct0is,
@@ -180,6 +195,9 @@ impl CiphertextAdditionWitness {
             "sum_r0is": r0is,
             "sum_r1is": r1is,
             "prev_ct_commitment": prev_ct_commitment,
+            // Not a crisp circuit input. The caller needs it to build the ballot digest before
+            // signing, so it rides along with the witness rather than being recomputed.
+            "ct_commitment": ct_commitment,
         });
 
         Ok(json)

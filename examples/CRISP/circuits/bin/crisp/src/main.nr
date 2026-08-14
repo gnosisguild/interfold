@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crisp_lib::ciphertext_addition::CiphertextAddition;
-use crisp_lib::ecdsa::{address_to_field, derive_address, validate_signature};
+use crisp_lib::ecdsa::{address_to_field, derive_address, digest_from_halves, validate_signature};
 use crisp_lib::merkle_tree::get_merkle_root;
 use crisp_lib::utils::{check_coefficient_values_with_balance, check_coefficient_zero};
 use interfold_lib::configs::default::threshold::{
@@ -62,15 +62,17 @@ fn main(
     public_key_x: [u8; 32],
     public_key_y: [u8; 32],
     signature: [u8; 64],
-    hashed_message: [u8; 32],
-    // Merkle Tree Section.
+    digest_hi: pub Field,
+    digest_lo: pub Field,
+    // Eligibility Section. `slot_address` comes first so that the public inputs align with the
+    // `crisp_onchain` circuit, where `voting_power` takes the position of `merkle_root`.
+    slot_address: pub Field,
     merkle_root: pub Field,
+    balance: Field,
     merkle_proof_length: u32,
     merkle_proof_indices: [bool; 20],
     merkle_proof_siblings: [Field; 20],
     // Other inputs.
-    slot_address: pub Field,
-    balance: Field,
     is_first_vote: pub bool,
     is_mask_vote: bool,
     num_options: pub u32,
@@ -118,12 +120,17 @@ fn main(
     // CASE 1: ACTUAL VOTE (is_mask_vote == false)
     //   - This is an eligible voter casting a vote
     //   - Verify vote amount <= balance (checked via valid_vote)
-    //   - Validate signature over the hashed message (checked via valid_signature)
-    //     to authenticate the voter
+    //   - Validate the signature over the public digest (checked via valid_signature)
+    //     to authenticate the voter for this ballot
     //   - Verify address matches slot address (checked via valid_address)
     //   - Return new vote ciphertext commitment (ct_commitment)
     let valid_vote =
         check_coefficient_values_with_balance(k1, Q_MOD_T_CENTERED, balance, num_options);
+
+    // The digest is a public input, so the prover cannot select the message that the signature
+    // covers. The contract computes the digest from the round, the slot, and this ballot, which
+    // binds the signature to all three.
+    let hashed_message = digest_from_halves(digest_hi, digest_lo);
     let valid_signature = validate_signature(hashed_message, public_key_x, public_key_y, signature);
     let valid_address =
         slot_address == address_to_field(derive_address(public_key_x, public_key_y));

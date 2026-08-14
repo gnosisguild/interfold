@@ -6,6 +6,18 @@ set -euo pipefail
 INTERFOLD_CIRCUITS="../../circuits"
 CRISP_CIRCUITS="circuits"
 
+# Two ballot stacks share the same user_data_encryption dependencies and differ only in how a
+# round establishes eligibility:
+#
+#   crisp         + fold         -> CRISPVerifier.sol         (census Merkle tree)
+#   crisp_onchain + fold_onchain -> CRISPOnchainVerifier.sol  (voting power read on chain)
+#
+# Each row is "crisp package dir : fold package dir : fold package name : verifier file name".
+STACKS=(
+    "crisp:fold:crisp_fold:CRISPVerifier.sol"
+    "crisp_onchain:fold_onchain:crisp_onchain_fold:CRISPOnchainVerifier.sol"
+)
+
 echo "Compiling interfold user_data_encryption circuits (dependencies)..."
 
 echo "Compiling user_data_encryption_ct0..."
@@ -26,17 +38,10 @@ if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption" && nargo compi
     exit 1
 fi
 
-echo "Compiling CRISP circuit..."
-if ! (cd "$CRISP_CIRCUITS/bin/crisp" && nargo compile); then
-    echo "Error: CRISP circuit compilation failed"
-    exit 1
-fi
-
 # Inner recursive proofs use noir-recursive-no-zk; fold's compute_vk_hash chain reads
 # `{name}.vk_recursive_hash` in each package target/ (same layout as interfold `scripts/build-circuits.ts`).
 THRESHOLD_TARGET="${INTERFOLD_CIRCUITS}/bin/threshold/target"
-CRISP_TARGET="${CRISP_CIRCUITS}/bin/crisp/target"
-echo "Writing noir-recursive-no-zk VKs (user_data_encryption + crisp stack)..."
+echo "Writing noir-recursive-no-zk VKs (user_data_encryption)..."
 for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do
     if ! bb write_vk -b "${THRESHOLD_TARGET}/${name}.json" -o "${THRESHOLD_TARGET}" -t noir-recursive-no-zk; then
         echo "Error: bb write_vk (noir-recursive-no-zk) failed for ${name}"
@@ -45,55 +50,12 @@ for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encrypti
     mv "${THRESHOLD_TARGET}/vk" "${THRESHOLD_TARGET}/${name}.vk_recursive"
     mv "${THRESHOLD_TARGET}/vk_hash" "${THRESHOLD_TARGET}/${name}.vk_recursive_hash"
 done
-if ! bb write_vk -b "${CRISP_TARGET}/crisp.json" -o "${CRISP_TARGET}" -t noir-recursive-no-zk; then
-    echo "Error: bb write_vk (noir-recursive-no-zk) failed for crisp"
-    exit 1
-fi
-mv "${CRISP_TARGET}/vk" "${CRISP_TARGET}/crisp.vk_recursive"
-mv "${CRISP_TARGET}/vk_hash" "${CRISP_TARGET}/crisp.vk_recursive_hash"
-
-echo "Compiling fold circuit (verifies user_data_encryption + crisp)..."
-if ! (cd "$CRISP_CIRCUITS/bin/fold" && nargo compile); then
-    echo "Error: Fold circuit compilation failed"
-    exit 1
-fi
-
-# Generate verifier from fold circuit (on-chain proof verifies the folded proof)
-echo "Generating fold Verifier Key..."
-if ! bb write_vk -b "$CRISP_CIRCUITS/bin/fold/target/crisp_fold.json" -o "$CRISP_CIRCUITS/bin/fold/target" --oracle_hash keccak; then
-    echo "Error: Failed to generate fold Verifier Key"
-    exit 1
-fi
-
-echo "Generating Solidity Verifier..."
-if ! bb write_solidity_verifier -k "$CRISP_CIRCUITS/bin/fold/target/vk" -o "$CRISP_CIRCUITS/bin/fold/target/CRISPVerifier.sol"; then
-    echo "Error: Failed to generate Solidity Verifier"
-    exit 1
-fi
-
-echo "Copying Solidity Verifier to contracts folder..."
-if ! cp "$CRISP_CIRCUITS/bin/fold/target/CRISPVerifier.sol" packages/crisp-contracts/contracts/CRISPVerifier.sol; then
-    echo "Error: Failed to copy Solidity Verifier to contracts folder"
-    exit 1
-fi
-
-# Add the correct license header
-echo "Adding license header to CRISPVerifier.sol..."
-LICENSE_HEADER="// SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE."
-# Remove the first 2 lines (Apache license and copyright) and prepend our license header
-TEMP_FILE=$(mktemp)
-{
-    echo "$LICENSE_HEADER"
-    tail -n +3 packages/crisp-contracts/contracts/CRISPVerifier.sol
-} > "$TEMP_FILE"
-mv "$TEMP_FILE" packages/crisp-contracts/contracts/CRISPVerifier.sol
 
 # Apply project-specific checks that the generated verifier does not emit.
-python3 - "packages/crisp-contracts/contracts/CRISPVerifier.sol" <<'PY'
+patch_verifier() {
+    local verifier_path="$1"
+
+    python3 - "$verifier_path" <<'PY'
 from pathlib import Path
 import sys
 
@@ -158,12 +120,74 @@ for old, new in replacements:
 
 path.write_text(text)
 PY
+}
 
-echo "Formatting CRISPVerifier.sol with Prettier..."
-if pnpm exec prettier --write packages/crisp-contracts/contracts/CRISPVerifier.sol 2>/dev/null; then
-    echo "Prettier formatting complete"
-else
-    echo "Warning: Prettier formatting skipped (run pnpm install from repo root if needed)"
-fi
+for stack in "${STACKS[@]}"; do
+    IFS=":" read -r crisp_dir fold_dir fold_pkg verifier_file <<<"$stack"
+    crisp_target="${CRISP_CIRCUITS}/bin/${crisp_dir}/target"
+
+    echo "Compiling ${crisp_dir} circuit..."
+    if ! (cd "$CRISP_CIRCUITS/bin/${crisp_dir}" && nargo compile); then
+        echo "Error: ${crisp_dir} circuit compilation failed"
+        exit 1
+    fi
+
+    echo "Writing noir-recursive-no-zk VK for ${crisp_dir}..."
+    if ! bb write_vk -b "${crisp_target}/${crisp_dir}.json" -o "${crisp_target}" -t noir-recursive-no-zk; then
+        echo "Error: bb write_vk (noir-recursive-no-zk) failed for ${crisp_dir}"
+        exit 1
+    fi
+    mv "${crisp_target}/vk" "${crisp_target}/${crisp_dir}.vk_recursive"
+    mv "${crisp_target}/vk_hash" "${crisp_target}/${crisp_dir}.vk_recursive_hash"
+
+    echo "Compiling ${fold_dir} circuit (verifies user_data_encryption + ${crisp_dir})..."
+    if ! (cd "$CRISP_CIRCUITS/bin/${fold_dir}" && nargo compile); then
+        echo "Error: ${fold_dir} circuit compilation failed"
+        exit 1
+    fi
+
+    # Generate verifier from fold circuit (on-chain proof verifies the folded proof)
+    echo "Generating ${fold_dir} Verifier Key..."
+    if ! bb write_vk -b "$CRISP_CIRCUITS/bin/${fold_dir}/target/${fold_pkg}.json" -o "$CRISP_CIRCUITS/bin/${fold_dir}/target" --oracle_hash keccak; then
+        echo "Error: Failed to generate ${fold_dir} Verifier Key"
+        exit 1
+    fi
+
+    echo "Generating Solidity Verifier ${verifier_file}..."
+    if ! bb write_solidity_verifier -k "$CRISP_CIRCUITS/bin/${fold_dir}/target/vk" -o "$CRISP_CIRCUITS/bin/${fold_dir}/target/${verifier_file}"; then
+        echo "Error: Failed to generate Solidity Verifier ${verifier_file}"
+        exit 1
+    fi
+
+    echo "Copying ${verifier_file} to contracts folder..."
+    if ! cp "$CRISP_CIRCUITS/bin/${fold_dir}/target/${verifier_file}" "packages/crisp-contracts/contracts/${verifier_file}"; then
+        echo "Error: Failed to copy ${verifier_file} to contracts folder"
+        exit 1
+    fi
+
+    # Add the correct license header
+    echo "Adding license header to ${verifier_file}..."
+    LICENSE_HEADER="// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE."
+    # Remove the first 2 lines (Apache license and copyright) and prepend our license header
+    TEMP_FILE=$(mktemp)
+    {
+        echo "$LICENSE_HEADER"
+        tail -n +3 "packages/crisp-contracts/contracts/${verifier_file}"
+    } >"$TEMP_FILE"
+    mv "$TEMP_FILE" "packages/crisp-contracts/contracts/${verifier_file}"
+
+    patch_verifier "packages/crisp-contracts/contracts/${verifier_file}"
+
+    echo "Formatting ${verifier_file} with Prettier..."
+    if pnpm exec prettier --write "packages/crisp-contracts/contracts/${verifier_file}" 2>/dev/null; then
+        echo "Prettier formatting complete"
+    else
+        echo "Warning: Prettier formatting skipped (run pnpm install from repo root if needed)"
+    fi
+done
 
 echo "Noir setup completed successfully"

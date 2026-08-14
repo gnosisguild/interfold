@@ -8732,7 +8732,7 @@ function ap({ snapshot: e }) {
           exitInProgress: (f == null ? void 0 : f.exit_in_progress) ?? (y == null ? void 0 : y.exit_unlock_at) !== void 0,
           ticketBalance: (f == null ? void 0 : f.ticket_balance) ?? (y == null ? void 0 : y.ticket_balance),
           availableTickets: f == null ? void 0 : f.available_tickets,
-          licenseBond: (f == null ? void 0 : f.license_bond) ?? (y == null ? void 0 : y.license_bond),
+          ciphernodeBond: (f == null ? void 0 : f.ciphernode_bond) ?? (y == null ? void 0 : y.ciphernode_bond),
           rewardCredits: (y == null ? void 0 : y.rewards_credited.length) ?? 0,
         }
       }),
@@ -8891,8 +8891,8 @@ function ap({ snapshot: e }) {
                               }),
                               o.jsxs('div', {
                                 children: [
-                                  o.jsx('dt', { children: 'License bond' }),
-                                  o.jsx('dd', { className: 'mono', title: p.licenseBond, children: qt(p.licenseBond) }),
+                                  o.jsx('dt', { children: 'Ciphernode bond' }),
+                                  o.jsx('dd', { className: 'mono', title: p.ciphernodeBond, children: qt(p.ciphernodeBond) }),
                                 ],
                               }),
                               o.jsxs('div', {

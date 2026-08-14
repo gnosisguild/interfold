@@ -59,13 +59,13 @@
       "constructorArgs": {
         "owner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "ticketToken": "0x9e271C60139fA951EFb8954Dd0454B524630d767",
-        "licenseToken": "0x0000000000000000000000000000000000000000",
+        "ciphernodeBondToken": "0x0000000000000000000000000000000000000000",
         "registry": "0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A",
         "slashedFundsTreasury": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "ticketPrice": "10000000",
-        "licenseRequiredBond": "100000000000000000000",
+        "requiredCiphernodeBond": "100000000000000000000",
         "ticketTokenDecimals": "6",
-        "licenseTokenDecimals": "0",
+        "ciphernodeBondTokenDecimals": "0",
         "minTicketBalance": "1",
         "exitDelay": "604800"
       },

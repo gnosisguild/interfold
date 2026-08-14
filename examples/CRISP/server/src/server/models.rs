@@ -198,6 +198,10 @@ pub struct E3StateLite {
 
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
+    /// Served so a client can tell which ballot circuit a round needs. Without it a client
+    /// cannot distinguish an ONCHAIN round and would build a Merkle witness for it, which no
+    /// verifier accepts.
+    pub census_mode: CensusMode,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -258,6 +262,10 @@ pub struct E3Crisp {
     /// is read. Named for a block height for backwards compatibility.
     #[serde(default)]
     pub snapshot_block: u64,
+    /// Defaults to `Token` for rounds stored before this field existed, which is what they
+    /// were: `Onchain` did not exist when they were written.
+    #[serde(default)]
+    pub census_mode: CensusMode,
 }
 
 impl From<E3> for WebResultRequest {
@@ -299,11 +307,15 @@ pub enum CreditMode {
 ///
 /// Required in the params and never inferred: a round that omits it fails to decode rather than
 /// quietly becoming a token vote over the wrong people.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum CensusMode {
+    #[default]
     Token = 0,
     ByRequester = 1,
+    /// No census at all. `CRISPProgram` reads voting power from the token per input, so the
+    /// coordinator enumerates nothing and posts no root.
+    Onchain = 2,
 }
 
 impl TryFrom<u64> for CensusMode {
@@ -313,6 +325,7 @@ impl TryFrom<u64> for CensusMode {
         match value {
             0 => Ok(CensusMode::Token),
             1 => Ok(CensusMode::ByRequester),
+            2 => Ok(CensusMode::Onchain),
             _ => Err(eyre::eyre!("Unknown census mode: {}", value)),
         }
     }
@@ -331,6 +344,59 @@ impl TryFrom<u64> for CreditMode {
 }
 
 #[cfg(test)]
+mod persisted_round_tests {
+    use super::{CensusMode, CreditMode, E3Crisp};
+
+    /// A round written before `census_mode` existed. Kept verbatim rather than generated, so a
+    /// change to the struct cannot quietly change what "legacy" means.
+    const LEGACY_ROUND: &str = r#"{
+        "emojis": ["a", "b"],
+        "has_voted": [],
+        "start_time": 1,
+        "end_time": 2,
+        "status": "Active",
+        "tally": [],
+        "token_holder_hashes": [],
+        "eligible_addresses": [],
+        "token_address": "0x0",
+        "balance_threshold": "0",
+        "ciphertext_inputs": [],
+        "requester": "0x0",
+        "num_options": "2",
+        "credit_mode": 1,
+        "credits": null
+    }"#;
+
+    /// `E3Crisp` carries no schema version, and `census_mode` was added with `#[serde(default)]`
+    /// alongside `snapshot_block`, which was added the same way. The default is sound for the only
+    /// population that can lack the field: every stored round predates `Onchain`, so it was a
+    /// token census by construction. This pins that, so a future variant reordering — which would
+    /// silently move the default — fails here instead of at a vote.
+    #[test]
+    fn a_round_stored_before_census_mode_reads_as_token() {
+        let round: E3Crisp =
+            serde_json::from_str(LEGACY_ROUND).expect("legacy round must still decode");
+
+        assert_eq!(round.census_mode, CensusMode::Token);
+        assert_eq!(round.snapshot_block, 0);
+        assert_eq!(round.credit_mode, CreditMode::Custom);
+    }
+
+    #[test]
+    fn every_census_mode_round_trips_through_storage() {
+        for mode in [CensusMode::Token, CensusMode::ByRequester, CensusMode::Onchain] {
+            let mut round: E3Crisp = serde_json::from_str(LEGACY_ROUND).unwrap();
+            round.census_mode = mode;
+
+            let encoded = serde_json::to_string(&round).unwrap();
+            let decoded: E3Crisp = serde_json::from_str(&encoded).unwrap();
+
+            assert_eq!(decoded.census_mode, mode, "mode did not survive storage");
+        }
+    }
+}
+
+#[cfg(test)]
 mod census_mode_tests {
     use super::CensusMode;
 
@@ -338,14 +404,18 @@ mod census_mode_tests {
     fn unknown_values_are_rejected_rather_than_defaulted() {
         // A mode the coordinator does not understand must stop the round, not quietly become a
         // token vote — which is the failure this enum exists to prevent.
-        assert!(CensusMode::try_from(2u64).is_err());
+        assert!(CensusMode::try_from(3u64).is_err());
         assert!(CensusMode::try_from(u64::MAX).is_err());
     }
 
     #[test]
     fn known_values_round_trip() {
+        // Values must match `CRISPProgram.CensusMode`, which the contract range-checks against
+        // `type(CensusMode).max`. A discriminant that drifts from Solidity would route a round
+        // down the wrong census path rather than failing.
         assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
         assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
+        assert_eq!(CensusMode::try_from(2u64).unwrap(), CensusMode::Onchain);
     }
 }
 

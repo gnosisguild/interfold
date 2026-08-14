@@ -11,6 +11,7 @@ mod aggregation_proof_signed;
 mod aggregator_changed;
 mod bond_owner_set;
 mod ciphernode_added;
+mod ciphernode_bond_updated;
 mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
 mod ciphernode_selected;
@@ -47,7 +48,6 @@ mod evm_log_observed;
 mod input_published;
 mod interfold_error;
 mod keyshare_created;
-mod license_bond_updated;
 mod net_ready;
 mod operator_activation_changed;
 mod outgoing_sync_requested;
@@ -90,6 +90,7 @@ pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
 pub use bond_owner_set::*;
 pub use ciphernode_added::*;
+pub use ciphernode_bond_updated::*;
 pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
 pub use ciphernode_selected::*;
@@ -127,7 +128,6 @@ pub use evm_log_observed::*;
 pub use input_published::*;
 pub use interfold_error::*;
 pub use keyshare_created::*;
-pub use license_bond_updated::*;
 pub use net_ready::*;
 pub use operator_activation_changed::*;
 pub use outgoing_sync_requested::*;
@@ -339,7 +339,7 @@ pub enum InterfoldEventData {
     RewardsDistributed(RewardsDistributed),
     RewardCredited(RewardCredited),
     RewardClaimed(RewardClaimed),
-    LicenseBondUpdated(LicenseBondUpdated),
+    CiphernodeBondUpdated(CiphernodeBondUpdated),
     CiphernodeDeregistrationRequested(CiphernodeDeregistrationRequested),
     CommitteeFormationFailed(CommitteeFormationFailed),
     CommitteeActivationChanged(CommitteeActivationChanged),
@@ -773,7 +773,7 @@ impl_event_types!(
     RewardsDistributed,
     RewardCredited,
     RewardClaimed,
-    LicenseBondUpdated,
+    CiphernodeBondUpdated,
     CiphernodeDeregistrationRequested,
     CommitteeFormationFailed,
     CommitteeActivationChanged,

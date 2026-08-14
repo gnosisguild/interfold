@@ -60,7 +60,7 @@ sol! {
     contract SlashingManager {
         struct SlashPolicy {
             uint256 ticketPenalty;
-            uint256 licensePenalty;
+            uint256 ciphernodeBondPenalty;
             bool requiresProof;
             address proofVerifier;
             bool banNode;
@@ -920,7 +920,7 @@ async fn test_onchain_valid_attestation_executes_slash() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1110,7 +1110,7 @@ async fn test_onchain_insufficient_attestations_reverts() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1238,7 +1238,7 @@ async fn test_onchain_voter_not_in_committee_reverts() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1361,7 +1361,7 @@ async fn test_onchain_invalid_vote_signature_reverts() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1495,7 +1495,7 @@ async fn test_onchain_duplicate_voter_reverts() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1623,7 +1623,7 @@ async fn test_onchain_duplicate_evidence_reverts() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,
@@ -1790,7 +1790,7 @@ async fn test_onchain_actor_signed_vote_accepted() {
             reason,
             SlashingManager::SlashPolicy {
                 ticketPenalty: U256::from(50_000_000u64),
-                licensePenalty: U256::from(100_000_000_000_000_000_000u128),
+                ciphernodeBondPenalty: U256::from(100_000_000_000_000_000_000u128),
                 requiresProof: true,
                 proofVerifier: Address::ZERO,
                 banNode: false,

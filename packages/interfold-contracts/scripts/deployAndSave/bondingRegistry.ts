@@ -22,13 +22,13 @@ import {
 export interface BondingRegistryArgs {
   owner?: string;
   ticketToken?: string;
-  licenseToken?: string;
+  ciphernodeBondToken?: string;
   registry?: string;
   slashedFundsTreasury?: string;
   ticketPrice?: string;
-  licenseRequiredBond?: string;
+  requiredCiphernodeBond?: string;
   ticketTokenDecimals?: number;
-  licenseTokenDecimals?: number;
+  ciphernodeBondTokenDecimals?: number;
   minTicketBalance?: number;
   exitDelay?: number;
   hre: HardhatRuntimeEnvironment;
@@ -42,13 +42,13 @@ export interface BondingRegistryArgs {
 export const deployAndSaveBondingRegistry = async ({
   owner,
   ticketToken,
-  licenseToken,
+  ciphernodeBondToken,
   registry,
   slashedFundsTreasury,
   ticketPrice,
-  licenseRequiredBond,
+  requiredCiphernodeBond,
   ticketTokenDecimals = 6,
-  licenseTokenDecimals = 0,
+  ciphernodeBondTokenDecimals = 0,
   minTicketBalance,
   exitDelay,
   hre,
@@ -64,26 +64,27 @@ export const deployAndSaveBondingRegistry = async ({
   if (
     !owner ||
     !ticketToken ||
-    !licenseToken ||
+    !ciphernodeBondToken ||
     !registry ||
     !slashedFundsTreasury ||
     !ticketPrice ||
-    !licenseRequiredBond ||
+    !requiredCiphernodeBond ||
     minTicketBalance === undefined ||
     exitDelay === undefined ||
     (preDeployedArgs?.constructorArgs?.owner === owner &&
       preDeployedArgs?.constructorArgs?.ticketToken === ticketToken &&
-      preDeployedArgs?.constructorArgs?.licenseToken === licenseToken &&
+      preDeployedArgs?.constructorArgs?.ciphernodeBondToken ===
+        ciphernodeBondToken &&
       preDeployedArgs?.constructorArgs?.registry === registry &&
       preDeployedArgs?.constructorArgs?.slashedFundsTreasury ===
         slashedFundsTreasury &&
       preDeployedArgs?.constructorArgs?.ticketPrice === ticketPrice &&
-      preDeployedArgs?.constructorArgs?.licenseRequiredBond ===
-        licenseRequiredBond &&
+      preDeployedArgs?.constructorArgs?.requiredCiphernodeBond ===
+        requiredCiphernodeBond &&
       preDeployedArgs?.constructorArgs?.ticketTokenDecimals ===
         ticketTokenDecimals.toString() &&
-      preDeployedArgs?.constructorArgs?.licenseTokenDecimals ===
-        licenseTokenDecimals.toString() &&
+      preDeployedArgs?.constructorArgs?.ciphernodeBondTokenDecimals ===
+        ciphernodeBondTokenDecimals.toString() &&
       preDeployedArgs?.constructorArgs?.minTicketBalance ===
         minTicketBalance.toString() &&
       preDeployedArgs?.constructorArgs?.exitDelay === exitDelay.toString())
@@ -119,6 +120,20 @@ export const deployAndSaveBondingRegistry = async ({
   await slashingLibrary.waitForDeployment();
   const slashingLibraryAddress = await slashingLibrary.getAddress();
 
+  const registrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+  );
+  const registrationLibrary = await registrationFactory.deploy();
+  await registrationLibrary.waitForDeployment();
+  const registrationLibraryAddress = await registrationLibrary.getAddress();
+
+  const ownershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+  );
+  const ownershipLibrary = await ownershipFactory.deploy();
+  await ownershipLibrary.waitForDeployment();
+  const ownershipLibraryAddress = await ownershipLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
     {
@@ -126,6 +141,8 @@ export const deployAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
     },
   );
@@ -140,11 +157,11 @@ export const deployAndSaveBondingRegistry = async ({
       owner,
       {
         ticketToken,
-        licenseToken,
+        ciphernodeBondToken,
         ticketPrice,
-        licenseRequiredBond,
+        requiredCiphernodeBond,
         expectedTicketDecimals: ticketTokenDecimals,
-        expectedLicenseDecimals: licenseTokenDecimals,
+        expectedCiphernodeBondDecimals: ciphernodeBondTokenDecimals,
       },
       registry,
       slashedFundsTreasury,
@@ -177,19 +194,29 @@ export const deployAndSaveBondingRegistry = async ({
     "BondingSlashingLib",
     chain,
   );
+  storeDeploymentArgs(
+    { address: registrationLibraryAddress, blockNumber },
+    "BondingRegistrationLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: ownershipLibraryAddress, blockNumber },
+    "BondingOwnershipLib",
+    chain,
+  );
 
   storeDeploymentArgs(
     {
       constructorArgs: {
         owner,
         ticketToken,
-        licenseToken,
+        ciphernodeBondToken,
         registry,
         slashedFundsTreasury,
         ticketPrice,
-        licenseRequiredBond,
+        requiredCiphernodeBond,
         ticketTokenDecimals: ticketTokenDecimals.toString(),
-        licenseTokenDecimals: licenseTokenDecimals.toString(),
+        ciphernodeBondTokenDecimals: ciphernodeBondTokenDecimals.toString(),
         minTicketBalance: minTicketBalance.toString(),
         exitDelay: exitDelay.toString(),
       },
@@ -197,6 +224,8 @@ export const deployAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
       proxyRecords: {
         initData,
@@ -278,6 +307,22 @@ export const upgradeAndSaveBondingRegistry = async ({
   await slashingLibrary.waitForDeployment();
   const slashingLibraryAddress = await slashingLibrary.getAddress();
 
+  const registrationFactory = await ethers.getContractFactory(
+    "BondingRegistrationLib",
+    signer,
+  );
+  const registrationLibrary = await registrationFactory.deploy();
+  await registrationLibrary.waitForDeployment();
+  const registrationLibraryAddress = await registrationLibrary.getAddress();
+
+  const ownershipFactory = await ethers.getContractFactory(
+    "BondingOwnershipLib",
+    signer,
+  );
+  const ownershipLibrary = await ownershipFactory.deploy();
+  await ownershipLibrary.waitForDeployment();
+  const ownershipLibraryAddress = await ownershipLibrary.getAddress();
+
   const bondingRegistryFactory = await ethers.getContractFactory(
     "BondingRegistry",
     {
@@ -286,6 +331,8 @@ export const upgradeAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
     },
   );
@@ -335,6 +382,8 @@ export const upgradeAndSaveBondingRegistry = async ({
         BondingAssetLib: assetLibraryAddress,
         BondingEligibilityLib: eligibilityLibraryAddress,
         BondingSlashingLib: slashingLibraryAddress,
+        BondingRegistrationLib: registrationLibraryAddress,
+        BondingOwnershipLib: ownershipLibraryAddress,
       },
       proxyRecords,
     },

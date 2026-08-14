@@ -12,7 +12,7 @@ ticket system and sortition algorithm.
 
 | Token     | Purpose                                            | Transferable |
 | --------- | -------------------------------------------------- | ------------ |
-| **FOLD**  | License bond - required to register                | Yes          |
+| **FOLD**  | Ciphernode bond - required to register             | Yes          |
 | **tFOLD** | Ticket token - determines committee selection odds | No           |
 | **USDC**  | Underlying asset for tickets (fee token)           | Yes          |
 
@@ -184,12 +184,12 @@ Watch your node logs for:
 
 ## Troubleshooting
 
-| Symptom                         | Possible Cause                        | Solution                         |
-| ------------------------------- | ------------------------------------- | -------------------------------- |
-| Never being selected            | Low ticket count relative to peers    | Add more tickets                 |
-| `isActive` is false             | Below minimum tickets or license bond | Top up tickets or rebond license |
-| `SubmissionWindowClosed` errors | RPC latency or slow submission        | Use faster RPC, check network    |
-| Committee missing your operator | Submission didn't succeed             | Check logs, retry next round     |
+| Symptom                         | Possible Cause                           | Solution                         |
+| ------------------------------- | ---------------------------------------- | -------------------------------- |
+| Never being selected            | Low ticket count relative to peers       | Add more tickets                 |
+| `isActive` is false             | Below minimum tickets or ciphernode bond | Top up tickets or bond more FOLD |
+| `SubmissionWindowClosed` errors | RPC latency or slow submission           | Use faster RPC, check network    |
+| Committee missing your operator | Submission didn't succeed                | Check logs, retry next round     |
 
 ## Best Practices
 
@@ -197,7 +197,7 @@ Watch your node logs for:
 2. **Alert on missed submissions** - Human intervention before committee deadlines
 3. **Batch networks separately** - Run separate CLI instances per chain
 4. **Track governance changes** - `sortitionSubmissionWindow`, `ticketPrice`, and
-   `licenseRequiredBond` may change
+   `requiredCiphernodeBond` may change
 
 ## Next Steps
 

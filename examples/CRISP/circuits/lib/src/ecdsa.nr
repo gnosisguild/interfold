@@ -84,6 +84,33 @@ pub fn address_to_field(addr: [u8; 20]) -> Field {
     acc
 }
 
+/// Rebuilds the 32-byte signed digest from its two field halves.
+///
+/// A Keccak-256 digest is 256 bits, but a field element holds fewer than 254 bits. The digest
+/// therefore enters a circuit as two public inputs. `digest_hi` holds the first 16 bytes and
+/// `digest_lo` holds the last 16 bytes. Both halves are big-endian.
+///
+/// `to_be_bytes` constrains each half to 16 bytes, so each half has one representation only.
+///
+/// # Arguments
+/// * `digest_hi` - The first 16 bytes of the digest, as a big-endian integer
+/// * `digest_lo` - The last 16 bytes of the digest, as a big-endian integer
+///
+/// # Returns
+/// The 32-byte digest.
+pub fn digest_from_halves(digest_hi: Field, digest_lo: Field) -> [u8; 32] {
+    let hi: [u8; 16] = digest_hi.to_be_bytes();
+    let lo: [u8; 16] = digest_lo.to_be_bytes();
+
+    let mut digest = [0; 32];
+    for i in 0..16 {
+        digest[i] = hi[i];
+        digest[i + 16] = lo[i];
+    }
+
+    digest
+}
+
 #[test]
 fn test_derive_address() {
     let pub_key_x = [
@@ -150,6 +177,85 @@ fn test_validate_signature_sdk_input() {
     ];
 
     assert(validate_signature(hashed_message, pub_key_x, pub_key_y, signature));
+}
+
+#[test]
+fn test_digest_from_halves() {
+    let digest = digest_from_halves(
+        0x437e9da4a2a538f29bd671c453c6e424,
+        0xae689857a76c4022eaa17a372c3e9737,
+    );
+
+    assert(
+        digest
+            == [
+                67, 126, 157, 164, 162, 165, 56, 242, 155, 214, 113, 196, 83, 198, 228, 36, 174, 104,
+                152, 87, 167, 108, 64, 34, 234, 161, 122, 55, 44, 62, 151, 55,
+            ],
+    );
+}
+
+#[test]
+fn test_digest_from_halves_matches_signature() {
+    // The same digest as `test_validate_signature`, supplied as two halves.
+    let digest = digest_from_halves(
+        0x437e9da4a2a538f29bd671c453c6e424,
+        0xae689857a76c4022eaa17a372c3e9737,
+    );
+    let pub_key_x = [
+        131, 24, 83, 91, 84, 16, 93, 74, 122, 174, 96, 192, 143, 196, 95, 150, 135, 24, 27, 79, 223,
+        198, 37, 189, 26, 117, 63, 167, 57, 127, 237, 117,
+    ];
+    let pub_key_y = [
+        53, 71, 241, 28, 168, 105, 102, 70, 242, 243, 172, 176, 142, 49, 1, 106, 250, 194, 62, 99,
+        12, 93, 17, 245, 159, 97, 254, 245, 123, 13, 42, 165,
+    ];
+    let signature = [
+        78, 219, 63, 96, 214, 92, 16, 36, 108, 207, 133, 108, 3, 248, 122, 23, 192, 236, 210, 253,
+        206, 125, 83, 124, 163, 54, 106, 125, 188, 223, 192, 39, 44, 76, 228, 107, 188, 221, 183,
+        124, 118, 143, 228, 126, 216, 173, 160, 231, 62, 52, 188, 154, 110, 230, 183, 71, 36, 161,
+        171, 163, 213, 62, 223, 152,
+    ];
+
+    assert(validate_signature(digest, pub_key_x, pub_key_y, signature));
+}
+
+/// A signature is valid only for the digest it covers.
+///
+/// This is the property the ballot binding depends on. The digest is a public input that the
+/// contract computes from the round, the slot, and the ballot, so a signature taken from anywhere
+/// else cannot be replayed onto a different ballot. Before the digest became a public input, the
+/// message was a free witness and any signature by the slot key was accepted.
+#[test(should_fail)]
+fn test_fail_signature_over_different_digest() {
+    // The key and signature of `test_validate_signature`, checked against the digest of
+    // `test_validate_signature_sdk_input`.
+    let other_digest = digest_from_halves(
+        0xc8e862a25083f239fc4ce22d7fcecf27,
+        0xce2cd3ab714379444efdca4f1d80824c,
+    );
+    let pub_key_x = [
+        131, 24, 83, 91, 84, 16, 93, 74, 122, 174, 96, 192, 143, 196, 95, 150, 135, 24, 27, 79, 223,
+        198, 37, 189, 26, 117, 63, 167, 57, 127, 237, 117,
+    ];
+    let pub_key_y = [
+        53, 71, 241, 28, 168, 105, 102, 70, 242, 243, 172, 176, 142, 49, 1, 106, 250, 194, 62, 99,
+        12, 93, 17, 245, 159, 97, 254, 245, 123, 13, 42, 165,
+    ];
+    let signature = [
+        78, 219, 63, 96, 214, 92, 16, 36, 108, 207, 133, 108, 3, 248, 122, 23, 192, 236, 210, 253,
+        206, 125, 83, 124, 163, 54, 106, 125, 188, 223, 192, 39, 44, 76, 228, 107, 188, 221, 183,
+        124, 118, 143, 228, 126, 216, 173, 160, 231, 62, 52, 188, 154, 110, 230, 183, 71, 36, 161,
+        171, 163, 213, 62, 223, 152,
+    ];
+
+    assert(validate_signature(other_digest, pub_key_x, pub_key_y, signature));
+}
+
+#[test(should_fail)]
+fn test_fail_digest_half_too_large() {
+    // A half that needs more than 16 bytes has no unique encoding, so `to_be_bytes` must reject it.
+    let _ = digest_from_halves(0x0100000000000000000000000000000000, 0);
 }
 
 #[test(should_fail)]

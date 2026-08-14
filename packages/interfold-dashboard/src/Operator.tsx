@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Ciphernode operator guide — an interactive walkthrough of the on-chain steps
 // that take a ciphernode from "nothing" to "active in sortition":
-// connect a wallet, authorize a bond owner, bond the license, register the node,
+// connect a wallet, authorize a bond owner, bond the ciphernode bond, register the node,
 // then buy tickets.
 //
 // The operator key and the bond owner are separate addresses on purpose. The
@@ -177,12 +177,12 @@ export default function Operator() {
   const bondOwnerSet = Boolean(status?.bondOwner)
   const isBondOwner = sameAddress(wallet.address, status?.bondOwner)
   const isOperatorWallet = sameAddress(wallet.address, operator)
-  // Registration readiness must compare against the full `licenseRequiredBond`.
-  // `status.licensed` is the registry's `isLicensed()`, which only tests the
-  // active-maintenance floor (`licenseRequiredBond * licenseActiveBps`, 80% by
+  // Registration readiness must compare against the full `requiredCiphernodeBond`.
+  // `status.bonded` is the registry's `isCiphernodeBonded()`, which only tests the
+  // active-maintenance floor (`requiredCiphernodeBond * ciphernodeBondActiveBps`, 80% by
   // default). An operator between that floor and the full bond reads as
-  // licensed, but `registerOperatorFor` still reverts with `NotLicensed`.
-  const bonded = Boolean(config && status && status.licenseBond >= config.licenseRequiredBond)
+  // bonded, but `registerOperatorFor` still reverts with `NotCiphernodeBonded`.
+  const bonded = Boolean(config && status && status.ciphernodeBond >= config.requiredCiphernodeBond)
   const registered = Boolean(status?.registered)
   const ticketed = Boolean(config && status && status.availableTickets >= config.minTicketBalance)
 
@@ -191,15 +191,15 @@ export default function Operator() {
   const stateOf = (i: number): StepState => (stepDone[i] ? 'done' : i === activeStep ? 'active' : 'todo')
 
   // ─── Step 3 amounts ─────────────────────────────────────────────────────
-  const shortfall = config && status ? bigMax(config.licenseRequiredBond - status.licenseBond, 0n) : 0n
+  const shortfall = config && status ? bigMax(config.requiredCiphernodeBond - status.ciphernodeBond, 0n) : 0n
   useEffect(() => {
     if (!config) return
-    setBondAmountInput((v) => (v.trim() === '' && shortfall > 0n ? formatUnits(shortfall, config.licenseDecimals) : v))
+    setBondAmountInput((v) => (v.trim() === '' && shortfall > 0n ? formatUnits(shortfall, config.ciphernodeBondDecimals) : v))
   }, [config, shortfall])
 
   const bondAmount = useMemo(() => {
     if (!config) return null
-    return parseAmount(bondAmountInput, config.licenseDecimals)
+    return parseAmount(bondAmountInput, config.ciphernodeBondDecimals)
   }, [bondAmountInput, config])
 
   // ─── Step 5 amounts ─────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ export default function Operator() {
         <h1 className='opguide__title'>Run a ciphernode on Interfold.</h1>
         <p className='opguide__lede'>
           Ciphernodes hold key shares for encrypted computations and are selected into committees by sortition. To take part, a node needs a
-          bonded license and a ticket balance. This guide walks the on-chain setup step by step, against the live{' '}
+          bonded ciphernode bond and a ticket balance. This guide walks the on-chain setup step by step, against the live{' '}
           <a className='link-inline' href={explorerAddress(CONTRACTS.BondingRegistry)} target='_blank' rel='noreferrer'>
             bonding registry
           </a>
@@ -294,8 +294,8 @@ export default function Operator() {
                   <div>
                     <div className='opfaucet__title'>Testnet tokens</div>
                     <div className='opfaucet__sub'>
-                      This is a Sepolia deployment. The faucet tops up {config.licenseSymbol} for the license bond and {config.ticketSymbol}{' '}
-                      for tickets.
+                      This is a Sepolia deployment. The faucet tops up {config.ciphernodeBondSymbol} for the ciphernode bond and{' '}
+                      {config.ticketSymbol} for tickets.
                     </div>
                   </div>
                   <button
@@ -381,7 +381,7 @@ export default function Operator() {
                 <>
                   <Note>
                     <code className='mono'>setBondOwner</code> is sent by the operator key itself — it is how the node authorizes a wallet
-                    to stake on its behalf.
+                    to post collateral on its behalf.
                   </Note>
                   {connected && operatorValid && !isOperatorWallet && (
                     <Note kind='warn'>
@@ -410,24 +410,30 @@ export default function Operator() {
               {errFor('setBondOwner')}
             </StepCard>
 
-            {/* ── 3. Bond the license ────────────────────────────────── */}
+            {/* ── 3. Bond the ciphernode bond ────────────────────────────────── */}
             <StepCard
               num={3}
-              title={`Bond the ${config.licenseSymbol} license`}
-              lede={`A license bond of ${fmtToken(config.licenseRequiredBond, config.licenseDecimals, config.licenseSymbol)} is the collateral that makes the node eligible to register. It is slashable, and unbonding is subject to the exit delay.`}
+              title={`Bond the ${config.ciphernodeBondSymbol} ciphernode bond`}
+              lede={`A ciphernode bond of ${fmtToken(config.requiredCiphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)} is the collateral that makes the node eligible to register. It is slashable, and unbonding is subject to the exit delay.`}
               state={stateOf(2)}
             >
               <dl className='dl'>
                 <dt>Required bond</dt>
-                <dd className='mono'>{fmtToken(config.licenseRequiredBond, config.licenseDecimals, config.licenseSymbol)}</dd>
+                <dd className='mono'>
+                  {fmtToken(config.requiredCiphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)}
+                </dd>
                 <dt>Currently bonded</dt>
-                <dd className='mono'>{fmtToken(status?.licenseBond ?? 0n, config.licenseDecimals, config.licenseSymbol)}</dd>
+                <dd className='mono'>
+                  {fmtToken(status?.ciphernodeBond ?? 0n, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)}
+                </dd>
                 <dt>Your wallet balance</dt>
-                <dd className='mono'>{fmtToken(funds?.licenseBalance ?? 0n, config.licenseDecimals, config.licenseSymbol)}</dd>
+                <dd className='mono'>
+                  {fmtToken(funds?.ciphernodeBondBalance ?? 0n, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)}
+                </dd>
               </dl>
 
               <Field
-                label={`Amount to bond (${config.licenseSymbol})`}
+                label={`Amount to bond (${config.ciphernodeBondSymbol})`}
                 value={bondAmountInput}
                 onChange={setBondAmountInput}
                 placeholder='0.0'
@@ -435,9 +441,9 @@ export default function Operator() {
                 hint={bondAmountInput.trim() !== '' && bondAmount === null ? 'Enter a positive number.' : undefined}
               />
 
-              {bondAmount !== null && funds && bondAmount > funds.licenseBalance && (
+              {bondAmount !== null && funds && bondAmount > funds.ciphernodeBondBalance && (
                 <Note kind='warn'>
-                  Not enough {config.licenseSymbol} in the connected wallet.
+                  Not enough {config.ciphernodeBondSymbol} in the connected wallet.
                   {FAUCET_ENABLED ? ' Use the faucet in step 1.' : ''}
                 </Note>
               )}
@@ -446,12 +452,16 @@ export default function Operator() {
                 <button
                   className='btn btn--ghost'
                   disabled={
-                    busy !== null || !connected || !isBondOwner || bondAmount === null || (funds?.licenseAllowance ?? 0n) >= bondAmount
+                    busy !== null ||
+                    !connected ||
+                    !isBondOwner ||
+                    bondAmount === null ||
+                    (funds?.ciphernodeBondAllowance ?? 0n) >= bondAmount
                   }
                   onClick={() =>
-                    void run('approveLicense', () =>
+                    void run('approveCiphernodeBond', () =>
                       write({
-                        address: config.licenseToken,
+                        address: config.ciphernodeBondToken,
                         abi: erc20Abi,
                         functionName: 'approve',
                         args: [CONTRACTS.BondingRegistry, bondAmount!],
@@ -460,10 +470,10 @@ export default function Operator() {
                   }
                 >
                   {label(
-                    'approveLicense',
-                    bondAmount !== null && (funds?.licenseAllowance ?? 0n) >= bondAmount
-                      ? `${config.licenseSymbol} approved`
-                      : `Approve ${config.licenseSymbol}`,
+                    'approveCiphernodeBond',
+                    bondAmount !== null && (funds?.ciphernodeBondAllowance ?? 0n) >= bondAmount
+                      ? `${config.ciphernodeBondSymbol} approved`
+                      : `Approve ${config.ciphernodeBondSymbol}`,
                   )}
                 </button>
                 <button
@@ -474,25 +484,25 @@ export default function Operator() {
                     !isBondOwner ||
                     !operator ||
                     bondAmount === null ||
-                    (funds?.licenseAllowance ?? 0n) < bondAmount
+                    (funds?.ciphernodeBondAllowance ?? 0n) < bondAmount
                   }
                   onClick={() =>
-                    void run('bondLicense', () =>
+                    void run('bondCiphernode', () =>
                       write({
                         address: CONTRACTS.BondingRegistry,
                         abi: bondingRegistryAbi,
-                        functionName: 'bondLicenseFor',
+                        functionName: 'bondCiphernodeFor',
                         args: [operator!, bondAmount!],
                       }),
                     )
                   }
                 >
-                  {label('bondLicense', 'Bond license')}
+                  {label('bondCiphernode', 'Bond FOLD')}
                 </button>
               </div>
               {!bondOwnerSet && <Note>Complete step 2 first — the registry only accepts collateral from an authorized bond owner.</Note>}
-              {errFor('approveLicense')}
-              {errFor('bondLicense')}
+              {errFor('approveCiphernodeBond')}
+              {errFor('bondCiphernode')}
             </StepCard>
 
             {/* ── 4. Register ────────────────────────────────────────── */}
@@ -504,15 +514,15 @@ export default function Operator() {
             >
               <dl className='dl'>
                 <dt>Bonded for registration</dt>
-                <dd>{bonded ? 'Yes' : 'Not yet — bond the full license first'}</dd>
+                <dd>{bonded ? 'Yes' : 'Not yet — bond the full ciphernode bond first'}</dd>
                 <dt>Registered</dt>
                 <dd>{registered ? 'Yes' : 'No'}</dd>
               </dl>
-              {status?.licensed && !bonded && (
+              {status?.bonded && !bonded && (
                 <Note kind='warn'>
                   This operator meets the active-maintenance threshold, but registration needs the full{' '}
-                  {fmtToken(config.licenseRequiredBond, config.licenseDecimals, config.licenseSymbol)}. Bond{' '}
-                  {fmtToken(shortfall, config.licenseDecimals, config.licenseSymbol)} more in step 3.
+                  {fmtToken(config.requiredCiphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)}. Bond{' '}
+                  {fmtToken(shortfall, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)} more in step 3.
                 </Note>
               )}
               {status?.exitInProgress && (
@@ -545,7 +555,7 @@ export default function Operator() {
             <StepCard
               num={5}
               title='Buy tickets'
-              lede={`Tickets are the stake that weights sortition. Each costs ${fmtToken(config.ticketPrice, config.ticketDecimals, config.ticketSymbol)}, and a node needs at least ${config.minTicketBalance.toString()} to go active.`}
+              lede={`Tickets are the collateral that weights sortition. Each costs ${fmtToken(config.ticketPrice, config.ticketDecimals, config.ticketSymbol)}, and a node needs at least ${config.minTicketBalance.toString()} to go active.`}
               state={stateOf(4)}
             >
               <dl className='dl'>
@@ -675,7 +685,7 @@ export default function Operator() {
 
 function ParameterStrip({ config }: { config: BondingConfig }) {
   const items: Array<[string, string]> = [
-    ['License bond', fmtToken(config.licenseRequiredBond, config.licenseDecimals, config.licenseSymbol)],
+    ['Ciphernode bond', fmtToken(config.requiredCiphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)],
     ['Ticket price', fmtToken(config.ticketPrice, config.ticketDecimals, config.ticketSymbol)],
     ['Min. tickets', config.minTicketBalance.toString()],
     ['Exit delay', formatDuration(config.exitDelay)],
@@ -718,8 +728,8 @@ function PositionPanel({ config, status, operator }: { config: BondingConfig; st
       <dl className='dl'>
         <dt>Bond owner</dt>
         <dd>{status.bondOwner ? <AddrLink address={status.bondOwner} /> : <span className='dl__muted'>Not authorized</span>}</dd>
-        <dt>License bond</dt>
-        <dd className='mono'>{fmtToken(status.licenseBond, config.licenseDecimals, config.licenseSymbol)}</dd>
+        <dt>Ciphernode bond</dt>
+        <dd className='mono'>{fmtToken(status.ciphernodeBond, config.ciphernodeBondDecimals, config.ciphernodeBondSymbol)}</dd>
         <dt>Tickets</dt>
         <dd className='mono'>
           {status.availableTickets.toString()} <span className='insp-stat__of'>/ {config.minTicketBalance.toString()} required</span>

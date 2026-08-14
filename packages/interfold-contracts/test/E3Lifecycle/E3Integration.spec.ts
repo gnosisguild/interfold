@@ -97,7 +97,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ciphernodeRegistry: registry,
       slashingManager,
       usdcToken,
-      licenseToken: foldToken,
+      ciphernodeBondToken: foldToken,
       mocks: {
         e3Program,
         decryptionVerifier,
@@ -112,7 +112,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     // Slash policy for Lane A proof routing E2E tests
     await slashingManager.setSlashPolicy(REASON_PT_0, {
       ticketPenalty: ethers.parseUnits("50", 6),
-      licensePenalty: ethers.parseEther("100"),
+      ciphernodeBondPenalty: ethers.parseEther("100"),
       requiresProof: true,
       proofVerifier: ethers.ZeroAddress,
       banNode: false,
@@ -187,7 +187,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
         .connect(computeProvider)
-        .bondLicenseFor(operatorAddress, ethers.parseEther("1000"));
+        .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
       await bondingRegistry
         .connect(computeProvider)
         .registerOperatorFor(operatorAddress);
@@ -352,10 +352,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await bondingRegistry
         .connect(computeProvider)
         .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256);
-      const [pendingTickets, pendingLicense] =
+      const [pendingTickets, pendingCiphernodeBond] =
         await bondingRegistry.pendingExits(operatorAddress);
       expect(pendingTickets).to.equal(0);
-      expect(pendingLicense).to.equal(0);
+      expect(pendingCiphernodeBond).to.equal(0);
     });
 
     it("classifies every supported failure reason by economic responsibility", async function () {
@@ -1136,7 +1136,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1286,7 +1286,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1453,7 +1453,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1608,7 +1608,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1818,7 +1818,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await transferBondOwner(operator2, treasury);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -1829,7 +1829,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_1, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
@@ -2010,7 +2010,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await transferBondOwner(operator1, requester);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
-        licensePenalty: ethers.parseEther("100"),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
         requiresProof: true,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,

@@ -35,8 +35,8 @@ pub(crate) fn extractor(
                 return None;
             };
             info!(
-                "SlashExecuted event received: proposal_id={}, e3_id={}, operator={}, reason={:?}, ticket={}, license={}",
-                event.proposalId, event.e3Id, event.operator, event.reason, event.ticketAmount, event.licenseAmount
+                "SlashExecuted event received: proposal_id={}, e3_id={}, operator={}, reason={:?}, ticket={}, ciphernode_bond={}",
+                event.proposalId, event.e3Id, event.operator, event.reason, event.ticketAmount, event.ciphernodeBondAmount
             );
             Some(InterfoldEventData::from(e3_events::SlashExecuted {
                 e3_id: E3id::new(event.e3Id.to_string(), chain_id),
@@ -62,12 +62,12 @@ pub(crate) fn extractor(
                         return None;
                     }
                 },
-                license_amount: match safe_u256_to_u128(event.licenseAmount) {
+                ciphernode_bond_amount: match safe_u256_to_u128(event.ciphernodeBondAmount) {
                     Some(v) => v,
                     None => {
                         error!(
-                            "SlashExecuted licenseAmount overflows u128: {}",
-                            event.licenseAmount
+                            "SlashExecuted ciphernodeBondAmount overflows u128: {}",
+                            event.ciphernodeBondAmount
                         );
                         return None;
                     }
@@ -127,7 +127,7 @@ mod tests {
             operator: Address::repeat_byte(0x44),
             reason: B256::repeat_byte(0x55),
             ticketAmount: U256::from(100),
-            licenseAmount: U256::from(200),
+            ciphernodeBondAmount: U256::from(200),
             executed: true,
             lane: 1,
         };
@@ -137,7 +137,7 @@ mod tests {
             Some(InterfoldEventData::SlashExecuted(event)) => {
                 assert_eq!(event.e3_id, E3id::new("9", 31337));
                 assert_eq!(event.ticket_amount, 100);
-                assert_eq!(event.license_amount, 200);
+                assert_eq!(event.ciphernode_bond_amount, 200);
             }
             other => panic!("expected SlashExecuted, got {other:?}"),
         }

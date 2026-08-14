@@ -196,6 +196,41 @@ export function syncProtocolDeploymentRecords(
     "BondingSlashingLib",
     opts.chain,
   );
+  storeDeploymentArgs(
+    { address: deployment.bondingRegistrationLib, blockNumber },
+    "BondingRegistrationLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    { address: deployment.bondingOwnershipLib, blockNumber },
+    "BondingOwnershipLib",
+    opts.chain,
+  );
+  storeDeploymentArgs(
+    {
+      address: deployment.bondedCheckpoints,
+      blockNumber,
+      constructorArgs: { registry: config.bondingRegistryProxy },
+    },
+    "BondedCheckpoints",
+    opts.chain,
+  );
+  // Absent until `--action activate-voting`, which cannot run before the Safe batch configures the
+  // registry the constructor validates against.
+  if (deployment.bondedVotes) {
+    storeDeploymentArgs(
+      {
+        address: deployment.bondedVotes,
+        blockNumber,
+        constructorArgs: {
+          token: config.fold,
+          checkpoints: deployment.bondedCheckpoints,
+        },
+      },
+      "BondedVotes",
+      opts.chain,
+    );
+  }
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
@@ -281,11 +316,12 @@ export function syncProtocolDeploymentRecords(
     config.safe,
     {
       ticketToken: deployment.ticketToken,
-      licenseToken: config.fold,
+      ciphernodeBondToken: config.fold,
       ticketPrice: BigInt(config.bonding.ticketPrice),
-      licenseRequiredBond: BigInt(config.bonding.licenseRequiredBond),
+      requiredCiphernodeBond: BigInt(config.bonding.requiredCiphernodeBond),
       expectedTicketDecimals: config.bonding.ticketTokenDecimals,
-      expectedLicenseDecimals: config.bonding.licenseTokenDecimals,
+      expectedCiphernodeBondDecimals:
+        config.bonding.ciphernodeBondTokenDecimals,
     },
     deployment.ciphernodeRegistry,
     config.slashedFundsTreasury,
@@ -299,13 +335,13 @@ export function syncProtocolDeploymentRecords(
       constructorArgs: {
         owner: config.safe,
         ticketToken: deployment.ticketToken,
-        licenseToken: config.fold,
+        ciphernodeBondToken: config.fold,
         registry: deployment.ciphernodeRegistry,
         slashedFundsTreasury: config.slashedFundsTreasury,
         ticketPrice: config.bonding.ticketPrice,
-        licenseRequiredBond: config.bonding.licenseRequiredBond,
+        requiredCiphernodeBond: config.bonding.requiredCiphernodeBond,
         ticketTokenDecimals: config.bonding.ticketTokenDecimals,
-        licenseTokenDecimals: config.bonding.licenseTokenDecimals,
+        ciphernodeBondTokenDecimals: config.bonding.ciphernodeBondTokenDecimals,
         minTicketBalance: config.bonding.minTicketBalance,
         exitDelay: config.bonding.exitDelay,
       },
@@ -313,6 +349,8 @@ export function syncProtocolDeploymentRecords(
         BondingAssetLib: deployment.bondingAssetLib,
         BondingEligibilityLib: deployment.bondingEligibilityLib,
         BondingSlashingLib: deployment.bondingSlashingLib,
+        BondingRegistrationLib: deployment.bondingRegistrationLib,
+        BondingOwnershipLib: deployment.bondingOwnershipLib,
       },
       proxyRecords: {
         initData: bondingInitData,

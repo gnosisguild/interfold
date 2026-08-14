@@ -17,12 +17,15 @@ import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 import {
     IERC165
 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { BondingAssetLib } from "../lib/BondingAssetLib.sol";
 import { BondingEligibilityLib } from "../lib/BondingEligibilityLib.sol";
 import { BondingSlashingLib } from "../lib/BondingSlashingLib.sol";
+import { BondingRegistrationLib } from "../lib/BondingRegistrationLib.sol";
+import { BondingOwnershipLib } from "../lib/BondingOwnershipLib.sol";
 import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
@@ -35,7 +38,7 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
 /**
  * @title BondingRegistry
- * @notice Implementation of the bonding registry managing operator ticket balances and license bonds
+ * @notice Implementation of the bonding registry managing operator ticket balances and ciphernode bonds
  * @dev Handles deposits, withdrawals, slashing, exits, and integrates with registry and slashing manager
  */
 // solhint-disable-next-line max-states-count
@@ -65,10 +68,10 @@ contract BondingRegistry is
     /// @dev Reason code for ticket balance withdrawals
     bytes32 private constant REASON_WITHDRAW = bytes32("WITHDRAW");
 
-    /// @dev Reason code for license bond operations
+    /// @dev Reason code for ciphernode bond operations
     bytes32 private constant REASON_BOND = bytes32("BOND");
 
-    /// @dev Reason code for license unbond operations
+    /// @dev Reason code for ciphernode bond unbond operations
     bytes32 private constant REASON_UNBOND = bytes32("UNBOND");
 
     // ======================
@@ -78,8 +81,8 @@ contract BondingRegistry is
     /// @notice Ticket token (tFOLD with underlying USDC) used for collateral
     InterfoldTicketToken public ticketToken;
 
-    /// @notice License token (FOLD) required for operator registration
-    IERC20 public licenseToken;
+    /// @notice Ciphernode bond token (FOLD) required for operator registration
+    IERC20 public ciphernodeBondToken;
 
     /// @notice Registry contract for managing committee membership
     ICiphernodeRegistry public registry;
@@ -118,8 +121,8 @@ contract BondingRegistry is
     /// @notice Price per ticket in ticket token units
     uint256 public ticketPrice;
 
-    /// @notice Minimum license bond required for initial registration
-    uint256 public licenseRequiredBond;
+    /// @notice Minimum ciphernode bond required for initial registration
+    uint256 public requiredCiphernodeBond;
 
     /// @notice Minimum number of tickets required to maintain active status
     uint256 public minTicketBalance;
@@ -127,21 +130,21 @@ contract BondingRegistry is
     /// @notice Time delay in seconds before exits can be claimed
     uint64 public exitDelay;
 
-    /// @notice Percentage (in basis points) of license bond that must remain bonded to stay active
+    /// @notice Percentage (in basis points) of ciphernode bond that must remain bonded to stay active
     /// @dev Default 8000 = 80%. Allows operators to unbond up to 20% while remaining active
-    uint256 public licenseActiveBps;
+    uint256 public ciphernodeBondActiveBps;
 
     /// @notice Number of currently active operators
     uint256 public numActiveOperators;
 
     /// @notice Operator state data structure
-    /// @param licenseBond Amount of license tokens currently bonded
+    /// @param ciphernodeBond Amount of ciphernode bond tokens currently bonded
     /// @param exitUnlocksAt Timestamp when pending exit can be claimed
     /// @param registered Whether operator is registered in the protocol
     /// @param exitRequested Whether operator has requested to exit
     /// @param active Whether operator meets all requirements for active status
     struct Operator {
-        uint256 licenseBond;
+        uint256 ciphernodeBond;
         uint64 exitUnlocksAt;
         bool registered;
         bool exitRequested;
@@ -155,14 +158,14 @@ contract BondingRegistry is
     /// @notice Total slashed ticket balance available for treasury withdrawal
     uint256 public slashedTicketBalance;
 
-    /// @notice Total slashed license bond available for treasury withdrawal
-    uint256 public slashedLicenseBond;
+    /// @notice Total slashed ciphernode bond available for treasury withdrawal
+    uint256 public slashedCiphernodeBond;
 
     // ======================
     // Exit Queue library state
     // ======================
 
-    /// @dev Internal state for managing exit queue of tickets and licenses
+    /// @dev Internal state for managing exit queue of tickets and ciphernode bonds
     ExitQueueLib.ExitQueueState private _exits;
 
     /// @notice Version of the current operator-eligibility policy.
@@ -185,12 +188,12 @@ contract BondingRegistry is
     uint256 public constant MAX_AUTHORIZED_SLASHING_MANAGERS = 32;
 
     /// @inheritdoc IBondingRegistry
-    uint256 public totalLicenseLiability;
+    uint256 public totalCiphernodeBondLiability;
 
     /// @dev Owner authorized by an operator. Zero means unset.
     mapping(address operator => address bondOwner) private _bondOwnerOf;
 
-    /// @dev Aggregate license collateral owned by an account across operator keys.
+    /// @dev Aggregate ciphernode bond collateral owned by an account across operator keys.
     mapping(address bondOwner => uint256 amount) private _bondedByOwner;
 
     /// @dev Proposed owner in the two-step bond-owner transfer flow.
@@ -208,14 +211,14 @@ contract BondingRegistry is
     /// @dev Number of proposal-scoped reservations owned by each manager.
     mapping(address manager => uint256 count) private _pendingSlashRouteCount;
 
-    /// @notice Version shared by the ticket and license asset identities.
+    /// @notice Version shared by the ticket and ciphernode bond asset identities.
     uint64 public bondingAssetConfigurationVersion;
 
     /// @notice Expected decimals for the active ticket token.
     uint8 private _ticketTokenDecimals;
 
-    /// @notice Expected decimals for the active license token.
-    uint8 private _licenseTokenDecimals;
+    /// @notice Expected decimals for the active ciphernode bond token.
+    uint8 private _ciphernodeBondTokenDecimals;
 
     /// @inheritdoc IBondingRegistry
     uint256 public numRegisteredOperators;
@@ -304,7 +307,7 @@ contract BondingRegistry is
         setSlashedFundsTreasury(_slashedFundsTreasury);
         setMinTicketBalance(_minTicketBalance);
         setExitDelay(_exitDelay);
-        setLicenseActiveBps(8_000);
+        setCiphernodeBondActiveBps(8_000);
         if (_owner != owner()) _transferOwnership(_owner);
     }
 
@@ -313,8 +316,8 @@ contract BondingRegistry is
     // ======================
 
     /// @inheritdoc IBondingRegistry
-    function getLicenseToken() external view returns (address) {
-        return address(licenseToken);
+    function getCiphernodeBondToken() external view returns (address) {
+        return address(ciphernodeBondToken);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -330,8 +333,10 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function getLicenseBond(address operator) external view returns (uint256) {
-        return operators[operator].licenseBond;
+    function getCiphernodeBond(
+        address operator
+    ) external view returns (uint256) {
+        return operators[operator].ciphernodeBond;
     }
 
     /// @inheritdoc IBondingRegistry
@@ -379,30 +384,30 @@ contract BondingRegistry is
     /// @notice Get operator's total pending exit amounts
     /// @param operator Address of the operator
     /// @return ticket Total pending ticket balance in exit queue
-    /// @return license Total pending license bond in exit queue
+    /// @return ciphernodeBond Total pending ciphernode bond in exit queue
     function pendingExits(
         address operator
-    ) external view returns (uint256 ticket, uint256 license) {
-        (ticket, license) = _exits.getPendingAmounts(operator);
+    ) external view returns (uint256 ticket, uint256 ciphernodeBond) {
+        (ticket, ciphernodeBond) = _exits.getPendingAmounts(operator);
     }
 
     /// @notice Preview how much an operator can currently claim
     /// @param operator Address of the operator
     /// @return ticket Claimable ticket balance
-    /// @return license Claimable license bond
+    /// @return ciphernodeBond Claimable ciphernode bond
     function previewClaimable(
         address operator
-    ) external view returns (uint256 ticket, uint256 license) {
-        (ticket, license) = _exits.previewClaimableAmounts(operator);
+    ) external view returns (uint256 ticket, uint256 ciphernodeBond) {
+        (ticket, ciphernodeBond) = _exits.previewClaimableAmounts(operator);
     }
 
     /// @inheritdoc IBondingRegistry
-    function isLicensed(address operator) external view returns (bool) {
+    function isCiphernodeBonded(address operator) external view returns (bool) {
         return
-            BondingEligibilityLib.isLicensed(
-                operators[operator].licenseBond,
-                licenseRequiredBond,
-                licenseActiveBps
+            BondingEligibilityLib.isCiphernodeBonded(
+                operators[operator].ciphernodeBond,
+                requiredCiphernodeBond,
+                ciphernodeBondActiveBps
             );
     }
 
@@ -504,27 +509,14 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function setBondOwner(address bondOwner) external {
-        require(bondOwner != address(0), ZeroAddress());
-
-        address currentOwner = _bondOwnerOf[msg.sender];
-        if (currentOwner != address(0)) {
-            (uint256 pendingTicket, uint256 pendingLicense) = _exits
-                .getPendingAmounts(msg.sender);
-            Operator storage op = operators[msg.sender];
-            if (
-                op.registered ||
-                op.licenseBond != 0 ||
-                pendingLicense != 0 ||
-                ticketToken.balanceOf(msg.sender) != 0 ||
-                pendingTicket != 0
-            ) {
-                revert BondOwnerAlreadySet(msg.sender, currentOwner);
-            }
-        }
-
-        delete _pendingBondOwnerOf[msg.sender];
-        _bondOwnerOf[msg.sender] = bondOwner;
-        emit BondOwnerSet(msg.sender, bondOwner);
+        BondingOwnershipLib.setBondOwner(
+            _bondOwnerOf,
+            _pendingBondOwnerOf,
+            operators,
+            _exits,
+            ticketToken,
+            bondOwner
+        );
     }
 
     /// @inheritdoc IBondingRegistry
@@ -542,19 +534,20 @@ contract BondingRegistry is
         require(msg.sender == _pendingBondOwnerOf[operator], Unauthorized());
 
         address previousOwner = bondOwnerOf(operator);
-        (, uint256 pendingLicense) = _exits.getPendingAmounts(operator);
-        uint256 delegatedBond = operators[operator].licenseBond +
-            pendingLicense;
+        (, uint256 pendingCiphernodeBond) = _exits.getPendingAmounts(operator);
+        uint256 delegatedBond = operators[operator].ciphernodeBond +
+            pendingCiphernodeBond;
 
         if (delegatedBond != 0) {
             uint256 remainingBonded = _bondedByOwner[previousOwner] -
                 delegatedBond;
             uint256 lockedBalance = _lockedBalanceOf(
-                licenseToken,
+                ciphernodeBondToken,
                 previousOwner
             );
-            uint256 controlledBalance = licenseToken.balanceOf(previousOwner) +
-                remainingBonded;
+            uint256 controlledBalance = ciphernodeBondToken.balanceOf(
+                previousOwner
+            ) + remainingBonded;
             if (lockedBalance > controlledBalance) {
                 revert BondOwnerTransferViolatesLock(
                     previousOwner,
@@ -568,6 +561,11 @@ contract BondingRegistry is
         _bondOwnerOf[operator] = msg.sender;
         _bondedByOwner[previousOwner] -= delegatedBond;
         _bondedByOwner[msg.sender] += delegatedBond;
+        // Both sides, in the same call: the bond leaves one history and joins the other, and
+        // checkpointing only the receiver would leave the previous owner voting with weight it
+        // no longer holds.
+        _syncBondedCheckpoint(previousOwner);
+        _syncBondedCheckpoint(msg.sender);
 
         emit BondOwnerSet(operator, msg.sender);
     }
@@ -580,21 +578,16 @@ contract BondingRegistry is
     }
 
     function _registerOperator(address operator) internal {
-        // Clear previous exit request
-        if (operators[operator].exitRequested) {
-            operators[operator].exitRequested = false;
-            operators[operator].exitUnlocksAt = 0;
-        }
-
-        require(slashingManager != address(0), ZeroAddress());
-        require(!_isOperatorBanned(operator), CiphernodeBanned());
-        require(!operators[operator].registered, AlreadyRegistered());
-        require(
-            operators[operator].licenseBond >= licenseRequiredBond,
-            NotLicensed()
+        BondingRegistrationLib.register(
+            operators,
+            operator,
+            slashingManager,
+            requiredCiphernodeBond,
+            _isOperatorBanned(operator)
         );
-
-        operators[operator].registered = true;
+        // Counted here, before the external call, exactly as before the extraction: the counter
+        // is a scalar the library cannot reach, and incrementing it afterwards would leave a
+        // window where the operator reads as registered but uncounted.
         numRegisteredOperators++;
 
         // CiphernodeRegistry already emits an event when a ciphernode is added
@@ -616,48 +609,28 @@ contract BondingRegistry is
     }
 
     function _deregisterOperator(address operator) internal {
-        Operator storage op = operators[operator];
-        require(op.registered, NotRegistered());
-
-        op.registered = false;
+        uint64 exitUnlocksAt = BondingRegistrationLib.markDeregistered(
+            operators,
+            operator,
+            exitDelay
+        );
+        // Decremented between the two library calls, which is where the original decrements it:
+        // before any token call, so no external callee observes a deregistered operator that is
+        // still counted.
         numRegisteredOperators--;
-        op.exitRequested = true;
-        op.exitUnlocksAt = uint64(block.timestamp) + exitDelay;
 
-        uint256 ticketOut = ticketToken.balanceOf(operator);
-        uint256 licenseOut = op.licenseBond;
-        if (ticketOut != 0) {
-            ticketToken.burnTickets(operator, ticketOut);
-            emit TicketBalanceUpdated(
-                operator,
-                -int256(ticketOut),
-                0,
-                REASON_WITHDRAW
-            );
-        }
-        if (licenseOut != 0) {
-            op.licenseBond = 0;
-            emit LicenseBondUpdated(
-                operator,
-                -int256(licenseOut),
-                0,
-                REASON_UNBOND
-            );
-        }
-
-        if (ticketOut != 0 || licenseOut != 0) {
-            _exits.queueAssetsForExit(
-                operator,
-                exitDelay,
-                ticketOut,
-                licenseOut
-            );
-        }
+        BondingRegistrationLib.releaseAssets(
+            operators,
+            _exits,
+            ticketToken,
+            operator,
+            exitDelay
+        );
 
         // CiphernodeRegistry already emits an event when a ciphernode is removed
         registry.removeCiphernode(operator);
 
-        emit CiphernodeDeregistrationRequested(operator, op.exitUnlocksAt);
+        emit CiphernodeDeregistrationRequested(operator, exitUnlocksAt);
         _updateOperatorStatus(operator);
     }
 
@@ -720,15 +693,15 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function bondLicenseFor(
+    function bondCiphernodeFor(
         address operator,
         uint256 amount
     ) external nonReentrant noExitInProgress(operator) {
-        _bondLicense(operator, amount);
+        _bondCiphernode(operator, amount);
     }
 
     /// @inheritdoc IBondingRegistry
-    function unbondLicenseFor(
+    function unbondCiphernodeFor(
         address operator,
         uint256 amount
     )
@@ -738,23 +711,23 @@ contract BondingRegistry is
         noOpenSlashProposal(operator)
         onlyBondOwner(operator)
     {
-        _unbondLicense(operator, amount);
+        _unbondCiphernode(operator, amount);
     }
 
-    function _unbondLicense(address operator, uint256 amount) internal {
+    function _unbondCiphernode(address operator, uint256 amount) internal {
         require(amount != 0, ZeroAmount());
         require(
-            operators[operator].licenseBond >= amount,
+            operators[operator].ciphernodeBond >= amount,
             InsufficientBalance()
         );
 
-        operators[operator].licenseBond -= amount;
-        _exits.queueLicensesForExit(operator, exitDelay, amount);
+        operators[operator].ciphernodeBond -= amount;
+        _exits.queueCiphernodeBondsForExit(operator, exitDelay, amount);
 
-        emit LicenseBondUpdated(
+        emit CiphernodeBondUpdated(
             operator,
             -int256(amount),
-            operators[operator].licenseBond,
+            operators[operator].ciphernodeBond,
             REASON_UNBOND
         );
 
@@ -769,11 +742,11 @@ contract BondingRegistry is
     function claimExitsFor(
         address operator,
         uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
+        uint256 maxCiphernodeBondAmount
     ) external nonReentrant {
-        if (maxLicenseAmount != 0) _checkBondOwner(operator);
+        if (maxCiphernodeBondAmount != 0) _checkBondOwner(operator);
         BondingSlashingLib.validateExitClaim(operator);
-        _claimExits(operator, maxTicketAmount, maxLicenseAmount);
+        _claimExits(operator, maxTicketAmount, maxCiphernodeBondAmount);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -793,19 +766,22 @@ contract BondingRegistry is
     function _claimExits(
         address operator,
         uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
+        uint256 maxCiphernodeBondAmount
     ) internal {
-        uint256 licenseClaim = BondingAssetLib.claimExits(
+        uint256 ciphernodeBondClaim = BondingAssetLib.claimExits(
             _exits,
             ticketToken,
-            licenseToken,
+            ciphernodeBondToken,
             _bondOwnerOf,
             _bondedByOwner,
             operator,
             maxTicketAmount,
-            maxLicenseAmount
+            maxCiphernodeBondAmount
         );
-        totalLicenseLiability -= licenseClaim;
+        totalCiphernodeBondLiability -= ciphernodeBondClaim;
+        // `BondingAssetLib.claimExits` decrements `_bondedByOwner` through a storage pointer, so
+        // the checkpoint has to be taken here rather than at the write.
+        _syncBondedCheckpoint(bondOwnerOf(operator));
     }
 
     // ======================
@@ -848,7 +824,7 @@ contract BondingRegistry is
             (uint256 pendingSlashed, ) = _exits.slashPendingAssets(
                 operator,
                 remainingToSlash,
-                0, // licenseAmount
+                0, // ciphernodeBondAmount
                 true
             );
             require(pendingSlashed == remainingToSlash, InsufficientBalance());
@@ -868,7 +844,7 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function slashLicenseBond(
+    function slashCiphernodeBond(
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
@@ -876,9 +852,11 @@ contract BondingRegistry is
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
-        (, uint256 pendingLicenseBalance) = _exits.getPendingAmounts(operator);
-        uint256 totalAvailableBalance = operatorData.licenseBond +
-            pendingLicenseBalance;
+        (, uint256 pendingCiphernodeBondBalance) = _exits.getPendingAmounts(
+            operator
+        );
+        uint256 totalAvailableBalance = operatorData.ciphernodeBond +
+            pendingCiphernodeBondBalance;
         uint256 actualSlashAmount = Math.min(
             requestedSlashAmount,
             totalAvailableBalance
@@ -888,10 +866,10 @@ contract BondingRegistry is
 
         uint256 activeSlashAmount = Math.min(
             actualSlashAmount,
-            operatorData.licenseBond
+            operatorData.ciphernodeBond
         );
         if (activeSlashAmount != 0) {
-            operatorData.licenseBond -= activeSlashAmount;
+            operatorData.ciphernodeBond -= activeSlashAmount;
         }
 
         uint256 remainingSlashAmount = actualSlashAmount - activeSlashAmount;
@@ -909,11 +887,11 @@ contract BondingRegistry is
         }
 
         _decreaseDelegatedBond(operator, actualSlashAmount);
-        slashedLicenseBond += actualSlashAmount;
-        emit LicenseBondUpdated(
+        slashedCiphernodeBond += actualSlashAmount;
+        emit CiphernodeBondUpdated(
             operator,
             -int256(actualSlashAmount),
-            operatorData.licenseBond,
+            operatorData.ciphernodeBond,
             slashReason
         );
 
@@ -1095,12 +1073,14 @@ contract BondingRegistry is
     function _setBondingAssetConfig(
         BondingAssetConfig calldata config
     ) internal {
-        _sweepLicenseSurplus();
+        _sweepCiphernodeBondSurplus();
+        bool ciphernodeBondTokenChanged = address(ciphernodeBondToken) !=
+            config.ciphernodeBondToken;
         bool assetChanged = BondingAssetLib.validateBondingAssetConfig(
             address(ticketToken),
-            address(licenseToken),
+            address(ciphernodeBondToken),
             _ticketTokenDecimals,
-            _licenseTokenDecimals,
+            _ciphernodeBondTokenDecimals,
             bondingAssetConfigurationVersion,
             address(this),
             config,
@@ -1109,25 +1089,74 @@ contract BondingRegistry is
         );
 
         ticketToken = InterfoldTicketToken(config.ticketToken);
-        licenseToken = IERC20(config.licenseToken);
+        ciphernodeBondToken = IERC20(config.ciphernodeBondToken);
         ticketPrice = config.ticketPrice;
-        licenseRequiredBond = config.licenseRequiredBond;
+        requiredCiphernodeBond = config.requiredCiphernodeBond;
         _ticketTokenDecimals = config.expectedTicketDecimals;
-        _licenseTokenDecimals = config.expectedLicenseDecimals;
+        _ciphernodeBondTokenDecimals = config.expectedCiphernodeBondDecimals;
         if (assetChanged) bondingAssetConfigurationVersion++;
+        if (
+            ciphernodeBondTokenChanged &&
+            address(bondedCheckpoints) != address(0)
+        ) {
+            // The recorded history counts ciphernode-bond-token units, and `BondedVotes` adds them to the
+            // voting power of one fixed token. Bonds of a replacement token would enter the same
+            // history and be counted as that token, so summed voting power could exceed its total
+            // supply. Rotation already requires every old bond to be drained, so each owner's last
+            // recorded total is zero: detaching freezes a settled history rather than truncating a
+            // live one. Governance may then attach a checkpoint contract for the new token, and
+            // the old contract keeps answering correctly for the timepoints it covers.
+            emit BondedCheckpointsDetached(address(bondedCheckpoints));
+            delete bondedCheckpoints;
+        }
         _invalidateEligibilityStatuses();
     }
 
     /// @inheritdoc IBondingRegistry
-    function setLicenseActiveBps(uint256 newBps) public onlyOwner {
+    function setCiphernodeBondActiveBps(uint256 newBps) public onlyOwner {
         require(newBps > 0 && newBps <= BPS_BASE, InvalidConfiguration());
 
-        uint256 oldValue = licenseActiveBps;
+        uint256 oldValue = ciphernodeBondActiveBps;
         if (oldValue == newBps) return;
-        licenseActiveBps = newBps;
+        ciphernodeBondActiveBps = newBps;
         _invalidateEligibilityStatuses();
 
-        emit ConfigurationUpdated("licenseActiveBps", oldValue, newBps);
+        emit ConfigurationUpdated("ciphernodeBondActiveBps", oldValue, newBps);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function setBondedCheckpoints(
+        IBondedCheckpoints newCheckpoints
+    ) external onlyOwner {
+        // One-time: repointing would abandon the recorded history, and every past vote reading
+        // through it would silently change answer.
+        require(
+            address(bondedCheckpoints) == address(0),
+            InvalidConfiguration()
+        );
+        // Subsumes a zero-address check: a call to an address with no code returns nothing, so
+        // decoding the result reverts.
+        require(
+            newCheckpoints.registry() == address(this),
+            InvalidConfiguration()
+        );
+
+        bondedCheckpoints = newCheckpoints;
+
+        // Exercise the write path before the one-shot slot is spent. `registry()` alone does not
+        // establish it: other protocol contracts answer `registry()` with this address, so an
+        // address mixed up with one of them passes that check and then reverts on every bond,
+        // slash, exit claim and owner transfer, with the slot consumed and no way to correct it.
+        // The probe writes the zero address, whose bonded total is always zero, so it leaves no
+        // state any real owner can read.
+        _syncBondedCheckpoint(address(0));
+
+        emit BondedCheckpointsSet(address(newCheckpoints));
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function resyncBondedCheckpoint(address bondOwner) external {
+        _syncBondedCheckpoint(bondOwner);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1176,17 +1205,21 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function sweepLicenseSurplus() external onlyOwner returns (uint256 amount) {
-        return _sweepLicenseSurplus();
+    function sweepCiphernodeBondSurplus()
+        external
+        onlyOwner
+        returns (uint256 amount)
+    {
+        return _sweepCiphernodeBondSurplus();
     }
 
-    function _sweepLicenseSurplus() private returns (uint256 amount) {
+    function _sweepCiphernodeBondSurplus() private returns (uint256 amount) {
         return
-            BondingAssetLib.sweepLicenseSurplus(
-                address(licenseToken),
+            BondingAssetLib.sweepCiphernodeBondSurplus(
+                address(ciphernodeBondToken),
                 address(this),
                 slashedFundsTreasury,
-                totalLicenseLiability
+                totalCiphernodeBondLiability
             );
     }
 
@@ -1271,32 +1304,35 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function withdrawSlashedFunds(
         uint256 ticketAmount,
-        uint256 licenseAmount
+        uint256 ciphernodeBondAmount
     ) public onlyOwner {
         require(
             ticketAmount <= slashedTicketBalance - reservedSlashedTicketBalance,
             ReservedSlashedFunds()
         );
-        require(licenseAmount <= slashedLicenseBond, InsufficientBalance());
+        require(
+            ciphernodeBondAmount <= slashedCiphernodeBond,
+            InsufficientBalance()
+        );
 
         if (ticketAmount > 0) {
             slashedTicketBalance -= ticketAmount;
             ticketToken.payout(slashedFundsTreasury, ticketAmount);
         }
 
-        if (licenseAmount > 0) {
-            slashedLicenseBond -= licenseAmount;
-            totalLicenseLiability -= licenseAmount;
-            _safeTransferLicenseWithDeltaCheck(
+        if (ciphernodeBondAmount > 0) {
+            slashedCiphernodeBond -= ciphernodeBondAmount;
+            totalCiphernodeBondLiability -= ciphernodeBondAmount;
+            _safeTransferCiphernodeBondWithDeltaCheck(
                 slashedFundsTreasury,
-                licenseAmount
+                ciphernodeBondAmount
             );
         }
 
         emit SlashedFundsWithdrawn(
             slashedFundsTreasury,
             ticketAmount,
-            licenseAmount
+            ciphernodeBondAmount
         );
     }
 
@@ -1304,26 +1340,27 @@ contract BondingRegistry is
     // Internal Functions
     // ======================
 
-    function _bondLicense(address operator, uint256 amount) internal {
+    function _bondCiphernode(address operator, uint256 amount) internal {
         require(operator != address(0), ZeroAddress());
         require(amount != 0, ZeroAmount());
 
         address bondOwner = bondOwnerOf(operator);
         require(msg.sender == bondOwner, NotBondOwner(msg.sender, operator));
 
-        operators[operator].licenseBond += amount;
+        operators[operator].ciphernodeBond += amount;
         _bondedByOwner[bondOwner] += amount;
+        _syncBondedCheckpoint(bondOwner);
         BondingAssetLib.transferFromExact(
-            address(licenseToken),
+            address(ciphernodeBondToken),
             msg.sender,
             amount
         );
-        totalLicenseLiability += amount;
+        totalCiphernodeBondLiability += amount;
 
-        emit LicenseBondUpdated(
+        emit CiphernodeBondUpdated(
             operator,
             int256(amount),
-            operators[operator].licenseBond,
+            operators[operator].ciphernodeBond,
             REASON_BOND
         );
 
@@ -1333,6 +1370,24 @@ contract BondingRegistry is
     function _decreaseDelegatedBond(address operator, uint256 amount) internal {
         address bondOwner = bondOwnerOf(operator);
         _bondedByOwner[bondOwner] -= amount;
+        _syncBondedCheckpoint(bondOwner);
+    }
+
+    /// @dev Record the owner's current bonded total in the checkpoint contract.
+    ///
+    /// Sends the total rather than a delta, so the history mirrors this mapping. A mutation site
+    /// that forgets to call this is then caught by comparing the two, whereas a delta-derived
+    /// history would drift undetected — and it would drift in voting weight.
+    ///
+    /// Skipped while unconfigured. This contract is upgradeable, so an upgrade lands before the
+    /// checkpoint contract can be pointed at it, and reverting in that window would freeze
+    /// bonding, unbonding and slashing. History therefore begins at configuration rather than at
+    /// upgrade, which is visible on chain and cannot be mistaken for a zero balance.
+    function _syncBondedCheckpoint(address bondOwner) internal {
+        IBondedCheckpoints checkpoints = bondedCheckpoints;
+        if (address(checkpoints) == address(0)) return;
+
+        checkpoints.sync(bondOwner, _bondedByOwner[bondOwner]);
     }
 
     function _checkBondOwner(address operator) internal view {
@@ -1342,7 +1397,7 @@ contract BondingRegistry is
     }
 
     /// @dev Updates operator's active status based on current conditions
-    /// @dev Operator is active if: registered, has minimum license bond, and has minimum tickets
+    /// @dev Operator is active if: registered, has minimum ciphernode bond, and has minimum tickets
     /// @param operator Address of the operator to update
     function _updateOperatorStatus(address operator) internal {
         Operator storage op = operators[operator];
@@ -1356,9 +1411,9 @@ contract BondingRegistry is
                 BondingEligibilityLib.OperatorRequirements({
                     registered: op.registered,
                     banned: _isOperatorBanned(operator),
-                    licenseBond: op.licenseBond,
-                    licenseRequiredBond: licenseRequiredBond,
-                    licenseActiveBps: licenseActiveBps,
+                    ciphernodeBond: op.ciphernodeBond,
+                    requiredCiphernodeBond: requiredCiphernodeBond,
+                    ciphernodeBondActiveBps: ciphernodeBondActiveBps,
                     ticketToken: address(ticketToken),
                     ticketPrice: ticketPrice,
                     minTicketBalance: minTicketBalance
@@ -1393,14 +1448,14 @@ contract BondingRegistry is
         numActiveOperators = 0;
     }
 
-    /// @dev Sends the license token and reverts unless the recipient receives the
+    /// @dev Sends the ciphernode bond token and reverts unless the recipient receives the
     ///      exact amount. A revert restores the liability accounting at the call site.
-    function _safeTransferLicenseWithDeltaCheck(
+    function _safeTransferCiphernodeBondWithDeltaCheck(
         address recipient,
         uint256 expectedAmount
     ) internal {
         BondingAssetLib.transferExact(
-            address(licenseToken),
+            address(ciphernodeBondToken),
             recipient,
             expectedAmount
         );
@@ -1422,7 +1477,13 @@ contract BondingRegistry is
             interfaceId == type(IERC165).interfaceId;
     }
 
+    /// @inheritdoc IBondingRegistry
+    /// @dev Held off this contract because it is within a few hundred bytes of the EIP-170 limit.
+    /// Unset until configured, and writes are skipped while it is — see {_syncBondedCheckpoint}.
+    /// Readable so a deployment can verify the wiring it just configured.
+    IBondedCheckpoints public bondedCheckpoints;
+
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[39] private __gap;
+    uint256[38] private __gap;
 }

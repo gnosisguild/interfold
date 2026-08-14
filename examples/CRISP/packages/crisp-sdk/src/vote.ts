@@ -4,15 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { type Vote, MaskVoteProofInputs, ProofInputs, ProofData, VoteProofInputs } from './types'
-import { generateMerkleProof, getAddressFromSignature, getZeroVote, getMaxVoteValue, proofToFields } from './utils'
-import { generateCircuitInputsImpl } from './circuitInputs'
-import { MASK_SIGNATURE, SIGNATURE_MESSAGE_HASH } from './constants'
+import { type Vote, type CensusVariant, type PrepareBallotInputs, type PreparedBallot, ProofData } from './types'
+import { getMaxVoteValue, proofToFields } from './utils'
+import { attachSignatureImpl, prepareCircuitInputsImpl } from './circuitInputs'
+import { MASK_SIGNATURE } from './constants'
 export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } from './encoding'
+export { splitDigest } from './circuitInputs'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
 import crispCircuit from '../../../circuits/bin/crisp/target/crisp.json'
 import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
+import crispOnchainCircuit from '../../../circuits/bin/crisp_onchain/target/crisp_onchain.json'
+import foldOnchainCircuit from '../../../circuits/bin/fold_onchain/target/crisp_onchain_fold.json'
 import userDataEncryptionCt0Circuit from '../../../../../circuits/bin/threshold/target/user_data_encryption_ct0.json'
 import userDataEncryptionCt1Circuit from '../../../../../circuits/bin/threshold/target/user_data_encryption_ct1.json'
 import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/target/user_data_encryption.json'
@@ -55,22 +58,18 @@ export const destroyBBApi = (): void => {
 }
 
 /**
- * Generate the circuit inputs for a vote proof.
+ * Encrypt a ballot and build every circuit input that does not depend on the signature.
  * Runs in a worker when available to avoid blocking the main thread.
  */
-export const generateCircuitInputs = async (proofInputs: ProofInputs): Promise<{ circuitInputs: any; encryptedVote: Uint8Array }> => {
+export const prepareCircuitInputs = async (inputs: PrepareBallotInputs): Promise<PreparedBallot> => {
   if (typeof Worker !== 'undefined') {
     try {
       const worker = new Worker(new URL('./workers/generateCircuitInputs.worker.js', import.meta.url), { type: 'module' })
       return new Promise((resolve, reject) => {
-        worker.onmessage = (
-          e: MessageEvent<
-            { type: 'result'; circuitInputs: any; encryptedVote: Uint8Array } | { type: 'error'; error: string; stack?: string }
-          >,
-        ) => {
+        worker.onmessage = (e: MessageEvent<{ type: 'result'; prepared: PreparedBallot } | { type: 'error'; error: string }>) => {
           worker.terminate()
           if (e.data.type === 'result') {
-            resolve({ circuitInputs: e.data.circuitInputs, encryptedVote: e.data.encryptedVote })
+            resolve(e.data.prepared)
           } else {
             reject(new Error(e.data.error))
           }
@@ -79,14 +78,14 @@ export const generateCircuitInputs = async (proofInputs: ProofInputs): Promise<{
           worker.terminate()
           reject(err)
         }
-        worker.postMessage(proofInputs)
+        worker.postMessage(inputs)
       })
     } catch {
       // Worker creation failed (e.g. bundler path resolution); fall back to main thread
     }
   }
 
-  return generateCircuitInputsImpl(proofInputs)
+  return prepareCircuitInputsImpl(inputs)
 }
 
 /**
@@ -106,8 +105,11 @@ export const executeCircuit = async (circuit: CompiledCircuit, inputs: any): Pro
  * @param circuitInputs - Inputs used in both the CRISP and GRECO circuits.
  * @returns The proof.
  */
-export const generateProof = async (circuitInputs: any) => {
+export const generateProof = async (circuitInputs: any, censusMode: CensusVariant = 'merkle') => {
   const api = await getBBApi()
+
+  const ballotCircuit = censusMode === 'onchain' ? crispOnchainCircuit : crispCircuit
+  const foldCircuitForMode = censusMode === 'onchain' ? foldOnchainCircuit : foldCircuit
 
   const { witness: userDataEncryptionCt0Witness } = await executeCircuit(userDataEncryptionCt0Circuit as CompiledCircuit, {
     pk0is: circuitInputs.pk0is,
@@ -128,7 +130,20 @@ export const generateProof = async (circuitInputs: any) => {
     p1is: circuitInputs.p1is,
     p2is: circuitInputs.p2is,
   })
-  const { witness: crispWitness, returnValue: crispReturnValue } = await executeCircuit(crispCircuit as CompiledCircuit, {
+  // The two stacks share every input except how eligibility reaches the circuit: a census round
+  // proves a Merkle path, an on-chain round takes the voting power the contract read.
+  const eligibilityInputs =
+    censusMode === 'onchain'
+      ? { voting_power: circuitInputs.voting_power }
+      : {
+          merkle_root: circuitInputs.merkle_root,
+          balance: circuitInputs.balance,
+          merkle_proof_length: circuitInputs.merkle_proof_length,
+          merkle_proof_indices: circuitInputs.merkle_proof_indices,
+          merkle_proof_siblings: circuitInputs.merkle_proof_siblings,
+        }
+
+  const { witness: crispWitness, returnValue: crispReturnValue } = await executeCircuit(ballotCircuit as CompiledCircuit, {
     prev_ct0is: circuitInputs.prev_ct0is,
     prev_ct1is: circuitInputs.prev_ct1is,
     prev_ct_commitment: circuitInputs.prev_ct_commitment,
@@ -142,13 +157,10 @@ export const generateProof = async (circuitInputs: any) => {
     public_key_x: circuitInputs.public_key_x,
     public_key_y: circuitInputs.public_key_y,
     signature: circuitInputs.signature,
-    hashed_message: circuitInputs.hashed_message,
-    merkle_root: circuitInputs.merkle_root,
-    merkle_proof_length: circuitInputs.merkle_proof_length,
-    merkle_proof_indices: circuitInputs.merkle_proof_indices,
-    merkle_proof_siblings: circuitInputs.merkle_proof_siblings,
+    digest_hi: circuitInputs.digest_hi,
+    digest_lo: circuitInputs.digest_lo,
     slot_address: circuitInputs.slot_address,
-    balance: circuitInputs.balance,
+    ...eligibilityInputs,
     is_first_vote: circuitInputs.is_first_vote,
     is_mask_vote: circuitInputs.is_mask_vote,
     num_options: circuitInputs.num_options,
@@ -157,8 +169,8 @@ export const generateProof = async (circuitInputs: any) => {
   const userDataEncryptionCt0Backend = new UltraHonkBackend((userDataEncryptionCt0Circuit as CompiledCircuit).bytecode, api)
   const userDataEncryptionCt1Backend = new UltraHonkBackend((userDataEncryptionCt1Circuit as CompiledCircuit).bytecode, api)
   const userDataEncryptionBackend = new UltraHonkBackend((userDataEncryptionCircuit as CompiledCircuit).bytecode, api)
-  const crispBackend = new UltraHonkBackend((crispCircuit as CompiledCircuit).bytecode, api)
-  const foldBackend = new UltraHonkBackend((foldCircuit as CompiledCircuit).bytecode, api)
+  const crispBackend = new UltraHonkBackend((ballotCircuit as CompiledCircuit).bytecode, api)
+  const foldBackend = new UltraHonkBackend((foldCircuitForMode as CompiledCircuit).bytecode, api)
 
   const { proof: userDataEncryptionCt0Proof, publicInputs: userDataEncryptionCt0PublicInputs } =
     await userDataEncryptionCt0Backend.generateProof(userDataEncryptionCt0Witness, {
@@ -215,7 +227,7 @@ export const generateProof = async (circuitInputs: any) => {
     },
   )
 
-  const { witness: foldWitness } = await executeCircuit(foldCircuit as CompiledCircuit, {
+  const { witness: foldWitness } = await executeCircuit(foldCircuitForMode as CompiledCircuit, {
     user_data_encryption_verification_key: userDataEncryptionArtifacts.vkAsFields,
     user_data_encryption_proof: proofToFields(userDataEncryptionProof),
     user_data_encryption_public_inputs: userDataEncryptionPublicInputs,
@@ -224,8 +236,11 @@ export const generateProof = async (circuitInputs: any) => {
     crisp_proof: proofToFields(crispProof),
     crisp_key_hash: crispArtifacts.vkHash,
     prev_ct_commitment: circuitInputs.prev_ct_commitment,
-    merkle_root: circuitInputs.merkle_root,
+    digest_hi: circuitInputs.digest_hi,
+    digest_lo: circuitInputs.digest_lo,
     slot_address: circuitInputs.slot_address,
+    // Position 4 of the public inputs, and the only slot the two stacks disagree on.
+    ...(censusMode === 'onchain' ? { voting_power: circuitInputs.voting_power } : { merkle_root: circuitInputs.merkle_root }),
     is_first_vote: circuitInputs.is_first_vote,
     num_options: circuitInputs.num_options,
     final_ct_commitment: crispReturnValue[0].toString(),
@@ -276,49 +291,58 @@ export const validateVote = (vote: Vote, balance: bigint): void => {
 }
 
 /**
- * Generate a vote proof for the CRISP circuit given the vote proof inputs.
- * @param voteProofInputs - The vote proof inputs.
- * @returns The vote proof.
+ * Phase one: encrypt a ballot, before the voter signs anything.
+ *
+ * A ballot must be encrypted before it can be signed, because the digest binds the ciphertext.
+ * Take `ctCommitment` from the result, read the digest from `CRISPProgram.ballotDigest`, have the
+ * voter sign it, then call {@link finishBallotProof}.
+ *
+ * @param inputs - The ballot to encrypt.
+ * @returns The prepared ballot.
  */
-export const generateVoteProof = async (voteProofInputs: VoteProofInputs): Promise<ProofData> => {
-  // first validate the vote
-  validateVote(voteProofInputs.vote, voteProofInputs.balance)
+export const prepareBallot = async (inputs: PrepareBallotInputs): Promise<PreparedBallot> => {
+  if (!inputs.isMaskVote) {
+    validateVote(inputs.vote, inputs.censusMode === 'onchain' ? inputs.votingPower : inputs.balance)
+  }
 
-  const address = await getAddressFromSignature(voteProofInputs.signature, voteProofInputs.messageHash)
-
-  const merkleProof = generateMerkleProof(voteProofInputs.balance, address, voteProofInputs.merkleLeaves)
-
-  const { circuitInputs, encryptedVote } = await generateCircuitInputs({
-    ...voteProofInputs,
-    slotAddress: address,
-    merkleProof,
-    previousCiphertext: voteProofInputs.previousCiphertext,
-    signature: voteProofInputs.signature,
-    messageHash: voteProofInputs.messageHash,
-    isMaskVote: false,
-  })
-
-  return { ...(await generateProof(circuitInputs)), encryptedVote }
+  // Through the worker wrapper, not the impl: BFV encryption is the heaviest step in the flow and
+  // running it on the main thread freezes the browser for its duration. The wrapper falls back to
+  // the main thread by itself where `Worker` is unavailable.
+  return prepareCircuitInputs(inputs)
 }
 
 /**
- * Generate a proof for a vote masking operation.
- * @param maskVoteProofInputs The mask vote proof inputs.
- * @returns
+ * Phase two: prove a prepared ballot, given the signature over its digest.
+ *
+ * Get the digest from `CRISPProgram.ballotDigest(e3Id, slot, prepared.ctCommitment)` and have the
+ * voter sign it. Reading it from the contract rather than rebuilding the EIP-712 struct here means
+ * there is only one implementation of the domain to keep correct.
+ *
+ * @param prepared The output of `prepareBallot`.
+ * @param digest The ballot digest.
+ * @param signature The voter signature over that digest.
+ * @returns The proof.
  */
-export const generateMaskVoteProof = async (maskVoteProofInputs: MaskVoteProofInputs): Promise<ProofData> => {
-  const merkleProof = generateMerkleProof(maskVoteProofInputs.balance, maskVoteProofInputs.slotAddress, maskVoteProofInputs.merkleLeaves)
+export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<ProofData> => {
+  const circuitInputs = await attachSignatureImpl(prepared, digest, signature)
 
-  const { circuitInputs, encryptedVote } = await generateCircuitInputs({
-    ...maskVoteProofInputs,
-    signature: MASK_SIGNATURE,
-    messageHash: SIGNATURE_MESSAGE_HASH,
-    vote: getZeroVote(maskVoteProofInputs.numOptions),
-    merkleProof,
-    isMaskVote: true,
-  })
+  return { ...(await generateProof(circuitInputs, prepared.censusMode)), encryptedVote: prepared.encryptedVote }
+}
 
-  return { ...(await generateProof(circuitInputs)), encryptedVote }
+/**
+ * Phase two for a mask.
+ *
+ * A mask carries the same digest as a real vote, because `CRISPProgram.publishInput` computes it
+ * for every input regardless of branch. Only the signature is a placeholder, and the circuit does
+ * not check it on the mask branch. Passing a real digest here is what keeps a mask and a vote
+ * indistinguishable in the published public inputs.
+ *
+ * @param prepared The output of `prepareBallot` with `isMaskVote: true`.
+ * @param digest The ballot digest, from the same contract call a real vote would use.
+ * @returns The proof.
+ */
+export const finishMaskProof = async (prepared: PreparedBallot, digest: `0x${string}`): Promise<ProofData> => {
+  return finishBallotProof(prepared, digest, MASK_SIGNATURE)
 }
 
 /**
@@ -326,9 +350,10 @@ export const generateMaskVoteProof = async (maskVoteProofInputs: MaskVoteProofIn
  * @param proof - The proof to verify.
  * @returns True if the proof is valid, false otherwise.
  */
-export const verifyProof = async (proof: ProofData): Promise<boolean> => {
+export const verifyProof = async (proof: ProofData, censusMode: CensusVariant = 'merkle'): Promise<boolean> => {
   const api = await getBBApi()
-  const foldBackend = new UltraHonkBackend(foldCircuit.bytecode, api)
+  const circuit = censusMode === 'onchain' ? foldOnchainCircuit : foldCircuit
+  const foldBackend = new UltraHonkBackend(circuit.bytecode, api)
 
   return foldBackend.verifyProof(proof, { verifierTarget: 'evm' })
 }
@@ -340,8 +365,12 @@ export const verifyProof = async (proof: ProofData): Promise<boolean> => {
  * @returns The encoded proof data as a hex string.
  */
 export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote }: ProofData): Hex => {
-  const slotAddress = getAddress(numberToHex(BigInt(publicInputs[2]), { size: 20 }))
-  const encryptedVoteCommitment = publicInputs[5] as `0x${string}`
+  // Indices follow the fold circuit public inputs:
+  //   0 prev_ct_commitment, 1 digest_hi, 2 digest_lo, 3 slot_address,
+  //   4 merkle_root | voting_power, 5 is_first_vote, 6 num_options,
+  //   7 final_ct_commitment, 8 committee public key
+  const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
+  const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
 
   return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes'), [
     bytesToHex(proof),

@@ -11,9 +11,9 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp (or the lib preset).
 /// Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x265a34e63b1312711dd4e696d5aa2c96a2cb2f6b91fd59f1ba1a8a784e3a5f58;
+    0x104652e4140264c4bf518b0469d4062b9e2d4a9b4567979be7568a010a0db217;
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x17c92f1a6fe7e15810f0935423aa2caf95625212836bdfce80d892ca5689b03a;
+    0x02068bab950c2f2f8ceb72404c406facc12e658233af8c7d732775bf36962783;
 
 fn main(
     // User Data Encryption Section.
@@ -26,8 +26,10 @@ fn main(
     crisp_proof: UltraHonkProof,
     crisp_key_hash: Field,
     prev_ct_commitment: pub Field,
-    merkle_root: pub Field,
+    digest_hi: pub Field,
+    digest_lo: pub Field,
     slot_address: pub Field,
+    merkle_root: pub Field,
     is_first_vote: pub bool,
     num_options: pub u32,
     final_ct_commitment: pub Field,
@@ -45,8 +47,10 @@ fn main(
         crisp_proof,
         [
             prev_ct_commitment,
-            merkle_root,
+            digest_hi,
+            digest_lo,
             slot_address,
+            merkle_root,
             if is_first_vote { 1 } else { 0 },
             num_options as Field,
             final_ct_commitment,

@@ -81,7 +81,7 @@ describe("E3 Pricing", function () {
       interfold: sys.interfold,
       ciphernodeRegistryContract: sys.ciphernodeRegistry,
       bondingRegistry: sys.bondingRegistry,
-      licenseToken: sys.licenseToken,
+      ciphernodeBondToken: sys.ciphernodeBondToken,
       ticketToken: sys.ticketToken,
       usdcToken: sys.usdcToken,
       slashingManager: sys.slashingManager,
@@ -246,7 +246,7 @@ describe("E3 Pricing", function () {
     it("updates the token scale and raw-unit prices together", async function () {
       const { interfold } = await loadFixture(setup);
       const token = await (
-        await ethers.getContractFactory("MockLockAwareLicenseToken")
+        await ethers.getContractFactory("MockLockAwareCiphernodeBondToken")
       ).deploy(0);
       const tokenAddress = await token.getAddress();
       const pricing = {

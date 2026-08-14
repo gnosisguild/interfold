@@ -12,8 +12,8 @@ import {
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import {
-    ILockAwareLicenseToken
-} from "../interfaces/ILockAwareLicenseToken.sol";
+    ILockAwareCiphernodeBondToken
+} from "../interfaces/ILockAwareCiphernodeBondToken.sol";
 import {
     BONDING_SLASHING_STORAGE_SLOT,
     BondingSlashingStorage,
@@ -31,30 +31,31 @@ library BondingAssetLib {
     function claimExits(
         ExitQueueLib.ExitQueueState storage exits,
         InterfoldTicketToken ticketToken,
-        IERC20 licenseToken,
+        IERC20 ciphernodeBondToken,
         mapping(address operator => address bondOwner) storage bondOwners,
         mapping(address bondOwner => uint256 amount) storage bondedByOwner,
         address operator,
         uint256 maxTicketAmount,
-        uint256 maxLicenseAmount
-    ) external returns (uint256 licenseClaim) {
-        (uint256 ticketClaim, uint256 claimedLicense) = exits.claimAssets(
-            operator,
-            maxTicketAmount,
-            maxLicenseAmount
-        );
-        if (ticketClaim == 0 && claimedLicense == 0) {
+        uint256 maxCiphernodeBondAmount
+    ) external returns (uint256 ciphernodeBondClaim) {
+        (uint256 ticketClaim, uint256 claimedCiphernodeBond) = exits
+            .claimAssets(operator, maxTicketAmount, maxCiphernodeBondAmount);
+        if (ticketClaim == 0 && claimedCiphernodeBond == 0) {
             revert IBondingRegistry.ExitNotReady();
         }
 
         address bondOwner = bondOwners[operator];
         if (bondOwner == address(0)) revert IBondingRegistry.ZeroAddress();
         if (ticketClaim != 0) ticketToken.payout(bondOwner, ticketClaim);
-        if (claimedLicense != 0) {
-            bondedByOwner[bondOwner] -= claimedLicense;
-            _transferExact(address(licenseToken), bondOwner, claimedLicense);
+        if (claimedCiphernodeBond != 0) {
+            bondedByOwner[bondOwner] -= claimedCiphernodeBond;
+            _transferExact(
+                address(ciphernodeBondToken),
+                bondOwner,
+                claimedCiphernodeBond
+            );
         }
-        return claimedLicense;
+        return claimedCiphernodeBond;
     }
 
     function validateExitTiming(
@@ -136,16 +137,16 @@ library BondingAssetLib {
 
     function validateBondingAssetConfig(
         address currentTicket,
-        address currentLicense,
+        address currentCiphernodeBond,
         uint8 currentTicketDecimals,
-        uint8 currentLicenseDecimals,
+        uint8 currentCiphernodeBondDecimals,
         uint64 configurationVersion,
         address registry,
         IBondingRegistry.BondingAssetConfig calldata config,
         address[] storage managers,
         mapping(address => uint256) storage pendingRoutes
     ) external returns (bool assetChanged) {
-        if (config.ticketPrice == 0 || config.licenseRequiredBond == 0) {
+        if (config.ticketPrice == 0 || config.requiredCiphernodeBond == 0) {
             revert IBondingRegistry.InvalidConfiguration();
         }
         _validateTicketAsset(
@@ -155,29 +156,30 @@ library BondingAssetLib {
             config.expectedTicketDecimals,
             registry
         );
-        _validateLicenseAsset(
-            currentLicense,
-            currentLicenseDecimals,
-            config.licenseToken,
-            config.expectedLicenseDecimals,
+        _validateCiphernodeBondAsset(
+            currentCiphernodeBond,
+            currentCiphernodeBondDecimals,
+            config.ciphernodeBondToken,
+            config.expectedCiphernodeBondDecimals,
             registry
         );
 
         assetChanged =
             currentTicket != config.ticketToken ||
-            currentLicense != config.licenseToken ||
+            currentCiphernodeBond != config.ciphernodeBondToken ||
             currentTicketDecimals != config.expectedTicketDecimals ||
-            currentLicenseDecimals != config.expectedLicenseDecimals;
+            currentCiphernodeBondDecimals !=
+            config.expectedCiphernodeBondDecimals;
         if (assetChanged) {
             _requireNoAssetConfigurationObligations(managers, pendingRoutes);
         }
         emit IBondingRegistry.BondingAssetConfigUpdated(
             InterfoldTicketToken(config.ticketToken),
-            IERC20(config.licenseToken),
+            IERC20(config.ciphernodeBondToken),
             config.ticketPrice,
-            config.licenseRequiredBond,
+            config.requiredCiphernodeBond,
             config.expectedTicketDecimals,
-            config.expectedLicenseDecimals,
+            config.expectedCiphernodeBondDecimals,
             configurationVersion + (assetChanged ? 1 : 0)
         );
     }
@@ -225,7 +227,7 @@ library BondingAssetLib {
         return abi.decode(result, (address));
     }
 
-    function _validateLicenseAsset(
+    function _validateCiphernodeBondAsset(
         address current,
         uint8 currentDecimals,
         address next,
@@ -324,10 +326,13 @@ library BondingAssetLib {
         address account
     ) public view returns (uint256) {
         (bool success, bytes memory result) = token.staticcall(
-            abi.encodeCall(ILockAwareLicenseToken.lockedBalanceOf, (account))
+            abi.encodeCall(
+                ILockAwareCiphernodeBondToken.lockedBalanceOf,
+                (account)
+            )
         );
         if (!success || result.length != 32) {
-            revert IBondingRegistry.IncompatibleLicenseToken(token);
+            revert IBondingRegistry.IncompatibleCiphernodeBondToken(token);
         }
         return abi.decode(result, (uint256));
     }
@@ -361,7 +366,7 @@ library BondingAssetLib {
         }
     }
 
-    function sweepLicenseSurplus(
+    function sweepCiphernodeBondSurplus(
         address tokenAddress,
         address registry,
         address treasury,
@@ -374,7 +379,7 @@ library BondingAssetLib {
 
         amount = balance - liabilities;
         _transferExact(tokenAddress, treasury, amount);
-        emit IBondingRegistry.LicenseSurplusSwept(
+        emit IBondingRegistry.CiphernodeBondSurplusSwept(
             tokenAddress,
             treasury,
             amount

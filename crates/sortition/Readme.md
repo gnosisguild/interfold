@@ -9,7 +9,7 @@ aggregation, encryption, and decryption.
 The Interfold system uses a score-based sortition mechanism to select a committee of ciphernodes to
 perform threshold homomorphic encryption operations. The flow involves:
 
-1. **Operator Setup** - Bonding license tokens and ticket balance
+1. **Operator Setup** - Bonding ciphernode bond tokens and ticket balance
 2. **Registration** - Registering as a ciphernode operator
 3. **E3 Request** - A computation request triggers sortition
 4. **Score Sortition** - Nodes are selected based on ticket balances
@@ -36,12 +36,12 @@ sequenceDiagram
     Note over Operator,BondingRegistry: Phase 1: Operator Setup & Registration
 
     Operator->>BondingRegistry: setBondOwner(owner)
-    Operator->>BondingRegistry: bondLicenseFor(operator, amount)
+    Operator->>BondingRegistry: bondCiphernodeFor(operator, amount)
     BondingRegistry->>BondingRegistry: Transfer FOLD tokens
-    BondingRegistry->>EventBus: LicenseBondUpdated
+    BondingRegistry->>EventBus: CiphernodeBondUpdated
 
     Operator->>BondingRegistry: registerOperatorFor(operator)
-    BondingRegistry->>BondingRegistry: Check isLicensed()
+    BondingRegistry->>BondingRegistry: Check ciphernodeBond >= requiredCiphernodeBond
     BondingRegistry->>CiphernodeRegistry: addCiphernode(operator)
     CiphernodeRegistry->>EventBus: CiphernodeAdded(operator, index, numNodes, chainId)
     EventBus->>NodeStateManager: CiphernodeAdded
@@ -154,11 +154,11 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> Unbonded
     Unbonded --> Unbonded: setBondOwner(owner)
-    Unbonded --> Licensed: bondLicenseFor(operator, amount >= requiredBond)
-    Licensed --> Registered: registerOperatorFor(operator)
+    Unbonded --> Bonded: bondCiphernodeFor(operator, amount >= requiredBond)
+    Bonded --> Registered: registerOperatorFor(operator)
     Registered --> Active: addTicketBalanceFor(operator, balance >= minBalance)
-    Active --> Inactive: removeTicketBalanceFor(...) OR unbondLicenseFor(...)
-    Inactive --> Active: addTicketBalanceFor(...) OR bondLicenseFor(...)
+    Active --> Inactive: removeTicketBalanceFor(...) OR unbondCiphernodeFor(...)
+    Inactive --> Active: addTicketBalanceFor(...) OR bondCiphernodeFor(...)
     Active --> ExitPending: deregisterOperatorFor(operator)
     Inactive --> ExitPending: deregisterOperatorFor(operator)
     Registered --> ExitPending: deregisterOperatorFor(operator)
@@ -313,12 +313,12 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 ### Bonding Registry Events
 
-| Event                       | Parameters                                   | Purpose                      |
-| --------------------------- | -------------------------------------------- | ---------------------------- |
-| `LicenseBondUpdated`        | operator, delta, newBalance, reason          | Track license token bonding  |
-| `TicketBalanceUpdated`      | operator, delta, newBalance, reason, chainId | Track ticket balance changes |
-| `OperatorActivationChanged` | operator, active, chainId                    | Node activation status       |
-| `ConfigurationUpdated`      | parameter, oldValue, newValue                | System parameter changes     |
+| Event                       | Parameters                                   | Purpose                             |
+| --------------------------- | -------------------------------------------- | ----------------------------------- |
+| `CiphernodeBondUpdated`     | operator, delta, newBond, reason, chainId    | Track ciphernode bond token bonding |
+| `TicketBalanceUpdated`      | operator, delta, newBalance, reason, chainId | Track ticket balance changes        |
+| `OperatorActivationChanged` | operator, active, chainId                    | Node activation status              |
+| `ConfigurationUpdated`      | parameter, oldValue, newValue                | System parameter changes            |
 
 ### Ciphernode Registry Events
 

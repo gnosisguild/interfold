@@ -399,7 +399,7 @@ contract SlashingManager is
         // `enabled = false` is allowed so governance can pre-stage / pause a policy.
         // Per-call enforcement happens in `proposeSlash` / `proposeSlashEvidence`.
         require(
-            policy.ticketPenalty > 0 || policy.licensePenalty > 0,
+            policy.ticketPenalty > 0 || policy.ciphernodeBondPenalty > 0,
             InvalidPolicy()
         );
 
@@ -574,7 +574,7 @@ contract SlashingManager is
         p.operator = operator;
         p.reason = reason;
         p.ticketAmount = policy.ticketPenalty;
-        p.licenseAmount = policy.licensePenalty;
+        p.ciphernodeBondAmount = policy.ciphernodeBondPenalty;
         p.proposedAt = block.timestamp;
         p.executableAt = executableAt;
         p.proposer = msg.sender;
@@ -594,7 +594,7 @@ contract SlashingManager is
             operator,
             reason,
             policy.ticketPenalty,
-            policy.licensePenalty,
+            policy.ciphernodeBondPenalty,
             executableAt,
             msg.sender,
             Lane.LaneA
@@ -664,7 +664,7 @@ contract SlashingManager is
         p.operator = operator;
         p.reason = reason;
         p.ticketAmount = policy.ticketPenalty;
-        p.licenseAmount = policy.licensePenalty;
+        p.ciphernodeBondAmount = policy.ciphernodeBondPenalty;
         p.proposedAt = block.timestamp;
         p.executableAt = executableAt;
         p.proposer = msg.sender;
@@ -685,7 +685,7 @@ contract SlashingManager is
             operator,
             reason,
             policy.ticketPenalty,
-            policy.licensePenalty,
+            policy.ciphernodeBondPenalty,
             executableAt,
             msg.sender,
             Lane.LaneB
@@ -774,7 +774,7 @@ contract SlashingManager is
         E3Dependencies memory dependencies = _dependenciesFor(p.e3Id);
 
         uint256 actualTicketSlashed = 0;
-        uint256 actualLicenseSlashed = 0;
+        uint256 actualCiphernodeBondSlashed = 0;
 
         // Execute financial penalties
         if (p.ticketAmount > 0) {
@@ -785,12 +785,14 @@ contract SlashingManager is
             );
         }
 
-        if (p.licenseAmount > 0) {
-            actualLicenseSlashed = dependencies.bonding.slashLicenseBond(
-                p.operator,
-                p.licenseAmount,
-                p.reason
-            );
+        if (p.ciphernodeBondAmount > 0) {
+            actualCiphernodeBondSlashed = dependencies
+                .bonding
+                .slashCiphernodeBond(
+                    p.operator,
+                    p.ciphernodeBondAmount,
+                    p.reason
+                );
         }
 
         // Financial penalties succeeded — commit `executed` before any further
@@ -891,7 +893,7 @@ contract SlashingManager is
             p.operator,
             p.reason,
             actualTicketSlashed,
-            actualLicenseSlashed,
+            actualCiphernodeBondSlashed,
             true,
             lane
         );

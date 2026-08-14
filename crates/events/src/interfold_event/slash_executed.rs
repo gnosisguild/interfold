@@ -27,8 +27,8 @@ pub struct SlashExecuted {
     pub reason: [u8; 32],
     /// Amount of ticket collateral slashed.
     pub ticket_amount: u128,
-    /// Amount of license bond slashed.
-    pub license_amount: u128,
+    /// Amount of ciphernode bond slashed.
+    pub ciphernode_bond_amount: u128,
 }
 
 impl Display for SlashExecuted {

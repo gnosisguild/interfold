@@ -26,7 +26,7 @@ pub struct OperatorChainStatus {
     pub exit_in_progress: bool,
     pub ticket_balance: String,
     pub available_tickets: String,
-    pub license_bond: String,
+    pub ciphernode_bond: String,
     pub bond_owner: String,
 }
 
@@ -45,7 +45,7 @@ pub async fn fetch_operator_status(
 
     let (
         ticket_balance,
-        license_bond,
+        ciphernode_bond,
         available_tickets,
         operator_registered,
         operator_active,
@@ -55,7 +55,7 @@ pub async fn fetch_operator_status(
         bond_owner,
     ) = tokio::try_join!(
         async { bonding.getTicketBalance(operator).call().await },
-        async { bonding.getLicenseBond(operator).call().await },
+        async { bonding.getCiphernodeBond(operator).call().await },
         async { bonding.availableTickets(operator).call().await },
         async { bonding.isRegistered(operator).call().await },
         async { bonding.isActive(operator).call().await },
@@ -75,7 +75,7 @@ pub async fn fetch_operator_status(
         exit_in_progress,
         ticket_balance: ticket_balance.to_string(),
         available_tickets: available_tickets.to_string(),
-        license_bond: license_bond.to_string(),
+        ciphernode_bond: ciphernode_bond.to_string(),
         bond_owner: bond_owner.to_string(),
     })
 }

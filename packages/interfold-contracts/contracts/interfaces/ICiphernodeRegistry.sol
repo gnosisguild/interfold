@@ -71,7 +71,7 @@ interface ICiphernodeRegistry {
 
     /// @notice This event MUST be emitted when a committee is selected for an E3.
     /// @param e3Id ID of the E3 for which the committee was selected.
-    /// @param entropyBlock Future block whose hash supplies sortition entropy.
+    /// @param entropyBlock Future chain block whose hash supplies sortition entropy.
     /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).

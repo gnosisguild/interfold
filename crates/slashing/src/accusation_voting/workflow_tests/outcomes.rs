@@ -72,7 +72,7 @@ fn committee_size_unchanged_after_slash() {
         operator: slashed,
         reason: [0u8; 32],
         ticket_amount: 0,
-        license_amount: 0,
+        ciphernode_bond_amount: 0,
     });
     assert_eq!(v.committee.len(), 8);
     assert_eq!(v.committee_n, 9);
