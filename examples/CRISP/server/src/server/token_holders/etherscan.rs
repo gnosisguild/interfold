@@ -390,7 +390,7 @@ impl EtherscanClient {
 
         // DelegateVotesChanged event signature
         let delegate_votes_changed_topic =
-            "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f";
+            "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724";
 
         loop {
             let url = format!(
@@ -955,7 +955,7 @@ mod tests {
             DelegateVotesChangedLog {
                 address: "0xtoken".to_string(),
                 topics: vec![
-                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f".to_string(),
+                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724".to_string(),
                     "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
                 ],
                 data: "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064".to_string(),
@@ -1056,7 +1056,7 @@ mod tests {
             DelegateVotesChangedLog {
                 address: "0xtoken".to_string(),
                 topics: vec![
-                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e8af2ade71e1ddfc5c9f0e6f".to_string(),
+                    "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724".to_string(),
                     "0x000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7".to_string(), // delegate B
                 ],
                 data: "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064".to_string(),
