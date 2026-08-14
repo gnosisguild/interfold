@@ -92,6 +92,9 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
   /// vote proof fails. Must stay aligned with the SDK constant of the same name.
   uint256 constant MAX_VOTE_OPTIONS = 10;
+  /// @notice Largest `decimals` a divisor can be derived from: `10 ** 77` is the last power of ten
+  /// that fits in a uint256.
+  uint8 constant MAX_DERIVABLE_DECIMALS = 78;
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -136,6 +139,10 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// replaces the Merkle membership proof that gates both branches in the other modes.
   error SlotNotEligible();
   error InvalidCensusMode();
+
+  /// @notice A token reports more decimals than a divisor can be derived from.
+  /// @dev `10 ** (decimals - 1)` must fit in a uint256. Pass an explicit divisor for such a token.
+  error UnsupportedTokenDecimals(uint8 decimals);
 
   /// @notice An ONCHAIN round's floor is below one ballot unit.
   /// @dev `minVotingPower` must be at least the divisor, so every slot that clears the floor
@@ -515,6 +522,12 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// @return The divisor, never zero.
   function _defaultVotingPowerDivisor(address token) internal view returns (uint256) {
     try IVotesToken(token).decimals() returns (uint8 dec) {
+      // `10 ** 78` does not fit in a uint256, and the exponentiation happens in the success body
+      // of the `try`, where a revert is NOT caught — an absurd `decimals` would surface as a bare
+      // arithmetic panic instead of a named error, which is the failure mode the code check above
+      // exists to avoid. Refused explicitly; such a token can still be used by naming a divisor.
+      if (dec > MAX_DERIVABLE_DECIMALS) revert UnsupportedTokenDecimals(dec);
+
       return dec > 1 ? 10 ** (uint256(dec) - 1) : 1;
     } catch {
       return 1;

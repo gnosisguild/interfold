@@ -145,6 +145,19 @@ describe('CRISPProgram census mode', function () {
       expect(await crispProgram.votingPowerDivisorOf(41)).to.equal(10n ** 17n)
     })
 
+    /// `10 ** 78` overflows a uint256, and the exponentiation sits in the success body of a
+    /// `try`, where a revert is not caught — so without an explicit bound an absurd `decimals`
+    /// surfaces as a bare arithmetic panic rather than a named error.
+    it('refuses a token whose decimals a divisor cannot be derived from', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+      await votes.waitForDeployment()
+      const token = await votes.getAddress()
+
+      // 18 decimals derives fine; the bound only bites well past any real token.
+      await validate(45, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n }))
+      expect(await crispProgram.votingPowerDivisorOf(45)).to.equal(10n ** 17n)
+    })
+
     it('rejects ONCHAIN with constant credits of zero', async () => {
       // `credits` becomes the voting-power bound the circuit enforces, so zero accepts only masks.
       const votes = await ethers.deployContract('MockVotesToken')

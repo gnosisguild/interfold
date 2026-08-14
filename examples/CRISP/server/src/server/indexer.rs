@@ -257,12 +257,27 @@ pub async fn register_e3_requested(
                     }
                 };
 
+                // Fatal only where the list decides who may vote. For a Merkle round an empty
+                // census means nobody can ever cast a ballot, so failing loudly is right. For an
+                // on-chain census the list is an index over what the contract already decides:
+                // failing here would skip `initialize_round`, leaving a perfectly votable round
+                // unrecorded and invisible to every client, because discovery happened to come
+                // back empty — a missing API key or a rate limit would be enough.
                 if token_holders.is_empty() {
-                    return Err(eyre::eyre!(
-                        "[e3_id={}] No eligible token holders found for token address {}.",
-                        e3_id,
-                        token_address
-                    ));
+                    if !is_onchain_census {
+                        return Err(eyre::eyre!(
+                            "[e3_id={}] No eligible token holders found for token address {}.",
+                            e3_id,
+                            token_address
+                        ));
+                    }
+
+                    warn!(
+                        "[e3_id={}] CensusMode::Onchain discovery found no holders for {}. The \
+                         round is still recorded and votable — eligibility is read from the token \
+                         at publish time — but clients have no mask targets to draw from.",
+                        e3_id, token_address
+                    );
                 }
 
                 // save the e3 details
@@ -278,12 +293,20 @@ pub async fn register_e3_requested(
                 repo.set_eligible_addresses(token_holders.clone())
                     .await?;
 
-                // Compute Poseidon hashes for token holder address + balance pairs.
-                let token_holder_hashes = compute_token_holder_hashes(&token_holders)
-                    .with_context(|| "Failed to compute token holder hashes")?;
+                // Poseidon hashes exist to build the census tree, and an on-chain census has no
+                // tree: `_eligibility` reads power from the token per input. The addresses are
+                // stored above and that is all a client needs here — a mask is written to someone
+                // else's slot, so it needs a list of who holds power, not a membership proof.
+                let token_holder_hashes = if is_onchain_census {
+                    Vec::new()
+                } else {
+                    let hashes = compute_token_holder_hashes(&token_holders)
+                        .with_context(|| "Failed to compute token holder hashes")?;
 
-                repo.set_token_holder_hashes(token_holder_hashes.clone())
-                    .await?;
+                    repo.set_token_holder_hashes(hashes.clone()).await?;
+
+                    hashes
+                };
 
                 CurrentRoundRepository::new(store.clone())
                     .record_round(&e3_id)
