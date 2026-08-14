@@ -664,6 +664,26 @@ mod custom_params_decoding_tests {
         ))
     }
 
+    /// Every producer of `customParams` must encode exactly what `CRISPProgram._initRound`
+    /// decodes. A short encoding does not degrade — `abi.decode` reverts with empty data, so
+    /// `request_e3` fails with nothing to read, which is how this surfaced in crisp_e2e after the
+    /// divisor field was added. Pins the arity so a future field breaks a test instead of a round.
+    #[test]
+    fn the_encoded_tuple_has_the_arity_the_contract_decodes() {
+        // Seven: token, threshold, numOptions, creditMode, credits, censusMode, divisor.
+        const CONTRACT_FIELD_COUNT: usize = 7;
+
+        let encoded = encode(0);
+
+        // Each static field occupies one 32-byte word.
+        assert_eq!(
+            encoded.len(),
+            CONTRACT_FIELD_COUNT * 32,
+            "encoded params must be {} words; a mismatch reverts request_e3 with empty data",
+            CONTRACT_FIELD_COUNT
+        );
+    }
+
     #[test]
     fn decodes_the_declared_census_mode() {
         let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(1)).unwrap();
