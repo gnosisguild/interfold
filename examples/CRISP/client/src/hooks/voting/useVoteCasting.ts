@@ -6,20 +6,24 @@
 
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useSignMessage } from 'wagmi'
-import { encodeSolidityProof, generateMaskVoteProof, generateVoteProof } from '@crisp-e3/sdk'
+import { useSignTypedData, usePublicClient, useChainId } from 'wagmi'
+import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
 import { Poll } from '@/model/poll.model'
-import { BroadcastVoteRequest, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
-import { hashMessage } from 'viem'
+import { BroadcastVoteRequest, CensusMode, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
+import { ballotTypedData, getBallotDigest, getCrispProgramAddress } from '@/utils/ballotDigest'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
+
+/// Shared so the guard in `castVoteWithProof` and the one in `handleProofGeneration` cannot drift
+/// into telling a voter two different things about the same round.
+const ONCHAIN_UNSUPPORTED = 'This round uses an on-chain census, which this client cannot vote in yet.'
 
 const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uint8Array | undefined> => {
   const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
@@ -96,7 +100,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const roundState = customRoundState ?? contextRoundState
   const votingRound = customVotingRound ?? contextVotingRound
 
-  const { signMessageAsync } = useSignMessage()
+  const { signTypedDataAsync } = useSignTypedData()
+  const publicClient = usePublicClient()
+  const chainId = useChainId()
   const { getEligibleVoters, getMerkleLeaves } = useInterfoldServer()
   const { showToast } = useNotificationAlertContext()
   const navigate = useNavigate()
@@ -106,51 +112,79 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
 
+  /**
+   * Encrypt the ballot, have the voter sign the digest that binds it, then prove it.
+   *
+   * The order matters and cannot be rearranged: the digest commits to the ciphertext, so the
+   * ballot has to exist before there is anything to sign. That is why signing happens here rather
+   * than up front in `handleVote`.
+   *
+   * A mask follows the same path and carries the same digest — `publishInput` computes one for
+   * every input regardless of branch, so a mask that skipped it would be rejected, and one that
+   * looked different on chain would defeat the point of masking.
+   */
   const handleProofGeneration = useCallback(
-    async (
-      vote: Vote,
-      address: string,
-      balance: bigint,
-      signature: string,
-      messageHash: `0x${string}`,
-      isAMask: boolean,
-      merkleLeaves: bigint[],
-    ): Promise<string | undefined> => {
+    async (vote: Vote, address: string, balance: bigint, isAMask: boolean, merkleLeaves: bigint[]): Promise<string | undefined> => {
       if (!votingRound) throw new Error('No voting round available for proof generation')
+      if (!roundState) throw new Error('No round state available for proof generation')
+      if (!publicClient) throw new Error('No RPC client available for proof generation')
+
+      // Defence in depth. `castVoteWithProof` refuses these rounds before fetching a census, but
+      // this path builds a Merkle witness and must not do so for a round whose ballots are
+      // verified by `crisp_onchain` — that proof could never be published.
+      if (roundState.census_mode === CensusMode.Onchain) {
+        throw new Error(ONCHAIN_UNSUPPORTED)
+      }
 
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
         const previousCiphertext = await getPreviousCiphertext(votingRound.round_id, address)
+        const e3Id = BigInt(votingRound.round_id)
+        const slot = address as `0x${string}`
 
-        const proof = isAMask
-          ? await generateMaskVoteProof({
-              publicKey,
-              balance,
-              slotAddress: address,
-              merkleLeaves,
-              numOptions: NUM_OPTIONS,
-              previousCiphertext,
-            })
-          : await generateVoteProof({
-              vote,
-              publicKey,
-              signature: signature as `0x${string}`,
-              merkleLeaves,
-              balance,
-              messageHash,
-              slotAddress: address,
-              previousCiphertext,
-            })
+        const prepared = await prepareBallot({
+          censusMode: 'merkle',
+          vote,
+          publicKey,
+          balance,
+          merkleLeaves,
+          slotAddress: address,
+          isMaskVote: isAMask,
+          numOptions: NUM_OPTIONS,
+          previousCiphertext,
+        })
 
-        return encodeSolidityProof(proof)
+        const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+        const digest = await getBallotDigest(publicClient, crispProgram, e3Id, slot, prepared.ctCommitment)
+
+        // A mask is not signed. The circuit skips the signature check on that branch, so the
+        // placeholder the SDK supplies is enough.
+        if (isAMask) {
+          return encodeSolidityProof(await finishMaskProof(prepared, digest))
+        }
+
+        setVotingStep('signing')
+        setLastActiveStep('signing')
+        setStepMessage('Please sign the ballot in your wallet...')
+
+        const { domain, types, primaryType } = ballotTypedData(chainId, crispProgram)
+        const signature = await signTypedDataAsync({
+          domain,
+          types,
+          primaryType,
+          message: { e3Id, slot, ciphertextCommitment: prepared.ctCommitment },
+        })
+
+        return encodeSolidityProof(await finishBallotProof(prepared, digest, signature))
       } catch (error) {
+        // Logged and rethrown, not shown. `castVoteWithProof` already toasts what it catches, and
+        // toasting here as well gave a rejected wallet prompt two notifications.
         const message = error instanceof Error ? error.message : String(error)
-        showToast({ type: 'danger', message })
         handleGenericError('generateProof', error instanceof Error ? error : new Error(message))
         throw error
       }
     },
-    [votingRound, showToast],
+    [votingRound, roundState, publicClient, chainId, signTypedDataAsync],
   )
 
   const resetVotingState = useCallback(() => {
@@ -206,42 +240,23 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         throw new Error('No round state available for voting')
       }
 
-      // Step 1: Signing
-      setVotingStep('signing')
-      setLastActiveStep('signing')
-      setStepMessage('Please sign the message in your wallet...')
-
-      const message = `Vote for round ${roundState.id}`
-      const messageHash = hashMessage(message)
+      // No signing here. The ballot digest commits to the ciphertext, so there is nothing to sign
+      // until the vote has been encrypted — the wallet prompt now happens inside
+      // `handleProofGeneration`.
 
       // vote is either 0 or 1, so we need to encode the vote accordingly.
       const balance = 1n
       const vote = pollSelected.value === 0 ? [Number(balance), 0] : [0, Number(balance)]
 
-      let signature: string
-      try {
-        signature = await signMessageAsync({ message })
-        return {
-          signature,
-          messageHash,
-          vote,
-          slotAddress,
-          balance,
-        }
-      } catch (error) {
-        console.log('User rejected signature or signing failed', error)
-        resetVotingState()
-        return {
-          signature: '',
-          messageHash: '' as `0x${string}`,
-          vote: [0, 0],
-          slotAddress: '',
-          balance: 0n,
-          error: 'User rejected signature or signing failed',
-        }
+      return {
+        signature: '',
+        messageHash: '' as `0x${string}`,
+        vote,
+        slotAddress,
+        balance,
       }
     },
-    [roundState, signMessageAsync, resetVotingState],
+    [roundState],
   )
 
   const castVoteWithProof = useCallback(
@@ -276,6 +291,13 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           throw new Error(voteData.error)
         }
 
+        // Checked before the census is fetched. An ONCHAIN round has no Merkle census, so the
+        // empty-leaves error below would fire first and blame the coordinator for a round this
+        // client simply cannot vote in.
+        if (roundState.census_mode === CensusMode.Onchain) {
+          throw new Error(ONCHAIN_UNSUPPORTED)
+        }
+
         // Step 2: Encrypting vote
         setVotingStep('encrypting')
         setLastActiveStep('encrypting')
@@ -291,8 +313,6 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           voteData.vote,
           voteData.slotAddress,
           voteData.balance,
-          voteData.signature,
-          voteData.messageHash,
           isAMask,
           merkleLeaves.map((s: string) => BigInt(`0x${s}`)),
         )

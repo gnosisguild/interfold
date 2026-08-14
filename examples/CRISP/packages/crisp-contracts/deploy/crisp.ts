@@ -63,7 +63,9 @@ export const deployCRISPContracts = async () => {
   await relationsLib.waitForDeployment()
   const relationsLibAddress = await relationsLib.getAddress()
 
-  const honkVerifierFactory = await ethers.getContractFactory('HonkVerifier', {
+  // Both generated verifiers declare a contract called `HonkVerifier`, so every factory lookup
+  // here has to be fully qualified by file. A bare 'HonkVerifier' is ambiguous.
+  const honkVerifierFactory = await ethers.getContractFactory('contracts/CRISPVerifier.sol:HonkVerifier', {
     libraries: {
       'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': zkTranscriptLibAddress,
       'project/contracts/CRISPVerifier.sol:RelationsLib': relationsLibAddress,
@@ -82,6 +84,32 @@ export const deployCRISPContracts = async () => {
     chain,
   )
 
+  // The `CensusMode.ONCHAIN` verifier. Generated from the `crisp_onchain` circuit, which has no
+  // Merkle inputs and takes voting power as a public input, so it needs its own libraries.
+  const onchainZkTranscriptLib = await ethers.deployContract('contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib')
+  await onchainZkTranscriptLib.waitForDeployment()
+  const onchainRelationsLib = await ethers.deployContract('contracts/CRISPOnchainVerifier.sol:RelationsLib')
+  await onchainRelationsLib.waitForDeployment()
+
+  const onchainHonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPOnchainVerifier.sol:HonkVerifier', {
+    libraries: {
+      'project/contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib': await onchainZkTranscriptLib.getAddress(),
+      'project/contracts/CRISPOnchainVerifier.sol:RelationsLib': await onchainRelationsLib.getAddress(),
+    },
+  })
+  const onchainHonkVerifier = await onchainHonkVerifierFactory.deploy()
+  await onchainHonkVerifier.waitForDeployment()
+  const onchainHonkVerifierAddress = await onchainHonkVerifier.getAddress()
+
+  storeDeploymentArgs(
+    {
+      address: onchainHonkVerifierAddress,
+      blockNumber: await ethers.provider.getBlockNumber(),
+    },
+    'OnchainHonkVerifier',
+    chain,
+  )
+
   const crispFactory = await ethers.getContractFactory(
     CRISPProgramFactory.abi,
     CRISPProgramFactory.linkBytecode({
@@ -90,7 +118,7 @@ export const deployCRISPContracts = async () => {
     owner,
   )
 
-  const crisp = await crispFactory.deploy(interfoldAddress, verifier, honkVerifierAddress, IMAGE_ID)
+  const crisp = await crispFactory.deploy(interfoldAddress, verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
   await crisp.waitForDeployment()
 
   const crispAddress = await crisp.getAddress()
@@ -102,6 +130,7 @@ export const deployCRISPContracts = async () => {
         interfold: interfoldAddress,
         verifierAddress: verifier,
         honkVerifierAddress,
+        onchainHonkVerifierAddress,
         imageId: IMAGE_ID,
       },
     },
@@ -136,6 +165,7 @@ export const deployCRISPContracts = async () => {
       Risc0Verifier: ${verifier}
       Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
+      OnchainHonkVerifier: ${onchainHonkVerifierAddress}
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}
       `)

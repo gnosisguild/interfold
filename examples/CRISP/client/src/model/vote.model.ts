@@ -6,6 +6,16 @@
 
 import { CreditMode } from '@crisp-e3/sdk'
 
+/**
+ * Where a round's electorate comes from. Mirrors `CensusMode` in the CRISP server and
+ * `CRISPProgram`, including the discriminants — they cross the wire as numbers.
+ */
+export enum CensusMode {
+  Token = 0,
+  ByRequester = 1,
+  Onchain = 2,
+}
+
 export interface VotingRound {
   round_id: string
   pk_bytes: number[]
@@ -58,6 +68,7 @@ export interface VoteStateLite {
   emojis: [string, string]
 
   credit_mode: CreditMode
+  census_mode: CensusMode
   credits?: number
 }
 

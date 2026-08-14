@@ -60,10 +60,34 @@ export async function deployHonkVerifier() {
   const zkTranscriptLib = await deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
   const relationsLib = await deployContract('contracts/CRISPVerifier.sol:RelationsLib')
 
-  const HonkVerifierFactory = await ethers.getContractFactory('HonkVerifier', {
+  // Fully qualified: `CRISPOnchainVerifier.sol` declares a `HonkVerifier` too, so the bare name
+  // is ambiguous.
+  const HonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPVerifier.sol:HonkVerifier', {
     libraries: {
       'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
       'project/contracts/CRISPVerifier.sol:RelationsLib': await relationsLib.getAddress(),
+    },
+  })
+
+  const honkVerifier = await HonkVerifierFactory.deploy()
+
+  await honkVerifier.waitForDeployment()
+
+  return honkVerifier as unknown as HonkVerifier
+}
+
+/**
+ * Deploy the `CensusMode.ONCHAIN` HonkVerifier, generated from the `crisp_onchain` circuit.
+ * @returns The deployed verifier.
+ */
+export async function deployOnchainHonkVerifier() {
+  const zkTranscriptLib = await deployContract('contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib')
+  const relationsLib = await deployContract('contracts/CRISPOnchainVerifier.sol:RelationsLib')
+
+  const HonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPOnchainVerifier.sol:HonkVerifier', {
+    libraries: {
+      'project/contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
+      'project/contracts/CRISPOnchainVerifier.sol:RelationsLib': await relationsLib.getAddress(),
     },
   })
 
@@ -78,12 +102,17 @@ export async function deployCRISPProgram(
   contracts: {
     mockInterfold?: MockInterfold
     honkVerifier?: HonkVerifier
+    onchainHonkVerifier?: HonkVerifier
     poseidonT3?: PoseidonT3
     risc0Verifier?: MockRISC0Verifier
   } = {},
 ) {
   const poseidonT3 = contracts.poseidonT3 || (await deployPoseidonT3())
   const honkVerifier = contracts.honkVerifier || (await deployHonkVerifier())
+  // The `CensusMode.ONCHAIN` verifier is generated from a different circuit, but the constructor
+  // only needs a non-zero address unless a test actually verifies an ONCHAIN ballot. Tests that do
+  // must pass the real one.
+  const onchainHonkVerifier = contracts.onchainHonkVerifier || honkVerifier
   const mockInterfold = contracts.mockInterfold || (await deployMockInterfold())
   const risc0Verifier = contracts.risc0Verifier ? await contracts.risc0Verifier.getAddress() : nonZeroAddress
 
@@ -93,9 +122,15 @@ export async function deployCRISPProgram(
     },
   })
 
-  const program = await programFactory.deploy(await mockInterfold.getAddress(), risc0Verifier, await honkVerifier.getAddress(), zeroHash)
+  const program = await programFactory.deploy(
+    await mockInterfold.getAddress(),
+    risc0Verifier,
+    await honkVerifier.getAddress(),
+    await onchainHonkVerifier.getAddress(),
+    zeroHash,
+  )
 
   await program.waitForDeployment()
 
-  return program as CRISPProgram
+  return program as unknown as CRISPProgram
 }

@@ -8,12 +8,12 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use interfold_lib::math::commitments::compute_vk_hash;
 
 /// Binds the four inner `vk_hash` witnesses. Regenerate with `pnpm compute:vk-hash` in
-/// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp (or the lib preset).
-/// Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
-pub global CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x104652e4140264c4bf518b0469d4062b9e2d4a9b4567979be7568a010a0db217;
-pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x02068bab950c2f2f8ceb72404c406facc12e658233af8c7d732775bf36962783;
+/// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
+/// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
+pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
+    0x1833f8fa609f79d0fafb594b3648322f084733077f6bc1b3a8e5f21aa35dd156;
+pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
+    0x0a58bb5d3d8e3f18d08ca977488c07ef6fa22cf42304e30c7333de1484842012;
 
 fn main(
     // User Data Encryption Section.
@@ -29,7 +29,7 @@ fn main(
     digest_hi: pub Field,
     digest_lo: pub Field,
     slot_address: pub Field,
-    merkle_root: pub Field,
+    voting_power: pub Field,
     is_first_vote: pub bool,
     num_options: pub u32,
     final_ct_commitment: pub Field,
@@ -50,7 +50,7 @@ fn main(
             digest_hi,
             digest_lo,
             slot_address,
-            merkle_root,
+            voting_power,
             if is_first_vote { 1 } else { 0 },
             num_options as Field,
             final_ct_commitment,
@@ -76,8 +76,8 @@ fn main(
 
     let chain_key_hash = compute_vk_hash(vk_hashes);
     assert(
-        (chain_key_hash == CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE)
-            | (chain_key_hash == CRISP_FOLD_EXPECTED_KEY_HASH_SECURE),
+        (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE)
+            | (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE),
     );
 
     user_data_encryption_public_inputs[2]

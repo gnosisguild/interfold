@@ -12,6 +12,7 @@ const CONSTANT = 0
 const CUSTOM = 1
 const TOKEN = 0
 const BY_REQUESTER = 1
+const ONCHAIN = 2
 /// Mirrors `MAX_VOTE_OPTIONS` in CRISPProgram.sol, which is not public.
 const MAX_VOTE_OPTIONS = 10
 
@@ -27,9 +28,9 @@ describe('CRISPProgram census mode', function () {
   let crispProgram: CRISPProgram
   let owner: string
 
-  const encode = (creditMode: number, censusMode?: number, numOptions = 2) => {
+  const encode = (creditMode: number, censusMode?: number, numOptions = 2, opts: { token?: string; credits?: number } = {}) => {
     const types = ['address', 'uint256', 'uint256', 'uint256', 'uint256']
-    const values: unknown[] = [ethers.ZeroAddress, 0, numOptions, creditMode, 1]
+    const values: unknown[] = [opts.token ?? ethers.ZeroAddress, 0, numOptions, creditMode, opts.credits ?? 1]
     if (censusMode !== undefined) {
       types.push('uint256')
       values.push(censusMode)
@@ -77,7 +78,65 @@ describe('CRISPProgram census mode', function () {
   /// An unrecognised mode is a coordinator that would not know what to do. Better to refuse the
   /// round than to have it silently treated as a token vote.
   it('rejects an unknown census mode', async () => {
-    await expect(validate(6, encode(CONSTANT, 2))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
+    await expect(validate(6, encode(CONSTANT, 3))).to.be.revertedWithCustomError(crispProgram, 'InvalidCensusMode')
+  })
+
+  /// ONCHAIN reads every voter's power from the token, one input at a time. A round that names no
+  /// token, or names something that cannot answer `getPastVotes`, accepts no ballot at all — so it
+  /// is refused in the request transaction rather than after the fee is paid.
+  describe('onchain census', () => {
+    it('rejects ONCHAIN without a token', async () => {
+      await expect(validate(20, encode(CUSTOM, ONCHAIN))).to.be.revertedWithCustomError(crispProgram, 'CensusModeRequiresToken')
+    })
+
+    it('rejects ONCHAIN with an address that holds no code', async () => {
+      // An EOA. A call to a codeless address succeeds and returns nothing, so `clock()` fails
+      // while decoding rather than inside the call — which `try/catch` does not cover. Without an
+      // explicit code check the round is still refused, but by a bare panic rather than a named
+      // error, which tells a requester nothing about what to fix.
+      const eoa = (await ethers.getSigners())[1].address
+
+      await expect(validate(25, encode(CUSTOM, ONCHAIN, 2, { token: eoa }))).to.be.revertedWithCustomError(
+        crispProgram,
+        'CensusModeRequiresToken',
+      )
+    })
+
+    it('rejects ONCHAIN with a token that is not an ERC20Votes', async () => {
+      // A plain ERC20. `_previousTimepoint` swallows the missing `clock()` and falls back to block
+      // numbers, so without the probe this round would validate and then revert on every input.
+      const plain = await ethers.deployContract('MockVotingToken')
+
+      await expect(validate(21, encode(CUSTOM, ONCHAIN, 2, { token: await plain.getAddress() }))).to.be.revertedWithCustomError(
+        crispProgram,
+        'CensusModeRequiresToken',
+      )
+    })
+
+    it('rejects ONCHAIN with constant credits of zero', async () => {
+      // `credits` becomes the voting-power bound the circuit enforces, so zero accepts only masks.
+      const votes = await ethers.deployContract('MockVotesToken')
+
+      await expect(
+        validate(22, encode(CONSTANT, ONCHAIN, 2, { token: await votes.getAddress(), credits: 0 })),
+      ).to.be.revertedWithCustomError(crispProgram, 'InvalidCredits')
+    })
+
+    it('accepts ONCHAIN with a votes token', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+
+      await validate(23, encode(CUSTOM, ONCHAIN, 2, { token: await votes.getAddress() }))
+
+      expect(await crispProgram.censusModeOf(23)).to.equal(ONCHAIN)
+    })
+
+    it('allows constant credits when the allowance is non-zero', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+
+      await validate(24, encode(CONSTANT, ONCHAIN, 2, { token: await votes.getAddress(), credits: 5 }))
+
+      expect(await crispProgram.censusModeOf(24)).to.equal(ONCHAIN)
+    })
   })
 
   /// The circuit asserts `num_options <= MAX_OPTIONS`, so a round above the cap accepts no ballot:

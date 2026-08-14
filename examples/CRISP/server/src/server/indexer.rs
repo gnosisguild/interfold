@@ -124,6 +124,29 @@ pub async fn register_e3_requested(
                 // name is historical.
                 let snapshot_timepoint = event.e3.requestBlock.to::<u64>().saturating_sub(1);
 
+                // An on-chain census has nothing for the coordinator to build. `CRISPProgram`
+                // reads each voter's power with `getPastVotes` when the input is published, so
+                // there is no holder list to enumerate and no root to post — `setMerkleRoot` is
+                // not just unnecessary here, it is unused: `_eligibility` never reads it in this
+                // mode. The round is still recorded, because the API serves its metadata.
+                if custom_params.census_mode == CensusMode::Onchain {
+                    info!(
+                        "[e3_id={}] CensusMode::Onchain — no census to build, skipping token \
+                         holder discovery and setMerkleRoot",
+                        e3_id
+                    );
+
+                    repo.initialize_round(
+                        custom_params,
+                        e3.requester.to_string(),
+                        input_window[1],
+                        snapshot_timepoint,
+                    )
+                    .await?;
+
+                    return Ok(());
+                }
+
                 // Get token holders from Etherscan API or mocked data.
                 // Asked only when the round declared it. Probing every requester and falling back
                 // on failure would turn a broken census provider into a token vote over the wrong
@@ -597,7 +620,9 @@ mod custom_params_decoding_tests {
 
     #[test]
     fn an_unrecognised_mode_is_an_error() {
-        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(2)).unwrap();
+        // 3 rather than 2: 2 is `Onchain`. This must stay one past the highest variant, so it
+        // keeps testing an unknown mode rather than silently becoming a valid one.
+        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(3)).unwrap();
         assert!(CensusMode::try_from(decoded.5.to::<u64>()).is_err());
     }
 }
