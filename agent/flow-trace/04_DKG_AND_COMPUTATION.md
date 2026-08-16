@@ -6,12 +6,28 @@ After committee finalization, the selected ciphernodes perform Distributed Key G
 using threshold BFV (TrBFV) cryptography. This produces a collective public key without any single
 party knowing the full secret key. Later, the committee produces decryption shares; all committee
 members buffer them, and the active aggregator combines them. The runtime first normalizes the
-finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
-non-expelled `party_id` in that normalized order.
+finalized committee into ascending address order, and the active aggregator is then the lowest
+non-expelled/non-unresponsive `party_id` in that normalized order.
+
+The selector drives both aggregation phases from persisted leases derived from authoritative
+Interfold deadlines. Each eligible party receives an equal slice of the remaining DKG or decryption
+window. When one slice expires without confirmed publication, every node skips the same party and
+the next standby's existing verified buffer activates through `AggregatorChanged`.
+`CommitteePublished` settles the DKG lease; `CiphertextOutputPublished` arms a fresh decryption
+lease and resets local liveness presumptions; `PlaintextOutputPublished` settles it. After the final
+slice and exact chain deadline, the durable EVM outbox submits `markE3Failed`.
 
 Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
+
+CPU-bound ZK and TrBFV requests enter a fair, semaphore-bounded Rayon pool. Admission has a
+configurable timeout, and every admitted closure has a configurable execution budget
+(`multithread_admission_timeout_secs` and `multithread_execution_timeout_secs`). Rayon cannot safely
+interrupt an already-running closure, so a production deadline breach or cancellation after dispatch
+is fail-stop: the process aborts and the OS reclaims every worker instead of leaving an orphan to
+monopolize protocol capacity. Panics are caught and returned as correlated `ComputeRequestError`
+events.
 
 ---
 
@@ -94,7 +110,7 @@ ProofRequestActor receives EncryptionKeyPending
 │          e3_id, party_id, bfv_public_key,
 │          signed_proof: SignedProofPayload { proof, signature }
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to all nodes via EVM-authenticated libp2p protocol gossip
 │
 └─ RECEIVING NODES verify C0 proof:
      ProofVerificationActor receives EncryptionKeyReceived (from P2P)
@@ -299,7 +315,7 @@ ProofRequestActor receives ThresholdSharePending
 │          signed_sk_encryption_proofs,    // C3a[] indexed by (recipient, row)
 │          signed_esm_encryption_proofs    // C3b[] indexed by (esi, recipient, row)
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to all nodes via EVM-authenticated libp2p protocol gossip
 │
 └─ IMPORTANT: ThresholdShareCreated is NOT published until ALL proofs complete
    → Ensures no incomplete data is gossiped
@@ -534,7 +550,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │           signed_sk_decryption_proof,       // C4a
 │     │           signed_esm_decryption_proofs[]    // C4b per ESI
 │     │         }
-│     │         → Broadcast to all committee nodes via P2P gossip
+│     │         → Broadcast to all committee nodes via EVM-authenticated P2P protocol gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
 │
 ├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
@@ -592,7 +608,7 @@ phase.
   │   └─ Compares committee, keyshare, and expulsion identities as parsed EVM addresses;
   │      EIP-55 casing differences cannot bypass an expulsion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On expulsion-driven handoff, the next active aggregator flushes its existing buffer
+  │   └─ On expulsion- or lease-driven handoff, the next active aggregator flushes its existing buffer
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │
@@ -662,22 +678,24 @@ phase.
 │       }
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists separate proof and public-key-candidate intents before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  ├─ Calls contract.publishCommittee(
+  ├─ Locally signs contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
+  │  ├─ Persists signed raw bytes, nonce, and transaction hash before RPC dispatch
   │  └─ If that transaction is mined with a failed receipt, the writer reads the
   │     commitment again. An equal commitment from another aggregator completes
   │     the step; a different commitment stays an error
-  └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
-     commitment is available, including after restart
+  └─ Locally signs contract.publishCommitteePublicKey(e3_id, publicKey) after the
+     commitment is available, including after restart. The second transaction has its own durable
+     intent, signed bytes, nonce, and hash
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
@@ -1017,14 +1035,16 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │       }
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists the full publication intent before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
+  └─ Locally signs contract.publishPlaintextOutput(e3Id, output, proof)
+        ├─ Persists signed raw bytes, nonce, and transaction hash before RPC dispatch
+        └─ Receipt/preflight reconciliation closes the durable intent; missing work rebroadcasts the same bytes
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │
@@ -1238,6 +1258,14 @@ ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
 ```
 
 ## Durable flow tracing
+
+Every protocol-event gossip described above is wrapped in a domain-separated EVM signature that also
+commits to the signed gossipsub author, wire version, and issuance time. Before startup buffering or
+durable publication, the receiver recovers the address, checks the current chain/E3 committee and
+expulsion view, validates any claimed node/party/accuser/voter role, and charges per-peer plus
+per-peer/E3 event and byte quotas. Rejected authors do not consume the startup buffer; repeated
+invalid input quarantines the peer. The inner proof signatures and ZK checks documented in this
+trace remain the artifact-validity boundary after network admission.
 
 The dashboard renders event ID, causation ID, origin ID, HLC timestamp, block watermark, aggregate,
 and source exactly as the local EventStore recorded them. Observability does not change the

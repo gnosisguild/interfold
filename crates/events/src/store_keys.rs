@@ -73,6 +73,10 @@ impl StoreKeys {
         format!("//evm_readers/bonding_registry/{chain_id}")
     }
 
+    pub fn evm_effect_outbox(writer: &str, chain_id: u64) -> String {
+        format!("//evm_effect_outbox/{writer}/{chain_id}")
+    }
+
     pub fn node_state() -> String {
         String::from("//node_state")
     }
@@ -90,6 +94,10 @@ impl StoreKeys {
 
     pub fn ciphernode_selector() -> String {
         String::from("//ciphernode_selector")
+    }
+
+    pub fn aggregator_failover() -> String {
+        String::from("//aggregator_failover")
     }
 
     pub fn aggregate_seq(aggregate_id: AggregateId) -> String {

@@ -1,9 +1,44 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Actix routing and lifecycle handlers for the registry writer.
+//! Actix routing, durable effect admission, and replay for the registry writer.
 
 use super::effects::*;
 use super::*;
+use crate::{reconcile_dispatched, DispatchReconciliation, OutboxAdmission};
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct RegistryEffectFinished(String);
+
+impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
+    fn admit_effect(&mut self, effect: RegistryEffect, ctx: &mut Context<Self>) {
+        let key = effect.key();
+        let outbox = self.outbox.clone();
+        let bus = self.bus.clone();
+        ctx.wait(
+            async move { outbox.admit(key, effect).await }
+                .into_actor(self)
+                .map(move |result, _, ctx| match result {
+                    Ok(OutboxAdmission::AlreadyTerminal) => {}
+                    Ok(OutboxAdmission::Inserted | OutboxAdmission::AlreadyPending) => {
+                        ctx.notify(DrainRegistryOutbox);
+                    }
+                    Err(error) => bus.err(EType::Evm, error),
+                }),
+        );
+    }
+
+    fn can_execute(&self, effect: &RegistryEffect) -> bool {
+        self.effects_enabled
+            && match effect {
+                RegistryEffect::PublishCommitteeProof { event, .. }
+                | RegistryEffect::PublishCommitteePublicKey { event, .. } => {
+                    self.is_active_aggregator_for(&event.e3_id)
+                }
+                RegistryEffect::SubmitTicket(_) | RegistryEffect::FinalizeCommittee(_) => true,
+            }
+    }
+}
 
 fn update_request_registry(
     registries: &mut HashMap<E3id, Address>,
@@ -22,7 +57,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> Actor for CiphernodeRegistr
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT)
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        ctx.run_interval(Duration::from_secs(30), |actor, ctx| {
+            if actor.effects_enabled {
+                ctx.notify(DrainRegistryOutbox);
+            }
+        });
     }
 }
 
@@ -41,21 +81,19 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 }
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
-                // Only publish if the src and destination chains match
                 if self.provider.chain_id() == data.e3_id.chain_id() {
                     ctx.notify(data);
                 }
             }
-            InterfoldEventData::CommitteeFinalizeRequested(data) => {
-                if self.provider.chain_id() == data.e3_id.chain_id() {
-                    ctx.notify(data);
-                }
+            InterfoldEventData::CommitteeFinalizeRequested(data)
+                if self.provider.chain_id() == data.e3_id.chain_id() =>
+            {
+                self.admit_effect(RegistryEffect::FinalizeCommittee(data), ctx)
             }
-            InterfoldEventData::TicketGenerated(data) => {
-                // Submit ticket if chain matches
-                if self.provider.chain_id() == data.e3_id.chain_id() {
-                    ctx.notify(data);
-                }
+            InterfoldEventData::TicketGenerated(data)
+                if self.provider.chain_id() == data.e3_id.chain_id() =>
+            {
+                self.admit_effect(RegistryEffect::SubmitTicket(data), ctx)
             }
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
@@ -69,8 +107,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
 {
     type Result = ();
 
-    fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
+        ctx.notify(DrainRegistryOutbox);
     }
 }
 
@@ -79,8 +118,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
 {
     type Result = ();
 
-    fn handle(&mut self, msg: AggregatorChanged, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: AggregatorChanged, ctx: &mut Self::Context) -> Self::Result {
+        let became_active = msg.is_aggregator;
         self.active_aggregators.insert(msg.e3_id, msg.is_aggregator);
+        if became_active && self.effects_enabled {
+            ctx.notify(DrainRegistryOutbox);
+        }
     }
 }
 
@@ -113,104 +156,217 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
         self.active_aggregators.remove(&msg.e3_id);
         self.request_registries.remove(&msg.e3_id);
-        self.submitting.remove(&msg.e3_id);
     }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
     for CiphernodeRegistrySolWriter<P>
 {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
-    fn handle(&mut self, msg: TicketGenerated, _: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled {
-            return Box::pin(async {});
-        }
-
-        match msg.ticket_id {
-            TicketId::Score(ticket_id) => {
-                info!(
-                    "Score sortition ticket generated for E3 {:?}, submitting to contract",
-                    msg.e3_id
-                );
-
-                let e3_id = msg.e3_id.clone();
-                let log_e3_id = msg.e3_id.clone();
-                let contract_address = self.contract_address;
-                let provider = self.provider.clone();
-                let bus = self.bus.clone();
-
-                Box::pin(async move {
-                    info!("Submitting ticket {} for E3 {:?}", ticket_id, e3_id);
-
-                    let result =
-                        submit_ticket_to_registry(provider, contract_address, e3_id, ticket_id)
-                            .await;
-                    match result {
-                        Ok(TxOutcome::Mined(receipt)) => {
-                            info!(tx=%receipt.transaction_hash, "Ticket submitted to registry");
-                        }
-                        Ok(TxOutcome::AlreadySettled) => {
-                            info!(e3_id = %log_e3_id, "Ticket already recorded on chain; skipping submission");
-                        }
-                        Err(err) => {
-                            error!("Failed to submit ticket: {}", format_evm_error(&err));
-                            bus.err(EType::Evm, err);
-                        }
-                    }
-                })
-            }
-        }
+    fn handle(&mut self, msg: TicketGenerated, ctx: &mut Self::Context) -> Self::Result {
+        self.admit_effect(RegistryEffect::SubmitTicket(msg), ctx);
     }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteeFinalizeRequested>
     for CiphernodeRegistrySolWriter<P>
 {
+    type Result = ();
+
+    fn handle(&mut self, msg: CommitteeFinalizeRequested, ctx: &mut Self::Context) -> Self::Result {
+        self.admit_effect(RegistryEffect::FinalizeCommittee(msg), ctx);
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ();
+
+    fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
+        let Some(registry) = self.request_registries.get(&msg.e3_id).copied() else {
+            error!(
+                e3_id = %msg.e3_id,
+                "Cannot publish a committee without its request-time registry"
+            );
+            return;
+        };
+
+        self.admit_effect(
+            RegistryEffect::PublishCommitteeProof {
+                registry,
+                event: msg.clone(),
+            },
+            ctx,
+        );
+        self.admit_effect(
+            RegistryEffect::PublishCommitteePublicKey {
+                registry,
+                event: msg,
+            },
+            ctx,
+        );
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<DrainRegistryOutbox>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ();
+
+    fn handle(&mut self, _: DrainRegistryOutbox, ctx: &mut Self::Context) -> Self::Result {
+        if !self.effects_enabled {
+            return;
+        }
+        let outbox = self.outbox.clone();
+        ctx.wait(async move { outbox.pending().await }.into_actor(self).map(
+            |pending, actor, ctx| {
+                for (key, effect, status) in pending {
+                    if actor.can_execute(&effect) && actor.submitting.insert(key.clone()) {
+                        ctx.notify(ExecuteRegistryEffect {
+                            key,
+                            effect,
+                            status,
+                        });
+                    }
+                }
+            },
+        ));
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<ExecuteRegistryEffect>
+    for CiphernodeRegistrySolWriter<P>
+{
     type Result = ResponseFuture<()>;
 
-    fn handle(&mut self, msg: CommitteeFinalizeRequested, _: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled {
-            return Box::pin(async {});
-        }
-
-        let e3_id = msg.e3_id.clone();
-        let contract_address = self.contract_address;
+    fn handle(&mut self, msg: ExecuteRegistryEffect, ctx: &mut Self::Context) -> Self::Result {
         let provider = self.provider.clone();
+        let contract_address = self.contract_address;
+        let outbox = self.outbox.clone();
         let bus = self.bus.clone();
+        let address = ctx.address();
 
         Box::pin(async move {
-            match should_finalize_committee(provider.clone(), contract_address, e3_id.clone()).await
-            {
-                Ok(false) => {
-                    info!(e3_id = %e3_id, "Skipping finalizeCommittee; on-chain state is not finalizable");
-                    return;
+            let ExecuteRegistryEffect {
+                key,
+                effect,
+                status,
+            } = msg;
+            let result: Result<()> = async {
+                match reconcile_dispatched(&provider, &outbox, &key, &status).await? {
+                    DispatchReconciliation::Pending | DispatchReconciliation::Terminal => {
+                        return Ok(())
+                    }
+                    DispatchReconciliation::NotDispatched | DispatchReconciliation::Retry => {}
                 }
-                Err(err) => {
-                    error!(
-                        "Failed to preflight finalizeCommittee: {}",
-                        format_evm_error(&err)
-                    );
-                    return;
+
+                match effect {
+                    RegistryEffect::SubmitTicket(event) => {
+                        let TicketId::Score(ticket_id) = event.ticket_id;
+                        if !should_submit_ticket(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id.clone(),
+                            ticket_id,
+                        )
+                        .await?
+                        {
+                            outbox.mark_terminal(&key).await?;
+                            return Ok(());
+                        }
+                        let receipt = submit_ticket_to_registry(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id,
+                            ticket_id,
+                            &outbox,
+                            &key,
+                        )
+                        .await?;
+                        info!(tx=%receipt.transaction_hash, "Ticket submitted to registry");
+                    }
+                    RegistryEffect::FinalizeCommittee(event) => {
+                        match should_finalize_committee(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id.clone(),
+                        )
+                        .await?
+                        {
+                            FinalizeCommitteePreflight::Terminal => {
+                                outbox.mark_terminal(&key).await?;
+                                return Ok(());
+                            }
+                            FinalizeCommitteePreflight::Retry => return Ok(()),
+                            FinalizeCommitteePreflight::Submit => {}
+                        }
+                        let receipt = finalize_committee_on_registry(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id,
+                            &outbox,
+                            &key,
+                        )
+                        .await?;
+                        info!(tx=%receipt.transaction_hash, "Committee finalized on registry");
+                    }
+                    RegistryEffect::PublishCommitteeProof { registry, event } => {
+                        if !should_publish_committee(
+                            provider.clone(),
+                            registry,
+                            event.e3_id.clone(),
+                            event.pk_commitment,
+                        )
+                        .await?
+                        {
+                            outbox.mark_terminal(&key).await?;
+                            return Ok(());
+                        }
+                        let receipt = publish_committee_to_registry(
+                            provider.clone(),
+                            registry,
+                            event,
+                            &outbox,
+                            &key,
+                        )
+                        .await?;
+                        info!(tx=%receipt.transaction_hash, "Committee proof published to registry");
+                    }
+                    RegistryEffect::PublishCommitteePublicKey { registry, event } => {
+                        if should_publish_committee(
+                            provider.clone(),
+                            registry,
+                            event.e3_id.clone(),
+                            event.pk_commitment,
+                        )
+                        .await?
+                        {
+                            return Ok(());
+                        }
+                        let receipt = publish_committee_public_key_to_registry(
+                            provider.clone(),
+                            registry,
+                            event,
+                            &outbox,
+                            &key,
+                        )
+                        .await?;
+                        info!(tx=%receipt.transaction_hash, "Committee public-key candidate published to registry");
+                    }
                 }
-                Ok(true) => {}
+                outbox.mark_terminal(&key).await?;
+                Ok(())
             }
+            .await;
 
-            info!("Finalizing committee for E3 {:?}", e3_id);
-
-            let log_e3_id = e3_id.clone();
-            let result = finalize_committee_on_registry(provider, contract_address, e3_id).await;
-            match result {
-                Ok(TxOutcome::Mined(receipt)) => {
-                    info!(tx=%receipt.transaction_hash, "Committee finalized on registry");
-                }
-                Ok(TxOutcome::AlreadySettled) => {
-                    info!(e3_id = %log_e3_id, "Committee finalized by another sender; nothing left to do");
-                }
-                Err(err) => {
-                    error!("Failed to finalize committee: {}", format_evm_error(&err));
-                    bus.err(EType::Evm, err);
-                }
+            if let Err(error) = result {
+                error!(effect_key = %key, "Durable registry effect remains pending: {}", format_evm_error(&error));
+                bus.err(EType::Evm, error);
+            }
+            if let Err(error) = address.send(RegistryEffectFinished(key)).await {
+                error!(%error, "Registry writer stopped before clearing in-flight effect");
             }
         })
     }
@@ -263,122 +419,12 @@ mod tests {
     }
 }
 
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated>
-    for CiphernodeRegistrySolWriter<P>
-{
-    type Result = ResponseFuture<()>;
-
-    fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled || !self.is_active_aggregator_for(&msg.e3_id) {
-            return Box::pin(async {});
-        }
-
-        let Some(contract_address) = self.request_registries.get(&msg.e3_id).copied() else {
-            error!(
-                e3_id = %msg.e3_id,
-                "Cannot publish a committee without its request-time registry"
-            );
-            return Box::pin(async {});
-        };
-
-        // Do not submit a second transaction while publishCommittee is in progress
-        // for this E3. The on-chain preflight prevents duplicates after a restart.
-        if !self.submitting.insert(msg.e3_id.clone()) {
-            info!(e3_id = %msg.e3_id, "publishCommittee already in flight; skipping duplicate submission");
-            return Box::pin(async {});
-        }
-
-        let e3_id = msg.e3_id.clone();
-        let pubkey = msg.pubkey.clone();
-        let pk_commitment = msg.pk_commitment;
-        let dkg_aggregator_proof = msg.dkg_aggregator_proof.clone();
-        let dkg_attestation_bundle = msg.dkg_attestation_bundle.clone();
-        let provider = self.provider.clone();
-        let bus = self.bus.clone();
-        let self_addr = ctx.address();
-
-        Box::pin(async move {
-            let should_publish = match should_publish_committee(
-                provider.clone(),
-                contract_address,
-                e3_id.clone(),
-                pk_commitment,
-            )
-            .await
-            {
-                Ok(false) => {
-                    info!(e3_id = %e3_id, "Committee proof already published; publishing the key candidate");
-                    false
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to preflight publishCommittee: {}",
-                        format_evm_error(&err)
-                    );
-                    // Transient read failure: allow a later event to retry.
-                    self_addr.do_send(ClearSubmitting(e3_id));
-                    return;
-                }
-                Ok(true) => true,
-            };
-
-            let result: Result<()> = async {
-                if should_publish {
-                    let outcome = publish_committee_to_registry(
-                        provider.clone(),
-                        contract_address,
-                        e3_id.clone(),
-                        pk_commitment,
-                        dkg_aggregator_proof.as_ref(),
-                        dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
-                    )
-                    .await?;
-                    match outcome.receipt() {
-                        Some(receipt) => {
-                            info!(tx=%receipt.transaction_hash, "Committee proof published to registry")
-                        }
-                        None => {
-                            info!(e3_id = %e3_id, "Committee proof published by another aggregator; publishing the key candidate")
-                        }
-                    }
-                }
-
-                let receipt = publish_committee_public_key_to_registry(
-                    provider,
-                    contract_address,
-                    e3_id.clone(),
-                    pubkey,
-                )
-                .await?;
-                info!(tx=%receipt.transaction_hash, "Committee public-key candidate published to registry");
-                Ok(())
-            }
-            .await;
-
-            if let Err(err) = result {
-                error!(
-                    "Failed to publish committee data: {}",
-                    format_evm_error(&err)
-                );
-                self_addr.do_send(ClearSubmitting(e3_id));
-                bus.err(EType::Evm, err);
-            }
-        })
-    }
-}
-
-/// Internal message: clear the in-flight `publishCommittee` marker for an E3 so
-/// a subsequent submission attempt is allowed after a failure (H13).
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ClearSubmitting(E3id);
-
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<ClearSubmitting>
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<RegistryEffectFinished>
     for CiphernodeRegistrySolWriter<P>
 {
     type Result = ();
 
-    fn handle(&mut self, msg: ClearSubmitting, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RegistryEffectFinished, _: &mut Self::Context) -> Self::Result {
         self.submitting.remove(&msg.0);
     }
 }

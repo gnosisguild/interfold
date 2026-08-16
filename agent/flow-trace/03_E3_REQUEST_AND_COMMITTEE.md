@@ -186,6 +186,14 @@ Requester calls: Interfold.request({
 When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and
 `CommitteeRequested` events from the chain:
 
+Before any reader or writer is attached, every enabled chain configuration must provide an explicit
+`chain_id`. Startup compares it with the RPC-reported ID and rejects missing, mismatched, or
+duplicate IDs, so two configured chains cannot share and overwrite one event aggregate. Every
+non-local chain must also configure positive `reorg_confirmations`; the reader never promotes logs
+above the confirmed head because the append-only event log has no rollback path. If registry or
+slashing writers cannot create their signed provider and attach, node construction fails; readiness
+is never published with a read-only partial protocol stack.
+
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
 It gives this data to the proof actors and registry writers before event replay starts. Events after
 the latest snapshot then replay in order and add any newer E3 contexts.
@@ -290,7 +298,14 @@ CiphernodeSelector receives WithSortitionTicket<E3Requested>
 ```
 CiphernodeRegistrySolWriter receives TicketGenerated event
 │
-└─ Calls contract.submitTicket(e3Id, ticketNumber).send()
+├─ Synchronously persists `ticket/{chain:e3}` with the full event payload
+├─ Waits for `EffectsEnabled`; periodic drain and restart replay retain the intent
+├─ Preflights `submitTicket` so an already-submitted/expired semantic intent closes idempotently
+└─ Builds and locally signs contract.submitTicket(e3Id, ticketNumber)
+    ├─ Persists exact raw transaction bytes, nonce, and hash before RPC dispatch
+    ├─ Broadcasts the persisted raw transaction before releasing the nonce lock
+    ├─ Successful receipt persists a terminal marker
+    └─ Unknown receipt is reconciled by hash before any retry
     │
     │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────────┐
     │  │                                                         │
@@ -480,9 +495,13 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │   }
 │   │   Publishes AggregatorChanged {
 │   │     e3_id,
-│   │     is_aggregator = (my node has the lowest non-expelled party_id in the
+│   │     is_aggregator = (my node has the lowest non-expelled/non-unresponsive party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
+│   │   InterfoldSolWriter durably queues a deadline refresh; after EffectsEnabled it reads
+│   │   getE3Stage/getDeadlines and publishes AggregatorLeaseUpdated(AwaitingPublicKey)
+│   │   CiphernodeSelector persists the lease and divides the remaining DKG window equally
+│   │   across the canonical active aggregator plus standbys
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -534,9 +553,11 @@ A ready committee must finalize at or before its absolute DKG deadline.
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
    aggregator failover, proof inputs, and `CommitteeHashLib.hash(topNodes)` aligned.
 
-4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
-   finalized committee plus enriched `CommitteeMemberExpelled` events. The active aggregator is the
-   lowest non-expelled `party_id` in the address-sorted runtime committee.
+4. **Active aggregator selection and failover**: `CiphernodeSelector` derives `AggregatorChanged`
+   from the finalized committee, enriched `CommitteeMemberExpelled` events, and its persisted
+   deadline-driven `unresponsive` set. The active aggregator is the lowest eligible `party_id` in
+   the address-sorted runtime committee. Confirmed chain progress settles or arms the next phase;
+   peer claims cannot reset a lease.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
    deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG

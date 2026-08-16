@@ -341,7 +341,7 @@ impl RunMerger {
 mod tests {
     use super::*;
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{E3id, EventPublisher, Sequenced, TestEvent};
+    use e3_events::{E3id, Sequenced, TestEvent};
 
     fn event(aggregate: u64, sequence: u64, timestamp: u128) -> InterfoldEvent<Sequenced> {
         InterfoldEvent::<Sequenced>::test_event("spooled")
@@ -388,9 +388,9 @@ mod tests {
         let bus = system.handle()?.enable("replay-spool-paging");
         let count = REPLAY_QUERY_PAGE_SIZE + 1;
         for index in 0..count {
-            bus.publish_without_context(TestEvent::new("paging", index as u64))?;
+            bus.publish_and_wait(TestEvent::new("paging", index as u64), None)
+                .await?;
         }
-        bus.flush_event_pipeline().await?;
 
         let eventstore = system.eventstore_reader()?.seq();
         let spool = ReplaySpool::load(
