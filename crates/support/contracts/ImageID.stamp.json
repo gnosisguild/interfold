@@ -14,8 +14,8 @@
     "",
     "A rebuild also needs the guest to read the fixed compute-provider. The guest reads",
     "e3-compute-provider through a git pin (crates/support/Cargo.toml and",
-    "crates/support/methods/guest/Cargo.toml), so the leaf-derivation fix in",
-    "crates/compute-provider does not reach the guest until that pin moves to a pushed commit.",
-    "See BRANCH-NOTES.md."
+    "crates/support/methods/guest/Cargo.toml), so a change to crates/compute-provider does not",
+    "reach the guest until that pin moves to a pushed commit. The procedure is in",
+    "crates/support/README.md."
   ]
 }

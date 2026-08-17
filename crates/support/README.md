@@ -116,6 +116,40 @@ interfold program compile
 This builds the guest ELF binary inside the Docker container. Output goes to
 `./target/riscv-guest/methods/guests/riscv32im-risc0-zkvm-elf/release/program.bin`.
 
+### Changing the guest, and the pin that decides which code it runs
+
+The guest does **not** compile `crates/compute-provider` from this tree. `crates/support` is a
+separate Cargo workspace, excluded from the root one on purpose so a client can build it
+independently, and it reads `e3-compute-provider` and `e3-fhe-params` through a git pin to a
+published revision (`crates/support/Cargo.toml`, `crates/support/methods/guest/Cargo.toml`).
+
+A change to `crates/compute-provider` therefore has no effect on the guest until that pin moves, and
+the pin can only move to a pushed commit. Moving it changes the image ID, and
+`Risc0BfvCiphertextVerifier.imageId` is immutable — so a guest change is a redeployment, not a patch.
+
+The order matters:
+
+1. Merge the change to `crates/compute-provider`, then push.
+2. Bump both pins to the merge commit. They must name the same revision; `pnpm check:image-id`
+   fails if they diverge.
+3. Update the `crates/support` call sites that track the crate's API — the compiler will point at
+   them, since they built against the old revision until now.
+4. Rebuild the guest against the pinned code:
+
+   ```bash
+   ./scripts/check-image-id.sh --rebuild
+   ```
+
+5. Commit the regenerated `crates/support/contracts/ImageID.sol`, refresh
+   `crates/support/contracts/ImageID.stamp.json` with the new input digest, and set
+   `imageIdVerified` to `true` — it is `false` for any image ID nobody has reproduced.
+6. Redeploy `Risc0BfvCiphertextVerifier`, and every E3 program that stores its own image ID.
+
+Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree.
+`pnpm check:image-id` catches the source drift, but only a rebuild proves the recorded image ID is
+the one the current sources produce. The reviewer-facing procedure is
+`docs/pages/verifying-the-compute-provider.mdx`.
+
 ### Step 3: Upload Program to IPFS (Pinata)
 
 ```bash
