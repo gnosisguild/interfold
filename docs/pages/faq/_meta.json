@@ -3,6 +3,9 @@
     "title": "FOLD Token"
   },
   "auction": {
-    "title": "The Interfold Auction"
+    "title": "The FOLD Auction"
+  },
+  "transferability": {
+    "title": "FOLD Transferability"
   }
 }
