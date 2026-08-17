@@ -118,8 +118,6 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (initial_state, threshold_n, threshold_m, circuit_h) =
         verifying_c1_non_square_state(&fhe, &e3_id)?;
-    let canonical_party_nodes = canonical_party_nodes(&initial_state);
-
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe,
@@ -128,7 +126,6 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
-            canonical_party_nodes,
         },
         test_state(initial_state),
     );
@@ -169,8 +166,6 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (mut state, threshold_n, _threshold_m, circuit_h) =
         verifying_c1_non_square_state(&fhe, &e3_id)?;
-    let canonical_party_nodes = canonical_party_nodes(&state);
-
     let PublicKeyAggregatorState::VerifyingC1 {
         submission_order,
         c1_proofs,
@@ -190,7 +185,6 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
-            canonical_party_nodes,
         },
         test_state(state),
     );

@@ -11,7 +11,15 @@ fn ks(byte: u8) -> ArcBytes {
 }
 
 fn collecting(threshold_n: usize, threshold_m: usize) -> PublicKeyAggregatorState {
-    PublicKeyAggregatorState::init(threshold_n, threshold_m, Seed([0u8; 32]))
+    let canonical_party_nodes = (0..threshold_n as u64)
+        .map(|party_id| (party_id, format!("node-{party_id}")))
+        .collect();
+    PublicKeyAggregatorState::init(
+        threshold_n,
+        threshold_m,
+        Seed([0u8; 32]),
+        canonical_party_nodes,
+    )
 }
 
 #[test]
@@ -65,12 +73,14 @@ fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
             circuit_committee_n,
             circuit_committee_h,
             threshold_m,
+            canonical_party_nodes,
             ..
         } => {
             assert_eq!(submission_order.len(), 3);
             assert_eq!(circuit_committee_n, 3);
             assert_eq!(circuit_committee_h, 2);
             assert_eq!(threshold_m, 1);
+            assert_eq!(canonical_party_nodes.len(), 3);
         }
         _ => panic!("expected VerifyingC1"),
     }
@@ -85,6 +95,7 @@ fn add_keyshare_wrong_state_errors() {
         circuit_committee_h: 2,
         c1_proofs: vec![],
         no_proof_parties: vec![],
+        canonical_party_nodes: HashMap::new(),
     };
     let err = PublicKeyAggregation::add_keyshare(state, ks(1), "n".into(), 0, None);
     assert!(err.is_err());
@@ -217,6 +228,11 @@ fn handle_member_expelled_transitions_when_enough_remain() {
                 ks(11),
             ),
         ],
+        canonical_party_nodes: HashMap::from([
+            (0, "0xabcdef0000000000000000000000000000000000".to_string()),
+            (1, "0x2222222222222222222222222222222222222222".to_string()),
+            (2, "0x3333333333333333333333333333333333333333".to_string()),
+        ]),
     };
     let next = PublicKeyAggregation::handle_member_expelled(
         state,
@@ -230,11 +246,13 @@ fn handle_member_expelled_transitions_when_enough_remain() {
             circuit_committee_n,
             circuit_committee_h,
             submission_order,
+            canonical_party_nodes,
             ..
         } => {
             assert_eq!(circuit_committee_n, 3);
             assert_eq!(circuit_committee_h, 2);
             assert_eq!(submission_order.len(), 1);
+            assert_eq!(canonical_party_nodes.len(), 3);
         }
         _ => panic!("expected VerifyingC1"),
     }

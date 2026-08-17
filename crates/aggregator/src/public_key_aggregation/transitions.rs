@@ -45,6 +45,7 @@ impl PublicKeyAggregation {
             c1_proofs,
             nodes,
             submission_order,
+            canonical_party_nodes,
             ..
         } = &mut state
         else {
@@ -84,6 +85,7 @@ impl PublicKeyAggregation {
                 circuit_committee_h: committee_h,
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
+                canonical_party_nodes: std::mem::take(canonical_party_nodes),
             });
         }
 
@@ -202,6 +204,7 @@ impl PublicKeyAggregation {
             c1_proofs,
             nodes,
             submission_order,
+            canonical_party_nodes,
             ..
         } = &mut state
         else {
@@ -260,6 +263,7 @@ impl PublicKeyAggregation {
                 circuit_committee_h: committee_h,
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
+                canonical_party_nodes: std::mem::take(canonical_party_nodes),
             });
         }
 

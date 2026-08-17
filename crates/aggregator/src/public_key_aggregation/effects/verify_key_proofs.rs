@@ -3,6 +3,7 @@
 //! C1 verification and honest-keyshare selection.
 
 use super::*;
+use std::collections::HashMap;
 
 impl PublicKeyAggregator {
     pub fn add_keyshare(
@@ -111,6 +112,7 @@ impl PublicKeyAggregator {
             circuit_committee_n,
             circuit_committee_h,
             c1_proofs,
+            canonical_party_nodes,
             ..
         } = self
             .state
@@ -258,11 +260,11 @@ impl PublicKeyAggregator {
         // produced a keyshare. Deriving this map from keyshare submitters would shorten the roster
         // and make the final N-sized DKG proof impossible.
         anyhow::ensure!(
-            self.canonical_party_nodes.len() == circuit_committee_n,
+            canonical_party_nodes.len() == circuit_committee_n,
             "finalized committee has {} entries; expected circuit N={circuit_committee_n}",
-            self.canonical_party_nodes.len()
+            canonical_party_nodes.len()
         );
-        let party_nodes = self.canonical_party_nodes.clone();
+        let party_nodes = canonical_party_nodes;
 
         let circuit_committee_h = circuit_h;
         self.state.try_mutate(&ec, |_| {

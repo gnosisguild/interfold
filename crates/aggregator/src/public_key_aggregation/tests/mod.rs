@@ -11,7 +11,7 @@ use e3_events::{
     Unsequenced, ZkError,
 };
 use e3_test_helpers::get_common_setup;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -64,29 +64,6 @@ fn complete_state() -> PublicKeyAggregatorState {
     }
 }
 
-fn canonical_party_nodes(state: &PublicKeyAggregatorState) -> HashMap<u64, String> {
-    match state {
-        PublicKeyAggregatorState::Collecting {
-            submission_order, ..
-        }
-        | PublicKeyAggregatorState::VerifyingC1 {
-            submission_order, ..
-        } => submission_order
-            .iter()
-            .map(|(party_id, node, _)| (*party_id, node.clone()))
-            .collect(),
-        PublicKeyAggregatorState::GeneratingC5Proof { party_nodes, .. } => party_nodes.clone(),
-        PublicKeyAggregatorState::Complete {
-            committee_addresses,
-            ..
-        } => committee_addresses
-            .iter()
-            .enumerate()
-            .map(|(party_id, node)| (party_id as u64, node.to_string()))
-            .collect(),
-    }
-}
-
 async fn build_public_key_aggregator(
     initial_state: PublicKeyAggregatorState,
 ) -> Result<(
@@ -110,7 +87,6 @@ async fn build_public_key_aggregator_with_committee(
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
-    let canonical_party_nodes = canonical_party_nodes(&initial_state);
     let aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe,
@@ -119,7 +95,6 @@ async fn build_public_key_aggregator_with_committee(
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size,
             dkg_fold_attestation_context: None,
-            canonical_party_nodes,
         },
         test_state(initial_state),
     );
@@ -163,10 +138,12 @@ fn verifying_c1_non_square_state(
 
     let mut submission_order = Vec::with_capacity(threshold_n);
     let mut c1_proofs = Vec::with_capacity(threshold_n);
+    let mut canonical_party_nodes = HashMap::with_capacity(threshold_n);
     let mut rng = rand::rng();
 
     for party_id in 0..threshold_n as u64 {
         let node = format!("0x{:040x}", party_id + 1);
+        canonical_party_nodes.insert(party_id, node.clone());
         if party_id < circuit_h as u64 {
             let sk = SecretKey::random(&fhe.params, &mut rng);
             let pk_share = PublicKeyShare::new(&sk, fhe.crp.clone(), &mut rng)?;
@@ -192,6 +169,7 @@ fn verifying_c1_non_square_state(
             circuit_committee_h: circuit_h,
             c1_proofs,
             no_proof_parties: vec![],
+            canonical_party_nodes,
         },
         threshold_n,
         threshold_m,
