@@ -74,8 +74,8 @@ Requester calls: Interfold.request({
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
-│   │   → InterfoldPricing uses the active circuit [T, N].
-│   │   → The quote uses T for decryption work and H for on-chain viability only.
+│   │   → InterfoldPricing validates the active circuit [T, H, N].
+│   │   → The quote uses N for committee-wide work and H for required decryption shares.
 │   │   → It also uses the time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
 │   │   → availability covers at least request time through input-window end
