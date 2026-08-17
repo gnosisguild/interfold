@@ -185,8 +185,8 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │                                                       │
 │     │  │  2b. Requester liability: use request-time work BPS:  │
 │     │  │      KeyPublished / CiphertextReady defaults:         │
-│     │  │      honestNodeAmount = payment * 4000 / 10000        │
-│     │  │      requesterAmount = payment * 5500 / 10000         │
+│     │  │      honestNodeAmount = payment * 5000 / 10000        │
+│     │  │      requesterAmount = payment * 4500 / 10000         │
 │     │  │      protocolAmount = remaining 500 / 10000           │
 │     │  │      → if no honest recipient exists, fold the work   │
 │     │  │        share back into requesterAmount                │
@@ -283,15 +283,15 @@ Scenario: E3 fails at KeyPublished stage (compute timeout)
   Payment: 1,000,000 fee-token units (one token with 6 decimals)
   Honest nodes: 3 (out of 5 committee members, 2 were slashed)
 
-  Work completed:  40% → honestNodeAmount = 400,000
-  Work remaining:  55% → requesterAmount  = 550,000
+  Work completed:  50% → honestNodeAmount = 500,000
+  Work remaining:  45% → requesterAmount  = 450,000
   Protocol fee:     5% → protocolAmount   =  50,000
 
-  Each honest node claims: 400,000 / 3 = 133,333
-  The 1-unit division dust is credited to the treasury pull ledger
+  Each honest node claims: 500,000 / 3 = 166,666
+  The 2-unit division dust is credited to the treasury pull ledger
 
-  Requester claims: 550,000
-  Treasury claims: 50,001
+  Requester claims: 450,000
+  Treasury claims: 50,002
 ```
 
 ### Refund Example: Ciphernode Fault

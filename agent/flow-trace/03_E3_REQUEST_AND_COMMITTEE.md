@@ -36,6 +36,10 @@ Interfold starts with requests paused. Deployment wires and validates one comple
 generation before it enables requests. Governance must pause requests and drain the current
 generation before it replaces a registry, bonding registry, slashing manager, or refund manager.
 
+An E3 Program can deploy before its Interfold controller. Interfold must register the deployed
+program before the program owner binds that controller one time. This order removes the constructor
+dependency between Interfold and applications such as CRISP.
+
 ---
 
 ## Step 1: E3 Request (On-Chain)

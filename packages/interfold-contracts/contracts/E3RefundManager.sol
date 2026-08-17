@@ -198,8 +198,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
         _workAllocation = WorkValueAllocation({
             committeeFormationBps: 1000,
-            dkgBps: 3000,
-            decryptionBps: 5500,
+            dkgBps: 4000,
+            decryptionBps: 4500,
             protocolBps: 500,
             successSlashedNodeBps: 5000
         });

@@ -19,6 +19,11 @@ contract MockInterfold {
   uint256 public nextE3Id;
 
   mapping(uint256 => E3) public e3s;
+  mapping(IE3Program => bool) public e3Programs;
+
+  function registerE3Program(IE3Program program) external {
+    e3Programs[program] = true;
+  }
 
   function request(address program) external {
     _request(program, 2);

@@ -118,7 +118,7 @@ export const deployCRISPContracts = async () => {
     owner,
   )
 
-  const crisp = await crispFactory.deploy(interfoldAddress, verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
+  const crisp = await crispFactory.deploy(await owner.getAddress(), verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
   await crisp.waitForDeployment()
 
   const crispAddress = await crisp.getAddress()
@@ -127,7 +127,7 @@ export const deployCRISPContracts = async () => {
       address: crispAddress,
       blockNumber: await ethers.provider.getBlockNumber(),
       constructorArgs: {
-        interfold: interfoldAddress,
+        initialOwner: await owner.getAddress(),
         verifierAddress: verifier,
         honkVerifierAddress,
         onchainHonkVerifierAddress,
@@ -138,9 +138,10 @@ export const deployCRISPContracts = async () => {
     chain,
   )
 
-  // enable the program on Interfold
+  // Register the program before its permanent Interfold binding.
   const tx = await interfold.registerE3Program(crispAddress)
   await tx.wait()
+  await (await crisp.bindInterfold(interfoldAddress)).wait()
 
   let tokenAddress
   if (useMocks) {

@@ -399,8 +399,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const scenarios = [
         { stage: 1, requesterBps: 9500n, nodeBps: 0n },
         { stage: 2, requesterBps: 8500n, nodeBps: 1000n },
-        { stage: 3, requesterBps: 5500n, nodeBps: 4000n },
-        { stage: 4, requesterBps: 5500n, nodeBps: 4000n },
+        { stage: 3, requesterBps: 4500n, nodeBps: 5000n },
+        { stage: 4, requesterBps: 4500n, nodeBps: 5000n },
       ] as const;
 
       for (const scenario of scenarios) {
@@ -564,7 +564,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(snapshot.bondingRegistry).to.equal(
         await bondingRegistry.getAddress(),
       );
-      expect(snapshot.allocation.committeeFormationBps).to.equal(1000);
+      expect(snapshot.allocation.committeeFormationBps).to.equal(1000n);
+      expect(snapshot.allocation.dkgBps).to.equal(4000n);
+      expect(snapshot.allocation.decryptionBps).to.equal(4500n);
+      expect(snapshot.allocation.protocolBps).to.equal(500n);
+      expect(snapshot.allocation.successSlashedNodeBps).to.equal(5000n);
 
       await e3RefundManager.connect(owner).setWorkAllocation({
         committeeFormationBps: 2000,
@@ -596,7 +600,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.honestNodeAmount).to.equal(
-        (distribution.originalPayment * 4000n) / 10000n,
+        (distribution.originalPayment * 5000n) / 10000n,
       );
       expect(
         await e3RefundManager.pendingTreasuryClaim(
@@ -614,7 +618,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const unchanged = await e3RefundManager.getE3PolicySnapshot(firstE3Id);
       expect(unchanged.version).to.equal(1);
       expect(unchanged.treasury).to.equal(originalTreasury);
-      expect(unchanged.allocation.committeeFormationBps).to.equal(1000);
+      expect(unchanged.allocation.committeeFormationBps).to.equal(1000n);
     });
 
     it("blocks dependency rotation until the active generation is drained", async function () {
@@ -2555,10 +2559,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
-        (distribution.originalPayment * 5500n) / 10000n,
+        (distribution.originalPayment * 4500n) / 10000n,
       );
       expect(distribution.honestNodeAmount).to.equal(
-        (distribution.originalPayment * 4000n) / 10000n,
+        (distribution.originalPayment * 5000n) / 10000n,
       );
       expect(distribution.protocolAmount).to.equal(
         distribution.originalPayment -
