@@ -11,7 +11,7 @@ its content into the pull request description.
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | Guest proved the input root and the computation over unrelated input sets | `ComputeInput` holds only `fhe_inputs`; `process` derives the leaves from the ciphertexts it processed. `with_leaf_hashes` is now `#[cfg(test)]`. | `compute_input::tests` (2 tests)                       |
 | SAFE commitment ignored components beyond `c[1]`                          | `bfv_ciphertext_to_greco` rejects any component count other than two.                                                                             | `ciphertext_with_more_than_two_components_is_rejected` |
-| CRISP never bound the emitted ciphertext bytes to the stored commitment   | **Not fixed. See "Open decision" below.**                                                                                                         | —                                                      |
+| CRISP never bound the emitted ciphertext bytes to the stored commitment   | Leaf binds bytes, commitment and slot; tree is append-only; guest selects the latest usable entry per slot. See below.                             | 18 unit + 8 native + 2 cross-language + 8 Solidity     |
 
 `ComputeManager::start_parallel` is removed. It set the final leaves to sub-tree roots, which is
 incompatible with deriving leaves from ciphertexts, and it produced a tree of sub-tree roots rather
@@ -71,8 +71,11 @@ because that is the signature at the pinned revision. It is deliberately left al
 
 1. Review and merge this branch.
 2. Push, then bump both pins to the merge commit.
-3. Update the two `ComputeManager::new` call sites in `crates/support/host/src/lib.rs` to the
-   three-argument signature.
+3. Update the call sites in `crates/support` that track the crate's API:
+   - the two `ComputeManager::new` calls in `crates/support/host/src/lib.rs` drop the `use_parallel`
+     and `batch_size` arguments;
+   - `crates/support/methods/guest/src/bin/program.rs` must handle the `Result` that
+     `ComputeInput::process` now returns.
 4. Rebuild the guest: `./scripts/check-image-id.sh --rebuild`.
 5. Commit the regenerated `crates/support/contracts/ImageID.sol`, refresh
    `crates/support/contracts/ImageID.stamp.json`, and set `imageIdVerified` to `true`.
@@ -113,23 +116,36 @@ is not documented in the audits README, and warns when the pin moves off it.
 **Any follow-up audit should scope `crates/compute-provider`, the guest, and `crates/zk-helpers`
 explicitly.**
 
-## Open decision: Finding 3, CRISP vote bytes
+## Resolved: Finding 3, CRISP vote bytes
 
-`CRISPProgram.publishInput` decodes `encryptedVote` and emits it in `InputPublished`, but never
-binds those bytes to `encryptedVoteCommitment`. The commitment is a SAFE/Poseidon value over the
-ciphertext's CRT limbs, so the contract cannot recompute it from the serialized bytes — there is no
-on-chain fix.
+`CRISPProgram.publishInput` emitted `encryptedVote` without ever binding it to
+`encryptedVoteCommitment`. The proof constrains the commitment and never sees the bytes, so a
+submitter could publish a valid commitment beside unrelated data. Once leaf derivation moved into
+the guest, one such input made the round unprovable — a free denial of service, since the mask path
+needs no signature and anyone can write to any census slot.
 
-Before this branch, a compute provider could route around a mismatched input by supplying the
-genuine on-chain leaves while processing only the well-formed ciphertexts. **That escape hatch was
-the leaf-derivation defect, and this branch closes it.** With leaves derived from the consumed
-ciphertexts, one malformed input makes the round permanently unresolvable: the prover cannot
-reproduce the on-chain root, and the failure bills the requester as a `ComputeTimeout`.
+Prevention at input time is not reachable in this architecture. The contract can afford one linear
+pass over 348 KB, so it can only verify a byte hash; the circuit can afford Poseidon over field
+elements but not a byte hash at that size, so it can only produce what the contract cannot check.
+Passing the ciphertext limbs as circuit public inputs *would* work — proof verification becomes the
+check — but costs ~49k public inputs at the secure preset, roughly 35M gas, over a block limit.
 
-Any address in the public census can trigger this for the price of one input transaction. The
-mask-vote branch of `circuits/bin/crisp/src/main.nr` asserts only `valid_zero_vote`; the signature
-and address checks sit in the `is_mask_vote == false` branch.
+The fix has three parts:
 
-**This must be resolved before the pin bump in step 2 above.** Landing the leaf-derivation fix
+1. **The leaf binds bytes, commitment and slot.**
+   `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`, identical in
+   `CRISPProgram.inputLeaf` and `MerkleTreeBuilder`.
+2. **The tree is append-only.** `_processVote` never updates in place. With update-in-place, an
+   attacker could mask over a counted vote with bad bytes and erase it silently — a worse outcome
+   than the bug being fixed.
+3. **The Secure Process selects the most recent usable entry per slot**, keeping every leaf so the
+   root still matches, and falling back to a slot's last good entry.
+
+The Noir circuits are unchanged: `prev_ct_commitment` now comes from a `slotCommitment` mapping
+rather than the tree leaf.
+
+**Not done:** an on-chain test of multi-entry append behaviour. A second input from one slot needs a
+re-vote proof with matching `prev`, so append-only semantics are proven in Rust against real
+ciphertexts and on-chain only as `numberOfVotes == 1` after one publish. Landing the leaf-derivation fix
 without it trades a forgery vector for a denial-of-service vector. The options are in the
 conversation; none of them is a small contract edit.

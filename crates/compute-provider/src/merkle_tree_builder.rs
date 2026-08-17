@@ -4,15 +4,25 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::compute_input::{ComputeError, FHEInputs};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, BigInteger};
 use e3_bfv_client::client::compute_ct_commitment;
-use e3_fhe_params::decode_bfv_params;
+use fhe::bfv::BfvParameters;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
+use sha2::{Digest as Sha2Digest, Sha256};
+use std::collections::BTreeMap;
+
+/// One input, paired with its position in the tree so the selection stays ordered.
+type PositionedInput = (usize, (Vec<u8>, u64));
 use std::str::FromStr;
 use zk_kit_imt::imt::IMT;
+
+/// The BN254 scalar field, which every tree leaf must be reduced into.
+const SNARK_SCALAR_FIELD: &str =
+    "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 
 pub struct MerkleTreeBuilder {
     pub leaf_hashes: Vec<String>,
@@ -42,20 +52,101 @@ impl MerkleTreeBuilder {
         self
     }
 
-    pub fn compute_leaf_hashes(&mut self, data: &[(Vec<u8>, u64)], params_bytes: &[u8]) {
-        let params = decode_bfv_params(params_bytes).expect("Failed to decode BFV params");
+    /// Derives one leaf per input, in the order given, and returns the inputs to compute over.
+    ///
+    /// The leaf matches the layout the E3 program builds:
+    /// `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`.
+    ///
+    /// The tree is append-only, so a slot may hold several entries. For each slot the most recent
+    /// entry whose bytes reproduce its commitment is returned; entries that do not reproduce it,
+    /// or that do not deserialize, keep their leaf but are skipped. That fallback is what stops a
+    /// third party appending bad bytes to a slot and erasing a vote that was already counted.
+    ///
+    /// The selection is a function of values the root binds, so any prover holding the same
+    /// published data reaches the same set.
+    ///
+    /// When `commitments` or `slots` is empty, no check is possible: every input is returned and
+    /// the leaf falls back to the bare ciphertext commitment.
+    pub fn compute_leaf_hashes(
+        &mut self,
+        inputs: &FHEInputs,
+        params: &BfvParameters,
+    ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
         let degree = params.degree();
         let plaintext_modulus = params.plaintext();
         let moduli = params.moduli().to_vec();
+        let bound = !inputs.commitments.is_empty() && !inputs.slots.is_empty();
 
-        for item in data {
-            let commitment =
-                compute_ct_commitment(item.0.clone(), degree, plaintext_modulus, moduli.clone())
-                    .expect("Failed to compute ciphertext commitment");
-
-            let commitment_hex = hex::encode(commitment);
-            self.leaf_hashes.push(commitment_hex);
+        if bound
+            && (inputs.commitments.len() != inputs.ciphertexts.len()
+                || inputs.slots.len() != inputs.ciphertexts.len())
+        {
+            return Err(ComputeError::MerkleTree(format!(
+                "{} ciphertexts, {} commitments, {} slots",
+                inputs.ciphertexts.len(),
+                inputs.commitments.len(),
+                inputs.slots.len()
+            )));
         }
+
+        // Keyed by slot; a later entry replaces an earlier one, so what survives is the most
+        // recent usable entry for that slot.
+        let mut latest_per_slot: BTreeMap<[u8; 20], PositionedInput> = BTreeMap::new();
+        let mut unbound_usable = Vec::new();
+
+        for (index, item) in inputs.ciphertexts.iter().enumerate() {
+            // A commitment that cannot be computed marks an unusable input rather than a failure:
+            // the bytes are attacker-supplied and must not be able to stop the round.
+            let recomputed =
+                compute_ct_commitment(item.0.clone(), degree, plaintext_modulus, moduli.clone())
+                    .ok();
+
+            if !bound {
+                let commitment = recomputed.ok_or(ComputeError::LeafCommitment {
+                    index,
+                    reason: "ciphertext could not be deserialized".to_string(),
+                })?;
+                self.leaf_hashes.push(hex::encode(commitment));
+                unbound_usable.push(item.clone());
+                continue;
+            }
+
+            self.leaf_hashes.push(Self::input_leaf(
+                &item.0,
+                &inputs.commitments[index],
+                &inputs.slots[index],
+            ));
+
+            if recomputed == Some(inputs.commitments[index]) {
+                latest_per_slot.insert(inputs.slots[index], (index, item.clone()));
+            }
+        }
+
+        if !bound {
+            return Ok(unbound_usable);
+        }
+
+        // Ordered by tree position so the computation is deterministic, not map order.
+        let mut selected: Vec<PositionedInput> = latest_per_slot.into_values().collect();
+        selected.sort_by_key(|(index, _)| *index);
+        Ok(selected.into_iter().map(|(_, item)| item).collect())
+    }
+
+    /// `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`, hex-encoded.
+    ///
+    /// Must stay byte-identical to `CRISPProgram.inputLeaf`, or no root will ever match.
+    fn input_leaf(ciphertext: &[u8], commitment: &[u8; 32], slot: &[u8; 20]) -> String {
+        let bytes_digest = Sha256::digest(ciphertext);
+
+        let mut outer = Sha256::new();
+        outer.update(bytes_digest);
+        outer.update(commitment);
+        outer.update(slot);
+        let combined = outer.finalize();
+
+        let field = BigUint::from_str_radix(SNARK_SCALAR_FIELD, 10).expect("field constant");
+        let reduced = BigUint::from_bytes_be(&combined) % field;
+        hex::encode(reduced.to_bytes_be())
     }
 
     fn poseidon_hash(nodes: Vec<String>) -> String {
@@ -75,7 +166,7 @@ impl MerkleTreeBuilder {
         hex::encode(result_hash.to_bytes_be())
     }
 
-    pub fn build_tree(&self) -> IMT {
+    pub fn build_tree(&self) -> Result<IMT, ComputeError> {
         let mut tree = IMT::new(
             Self::poseidon_hash,
             self.depth,
@@ -83,13 +174,14 @@ impl MerkleTreeBuilder {
             self.arity,
             vec![],
         )
-        .unwrap();
+        .map_err(|e| ComputeError::MerkleTree(e.to_string()))?;
 
         for leaf in &self.leaf_hashes {
-            tree.insert(leaf.clone()).unwrap();
+            tree.insert(leaf.clone())
+                .map_err(|e| ComputeError::MerkleTree(e.to_string()))?;
         }
 
-        tree
+        Ok(tree)
     }
 }
 
@@ -116,6 +208,7 @@ mod tests {
         let root = MerkleTreeBuilder::new(1)
             .with_leaf_hashes(vec!["0".to_string()])
             .build_tree()
+            .unwrap()
             .root()
             .unwrap();
 

@@ -417,6 +417,8 @@ async fn handle_e3_input_deadline_expiration(
 
     let voter_count = repo.get_vote_count().await?;
     let votes = repo.get_ciphertext_inputs().await?;
+    let input_commitments = repo.get_input_commitments().await?;
+    let input_slots = repo.get_input_slots().await?;
 
     if voter_count > 0 && votes.is_empty() {
         warn!(
@@ -446,6 +448,8 @@ async fn handle_e3_input_deadline_expiration(
             e3.committee_public_key_hash,
             e3.e3_params,
             votes,
+            input_commitments,
+            input_slots,
             format!(
                 "{}/state/add-result",
                 CONFIG.interfold_server_url_for_clients()
@@ -596,8 +600,13 @@ pub async fn register_input_published(
                     hex::encode(&event.encryptedVote[..8.min(event.encryptedVote.len())])
                 );
 
-                repo.insert_ciphertext_input(event.encryptedVote.to_vec(), event.index.to::<u64>())
-                    .await?;
+                repo.insert_ciphertext_input(
+                    event.encryptedVote.to_vec(),
+                    event.index.to::<u64>(),
+                    event.encryptedVoteCommitment.into(),
+                    event.slotAddress.into(),
+                )
+                .await?;
                 Ok(())
             }
         })

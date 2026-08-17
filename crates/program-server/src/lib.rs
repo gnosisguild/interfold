@@ -367,9 +367,45 @@ async fn handle_compute(
         .clone()
         .ok_or_else(|| actix_web::error::ErrorBadRequest("callback_url is required"))?;
 
+    let commitments = req
+        .input_commitments
+        .iter()
+        .map(|hex_commitment| {
+            let raw = hex::decode(hex_commitment.trim_start_matches("0x"))
+                .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad commitment: {e}")))?;
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map_err(|_| actix_web::error::ErrorBadRequest("each commitment must be 32 bytes"))
+        })
+        .collect::<ActixResult<Vec<[u8; 32]>>>()?;
+
+    if !commitments.is_empty() && commitments.len() != req.ciphertext_inputs.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_commitments must have one entry per ciphertext input",
+        ));
+    }
+
+    let slots = req
+        .input_slots
+        .iter()
+        .map(|hex_slot| {
+            let raw = hex::decode(hex_slot.trim_start_matches("0x"))
+                .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?;
+            <[u8; 20]>::try_from(raw.as_slice())
+                .map_err(|_| actix_web::error::ErrorBadRequest("each slot must be 20 bytes"))
+        })
+        .collect::<ActixResult<Vec<[u8; 20]>>>()?;
+
+    if !slots.is_empty() && slots.len() != req.ciphertext_inputs.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_slots must have one entry per ciphertext input",
+        ));
+    }
+
     let fhe_inputs = FHEInputs {
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
+        commitments,
+        slots,
     };
     let domain = ComputeDomain::new(
         req.chain_id,

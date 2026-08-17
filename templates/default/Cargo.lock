@@ -1313,13 +1313,16 @@ dependencies = [
  "ark-ff 0.4.2",
  "e3-bfv-client",
  "e3-fhe-params",
+ "fhe",
  "hex",
  "lean-imt",
  "light-poseidon",
  "num-bigint",
  "num-traits",
  "serde",
+ "sha2",
  "sha3 0.10.8",
+ "thiserror 1.0.69",
  "zk-kit-imt",
 ]
 

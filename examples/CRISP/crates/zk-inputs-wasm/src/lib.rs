@@ -82,6 +82,17 @@ impl ZKInputsGenerator {
     }
 
     /// Generate CRISP ZK inputs for a vote update (either from voter or as a masker) from JavaScript.
+    /// Computes the SAFE commitment of serialized ciphertext bytes.
+    ///
+    /// Needed to build the ballot digest for an update, where the commitment the contract stores is
+    /// the commitment of the summed ciphertext.
+    #[wasm_bindgen(js_name = "computeCtCommitment")]
+    pub fn compute_ct_commitment(&self, ciphertext: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        self.generator
+            .compute_ciphertext_commitment(&ciphertext)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     #[wasm_bindgen(js_name = "generateInputsForUpdate")]
     pub fn generate_inputs_for_update(
         &self,

@@ -456,10 +456,25 @@ jobs:
         with:
           path: dist/
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A RISC Zero proof names a guest image; it does not name the source that produced it. This
+      # record is what lets a third party tie the released source to the deployed imageId.
+      - name: Generate compute-provider provenance manifest
+        run: pnpm provenance:manifest --out compute-provider-provenance.json
+
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
           find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
+          cp compute-provider-provenance.json release-assets/
           # `interfold config check` fetches this asset from the latest release,
           # so a release without it leaves operators unable to detect a redeploy.
           if [ ! -f deployments/manifest.json ]; then

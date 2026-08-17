@@ -373,6 +373,26 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **Every E3 program must compare the proof's input root against its own root.**
   `Risc0BfvCiphertextVerifier` takes no `inputRoot` argument and constrains none. A program that
   skips the comparison accepts a result computed over any input set. — `flow-trace/04`
+- **An E3 program's input leaf binds the published bytes, the commitment, and the slot.**
+  `CRISPProgram.inputLeaf` is
+  `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`, and
+  `MerkleTreeBuilder::compute_leaf_hashes` rebuilds it byte for byte. The proof checked at input
+  time constrains the commitment and never sees the serialized ciphertext, so binding the bytes is
+  what lets the Secure Process detect a mismatch; binding the slot is what stops a prover
+  re-grouping entries, since selection is per slot. A divergence between the two implementations
+  makes every root mismatch and nothing else would catch it, so both sides pin the same vector
+  (`tests/input-leaf.test.ts`, `leaf_layout_matches_the_contract`) and
+  `onchain_root_agreement.rs` asserts Rust reproduces a root a real contract produced. SHA-256
+  rather than Keccak because the zkVM accelerates it inline. — `flow-trace/04`
+- **The input tree is append-only, and a Secure Process selects the most recent usable entry per
+  slot.** `_processVote` never updates in place. The mask path needs no signature, so anyone can
+  write to any census member's slot; with update-in-place a third party could replace the bytes of
+  a counted vote and erase it while the round still completed. An entry whose bytes do not
+  reproduce its commitment keeps its leaf — removing it would change the root — but is skipped, so
+  selection falls back to that slot's last good entry. The rule is a function of values the root
+  binds, so a prover cannot choose what to drop. Neither the contract nor the circuit can perform
+  this check: the commitment is a Poseidon sponge over CRT limbs, and the circuit cannot reproduce
+  the serialization. — `flow-trace/04`
 - **The SAFE ciphertext commitment requires exactly two components.** It covers `c[0]` and `c[1]`
   only, matching the Noir circuit, so `bfv_ciphertext_to_greco` rejects any other component count. A
   padded ciphertext would otherwise share a commitment with its two-component prefix while threshold

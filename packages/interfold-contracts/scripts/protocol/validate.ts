@@ -257,6 +257,31 @@ export async function actionValidate(): Promise<void> {
     console.log("  -- bondedVotes not deployed yet (--action activate-voting)");
   }
 
+  // Verifier read-backs. Each is configured by a Safe transaction, so a dropped or reverted write
+  // would otherwise leave the reference at address(0) with the deploy script still exiting zero.
+  const bfvSchemeId = ethers.id("fhe.rs:BFV");
+  if (config.verifiers?.ciphertextVerifier) {
+    checks.push([
+      "interfold.getCiphertextVerifier(fhe.rs:BFV)",
+      interfold.getCiphertextVerifier(bfvSchemeId),
+      config.verifiers.ciphertextVerifier,
+    ]);
+  }
+  if (config.verifiers?.decryptionVerifier) {
+    checks.push([
+      "interfold.getDecryptionVerifier(fhe.rs:BFV)",
+      interfold.getDecryptionVerifier(bfvSchemeId),
+      config.verifiers.decryptionVerifier,
+    ]);
+  }
+  if (config.verifiers?.pkVerifier) {
+    checks.push([
+      "interfold.getPkVerifier(fhe.rs:BFV)",
+      interfold.getPkVerifier(bfvSchemeId),
+      config.verifiers.pkVerifier,
+    ]);
+  }
+
   for (const [label, actualPromise, expected] of checks) {
     const actual = await actualPromise;
     assertEqual(label, actual, expected);

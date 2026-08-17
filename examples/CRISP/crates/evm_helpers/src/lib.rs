@@ -32,7 +32,7 @@ sol! {
 }
 
 sol! {
-    event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
+    event InputPublished(uint256 indexed e3Id, address indexed slotAddress, bytes32 encryptedVoteCommitment, bytes encryptedVote, uint256 index);
 }
 
 /// Type alias for read-only provider (no wallet)

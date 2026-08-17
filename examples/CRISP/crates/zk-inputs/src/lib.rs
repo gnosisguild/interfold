@@ -67,6 +67,26 @@ impl ZKInputsGenerator {
         Self::from_set(default_param_set())
     }
 
+    /// Computes the SAFE commitment of serialized ciphertext bytes.
+    ///
+    /// The commitment a CRISP round stores for an input is computed inside the circuit, from the
+    /// ciphertext the circuit built. For a first vote that is the ballot; for an update it is the
+    /// sum of the new ciphertext and the previous one. Either way it is the commitment of the
+    /// bytes that get published, so a caller can derive it here — which it must, because
+    /// `CRISPProgram.publishInput` builds the ballot digest over that commitment and the digest is
+    /// itself a circuit input. Without this the update path is unusable: the digest would depend
+    /// on a value that only exists after proving.
+    pub fn compute_ciphertext_commitment(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let commitment = e3_bfv_client::client::compute_ct_commitment(
+            ciphertext.to_vec(),
+            self.bfv_params.degree(),
+            self.bfv_params.plaintext(),
+            self.bfv_params.moduli().to_vec(),
+        )
+        .map_err(|e| eyre::eyre!("Failed to compute ciphertext commitment: {e}"))?;
+        Ok(commitment.to_vec())
+    }
+
     /// Generates CRISP ZK inputs for a vote encryption and addition operation.
     /// Note that this accepts the previous ciphertext in GRECO ABI encoded format.
     ///

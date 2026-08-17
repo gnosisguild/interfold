@@ -12,6 +12,7 @@ import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
+import { SNARK_SCALAR_FIELD } from "@zk-kit/lazy-imt.sol/Constants.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
@@ -63,6 +64,12 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     uint256 merkleRoot;
     bytes32 paramsHash;
     mapping(address slot => uint40 index) voteSlots;
+    /// @notice The last proven ciphertext commitment for a slot.
+    /// @dev Held separately because the input tree leaf binds the published bytes as well, so the
+    /// leaf is no longer the commitment. The Noir circuit takes `prev_ct_commitment` as a public
+    /// input and compares it against the commitment of the private previous ciphertext, so it must
+    /// keep receiving the commitment itself.
+    mapping(address slot => bytes32 commitment) slotCommitment;
     LazyIMTData votes;
     uint256 numOptions;
     CreditMode creditMode;
@@ -167,7 +174,19 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
 
   // Events
   event InterfoldBound(address indexed interfold);
-  event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
+
+  /// @notice A ciphertext input was accepted for a round.
+  /// @dev Carries the slot and the commitment as well as the bytes. Both are already public — the
+  /// slot is a plaintext `publishInput` argument and `getSlotIndex` exposes it — so emitting them
+  /// leaks nothing and saves every consumer from parsing transaction calldata. The Secure Process
+  /// needs the commitment to check that the published bytes are the ciphertext that was proven.
+  event InputPublished(
+    uint256 indexed e3Id,
+    address indexed slotAddress,
+    bytes32 encryptedVoteCommitment,
+    bytes encryptedVote,
+    uint256 index
+  );
 
   /// @notice Initialize the contract without an Interfold controller.
   /// @dev The owner binds the controller after Interfold registers this program.
@@ -476,7 +495,12 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // and gives it to the circuit, so the eligibility check has to happen here instead.
     (bytes32 eligibility, IHonkVerifier verifier) = _eligibility(e3Id, slotAddress);
 
-    (uint40 voteIndex, bytes32 previousEncryptedVoteCommitment) = _processVote(e3Id, slotAddress, encryptedVoteCommitment);
+    (uint40 voteIndex, bytes32 previousEncryptedVoteCommitment) = _processVote(
+      e3Id,
+      slotAddress,
+      encryptedVoteCommitment,
+      encryptedVote
+    );
 
     // Set the public inputs for the proof. Order must match Noir circuit.
     bytes32[] memory noirPublicInputs = new bytes32[](9);
@@ -500,7 +524,7 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       revert InvalidNoirProof();
     }
 
-    emit InputPublished(e3Id, encryptedVote, voteIndex);
+    emit InputPublished(e3Id, slotAddress, encryptedVoteCommitment, encryptedVote, voteIndex);
   }
 
   /// @notice Resolve the eligibility public input and the verifier for a round.
@@ -660,24 +684,45 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   function _processVote(
     uint256 e3Id,
     address slotAddress,
-    bytes32 encryptedVoteCommitment
+    bytes32 encryptedVoteCommitment,
+    bytes memory encryptedVote
   ) internal returns (uint40 voteIndex, bytes32 previousEncryptedVoteCommitment) {
-    uint40 storedIndexPlusOne = e3Data[e3Id].voteSlots[slotAddress];
+    RoundData storage round = e3Data[e3Id];
 
-    // we treat the index 0 as not voted yet
-    // any valid index will be index + 1
-    if (storedIndexPlusOne == 0) {
-      // FIRST VOTE
-      previousEncryptedVoteCommitment = bytes32(0);
-      voteIndex = e3Data[e3Id].votes.numberOfLeaves;
-      e3Data[e3Id].voteSlots[slotAddress] = voteIndex + 1;
-      e3Data[e3Id].votes._insert(uint256(encryptedVoteCommitment));
-    } else {
-      // RE-VOTE
-      voteIndex = storedIndexPlusOne - 1;
-      previousEncryptedVoteCommitment = bytes32(e3Data[e3Id].votes.elements[voteIndex]);
-      e3Data[e3Id].votes._update(uint256(encryptedVoteCommitment), voteIndex);
-    }
+    // Append-only. Updating a slot's leaf in place would let anyone who can write to a slot — and
+    // the mask path needs no signature — replace the bytes of a vote that was already counted,
+    // erasing it. Appending leaves the earlier entry in the tree, so the Secure Process falls back
+    // to the most recent entry whose bytes match their commitment and nothing is lost.
+    voteIndex = round.votes.numberOfLeaves;
+    round.votes._insert(inputLeaf(encryptedVote, encryptedVoteCommitment, slotAddress));
+
+    // Zero for a slot's first entry, which is what the circuit reads as `is_first_vote`.
+    previousEncryptedVoteCommitment = round.slotCommitment[slotAddress];
+
+    round.voteSlots[slotAddress] = voteIndex + 1;
+    round.slotCommitment[slotAddress] = encryptedVoteCommitment;
+  }
+
+  /// @notice Builds the input tree leaf for one published input.
+  /// @dev Binds three things the Secure Process must be able to trust:
+  ///
+  /// - the **bytes**, because the Noir proof constrains the commitment and never sees the
+  ///   serialized ciphertext, so the two can disagree and only the guest can tell;
+  /// - the **commitment**, so a submitter cannot pair any commitment with any ciphertext;
+  /// - the **slot**, because the tree is append-only and the guest tallies the most recent usable
+  ///   entry per slot. Without the slot in the leaf a prover could re-group entries and change
+  ///   which one wins.
+  ///
+  /// SHA-256 rather than Keccak: the zkVM accelerates SHA-256 inline, while its Keccak accelerator
+  /// emits a proof assumption the host must prove separately and compose. The extra on-chain cost
+  /// is about 67k gas on a transaction that already carries the ciphertext.
+  function inputLeaf(
+    bytes memory encryptedVote,
+    bytes32 commitment,
+    address slotAddress
+  ) public pure returns (uint256) {
+    return
+      uint256(sha256(abi.encodePacked(sha256(encryptedVote), commitment, slotAddress))) % SNARK_SCALAR_FIELD;
   }
 
   /// @notice Decode bytes to uint64 array

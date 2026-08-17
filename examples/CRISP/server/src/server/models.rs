@@ -258,6 +258,16 @@ pub struct E3Crisp {
     pub token_address: String,
     pub balance_threshold: String,
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
+    /// The commitment the contract stored for each input, keyed by the same on-chain index.
+    ///
+    /// The Secure Process needs it to check that the published bytes are the ciphertext that was
+    /// actually proven. Defaulted so rounds recorded before the event carried it still load.
+    #[serde(default)]
+    pub input_commitments: Vec<(u64, [u8; 32])>,
+    /// The slot each input was published to, keyed by the same on-chain index. The tree is
+    /// append-only, so the Secure Process groups entries by slot.
+    #[serde(default)]
+    pub input_slots: Vec<(u64, [u8; 20])>,
     pub requester: String,
     pub num_options: String,
     pub credit_mode: CreditMode,
@@ -389,7 +399,11 @@ mod persisted_round_tests {
 
     #[test]
     fn every_census_mode_round_trips_through_storage() {
-        for mode in [CensusMode::Token, CensusMode::ByRequester, CensusMode::Onchain] {
+        for mode in [
+            CensusMode::Token,
+            CensusMode::ByRequester,
+            CensusMode::Onchain,
+        ] {
             let mut round: E3Crisp = serde_json::from_str(LEGACY_ROUND).unwrap();
             round.census_mode = mode;
 

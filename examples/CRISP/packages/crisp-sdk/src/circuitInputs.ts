@@ -97,7 +97,14 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
   // `compute_ciphertext_commitment` exactly, so it is carried across instead.
   const ctCommitment = `0x${BigInt(circuitInputs.ct_commitment).toString(16).padStart(64, '0')}` as `0x${string}`
 
-  return { circuitInputs, encryptedVote, ctCommitment, censusMode: inputs.censusMode }
+  // `encryptedVote` is the ciphertext that gets published: the ballot for a first vote, the sum for
+  // an update. The circuit commits to exactly that, so its commitment is what the contract stores
+  // and what the ballot digest is built over. Computed by the same Rust that the circuit and the
+  // Secure Process use, rather than reimplemented here, so the three cannot drift.
+  const finalCommitmentBytes = zkInputsGenerator.computeCtCommitment(encryptedVote)
+  const finalCtCommitment = `0x${Buffer.from(finalCommitmentBytes).toString('hex').padStart(64, '0')}` as `0x${string}`
+
+  return { circuitInputs, encryptedVote, ctCommitment, finalCtCommitment, censusMode: inputs.censusMode }
 }
 
 /**

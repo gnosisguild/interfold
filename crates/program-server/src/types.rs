@@ -28,6 +28,18 @@ pub struct ComputeRequest {
     pub params: Vec<u8>,
     #[serde(deserialize_with = "deserialize_hex_tuple")]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
+    /// The commitment the E3 program stored for each input, hex encoded, in the same order as
+    /// `ciphertext_inputs`.
+    ///
+    /// Optional so an older caller still deserializes. Omitting it means the Secure Process cannot
+    /// check a published ciphertext against the commitment that was actually proven, so a single
+    /// unusable input costs the whole round.
+    #[serde(default)]
+    pub input_commitments: Vec<String>,
+    /// The slot each input was published to, hex encoded, in the same order. Required alongside
+    /// `input_commitments`: the tree is append-only, so the Secure Process groups by slot.
+    #[serde(default)]
+    pub input_slots: Vec<String>,
     pub callback_url: Option<String>,
 }
 

@@ -155,7 +155,13 @@ impl<S: DataStore> CrispE3Repository<S> {
         self.set_crisp(e3_crisp).await
     }
 
-    pub async fn insert_ciphertext_input(&mut self, vote: Vec<u8>, index: u64) -> Result<()> {
+    pub async fn insert_ciphertext_input(
+        &mut self,
+        vote: Vec<u8>,
+        index: u64,
+        commitment: [u8; 32],
+        slot: [u8; 20],
+    ) -> Result<()> {
         let key = self.crisp_key();
 
         self.store
@@ -170,6 +176,18 @@ impl<S: DataStore> CrispE3Repository<S> {
                         existing.0 = vote.clone();
                     } else {
                         e.ciphertext_inputs.push((vote.clone(), index));
+                    }
+                    if let Some(existing) =
+                        e.input_commitments.iter_mut().find(|(i, _)| *i == index)
+                    {
+                        existing.1 = commitment;
+                    } else {
+                        e.input_commitments.push((index, commitment));
+                    }
+                    if let Some(existing) = e.input_slots.iter_mut().find(|(i, _)| *i == index) {
+                        existing.1 = slot;
+                    } else {
+                        e.input_slots.push((index, slot));
                     }
                     e
                 })
@@ -199,6 +217,8 @@ impl<S: DataStore> CrispE3Repository<S> {
         snapshot_block: u64,
     ) -> Result<()> {
         self.set_crisp(E3Crisp {
+            input_commitments: Vec::new(),
+            input_slots: Vec::new(),
             has_voted: vec![],
             start_time: 0u64,
             status: "Requested".to_string(),
@@ -334,9 +354,32 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp.end_time)
     }
 
+    /// Returns the inputs in on-chain index order.
+    ///
+    /// Event handlers run concurrently, so arrival order is not chain order, and a leaf's position
+    /// in the input tree is its position in this vector. Sorting here is what keeps the root the
+    /// Secure Process derives equal to the one the contract accumulated.
     pub async fn get_ciphertext_inputs(&self) -> Result<Vec<(Vec<u8>, u64)>> {
         let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.ciphertext_inputs)
+        let mut inputs = e3_crisp.ciphertext_inputs;
+        inputs.sort_by_key(|(_, index)| *index);
+        Ok(inputs)
+    }
+
+    /// Returns the commitments in the same on-chain index order as `get_ciphertext_inputs`.
+    pub async fn get_input_commitments(&self) -> Result<Vec<[u8; 32]>> {
+        let e3_crisp = self.get_crisp().await?;
+        let mut commitments = e3_crisp.input_commitments;
+        commitments.sort_by_key(|(index, _)| *index);
+        Ok(commitments.into_iter().map(|(_, c)| c).collect())
+    }
+
+    /// Returns the slots in the same on-chain index order as `get_ciphertext_inputs`.
+    pub async fn get_input_slots(&self) -> Result<Vec<[u8; 20]>> {
+        let e3_crisp = self.get_crisp().await?;
+        let mut slots = e3_crisp.input_slots;
+        slots.sort_by_key(|(index, _)| *index);
+        Ok(slots.into_iter().map(|(_, s)| s).collect())
     }
 
     #[allow(dead_code)]

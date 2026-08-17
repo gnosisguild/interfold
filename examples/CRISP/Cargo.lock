@@ -2466,14 +2466,16 @@ dependencies = [
  "ark-ff 0.4.2",
  "e3-bfv-client",
  "e3-fhe-params",
+ "fhe",
  "hex",
  "lean-imt",
  "light-poseidon 0.2.0",
  "num-bigint",
  "num-traits",
- "rayon",
  "serde",
+ "sha2",
  "sha3",
+ "thiserror 1.0.69",
  "zk-kit-imt",
 ]
 
@@ -2603,10 +2605,12 @@ dependencies = [
 name = "e3-user-program"
 version = "0.1.0"
 dependencies = [
+ "e3-bfv-client",
  "e3-compute-provider",
  "e3-fhe-params",
  "fhe",
  "fhe-traits",
+ "rand 0.9.2",
 ]
 
 [[package]]

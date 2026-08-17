@@ -167,6 +167,17 @@ export type PreparedBallot = {
   circuitInputs: any
   encryptedVote: Uint8Array
   ctCommitment: `0x${string}`
+  /**
+   * The commitment the E3 program will store, and the value to pass to
+   * `CRISPProgram.ballotDigest`.
+   *
+   * For a first vote this equals `ctCommitment`. For an update — a re-vote, or a mask over a slot
+   * that already holds a ballot — the contract stores the commitment of the *summed* ciphertext,
+   * and so does the circuit. Since the digest is itself a circuit input, a caller has to know that
+   * value before proving; deriving it from `encryptedVote` is what makes the update path usable at
+   * all.
+   */
+  finalCtCommitment: `0x${string}`
   censusMode: CensusVariant
 }
 
