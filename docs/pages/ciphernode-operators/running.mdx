@@ -98,23 +98,23 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-        deploy_block: 11459000
+        address: '0x3Cd771d8B8677Bcb1e3338AdDF8A887CCc2C3768'
+        deploy_block: 11507472
       ciphernode_registry:
-        address: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
-        deploy_block: 11458978
+        address: '0x6c54Fe8d70476Ab87ef845aD669E91f66CdfCA8d'
+        deploy_block: 11507360
       bonding_registry:
-        address: '0x77384A924C18FfE00A9325815723121534105Abd'
-        deploy_block: 11458979
+        address: '0x43bA4663385b5F20f79c04AA8CD48694426863F0'
+        deploy_block: 11507361
       slashing_manager:
-        address: '0x4CE0107239719003ad07F65e0ae18a09aD2dcfDE'
-        deploy_block: 11458977
+        address: '0xfd1A11dd95161313A447e6465f9c2793Dda7bCa1'
+        deploy_block: 11507357
       fee_token:
-        address: '0xD4B8e32C718B87f81d8e58fB3a3f061D92CcBb27'
-        deploy_block: 11458975
+        address: '0xEd12306AF0Cd3D2170cb3E752A653A9143C60a83'
+        deploy_block: 11507353
       faucet:
-        address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-        deploy_block: 11458989
+        address: '0x2A9D8bf02b119Ceb21d3343F7b7F84a7cF1Cc8aC'
+        deploy_block: 11507376
 ```
 
 ### Check Your Addresses Are Current
@@ -131,7 +131,7 @@ interfold config check
 Deployment manifest: release v0.6.0
 sepolia:
   STALE interfold: config has 0x64Cd2d88…, published is 0xd49990bc…
-  warn  ciphernode_registry: deploy_block 11124526, published is 11458978
+  warn  ciphernode_registry: deploy_block 11124526, published is 11507360
 ```
 
 The command exits non-zero when any address is wrong, so it can gate a restart in a supervisor or a
@@ -215,23 +215,23 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-        deploy_block: 11459000
+        address: '0x3Cd771d8B8677Bcb1e3338AdDF8A887CCc2C3768'
+        deploy_block: 11507472
       ciphernode_registry:
-        address: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
-        deploy_block: 11458978
+        address: '0x6c54Fe8d70476Ab87ef845aD669E91f66CdfCA8d'
+        deploy_block: 11507360
       bonding_registry:
-        address: '0x77384A924C18FfE00A9325815723121534105Abd'
-        deploy_block: 11458979
+        address: '0x43bA4663385b5F20f79c04AA8CD48694426863F0'
+        deploy_block: 11507361
       slashing_manager:
-        address: '0x4CE0107239719003ad07F65e0ae18a09aD2dcfDE'
-        deploy_block: 11458977
+        address: '0xfd1A11dd95161313A447e6465f9c2793Dda7bCa1'
+        deploy_block: 11507357
       fee_token:
-        address: '0xD4B8e32C718B87f81d8e58fB3a3f061D92CcBb27'
-        deploy_block: 11458975
+        address: '0xEd12306AF0Cd3D2170cb3E752A653A9143C60a83'
+        deploy_block: 11507353
       faucet:
-        address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-        deploy_block: 11458989
+        address: '0x2A9D8bf02b119Ceb21d3343F7b7F84a7cF1Cc8aC'
+        deploy_block: 11507376
 ```
 
 ### Create the Credentials Secret
@@ -369,12 +369,12 @@ Each contract can be specified as a simple address string or with a deploy block
 ```yaml
 contracts:
   interfold:
-    address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-    deploy_block: 11459000
-  ciphernode_registry: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
+    address: '0x3Cd771d8B8677Bcb1e3338AdDF8A887CCc2C3768'
+    deploy_block: 11507472
+  ciphernode_registry: '0x6c54Fe8d70476Ab87ef845aD669E91f66CdfCA8d'
   faucet:
-    address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-    deploy_block: 11458989
+    address: '0x2A9D8bf02b119Ceb21d3343F7b7F84a7cF1Cc8aC'
+    deploy_block: 11507376
 ```
 
 ---
