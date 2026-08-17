@@ -297,3 +297,32 @@ _Found during source-code cross-referencing of these trace documents._
 | Z-16 | **Safe slashing-manager retirement**                            | Resolved | Retiring managers remain authorized for their assigned E3s, bans, slash locks, proposals, and pending routes. `closeE3` now also waits for the objective accusation submission deadline. Revocation requires every canonical obligation counter to be zero.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Z-24 | **Build-bound crypto configuration**                            | Resolved | The generated configuration ID binds the encryption scheme, exact parameter hash, and circuit version. Requests accept only that append-only configuration and snapshot its verifier addresses. Rust validates the emitted ID against its local build, and the indexer uses local immutable parameters plus the E3's frozen ID instead of querying mutable live parameter bytes.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Z-45 | **In-call request fee bound**                                   | Resolved | Each request supplies its expected fee token, expected crypto configuration, and maximum fee. Any change between quote and inclusion reverts before escrow transfer. The SDK obtains a fresh quote when the caller does not provide an explicit maximum.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+
+### Scope of the Zenith `Z-` entries
+
+The `Z-` rows above come from the 2026-08-17 Zenith protocol audit. Read its scope before treating a
+`Resolved` row as external assurance.
+
+The audit reviewed **six Solidity files and no Rust**, at scope commit `c2097da6`, with a mitigation
+review at `c64bcfb8` over the same six files:
+
+```
+E3RefundManager.sol   Interfold.sol   lib/ExitQueueLib.sol
+lib/InterfoldPricing.sol   registry/BondingRegistry.sol   registry/CiphernodeRegistryOwnable.sol
+```
+
+Outside both file lists: `crates/compute-provider` and the RISC Zero guest, `crates/zk-helpers`,
+`verifiers/bfv/Risc0BfvCiphertextVerifier.sol`, `lib/InterfoldLifecycle.sol`,
+`lib/Risc0ComputeProof.sol`, `lib/FailurePayerLib.sol`, and `examples/CRISP/**`.
+
+Two consequences worth holding onto:
+
+- **A `Resolved` row describes this repository's remediation, not an auditor's re-review of it.**
+  Several entries were remediated by adding files that are themselves outside both lists — Z-15's
+  protocol verifier among them — so the remediation code did not pass through the mitigation review.
+- **The compute path was never audited.** The input-root binding defect fixed in
+  `crates/compute-provider` (see `04_DKG_AND_COMPUTATION.md`) sat in unaudited code, which is the
+  simplest explanation for how it survived. Zenith's §2.5 Security Note recommends a follow-up audit
+  before deploying significant capital.
+
+Full scope detail: `packages/interfold-contracts/audits/README.md`.

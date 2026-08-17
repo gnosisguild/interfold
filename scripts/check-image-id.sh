@@ -81,6 +81,24 @@ else
   warn "pinned revision ${PINNED_REV:0:8} is not present locally; run 'git fetch' to check it."
 fi
 
+# A bare hash says nothing about why it was chosen. Tie it to the baseline recorded in the audit
+# index, so moving the pin is a deliberate act that updates the documented reason with it.
+AUDIT_BASELINE="c2097da61b4d07c4ce83840393ff4e9f171eefb4"
+AUDIT_README="packages/interfold-contracts/audits/README.md"
+
+if ! grep -q "$AUDIT_BASELINE" "$AUDIT_README" 2>/dev/null; then
+  fail "the audit baseline $AUDIT_BASELINE recorded in this script is not documented in
+  $AUDIT_README. Keep the two in step."
+fi
+
+if [ "$PINNED_REV" != "$AUDIT_BASELINE" ]; then
+  warn "the guest pin has moved off the documented audit baseline.
+    pinned:   $PINNED_REV
+    baseline: $AUDIT_BASELINE
+  That is expected once the pin is bumped past the audit. Update AUDIT_BASELINE in this script and
+  the rationale in crates/support/Cargo.toml, so the reason for the pin stays true."
+fi
+
 # --- 2. Toolchain sync --------------------------------------------------------------------------
 # The guest lockfile pins fhe.rs, whose workspace declares an MSRV. A guest toolchain below that
 # MSRV cannot build the guest at all, and the failure surfaces only at container start.

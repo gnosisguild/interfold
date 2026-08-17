@@ -91,6 +91,28 @@ caught, and carries `"imageIdVerified": false` with the reason. `check:image-id`
 whenever that flag is false, so a green check is not read as a verified artifact. Only `--rebuild`
 clears it, and that is blocked on the pin bump above.
 
+## Answered: was the compute path in the audit scope?
+
+No. The security report asked this; the 2026-08-17 Zenith report settles it.
+
+The audit's scope commit is **`c2097da61b4d07c4ce83840393ff4e9f171eefb4` — the same revision the
+guest is pinned to.** So the pin's reason is "freeze the guest at the audited baseline", and that
+reason does not hold up: the audit reviewed six Solidity files and no Rust.
+`crates/compute-provider`, the guest, `crates/zk-helpers`, and `Risc0BfvCiphertextVerifier.sol` were
+in neither the audit nor the mitigation review at `c64bcfb8`.
+
+That is the simplest explanation for how the input-root binding defect survived: it was never in
+scope. Zenith's own §2.5 Security Note recommends a follow-up audit before deploying significant
+capital.
+
+Recorded in `packages/interfold-contracts/audits/README.md`, `agent/flow-trace/00_INDEX.md`,
+`agent/INVARIANTS.md`, the pin comment in `crates/support/Cargo.toml`, and the `build.auditBaseline`
+field of the provenance manifest. `check:image-id` now fails if the baseline recorded in the script
+is not documented in the audits README, and warns when the pin moves off it.
+
+**Any follow-up audit should scope `crates/compute-provider`, the guest, and `crates/zk-helpers`
+explicitly.**
+
 ## Open decision: Finding 3, CRISP vote bytes
 
 `CRISPProgram.publishInput` decodes `encryptedVote` and emits it in `InputPublished`, but never

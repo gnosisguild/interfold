@@ -49,6 +49,15 @@ serde_json = "=1.0.141"
 # image ID. Bump it only together with a rebuilt crates/support/contracts/ImageID.sol and a
 # refreshed ImageID.stamp.json. `pnpm check:image-id` asserts that every pin here names one
 # revision and warns when that revision is not an ancestor of HEAD.
+#
+# Why this revision: c2097da6 is the scope commit of the 2026-08-17 Zenith protocol audit, so the
+# pin freezes the guest at the audited baseline.
+#
+# That reason does not carry the weight it appears to. The audit covered six Solidity files and no
+# Rust at all; crates/compute-provider and the guest were outside its scope, and outside the
+# mitigation review at c64bcfb8 as well. See packages/interfold-contracts/audits/README.md.
+# Pinning here buys reproducibility, not assurance, and this revision predates fixes that have
+# since landed on main.
 fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }

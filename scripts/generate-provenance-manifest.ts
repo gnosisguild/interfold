@@ -200,6 +200,16 @@ async function main() {
       hostToolchain: firstMatch(readIfPresent(path.join(REPO_ROOT, 'rust-toolchain.toml')), /channel = "([^"]+)"/),
       builderImage: builderImage(risc0Version),
       pinnedRevisions: pinnedRevisions(),
+      // Why the guest is pinned where it is, and what that pin does and does not certify. A
+      // consumer reading only a commit hash would reasonably assume the code behind it was
+      // audited; for the guest, it was not.
+      auditBaseline: {
+        commit: 'c2097da61b4d07c4ce83840393ff4e9f171eefb4',
+        report: 'packages/interfold-contracts/audits/20260714-Interfold - Zenith Audit Report.pdf',
+        mitigationReviewCommit: 'c64bcfb890b596e626ea6578c5fbd53f808c3b43',
+        guestInAuditScope: false,
+        note: 'The 2026-08-17 Zenith audit covered six Solidity files and no Rust. crates/compute-provider, the RISC Zero guest, crates/zk-helpers, and Risc0BfvCiphertextVerifier.sol were outside both the audit and the mitigation review.',
+      },
       lockfiles: {
         'crates/support/Cargo.lock': sha256File(path.join(SUPPORT, 'Cargo.lock')),
         'crates/support/methods/guest/Cargo.lock': sha256File(path.join(SUPPORT, 'methods', 'guest', 'Cargo.lock')),

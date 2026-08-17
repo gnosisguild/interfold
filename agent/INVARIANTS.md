@@ -356,6 +356,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
   output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
   create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
+- **The compute path carries no external audit.** The 2026-08-17 Zenith audit covered six Solidity
+  files and no Rust. `crates/compute-provider`, the RISC Zero guest, `crates/zk-helpers`, and
+  `Risc0BfvCiphertextVerifier.sol` were outside both the audit and its mitigation review, so a
+  `Resolved` `Z-` row is this repository's remediation rather than a re-reviewed one. Treat changes
+  in these areas as unaudited by default. — `flow-trace/00`;
+  `packages/interfold-contracts/audits/README.md`
 - **A Secure Process derives its input root; it never receives it.** `ComputeInput` holds only
   `fhe_inputs`, and `ComputeInput::process` derives the leaves from the ciphertexts it processed.
   The protocol verifier takes the input root from the proof envelope and does not constrain it, so
