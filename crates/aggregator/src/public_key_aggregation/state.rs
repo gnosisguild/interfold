@@ -44,9 +44,9 @@ pub enum PublicKeyAggregatorState {
         public_key: ArcBytes,
         keyshare_bytes: Vec<ArcBytes>,
         nodes: OrderedSet<String>,
-        /// Registered node address per sortition `party_id` for the **full** committee
-        /// (all `N` parties that submitted a keyshare, honest or not). Honest-only lookups
-        /// must intersect with `honest_party_ids`.
+        /// Registered node address per sortition `party_id` for the full finalized committee.
+        /// This contains all N parties even when one was excluded before submitting a keyshare.
+        /// Honest-only lookups must intersect with `honest_party_ids`.
         party_nodes: HashMap<u64, String>,
         /// DKG recursive proofs per party (restart-critical).
         dkg_node_proofs: HashMap<u64, Option<Proof>>,

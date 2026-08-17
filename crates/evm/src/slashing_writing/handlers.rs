@@ -2,7 +2,7 @@
 
 //! Admission, scheduling, and submission-outcome handlers.
 
-use super::effects::submit_slash_proposal;
+use super::effects::{read_slash_policy, submit_slash_proposal};
 use super::*;
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
@@ -13,33 +13,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         match msg.into_data() {
             InterfoldEventData::AccusationQuorumReached(data) => {
-                // Only submit if:
-                // 1. This is the right chain
-                // 2. The quorum decided the accused is at fault OR equivocated
-                // 3. This node is among the top MAX_SLASH_SUBMITTERS voters
-                //    (sorted ascending by address). The lowest-address voter
-                //    submits immediately; higher-ranked fallback voters wait
-                //    progressively longer (rank * SUBMITTER_DELAY_SECS) before
-                //    attempting submission. On-chain DuplicateEvidence protection
-                //    ensures at most one slash executes.
-                let my_addr = self.provider.provider().default_signer_address();
-                let rank = submission_rank(data.votes_for.iter().map(|v| v.voter), my_addr);
-
-                if should_submit_slash(
-                    self.provider.chain_id() == data.e3_id.chain_id(),
-                    &data.outcome,
-                    rank,
-                ) {
-                    if encode_attestation_evidence(&data).is_none() {
-                        self.bus.err(
-                            EType::Evm,
-                            anyhow::anyhow!(
-                                "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
-                                data.e3_id
-                            ),
-                        );
-                        return;
-                    }
+                // Every node evaluates the policy after quorum. Only the first three voters send
+                // a transaction when Lane A is enabled, but all nodes need the same disabled-policy
+                // decision so they can derive the same E3-scoped exclusion.
+                if self.provider.chain_id() == data.e3_id.chain_id()
+                    && is_slashable_outcome(&data.outcome)
+                {
                     match self.submissions.admit(data.clone()) {
                         Ok((key, SlashSubmissionDecision::Submit)) => {
                             ctx.notify(SubmitSlashIntent { key, event: data });
@@ -50,6 +29,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                         Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
                             info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
                         }
+                        Err(error) => self.bus.err(EType::Evm, error),
+                    }
+                }
+            }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                if data.e3_id.chain_id() == self.provider.chain_id() {
+                    match SlashIntentKey::from_exclusion(&data) {
+                        Ok(key) => self.submissions.mark_completed(key),
                         Err(error) => self.bus.err(EType::Evm, error),
                     }
                 }
@@ -97,9 +84,103 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
             let address = ctx.address();
             async move {
                 let SubmitSlashIntent { key, event: msg } = msg;
-                // Compute this node's submission rank for staggered fallback
-                let rank =
-                    submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr).unwrap_or(0);
+                let rank = submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr);
+
+                let policy =
+                    read_slash_policy(provider.clone(), contract_address, msg.proof_type as u8)
+                        .await;
+
+                match policy {
+                    Ok(policy)
+                        if classify_slash_policy(policy.enabled, policy.requiresProof)
+                            == SlashPolicyState::Disabled =>
+                    {
+                        info!(
+                            e3_id = %msg.e3_id,
+                            accused = %msg.accused,
+                            proof_type = %msg.proof_type,
+                            reason = %slash_reason(msg.proof_type as u8),
+                            "Slash policy is disabled; excluding the faulted member from local E3 work"
+                        );
+                        if let Err(error) = bus.publish_without_context(CommitteeMemberExcluded {
+                            e3_id: msg.e3_id.clone(),
+                            node: msg.accused,
+                            proof_type: msg.proof_type,
+                            party_id: None,
+                        }) {
+                            bus.err(EType::Evm, error);
+                            let _ = address
+                                .send(SlashSubmissionFinished {
+                                    key,
+                                    terminal: false,
+                                })
+                                .await;
+                            return;
+                        }
+                        let _ = address
+                            .send(SlashSubmissionFinished {
+                                key,
+                                terminal: true,
+                            })
+                            .await;
+                        return;
+                    }
+                    Ok(policy)
+                        if classify_slash_policy(policy.enabled, policy.requiresProof)
+                            == SlashPolicyState::InvalidForAttestations =>
+                    {
+                        bus.err(
+                            EType::Evm,
+                            anyhow::anyhow!(
+                                "Slash policy for proof type {} is enabled but does not accept committee attestations",
+                                msg.proof_type
+                            ),
+                        );
+                        let _ = address
+                            .send(SlashSubmissionFinished {
+                                key,
+                                terminal: true,
+                            })
+                            .await;
+                        return;
+                    }
+                    Err(error) => {
+                        // A failed read must not invent an exclusion. Eligible submitters retain the
+                        // previous transaction path so a temporary RPC read failure cannot suppress
+                        // an enabled slash.
+                        warn!(%error, "Could not read slash policy before submission");
+                    }
+                    Ok(_) => {}
+                }
+
+                if !should_submit_slash(true, &msg.outcome, rank) {
+                    let _ = address
+                        .send(SlashSubmissionFinished {
+                            key,
+                            terminal: true,
+                        })
+                        .await;
+                    return;
+                }
+
+                if encode_attestation_evidence(&msg).is_none() {
+                    bus.err(
+                        EType::Evm,
+                        anyhow::anyhow!(
+                            "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
+                            msg.e3_id
+                        ),
+                    );
+                    let _ = address
+                        .send(SlashSubmissionFinished {
+                            key,
+                            terminal: true,
+                        })
+                        .await;
+                    return;
+                }
+
+                let rank = rank.expect("submission decision requires a voter rank");
 
                 // Fallback submitters wait before attempting, giving the primary
                 // submitter time to land the transaction on-chain.

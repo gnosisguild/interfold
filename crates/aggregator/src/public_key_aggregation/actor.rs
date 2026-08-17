@@ -46,6 +46,8 @@ pub struct PublicKeyAggregator {
     params_preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
+    /// Immutable finalized committee keyed by stable sortition party ID.
+    canonical_party_nodes: HashMap<u64, String>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
 }
@@ -57,6 +59,7 @@ pub struct PublicKeyAggregatorParams {
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,
     pub dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
+    pub canonical_party_nodes: HashMap<u64, String>,
 }
 
 /// Aggregate PublicKey for a committee of nodes. This actor listens for KeyshareCreated events
@@ -75,6 +78,7 @@ impl PublicKeyAggregator {
             params_preset: params.params_preset,
             committee_size: params.committee_size,
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
+            canonical_party_nodes: params.canonical_party_nodes,
             early_dkg_proofs: Vec::new(),
         }
     }

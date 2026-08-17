@@ -26,9 +26,9 @@ pub(crate) enum HonestSelection {
 pub(crate) struct PublicKeyAggregation;
 
 impl PublicKeyAggregation {
-    /// Add a keyshare to a `Collecting` state, returning the next state. When all `N`
-    /// committee keyshares have arrived this transitions to `VerifyingC1`. Submitting a
-    /// `party_id` that already has a keyshare is idempotent (state is returned unchanged).
+    /// Add a keyshare to a `Collecting` state. When every currently expected party has submitted,
+    /// this transitions to `VerifyingC1`. The expected count starts at N and decreases after an
+    /// E3-scoped exclusion. Reusing a `party_id` is idempotent.
     pub(crate) fn add_keyshare(
         mut state: PublicKeyAggregatorState,
         keyshare: ArcBytes,

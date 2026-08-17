@@ -80,6 +80,18 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     interface ISlashingManager {
+        struct SlashPolicy {
+            uint256 ticketPenalty;
+            uint256 ciphernodeBondPenalty;
+            bool requiresProof;
+            address proofVerifier;
+            bool banNode;
+            uint256 appealWindow;
+            bool enabled;
+            bool affectsCommittee;
+            uint8 failureReason;
+        }
+
         // ── Write functions ─────────────────────────────────────────────────
         function proposeSlash(
             uint256 e3Id,
@@ -95,6 +107,8 @@ sol! {
 
         // ── View functions ──────────────────────────────────────────────────
         function ciphernodeRegistry() external view returns (address);
+
+        function getSlashPolicy(bytes32 reason) external view returns (SlashPolicy memory policy);
 
         // ── Events ──────────────────────────────────────────────────────────
         event SlashExecuted(

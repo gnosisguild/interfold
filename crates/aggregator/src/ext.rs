@@ -74,7 +74,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             return;
         }
 
-        let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
+        let Some(fhe) = ctx.get_dependency(FHE_KEY).cloned() else {
             self.bus.err(
                 EType::PublickeyAggregation,
                 anyhow!(ERROR_PUBKEY_FHE_MISSING),
@@ -87,11 +87,30 @@ impl E3Extension for PublicKeyAggregatorExtension {
             threshold_m,
             seed,
             params_preset,
+            committee,
             ..
         } = data.clone();
         let dkg_fold_attestation_context = ctx
             .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
             .copied();
+        let committee_addresses = match committee_addresses_from_node_strings(&committee) {
+            Ok(addresses) if addresses.len() == threshold_n => addresses,
+            Ok(addresses) => {
+                self.bus.err(
+                    EType::PublickeyAggregation,
+                    anyhow!(
+                        "Could not create PublicKeyAggregator for E3 {e3_id}: selected event has {} committee addresses; expected {threshold_n}.",
+                        addresses.len()
+                    ),
+                );
+                return;
+            }
+            Err(error) => {
+                self.bus.err(EType::PublickeyAggregation, error);
+                return;
+            }
+        };
+        ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, committee_addresses.clone());
         let repo = ctx.repositories().publickey(&e3_id);
         let sync_state = repo.send(Some(PublicKeyAggregatorState::init(
             threshold_n,
@@ -113,13 +132,14 @@ impl E3Extension for PublicKeyAggregatorExtension {
             }
         };
         let value = create_publickey_aggregator(
-            fhe.clone(),
+            fhe,
             self.bus.clone(),
             e3_id,
             sync_state,
             params_preset,
             committee_size,
             dkg_fold_attestation_context,
+            committee_addresses,
         );
 
         ctx.set_event_recipient("publickey", Some(value));
@@ -175,6 +195,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             committee_size,
             ctx.get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
                 .copied(),
+            load_committee_addresses(ctx)?,
         );
 
         // send to context
@@ -192,7 +213,13 @@ fn create_publickey_aggregator(
     params_preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
+    committee_addresses: Vec<Address>,
 ) -> Recipient<InterfoldEvent> {
+    let canonical_party_nodes = committee_addresses
+        .into_iter()
+        .enumerate()
+        .map(|(party_id, node)| (party_id as u64, node.to_string()))
+        .collect();
     KeyshareCreatedFilterBuffer::new(
         PublicKeyAggregator::new(
             PublicKeyAggregatorParams {
@@ -202,6 +229,7 @@ fn create_publickey_aggregator(
                 params_preset,
                 committee_size,
                 dkg_fold_attestation_context,
+                canonical_party_nodes,
             },
             sync_state,
         )

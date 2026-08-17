@@ -15,8 +15,8 @@ use e3_events::Sequenced;
 use e3_events::TypedEvent;
 use e3_events::{
     prelude::*, trap, AggregatorChanged, BusHandle, CiphernodeSelected, Committee,
-    CommitteeFinalized, CommitteeMemberExpelled, E3Requested, E3id, EType, EventType,
-    InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TicketId,
+    CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, E3Requested, E3id, EType,
+    EventType, InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TicketId,
 };
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
@@ -44,6 +44,8 @@ fn e3_meta_from(req: &E3Requested) -> E3Meta {
 pub struct CiphernodeSelectorState {
     pub e3_cache: HashMap<E3id, E3Meta>,
     pub committees: HashMap<E3id, Committee>,
+    /// Party IDs excluded from current E3 work by an on-chain expulsion or a confirmed local
+    /// fallback. This does not alter the canonical committee roster.
     pub expelled: HashMap<E3id, Vec<u64>>,
     /// Party ids the local node presumes unresponsive for failover purposes.
     /// Treated identically to `expelled` when computing the active aggregator,
@@ -99,6 +101,7 @@ impl CiphernodeSelector {
         bus.subscribe(EventType::E3RequestComplete, addr.clone().recipient());
         bus.subscribe(EventType::CommitteeFinalized, addr.clone().recipient());
         bus.subscribe(EventType::CommitteeMemberExpelled, addr.clone().recipient());
+        bus.subscribe(EventType::CommitteeMemberExcluded, addr.clone().recipient());
         bus.subscribe(EventType::Shutdown, addr.clone().recipient());
 
         info!("CiphernodeSelector listening!");

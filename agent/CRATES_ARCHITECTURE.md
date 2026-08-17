@@ -541,14 +541,15 @@ flowchart TD
     Quorum -->|yes| Decision[AccusationQuorumReached]
     Wait --> Timeout[E3 timeout / formation failure]
     Decision --> Writer[SlashingManagerSolWriter]
-    Writer --> Eligible{right chain, slashable outcome, and ranked submitter?}
-    Eligible -->|no| Ignore[ignore locally]
-    Eligible -->|yes| Effects{EffectsEnabled?}
+    Writer --> Effects{EffectsEnabled?}
     Effects -->|no| Deferred[in-memory deferred intents]
-    Deferred -->|startup reconciliation complete| Submit
+    Deferred -->|startup reconciliation complete| Policy
     Effects -->|yes| Gate{semantic intent already deferred, in flight, or complete?}
     Gate -->|yes| Ignore[coalesce duplicate]
-    Gate -->|no| Submit[submit now or after rank delay]
+    Gate -->|no| Policy{proof slash policy enabled?}
+    Policy -->|no| Exclude[durable E3-scoped local exclusion]
+    Policy -->|yes, ranked voter| Submit[submit now or after rank delay]
+    Policy -->|yes, not ranked| Ignore
     Submit --> Outcome{transaction outcome}
     Outcome -->|success or classified benign result| Complete[retain completed key]
     Outcome -->|retryable failure| Retry[clear in-flight key]
@@ -571,11 +572,16 @@ attributable to a canonical party before they become slashing evidence. Replayed
 semantic replay domain across deferred, in-flight, and completed submissions. Retryable submission
 failures release their key. Successful or known-benign terminal results retain it.
 
+Every node reads the proof-type policy after a fault quorum. A disabled policy produces a durable,
+E3-scoped `CommitteeMemberExcluded` fact instead of a transaction that must revert. This fact is
+not an on-chain expulsion: it changes only the current E3's collectors and aggregator selection.
+The canonical N-member roster remains unchanged for proof binding, rewards, and registry state.
+
 The gate is deliberately described as in-memory: there is no durable external-effect outbox or
 persisted transaction intent. A crash after snapshot advancement but before receipt classification
 can therefore lose the local redrive state, and a crash after submission can require on-chain
 reconciliation to distinguish landed from missing work. Closing that gap requires a durable
-intent/result state machine and contract preflight, not another process-local set.
+intent/result state machine and receipt reconciliation, not another process-local set.
 
 ## Program-server trust boundary
 

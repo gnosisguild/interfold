@@ -21,6 +21,7 @@ mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
 mod committee_formation_failed;
+mod committee_member_excluded;
 mod committee_published;
 mod committee_requested;
 mod committee_viability_updated;
@@ -100,6 +101,7 @@ pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
 pub use committee_formation_failed::*;
+pub use committee_member_excluded::*;
 pub use committee_published::*;
 pub use committee_requested::*;
 pub use committee_viability_updated::*;
@@ -347,6 +349,8 @@ pub enum InterfoldEventData {
     EvmLogObserved(EvmLogObserved),
     BondOwnerSet(BondOwnerSet),
     DkgFoldAttestationContextEstablished(DkgFoldAttestationContextEstablished),
+    // Append new durable variants to preserve existing enum discriminants in persisted logs.
+    CommitteeMemberExcluded(CommitteeMemberExcluded),
 }
 
 impl InterfoldEventData {
@@ -638,6 +642,7 @@ impl InterfoldEventData {
             InterfoldEventData::ShareVerificationComplete(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::SlashExecuted(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeMemberExpelled(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitteeMemberExcluded(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3Failed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3StageChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionShareProofSigned(ref data) => Some(data.e3_id.clone()),
@@ -780,7 +785,8 @@ impl_event_types!(
     CommitteeViabilityUpdated,
     EvmLogObserved,
     BondOwnerSet,
-    DkgFoldAttestationContextEstablished
+    DkgFoldAttestationContextEstablished,
+    CommitteeMemberExcluded
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

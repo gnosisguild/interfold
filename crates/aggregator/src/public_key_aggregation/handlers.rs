@@ -85,6 +85,48 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     Ok(())
                 });
             }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                // Sortition republishes this event with a party ID. The public-key collector uses
+                // the raw event because it filters by the node address before that enrichment.
+                if data.party_id.is_some() {
+                    return;
+                }
+
+                let node_addr = data.node;
+                if data.e3_id != self.e3_id {
+                    error!("Wrong e3_id sent to PublicKeyAggregator for local exclusion.");
+                    return;
+                }
+
+                info!(
+                    node = %node_addr,
+                    e3_id = %data.e3_id,
+                    proof_type = %data.proof_type,
+                    "PublicKeyAggregator excluding a quorum-confirmed faulty member"
+                );
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    let was_collecting = matches!(
+                        self.state.get(),
+                        Some(PublicKeyAggregatorState::Collecting { .. })
+                    );
+                    self.handle_member_expelled(node_addr, &ec)?;
+                    if was_collecting {
+                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
+                            submission_order,
+                            c1_proofs,
+                            ..
+                        }) = self.state.get()
+                        {
+                            self.dispatch_c1_verification(
+                                &submission_order,
+                                &c1_proofs,
+                                ec.clone(),
+                            )?;
+                        }
+                    }
+                    Ok(())
+                });
+            }
             _ => (),
         };
     }

@@ -127,6 +127,30 @@ impl ThresholdKeyshare {
             node_addr, party_id, data.e3_id, data.active_count_after
         );
 
+        self.handle_party_excluded(party_id, ec);
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn handle_committee_member_excluded(
+        &mut self,
+        data: CommitteeMemberExcluded,
+        ec: EventContext<Sequenced>,
+    ) {
+        let Some(party_id) = data.party_id else {
+            return;
+        };
+
+        info!(
+            node = %data.node,
+            party_id,
+            e3_id = %data.e3_id,
+            proof_type = %data.proof_type,
+            "Stopping current E3 work with a quorum-confirmed faulty member"
+        );
+
+        self.handle_party_excluded(party_id, ec);
+    }
+
+    fn handle_party_excluded(&mut self, party_id: u64, ec: EventContext<Sequenced>) {
         // Record permanently so late-arriving data is rejected even if
         // collectors haven't been created or have already completed.
         // Also clean honest_parties set for the expelled party.

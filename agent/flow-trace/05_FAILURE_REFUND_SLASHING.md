@@ -517,7 +517,23 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     Coalesce by the contract replay tuple (chainId, e3Id, accused, proofType)
 │     After EffectsEnabled, release each retained intent once and track it in flight
 │
-├─ 2. STAGGERED SUBMISSION (fallback submitters):
+├─ 2. READ THE PROOF-TYPE POLICY ON EVERY COMMITTEE NODE:
+│     reason = keccak256(abi.encodePacked(uint256(proofType)))
+│     policy = SlashingManager.getSlashPolicy(reason)
+│     │
+│     ├─ Policy disabled:
+│     │   ├─ Do not submit a transaction that can only revert
+│     │   ├─ Publish durable CommitteeMemberExcluded { party_id: None }
+│     │   └─ Stop waiting for the confirmed faulty member in this E3 only
+│     │       → No on-chain slash, ban, reward hold, or future-selection change is implied
+│     │
+│     ├─ Policy enabled but not configured for proof attestations:
+│     │   └─ Report the configuration error; do not invent an exclusion
+│     │
+│     └─ Policy read fails:
+│         └─ Do not invent an exclusion; ranked voters retain the transaction path
+│
+├─ 3. STAGGERED SUBMISSION (enabled policy, fallback submitters):
 │     Rank all agreeing voters by address (sorted ascending)
 │     My rank = position in sorted list
 │     │
@@ -528,7 +544,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → Prevents multiple nodes wasting gas on same slash
 │     → Higher-rank submitters expect DuplicateEvidence revert
 │
-├─ 3. Encode attestation evidence:
+├─ 4. Encode attestation evidence:
 │     proof = abi.encode(
 │       proofType,       // uint256 — which proof failed (C0-C7)
 │       voters[],        // address[] — sorted ascending
@@ -539,11 +555,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │       signatures[]     // bytes[] — per-voter ECDSA signatures
 │     )
 │
-├─ 4. Prefer proposeSlashByDkgParty(e3Id, partyId, proof) when the
+├─ 5. Prefer proposeSlashByDkgParty(e3Id, partyId, proof) when the
 │     canonical DKG slot resolves; otherwise call proposeSlash(e3Id, accused, proof)
 │     → On-chain verification happens (see Lane A below)
 │
-└─ 5. Handle result:
+└─ 6. Handle result:
      ├─ Success: log transaction hash
      ├─ DuplicateEvidence / stale committee attribution: terminal and logged as warning
      └─ Other RPC or contract failures: reported and made eligible for a later retry event
@@ -1280,6 +1296,18 @@ When CommitteeMemberExpelled event arrives from EVM:
         ├─ CiphernodeSelector: cleans e3_cache entry for this e3_id
         └─ E3Router: removes E3Context for this e3_id
 ```
+
+When a proof-fault quorum is reached while its on-chain policy is disabled, the writer publishes a
+separate `CommitteeMemberExcluded` event. Sortition resolves its stable `party_id` from the same
+immutable `CommitteeFinalized` roster and republishes the enriched event. The keyshare collectors,
+public-key aggregator, plaintext aggregator, and active-aggregator selector then treat that party as
+unavailable for this E3. The final DKG proof still receives all N canonical committee addresses
+from `CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
+
+This fallback is availability-only. The excluded operator remains an active on-chain committee
+member, can remain eligible for future E3s, and can receive any reward that the contracts still
+assign to it. Enable the matching slash policy when the deployment requires economic punishment,
+an on-chain reward hold, or registry expulsion.
 
 ---
 

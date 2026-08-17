@@ -35,6 +35,10 @@ impl DecryptionshareCreatedBuffer {
         }
     }
 
+    fn forward(dest: &Addr<ThresholdPlaintextAggregator>, event: InterfoldEvent) {
+        dest.do_send(event);
+    }
+
     fn flush(&mut self) {
         if !self.is_aggregator {
             return;
@@ -45,13 +49,16 @@ impl DecryptionshareCreatedBuffer {
                 InterfoldEventData::DecryptionshareCreated(data)
                     if !self.expelled_parties.contains(&data.party_id) =>
                 {
-                    self.dest.do_send(event);
+                    Self::forward(&self.dest, event);
                 }
                 InterfoldEventData::CommitteeMemberExpelled(data) if data.party_id.is_some() => {
-                    self.dest.do_send(event);
+                    Self::forward(&self.dest, event);
+                }
+                InterfoldEventData::CommitteeMemberExcluded(data) if data.party_id.is_some() => {
+                    Self::forward(&self.dest, event);
                 }
                 InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {
-                    self.dest.do_send(event);
+                    Self::forward(&self.dest, event);
                 }
                 _ => {}
             }
@@ -78,7 +85,7 @@ impl Handler<InterfoldEvent> for DecryptionshareCreatedBuffer {
                 }
 
                 if self.is_aggregator {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
                 } else {
                     self.buffer.push(msg);
                 }
@@ -88,7 +95,9 @@ impl Handler<InterfoldEvent> for DecryptionshareCreatedBuffer {
                     return;
                 };
 
-                self.expelled_parties.insert(party_id);
+                if !self.expelled_parties.insert(party_id) {
+                    return;
+                }
                 self.buffer.retain(|event| {
                     !matches!(
                         event.get_data(),
@@ -98,7 +107,29 @@ impl Handler<InterfoldEvent> for DecryptionshareCreatedBuffer {
                 });
 
                 if self.is_aggregator {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
+                } else {
+                    self.buffer.push(msg);
+                }
+            }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                let Some(party_id) = data.party_id else {
+                    return;
+                };
+
+                if !self.expelled_parties.insert(party_id) {
+                    return;
+                }
+                self.buffer.retain(|event| {
+                    !matches!(
+                        event.get_data(),
+                        InterfoldEventData::DecryptionshareCreated(share)
+                            if share.party_id == party_id
+                    )
+                });
+
+                if self.is_aggregator {
+                    Self::forward(&self.dest, msg);
                 } else {
                     self.buffer.push(msg);
                 }
@@ -108,11 +139,11 @@ impl Handler<InterfoldEvent> for DecryptionshareCreatedBuffer {
                 self.flush();
             }
             InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {
-                self.dest.do_send(msg);
+                Self::forward(&self.dest, msg);
             }
             _ => {
                 if self.is_aggregator {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
                 }
             }
         }

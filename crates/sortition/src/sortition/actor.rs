@@ -19,10 +19,10 @@ use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::hlc::HlcTimestamp;
 use e3_events::{
     prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExpelled, CommitteePublished, CommitteeRequested, ConfigurationUpdated,
-    E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EventContext,
-    EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished, Seed,
-    Sequenced, TicketBalanceUpdated, TypedEvent,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteePublished, CommitteeRequested,
+    ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
+    EventContext, EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished,
+    Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -47,6 +47,8 @@ pub struct Sortition {
     /// committee was finalized (e.g. out-of-order live delivery or a reorg). Drained when the
     /// `CommitteeFinalized` event for the same E3 is processed so early expulsions are not lost.
     pending_expulsions: HashMap<E3id, Vec<(CommitteeMemberExpelled, EventContext<Sequenced>)>>,
+    /// Raw local exclusions that arrived before the matching finalized committee.
+    pending_exclusions: HashMap<E3id, Vec<(CommitteeMemberExcluded, EventContext<Sequenced>)>>,
     /// Committee seeds rebuilt from registry replay before effects are enabled.
     sortition_seeds: HashMap<E3id, Seed>,
     /// Live E3 requests that arrived before their delayed committee seed.
@@ -80,6 +82,7 @@ impl Sortition {
             ciphernode_selector: params.ciphernode_selector,
             address: params.address,
             pending_expulsions: HashMap::new(),
+            pending_exclusions: HashMap::new(),
             sortition_seeds: HashMap::new(),
             pending_requests: HashMap::new(),
         }
@@ -127,6 +130,7 @@ impl Sortition {
                 EventType::PlaintextOutputPublished,
                 EventType::CommitteeFinalized,
                 EventType::CommitteeMemberExpelled,
+                EventType::CommitteeMemberExcluded,
                 EventType::E3Failed,
                 EventType::E3StageChanged,
                 EventType::E3RequestComplete,
@@ -236,6 +240,43 @@ impl Sortition {
 
         self.bus.publish(
             CommitteeMemberExpelled {
+                party_id: Some(party_id),
+                ..data
+            },
+            ec,
+        )?;
+
+        Ok(true)
+    }
+
+    /// Resolve a locally excluded node against the immutable finalized committee roster.
+    fn try_resolve_and_publish_exclusion(
+        &self,
+        data: CommitteeMemberExcluded,
+        ec: EventContext<Sequenced>,
+    ) -> Result<bool> {
+        let node_addr = data.node.to_string();
+
+        let Some(committee) = self.get_committee(&data.e3_id) else {
+            return Ok(false);
+        };
+
+        let Some(party_id) = committee.party_id_for(&node_addr) else {
+            warn!(
+                "Locally excluded node {} not found in committee for e3_id={}",
+                node_addr, data.e3_id
+            );
+            return Ok(true);
+        };
+
+        info!(
+            node = %node_addr,
+            party_id,
+            e3_id = %data.e3_id,
+            "Resolved local E3 exclusion to a stable party ID"
+        );
+        self.bus.publish(
+            CommitteeMemberExcluded {
                 party_id: Some(party_id),
                 ..data
             },

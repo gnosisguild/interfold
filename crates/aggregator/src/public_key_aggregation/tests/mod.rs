@@ -64,6 +64,29 @@ fn complete_state() -> PublicKeyAggregatorState {
     }
 }
 
+fn canonical_party_nodes(state: &PublicKeyAggregatorState) -> HashMap<u64, String> {
+    match state {
+        PublicKeyAggregatorState::Collecting {
+            submission_order, ..
+        }
+        | PublicKeyAggregatorState::VerifyingC1 {
+            submission_order, ..
+        } => submission_order
+            .iter()
+            .map(|(party_id, node, _)| (*party_id, node.clone()))
+            .collect(),
+        PublicKeyAggregatorState::GeneratingC5Proof { party_nodes, .. } => party_nodes.clone(),
+        PublicKeyAggregatorState::Complete {
+            committee_addresses,
+            ..
+        } => committee_addresses
+            .iter()
+            .enumerate()
+            .map(|(party_id, node)| (party_id as u64, node.to_string()))
+            .collect(),
+    }
+}
+
 async fn build_public_key_aggregator(
     initial_state: PublicKeyAggregatorState,
 ) -> Result<(
@@ -87,6 +110,7 @@ async fn build_public_key_aggregator_with_committee(
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let canonical_party_nodes = canonical_party_nodes(&initial_state);
     let aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe,
@@ -95,6 +119,7 @@ async fn build_public_key_aggregator_with_committee(
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size,
             dkg_fold_attestation_context: None,
+            canonical_party_nodes,
         },
         test_state(initial_state),
     );
