@@ -108,9 +108,9 @@ describe("E3 Pricing", function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
 
-      // Minimum uses circuit threshold T=1 and committee size N=3.
+      // Minimum requires H=2 decryption shares from an N=3 committee.
       const n = 3n; // total committee
-      const m = 1n; // quorum
+      const h = 2n; // required decryption shares
 
       // Get pricing config
       const pc = await interfold.getPricingConfig();
@@ -138,8 +138,8 @@ describe("E3 Pricing", function () {
       if (n > 1n) baseFee += (pc.coordinationPerPair * n * (n - 1n)) / 2n;
       baseFee += pc.verificationPerProof * n * proofsPerNode;
       baseFee += pc.availabilityPerNodePerSec * n * duration;
-      baseFee += pc.decryptionPerNode * m;
-      if (m > 1n) baseFee += (pc.coordinationPerPair * m * (m - 1n)) / 2n;
+      baseFee += pc.decryptionPerNode * h;
+      if (h > 1n) baseFee += (pc.coordinationPerPair * h * (h - 1n)) / 2n;
       baseFee += pc.publicationBase;
 
       const marginBps = pc.marginBps;
@@ -147,6 +147,29 @@ describe("E3 Pricing", function () {
 
       const actualFee = await interfold.getE3Quote(request);
       expect(actualFee).to.equal(expectedFee);
+    });
+
+    it("charges each required decryption share", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      const decryptionPerNode = 300000n;
+
+      await setPricingConfig(interfold, {
+        ...defaultPricingConfig,
+        decryptionPerNode: 0n,
+        marginBps: 0,
+      });
+      const feeWithoutDecryption = await interfold.getE3Quote(request);
+
+      await setPricingConfig(interfold, {
+        ...defaultPricingConfig,
+        decryptionPerNode,
+        marginBps: 0,
+      });
+      const feeWithDecryption = await interfold.getE3Quote(request);
+
+      expect(feeWithDecryption - feeWithoutDecryption).to.equal(
+        decryptionPerNode * 2n,
+      );
     });
 
     it("fee increases with longer input window", async function () {
@@ -692,15 +715,15 @@ describe("E3 Pricing", function () {
       // Compute the expected fee using the new duration.
       const pc2 = await interfold.getPricingConfig();
       const n = 3n;
-      const m = 1n;
+      const h = 2n;
       const proofsPerNode = 14n + 4n * (n - 1n);
       let baseFee = pc2.keyGenFixedPerNode * n;
       baseFee += pc2.keyGenPerEncryptionProof * n * proofsPerNode;
       if (n > 1n) baseFee += (pc2.coordinationPerPair * n * (n - 1n)) / 2n;
       baseFee += pc2.verificationPerProof * n * proofsPerNode;
       baseFee += pc2.availabilityPerNodePerSec * n * newDuration;
-      baseFee += pc2.decryptionPerNode * m;
-      if (m > 1n) baseFee += (pc2.coordinationPerPair * m * (m - 1n)) / 2n;
+      baseFee += pc2.decryptionPerNode * h;
+      if (h > 1n) baseFee += (pc2.coordinationPerPair * h * (h - 1n)) / 2n;
       baseFee += pc2.publicationBase;
       const expectedFee = (baseFee * (10000n + BigInt(pc2.marginBps))) / 10000n;
 
@@ -715,8 +738,8 @@ describe("E3 Pricing", function () {
       if (n > 1n) oldBaseFee += (pc2.coordinationPerPair * n * (n - 1n)) / 2n;
       oldBaseFee += pc2.verificationPerProof * n * proofsPerNode;
       oldBaseFee += pc2.availabilityPerNodePerSec * n * oldDuration;
-      oldBaseFee += pc2.decryptionPerNode * m;
-      if (m > 1n) oldBaseFee += (pc2.coordinationPerPair * m * (m - 1n)) / 2n;
+      oldBaseFee += pc2.decryptionPerNode * h;
+      if (h > 1n) oldBaseFee += (pc2.coordinationPerPair * h * (h - 1n)) / 2n;
       oldBaseFee += pc2.publicationBase;
       const oldFee = (oldBaseFee * (10000n + BigInt(pc2.marginBps))) / 10000n;
 
