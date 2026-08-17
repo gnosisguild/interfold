@@ -573,9 +573,9 @@ semantic replay domain across deferred, in-flight, and completed submissions. Re
 failures release their key. Successful or known-benign terminal results retain it.
 
 Every node reads the proof-type policy after a fault quorum. A disabled policy produces a durable,
-E3-scoped `CommitteeMemberExcluded` fact instead of a transaction that must revert. This fact is
-not an on-chain expulsion: it changes only the current E3's collectors and aggregator selection.
-The canonical N-member roster remains unchanged for proof binding, rewards, and registry state.
+E3-scoped `CommitteeMemberExcluded` fact instead of a transaction that must revert. This fact is not
+an on-chain expulsion: it changes only the current E3's collectors and aggregator selection. The
+canonical N-member roster remains unchanged for proof binding, rewards, and registry state.
 
 The gate is deliberately described as in-memory: there is no durable external-effect outbox or
 persisted transaction intent. A crash after snapshot advancement but before receipt classification

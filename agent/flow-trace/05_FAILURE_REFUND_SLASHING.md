@@ -1301,13 +1301,13 @@ When a proof-fault quorum is reached while its on-chain policy is disabled, the 
 separate `CommitteeMemberExcluded` event. Sortition resolves its stable `party_id` from the same
 immutable `CommitteeFinalized` roster and republishes the enriched event. The keyshare collectors,
 public-key aggregator, plaintext aggregator, and active-aggregator selector then treat that party as
-unavailable for this E3. The final DKG proof still receives all N canonical committee addresses
-from `CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
+unavailable for this E3. The final DKG proof still receives all N canonical committee addresses from
+`CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
 
 This fallback is availability-only. The excluded operator remains an active on-chain committee
 member, can remain eligible for future E3s, and can receive any reward that the contracts still
-assign to it. Enable the matching slash policy when the deployment requires economic punishment,
-an on-chain reward hold, or registry expulsion.
+assign to it. Enable the matching slash policy when the deployment requires economic punishment, an
+on-chain reward hold, or registry expulsion.
 
 ---
 
