@@ -89,6 +89,16 @@ fn build_compute_request(
         .json(request)
 }
 
+/// The published inputs for a round, in on-chain index order.
+///
+/// Grouped because the three vectors are only meaningful together: entry `i` of each describes the
+/// same input, and a length mismatch mis-pairs ciphertexts with the commitments that prove them.
+pub struct RoundInputs {
+    pub ciphertexts: Vec<(Vec<u8>, u64)>,
+    pub commitments: Vec<[u8; 32]>,
+    pub slots: Vec<[u8; 20]>,
+}
+
 pub async fn run_compute(
     e3_id: &str,
     chain_id: u64,
@@ -96,9 +106,7 @@ pub async fn run_compute(
     encryption_scheme_id: Vec<u8>,
     committee_public_key_hash: Vec<u8>,
     params: Vec<u8>,
-    ciphertext_inputs: Vec<(Vec<u8>, u64)>,
-    input_commitments: Vec<[u8; 32]>,
-    input_slots: Vec<[u8; 20]>,
+    inputs: RoundInputs,
     webhook_url: String,
 ) -> Result<(String, String)> {
     let request = ComputeRequest {
@@ -109,9 +117,9 @@ pub async fn run_compute(
         committee_public_key_hash,
         callback_url: Some(webhook_url),
         params,
-        ciphertext_inputs,
-        input_commitments,
-        input_slots,
+        ciphertext_inputs: inputs.ciphertexts,
+        input_commitments: inputs.commitments,
+        input_slots: inputs.slots,
     };
 
     println!("Sending request");

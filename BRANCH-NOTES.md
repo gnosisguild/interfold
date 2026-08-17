@@ -44,6 +44,22 @@ and `batch_size` parameters.
 - `CRISPProgram.setImageId` / `setRisc0Verifier` document that they cannot replace an accepted
   computation but can fail an E3 in flight.
 
+## The compute-provider crate stays generic
+
+The leaf layout and the selection rule are CRISP's, so they live in `examples/CRISP/program`, not in
+the crate every E3 program is pointed at. The crate holds only what is true for all of them — leaves
+are derived, never received, and every input contributes one — and takes the rest as an
+`InputPolicy`.
+
+- `InputPolicy::default()` is the pre-existing behaviour and matches the starter template.
+- Every E3 program now exports `policy()` beside `fhe_processor`.
+- `PublishedData { commitment, metadata }` carries what the program published per input; `metadata`
+  is opaque to the crate, and CRISP puts its slot address there.
+
+`FHEInputs` is back to `{ ciphertexts, params }`, so processors are unchanged. An earlier draft had
+put CRISP's `slots: Vec<[u8; 20]>` on it, which broke the starter template's test and would have
+silently given CRISP's dedup to any program that populated the field.
+
 ## Blocker: the guest still runs the old code
 
 **The leaf-derivation fix does not reach the deployed guest on this branch.**
@@ -75,7 +91,8 @@ because that is the signature at the pinned revision. It is deliberately left al
    - the two `ComputeManager::new` calls in `crates/support/host/src/lib.rs` drop the `use_parallel`
      and `batch_size` arguments;
    - `crates/support/methods/guest/src/bin/program.rs` must handle the `Result` that
-     `ComputeInput::process` now returns.
+     `ComputeInput::process` now returns, and pass the program's policy:
+     `input.input.process(fhe_processor, e3_user_program::policy())`.
 4. Rebuild the guest: `./scripts/check-image-id.sh --rebuild`.
 5. Commit the regenerated `crates/support/contracts/ImageID.sol`, refresh
    `crates/support/contracts/ImageID.stamp.json`, and set `imageIdVerified` to `true`.

@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::compute_input::{ComputeError, FHEInputs};
+use crate::compute_input::{ComputeError, FHEInputs, PublishedData};
+use crate::policy::{InputPolicy, PublishedInput};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, BigInteger};
 use e3_bfv_client::client::compute_ct_commitment;
@@ -12,17 +13,8 @@ use fhe::bfv::BfvParameters;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
-use sha2::{Digest as Sha2Digest, Sha256};
-use std::collections::BTreeMap;
-
-/// One input, paired with its position in the tree so the selection stays ordered.
-type PositionedInput = (usize, (Vec<u8>, u64));
 use std::str::FromStr;
 use zk_kit_imt::imt::IMT;
-
-/// The BN254 scalar field, which every tree leaf must be reduced into.
-const SNARK_SCALAR_FIELD: &str =
-    "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 
 pub struct MerkleTreeBuilder {
     pub leaf_hashes: Vec<String>,
@@ -52,101 +44,68 @@ impl MerkleTreeBuilder {
         self
     }
 
-    /// Derives one leaf per input, in the order given, and returns the inputs to compute over.
+    /// Derives one leaf per published input and returns the ciphertexts the policy selected.
     ///
-    /// The leaf matches the layout the E3 program builds:
-    /// `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`.
+    /// Two guarantees hold whatever the policy does, because they are applied here rather than
+    /// delegated:
     ///
-    /// The tree is append-only, so a slot may hold several entries. For each slot the most recent
-    /// entry whose bytes reproduce its commitment is returned; entries that do not reproduce it,
-    /// or that do not deserialize, keep their leaf but are skipped. That fallback is what stops a
-    /// third party appending bad bytes to a slot and erasing a vote that was already counted.
-    ///
-    /// The selection is a function of values the root binds, so any prover holding the same
-    /// published data reaches the same set.
-    ///
-    /// When `commitments` or `slots` is empty, no check is possible: every input is returned and
-    /// the leaf falls back to the bare ciphertext commitment.
+    /// - **every input contributes a leaf**, so the root covers the whole published set and a
+    ///   policy cannot make the result unpublishable by omitting one;
+    /// - **leaves are derived from the ciphertexts given**, never accepted alongside them.
     pub fn compute_leaf_hashes(
         &mut self,
         inputs: &FHEInputs,
+        published: &[PublishedData],
         params: &BfvParameters,
+        policy: InputPolicy,
     ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
         let degree = params.degree();
         let plaintext_modulus = params.plaintext();
         let moduli = params.moduli().to_vec();
-        let bound = !inputs.commitments.is_empty() && !inputs.slots.is_empty();
+        let empty = PublishedData::default();
 
-        if bound
-            && (inputs.commitments.len() != inputs.ciphertexts.len()
-                || inputs.slots.len() != inputs.ciphertexts.len())
-        {
-            return Err(ComputeError::MerkleTree(format!(
-                "{} ciphertexts, {} commitments, {} slots",
-                inputs.ciphertexts.len(),
-                inputs.commitments.len(),
-                inputs.slots.len()
-            )));
-        }
-
-        // Keyed by slot; a later entry replaces an earlier one, so what survives is the most
-        // recent usable entry for that slot.
-        let mut latest_per_slot: BTreeMap<[u8; 20], PositionedInput> = BTreeMap::new();
-        let mut unbound_usable = Vec::new();
-
-        for (index, item) in inputs.ciphertexts.iter().enumerate() {
-            // A commitment that cannot be computed marks an unusable input rather than a failure:
-            // the bytes are attacker-supplied and must not be able to stop the round.
-            let recomputed =
-                compute_ct_commitment(item.0.clone(), degree, plaintext_modulus, moduli.clone())
-                    .ok();
-
-            if !bound {
-                let commitment = recomputed.ok_or(ComputeError::LeafCommitment {
+        let entries: Vec<PublishedInput> = inputs
+            .ciphertexts
+            .iter()
+            .enumerate()
+            .map(|(index, (ciphertext, _))| {
+                let entry = published.get(index).unwrap_or(&empty);
+                PublishedInput {
                     index,
-                    reason: "ciphertext could not be deserialized".to_string(),
-                })?;
-                self.leaf_hashes.push(hex::encode(commitment));
-                unbound_usable.push(item.clone());
-                continue;
-            }
+                    ciphertext,
+                    commitment: entry.commitment.as_ref(),
+                    metadata: &entry.metadata,
+                    // Recomputed here rather than by the policy: it is the one value that ties the
+                    // published bytes back to what the E3 program proved, and it needs the BFV
+                    // parameters. A ciphertext that does not deserialize yields `None`, which is an
+                    // unusable input rather than a failure — the bytes are untrusted.
+                    recomputed: compute_ct_commitment(
+                        ciphertext.clone(),
+                        degree,
+                        plaintext_modulus,
+                        moduli.clone(),
+                    )
+                    .ok(),
+                }
+            })
+            .collect();
 
-            self.leaf_hashes.push(Self::input_leaf(
-                &item.0,
-                &inputs.commitments[index],
-                &inputs.slots[index],
-            ));
-
-            if recomputed == Some(inputs.commitments[index]) {
-                latest_per_slot.insert(inputs.slots[index], (index, item.clone()));
-            }
+        for entry in &entries {
+            self.leaf_hashes.push((policy.leaf)(entry)?);
         }
 
-        if !bound {
-            return Ok(unbound_usable);
-        }
+        let mut selected = (policy.select)(&entries);
+        selected.sort_unstable();
+        selected.dedup();
 
-        // Ordered by tree position so the computation is deterministic, not map order.
-        let mut selected: Vec<PositionedInput> = latest_per_slot.into_values().collect();
-        selected.sort_by_key(|(index, _)| *index);
-        Ok(selected.into_iter().map(|(_, item)| item).collect())
-    }
-
-    /// `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD`, hex-encoded.
-    ///
-    /// Must stay byte-identical to `CRISPProgram.inputLeaf`, or no root will ever match.
-    fn input_leaf(ciphertext: &[u8], commitment: &[u8; 32], slot: &[u8; 20]) -> String {
-        let bytes_digest = Sha256::digest(ciphertext);
-
-        let mut outer = Sha256::new();
-        outer.update(bytes_digest);
-        outer.update(commitment);
-        outer.update(slot);
-        let combined = outer.finalize();
-
-        let field = BigUint::from_str_radix(SNARK_SCALAR_FIELD, 10).expect("field constant");
-        let reduced = BigUint::from_bytes_be(&combined) % field;
-        hex::encode(reduced.to_bytes_be())
+        selected
+            .into_iter()
+            .map(|index| {
+                inputs.ciphertexts.get(index).cloned().ok_or_else(|| {
+                    ComputeError::MerkleTree(format!("selected index {index} is out of range"))
+                })
+            })
+            .collect()
     }
 
     fn poseidon_hash(nodes: Vec<String>) -> String {

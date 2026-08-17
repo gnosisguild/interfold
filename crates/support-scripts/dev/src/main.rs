@@ -18,7 +18,7 @@ impl ComputeProvider for MockProofProvider {
         // This dev provider stands in for the zkVM, where a failure aborts the guest. Panicking
         // with the reason keeps that behaviour while naming the input that could not be used.
         input
-            .process(fhe_processor)
+            .process(fhe_processor, e3_user_program::policy())
             .expect("the Secure Process rejected its inputs")
     }
 }

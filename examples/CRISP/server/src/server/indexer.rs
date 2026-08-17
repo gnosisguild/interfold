@@ -9,7 +9,7 @@ use crate::server::token_holders::{
 };
 use crate::server::{
     models::{CensusMode, CreditMode, CurrentRound, CustomParams, TokenHolder},
-    program_server_request::run_compute,
+    program_server_request::{run_compute, RoundInputs},
     repo::{CrispE3Repository, CurrentRoundRepository},
     token_holders::{build_tree, compute_token_holder_hashes},
     CONFIG,
@@ -447,9 +447,11 @@ async fn handle_e3_input_deadline_expiration(
             e3.encryption_scheme_id,
             e3.committee_public_key_hash,
             e3.e3_params,
-            votes,
-            input_commitments,
-            input_slots,
+            RoundInputs {
+                ciphertexts: votes,
+                commitments: input_commitments,
+                slots: input_slots,
+            },
             format!(
                 "{}/state/add-result",
                 CONFIG.interfold_server_url_for_clients()

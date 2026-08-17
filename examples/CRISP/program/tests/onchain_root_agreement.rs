@@ -15,12 +15,34 @@
 //! `MerkleTreeBuilder`. Such a divergence makes every round fail with no other symptom, and no
 //! single-language test can see it.
 
-use e3_compute_provider::{ComputeInput, FHEInputs};
+use e3_compute_provider::{ComputeInput, FHEInputs, PublishedData};
 use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
+use e3_user_program::policy::crisp;
 use sha3::Digest as _;
 
-const FIXTURE: &str =
-    include_str!("../../../examples/CRISP/packages/crisp-contracts/tests/fixtures/input-tree.json");
+const FIXTURE: &str = include_str!("../../packages/crisp-contracts/tests/fixtures/input-tree.json");
+
+/// Reads the fixture entries into the shapes `ComputeInput` takes.
+fn load(entries: &[serde_json::Value]) -> (Vec<(Vec<u8>, u64)>, Vec<PublishedData>) {
+    let mut ciphertexts = Vec::new();
+    let mut published = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        ciphertexts.push((
+            unhex(entry["encryptedVote"].as_str().expect("encryptedVote")),
+            index as u64,
+        ));
+        published.push(PublishedData {
+            commitment: Some(
+                <[u8; 32]>::try_from(
+                    unhex(entry["commitment"].as_str().expect("commitment")).as_slice(),
+                )
+                .expect("32-byte commitment"),
+            ),
+            metadata: unhex(entry["slot"].as_str().expect("slot")),
+        });
+    }
+    (ciphertexts, published)
+}
 
 fn unhex(value: &str) -> Vec<u8> {
     hex::decode(value.trim_start_matches("0x")).expect("fixture hex")
@@ -32,39 +54,29 @@ fn rust_reproduces_the_root_the_contract_produced() {
     let expected_root = unhex(fixture["inputRoot"].as_str().expect("inputRoot"));
 
     let entries = fixture["inputs"].as_array().expect("inputs");
-    let mut ciphertexts = Vec::new();
-    let mut commitments = Vec::new();
-    let mut slots = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        ciphertexts.push((
-            unhex(entry["encryptedVote"].as_str().expect("encryptedVote")),
-            index as u64,
-        ));
-        let commitment = unhex(entry["commitment"].as_str().expect("commitment"));
-        commitments.push(<[u8; 32]>::try_from(commitment.as_slice()).expect("32-byte commitment"));
-        let slot = unhex(entry["slot"].as_str().expect("slot"));
-        slots.push(<[u8; 20]>::try_from(slot.as_slice()).expect("20-byte slot"));
-    }
+    let (ciphertexts, published) = load(entries);
 
     // The SDK builds ballots under the insecure-512 threshold preset.
     let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
     let result = ComputeInput {
         fhe_inputs: FHEInputs {
             ciphertexts,
-            commitments,
-            slots,
             params: encode_bfv_params(&params),
         },
+        published,
     }
-    .process(|inputs| {
-        // Membership of the tree is what this test asserts, so the processor only has to be
-        // deterministic over the usable set.
-        inputs
-            .ciphertexts
-            .iter()
-            .flat_map(|(bytes, _)| bytes.clone())
-            .collect()
-    })
+    .process(
+        |inputs| {
+            // Membership of the tree is what this test asserts, so the processor only has to be
+            // deterministic over the selected set.
+            inputs
+                .ciphertexts
+                .iter()
+                .flat_map(|(bytes, _)| bytes.clone())
+                .collect()
+        },
+        crisp(),
+    )
     .expect("the fixture round must process");
 
     assert_eq!(
@@ -99,9 +111,8 @@ fn the_sdk_and_rust_agree_on_the_ciphertext_commitment() {
     );
 }
 
-const APPEND_FIXTURE: &str = include_str!(
-    "../../../examples/CRISP/packages/crisp-contracts/tests/fixtures/input-tree-append.json"
-);
+const APPEND_FIXTURE: &str =
+    include_str!("../../packages/crisp-contracts/tests/fixtures/input-tree-append.json");
 
 /// The poisoning case, against a tree a real contract built.
 ///
@@ -115,22 +126,12 @@ fn rust_falls_back_to_the_last_good_entry_in_a_slot() {
     let honest_index = fixture["honestIndex"].as_u64().expect("honestIndex") as usize;
 
     let entries = fixture["inputs"].as_array().expect("inputs");
-    let mut ciphertexts = Vec::new();
-    let mut commitments = Vec::new();
-    let mut slots = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        ciphertexts.push((
-            unhex(entry["encryptedVote"].as_str().unwrap()),
-            index as u64,
-        ));
-        commitments.push(
-            <[u8; 32]>::try_from(unhex(entry["commitment"].as_str().unwrap()).as_slice()).unwrap(),
-        );
-        slots
-            .push(<[u8; 20]>::try_from(unhex(entry["slot"].as_str().unwrap()).as_slice()).unwrap());
-    }
+    let (ciphertexts, published) = load(entries);
     assert_eq!(entries.len(), 2, "the fixture must hold both entries");
-    assert_eq!(slots[0], slots[1], "both entries belong to one slot");
+    assert_eq!(
+        published[0].metadata, published[1].metadata,
+        "both entries belong to one slot"
+    );
 
     let honest_bytes = ciphertexts[honest_index].0.clone();
     let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
@@ -139,18 +140,20 @@ fn rust_falls_back_to_the_last_good_entry_in_a_slot() {
     let result = ComputeInput {
         fhe_inputs: FHEInputs {
             ciphertexts,
-            commitments,
-            slots,
             params: encode_bfv_params(&params),
         },
+        published,
     }
-    .process(|inputs| {
-        inputs
-            .ciphertexts
-            .iter()
-            .flat_map(|(bytes, _)| bytes.clone())
-            .collect()
-    })
+    .process(
+        |inputs| {
+            inputs
+                .ciphertexts
+                .iter()
+                .flat_map(|(bytes, _)| bytes.clone())
+                .collect()
+        },
+        crisp(),
+    )
     .expect("a poisoned append must not stop the round");
 
     assert_eq!(

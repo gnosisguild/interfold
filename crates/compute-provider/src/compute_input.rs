@@ -6,6 +6,7 @@
 
 use crate::ciphertext_output::ComputeResult;
 use crate::merkle_tree_builder::MerkleTreeBuilder;
+use crate::policy::InputPolicy;
 use e3_bfv_client::client::compute_ct_commitment;
 use e3_fhe_params::decode_bfv_params;
 use sha3::{Digest, Keccak256};
@@ -14,36 +15,26 @@ pub type FHEProcessor = fn(&FHEInputs) -> Vec<u8>;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FHEInputs {
-    /// The serialized ciphertexts to process, each paired with its on-chain index.
+    /// The serialized ciphertexts to compute over, each paired with its on-chain index.
     ///
-    /// The index is not the authority on input order — a leaf's position in the tree is its
-    /// position in this vector, because `MerkleTreeBuilder::compute_leaf_hashes` walks the vector
-    /// in order and the tree inserts sequentially. **A caller assembling this vector from chain
-    /// events must sort by the index**, because event delivery is not ordered; getting it wrong
-    /// produces a root the E3 program rejects.
+    /// The index is not the authority on order — a leaf's position in the tree is its position in
+    /// this vector. **A caller assembling this from chain events must sort by the index**, because
+    /// event delivery is not ordered, and getting it wrong produces a root the E3 program rejects.
     pub ciphertexts: Vec<(Vec<u8>, u64)>,
-    /// The commitment the E3 program stored for each ciphertext, in the same order.
-    ///
-    /// The proof an E3 program checks at input time constrains the commitment, never the
-    /// serialized bytes above. Carrying both lets the Secure Process recompute each commitment
-    /// from the bytes it consumed and drop any input where the two disagree.
-    ///
-    /// Empty means "no commitments supplied": every input is then processed without the check,
-    /// which is the pre-binding behaviour and only safe for an E3 program whose inputs cannot
-    /// carry unbound bytes.
-    #[serde(default)]
-    pub commitments: Vec<[u8; 32]>,
-    /// The slot each input was published to, in the same order.
-    ///
-    /// The input tree is append-only, so a slot can hold several entries and the Secure Process
-    /// tallies the most recent one whose bytes match its commitment. That grouping has to be bound
-    /// by the root, which is why the slot is part of the leaf.
-    ///
-    /// Supplied together with `commitments`; when either is empty no check or grouping is done and
-    /// every input is processed, which is the pre-binding behaviour.
-    #[serde(default)]
-    pub slots: Vec<[u8; 20]>,
     pub params: Vec<u8>,
+}
+
+/// What an E3 program published alongside a ciphertext, in the same order as `ciphertexts`.
+///
+/// Separate from `FHEInputs` because a Secure Process never computes over it: it decides leaves and
+/// selection, which is the [`InputPolicy`]'s business, not the processor's.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct PublishedData {
+    /// The commitment the E3 program stored for this input, when it stores one.
+    pub commitment: Option<[u8; 32]>,
+    /// Anything else the program published per input. Opaque here; CRISP carries its slot address.
+    #[serde(default)]
+    pub metadata: Vec<u8>,
 }
 
 /// The full input to the Secure Process.
@@ -55,6 +46,10 @@ pub struct FHEInputs {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ComputeInput {
     pub fhe_inputs: FHEInputs,
+    /// One entry per ciphertext, in the same order. Empty when the E3 program publishes nothing
+    /// beyond the ciphertexts, which is what [`InputPolicy::default`] expects.
+    #[serde(default)]
+    pub published: Vec<PublishedData>,
 }
 
 /// A failure inside the Secure Process.
@@ -79,29 +74,41 @@ pub enum ComputeError {
 }
 
 impl ComputeInput {
-    pub fn process(&self, fhe_processor: FHEProcessor) -> Result<ComputeResult, ComputeError> {
+    /// Runs the Secure Process under the E3 program's [`InputPolicy`].
+    ///
+    /// The policy decides the leaf layout and which inputs are computed over. What it cannot do is
+    /// supply a root or drop an input from the tree — leaves are derived here, from the ciphertexts
+    /// actually consumed, and every published input contributes one.
+    pub fn process(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+    ) -> Result<ComputeResult, ComputeError> {
         let params = decode_bfv_params(&self.fhe_inputs.params)
             .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
 
-        // Every leaf is derived here, from the exact bytes, commitments and slots this Secure
-        // Process was given, so the root the E3 program compares against binds all three. An input
-        // whose bytes do not reproduce its commitment still contributes its leaf — dropping it
-        // would change the root — but it is not computed over.
+        if !self.published.is_empty() && self.published.len() != self.fhe_inputs.ciphertexts.len() {
+            return Err(ComputeError::MerkleTree(format!(
+                "{} ciphertexts but {} published entries",
+                self.fhe_inputs.ciphertexts.len(),
+                self.published.len()
+            )));
+        }
+
         let mut tree_builder = MerkleTreeBuilder::new(self.fhe_inputs.ciphertexts.len());
-        let usable = tree_builder.compute_leaf_hashes(&self.fhe_inputs, &params)?;
+        let selected =
+            tree_builder.compute_leaf_hashes(&self.fhe_inputs, &self.published, &params, policy)?;
         let merkle_root = tree_builder
             .build_tree()
             .map_err(|e| ComputeError::MerkleTree(e.to_string()))?
             .root()
             .ok_or_else(|| ComputeError::MerkleTree("the tree has no root".into()))?;
 
-        // The processor sees only the inputs that matched their commitment. Both the root above
-        // and this filter are functions of values the root binds, so the excluded set is
-        // reproducible by anyone holding the same inputs — a prover cannot choose it.
+        // The processor sees only what the policy selected. Both the root above and this set are
+        // functions of values the root binds, so any prover over the same published inputs reaches
+        // the same result.
         let processed_ciphertext = (fhe_processor)(&FHEInputs {
-            ciphertexts: usable,
-            commitments: Vec::new(),
-            slots: Vec::new(),
+            ciphertexts: selected,
             params: self.fhe_inputs.params.clone(),
         });
         let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
@@ -128,6 +135,7 @@ impl ComputeInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::{all_inputs, commitment_leaf, PublishedInput};
     use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
     use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
     use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
@@ -145,7 +153,6 @@ mod tests {
         sum.to_bytes()
     }
 
-    /// Builds `values.len()` encrypted inputs under one key, plus the encoded parameters.
     fn encrypted_inputs(values: &[u64]) -> FHEInputs {
         let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(7);
@@ -165,205 +172,124 @@ mod tests {
 
         FHEInputs {
             ciphertexts,
-            commitments: Vec::new(),
-            slots: Vec::new(),
             params: encode_bfv_params(&params),
         }
     }
 
-    /// Attaches the commitment and slot an E3 program would have stored for each ciphertext.
-    /// Each input gets its own slot unless `slots` is given.
-    fn with_real_commitments(inputs: FHEInputs) -> FHEInputs {
-        let count = inputs.ciphertexts.len();
-        with_slots(inputs, (0..count).map(|i| slot(i as u8)).collect())
-    }
-
-    /// A distinct slot address per index.
-    fn slot(tag: u8) -> [u8; 20] {
-        let mut address = [0u8; 20];
-        address[19] = tag;
-        address
-    }
-
-    fn with_slots(mut inputs: FHEInputs, slots: Vec<[u8; 20]>) -> FHEInputs {
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        inputs.commitments = inputs
-            .ciphertexts
-            .iter()
-            .map(|(bytes, _)| {
-                compute_ct_commitment(
-                    bytes.clone(),
-                    params.degree(),
-                    params.plaintext(),
-                    params.moduli().to_vec(),
-                )
-                .unwrap()
-            })
-            .collect();
-        inputs.slots = slots;
-        inputs
-    }
-
-    fn root_over(inputs: &FHEInputs) -> Vec<u8> {
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(inputs.ciphertexts.len());
-        builder.compute_leaf_hashes(inputs, &params).unwrap();
-        hex::decode(builder.build_tree().unwrap().root().unwrap()).unwrap()
-    }
-
-    /// The journal's input root must be a function of the ciphertexts the Secure Process consumed.
-    /// Before this binding existed, the root arrived as a separate `leaf_hashes` field, so a
-    /// prover could publish a tally over one input set while proving the root of another.
-    #[test]
-    fn merkle_root_is_derived_from_the_processed_ciphertexts() {
-        let inputs = encrypted_inputs(&[1, 1, 1]);
-        let result = ComputeInput {
-            fhe_inputs: inputs.clone(),
+    fn process(inputs: FHEInputs, policy: InputPolicy) -> Result<ComputeResult, ComputeError> {
+        ComputeInput {
+            fhe_inputs: inputs,
+            published: Vec::new(),
         }
-        .process(sum_processor)
-        .unwrap();
-
-        assert_eq!(result.merkle_root, root_over(&inputs));
+        .process(sum_processor, policy)
     }
 
-    /// Changing the consumed ciphertexts must change the published root, so an E3 program that
-    /// compares the root against its own on-chain root rejects the substituted set.
+    /// The journal's input root must be a function of the ciphertexts consumed. Before this, the
+    /// root arrived as a separate field, so a prover could publish a tally over one input set while
+    /// proving the root of another.
+    #[test]
+    fn the_root_is_derived_from_the_processed_ciphertexts() {
+        let inputs = encrypted_inputs(&[1, 1, 1]);
+        let params = decode_bfv_params(&inputs.params).unwrap();
+
+        let result = process(inputs.clone(), InputPolicy::default()).unwrap();
+
+        let mut builder = MerkleTreeBuilder::new(3);
+        builder
+            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
+            .unwrap();
+        let expected = hex::decode(builder.build_tree().unwrap().root().unwrap()).unwrap();
+
+        assert_eq!(result.merkle_root, expected);
+    }
+
+    /// Changing the consumed ciphertexts must change the published root, so an E3 program's
+    /// comparison rejects a substituted set.
     #[test]
     fn substituted_ciphertexts_produce_a_different_root() {
         let honest = encrypted_inputs(&[1, 1, 1]);
         let mut forged = honest.clone();
-        // Same leaf count, so the tree depth is unchanged; only the ciphertexts differ.
         forged.ciphertexts[2] = encrypted_inputs(&[9]).ciphertexts[0].clone();
 
-        let honest_root = ComputeInput { fhe_inputs: honest }
-            .process(sum_processor)
-            .unwrap()
-            .merkle_root;
-        let forged_root = ComputeInput { fhe_inputs: forged }
-            .process(sum_processor)
-            .unwrap()
-            .merkle_root;
-
-        assert_ne!(honest_root, forged_root);
-    }
-
-    /// A Secure Process accepts inputs from untrusted parties, so an unusable one must surface as
-    /// an error naming the offending index, not as a panic that aborts the prover.
-    #[test]
-    fn a_malformed_input_reports_its_index_instead_of_panicking() {
-        let mut inputs = encrypted_inputs(&[1, 1, 1]);
-        inputs.ciphertexts[1].0 = vec![0xff; 8];
-
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(inputs.ciphertexts.len());
-        let error = builder.compute_leaf_hashes(&inputs, &params).unwrap_err();
-
-        assert!(
-            matches!(error, ComputeError::LeafCommitment { index: 1, .. }),
-            "expected LeafCommitment at index 1, got {error:?}"
+        assert_ne!(
+            process(honest, InputPolicy::default()).unwrap().merkle_root,
+            process(forged, InputPolicy::default()).unwrap().merkle_root
         );
     }
 
-    /// An input whose published bytes do not reproduce its stored commitment must be excluded from
-    /// the computation while still contributing its leaf. Before this binding, the honest prover
-    /// simply could not reproduce the on-chain root and the whole round was lost.
+    /// The default policy is what every E3 program had before policies existed.
     #[test]
-    fn an_input_whose_bytes_contradict_its_commitment_is_excluded_from_the_tally() {
-        let honest = with_real_commitments(encrypted_inputs(&[1, 1, 1]));
-
-        // As published on chain: the commitment of input 1 is real and proven, but the bytes beside
-        // it are a different ciphertext. The contract builds its leaf from exactly this pair, so
-        // the guest sees the same pair and derives the same leaf.
-        let mut attacked = honest.clone();
-        attacked.ciphertexts[1].0 = encrypted_inputs(&[9]).ciphertexts[0].0.clone();
-
-        let result = ComputeInput {
-            fhe_inputs: attacked.clone(),
-        }
-        .process(sum_processor)
-        .expect("a contradicting input must not stop the round");
-
-        // The tally must be exactly the two inputs that did match, so it equals a run over only
-        // those two.
-        let mut only_matching = honest.clone();
-        only_matching.ciphertexts.remove(1);
-        only_matching.commitments.remove(1);
-        only_matching.slots.remove(1);
-        let reference = ComputeInput {
-            fhe_inputs: only_matching,
-        }
-        .process(sum_processor)
-        .unwrap();
-
-        assert_eq!(
-            result.ciphertext_hash, reference.ciphertext_hash,
-            "the contradicting input must not reach the processor"
-        );
-
-        // And it is still represented in the tree, so the root differs from the two-input run.
-        assert_ne!(result.merkle_root, reference.merkle_root);
-    }
-
-    /// Undecodable bytes are an unusable input, not a failure: the round must survive them.
-    #[test]
-    fn undecodable_bytes_are_excluded_rather_than_fatal() {
-        let mut inputs = with_real_commitments(encrypted_inputs(&[1, 1, 1]));
-        inputs.ciphertexts[2].0 = vec![0xff; 8];
-
-        let result = ComputeInput { fhe_inputs: inputs }
-            .process(sum_processor)
-            .expect("garbage bytes must not abort the Secure Process");
-
-        assert_eq!(result.merkle_root.len(), 32);
-    }
-
-    /// The leaf layout must match `CRISPProgram.inputLeaf`, byte for byte.
-    ///
-    /// This vector is duplicated in
-    /// `examples/CRISP/packages/crisp-contracts/tests/input-leaf.test.ts`. A divergence between
-    /// the two implementations makes every root mismatch, and nothing else would catch it.
-    #[test]
-    fn leaf_layout_matches_the_contract() {
-        let ciphertext: Vec<u8> = (0u8..64).collect();
-        let commitment = [0xabu8; 32];
-
-        let inputs = FHEInputs {
-            ciphertexts: vec![(ciphertext, 0)],
-            commitments: vec![commitment],
-            slots: vec![[0xcdu8; 20]],
-            params: encode_bfv_params(
-                &build_pair_for_preset(BfvPreset::InsecureThreshold512)
-                    .unwrap()
-                    .0,
-            ),
-        };
-
+    fn the_default_policy_uses_the_ciphertext_commitment_and_keeps_every_input() {
+        let inputs = encrypted_inputs(&[4, 5]);
         let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(1);
-        builder.compute_leaf_hashes(&inputs, &params).unwrap();
 
-        let expected = num_bigint::BigUint::parse_bytes(
-            b"3005744733328395831398716072572247490877798047068525662443106668216528579058",
-            10,
+        let mut builder = MerkleTreeBuilder::new(2);
+        let selected = builder
+            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
+            .unwrap();
+
+        assert_eq!(selected.len(), 2, "every input is computed over");
+        let commitment = compute_ct_commitment(
+            inputs.ciphertexts[0].0.clone(),
+            params.degree(),
+            params.plaintext(),
+            params.moduli().to_vec(),
         )
         .unwrap();
+        assert_eq!(builder.leaf_hashes[0], hex::encode(commitment));
+    }
+
+    /// A policy chooses what is computed over; it cannot shrink the tree. Dropping a leaf would
+    /// change the root and make the result unpublishable, so the crate applies this rather than
+    /// trusting each program to.
+    #[test]
+    fn a_policy_cannot_drop_an_input_from_the_tree() {
+        fn select_nothing(_: &[PublishedInput]) -> Vec<usize> {
+            Vec::new()
+        }
+        let inputs = encrypted_inputs(&[1, 2, 3]);
+        let params = decode_bfv_params(&inputs.params).unwrap();
+
+        let mut builder = MerkleTreeBuilder::new(3);
+        let selected = builder
+            .compute_leaf_hashes(
+                &inputs,
+                &[],
+                &params,
+                InputPolicy {
+                    leaf: commitment_leaf,
+                    select: select_nothing,
+                },
+            )
+            .unwrap();
+
+        assert!(selected.is_empty(), "the policy selected nothing");
         assert_eq!(
-            num_bigint::BigUint::from_bytes_be(&hex::decode(&builder.leaf_hashes[0]).unwrap()),
-            expected,
-            "leaf layout diverged from CRISPProgram.inputLeaf"
+            builder.leaf_hashes.len(),
+            3,
+            "every leaf is still in the tree"
         );
     }
 
-    /// A commitment list of the wrong length is a caller bug that would silently mis-pair inputs
-    /// with commitments, so it must be rejected rather than guessed at.
+    /// A policy returning an index that does not exist is a bug in the program, not a silent skip.
     #[test]
-    fn a_mismatched_commitment_count_is_rejected() {
-        let mut inputs = with_real_commitments(encrypted_inputs(&[1, 1, 1]));
-        inputs.commitments.pop();
-
+    fn an_out_of_range_selection_is_rejected() {
+        fn select_beyond_the_end(_: &[PublishedInput]) -> Vec<usize> {
+            vec![99]
+        }
+        let inputs = encrypted_inputs(&[1]);
         let params = decode_bfv_params(&inputs.params).unwrap();
-        let error = MerkleTreeBuilder::new(3)
-            .compute_leaf_hashes(&inputs, &params)
+
+        let error = MerkleTreeBuilder::new(1)
+            .compute_leaf_hashes(
+                &inputs,
+                &[],
+                &params,
+                InputPolicy {
+                    leaf: commitment_leaf,
+                    select: select_beyond_the_end,
+                },
+            )
             .unwrap_err();
 
         assert!(
@@ -372,340 +298,92 @@ mod tests {
         );
     }
 
-    /// A round where *every* input is unusable degenerates into a round with nothing to tally.
-    ///
-    /// The processor returns an empty ciphertext, which does not serialize back into a valid one,
-    /// so the output commitment fails with a typed error rather than a panic. That is acceptable:
-    /// this state is only reachable when no honest input exists — one honest input is never
-    /// excluded, because its bytes reproduce its commitment — and it is indistinguishable from a
-    /// round that received no inputs at all, which the protocol already resolves as
-    /// `NoInputsReceived`. Asserted so the behaviour is a decision rather than an accident.
+    /// Published data of the wrong length would silently mis-pair inputs with their commitments.
     #[test]
-    fn a_round_where_every_input_is_unusable_fails_cleanly() {
-        let mut inputs = with_real_commitments(encrypted_inputs(&[1, 1]));
-        for entry in inputs.ciphertexts.iter_mut() {
-            entry.0 = vec![0xde, 0xad, 0xbe, 0xef];
+    fn mismatched_published_data_is_rejected() {
+        let error = ComputeInput {
+            fhe_inputs: encrypted_inputs(&[1, 2]),
+            published: vec![PublishedData::default()],
         }
+        .process(sum_processor, InputPolicy::default())
+        .unwrap_err();
 
-        let error = ComputeInput { fhe_inputs: inputs }
-            .process(sum_processor)
+        assert!(
+            matches!(error, ComputeError::MerkleTree(_)),
+            "got {error:?}"
+        );
+    }
+
+    /// Under the default policy an undecodable ciphertext names the index that failed, rather than
+    /// aborting the process.
+    #[test]
+    fn the_default_policy_reports_the_index_of_an_undecodable_input() {
+        let mut inputs = encrypted_inputs(&[1, 1]);
+        inputs.ciphertexts[1].0 = vec![0xff; 8];
+        let params = decode_bfv_params(&inputs.params).unwrap();
+
+        let error = MerkleTreeBuilder::new(2)
+            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
             .unwrap_err();
 
         assert!(
-            matches!(error, ComputeError::OutputCommitment(_)),
-            "expected a typed output-commitment error, got {error:?}"
+            matches!(error, ComputeError::LeafCommitment { index: 1, .. }),
+            "got {error:?}"
         );
     }
 
-    /// A single honest input must survive any number of unusable ones beside it. This is the
-    /// property that turns a round-killing input into a excluded one.
+    /// `matches_commitment` is what a policy uses to spot a published ciphertext that disagrees
+    /// with what the E3 program proved.
     #[test]
-    fn one_honest_input_still_produces_a_tally_among_unusable_ones() {
-        let mut inputs = with_real_commitments(encrypted_inputs(&[1, 1, 1]));
-        inputs.ciphertexts[0].0 = vec![0x00; 12];
-        inputs.ciphertexts[2].0 = vec![0xff; 5];
+    fn matches_commitment_reports_the_three_cases() {
+        let bytes = vec![1u8, 2, 3];
+        let commitment = [7u8; 32];
 
-        let result = ComputeInput {
-            fhe_inputs: inputs.clone(),
-        }
-        .process(sum_processor)
-        .expect("one usable input must be enough");
-
-        // The tally is exactly the surviving input.
-        let mut only_good = inputs.clone();
-        only_good.ciphertexts = vec![inputs.ciphertexts[1].clone()];
-        only_good.commitments = vec![inputs.commitments[1]];
-        only_good.slots = vec![inputs.slots[1]];
-        let reference = ComputeInput {
-            fhe_inputs: only_good,
-        }
-        .process(sum_processor)
-        .unwrap();
-
-        assert_eq!(result.ciphertext_hash, reference.ciphertext_hash);
-    }
-
-    /// The excluded set must be a function of the inputs alone, so two provers over the same
-    /// published data produce the same result and neither can choose what to drop.
-    #[test]
-    fn the_excluded_set_is_deterministic() {
-        let mut inputs = with_real_commitments(encrypted_inputs(&[1, 1, 1]));
-        inputs.ciphertexts[0].0 = vec![0x00; 16];
-
-        let first = ComputeInput {
-            fhe_inputs: inputs.clone(),
-        }
-        .process(sum_processor)
-        .unwrap();
-        let second = ComputeInput { fhe_inputs: inputs }
-            .process(sum_processor)
-            .unwrap();
-
-        assert_eq!(first.merkle_root, second.merkle_root);
-        assert_eq!(first.ciphertext_hash, second.ciphertext_hash);
-        assert_eq!(first.ciphertext_commitment, second.ciphertext_commitment);
-    }
-
-    /// Swapping the commitment beside honest bytes must change the leaf, or an attacker could
-    /// pair any commitment with any ciphertext.
-    #[test]
-    fn the_leaf_binds_the_commitment_as_well_as_the_bytes() {
-        let inputs = with_real_commitments(encrypted_inputs(&[1]));
-        let params = decode_bfv_params(&inputs.params).unwrap();
-
-        let mut honest = MerkleTreeBuilder::new(1);
-        honest.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        let mut swapped_inputs = inputs.clone();
-        swapped_inputs.commitments[0] = [0x11u8; 32];
-        let mut swapped = MerkleTreeBuilder::new(1);
-        swapped
-            .compute_leaf_hashes(&swapped_inputs, &params)
-            .unwrap();
-
-        assert_ne!(honest.leaf_hashes[0], swapped.leaf_hashes[0]);
-    }
-
-    /// With no commitments or slots the builder keeps the pre-binding layout, so an E3 program
-    /// that has not migrated still works.
-    #[test]
-    fn without_binding_the_leaf_is_the_ciphertext_commitment() {
-        let inputs = encrypted_inputs(&[5]);
-        let bound = with_real_commitments(inputs.clone());
-        let params = decode_bfv_params(&inputs.params).unwrap();
-
-        let mut unchecked = MerkleTreeBuilder::new(1);
-        let usable = unchecked.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        assert_eq!(usable.len(), 1);
-        assert_eq!(
-            unchecked.leaf_hashes[0],
-            hex::encode(bound.commitments[0]),
-            "the unbound leaf is the bare ciphertext commitment"
-        );
-    }
-
-    /// The slot is part of the leaf, so the same ciphertext published to a different slot is a
-    /// different leaf. Without this a prover could re-group entries and change which one wins.
-    #[test]
-    fn the_leaf_binds_the_slot() {
-        let base = encrypted_inputs(&[3]);
-        let params = decode_bfv_params(&base.params).unwrap();
-
-        let a = with_slots(base.clone(), vec![slot(1)]);
-        let b = with_slots(base, vec![slot(2)]);
-
-        let mut first = MerkleTreeBuilder::new(1);
-        first.compute_leaf_hashes(&a, &params).unwrap();
-        let mut second = MerkleTreeBuilder::new(1);
-        second.compute_leaf_hashes(&b, &params).unwrap();
-
-        assert_ne!(first.leaf_hashes[0], second.leaf_hashes[0]);
-    }
-
-    /// The heart of append-only: a later entry that contradicts its commitment must not erase the
-    /// good entry already in the slot. This is the mask-poisoning case.
-    #[test]
-    fn a_poisoned_later_entry_falls_back_to_the_slot_s_last_good_one() {
-        let victim = slot(7);
-        let honest = encrypted_inputs(&[4]);
-        let mut inputs = with_slots(honest.clone(), vec![victim]);
-
-        // An attacker appends a second entry to the victim's slot: real commitment, wrong bytes.
-        let poison = encrypted_inputs(&[9]);
-        inputs
-            .ciphertexts
-            .push((poison.ciphertexts[0].0.clone(), 1));
-        inputs.commitments.push(inputs.commitments[0]);
-        inputs.slots.push(victim);
-
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(inputs.ciphertexts.len());
-        let usable = builder.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        assert_eq!(
-            usable.len(),
-            1,
-            "the slot still contributes exactly one entry"
-        );
-        assert_eq!(
-            usable[0].0, honest.ciphertexts[0].0,
-            "the victim's original vote must survive"
-        );
-        assert_eq!(
-            builder.leaf_hashes.len(),
-            2,
-            "both entries stay in the tree"
-        );
-    }
-
-    /// An honest re-vote must replace the earlier one, or voters could never change their mind.
-    #[test]
-    fn an_honest_later_entry_replaces_the_earlier_one() {
-        let voter = slot(3);
-        let first = encrypted_inputs(&[1]);
-        let second = encrypted_inputs(&[8]);
-
-        let mut inputs = with_slots(first, vec![voter]);
-        let later = with_slots(second.clone(), vec![voter]);
-        inputs.ciphertexts.push((later.ciphertexts[0].0.clone(), 1));
-        inputs.commitments.push(later.commitments[0]);
-        inputs.slots.push(voter);
-
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(2);
-        let usable = builder.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        assert_eq!(usable.len(), 1);
-        assert_eq!(usable[0].0, second.ciphertexts[0].0, "the re-vote wins");
-    }
-
-    /// Distinct slots each contribute their own entry, in tree order.
-    #[test]
-    fn every_slot_contributes_its_latest_usable_entry() {
-        let inputs = with_real_commitments(encrypted_inputs(&[1, 2, 3]));
-        let params = decode_bfv_params(&inputs.params).unwrap();
-
-        let mut builder = MerkleTreeBuilder::new(3);
-        let usable = builder.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        assert_eq!(usable.len(), 3);
-        assert_eq!(usable[0].1, 0);
-        assert_eq!(usable[2].1, 2);
-    }
-
-    /// Builds one slot's entry sequence. `true` is an honest entry, `false` an entry whose bytes
-    /// do not reproduce its commitment. Returns the inputs and the honest ciphertexts by index.
-    fn sequence_for_one_slot(pattern: &[bool]) -> (FHEInputs, Vec<Vec<u8>>) {
-        let target = slot(9);
-        let ballots: Vec<Vec<u8>> = (0..pattern.len())
-            .map(|i| encrypted_inputs(&[(i as u64) + 1]).ciphertexts[0].0.clone())
-            .collect();
-
-        // Distinct ballots, or a test expecting "the later honest entry" would pass even if the
-        // earlier one were selected.
-        for (i, ballot) in ballots.iter().enumerate() {
-            for other in &ballots[i + 1..] {
-                assert_ne!(ballot, other, "sequence ballots must be distinguishable");
-            }
-        }
-
-        let mut inputs = encrypted_inputs(&[1]);
-        inputs.ciphertexts.clear();
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let commit = |bytes: &Vec<u8>| {
-            compute_ct_commitment(
-                bytes.clone(),
-                params.degree(),
-                params.plaintext(),
-                params.moduli().to_vec(),
-            )
-            .unwrap()
+        let agreeing = PublishedInput {
+            index: 0,
+            ciphertext: &bytes,
+            commitment: Some(&commitment),
+            metadata: &[],
+            recomputed: Some(commitment),
+        };
+        let disagreeing = PublishedInput {
+            recomputed: Some([8u8; 32]),
+            ..agreeing
+        };
+        let undecodable = PublishedInput {
+            recomputed: None,
+            ..agreeing
+        };
+        let unpublished = PublishedInput {
+            commitment: None,
+            recomputed: None,
+            ..agreeing
         };
 
-        for (index, honest) in pattern.iter().enumerate() {
-            // A poisoned entry keeps a real commitment and carries unrelated bytes, which is what a
-            // third party can publish and no on-chain check can reject.
-            let published = if *honest {
-                ballots[index].clone()
-            } else {
-                vec![0xde, 0xad, 0xbe, 0xef, index as u8]
-            };
-            inputs.ciphertexts.push((published, index as u64));
-            inputs.commitments.push(commit(&ballots[index]));
-            inputs.slots.push(target);
-        }
-        (inputs, ballots)
+        assert!(agreeing.matches_commitment());
+        assert!(!disagreeing.matches_commitment());
+        assert!(
+            !undecodable.matches_commitment(),
+            "an undecodable input cannot match"
+        );
+        assert!(
+            unpublished.matches_commitment(),
+            "with no commitment published there is nothing to contradict"
+        );
     }
 
-    fn selected_for(pattern: &[bool]) -> (Vec<(Vec<u8>, u64)>, Vec<Vec<u8>>, usize) {
-        let (inputs, ballots) = sequence_for_one_slot(pattern);
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(inputs.ciphertexts.len());
-        let selected = builder.compute_leaf_hashes(&inputs, &params).unwrap();
-        (selected, ballots, builder.leaf_hashes.len())
-    }
-
-    /// Every entry sequence for one slot must resolve to that slot's most recent honest entry, and
-    /// every entry must stay in the tree regardless.
-    ///
-    /// The case that matters most is honest → poisoned → honest: selection has to move *forward*
-    /// to the later honest entry, not fall back to the first one.
     #[test]
-    fn selection_picks_the_latest_honest_entry_in_every_sequence() {
-        // (pattern, expected selected index, description)
-        let cases: &[(&[bool], Option<usize>, &str)] = &[
-            (&[true], Some(0), "a single honest entry"),
-            (&[false], None, "a single poisoned entry contributes nothing"),
-            (&[true, false], Some(0), "poisoned append falls back"),
-            (&[false, true], Some(1), "an honest entry after a poisoned one wins"),
-            (&[true, true], Some(1), "an honest re-vote replaces"),
-            (&[true, false, true], Some(2), "honest, poisoned, honest picks the last honest"),
-            (&[true, true, false], Some(1), "poisoned at the end falls back one step"),
-            (&[true, false, false], Some(0), "two poisoned appends still fall back to the first"),
-            (&[false, false, true], Some(2), "honest after two poisoned wins"),
-            (&[false, true, false], Some(1), "honest in the middle survives a later poison"),
-            (&[true, false, true, false], Some(2), "falls back past a trailing poison"),
-            (&[false, false, false], None, "an all-poisoned slot contributes nothing"),
-        ];
-
-        for (pattern, expected, description) in cases {
-            let (selected, ballots, leaves) = selected_for(pattern);
-
-            assert_eq!(
-                leaves,
-                pattern.len(),
-                "every entry must stay in the tree ({description})"
-            );
-
-            match expected {
-                Some(index) => {
-                    assert_eq!(selected.len(), 1, "one entry per slot ({description})");
-                    assert_eq!(
-                        selected[0].0, ballots[*index],
-                        "expected entry {index} ({description})"
-                    );
-                }
-                None => assert!(
-                    selected.is_empty(),
-                    "no entry should be selected ({description})"
-                ),
-            }
-        }
-    }
-
-    /// Sequences interleaved across slots must not bleed into one another: each slot resolves on
-    /// its own entries, in tree order.
-    #[test]
-    fn interleaved_slots_resolve_independently() {
-        let (mut a, ballots_a) = sequence_for_one_slot(&[true, false]);
-        let (b, ballots_b) = sequence_for_one_slot(&[false, true]);
-        let other = slot(11);
-
-        // Interleave: A-honest, B-poisoned, A-poisoned, B-honest.
-        let order = [(0usize, false), (0, true), (1, false), (1, true)];
-        let mut inputs = a.clone();
-        inputs.ciphertexts.clear();
-        inputs.commitments.clear();
-        inputs.slots.clear();
-        for (position, (index, from_b)) in order.iter().enumerate() {
-            let source = if *from_b { &b } else { &a };
-            inputs
-                .ciphertexts
-                .push((source.ciphertexts[*index].0.clone(), position as u64));
-            inputs.commitments.push(source.commitments[*index]);
-            inputs.slots.push(if *from_b { other } else { slot(9) });
-        }
-        a.ciphertexts.clear();
-
-        let params = decode_bfv_params(&inputs.params).unwrap();
-        let mut builder = MerkleTreeBuilder::new(4);
-        let selected = builder.compute_leaf_hashes(&inputs, &params).unwrap();
-
-        assert_eq!(builder.leaf_hashes.len(), 4, "all four entries stay in the tree");
-        assert_eq!(selected.len(), 2, "one entry per slot");
-        // Ordered by tree position: slot 9's honest entry is at 0, slot 11's at 3.
-        assert_eq!(selected[0].0, ballots_a[0]);
-        assert_eq!(selected[1].0, ballots_b[1]);
+    fn all_inputs_selects_everything() {
+        let bytes = vec![0u8];
+        let entries: Vec<PublishedInput> = (0..3)
+            .map(|index| PublishedInput {
+                index,
+                ciphertext: &bytes,
+                commitment: None,
+                metadata: &[],
+                recomputed: None,
+            })
+            .collect();
+        assert_eq!(all_inputs(&entries), vec![0, 1, 2]);
     }
 }

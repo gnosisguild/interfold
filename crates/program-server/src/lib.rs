@@ -10,7 +10,7 @@ use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result a
 use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use e3_bfv_client::compute_ct_commitment;
-use e3_compute_provider::FHEInputs;
+use e3_compute_provider::{FHEInputs, PublishedData};
 use e3_fhe_params::decode_bfv_params_arc;
 use serde::Serialize;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -72,6 +72,9 @@ fn fixed<const N: usize>(value: &[u8], name: &str) -> Result<[u8; N], String> {
 
 pub struct ComputeJob {
     pub inputs: FHEInputs,
+    /// What the E3 program published alongside each ciphertext, in the same order. Empty when the
+    /// program publishes nothing beyond the ciphertexts.
+    pub published: Vec<PublishedData>,
     pub domain: ComputeDomain,
 }
 
@@ -367,35 +370,39 @@ async fn handle_compute(
         .clone()
         .ok_or_else(|| actix_web::error::ErrorBadRequest("callback_url is required"))?;
 
-    let commitments = req
+    let published = req
         .input_commitments
         .iter()
-        .map(|hex_commitment| {
+        .zip(
+            req.input_slots
+                .iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(hex_commitment, hex_slot)| {
             let raw = hex::decode(hex_commitment.trim_start_matches("0x"))
                 .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad commitment: {e}")))?;
-            <[u8; 32]>::try_from(raw.as_slice())
-                .map_err(|_| actix_web::error::ErrorBadRequest("each commitment must be 32 bytes"))
+            let commitment = <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
+                actix_web::error::ErrorBadRequest("each commitment must be 32 bytes")
+            })?;
+            let metadata = match hex_slot {
+                Some(slot) => hex::decode(slot.trim_start_matches("0x"))
+                    .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?,
+                None => Vec::new(),
+            };
+            Ok(PublishedData {
+                commitment: Some(commitment),
+                metadata,
+            })
         })
-        .collect::<ActixResult<Vec<[u8; 32]>>>()?;
+        .collect::<ActixResult<Vec<PublishedData>>>()?;
 
-    if !commitments.is_empty() && commitments.len() != req.ciphertext_inputs.len() {
+    if !published.is_empty() && published.len() != req.ciphertext_inputs.len() {
         return Err(actix_web::error::ErrorBadRequest(
             "input_commitments must have one entry per ciphertext input",
         ));
     }
-
-    let slots = req
-        .input_slots
-        .iter()
-        .map(|hex_slot| {
-            let raw = hex::decode(hex_slot.trim_start_matches("0x"))
-                .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?;
-            <[u8; 20]>::try_from(raw.as_slice())
-                .map_err(|_| actix_web::error::ErrorBadRequest("each slot must be 20 bytes"))
-        })
-        .collect::<ActixResult<Vec<[u8; 20]>>>()?;
-
-    if !slots.is_empty() && slots.len() != req.ciphertext_inputs.len() {
+    if !req.input_slots.is_empty() && req.input_slots.len() != req.ciphertext_inputs.len() {
         return Err(actix_web::error::ErrorBadRequest(
             "input_slots must have one entry per ciphertext input",
         ));
@@ -404,8 +411,6 @@ async fn handle_compute(
     let fhe_inputs = FHEInputs {
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
-        commitments,
-        slots,
     };
     let domain = ComputeDomain::new(
         req.chain_id,
@@ -417,6 +422,7 @@ async fn handle_compute(
     .map_err(actix_web::error::ErrorBadRequest)?;
     let job = ComputeJob {
         inputs: fhe_inputs,
+        published,
         domain,
     };
 

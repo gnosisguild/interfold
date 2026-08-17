@@ -1298,6 +1298,35 @@ buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated reque
 E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
 durable event order or audit state.
 
+### What the compute-provider crate guarantees, and what an E3 program decides
+
+`e3-compute-provider` is shared by every E3 program, so it holds only what is true for all of them:
+
+- leaves are **derived** from the ciphertexts the Secure Process consumed, never received alongside
+  them;
+- **every** published input contributes a leaf, whatever is computed over.
+
+The leaf layout and which inputs are computed over come from the program, as an `InputPolicy`:
+
+```rust
+pub struct InputPolicy {
+    pub leaf: fn(&PublishedInput) -> Result<String, ComputeError>,
+    pub select: fn(&[PublishedInput]) -> Vec<usize>,
+}
+```
+
+Both are program-specific. A leaf must equal what that program builds on chain, and no two programs
+need agree. Selection answers "what does a second input for the same participant mean?", which CRISP
+answers differently from a program where every input counts.
+
+`InputPolicy::default()` is the behaviour that predates policies — the leaf is the ciphertext's own
+commitment and every input is computed over — and matches the starter template, whose
+`MyProgram.publishInput` inserts the commitment directly. Every E3 program exports `policy()` beside
+`fhe_processor`, so the guest and the dev runner need not know which program they are running.
+
+`PublishedData` carries what the program published per input: the stored commitment, and opaque
+`metadata` the crate never interprets. CRISP puts its 20-byte slot address there.
+
 ### Input leaf binding and per-slot selection
 
 An E3 program verifies a proof over the ciphertext **commitment** when an input is published. The

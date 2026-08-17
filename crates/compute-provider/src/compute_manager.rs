@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::ciphertext_output::ComputeProvider;
-use crate::compute_input::{ComputeInput, FHEInputs};
+use crate::compute_input::{ComputeInput, FHEInputs, PublishedData};
 use crate::FHEProcessor;
 
 pub struct ComputeManager<P>
@@ -22,9 +22,23 @@ where
     P: ComputeProvider + Send + Sync,
 {
     pub fn new(provider: P, fhe_inputs: FHEInputs, fhe_processor: FHEProcessor) -> Self {
+        Self::with_published(provider, fhe_inputs, Vec::new(), fhe_processor)
+    }
+
+    /// Carries what the E3 program published alongside each ciphertext, which its
+    /// [`crate::InputPolicy`] reads to build leaves and select inputs.
+    pub fn with_published(
+        provider: P,
+        fhe_inputs: FHEInputs,
+        published: Vec<PublishedData>,
+        fhe_processor: FHEProcessor,
+    ) -> Self {
         Self {
             provider,
-            input: ComputeInput { fhe_inputs },
+            input: ComputeInput {
+                fhe_inputs,
+                published,
+            },
             processor: fhe_processor,
         }
     }
