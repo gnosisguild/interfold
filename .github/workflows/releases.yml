@@ -523,14 +523,30 @@ jobs:
           if [ -f CHANGELOG.md ]; then
             echo "### What's Changed" >> release_notes.md
             echo "" >> release_notes.md
-            
-            # Try to extract the section for this version
-            # Fixed regex to handle both stable and pre-release versions
-            awk -v ver="${VERSION}" '
-              /^#+ \[?'"${VERSION//./\\.}"'\]?/ { flag=1; next }
-              /^#+ \[?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?/ && flag { exit }
+
+            # auto-changelog writes headings as "#### [v0.8.0](compare-url)", so the
+            # leading "v" must be optional. VERSION has it stripped from the tag, and
+            # matching the bare version produced an empty "What's Changed" section.
+            VERSION_RE="${VERSION//./\\.}"
+            awk -v ver="${VERSION_RE}" '
+              BEGIN {
+                start = "^#+ \\[?v?" ver "\\]?"
+                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+"
+              }
+              !flag && $0 ~ start { flag = 1; next }
+              flag && $0 ~ next_version { exit }
               flag { print }
-            ' CHANGELOG.md >> release_notes.md || echo "See CHANGELOG.md for details." >> release_notes.md
+            ' CHANGELOG.md > changelog_section.md
+
+            # awk exits 0 on no match, so an empty section never reached the old
+            # `||` fallback. Test the output instead of the exit status.
+            if [ -s changelog_section.md ]; then
+              cat changelog_section.md >> release_notes.md
+            else
+              echo "::warning::No CHANGELOG.md section matched v${VERSION}"
+              echo "See CHANGELOG.md for details." >> release_notes.md
+            fi
+            rm -f changelog_section.md
           fi
 
           # Add installation instructions
