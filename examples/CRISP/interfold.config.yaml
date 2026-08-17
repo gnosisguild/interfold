@@ -45,8 +45,8 @@ chains:
         address: "0x1D4b4750A5A2CB04F22979cb3FC05e9Fc51141eA"
         deploy_block: 11508395
       faucet:
-        address: "0x2A9D8bf02b119Ceb21d3343F7b7F84a7cF1Cc8aC"
-        deploy_block: 11507376
+        address: "0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA"
+        deploy_block: 11508419
 program:
   dev: true
   # risc0:

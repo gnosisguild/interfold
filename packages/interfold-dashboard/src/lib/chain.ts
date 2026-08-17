@@ -47,7 +47,7 @@ const envStr = (key: string, fallback: string): string => {
 // unset variable (use the default) from an explicitly empty one (disable). Every
 // other setting is resolved with `envStr`, which folds empty into the fallback
 // and so can never yield the disabled state.
-const FAUCET_DEFAULT = '0x2A9D8bf02b119Ceb21d3343F7b7F84a7cF1Cc8aC'
+const FAUCET_DEFAULT = '0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA'
 const faucetAddress = (): string => {
   const configured = env['VITE_FAUCET_ADDRESS']
   return configured === undefined ? FAUCET_DEFAULT : configured.trim()
@@ -61,13 +61,13 @@ export const publicClient = createPublicClient({
 })
 
 export const CONTRACTS = {
-  Interfold: envStr('VITE_INTERFOLD_ADDRESS', '0x3Cd771d8B8677Bcb1e3338AdDF8A887CCc2C3768') as Address,
-  CiphernodeRegistry: envStr('VITE_CIPHERNODE_REGISTRY_ADDRESS', '0x6c54Fe8d70476Ab87ef845aD669E91f66CdfCA8d') as Address,
-  CRISPProgram: envStr('VITE_CRISP_PROGRAM_ADDRESS', '0x9E74eCede3EA3a8ab9332A8403291A4EB0EdB5a6') as Address,
+  Interfold: envStr('VITE_INTERFOLD_ADDRESS', '0x38A8A686A420023568E995b57B4FBEA371555Ba7') as Address,
+  CiphernodeRegistry: envStr('VITE_CIPHERNODE_REGISTRY_ADDRESS', '0xa639b9a7AB05B787fFE258735Cf9541152a0E610') as Address,
+  CRISPProgram: envStr('VITE_CRISP_PROGRAM_ADDRESS', '0x8D9c914446451fdE7FC0fdBcF20573E878c3DE5a') as Address,
   // Operator-guide contracts. The bonding registry is the only address the guide
   // needs hardcoded — the ciphernode bond token, ticket wrapper, and ticket underlying
   // are all read back from it at runtime so they cannot drift.
-  BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x43bA4663385b5F20f79c04AA8CD48694426863F0') as Address,
+  BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x4b8560271CD78e071f0074f6Db7D344298187F8b') as Address,
   // Testnet-only convenience faucet (FOLD + fee token). The zero address or an
   // empty string disables the faucet card in the operator guide.
   Faucet: faucetAddress() as Address,
@@ -81,7 +81,7 @@ export const CHAIN = sepolia
 // Interfold, CiphernodeRegistry and CRISPProgram, so it must be the earliest of
 // those three deploy blocks (CiphernodeRegistry), not Interfold's: a later value
 // would silently drop registry events emitted before Interfold was deployed.
-export const DEPLOY_BLOCK = BigInt(envStr('VITE_DEPLOY_BLOCK', '11507360'))
+export const DEPLOY_BLOCK = BigInt(envStr('VITE_DEPLOY_BLOCK', '11508403'))
 
 // E3 timeout windows (seconds), matching the deployment's timeoutConfig. Used to
 // decide whether an E3 is still genuinely active vs. expired without completing.
