@@ -471,6 +471,14 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   has never been reproduced; treat its image ID as unverified.
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
+- **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
+  source commit, lockfile digests, pinned revisions, RISC Zero version, builder image tag **and
+  digest** (the builder tag is mutable and `RISC0_DOCKER_CONTAINER_TAG` overrides it), guest ELF
+  SHA-256, image ID, and the deployed verifier to one record. The generator reports
+  `complete: false` with the unresolved fields rather than emitting a partial record that reads as
+  verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
+  is computed from the loaded memory image. Procedure:
+  `docs/pages/verifying-the-compute-provider.mdx`.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27

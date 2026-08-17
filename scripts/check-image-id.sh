@@ -102,12 +102,29 @@ fi
 # Digest every input that changes the guest image: the guest crate, the journal types, the user
 # program, the build script, the resolved dependency graph, and the pinned revision.
 
+#
+# Manifest files are normalized first: a TOML comment cannot reach the compiled guest, and a gate
+# that fails on one teaches people to re-stamp without thinking. Rust sources are digested byte for
+# byte — over-strictness there costs a rebuild, while under-strictness ships a wrong image ID.
+digest_manifest() {
+  # Drop comment-only lines and blank lines, so documentation edits do not read as source drift.
+  sed -E 's/^[[:space:]]*#.*$//' "$1" | grep -v '^[[:space:]]*$'
+}
+
 guest_inputs_digest() {
   {
     find "$SUPPORT/methods/guest" "$SUPPORT/types" "$SUPPORT/program" \
-      -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \) \
-      | LC_ALL=C sort | xargs shasum -a 256
-    shasum -a 256 "$SUPPORT/methods/build.rs" "$SUPPORT/Cargo.toml"
+      -type f -name '*.rs' | LC_ALL=C sort | xargs shasum -a 256
+    shasum -a 256 "$SUPPORT/methods/build.rs"
+
+    for manifest in $(find "$SUPPORT/methods/guest" "$SUPPORT/types" "$SUPPORT/program" \
+      -type f \( -name 'Cargo.toml' -o -name 'Cargo.lock' \) | LC_ALL=C sort); do
+      echo "manifest $manifest"
+      digest_manifest "$manifest"
+    done
+    echo "manifest $SUPPORT/Cargo.toml"
+    digest_manifest "$SUPPORT/Cargo.toml"
+
     echo "pinned-rev $PINNED_REV"
     echo "risc0-toolchain $docker_toolchain"
     grep -oE '^ARG RISC0_VERSION=.*' "$DOCKERFILE"

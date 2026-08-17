@@ -231,12 +231,19 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   }
 
   /// @notice Set the Image ID for the guest program
+  /// @dev This value is application state, not protocol state. Interfold snapshots the protocol
+  /// ciphertext verifier for each E3 at request time, and that verifier's own `imageId` is
+  /// immutable, so changing this value cannot replace a computation the protocol already accepted.
+  /// It can still break an E3 that is in flight: `verify` would then check the receipt against a
+  /// guest that did not produce it, the round would fail as a compute timeout, and
+  /// `FailurePayerLib` bills that to the requester. Change it only between rounds.
   /// @param _imageId The new image ID.
   function setImageId(bytes32 _imageId) external onlyOwner {
     imageId = _imageId;
   }
 
   /// @notice Set the RISC Zero verifier.
+  /// @dev Carries the same in-flight risk as `setImageId`. Change it only between rounds.
   /// @param _risc0Verifier The new RISC Zero verifier address
   function setRisc0Verifier(IRiscZeroVerifier _risc0Verifier) external onlyOwner {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
@@ -528,7 +535,6 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // coordinator does when it builds a Merkle census (`balance / 10**(decimals - 1)`), so both
     // census families encode ballots in the same units and a tally decodes the same way.
     uint256 power = rawPower / round.votingPowerDivisor;
-
 
     // Eligibility comes from the power at the snapshot. The weight the circuit enforces comes from
     // the credit mode, so a CONSTANT round gives every eligible slot the same credits.

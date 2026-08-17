@@ -436,3 +436,48 @@ Generated verifiers are automatically:
 - Verifier contracts are large (~24KB) due to pairing cryptography
 - Library linking (e.g., `ZKTranscriptLib`) is handled automatically during deployment
 - Generated files are excluded from linting (`.solhintignore`)
+
+## Guest provenance
+
+Two commands cover the RISC Zero compute guest. The full reviewer-facing procedure is
+`docs/pages/verifying-the-compute-provider.mdx`.
+
+### `check-image-id.sh`
+
+`Risc0BfvCiphertextVerifier.imageId` is immutable and names exactly one guest image, so a guest
+change that leaves `crates/support/contracts/ImageID.sol` untouched ships a verifier that no longer
+matches the tree. This is the gate.
+
+```bash
+# Cheap checks: pin consistency, Dockerfile-vs-rust-toolchain sync, guest source drift
+pnpm check:image-id
+
+# Also rebuild the guest with the RISC Zero Docker builder and compare (needs Docker)
+./scripts/check-image-id.sh --rebuild
+```
+
+The drift check compares the digest of the guest-affecting inputs against
+`crates/support/contracts/ImageID.stamp.json`. That stamp is a **ratchet, not a proof** — it shows
+the inputs are unchanged since the image ID was recorded, never that the recorded value is the one
+those inputs produce. A stamp carrying `"imageIdVerified": false` has never been reproduced. Only
+`--rebuild` clears it.
+
+TOML comments are normalized out of the digest, so documenting a pin does not read as source drift.
+Rust sources are digested byte for byte.
+
+### `generate-provenance-manifest.ts`
+
+Emits the release record: source commit, lockfile digests, pinned revisions, RISC Zero version,
+builder image tag and digest, guest ELF SHA-256, image ID, and — with an RPC — the deployed verifier
+address, its runtime code digest, the underlying RISC Zero verifier, and the on-chain `imageId()`.
+
+```bash
+pnpm provenance:manifest
+pnpm provenance:manifest --rpc <url> --verifier <address> --out manifest.json
+```
+
+It prints `"complete": false` and lists unresolved fields when anything is missing. A release
+manifest must be complete.
+
+Note: the SHA-256 of the ELF is **not** the image ID. SHA-256 checks binary integrity; the image ID
+is computed from the loaded memory image. Both are recorded, for different purposes.

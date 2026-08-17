@@ -20,9 +20,22 @@ To simplify integration with the Interfold, use the provided Compute Provider pa
 **Benefits:**
 
 - **Handles Merkle tree construction**: Recreates the input Merkle tree inside the compute
-  environment.
+  environment, from the ciphertexts the Secure Process consumed.
 - **Simplifies proof generation**: Manages proof creation for computation verification.
 - **Abstracts complexity**: Allows you to focus on your computation logic.
+
+> **The first point is a security property, not a convenience.** `ComputeInput` carries only
+> `fhe_inputs`, and `ComputeInput::process` derives the leaves from those ciphertexts. It must stay
+> that way. If the leaves ever arrive as a separate value, they can disagree with the ciphertexts
+> that produced the result, and the input-root comparison your E3 program performs becomes
+> meaningless — a prover could replay the genuine on-chain leaves while computing over inputs that
+> were never submitted. Publishing a result is unpermissioned and one-shot, so that is not a
+> hypothetical failure of a trusted party.
+>
+> The matching obligation on the contract side is that **your E3 program must compare the proof's
+> input root against its own on-chain root**. `Risc0BfvCiphertextVerifier` takes the root from the
+> proof envelope and does not constrain it. See
+> [Verifying the Compute Provider](/verifying-the-compute-provider).
 
 **Implementation:**
 
@@ -117,7 +130,7 @@ pub fn run_compute(params: FHEInputs) -> Result<(Risc0Output, Vec<u8>)> {
     let risc0_provider = Risc0Provider;
 
     // Create the ComputeManager with the provider, params, and the secure process function
-    let mut provider = ComputeManager::new(risc0_provider, params, fhe_processor, false, None);
+    let mut provider = ComputeManager::new(risc0_provider, params, fhe_processor);
 
     // Execute the program and get the output
     let output: (Risc0Output, Vec<u8>) = provider.start();

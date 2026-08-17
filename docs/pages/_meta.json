@@ -88,6 +88,9 @@
   "compute-provider": {
     "title": "Compute Provider Setup"
   },
+  "verifying-the-compute-provider": {
+    "title": "Verifying the Compute Provider"
+  },
   "putting-it-together": {
     "title": "Putting It All Together"
   },

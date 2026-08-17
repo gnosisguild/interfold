@@ -34,6 +34,15 @@ and `batch_size` parameters.
 - New `pnpm check:image-id` (`scripts/check-image-id.sh`), wired into `.husky/pre-push` and a new
   `check_image_id` CI job.
 - New `pnpm check:verifiers`, wired into pre-push and the `build_circuits` CI job.
+- New `pnpm provenance:manifest` (`scripts/generate-provenance-manifest.ts`) — the release record.
+  It refuses to claim completeness: unresolved fields are listed and `complete` is `false`.
+- New docs page `docs/pages/verifying-the-compute-provider.mdx`, linked from the compute-provider
+  page and from `write-secure-program.mdx`.
+- The `e3-compute-provider` pins in `crates/support/Cargo.toml` and
+  `crates/support/methods/guest/Cargo.toml` now carry the rationale for being revisions rather than
+  paths, and the rule for bumping them.
+- `CRISPProgram.setImageId` / `setRisc0Verifier` document that they cannot replace an accepted
+  computation but can fail an E3 in flight.
 
 ## Blocker: the guest still runs the old code
 
