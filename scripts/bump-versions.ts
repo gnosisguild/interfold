@@ -287,7 +287,12 @@ class VersionBumper {
 
       console.log('\n📝 Generating changelog...')
       try {
-        execSync('pnpm auto-changelog -o CHANGELOG.md --commit-limit false --tag-prefix v', {
+        // This runs before the tag exists, so auto-changelog would otherwise file
+        // everything since the previous release as unreleased and omit it. The
+        // release workflow reads the section for the tag it builds, so without
+        // --latest-version the tagged CHANGELOG.md is always one release behind
+        // and "What's Changed" comes out empty.
+        execSync(`pnpm auto-changelog -o CHANGELOG.md --commit-limit false --tag-prefix v --latest-version v${this.newVersion}`, {
           cwd: this.rootDir,
           stdio: 'inherit',
         })
