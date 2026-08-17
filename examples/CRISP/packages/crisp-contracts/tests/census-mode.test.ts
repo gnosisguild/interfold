@@ -35,13 +35,7 @@ describe('CRISPProgram census mode', function () {
     opts: { token?: string; credits?: number; divisor?: number; minVotingPower?: bigint } = {},
   ) => {
     const types = ['address', 'uint256', 'uint256', 'uint256', 'uint256']
-    const values: unknown[] = [
-      opts.token ?? ethers.ZeroAddress,
-      opts.minVotingPower ?? 0n,
-      numOptions,
-      creditMode,
-      opts.credits ?? 1,
-    ]
+    const values: unknown[] = [opts.token ?? ethers.ZeroAddress, opts.minVotingPower ?? 0n, numOptions, creditMode, opts.credits ?? 1]
     if (censusMode !== undefined) {
       types.push('uint256', 'uint256')
       // 0 means "derive the divisor from the token's decimals".
@@ -136,9 +130,10 @@ describe('CRISPProgram census mode', function () {
       const token = await votes.getAddress()
 
       // Derived divisor is 10 ** (18 - 1); a floor under that admits sub-unit voters.
-      await expect(
-        validate(40, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n - 1n })),
-      ).to.be.revertedWithCustomError(crispProgram, 'MinVotingPowerBelowScale')
+      await expect(validate(40, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n - 1n }))).to.be.revertedWithCustomError(
+        crispProgram,
+        'MinVotingPowerBelowScale',
+      )
 
       // Exactly one ballot unit is enough.
       await validate(41, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n }))

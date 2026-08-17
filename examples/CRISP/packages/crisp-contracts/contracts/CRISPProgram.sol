@@ -507,7 +507,6 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // census families encode ballots in the same units and a tally decodes the same way.
     uint256 power = rawPower / round.votingPowerDivisor;
 
-
     // Eligibility comes from the power at the snapshot. The weight the circuit enforces comes from
     // the credit mode, so a CONSTANT round gives every eligible slot the same credits.
     return (bytes32(round.creditMode == CreditMode.CONSTANT ? round.credits : power), onchainHonkVerifier);

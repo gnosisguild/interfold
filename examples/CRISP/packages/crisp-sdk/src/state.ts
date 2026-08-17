@@ -106,12 +106,7 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, 
  * @param chainId - The chain the program is deployed on
  * @returns The spendable voting power in ballot units, or 0 for a round that is not ONCHAIN
  */
-export const getOnchainVotingPower = async (
-  programAddress: string,
-  e3Id: bigint,
-  slot: string,
-  chainId: number,
-): Promise<bigint> => {
+export const getOnchainVotingPower = async (programAddress: string, e3Id: bigint, slot: string, chainId: number): Promise<bigint> => {
   const publicClient = getPublicClient(chainId)
 
   return publicClient.readContract({
