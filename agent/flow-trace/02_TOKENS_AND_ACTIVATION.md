@@ -245,6 +245,13 @@ tickets — see [01_REGISTRATION.md](01_REGISTRATION.md#step-3-owner-funded-regi
 > (`balanceOf / ticketPrice >= minTicketBalance`) and in sortition eligibility — it is NOT used to
 > multiply the deposit amount.
 
+The CLI carries the same denomination: `interfold ciphernode tickets buy --amount 100` deposits 100
+units of the underlying token, and `tickets burn` / `deactivate --tickets` take tFOLD units. None of
+them take a ticket count. After the receipt the CLI reads `availableTickets(operator)` back from
+`BondingRegistry` and prints that, so the reported count reflects `floor(balance / ticketPrice)` and
+never implies a remainder is a whole ticket. Report the derived count, never the input amount — see
+`crates/cli/src/ciphernode/tickets.rs` and `lifecycle.rs`.
+
 ```text
 Bond owner submits addTicketBalanceFor(operator, amount)
 │
