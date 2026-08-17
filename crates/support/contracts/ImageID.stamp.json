@@ -1,0 +1,21 @@
+{
+  "imageId": "0x7ac6020923d10004ccb27d8cdb5df72e7476e8a9775b9c1c711e9d906b44e105",
+  "guestInputsDigest": "f3833685a270dfdb50c36b3eaa4289c7d63710f0d9e883c67e5004f02d9add47",
+  "imageIdVerified": false,
+  "reason": [
+    "The recorded image ID has never been reproduced from these inputs. It is very probably",
+    "stale: ImageID.sol last changed on 2026-06-23 in 8b81f51c, while the guest and the journal",
+    "types changed on 2026-08-06 in f716d933b and again on 2026-08-13 in 02ebe4589. The second of",
+    "those replaced a four-field result with a nine-field domain-separated journal.",
+    "",
+    "This stamp starts the drift ratchet from the current tree. It does not endorse the recorded",
+    "value. Run './scripts/check-image-id.sh --rebuild' to reproduce the image ID, commit the",
+    "regenerated ImageID.sol, then set imageIdVerified to true and drop this field.",
+    "",
+    "A rebuild also needs the guest to read the fixed compute-provider. The guest reads",
+    "e3-compute-provider through a git pin (crates/support/Cargo.toml and",
+    "crates/support/methods/guest/Cargo.toml), so the leaf-derivation fix in",
+    "crates/compute-provider does not reach the guest until that pin moves to a pushed commit.",
+    "See BRANCH-NOTES.md."
+  ]
+}

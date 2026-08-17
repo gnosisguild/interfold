@@ -22,15 +22,34 @@ use fhe::bfv::{BfvParameters, Ciphertext, PublicKey};
 /// A tuple of (ct0is, ct1is) where each is CrtPolynomial
 ///
 /// # Errors
-/// Returns [`CrtPolynomialError::ModuliLengthMismatch`] if `moduli.len() != self.limbs.len()`.
+/// Returns [`ZkHelpersUtilsError::UnexpectedCiphertextComponents`] if the ciphertext does not have
+/// exactly two components.
+/// Returns [`ZkHelpersUtilsError::ConversionError`] if `moduli.len() != self.limbs.len()`.
 pub fn bfv_ciphertext_to_greco(
     params: &BfvParameters,
     ciphertext: &Ciphertext,
-) -> Result<(CrtPolynomial, CrtPolynomial), CrtPolynomialError> {
+) -> Result<(CrtPolynomial, CrtPolynomial), ZkHelpersUtilsError> {
+    // The Greco form and the Noir circuit both cover c[0] and c[1] only. A ciphertext with more
+    // components would commit to the same value as its own two-component prefix, so two different
+    // ciphertexts would share one commitment. Reject the extra components instead.
+    if ciphertext.len() != 2 {
+        return Err(ZkHelpersUtilsError::UnexpectedCiphertextComponents(
+            ciphertext.len(),
+        ));
+    }
+
     let moduli = params.moduli();
 
-    let ct0is = fhe_poly_to_crt_centered(&ciphertext[0], moduli)?;
-    let ct1is = fhe_poly_to_crt_centered(&ciphertext[1], moduli)?;
+    let to_crt = |poly| {
+        fhe_poly_to_crt_centered(poly, moduli).map_err(|e: CrtPolynomialError| {
+            ZkHelpersUtilsError::ConversionError(format!(
+                "Failed to convert ciphertext polynomial: {e}"
+            ))
+        })
+    };
+
+    let ct0is = to_crt(&ciphertext[0])?;
+    let ct1is = to_crt(&ciphertext[1])?;
 
     Ok((ct0is, ct1is))
 }
@@ -117,6 +136,8 @@ pub fn compute_public_key_commitment(
 /// The commitment of the ciphertext
 ///
 /// # Errors
+/// Returns [`ZkHelpersUtilsError::UnexpectedCiphertextComponents`] if the ciphertext does not have
+/// exactly two components.
 /// Returns [`ZkHelpersUtilsError::ConversionError`] if the conversion fails.
 /// Returns [`ZkHelpersUtilsError::CommitmentTooLong`] if the commitment is too long.
 pub fn compute_ciphertext_commitment(
@@ -125,12 +146,7 @@ pub fn compute_ciphertext_commitment(
 ) -> Result<[u8; 32], ZkHelpersUtilsError> {
     use crate::commitments::compute_ciphertext_commitment;
 
-    let (ct0is, ct1is) = bfv_ciphertext_to_greco(params, ciphertext).map_err(|e| {
-        ZkHelpersUtilsError::ConversionError(format!(
-            "Failed to convert ciphertext to greco: {}",
-            e
-        ))
-    })?;
+    let (ct0is, ct1is) = bfv_ciphertext_to_greco(params, ciphertext)?;
 
     let pk_bit = compute_modulus_bit(params);
     let commitment = compute_ciphertext_commitment(&ct0is, &ct1is, pk_bit);
@@ -177,6 +193,43 @@ mod tests {
         // Verify the structure matches
         assert_eq!(actual_pk0is, inputs.pk0is);
         assert_eq!(actual_pk1is, inputs.pk1is);
+    }
+
+    /// The commitment covers `c[0]` and `c[1]` only. Without a component-count check, a
+    /// ciphertext padded with a third polynomial commits to the same value as its two-component
+    /// prefix, so two different serialized ciphertexts would share one commitment. Threshold
+    /// decryption then rejects the padded ciphertext and the round fails.
+    #[test]
+    fn ciphertext_with_more_than_two_components_is_rejected() {
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let sample =
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
+                .unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let ciphertext = Ciphertext::from_bytes(&inputs.ciphertext, &threshold_params).unwrap();
+
+        let padded = Ciphertext::new(
+            vec![
+                ciphertext[0].clone(),
+                ciphertext[1].clone(),
+                ciphertext[1].clone(),
+            ],
+            &threshold_params,
+        )
+        .unwrap();
+        assert_eq!(padded.len(), 3);
+
+        assert!(matches!(
+            bfv_ciphertext_to_greco(&threshold_params, &padded),
+            Err(ZkHelpersUtilsError::UnexpectedCiphertextComponents(3))
+        ));
+        assert!(matches!(
+            compute_ciphertext_commitment(&threshold_params, &padded),
+            Err(ZkHelpersUtilsError::UnexpectedCiphertextComponents(3))
+        ));
+
+        // The two-component original still converts, so the check rejects only the padding.
+        assert!(bfv_ciphertext_to_greco(&threshold_params, &ciphertext).is_ok());
     }
 
     #[test]

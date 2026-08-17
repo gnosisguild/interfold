@@ -46,8 +46,7 @@ fn encode_mock_compute_proof(seal: &[u8], result: &ComputeResult) -> Result<Vec<
 #[tokio::main]
 async fn main() -> Result<()> {
     let server = E3ProgramServer::builder(|job| async move {
-        let mut manager =
-            ComputeManager::new(MockProofProvider, job.inputs, fhe_processor, false, None);
+        let mut manager = ComputeManager::new(MockProofProvider, job.inputs, fhe_processor);
         let (result, ciphertext) = manager.start();
         let proof = encode_mock_compute_proof(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5], &result)?;
 

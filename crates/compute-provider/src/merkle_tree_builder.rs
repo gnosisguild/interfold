@@ -31,6 +31,12 @@ impl MerkleTreeBuilder {
         }
     }
 
+    /// Sets the leaves directly, for tests that need a known tree.
+    ///
+    /// Never use this to build a tree the journal publishes. A Secure Process must derive its
+    /// leaves from the ciphertexts it consumed, with [`Self::compute_leaf_hashes`]. Leaves that
+    /// arrive as a separate value can disagree with those ciphertexts.
+    #[cfg(test)]
     pub fn with_leaf_hashes(mut self, leaf_hashes: Vec<String>) -> Self {
         self.leaf_hashes = leaf_hashes;
         self

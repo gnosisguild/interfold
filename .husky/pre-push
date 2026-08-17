@@ -6,3 +6,5 @@ pnpm check:license
 pnpm check:committee
 pnpm check:docs
 pnpm check:invariants
+pnpm check:image-id
+pnpm check:verifiers

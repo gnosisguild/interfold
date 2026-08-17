@@ -281,6 +281,20 @@ jobs:
       - name: Run ZK Prover Integration Tests (with network downloads)
         run: 'cargo test -p e3-zk-prover --features integration-tests --test integration_tests -- --nocapture'
 
+  # Guards the RISC Zero guest artifact. The on-chain imageId is immutable, so a guest change
+  # that leaves ImageID.sol untouched ships a verifier that no longer matches this tree.
+  check_image_id:
+    timeout-minutes: 10
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # The pin-ancestry check reads history, so a shallow clone is not enough.
+          fetch-depth: 0
+
+      - name: Check guest pins, toolchain, and image ID drift
+        run: ./scripts/check-image-id.sh
+
   build_e3_support_risc0:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.docker_support == 'true'
@@ -940,6 +954,11 @@ jobs:
 
       - name: Build circuits
         run: pnpm build:circuits
+
+      # The generated verifier contracts must match the freshly built verification keys. A drift
+      # means the deployed verifier accepts a different circuit from the one in this tree.
+      - name: Check generated verifiers are in sync
+        run: pnpm check:verifiers
 
       - name: Upload compiled circuit artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

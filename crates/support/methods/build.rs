@@ -27,14 +27,26 @@ use risc0_build_ethereum::generate_solidity_files;
 const SOLIDITY_IMAGE_ID_PATH: &str = "../contracts/ImageID.sol";
 const SOLIDITY_ELF_PATH: &str = "../tests/Elf.sol";
 
+/// Reports whether the reproducible Docker guest build is selected.
+///
+/// The variable is read for its value, not its presence, so `RISC0_USE_DOCKER=0` selects the
+/// local build.
+fn use_docker() -> bool {
+    matches!(
+        env::var("RISC0_USE_DOCKER").unwrap_or_default().as_str(),
+        "1" | "true" | "TRUE" | "yes" | "YES"
+    )
+}
+
 fn main() {
     // Builds can be made deterministic, and thereby reproducible, by using Docker to build the
-    // guest. Check the RISC0_USE_DOCKER variable and use Docker to build the guest if set.
+    // guest. Set RISC0_USE_DOCKER to 1 (or true) to select the reproducible Docker build. Any
+    // other value, and an unset variable, select the local build.
     println!("cargo:rerun-if-env-changed=RISC0_USE_DOCKER");
     println!("cargo:rerun-if-changed=build.rs");
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let mut builder = GuestOptionsBuilder::default();
-    if env::var("RISC0_USE_DOCKER").is_ok() {
+    if use_docker() {
         let docker_options = DockerOptionsBuilder::default()
             .root_dir(manifest_dir.join("../"))
             .build()

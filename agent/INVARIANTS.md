@@ -356,6 +356,22 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
   output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
   create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
+- **A Secure Process derives its input root; it never receives it.** `ComputeInput` holds only
+  `fhe_inputs`, and `ComputeInput::process` derives the leaves from the ciphertexts it processed.
+  The protocol verifier takes the input root from the proof envelope and does not constrain it, so
+  the E3 program's comparison against its own on-chain root is the only check — and that comparison
+  is worthless if the guest can be handed leaves that disagree with the ciphertexts it consumed.
+  Publication is unpermissioned and one-shot, with no dispute path, so any party could otherwise
+  publish a tally over ciphertexts that were never submitted. `MerkleTreeBuilder::with_leaf_hashes`
+  is `#[cfg(test)]` to keep it out of that path. — `flow-trace/04`
+- **Every E3 program must compare the proof's input root against its own root.**
+  `Risc0BfvCiphertextVerifier` takes no `inputRoot` argument and constrains none. A program that
+  skips the comparison accepts a result computed over any input set. — `flow-trace/04`
+- **The SAFE ciphertext commitment requires exactly two components.** It covers `c[0]` and `c[1]`
+  only, matching the Noir circuit, so `bfv_ciphertext_to_greco` rejects any other component count. A
+  padded ciphertext would otherwise share a commitment with its two-component prefix while threshold
+  decryption rejects it, failing the round as a `DecryptionTimeout` billed to the ciphernodes. —
+  `flow-trace/04`
 - **Client PK commitment binding (C-01):** serialized PK event bytes are an untrusted transport
   hint; indexers store the decoded key only when its recomputed commitment equals the on-chain
   (C5-proven) value. Proof-backed committee publication never accepts key bytes. Public-key
@@ -438,7 +454,23 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 - Committee four-file sync (above) — `scripts/check-committee.sh`, pre-push + CI.
 - **Never hand-edit generated files:** parity matrices, `utils.ts` H/T values, verifier contracts
-  (`generate-verifiers.ts` output), `.active-preset.json`.
+  (`generate-verifiers.ts` output), `.active-preset.json`, `crates/support/contracts/ImageID.sol`,
+  `crates/support/tests/Elf.sol`.
+- **Generated verifiers must match the built VKs** — `pnpm check:verifiers`, pre-push + CI
+  (`build_circuits`). A drift means the deployed verifier accepts a different circuit from the tree.
+- **A guest change must reach `ImageID.sol`** — `pnpm check:image-id`, pre-push + CI
+  (`check_image_id`). `Risc0BfvCiphertextVerifier.imageId` is immutable and names exactly one guest
+  image, so a guest change that leaves the image ID untouched ships a verifier that no longer
+  matches the tree. The gate asserts three things: every Interfold git pin the guest workspace reads
+  names one revision; the Dockerfile `RISC0_TOOLCHAIN` matches `rust-toolchain.toml` (the guest
+  builds the same dependency tree as the host, and the pinned fhe.rs declares that MSRV); and the
+  digest of the guest-affecting inputs matches `crates/support/contracts/ImageID.stamp.json`. The
+  stamp is a **drift ratchet, not a proof** — it shows the inputs are unchanged since the image ID
+  was recorded, never that the recorded value is the one those inputs produce. Only
+  `./scripts/check-image-id.sh --rebuild` shows that. A stamp carrying `"imageIdVerified": false`
+  has never been reproduced; treat its image ID as unverified.
+- **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
+  guest ELF path, so it is generated per checkout and `.gitignore`d.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27

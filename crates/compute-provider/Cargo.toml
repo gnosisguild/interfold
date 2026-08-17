@@ -16,7 +16,12 @@ hex = "=0.4.3"
 light-poseidon = "=0.2.0"
 ark-ff = "=0.4.2"
 ark-bn254 = "=0.4.0"
-rayon = "=1.10.0"
 zk-kit-imt = "0.0.7"
 e3-bfv-client = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+
+[dev-dependencies]
+fhe = { workspace = true }
+fhe-traits = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }

@@ -1318,7 +1318,6 @@ dependencies = [
  "light-poseidon",
  "num-bigint",
  "num-traits",
- "rayon",
  "serde",
  "sha3 0.10.8",
  "zk-kit-imt",

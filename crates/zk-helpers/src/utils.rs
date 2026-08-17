@@ -37,6 +37,12 @@ pub enum ZkHelpersUtilsError {
 
     #[error("Commitment too long: {0}")]
     CommitmentTooLong(usize),
+
+    #[error(
+        "Expected 2 ciphertext components, got {0}; the commitment covers c[0] and c[1] only, \
+         so a ciphertext with more components must be relinearized first"
+    )]
+    UnexpectedCiphertextComponents(usize),
 }
 
 pub type Result<T> = std::result::Result<T, ZkHelpersUtilsError>;

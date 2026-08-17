@@ -813,6 +813,44 @@ smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commit
 minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
 value, and depth rule.
 
+The guest derives the input root from the ciphertexts it processed. `ComputeInput` holds only
+`fhe_inputs`, and `ComputeInput::process` calls `MerkleTreeBuilder::compute_leaf_hashes` over those
+ciphertexts before it builds the tree (`crates/compute-provider/src/compute_input.rs`). The leaves
+are therefore a function of the processed set, not a separate prover-supplied value.
+
+This binding matters because nothing else supplies it. `Risc0BfvCiphertextVerifier` takes the input
+root from the proof envelope and never constrains it, so the only check on the root is the
+comparison an E3 program performs against its own on-chain root (`CRISPProgram.verify`,
+`MyProgram.verify`). If the guest accepted the leaves as an independent input, that comparison would
+pass for a tally computed over ciphertexts that were never submitted: a prover would replay the
+genuine on-chain leaves while processing its own ciphertexts. Publication is unpermissioned
+(`Interfold.publishCiphertextOutput` has no authorization modifier) and one-shot, so any party could
+do this, and no dispute path exists.
+
+Two rules follow for anyone changing this path:
+
+- **An E3 program must compare the proof's input root against its own root.** The protocol verifier
+  will not do it.
+- **A Secure Process must derive its leaves, never receive them.**
+  `MerkleTreeBuilder::with_leaf_hashes` is `#[cfg(test)]` for that reason.
+
+`ComputeManager` proves the whole input set in one guest run. The former `start_parallel` path
+proved per chunk and set the final leaves to sub-tree roots, which produced a tree of sub-tree roots
+rather than the flat input root an E3 program compares against. It was unreachable — every call site
+passed `use_parallel = false` — and it is removed. Restoring batching requires first defining what a
+leaf means on that path.
+
+### Ciphertext component count
+
+The SAFE ciphertext commitment covers `c[0]` and `c[1]` only, matching the Noir circuit.
+`bfv_ciphertext_to_greco` rejects any ciphertext whose component count is not exactly two
+(`crates/zk-helpers/src/circuits/threshold/user_data_encryption/utils.rs`). Without that check a
+ciphertext padded with a third polynomial commits to the same value as its two-component prefix, so
+the input root and the output commitment stay identical while threshold decryption rejects the
+padded output — `ShareManager` requires exactly two components. The round would then fail as a
+`DecryptionTimeout`, which `FailurePayerLib` bills to the ciphernodes. Seed-compressed ciphertexts
+are unaffected: `TryConvertFrom` expands the seed into `c[1]` before the converter sees it.
+
 ```
 Compute provider runs computation on encrypted data:
 │
