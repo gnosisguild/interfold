@@ -1,6 +1,6 @@
 {
   "imageId": "0x7ac6020923d10004ccb27d8cdb5df72e7476e8a9775b9c1c711e9d906b44e105",
-  "guestInputsDigest": "a0df9e6388a0fc3ea8565faf8dcb334b402b406db84de79bee971ead4e68f21d",
+  "guestInputsDigest": "f44959fa60d3972e45bdfdd541d7ad0bf55febf6ad0d045895b9d7ce63d04178",
   "imageIdVerified": false,
   "reason": [
     "The recorded image ID has never been reproduced from these inputs. It is very probably",
@@ -11,6 +11,11 @@
     "This stamp starts the drift ratchet from the current tree. It does not endorse the recorded",
     "value. Run './scripts/check-image-id.sh --rebuild' to reproduce the image ID, commit the",
     "regenerated ImageID.sol, then set imageIdVerified to true and drop this field.",
+    "",
+    "The digest was rebaselined once more when crates/support/methods/guest/Cargo.lock was",
+    "repaired: it was one line behind its manifests (e3-support-types gained alloy-primitives in",
+    "02ebe458), so 'cargo metadata --locked' refused the workspace and the reproducible build",
+    "stopped before it started. The lockfile is a guest input, so repairing it moved the digest.",
     "",
     "A rebuild also needs the guest to read the fixed compute-provider. The guest reads",
     "e3-compute-provider through a git pin (crates/support/Cargo.toml and",

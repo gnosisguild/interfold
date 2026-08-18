@@ -450,6 +450,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # This job holds `contents: write` and runs `pnpm install`, which executes lifecycle
+          # scripts from every dependency. Persisting the token in .git/config would leave it on
+          # disk for all of them. The one step that needs it takes it explicitly instead.
+          persist-credentials: false
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
@@ -639,7 +643,12 @@ jobs:
 
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git tag -f stable
-          git push origin stable --force
+          # The checkout persists no credentials, so the remote is named with the token here rather
+          # than read from .git/config. Interpolated by the shell from the environment, never by
+          # Actions into the script body.
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" stable --force
           echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"

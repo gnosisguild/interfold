@@ -159,12 +159,22 @@ function guestElf() {
   }
 }
 
+/**
+ * How long a single RPC call may take before it counts as unresolved.
+ *
+ * `fetch` has no default timeout, and this runs in the release job. An endpoint that accepts the
+ * connection and never answers would hang the release rather than failing it, which is the one
+ * outcome a fail-closed gate must not have.
+ */
+const RPC_TIMEOUT_MS = 15_000
+
 async function rpcCall(rpc: string, method: string, params: unknown[]): Promise<string | null> {
   try {
     const response = await fetch(rpc, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
     })
     const body = (await response.json()) as { result?: string; error?: unknown }
     if (body.error || typeof body.result !== 'string') return null
@@ -283,9 +293,7 @@ async function main() {
   // The recorded image ID must also be the one deployed, or the manifest describes a different
   // artefact from the one in use.
   if (chain?.onchainImageId && committedImageId && chain.onchainImageId !== committedImageId) {
-    unresolved.push(
-      `deployment.onchainImageId (${chain.onchainImageId}) does not match ImageID.sol (${committedImageId})`,
-    )
+    unresolved.push(`deployment.onchainImageId (${chain.onchainImageId}) does not match ImageID.sol (${committedImageId})`)
   }
 
   const output = { ...manifest, complete: unresolved.length === 0, unresolved }

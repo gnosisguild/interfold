@@ -71,11 +71,29 @@ $(printf '%s\n' "$pins" | sed 's/^/    /')
 fi
 PINNED_REV="$pins"
 
+# The paths the pin decides the contents of. The guest compiles these through the git pin, so a
+# change to them here does not reach the guest until the pin moves past it.
+GUEST_SOURCE_PATHS="crates/compute-provider crates/support/types"
+
 # The pin must be a commit this repository knows, so a reviewer can diff it against the tree.
 if git cat-file -e "${PINNED_REV}^{commit}" 2>/dev/null; then
   if ! git merge-base --is-ancestor "$PINNED_REV" HEAD 2>/dev/null; then
     warn "pinned revision ${PINNED_REV:0:8} is not an ancestor of HEAD.
   The guest is built from sources that are not in this branch's history."
+  fi
+
+  # Ancestry says the pin is a commit we know. It does not say the pin is current, and those are
+  # different questions: a pin can be a perfectly good ancestor and still predate every fix to the
+  # code it compiles. Ask the second question directly.
+  # shellcheck disable=SC2086
+  last_source_change="$(git log -1 --format=%H -- $GUEST_SOURCE_PATHS 2>/dev/null || true)"
+  if [ -n "$last_source_change" ] &&
+    ! git merge-base --is-ancestor "$last_source_change" "$PINNED_REV" 2>/dev/null; then
+    warn "the guest pin predates the last change to the code it compiles.
+    pinned:      ${PINNED_REV:0:8}
+    last change: ${last_source_change:0:8} ($GUEST_SOURCE_PATHS)
+  The guest still runs the older code. Move the pin to a pushed commit that contains the change,
+  update both lockfiles, rebuild the guest, and commit the regenerated $IMAGE_ID_SOL."
   fi
 else
   warn "pinned revision ${PINNED_REV:0:8} is not present locally; run 'git fetch' to check it."
