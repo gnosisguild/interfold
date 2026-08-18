@@ -78,8 +78,8 @@ The server exposes several RESTful API endpoints:
 
 ## Upgrading across an input-format change
 
-`InputPublished` and the durable round record both carry per-input fields, and both have changed.
-A deployment that adds one cannot be rolled forward over a round that is already taking inputs:
+`InputPublished` and the durable round record both carry per-input fields, and both have changed. A
+deployment that adds one cannot be rolled forward over a round that is already taking inputs:
 
 - the event's topic hash changes with its signature, so the indexer no longer matches the logs an
   already-deployed `CRISPProgram` emits;

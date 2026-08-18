@@ -3,10 +3,10 @@
 `@crisp-e3/sdk` and `@crisp-e3/contracts` are published as a matched pair on two channels, split by
 BFV preset.
 
-| channel | tag | preset | who it is for |
-| --- | --- | --- | --- |
-| testing | `testing` | `insecure-512` | testnets, demos, local development |
-| production | `latest` | `secure-8192` | real rounds |
+| channel    | tag       | preset         | who it is for                      |
+| ---------- | --------- | -------------- | ---------------------------------- |
+| testing    | `testing` | `insecure-512` | testnets, demos, local development |
+| production | `latest`  | `secure-8192`  | real rounds                        |
 
 ## Why the channels are split by preset
 
@@ -20,8 +20,8 @@ which is a loud, immediate error rather than a silently wrong proof:
 
 ```ts
 // on @crisp-e3/sdk@testing
-import { loadCircuits } from '@crisp-e3/sdk/insecure-512'   // resolves
-import { loadCircuits } from '@crisp-e3/sdk/secure-8192'    // ERR_MODULE_NOT_FOUND
+import { loadCircuits } from '@crisp-e3/sdk/insecure-512' // resolves
+import { loadCircuits } from '@crisp-e3/sdk/secure-8192' // ERR_MODULE_NOT_FOUND
 ```
 
 It also keeps the secure circuits out of every testing install. They are far larger than the
@@ -68,7 +68,7 @@ pnpm publish:prod
 
 `prepublishOnly` runs `check-presets` on both packages, which refuses to publish a channel whose
 artifacts do not match its preset — a missing preset, a stub bundle, an exports entry pointing at
-nothing, missing verifiers, or the *other* preset's bundle being present.
+nothing, missing verifiers, or the _other_ preset's bundle being present.
 
 ## Deploying
 

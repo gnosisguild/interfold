@@ -80,15 +80,7 @@ describe('CRISP on-chain census', function () {
   }) =>
     ethers.AbiCoder.defaultAbiCoder().encode(
       ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
-      [
-        opts.token,
-        opts.minVotingPower,
-        opts.numOptions,
-        opts.creditMode,
-        opts.credits,
-        opts.censusMode,
-        opts.votingPowerDivisor ?? 0n,
-      ],
+      [opts.token, opts.minVotingPower, opts.numOptions, opts.creditMode, opts.credits, opts.censusMode, opts.votingPowerDivisor ?? 0n],
     )
 
   before(async function () {

@@ -26,7 +26,7 @@ both. Each ships as its own subpath, so your bundler pulls only the one you impo
 
 ```ts
 import { setCircuits } from '@crisp-e3/sdk'
-import { loadCircuits } from '@crisp-e3/sdk/insecure-512'   // or '@crisp-e3/sdk/secure-8192'
+import { loadCircuits } from '@crisp-e3/sdk/insecure-512' // or '@crisp-e3/sdk/secure-8192'
 
 setCircuits(await loadCircuits())
 ```

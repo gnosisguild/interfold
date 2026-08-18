@@ -44,11 +44,7 @@ if (requested === undefined) {
 }
 
 export default defineConfig({
-  entry: [
-    'src/index.ts',
-    'src/workers/generateCircuitInputs.worker.ts',
-    ...selected.map((preset) => `src/presets/${preset}.ts`),
-  ],
+  entry: ['src/index.ts', 'src/workers/generateCircuitInputs.worker.ts', ...selected.map((preset) => `src/presets/${preset}.ts`)],
   include: ['src/**/*.ts'],
   splitting: false,
   sourcemap: true,
