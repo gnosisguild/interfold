@@ -1,6 +1,6 @@
 {
   "imageId": "0x7ac6020923d10004ccb27d8cdb5df72e7476e8a9775b9c1c711e9d906b44e105",
-  "guestInputsDigest": "7ff97cdf378a65c843cbb4f8dc4f8fedfc50a277e17416b1e1f2a678188072d2",
+  "guestInputsDigest": "878dba7dcb006339ff154a8e5a43a0762f953c18239ac2156fd154159872ebea",
   "imageIdVerified": false,
   "reason": [
     "The recorded image ID has never been reproduced from these inputs, and this stamp does not",
@@ -14,6 +14,12 @@
     "crates/support/methods/guest/Cargo.lock was repaired: it was one line behind its manifests, so",
     "'cargo metadata --locked' refused the workspace and the reproducible build stopped before it",
     "started. Third for the two changes below.",
+    "",
+    "0. The support workspace was repaired to build against the moved pin at all. The new revision",
+    "   carries the InputPolicy API, and crates/support still called the previous signatures, so",
+    "   `cargo check --locked` failed outright. The guest now passes the user program's `policy()`",
+    "   rather than assuming the default, and the program exposes one. Those files are guest inputs,",
+    "   so the digest moved with them.",
     "",
     "1. The guest pin moved from c2097da6 to 5b2ca661. The old pin predated every fix to the code",
     "   the guest compiles, among them 5213e23d, which derives the guest input root from the",

@@ -328,19 +328,27 @@ fn validated_callback_url(
     localhost_rewrite: Option<&str>,
 ) -> Result<reqwest::Url> {
     let mut callback = parse_http_url(callback_url, "callback URL")?;
+    let mut rewritten = false;
     if matches!(callback.host_str(), Some("localhost" | "127.0.0.1")) {
         if let Some(rewrite) = localhost_rewrite {
             callback
                 .set_host(Some(rewrite))
                 .map_err(|_| anyhow::anyhow!("invalid localhost rewrite host"))?;
+            rewritten = true;
         }
     }
     anyhow::ensure!(
         callback.fragment().is_none(),
         "callback URL must not contain a fragment"
     );
-    // After the rewrite, so the host actually dialled is the one checked.
-    ensure_public_callback_host(&callback)?;
+
+    // The rewrite target is operator configuration rather than caller input, and it exists so a
+    // local deployment can post to its own host. Exempting it keeps that path working without
+    // opening the general case: a caller who did not name an exact local host is still checked.
+    if !rewritten {
+        ensure_public_callback_host(&callback)?;
+    }
+
     Ok(callback)
 }
 
@@ -615,10 +623,21 @@ mod server_tests {
     #[test]
     fn callback_validation_accepts_http_origins_and_rejects_unsafe_urls() {
         assert!(validated_callback_url("https://callback.example:8443/results/1", None).is_ok());
-        assert!(validated_callback_url("https://metadata.internal:8443/latest", None).is_ok());
         assert!(validated_callback_url("file:///etc/passwd", None).is_err());
         assert!(validated_callback_url("https://user:pass@example.com/result", None).is_err());
         assert!(validated_callback_url("https://example.com/result#fragment", None).is_err());
+
+        // This endpoint dials whatever it is given, so a caller must not be able to aim it inside
+        // the deployment. `metadata.internal` was previously accepted; it is the canonical target.
+        assert!(validated_callback_url("https://metadata.internal:8443/latest", None).is_err());
+        assert!(validated_callback_url("http://169.254.169.254/latest/meta-data", None).is_err());
+        assert!(validated_callback_url("http://10.0.0.5/hook", None).is_err());
+        assert!(validated_callback_url("http://192.168.1.10/hook", None).is_err());
+        assert!(validated_callback_url("http://127.0.0.1/hook", None).is_err());
+        assert!(validated_callback_url("http://[::1]/hook", None).is_err());
+        assert!(validated_callback_url("http://[fd00::1]/hook", None).is_err());
+        assert!(validated_callback_url("http://100.64.0.1/hook", None).is_err());
+        assert!(validated_callback_url("http://localhost/hook", None).is_err());
     }
 
     #[test]
