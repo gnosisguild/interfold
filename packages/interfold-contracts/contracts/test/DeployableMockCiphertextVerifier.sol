@@ -19,7 +19,7 @@ contract DeployableMockCiphertextVerifier is ICiphertextVerifier {
         bytes32,
         bytes32,
         bytes calldata
-    ) external pure returns (bool) {
+    ) external pure override returns (bool) {
         return true;
     }
 }
