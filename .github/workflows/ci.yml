@@ -959,8 +959,33 @@ jobs:
 
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.
+      #
+      # `--no-compile` is load-bearing, not an optimisation. Without it the checker deletes every
+      # nargo target directory first — its guard against comparing stale artifacts — and recompiles
+      # only what it needs, which is the `.json` and the evm `.vk`. That silently discards the
+      # `.vk_recursive` files `build:circuits` had just written, and the upload below then ships an
+      # artifact `zk_prover_e2e` cannot use. Nothing here fails; the damage surfaces two jobs later.
+      # The step above has just built these circuits, so there is nothing stale to guard against.
       - name: Check generated verifiers are in sync
-        run: pnpm check:verifiers
+        run: pnpm check:verifiers --no-compile
+
+      # Asserted before the upload, so a step that consumes or clears a build output fails in the
+      # job that did it rather than in the job that needed it. Same list `zk_prover_e2e` checks.
+      - name: Verify recursive aggregation artifacts survived
+        run: |
+          for artifact in \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive
+          do
+            test -f "$artifact" || {
+              echo "Missing before upload: $artifact"
+              echo "A step between 'Build circuits' and here removed it."
+              exit 1
+            }
+            echo "  ok $artifact"
+          done
 
       - name: Upload compiled circuit artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
