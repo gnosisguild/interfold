@@ -55,7 +55,7 @@ export const publishInput = task(
       const { deployAndSaveMockProgram } = await import(
         "../scripts/deployAndSave/mockProgram"
       );
-      const { MockE3Program__factory } = await import("../types");
+      const { MockE3ProgramHarness__factory } = await import("../types");
 
       const { ethers } = await hre.network.connect();
       const [signer] = await ethers.getSigners();
@@ -75,7 +75,7 @@ export const publishInput = task(
         }
       }
 
-      const program = MockE3Program__factory.connect(
+      const program = MockE3ProgramHarness__factory.connect(
         actualProgramAddress,
         signer,
       );
@@ -107,14 +107,14 @@ export const publishInput = task(
   }))
   .build();
 
-// Wire MockE3Program → Interfold so `publishInput` forwards to
+// Wire the local MockE3ProgramHarness to Interfold so `publishInput` forwards to
 // `publishCiphertextOutput`. Off by default; the proof-aggregation integration
 // flow opts in by calling this once after deploy. The non-aggregation `base`
 // flow does NOT wire it, preserving the pre-existing fake_encrypt path which
 // posts the ciphertext via `e3:publishCiphertext` directly.
 export const setMockProgramInterfold = task(
   "e3-program:setMockInterfold",
-  "Wire MockE3Program → Interfold for the proof-aggregation integration test",
+  "Wire the mock test harness to Interfold for proof-aggregation tests",
 )
   .setAction(async () => ({
     default: async (_args, hre) => {
@@ -142,12 +142,14 @@ export const setMockProgramInterfold = task(
       );
       const current: string = await mockProgram.interfold();
       if (current.toLowerCase() === interfoldArgs.address.toLowerCase()) {
-        console.log(`MockE3Program already wired to ${interfoldArgs.address}`);
+        console.log(
+          `MockE3ProgramHarness already wired to ${interfoldArgs.address}`,
+        );
         return;
       }
       await mockProgram.setInterfold(interfoldArgs.address);
       console.log(
-        `MockE3Program ${mockArgs.address} → Interfold ${interfoldArgs.address}`,
+        `MockE3ProgramHarness ${mockArgs.address} → Interfold ${interfoldArgs.address}`,
       );
     },
   }))

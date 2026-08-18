@@ -86,6 +86,8 @@ export interface ProtocolConfigFile {
     dkgFoldAttestationVerifier?: string;
   };
   ciphertextVerifier?: string;
+  /** Deploy the stateless MockE3Program as the initial E3 program. */
+  deployMockE3Program?: boolean;
   bindInitialE3Program?: boolean;
   e3Programs: [string];
 }
@@ -121,6 +123,7 @@ export interface ProtocolDeployment {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
+  initialE3Program: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -199,6 +202,7 @@ export interface ProtocolContracts {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
+  initialE3Program: string;
 }
 
 export interface ProtocolInterfaces {

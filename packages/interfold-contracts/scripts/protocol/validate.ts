@@ -286,13 +286,17 @@ export async function actionValidate(): Promise<void> {
     );
   }
 
-  for (const program of config.e3Programs) {
-    await requireContract(ethers.provider, program, "e3Programs[0]");
-    if (!(await interfold.e3Programs(program))) {
-      throw new Error(`E3 Program is not registered: ${program}`);
-    }
-    console.log(`  ok interfold.e3Programs(${program})`);
+  await requireContract(
+    ethers.provider,
+    deployment.initialE3Program,
+    "initialE3Program",
+  );
+  if (!(await interfold.e3Programs(deployment.initialE3Program))) {
+    throw new Error(
+      `E3 Program is not registered: ${deployment.initialE3Program}`,
+    );
   }
+  console.log(`  ok interfold.e3Programs(${deployment.initialE3Program})`);
 
   const encryptionSchemeId = ethers.id("fhe.rs:BFV");
   for (const [label, actualPromise, expected] of [

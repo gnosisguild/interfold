@@ -278,8 +278,19 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }
+  if (
+    config.deployMockE3Program !== undefined &&
+    typeof config.deployMockE3Program !== "boolean"
+  ) {
+    throw new Error("deployMockE3Program must be a boolean");
+  }
   const initialE3Program = address(config.e3Programs[0], "e3Programs[0]");
-  if (initialE3Program === ZERO) {
+  if (config.deployMockE3Program && initialE3Program !== ZERO) {
+    throw new Error(
+      "e3Programs[0] must be the zero address when deployMockE3Program is true",
+    );
+  }
+  if (!config.deployMockE3Program && initialE3Program === ZERO) {
     throw new Error("e3Programs[0] must not be the zero address");
   }
   config.e3Programs = [initialE3Program];
@@ -305,6 +316,11 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (config.bindInitialE3Program && !ciphertextVerifier) {
     throw new Error(
       "ciphertextVerifier is required when bindInitialE3Program is true",
+    );
+  }
+  if (config.deployMockE3Program && config.bindInitialE3Program) {
+    throw new Error(
+      "bindInitialE3Program must be false when deployMockE3Program is true",
     );
   }
 }

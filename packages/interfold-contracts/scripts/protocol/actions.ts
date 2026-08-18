@@ -108,7 +108,7 @@ async function assertPreconditions(
   ethers: any,
   config: ReturnType<typeof loadConfig>,
 ) {
-  await Promise.all([
+  const contracts = [
     requireContract(ethers.provider, config.fold, "fold"),
     requireContract(ethers.provider, config.feeToken, "feeToken"),
     requireContract(
@@ -126,8 +126,13 @@ async function assertPreconditions(
       config.bondingRegistryProxyAdmin,
       "bondingRegistryProxyAdmin",
     ),
-    requireContract(ethers.provider, config.e3Programs[0], "e3Programs[0]"),
-  ]);
+  ];
+  if (!config.deployMockE3Program) {
+    contracts.push(
+      requireContract(ethers.provider, config.e3Programs[0], "e3Programs[0]"),
+    );
+  }
+  await Promise.all(contracts);
 
   if (config.safe) {
     await requireContract(ethers.provider, config.safe, "safe");
@@ -257,6 +262,7 @@ Protocol contracts deployed
   slashingEvidenceLib:    ${deployment.slashingEvidenceLib}
   ciphernodeRegistry:     ${deployment.ciphernodeRegistry}
   interfold:              ${deployment.interfold}
+  initialE3Program:       ${deployment.initialE3Program}
   interfoldLifecycle:     ${deployment.interfoldLifecycle}
   interfoldPricing:       ${deployment.interfoldPricing}
   e3RefundManager:        ${deployment.e3RefundManager}
@@ -307,7 +313,11 @@ Protocol configuration is valid
   ticket underlying:    ${config.ticketUnderlyingToken}
   BondingRegistry:      ${config.bondingRegistryProxy}
   ProxyAdmin:           ${config.bondingRegistryProxyAdmin}
-  initial E3 program:   ${config.e3Programs[0]}
+  initial E3 program:   ${
+    config.deployMockE3Program
+      ? "MockE3Program (deployed with protocol)"
+      : config.e3Programs[0]
+  }
   ciphertext verifier:  ${config.ciphertextVerifier ?? "(not configured)"}
   Aragon Admin plugin:  ${config.governance?.adminPlugin ?? "(not configured)"}
   proposer Safe:        ${config.governance?.proposerSafe ?? "(not configured)"}

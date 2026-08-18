@@ -20,6 +20,14 @@ export async function deployProtocolContracts(
 ): Promise<ProtocolDeployResult> {
   const poseidonT3 = await ensurePoseidonT3(ethers);
 
+  let initialE3Program = config.e3Programs[0];
+  if (config.deployMockE3Program) {
+    const programFactory = await ethers.getContractFactory("MockE3Program");
+    const program = await programFactory.deploy();
+    await program.waitForDeployment();
+    initialE3Program = await deployedAddress(program);
+  }
+
   const ticketFactory = await ethers.getContractFactory("InterfoldTicketToken");
   const ticket = await ticketFactory.deploy(
     config.ticketUnderlyingToken,
@@ -110,7 +118,7 @@ export async function deployProtocolContracts(
       },
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
-      config.e3Programs[0],
+      initialE3Program,
     ]),
   );
 
@@ -224,6 +232,7 @@ export async function deployProtocolContracts(
       bondingRegistrationLib,
       bondingOwnershipLib,
       bondedCheckpoints,
+      initialE3Program,
       ...deployedVerifiers,
     },
     interfaces: {

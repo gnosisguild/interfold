@@ -180,8 +180,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   deadline watermark. The time-based floor decreases after old windows expire, and the
   BondingRegistry cannot clear its registry pointer. — `flow-trace/02`, `03`, `06`; INDEX Z-37
 - **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
-  ownership to the configured protocol owner. Later registrations are append-only and owner-only.
-  Every registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
+  Interfold ownership to the configured protocol owner. Later registrations are append-only and
+  owner-only. Every registered address must contain runtime code. `MockE3Program` is the stateless
+  launch option. It has no administrative controls and applies no application rules. The
+  request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its mutable failure
+  controls live only in `MockE3ProgramHarness`. — `Interfold.sol`; `MockE3Program.sol`;
+  `flow-trace/03`
 
 ### Deadlines
 

@@ -11,6 +11,7 @@
 | `InterfoldTicketToken.sol`      | Collateral-backed tickets used by ciphernodes for sortition entry                                |
 | `SlashingManager.sol`           | Fault attribution and slashing for dishonest ciphernodes (accusation → quorum → slash)           |
 | `E3RefundManager.sol`           | Issues refunds to requesters when an E3 fails                                                    |
+| `test/MockE3Program.sol`        | Stateless BFV program for protocol tests without application-specific rules                      |
 
 ## Audits
 
@@ -46,7 +47,9 @@ import {
 contract MockE3Program is IE3Program {...}
 ```
 
-[Check out the E3 mock for an example](./contracts/test/MockE3Program.sol)
+[See the stateless mock program](./contracts/test/MockE3Program.sol) or its
+[test-only failure harness](./contracts/test/MockE3ProgramHarness.sol) for
+examples.
 
 ## To deploy
 
@@ -122,12 +125,20 @@ Import the Safe Builder wrapper into the configured proposer Safe. Do not import
 the raw action list into the Safe, because those calls must execute from the
 DAO.
 
-Set `e3Programs` in the protocol configuration to one deployed E3 program
-contract. The deploy action rejects any other list length or an address without
-contract code. It registers the program in `Interfold.initialize` before the
-governance transaction executes. Later registrations require an owner
-transaction. Set `bindInitialE3Program` to bind a compatible program in that
-governance transaction.
+Choose one initial E3 program in the protocol configuration. For an existing
+program, set `e3Programs` to its deployed address. The deploy action rejects an
+address without contract code. Set `bindInitialE3Program` to bind a compatible
+program in the governance transaction.
+
+Set `deployMockE3Program` to `true` and set `e3Programs[0]` to the zero address
+to deploy `MockE3Program` in the same run. This stateless program applies no
+application-specific input or output rules. It has no owner, controller,
+setters, or reentrancy hooks. Interfold still verifies each BFV ciphertext proof
+and committee decryption proof. Do not set `bindInitialE3Program` for this
+option.
+
+`Interfold.initialize` registers the selected program before the governance
+transaction executes. Later registrations require an owner transaction.
 
 Set `verifiers.deploy` to `true` to deploy the generated BFV verifier stack. Set
 `ciphertextVerifier` to the deployed application ciphertext verifier.

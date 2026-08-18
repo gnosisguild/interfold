@@ -107,7 +107,6 @@ describe("Protocol deployment", function () {
       );
 
       delete config.protocolOwner;
-      config.e3Programs = ["0x0000000000000000000000000000000000000002"];
       fs.writeFileSync(configFile, JSON.stringify(config));
       process.env.PROTOCOL_OWNER = "0x0000000000000000000000000000000000000001";
       expect(loadConfig(configFile).protocolOwner).to.equal(
@@ -116,6 +115,37 @@ describe("Protocol deployment", function () {
     } finally {
       if (previousOwner === undefined) delete process.env.PROTOCOL_OWNER;
       else process.env.PROTOCOL_OWNER = previousOwner;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects external wiring for the deployed MockE3Program", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-mock-program-config-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.e3Programs = ["0x0000000000000000000000000000000000000002"];
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "e3Programs[0] must be the zero address when deployMockE3Program is true",
+      );
+
+      config.e3Programs = [ethersLib.ZeroAddress];
+      config.bindInitialE3Program = true;
+      config.ciphertextVerifier = "0x0000000000000000000000000000000000000002";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "bindInitialE3Program must be false when deployMockE3Program is true",
+      );
+    } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -134,9 +164,6 @@ describe("Protocol deployment", function () {
     await feeToken.waitForDeployment();
     const ticketUnderlyingToken = await tokenFactory.deploy(0);
     await ticketUnderlyingToken.waitForDeployment();
-    const programFactory = await ethers.getContractFactory("MockE3Program");
-    const program = await programFactory.deploy();
-    await program.waitForDeployment();
     // FOLD has to be a real votes token: the deployment builds `BondedVotes` against it, and that
     // constructor compares the token's ERC-6372 clock with the bonded history's.
     const foldFactory = await ethers.getContractFactory("MockVotesToken");
@@ -172,7 +199,6 @@ describe("Protocol deployment", function () {
     config.protocolTreasury = await safe.getAddress();
     config.slashedFundsTreasury = await safe.getAddress();
     config.interfold.pricing.protocolTreasury = await safe.getAddress();
-    config.e3Programs = [await program.getAddress()];
     config.verifiers = {
       deploy: false,
       decryptionVerifier: await decryptionVerifier.getAddress(),
@@ -189,11 +215,28 @@ describe("Protocol deployment", function () {
       "Interfold",
       result.contracts.interfold,
     );
+    const program = await ethers.getContractAt(
+      "MockE3Program",
+      result.contracts.initialE3Program,
+    );
 
     expect(await ticket.underlying()).to.equal(
       await ticketUnderlyingToken.getAddress(),
     );
     expect(await interfold.feeToken()).to.equal(await feeToken.getAddress());
+    expect(
+      await interfold.e3Programs(result.contracts.initialE3Program),
+    ).to.equal(true);
+    expect(await program.ENCRYPTION_SCHEME_ID()).to.equal(
+      ethersLib.id("fhe.rs:BFV"),
+    );
+    expect(result.contracts.decryptionVerifier).to.equal(
+      await decryptionVerifier.getAddress(),
+    );
+    expect(result.contracts.pkVerifier).to.equal(await pkVerifier.getAddress());
+    expect(result.contracts.dkgFoldAttestationVerifier).to.equal(
+      await dkgFoldAttestationVerifier.getAddress(),
+    );
     for (const verifier of [
       result.contracts.decryptionVerifier,
       result.contracts.pkVerifier,

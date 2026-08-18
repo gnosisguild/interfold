@@ -127,9 +127,15 @@ export function syncProtocolDeploymentRecords(
     "MockUSDC",
     opts.chain,
   );
-  if (config.e3Programs?.[0]) {
+  if (config.deployMockE3Program) {
     storeDeploymentArgs(
-      { address: config.e3Programs[0], blockNumber },
+      { address: deployment.initialE3Program, blockNumber },
+      "MockE3Program",
+      opts.chain,
+    );
+  } else if (config.e3Programs?.[0]) {
+    storeDeploymentArgs(
+      { address: deployment.initialE3Program, blockNumber },
       "MockE3Program",
       opts.chain,
     );
@@ -252,7 +258,7 @@ export function syncProtocolDeploymentRecords(
           config.interfold.timeoutConfig.decryptionWindow,
         ),
       },
-      config.e3Programs[0],
+      deployment.initialE3Program,
     ],
   );
   storeDeploymentArgs(
@@ -269,7 +275,7 @@ export function syncProtocolDeploymentRecords(
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
         pricingConfig: JSON.stringify(config.interfold.pricing),
-        initialE3Program: config.e3Programs[0],
+        initialE3Program: deployment.initialE3Program,
       },
       libraries: {
         InterfoldLifecycle: deployment.interfoldLifecycle,

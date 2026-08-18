@@ -573,7 +573,10 @@ A ready committee must finalize at or before its absolute DKG deadline.
 10. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
     `Interfold.initialize` registers it before it transfers ownership to the Safe. Every
     registration rejects an address without runtime code. After initialization, only the owner can
-    append another program.
+    append another program. The deployment can create `MockE3Program` as the initial program. This
+    stateless program accepts the active BFV scheme and applies no application rules. It has no
+    owner, controller, or mutable configuration. The request-time ciphertext verifier and decryption
+    verifier still verify the protocol proofs.
 
 ---
 

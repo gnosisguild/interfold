@@ -139,7 +139,7 @@ export const deployInterfold = async (
   const shouldHaveZKVerification =
     process.env.ENABLE_ZK_VERIFICATION === "true" || withZKVerification;
 
-  // H-23: refuse to deploy mocks (MockUSDC / MockE3Program) and the
+  // H-23: refuse to deploy test mocks (MockUSDC / MockE3ProgramHarness) and the
   // `insecure512` BFV preset on any chain that is not a recognised local /
   // test network. Override via `ALLOW_MOCKS_ON_PRODUCTION=true` only for
   // explicit dry-runs.
