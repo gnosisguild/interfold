@@ -40,16 +40,17 @@ pub fn bfv_ciphertext_to_greco(
 
     let moduli = params.moduli();
 
-    let to_crt = |poly| {
-        fhe_poly_to_crt_centered(poly, moduli).map_err(|e: CrtPolynomialError| {
-            ZkHelpersUtilsError::ConversionError(format!(
-                "Failed to convert ciphertext polynomial: {e}"
-            ))
-        })
+    // Converted separately and directly, not through a shared closure. `fhe_poly_to_crt_centered`
+    // takes the polynomial by reference and builds a fresh `CrtPolynomial` before reversing and
+    // centering it, so each call starts from an untouched component and neither centering can
+    // compound on the other. Spelling that out here rather than folding the two calls into one
+    // helper, because a reused helper reads as though it might carry state across them.
+    let wrap = |e: CrtPolynomialError| {
+        ZkHelpersUtilsError::ConversionError(format!("Failed to convert ciphertext polynomial: {e}"))
     };
 
-    let ct0is = to_crt(&ciphertext[0])?;
-    let ct1is = to_crt(&ciphertext[1])?;
+    let ct0is = fhe_poly_to_crt_centered(&ciphertext[0], moduli).map_err(wrap)?;
+    let ct1is = fhe_poly_to_crt_centered(&ciphertext[1], moduli).map_err(wrap)?;
 
     Ok((ct0is, ct1is))
 }
@@ -171,6 +172,7 @@ pub fn compute_ciphertext_commitment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_bigint::BigInt;
     use crate::circuits::computation::Computation;
     use crate::threshold::user_data_encryption::computation::Inputs;
     use crate::threshold::user_data_encryption::UserDataEncryptionCircuitData;
@@ -193,6 +195,45 @@ mod tests {
         // Verify the structure matches
         assert_eq!(actual_pk0is, inputs.pk0is);
         assert_eq!(actual_pk1is, inputs.pk1is);
+    }
+
+    /// Centering must hold for both components, and converting twice must give the same answer.
+    ///
+    /// The conversion reads the ciphertext by reference and centers a copy, so nothing it does can
+    /// leave a component centered-twice or half-centered. Asserted rather than reasoned about,
+    /// because the failure would be silent: a coefficient outside (-q/2, q/2] still commits to
+    /// *something*, and the circuit would reject the ballot with no indication why.
+    #[test]
+    fn conversion_centers_both_components_and_is_repeatable() {
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let sample =
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
+                .unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let ciphertext = Ciphertext::from_bytes(&inputs.ciphertext, &threshold_params).unwrap();
+
+        let moduli = threshold_params.moduli();
+        let (ct0is, ct1is) = bfv_ciphertext_to_greco(&threshold_params, &ciphertext).unwrap();
+
+        for crt in [&ct0is, &ct1is] {
+            assert_eq!(crt.limbs.len(), moduli.len());
+            for (limb, qi) in crt.limbs.iter().zip(moduli.iter()) {
+                let half = BigInt::from(*qi) / BigInt::from(2u64);
+                let low = -half.clone();
+                for coefficient in limb.coefficients() {
+                    assert!(
+                        *coefficient > low && *coefficient <= half,
+                        "coefficient {coefficient} outside (-q/2, q/2] for q={qi}"
+                    );
+                }
+            }
+        }
+
+        // Idempotent in the sense that matters: the input is untouched, so a second conversion of
+        // the same ciphertext produces an identical result rather than centering again.
+        let (again0, again1) = bfv_ciphertext_to_greco(&threshold_params, &ciphertext).unwrap();
+        assert_eq!(ct0is.limbs, again0.limbs);
+        assert_eq!(ct1is.limbs, again1.limbs);
     }
 
     /// The commitment covers `c[0]` and `c[1]` only. Without a component-count check, a
