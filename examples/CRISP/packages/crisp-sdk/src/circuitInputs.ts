@@ -102,11 +102,20 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
   // JavaScript or a widened object gets no type error. Defaulting a missing index to zero would
   // name the slot's first entry as the parent, and the proof would be built against one commitment
   // while the contract supplied another — visible only as a rejected proof.
-  if (inputs.previousCiphertext && !Number.isInteger(inputs.previousIndex)) {
-    throw new Error('previousCiphertext was supplied without its previousIndex; pass the slot head as a pair')
+  if (inputs.previousCiphertext !== undefined) {
+    const index = inputs.previousIndex
+    // Non-negative and safe, not merely an integer. `-1` would come back out as zero, which the
+    // contract reads as "extends nothing" — a re-vote silently published as a first vote against a
+    // slot that already holds one. Anything at or above `MAX_SAFE_INTEGER` cannot represent
+    // `index + 1` exactly, so the parent it names is not the parent it meant.
+    if (!Number.isSafeInteger(index) || (index as number) < 0 || (index as number) + 1 > Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `previousCiphertext needs a non-negative safe integer previousIndex; got ${String(index)}. Pass the slot head as a pair.`,
+      )
+    }
   }
 
-  const parentIndexPlusOne = inputs.previousCiphertext ? (inputs.previousIndex as number) + 1 : 0
+  const parentIndexPlusOne = inputs.previousCiphertext !== undefined ? (inputs.previousIndex as number) + 1 : 0
 
   return { circuitInputs, encryptedVote, ctCommitment, parentIndexPlusOne, censusMode: inputs.censusMode }
 }

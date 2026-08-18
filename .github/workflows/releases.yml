@@ -647,8 +647,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git tag -f stable
-          # The checkout persists no credentials, so the remote is named with the token here rather
-          # than read from .git/config. Interpolated by the shell from the environment, never by
-          # Actions into the script body.
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" stable --force
+          # Through a credential helper, so the token never reaches a process argument list. Every
+          # process on a runner shares one user, so anything left running by `pnpm install` can read
+          # /proc/*/cmdline; it cannot read another process's environment as easily. The config
+          # stores the helper only — the token is read from the environment when git invokes it.
+          git config --local credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+          git push origin stable --force
+          git config --local --unset credential.helper
           echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"

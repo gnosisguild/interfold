@@ -478,8 +478,8 @@ async fn handle_e3_input_deadline_expiration(
     let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
     let e3: e3_sdk::indexer::models::E3 = repo.get_e3().await?;
 
-    // A retry pass for a round that already got past this point. Computation is one-shot, so a
-    // second `run_compute` for the same round would publish a second result.
+    // A cheap skip for a retry pass over a round that already moved on, so it does not sit through
+    // the indexer wait below. Not the safety barrier — `try_claim_computing` is, further down.
     let status = repo.get_status().await?;
     if status == "Computing" || status == "Finished" {
         return Ok(());
@@ -538,7 +538,20 @@ async fn handle_e3_input_deadline_expiration(
             votes.len(),
             voter_count
         );
-        repo.update_status("Computing").await?;
+        // The barrier. Two passes can be inside the indexer wait at once, and `run_compute` is
+        // one-shot, so the transition to "Computing" has to be the thing that decides which one
+        // proceeds — in a single store operation, not a read followed by a write.
+        //
+        // Claimed here rather than before the wait: a pass that gives up on a short index leaves
+        // the round "Expired" so a later pass can still take it, and claiming earlier would pin it
+        // to "Computing" and strand it.
+        if !repo.try_claim_computing().await? {
+            info!(
+                "[e3_id={}] another pass is already computing this round; nothing to do",
+                e3_id
+            );
+            return Ok(());
+        }
 
         let (id, status) = run_compute(
             &e3_id,

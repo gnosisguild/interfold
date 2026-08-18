@@ -298,6 +298,32 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp.status)
     }
 
+    /// Moves the round to "Computing", but only if nothing has claimed it yet.
+    ///
+    /// Returns whether this caller made the transition. One store operation, because `modify` is a
+    /// read-modify-write under a single write lock: reading the status and writing it back as two
+    /// separate awaits leaves a window where two deadline passes both observe "Expired" and both
+    /// start the one-shot `run_compute`, publishing two results for one round.
+    pub async fn try_claim_computing(&mut self) -> Result<bool> {
+        let key = self.crisp_key();
+        let mut claimed = false;
+
+        self.store
+            .modify(&key, |e3_obj: Option<E3Crisp>| {
+                e3_obj.map(|mut e| {
+                    if e.status != "Computing" && e.status != "Finished" {
+                        e.status = "Computing".to_string();
+                        claimed = true;
+                    }
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not claim computation for '{key}'"))?;
+
+        Ok(claimed)
+    }
+
     pub async fn update_status(&mut self, value: &str) -> Result<()> {
         let key = self.crisp_key();
 

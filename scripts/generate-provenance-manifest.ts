@@ -197,13 +197,16 @@ const SELECTOR_RISC0_VERIFIER = '0x5c9770c5'
  */
 function hexOfLength(value: string | null, bytes: number): string | null {
   if (!value) return null
-  return new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value) ? value : null
+  // Lowercased, not returned as received. Hex is case-insensitive, but `onchainImageId` is later
+  // compared against `ImageID.sol` as a plain string — an uppercase RPC answer would read as a
+  // mismatch and make the manifest incomplete for no reason.
+  return new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value) ? value.toLowerCase() : null
 }
 
-/** Any `0x`-prefixed hex string with a whole number of bytes, or null. */
+/** Any `0x`-prefixed hex string with a whole number of bytes, lowercased, or null. */
 function hexBytes(value: string | null): string | null {
   if (!value) return null
-  return /^0x([0-9a-fA-F]{2})*$/.test(value) ? value : null
+  return /^0x([0-9a-fA-F]{2})*$/.test(value) ? value.toLowerCase() : null
 }
 
 async function chainFacts(rpc: string, verifier: string) {
@@ -245,7 +248,9 @@ async function main() {
   const risc0Version = firstMatch(dockerfile, /^ARG RISC0_VERSION=(.*)$/m)
   const risc0Toolchain = firstMatch(dockerfile, /^ARG RISC0_TOOLCHAIN=(.*)$/m)
   const stamp = readIfPresent(STAMP)
-  const committedImageId = firstMatch(readIfPresent(IMAGE_ID_SOL), /(0x[0-9a-fA-F]{64})/)
+  // Lowercased for the same reason the RPC answers are: Solidity accepts either case, and this
+  // value is compared against `deployment.onchainImageId` as a plain string.
+  const committedImageId = firstMatch(readIfPresent(IMAGE_ID_SOL), /(0x[0-9a-fA-F]{64})/)?.toLowerCase() ?? null
 
   const elf = guestElf()
   const chain = args.rpc && args.verifier ? await chainFacts(args.rpc, args.verifier) : null
