@@ -8,6 +8,7 @@
     "proposalMetadata": "0x"
   },
   "fold": "0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904",
+  "escrowVotesAdapter": "0x8f141B4D294d39e7D1530916A3eD65B3970C6FEc",
   "bondingRegistryProxy": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
   "bondingRegistryProxyAdmin": "0xf1511Fc32abf7Bd3a3213ddCF08C07259b53972b",
   "feeToken": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",

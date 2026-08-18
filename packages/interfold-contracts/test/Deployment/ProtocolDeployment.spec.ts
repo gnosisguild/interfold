@@ -119,6 +119,55 @@ describe("Protocol deployment", function () {
     }
   });
 
+  it("rejects config names that cannot be used as deployment file names", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-config-name-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.name = "../mainnet-protocol";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "Config name may only contain letters, numbers, underscores and hyphens",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes the optional escrow votes adapter", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-escrow-votes-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const previousAdapter = process.env.ESCROW_VOTES_ADAPTER;
+    const adapter = "0x0000000000000000000000000000000000000002";
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(loadConfig(configFile).escrowVotesAdapter).to.equal(undefined);
+
+      process.env.ESCROW_VOTES_ADAPTER = adapter;
+      expect(loadConfig(configFile).escrowVotesAdapter).to.equal(adapter);
+    } finally {
+      if (previousAdapter === undefined) delete process.env.ESCROW_VOTES_ADAPTER;
+      else process.env.ESCROW_VOTES_ADAPTER = previousAdapter;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects external wiring for the deployed MockE3Program", function () {
     const source = new URL(
       "../../deploy/protocol/example.protocol.config.json",

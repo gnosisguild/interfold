@@ -3,6 +3,9 @@ import SafeApiKit from "@safe-global/api-kit";
 import Safe from "@safe-global/protocol-kit";
 import { MetaTransactionData, OperationType } from "@safe-global/types-kit";
 import { ethers as ethersLib } from "ethers";
+import { stdin, stderr } from "node:process";
+import readline from "node:readline/promises";
+import { Writable } from "node:stream";
 
 import { arg } from "./cli";
 import { safeProposalPath, writeJson } from "./files";
@@ -145,18 +148,39 @@ function safeTransactionUrl(
   return `https://app.safe.global/transactions/tx?safe=${prefix}:${safeAddress}&id=multisig_${safeAddress}_${safeTxHash}`;
 }
 
-function privateKeyForSafeProposal(): string {
-  if (process.env.PRIVATE_KEY) return process.env.PRIVATE_KEY;
-  if (process.env.MNEMONIC) {
-    return ethersLib.HDNodeWallet.fromPhrase(
-      process.env.MNEMONIC,
-      undefined,
-      "m/44'/60'/0'/0/0",
-    ).privateKey;
+async function readSecretFromStdin(prompt: string): Promise<string> {
+  if (!stdin.isTTY) {
+    throw new Error(
+      "Run this command from an interactive terminal so the Safe proposal signing key can be read from stdin.",
+    );
   }
-  throw new Error(
-    "Set PRIVATE_KEY or MNEMONIC so the Safe SDK can sign the proposal hash.",
-  );
+
+  let muted = false;
+  const hiddenOutput = new Writable({
+    write(chunk, encoding, callback) {
+      if (!muted) stderr.write(chunk, encoding);
+      callback();
+    },
+  });
+  const rl = readline.createInterface({
+    input: stdin,
+    output: hiddenOutput,
+    terminal: true,
+  });
+
+  stderr.write(prompt);
+  muted = true;
+  const secret = (await rl.question("")).trim();
+  muted = false;
+  stderr.write("\n");
+  rl.close();
+
+  if (!secret) throw new Error("Safe proposal signing key is required.");
+  return secret;
+}
+
+async function privateKeyForSafeProposal(): Promise<string> {
+  return readSecretFromStdin("Safe proposal private key: ");
 }
 
 function rpcUrlForSafeProposal(): string {
@@ -187,7 +211,7 @@ export async function proposeSafeBatch(
   if (transactions.length === 0)
     throw new Error("Safe batch has no transactions to propose");
 
-  const privateKey = privateKeyForSafeProposal();
+  const privateKey = await privateKeyForSafeProposal();
   const proposer = address(
     new ethersLib.Wallet(privateKey).address,
     "Safe proposal signer",

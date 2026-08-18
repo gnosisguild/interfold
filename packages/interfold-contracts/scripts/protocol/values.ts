@@ -123,6 +123,12 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
   applyAddressOverride(
     config,
+    "escrowVotesAdapter",
+    "escrow-votes-adapter",
+    "ESCROW_VOTES_ADAPTER",
+  );
+  applyAddressOverride(
+    config,
     "bondingRegistryProxy",
     "bonding-registry",
     "BONDING_REGISTRY",
@@ -167,6 +173,7 @@ function applyAddressOverride(
     | "safe"
     | "protocolOwner"
     | "fold"
+    | "escrowVotesAdapter"
     | "bondingRegistryProxy"
     | "bondingRegistryProxyAdmin"
     | "feeToken"
@@ -211,6 +218,11 @@ function applyGovernanceOverride(config: ProtocolConfigFile): void {
 
 function validateConfig(config: ProtocolConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
+  if (!/^[A-Za-z0-9_-]+$/.test(config.name)) {
+    throw new Error(
+      "Config name may only contain letters, numbers, underscores and hyphens",
+    );
+  }
   config.protocolOwner = address(config.protocolOwner, "protocolOwner");
   if (config.protocolOwner === ZERO) {
     throw new Error("protocolOwner must not be the zero address");
@@ -248,6 +260,10 @@ function validateConfig(config: ProtocolConfigFile): void {
     }
   }
   config.fold = address(config.fold, "fold");
+  config.escrowVotesAdapter = optionalAddress(
+    config.escrowVotesAdapter,
+    "escrowVotesAdapter",
+  );
   config.bondingRegistryProxy = address(
     config.bondingRegistryProxy,
     "bondingRegistryProxy",

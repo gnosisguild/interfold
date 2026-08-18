@@ -127,6 +127,15 @@ async function assertPreconditions(
       "bondingRegistryProxyAdmin",
     ),
   ];
+  if (config.escrowVotesAdapter) {
+    contracts.push(
+      requireContract(
+        ethers.provider,
+        config.escrowVotesAdapter,
+        "escrowVotesAdapter",
+      ),
+    );
+  }
   if (!config.deployMockE3Program) {
     contracts.push(
       requireContract(ethers.provider, config.e3Programs[0], "e3Programs[0]"),
@@ -310,6 +319,7 @@ Protocol configuration is valid
   chainId:              ${config.chainId}
   protocol owner:       ${config.protocolOwner}
   FOLD:                 ${config.fold}
+  escrow votes adapter: ${config.escrowVotesAdapter ?? "(not configured)"}
   fee token:            ${config.feeToken}
   ticket underlying:    ${config.ticketUnderlyingToken}
   BondingRegistry:      ${config.bondingRegistryProxy}
@@ -403,7 +413,12 @@ export async function actionExecuteGovernance(): Promise<void> {
         value: BigInt(tx.value),
         data: tx.data,
       });
-      await response.wait();
+      const receipt = await response.wait();
+      if (!receipt || receipt.status !== 1) {
+        throw new Error(
+          `Transaction ${index + 1}/${transactions.length} was not confirmed successfully`,
+        );
+      }
       console.log(
         `  executed ${index + 1}/${transactions.length}: ${response.hash}. Next index: ${index + 1}`,
       );

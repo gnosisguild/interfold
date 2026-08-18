@@ -38,6 +38,7 @@ Flags:
   --ciphertext-verifier 0x... Set the ciphertext verifier for prepare-rehearsal
   --from-index N             Resume execute-governance at zero-based index N
   --fold 0x...               Fill a zero FOLD placeholder
+  --escrow-votes-adapter 0x... Fill a zero escrow votes adapter placeholder
   --bonding-registry 0x...   Fill a zero BondingRegistry proxy placeholder
   --bonding-registry-proxy-admin 0x...
   --fee-token 0x...
