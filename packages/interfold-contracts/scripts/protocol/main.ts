@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import {
+  actionCheckConfig,
   actionDeploy,
   actionExecuteGovernance,
   actionProposeSafe,
@@ -14,9 +15,10 @@ function printHelp(): void {
 Interfold protocol deployment
 
 Actions:
+  --action check-config Verify the configuration and on-chain prerequisites
   --action deploy       Deploy protocol contracts and write one governance wiring batch
   --action propose-safe Propose the written governance batch through the Safe SDK
-  --action execute-governance  Execute wiring directly on a non-mainnet rehearsal chain
+  --action execute-governance  Execute wiring directly on Sepolia or local Hardhat
   --action prepare-rehearsal   Deploy fresh Sepolia prerequisites and write the rehearsal config
   --action activate-voting  Deploy BondedVotes once governance has configured the registry
   --action validate     Validate after the governance batch executes
@@ -29,6 +31,9 @@ Examples:
 Flags:
   --sync-integration-config  Also update tests/integration/interfold.config.yaml
   --protocol-owner 0x...     Fill a zero protocol-owner placeholder
+  --e3-program 0x...         Set the E3 program for prepare-rehearsal
+  --ciphertext-verifier 0x... Set the ciphertext verifier for prepare-rehearsal
+  --from-index N             Resume execute-governance at zero-based index N
   --fold 0x...               Fill a zero FOLD placeholder
   --bonding-registry 0x...   Fill a zero BondingRegistry proxy placeholder
   --bonding-registry-proxy-admin 0x...
@@ -43,6 +48,7 @@ Flags:
 export async function main(): Promise<void> {
   const action = (arg("action") ?? "help").toLowerCase();
   if (action === "help") return printHelp();
+  if (action === "check-config") return actionCheckConfig();
   if (action === "deploy") return actionDeploy();
   if (action === "propose-safe") return actionProposeSafe();
   if (action === "execute-governance") return actionExecuteGovernance();

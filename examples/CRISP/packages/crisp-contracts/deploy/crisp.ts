@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { readDeploymentArgs, storeDeploymentArgs } from '@interfold/contracts/scripts'
+import { getDeploymentChain, readDeploymentArgs, storeDeploymentArgs } from '@interfold/contracts/scripts'
 import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
 import { readFileSync } from 'fs'
 
@@ -20,12 +20,16 @@ if (!IMAGE_ID) {
   throw new Error('IMAGE_ID not found')
 }
 
-export const deployCRISPContracts = async () => {
+export interface CRISPDeploymentResult {
+  governanceComplete: boolean
+}
+
+export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => {
   const { ethers } = await hre.network.connect()
   const [owner] = await ethers.getSigners()
   const ownerAddress = await owner.getAddress()
 
-  const chain = hre.globalOptions.network
+  const chain = getDeploymentChain(hre)
   const configuredOwner = process.env.CRISP_INITIAL_OWNER
   if (chain === 'mainnet' && !configuredOwner) {
     throw new Error('CRISP_INITIAL_OWNER is required on mainnet')
@@ -147,18 +151,31 @@ export const deployCRISPContracts = async () => {
     chain,
   )
 
+  let governanceComplete = false
   const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
   if (interfoldAddress) {
     const interfold = InterfoldFactory.connect(interfoldAddress, owner)
     const interfoldOwner = await interfold.owner()
-    if (interfoldOwner.toLowerCase() === ownerAddress.toLowerCase() && initialOwner.toLowerCase() === ownerAddress.toLowerCase()) {
+    const registered = await interfold.e3Programs(crispAddress)
+    const boundInterfold = await crisp.interfold()
+    const configuredVerifier = await interfold.getCiphertextVerifier(encryptionSchemeId)
+    if (
+      registered &&
+      boundInterfold.toLowerCase() === interfoldAddress.toLowerCase() &&
+      configuredVerifier.toLowerCase() === ciphertextVerifierAddress.toLowerCase()
+    ) {
+      governanceComplete = true
+    } else if (interfoldOwner.toLowerCase() === ownerAddress.toLowerCase() && initialOwner.toLowerCase() === ownerAddress.toLowerCase()) {
       await (await interfold.setCiphertextVerifier(encryptionSchemeId, ciphertextVerifierAddress)).wait()
-      if (!(await interfold.e3Programs(crispAddress))) {
+      if (!registered) {
         await (await interfold.registerE3Program(crispAddress)).wait()
       }
       await (await crisp.bindInterfold(interfoldAddress)).wait()
+      governanceComplete = true
     } else {
-      console.log('CRISP was deployed unbound. Protocol governance must set its ciphertext verifier and bind it after registration.')
+      console.log(
+        'CRISP integration is incomplete. Protocol governance must set the ciphertext verifier, register the program, and bind Interfold.',
+      )
     }
   }
 
@@ -189,6 +206,8 @@ export const deployCRISPContracts = async () => {
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}
       `)
+
+  return { governanceComplete }
 }
 
 /**
@@ -198,7 +217,7 @@ export const deployCRISPContracts = async () => {
  */
 export const deployVerifier = async (useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
-  const chain = hre.globalOptions.network
+  const chain = getDeploymentChain(hre)
 
   if (!useMockVerifier) {
     const existingVerifier = readDeploymentArgs('RiscZeroGroth16Verifier', chain)
@@ -237,7 +256,7 @@ export const deployVerifier = async (useMockVerifier: boolean, connectedEthers?:
       blockNumber: await ethers.provider.getBlockNumber(),
     },
     'MockRISC0Verifier',
-    hre.globalOptions.network,
+    chain,
   )
 
   return mockVerifierAddress

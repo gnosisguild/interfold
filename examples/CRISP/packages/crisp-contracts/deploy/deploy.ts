@@ -3,7 +3,7 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-import { deployInterfold, readDeploymentArgs, updateE3Config } from '@interfold/contracts/scripts'
+import { deployInterfold, getDeploymentChain, readDeploymentArgs, updateE3Config } from '@interfold/contracts/scripts'
 import { deployCRISPContracts } from './crisp'
 import { syncCrispEnvFromDeployments } from './syncCrispEnv'
 import path from 'path'
@@ -29,7 +29,7 @@ const __dirname = path.dirname(__filename)
  * Deploys the Interfold and CRISP contracts
  */
 export const deploy = async () => {
-  const chain = hre.globalOptions.network ?? 'localhost'
+  const chain = getDeploymentChain(hre)
 
   const shouldDeployInterfold = Boolean(process.env.DEPLOY_INTERFOLD)
   const withZkVerification = process.env.ENABLE_ZK_VERIFICATION === 'true'
@@ -37,10 +37,14 @@ export const deploy = async () => {
   if (shouldDeployInterfold) {
     await deployInterfold(true, withZkVerification)
   }
-  await deployCRISPContracts()
+  const { governanceComplete } = await deployCRISPContracts()
 
   if (!readDeploymentArgs('Interfold', chain)?.address) {
     console.log('CRISP prerequisites deployed. Bind the program during protocol governance wiring.')
+    return
+  }
+  if (!governanceComplete) {
+    console.log('CRISP configuration sync is deferred until protocol governance completes the program registration and binding.')
     return
   }
 

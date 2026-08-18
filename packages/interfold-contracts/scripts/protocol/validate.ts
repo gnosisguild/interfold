@@ -319,11 +319,7 @@ export async function actionValidate(): Promise<void> {
     ],
   ] as const) {
     if (!expected) continue;
-    const actual = await actualPromise;
-    if (String(actual).toLowerCase() !== expected.toLowerCase()) {
-      throw new Error(`${label}: expected ${expected}, got ${actual}`);
-    }
-    console.log(`  ok ${label}`);
+    assertEqual(label, await actualPromise, expected);
   }
 
   if (config.bindInitialE3Program) {

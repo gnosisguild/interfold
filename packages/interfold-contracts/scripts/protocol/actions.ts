@@ -3,7 +3,7 @@ import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 
 import { syncProtocolDeploymentRecords } from "../deploymentRecords";
-import { connect, hasFlag, networkName } from "./cli";
+import { arg, connect, hasFlag, networkName } from "./cli";
 import { proxyAdminInterface } from "./constants";
 import { deployProtocolContracts } from "./deployContracts";
 import { deploymentPath, readJson, safeBatchPath, writeJson } from "./files";
@@ -11,6 +11,8 @@ import { governanceBatch, proposeSafeBatch } from "./safe";
 import { buildSafeTransactions } from "./transactions";
 import type { ProtocolDeployment, SafeTransaction } from "./types";
 import { address, loadConfig, requireContract } from "./values";
+
+const DIRECT_GOVERNANCE_CHAIN_IDS = new Set([31337, 11155111]);
 
 async function assertPreconditions(
   ethers: any,
@@ -46,6 +48,19 @@ async function assertPreconditions(
       config.ciphertextVerifier,
       "ciphertextVerifier",
     );
+  }
+  if (config.bindInitialE3Program) {
+    const program = new ethersLib.Contract(
+      config.e3Programs[0],
+      ["function owner() view returns (address)"],
+      ethers.provider,
+    );
+    const programOwner = address(await program.owner(), "e3Programs[0].owner");
+    if (programOwner !== config.protocolOwner) {
+      throw new Error(
+        `E3 Program owner mismatch: expected ${config.protocolOwner}, got ${programOwner}`,
+      );
+    }
   }
   if (!config.verifiers?.deploy) {
     for (const [label, target] of [
@@ -156,6 +171,32 @@ Deployment file
 `);
 }
 
+export async function actionCheckConfig(): Promise<void> {
+  const { ethers } = await connect();
+  const network = await ethers.provider.getNetwork();
+  const chainId = Number(network.chainId);
+  const config = loadConfig();
+  if (chainId !== config.chainId) {
+    throw new Error(
+      `Connected chainId ${chainId} != config.chainId ${config.chainId}`,
+    );
+  }
+  await assertPreconditions(ethers, config);
+  console.log(`
+Protocol configuration is valid
+  name:                 ${config.name}
+  chainId:              ${config.chainId}
+  protocol owner:       ${config.protocolOwner}
+  FOLD:                 ${config.fold}
+  fee token:            ${config.feeToken}
+  ticket underlying:    ${config.ticketUnderlyingToken}
+  BondingRegistry:      ${config.bondingRegistryProxy}
+  ProxyAdmin:           ${config.bondingRegistryProxyAdmin}
+  initial E3 program:   ${config.e3Programs[0]}
+  ciphertext verifier:  ${config.ciphertextVerifier ?? "(not configured)"}
+`);
+}
+
 export async function actionProposeSafe(): Promise<void> {
   const config = loadConfig();
   const transactions = readGovernanceBatch(config);
@@ -180,9 +221,9 @@ export async function actionExecuteGovernance(): Promise<void> {
       `Connected chainId ${chainId} != config.chainId ${config.chainId}`,
     );
   }
-  if (chainId === 1) {
+  if (!DIRECT_GOVERNANCE_CHAIN_IDS.has(chainId)) {
     throw new Error(
-      "Direct governance execution is disabled on mainnet. Submit the transaction file through the DAO proposal flow.",
+      "Direct governance execution is restricted to Sepolia and local Hardhat. Submit the transaction file through the production governance flow.",
     );
   }
 
@@ -195,20 +236,40 @@ export async function actionExecuteGovernance(): Promise<void> {
   }
 
   const transactions = readGovernanceBatch(config);
+  const startIndex = Number(arg("from-index") ?? "0");
+  if (
+    !Number.isInteger(startIndex) ||
+    startIndex < 0 ||
+    startIndex > transactions.length
+  ) {
+    throw new Error(
+      `--from-index must be between 0 and ${transactions.length}`,
+    );
+  }
   for (let index = 0; index < transactions.length; index++) {
     const tx = transactions[index];
     if (tx.operation !== 0) {
       throw new Error(`Transaction ${index + 1} is not a CALL operation`);
     }
-    const response = await signer.sendTransaction({
-      to: tx.to,
-      value: BigInt(tx.value),
-      data: tx.data,
-    });
-    await response.wait();
-    console.log(
-      `  executed ${index + 1}/${transactions.length}: ${response.hash}`,
-    );
+  }
+  for (let index = startIndex; index < transactions.length; index++) {
+    const tx = transactions[index];
+    try {
+      const response = await signer.sendTransaction({
+        to: tx.to,
+        value: BigInt(tx.value),
+        data: tx.data,
+      });
+      await response.wait();
+      console.log(
+        `  executed ${index + 1}/${transactions.length}: ${response.hash}. Next index: ${index + 1}`,
+      );
+    } catch (error) {
+      console.error(
+        `  failed at ${index + 1}/${transactions.length}. Resume with --from-index ${index} after you confirm that the transaction did not execute.`,
+      );
+      throw error;
+    }
   }
 }
 

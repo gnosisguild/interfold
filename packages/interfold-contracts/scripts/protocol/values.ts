@@ -178,7 +178,8 @@ function applyAddressOverride(
   envName: string,
 ): void {
   const override = arg(cliName) ?? process.env[envName];
-  if (override && config[key] === ZERO) {
+  const current = config[key];
+  if (override && (!current || current === ZERO)) {
     config[key] = override;
   }
 }
@@ -186,6 +187,9 @@ function applyAddressOverride(
 function validateConfig(config: ProtocolConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
   config.protocolOwner = address(config.protocolOwner, "protocolOwner");
+  if (config.protocolOwner === ZERO) {
+    throw new Error("protocolOwner must not be the zero address");
+  }
   if (config.safe === ZERO) config.safe = undefined;
   if (config.safe) {
     config.safe = address(config.safe, "safe");

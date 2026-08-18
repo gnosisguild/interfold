@@ -83,9 +83,14 @@ The protocol deploy happens after the sale/TGE prep and upgrades the existing
 placeholder bonding registry proxy:
 
 ```sh
+pnpm protocol --network sepolia --action check-config --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 pnpm protocol --network sepolia --action validate --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 ```
+
+Run `check-config` before `deploy`. This action validates the network, required
+contract addresses, ProxyAdmin owner, and initial E3 program owner. It does not
+send a transaction.
 
 Set `protocolOwner` to the contract that owns and configures the protocol. Set
 the optional `safe` field to the same address only when the protocol owner is a

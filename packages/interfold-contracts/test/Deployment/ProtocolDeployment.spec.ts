@@ -6,15 +6,50 @@
 import { expect } from "chai";
 import fs from "fs";
 import { network } from "hardhat";
+import os from "os";
+import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
 import { buildSafeTransactions } from "../../scripts/protocol/transactions";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
+import { loadConfig } from "../../scripts/protocol/values";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("rejects a zero protocol owner and accepts a missing-owner override", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-config-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const previousOwner = process.env.PROTOCOL_OWNER;
+
+    try {
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "protocolOwner must not be the zero address",
+      );
+
+      delete config.protocolOwner;
+      config.e3Programs = ["0x0000000000000000000000000000000000000002"];
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      process.env.PROTOCOL_OWNER = "0x0000000000000000000000000000000000000001";
+      expect(loadConfig(configFile).protocolOwner).to.equal(
+        "0x0000000000000000000000000000000000000001",
+      );
+    } finally {
+      if (previousOwner === undefined) delete process.env.PROTOCOL_OWNER;
+      else process.env.PROTOCOL_OWNER = previousOwner;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses separate fee and ticket collateral tokens", async function () {
     const [operator, safe, bondingProxy, bondingProxyAdmin] =
       await ethers.getSigners();
@@ -74,9 +109,16 @@ describe("Protocol deployment", function () {
       await ticketUnderlyingToken.getAddress(),
     );
     expect(await interfold.feeToken()).to.equal(await feeToken.getAddress());
-    expect(result.contracts.decryptionVerifier).to.not.equal(undefined);
-    expect(result.contracts.pkVerifier).to.not.equal(undefined);
-    expect(result.contracts.dkgFoldAttestationVerifier).to.not.equal(undefined);
+    for (const verifier of [
+      result.contracts.decryptionVerifier,
+      result.contracts.pkVerifier,
+      result.contracts.dkgFoldAttestationVerifier,
+    ]) {
+      expect(verifier).to.match(/^0x[0-9a-fA-F]{40}$/);
+      expect(await ethers.provider.getCode(verifier as string)).to.not.equal(
+        "0x",
+      );
+    }
 
     // Bonded voting has to be deployed and wired by the deployment itself. Shipping the registry
     // without it leaves the feature silently disabled: the sync is a no-op while unconfigured, so
