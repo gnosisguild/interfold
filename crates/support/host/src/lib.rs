@@ -19,9 +19,11 @@ use boundless_market::{
     storage::storage_provider_from_env,
     Client,
 };
-use e3_compute_provider::{ComputeInput, ComputeManager, ComputeProvider, FHEInputs};
+use e3_compute_provider::{
+    ComputeInput, ComputeManager, ComputeProvider, FHEInputs, InputPolicy, PublishedData,
+};
 use e3_support_types::{ComputeDomain, ComputeGuestInput, ComputeJournal};
-use e3_user_program::fhe_processor;
+use e3_user_program::{fhe_processor, policy};
 use methods::PROGRAM_ELF;
 use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
@@ -51,16 +53,26 @@ pub enum ComputeError {
     Other(String),
 }
 
+/// The compute provider has its own error type; this one is the host's public surface.
+///
+/// Flattened to a string rather than re-exported so the host's callers do not have to depend on
+/// the provider crate to match on a failure.
+impl From<e3_compute_provider::ComputeError> for ComputeError {
+    fn from(error: e3_compute_provider::ComputeError) -> Self {
+        ComputeError::Other(error.to_string())
+    }
+}
+
 impl ComputeProvider for BoundlessProvider {
     type Output = BoundlessOutput;
 
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
+    fn prove(&self, input: &ComputeInput, policy: InputPolicy) -> Self::Output {
         let is_dev_mode =
             std::env::var("RISC0_DEV_MODE").unwrap_or_else(|_| "0".to_string()) == "1";
 
         if is_dev_mode {
             println!("Dev mode: Using fake proof");
-            fake_prove(input, &self.domain)
+            fake_prove(input, &self.domain, policy)
         } else {
             println!("Using Boundless for proving");
             tokio::runtime::Handle::current().block_on(boundless_prove(input, &self.domain))
@@ -81,11 +93,21 @@ fn encode_journal(result: &ComputeJournal) -> Result<Vec<u8>, Error> {
 }
 
 /// Dev mode: return fake proof without executing
-fn fake_prove(input: &ComputeInput, domain: &ComputeDomain) -> BoundlessOutput {
+fn fake_prove(
+    input: &ComputeInput,
+    domain: &ComputeDomain,
+    policy: InputPolicy,
+) -> BoundlessOutput {
     println!("Generating fake proof for dev mode");
 
-    // Execute the program with the input
-    let result = match ComputeJournal::new(domain.clone(), input.process(fhe_processor)) {
+    // Execute the program with the input. The policy is the caller's, so dev mode computes the same
+    // result the guest would rather than silently falling back to the default.
+    let processed = match input.process(fhe_processor, policy) {
+        Ok(processed) => processed,
+        Err(error) => return to_output_error(Error::from(error)),
+    };
+
+    let result = match ComputeJournal::new(domain.clone(), processed) {
         Ok(result) => result,
         Err(error) => return to_output_error(error),
     };
@@ -378,7 +400,9 @@ pub struct Risc0Output {
 impl ComputeProvider for Risc0Provider {
     type Output = Risc0Output;
 
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
+    fn prove(&self, input: &ComputeInput, _policy: InputPolicy) -> Self::Output {
+        // The policy is not forwarded: the guest calls the user program's own `policy()`, so
+        // passing one here would let host and guest disagree about the leaves and the selection.
         let guest_input = ComputeGuestInput {
             domain: self.domain.clone(),
             input: input.clone(),
@@ -425,21 +449,24 @@ impl ComputeProvider for Risc0Provider {
 pub fn run_compute(
     params: FHEInputs,
     domain: ComputeDomain,
+    published: Vec<PublishedData>,
 ) -> std::result::Result<(BoundlessOutput, Vec<u8>), ComputeError> {
     let boundless_provider = BoundlessProvider { domain };
 
-    let mut provider = ComputeManager::new(
+    // `with_published` rather than `new`: the policy reads this to rebuild the leaves the E3
+    // program's contract built. Passing an empty vec is the same as `new`, which is what a program
+    // using the default policy wants.
+    let mut provider = ComputeManager::with_published(
         boundless_provider,
         params.clone(),
+        published,
         fhe_processor,
-        false,
-        None,
     );
 
     // Start timer
     let start_time = Instant::now();
 
-    let output = provider.start();
+    let output = provider.start(policy())?;
 
     // Capture end time and calculate the duration
     let elapsed_time = start_time.elapsed();
@@ -454,24 +481,23 @@ pub fn run_compute(
     );
 
     // Check if the output indicates failure
-    match output.0 {
+    match &output.0 {
         BoundlessOutput::Success { .. } => Ok(output),
-        BoundlessOutput::Error { error } => Err(ComputeError::BoundlessFailed(error)),
+        BoundlessOutput::Error { error } => Err(ComputeError::BoundlessFailed(error.clone())),
     }
 }
 
 pub fn run_risc0_compute(
     params: FHEInputs,
     domain: ComputeDomain,
+    published: Vec<PublishedData>,
 ) -> std::result::Result<(Risc0Output, Vec<u8>), ComputeError> {
     let risc0_provider = Risc0Provider { domain };
 
     let mut provider =
-        ComputeManager::new(risc0_provider, params.clone(), fhe_processor, false, None);
+        ComputeManager::with_published(risc0_provider, params.clone(), published, fhe_processor);
 
-    let output = provider.start();
-
-    Ok(output)
+    Ok(provider.start(policy())?)
 }
 
 pub fn encode_compute_proof(

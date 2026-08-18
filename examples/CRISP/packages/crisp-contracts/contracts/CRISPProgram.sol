@@ -76,6 +76,18 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     /// input is provably its owner voting again. With the history, an entry like that is simply
     /// never extended: the next input names the same parent, and masking continues.
     mapping(address slot => mapping(uint40 index => bytes32 commitment)) inputCommitment;
+    /// @notice Leaves already appended to this round's input tree.
+    /// @dev A replay guard, not a uniqueness requirement on ballots. The proof constrains the
+    /// commitment, not who submits it, so anyone who observes a published input can resubmit the
+    /// identical calldata: the proof still verifies and {_processVote} appends again. The tally
+    /// does not change — the replay names the same parent as the original, which is no longer the
+    /// head, so the Secure Process drops it — but the tree is fixed-depth, so enough replays reach
+    /// capacity and every later input reverts, denying the round.
+    ///
+    /// Keyed by the leaf rather than the proof because the leaf is exactly what an append adds.
+    /// Two genuinely distinct inputs differ in bytes, commitment, slot or parent, so they differ
+    /// here; only a byte-identical resubmission collides.
+    mapping(uint256 leaf => bool) appendedLeaf;
     LazyIMTData votes;
     uint256 numOptions;
     CreditMode creditMode;
@@ -174,6 +186,9 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// @dev Includes an index belonging to another slot, which the per-slot commitment map reads as
   /// absent. Name no parent instead when there is nothing to extend.
   error UnknownParentInput(uint40 parentIndex);
+
+  /// @notice Thrown when an input identical to one already published is submitted again.
+  error InputAlreadyPublished(uint256 leaf);
   error SlotIsEmpty();
   error MerkleRootNotSet();
   error InvalidNumOptions();
@@ -745,8 +760,16 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // the mask path needs no signature — replace the bytes of a vote that was already counted,
     // erasing it. Appending leaves the earlier entry in the tree, so the Secure Process can fall
     // back to it when a later entry is unusable, and nothing is lost.
+    uint256 leaf = inputLeaf(encryptedVote, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
+
+    // Refuse a byte-identical resubmission. Without this the tree is a free growth surface for
+    // anyone replaying a published input, and the round dies at tree capacity rather than at the
+    // input deadline.
+    if (round.appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
+    round.appendedLeaf[leaf] = true;
+
     voteIndex = round.votes.numberOfLeaves;
-    round.votes._insert(inputLeaf(encryptedVote, encryptedVoteCommitment, slotAddress, parentIndexPlusOne));
+    round.votes._insert(leaf);
 
     round.voteSlots[slotAddress] = voteIndex + 1;
     round.inputCommitment[slotAddress][voteIndex] = encryptedVoteCommitment;

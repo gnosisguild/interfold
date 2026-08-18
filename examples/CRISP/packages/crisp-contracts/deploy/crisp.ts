@@ -74,7 +74,6 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   // census mode per preset, so factory lookups have to be fully qualified by file. `verifierNames`
   // owns that convention and the preset choice — see scripts/verifiers.ts.
   const merkleVerifier = verifierNames('merkle')
-  console.log(`Deploying the ${merkleVerifier.preset} verifiers`)
 
   const zkTranscriptLib = await ethers.deployContract(merkleVerifier.zkTranscriptLib)
   await zkTranscriptLib.waitForDeployment()

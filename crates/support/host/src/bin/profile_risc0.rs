@@ -85,7 +85,8 @@ fn main() {
         &[0x33; 32],
     )
     .expect("invalid compute domain");
-    match run_risc0_compute(fhe_inputs, domain) {
+    // No published data: this profiles the default policy, which is what the template program uses.
+    match run_risc0_compute(fhe_inputs, domain, Vec::new()) {
         Ok((output, ciphertext)) => {
             println!("Success! RISC0 computation completed");
             println!("Output result: {:?}", output.result);

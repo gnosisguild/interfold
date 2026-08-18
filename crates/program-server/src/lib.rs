@@ -227,6 +227,88 @@ pub struct AppConfig {
     jobs: Arc<Semaphore>,
 }
 
+/// Whether callbacks to addresses only reachable from inside the deployment are permitted.
+///
+/// Off by default. Local development legitimately posts to a host on the same machine, so there has
+/// to be a way in, but it must be a deliberate one rather than the default.
+fn allow_private_callbacks() -> bool {
+    matches!(
+        std::env::var("ALLOW_PRIVATE_CALLBACKS")
+            .unwrap_or_default()
+            .as_str(),
+        "1" | "true" | "TRUE" | "yes" | "YES"
+    )
+}
+
+/// Rejects a callback host that is not reachable from the public internet.
+///
+/// This endpoint takes a URL from the network and then makes a request to it, which is a
+/// server-side request forgery primitive: without this, a caller can aim the callback at a cloud
+/// metadata service (169.254.169.254), at loopback, or at anything inside the private network the
+/// server sits in, and read the effect through the response or the side effects.
+///
+/// Literal addresses are checked exhaustively. A hostname is checked by name only — a name that
+/// resolves to a private address still passes, and DNS rebinding remains possible. Closing that
+/// needs resolution at connect time and a pinned socket; this guard is the cheap part, not the
+/// whole answer.
+fn ensure_public_callback_host(url: &reqwest::Url) -> Result<()> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    if allow_private_callbacks() {
+        return Ok(());
+    }
+
+    fn v4_is_internal(ip: Ipv4Addr) -> bool {
+        ip.is_private()
+            || ip.is_loopback()
+            || ip.is_link_local()
+            || ip.is_broadcast()
+            || ip.is_documentation()
+            || ip.is_unspecified()
+            || ip.octets()[0] == 0
+            // 100.64.0.0/10, carrier-grade NAT.
+            || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
+    }
+
+    fn v6_is_internal(ip: Ipv6Addr) -> bool {
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            return v4_is_internal(mapped);
+        }
+        ip.is_loopback()
+            || ip.is_unspecified()
+            // fc00::/7 unique-local, fe80::/10 link-local.
+            || (ip.segments()[0] & 0xfe00) == 0xfc00
+            || (ip.segments()[0] & 0xffc0) == 0xfe80
+    }
+
+    let internal = match url.host_str() {
+        Some(host) => {
+            // `host_str` keeps the brackets on an IPv6 literal, which `IpAddr` will not parse.
+            let bare = host.trim_start_matches('[').trim_end_matches(']');
+            match bare.parse::<IpAddr>() {
+                Ok(IpAddr::V4(ip)) => v4_is_internal(ip),
+                Ok(IpAddr::V6(ip)) => v6_is_internal(ip),
+                Err(_) => {
+                    let lowered = bare.to_ascii_lowercase();
+                    lowered == "localhost"
+                        || lowered.ends_with(".localhost")
+                        || lowered.ends_with(".local")
+                        || lowered.ends_with(".internal")
+                }
+            }
+        }
+        None => true,
+    };
+
+    anyhow::ensure!(
+        !internal,
+        "callback URL must not point at a private, loopback or link-local address; \
+         set ALLOW_PRIVATE_CALLBACKS=1 to permit it for local development"
+    );
+
+    Ok(())
+}
+
 fn parse_http_url(value: &str, label: &str) -> Result<reqwest::Url> {
     let url = reqwest::Url::parse(value).with_context(|| format!("invalid {label}"))?;
     anyhow::ensure!(
@@ -257,6 +339,8 @@ fn validated_callback_url(
         callback.fragment().is_none(),
         "callback URL must not contain a fragment"
     );
+    // After the rewrite, so the host actually dialled is the one checked.
+    ensure_public_callback_host(&callback)?;
     Ok(callback)
 }
 

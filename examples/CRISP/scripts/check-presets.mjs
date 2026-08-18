@@ -28,8 +28,11 @@ const CONTRACTS = join(CRISP, 'packages', 'crisp-contracts')
 /** Which preset each release channel stands for. */
 const CHANNEL_PRESET = { testing: 'insecure-512', latest: 'secure-8192' }
 
-/** Generated per census mode; both are needed for a preset to be deployable. */
+/** Generated per census mode. Not preset-specific — see packages/crisp-contracts/scripts/verifiers.ts. */
 const VERIFIERS = ['CRISPVerifier.sol', 'CRISPOnchainVerifier.sol']
+
+/** Polynomial degree each preset's circuits carry, used to prove the bundle is what it claims. */
+const EXPECTED_DEGREE = { 'insecure-512': 512, 'secure-8192': 8192 }
 
 /** Below this a "built" entry is a stub or a failed inline rather than a real circuit bundle. */
 const MIN_BYTES = 100 * 1024
@@ -75,13 +78,35 @@ if (!entry) {
   }
 }
 
+// --- the bundle really carries the channel's circuits ---
+//
+// The filename says which preset a bundle is; this checks the contents agree. A bundle built from
+// the wrong staged artifacts would ship under the right name and fail only at on-chain
+// verification, which is the whole failure mode these channels exist to prevent.
+if (existsSync(built)) {
+  const source = readFileSync(built, 'utf8')
+  const degree = EXPECTED_DEGREE[wanted]
+  const other = Object.entries(EXPECTED_DEGREE).find(([preset]) => preset !== wanted)
+
+  // The bundler may emit the inlined JSON as a JS object literal, so the key can be quoted or bare
+  // and the space is optional. Match all of those rather than one spelling.
+  const hasDegree = (value) => new RegExp(`["']?length["']?\\s*:\\s*${value}\\b`).test(source)
+
+  if (!hasDegree(degree)) {
+    problems.push(`${wanted}: dist/presets/${wanted}.js contains no length-${degree} arrays; the inlined circuits are not ${wanted}.`)
+  }
+  if (other && hasDegree(other[1])) {
+    problems.push(`${wanted}: dist/presets/${wanted}.js contains length-${other[1]} arrays, which belong to ${other[0]}.`)
+  }
+}
+
 // --- the generated verifiers ---
 //
-// These are what a consumer deploys, and they encode the circuit's verification key, so the wrong
-// preset here is a verifier that rejects every proof the matching SDK produces.
+// Preset-independent, so this is only an existence check: without them a consumer has nothing to
+// deploy, but there is no wrong-preset case to catch here.
 for (const verifier of VERIFIERS) {
-  if (!existsSync(join(CONTRACTS, 'contracts', 'verifiers', wanted, verifier))) {
-    problems.push(`${wanted}: contracts/verifiers/${wanted}/${verifier} is missing — regenerate with scripts/compile_circuits.sh.`)
+  if (!existsSync(join(CONTRACTS, 'contracts', 'verifiers', verifier))) {
+    problems.push(`contracts/verifiers/${verifier} is missing — regenerate with scripts/compile_circuits.sh.`)
   }
 }
 
