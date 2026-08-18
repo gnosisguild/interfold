@@ -236,7 +236,11 @@ export async function actionExecuteGovernance(): Promise<void> {
   }
 
   const transactions = readGovernanceBatch(config);
-  const startIndex = Number(arg("from-index") ?? "0");
+  const fromIndex = arg("from-index");
+  if ((hasFlag("from-index") && !fromIndex) || fromIndex?.trim() === "") {
+    throw new Error("--from-index requires a zero-based index");
+  }
+  const startIndex = Number(fromIndex ?? "0");
   if (
     !Number.isInteger(startIndex) ||
     startIndex < 0 ||

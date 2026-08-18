@@ -72,6 +72,16 @@ describe("Protocol deployment", function () {
     const foldFactory = await ethers.getContractFactory("MockVotesToken");
     const fold = await foldFactory.deploy();
     await fold.waitForDeployment();
+    const decryptionVerifier = await ethers.deployContract(
+      "MockDecryptionVerifier",
+    );
+    await decryptionVerifier.waitForDeployment();
+    const pkVerifier = await ethers.deployContract("MockPkVerifier");
+    await pkVerifier.waitForDeployment();
+    const dkgFoldAttestationVerifier = await ethers.deployContract(
+      "DkgFoldAttestationVerifier",
+    );
+    await dkgFoldAttestationVerifier.waitForDeployment();
 
     const config = JSON.parse(
       fs.readFileSync(
@@ -93,7 +103,12 @@ describe("Protocol deployment", function () {
     config.slashedFundsTreasury = await safe.getAddress();
     config.interfold.pricing.protocolTreasury = await safe.getAddress();
     config.e3Programs = [await program.getAddress()];
-    config.verifiers = { deploy: true };
+    config.verifiers = {
+      deploy: false,
+      decryptionVerifier: await decryptionVerifier.getAddress(),
+      pkVerifier: await pkVerifier.getAddress(),
+      dkgFoldAttestationVerifier: await dkgFoldAttestationVerifier.getAddress(),
+    };
 
     const result = await deployProtocolContracts(ethers, operator, config);
     const ticket = await ethers.getContractAt(

@@ -153,7 +153,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
 
   let governanceComplete = false
   const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
-  if (interfoldAddress) {
+  if (interfoldAddress && (await ethers.provider.getCode(interfoldAddress)) !== '0x') {
     const interfold = InterfoldFactory.connect(interfoldAddress, owner)
     const interfoldOwner = await interfold.owner()
     const registered = await interfold.e3Programs(crispAddress)
