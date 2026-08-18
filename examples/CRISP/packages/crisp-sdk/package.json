@@ -1,6 +1,6 @@
 {
   "name": "@crisp-e3/sdk",
-  "version": "0.17.0",
+  "version": "0.18.0-insecure.0",
   "type": "module",
   "author": {
     "name": "gnosisguild",
@@ -49,9 +49,7 @@
     "check:presets": "node ../../scripts/check-presets.mjs",
     "prepublishOnly": "pnpm check:presets",
     "build:testing": "pnpm build:wasm && CRISP_PRESET=insecure-512 tsup",
-    "build:prod": "pnpm build:wasm && CRISP_PRESET=secure-8192 tsup",
-    "publish:testing": "pnpm build:testing && CRISP_CHANNEL=testing npm publish --tag testing",
-    "publish:prod": "pnpm build:prod && CRISP_CHANNEL=latest npm publish --tag latest"
+    "build:prod": "pnpm build:wasm && CRISP_PRESET=secure-8192 tsup"
   },
   "publishConfig": {
     "access": "public"
