@@ -95,6 +95,25 @@ if git cat-file -e "${PINNED_REV}^{commit}" 2>/dev/null; then
   The guest still runs the older code. Move the pin to a pushed commit that contains the change,
   update both lockfiles, rebuild the guest, and commit the regenerated $IMAGE_ID_SOL."
   fi
+
+  # Third question: will the pin still resolve a year from now? Ancestry and currency are both
+  # satisfied by a branch tip, and a branch tip is exactly what stops resolving. This repository
+  # squash-merges, so the commit a feature branch pointed at is replaced by a new one on main and
+  # the original ends up referenced by nothing; once it is collected, `cargo fetch` cannot retrieve
+  # it and the guest can no longer be built at all.
+  #
+  # A tagged commit does not have that problem: the tag is a ref, so the commit stays reachable,
+  # and it is an ancestor of main besides. Pin by `rev` rather than by `tag` even so — a tag can be
+  # moved, and a pin deciding which code the guest runs should be content-addressed.
+  if pin_tag="$(git describe --exact-match --tags "$PINNED_REV" 2>/dev/null)"; then
+    echo "check:image-id: pin ${PINNED_REV:0:8} is the released commit $pin_tag."
+  else
+    warn "the guest pin is not a released commit.
+    pinned: ${PINNED_REV:0:8}
+  Nothing but this branch refers to it, and squash-merging replaces the branch commit, so the pin
+  will stop resolving once the original is collected. Re-pin to the commit a release tag names
+  once this merges, and record the tag in the rationale in crates/support/Cargo.toml."
+  fi
 else
   warn "pinned revision ${PINNED_REV:0:8} is not present locally; run 'git fetch' to check it."
 fi
@@ -113,8 +132,11 @@ if [ "$PINNED_REV" != "$AUDIT_BASELINE" ]; then
   warn "the guest pin has moved off the documented audit baseline.
     pinned:   $PINNED_REV
     baseline: $AUDIT_BASELINE
-  That is expected once the pin is bumped past the audit. Update AUDIT_BASELINE in this script and
-  the rationale in crates/support/Cargo.toml, so the reason for the pin stays true."
+  That is expected once the pin is bumped past the audit, and this warning is then the standing
+  reminder that the guest no longer runs audited code. Leave AUDIT_BASELINE alone unless a later
+  audit sets a new one: it is asserted against the audits README as that audit's scope commit, so
+  pointing it at an unreviewed revision would make this script vouch for a review that never
+  happened. Keep the reason current in the rationale in crates/support/Cargo.toml instead."
 fi
 
 # --- 2. Toolchain sync --------------------------------------------------------------------------
