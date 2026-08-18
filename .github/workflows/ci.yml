@@ -687,6 +687,7 @@ jobs:
           - test-suite: test:sdk
             command: pnpm test:sdk
             timeout: 45
+            needs-sdk: true
           # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
           # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
           # with every ballot a new test needs. Split, the critical path is the largest single leg
@@ -696,15 +697,25 @@ jobs:
           # Balanced by ballots, which is what the time is: input-tree 7, ballots 5, unit 0.
           # `pnpm test:contracts` still runs all of it in one go for local use, and
           # `crisp_contract_leg_coverage` fails if a test file ever belongs to no leg.
+          #
+          # Every contract leg needs both capabilities: `hardhat.config.ts` imports
+          # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
+          # and each leg contains at least one test that imports `@crisp-e3/sdk`.
           - test-suite: test:contracts:input-tree
             command: pnpm test:contracts:input-tree
             timeout: 45
+            needs-evm: true
+            needs-sdk: true
           - test-suite: test:contracts:ballots
             command: pnpm test:contracts:ballots
             timeout: 45
+            needs-evm: true
+            needs-sdk: true
           - test-suite: test:contracts:unit
             command: pnpm test:contracts:unit
             timeout: 15
+            needs-evm: true
+            needs-sdk: true
           - test-suite: cargo test
             command: cargo test
             timeout: 20
@@ -761,13 +772,16 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
+      # Gated on a declared capability rather than on the leg's name. Matching the name made the
+      # label load-bearing: splitting `test:contracts` into three renamed legs silently skipped this
+      # step, and the suite failed on a missing `@interfold/contracts/dist` two steps later.
       - name: Compile Interfold contracts
-        if: matrix.test-suite == 'test:contracts'
+        if: matrix.needs-evm
         working-directory: .
         run: pnpm evm:build
 
       - name: Download Crisp SDK artifacts
-        if: matrix.test-suite == 'test:sdk' || matrix.test-suite == 'test:contracts'
+        if: matrix.needs-sdk
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: crisp-sdk-artifacts
