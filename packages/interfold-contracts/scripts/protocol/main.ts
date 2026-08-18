@@ -31,6 +31,9 @@ Examples:
 Flags:
   --sync-integration-config  Also update tests/integration/interfold.config.yaml
   --protocol-owner 0x...     Fill a zero protocol-owner placeholder
+  --aragon-admin-plugin 0x... Fill a missing Aragon Admin plugin
+  --governance-safe 0x...    Fill a missing Aragon proposer Safe
+  --governance-proposal-metadata 0x...
   --e3-program 0x...         Set the E3 program for prepare-rehearsal
   --ciphertext-verifier 0x... Set the ciphertext verifier for prepare-rehearsal
   --from-index N             Resume execute-governance at zero-based index N

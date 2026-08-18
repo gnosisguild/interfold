@@ -13,6 +13,10 @@ import type {
 } from "./types";
 import { address } from "./values";
 
+const aragonAdminPluginInterface = new ethersLib.Interface([
+  "function executeProposal(bytes metadata,tuple(address to,uint256 value,bytes data)[] actions,uint256 allowFailureMap)",
+]);
+
 export function safeTx(to: string, data: string): SafeTransaction {
   return {
     to,
@@ -59,6 +63,64 @@ export function governanceBatch(
       executor: config.protocolOwner,
     },
     transactions,
+  };
+}
+
+export function aragonAdminSafeTransactions(
+  config: ProtocolConfigFile,
+  transactions: SafeTransaction[],
+): SafeTransaction[] {
+  if (!config.governance) {
+    throw new Error("Aragon governance is not configured");
+  }
+  if (transactions.length === 0) {
+    throw new Error("Governance batch has no transactions to wrap");
+  }
+  for (const [index, tx] of transactions.entries()) {
+    if (tx.operation !== 0) {
+      throw new Error(
+        `Governance transaction ${index + 1} is not a CALL operation`,
+      );
+    }
+  }
+
+  const actions = transactions.map((tx) => ({
+    to: tx.to,
+    value: BigInt(tx.value),
+    data: tx.data,
+  }));
+  const metadata = config.governance.proposalMetadata ?? "0x";
+  return [
+    safeTx(
+      config.governance.adminPlugin,
+      aragonAdminPluginInterface.encodeFunctionData("executeProposal", [
+        metadata,
+        actions,
+        0n,
+      ]),
+    ),
+  ];
+}
+
+export function aragonAdminSafeBatch(
+  config: ProtocolConfigFile,
+  transactions: SafeTransaction[],
+) {
+  if (!config.governance) {
+    throw new Error("Aragon governance is not configured");
+  }
+  return {
+    version: "1.0",
+    chainId: config.chainId.toString(),
+    createdAt: Date.now(),
+    meta: {
+      name: `${config.name} Aragon Admin proposal`,
+      description:
+        "Execute the protocol wiring actions through the Aragon Admin plugin.",
+      txBuilderVersion: "1.18.0",
+      createdFromSafeAddress: config.governance.proposerSafe,
+    },
+    transactions: aragonAdminSafeTransactions(config, transactions),
   };
 }
 
@@ -117,11 +179,10 @@ function toMetaTransaction(tx: SafeTransaction): MetaTransactionData {
 export async function proposeSafeBatch(
   config: ProtocolConfigFile,
   transactions: SafeTransaction[],
+  safeAddress = config.safe,
 ): Promise<SafeProposal> {
-  if (!config.safe) {
-    throw new Error(
-      "This protocol owner is not configured as a Safe. Submit the governance transactions through its native proposal flow.",
-    );
+  if (!safeAddress) {
+    throw new Error("No Safe is configured for this governance transaction.");
   }
   if (transactions.length === 0)
     throw new Error("Safe batch has no transactions to propose");
@@ -139,11 +200,11 @@ export async function proposeSafeBatch(
   const protocolKit = await Safe.init({
     provider: rpcUrlForSafeProposal(),
     signer: privateKey,
-    safeAddress: config.safe,
+    safeAddress,
   });
 
   const nonce = Number(
-    arg("safe-nonce") ?? (await apiKit.getNextNonce(config.safe)),
+    arg("safe-nonce") ?? (await apiKit.getNextNonce(safeAddress)),
   );
   const origin = arg("origin") ?? `Interfold ${config.name} protocol wiring`;
   const safeTransaction = await protocolKit.createTransaction({
@@ -155,7 +216,7 @@ export async function proposeSafeBatch(
   const signature = await protocolKit.signHash(safeTxHash);
 
   await apiKit.proposeTransaction({
-    safeAddress: config.safe,
+    safeAddress,
     safeTransactionData: safeTransaction.data,
     safeTxHash,
     senderAddress: proposer,
@@ -165,12 +226,12 @@ export async function proposeSafeBatch(
 
   const proposal = {
     safeTxHash,
-    safeAddress: config.safe,
+    safeAddress,
     proposer,
     nonce,
     transactionCount: transactions.length,
     origin,
-    url: safeTransactionUrl(config.chainId, config.safe, safeTxHash),
+    url: safeTransactionUrl(config.chainId, safeAddress, safeTxHash),
     proposedAt: new Date().toISOString(),
   };
   writeJson(safeProposalPath(config), proposal);

@@ -31,6 +31,12 @@ export interface ProtocolConfigFile {
   protocolOwner: string;
   /** Optional Safe address when the protocol owner is itself a Safe. */
   safe?: string;
+  /** Optional Aragon Admin plugin route for DAO-owned protocol deployments. */
+  governance?: {
+    adminPlugin: string;
+    proposerSafe: string;
+    proposalMetadata?: string;
+  };
   fold: string;
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
@@ -132,6 +138,7 @@ export interface ProtocolDeployment {
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
   safeTransactions: string;
+  governanceSafeBuilder?: string;
   safeProposal?: SafeProposal;
 }
 

@@ -6,13 +6,103 @@ import { syncProtocolDeploymentRecords } from "../deploymentRecords";
 import { arg, connect, hasFlag, networkName } from "./cli";
 import { proxyAdminInterface } from "./constants";
 import { deployProtocolContracts } from "./deployContracts";
-import { deploymentPath, readJson, safeBatchPath, writeJson } from "./files";
-import { governanceBatch, proposeSafeBatch } from "./safe";
+import {
+  deploymentPath,
+  governanceSafeBuilderPath,
+  readJson,
+  safeBatchPath,
+  writeJson,
+} from "./files";
+import {
+  aragonAdminSafeBatch,
+  aragonAdminSafeTransactions,
+  governanceBatch,
+  proposeSafeBatch,
+} from "./safe";
 import { buildSafeTransactions } from "./transactions";
 import type { ProtocolDeployment, SafeTransaction } from "./types";
 import { address, loadConfig, requireContract } from "./values";
 
 const DIRECT_GOVERNANCE_CHAIN_IDS = new Set([31337, 11155111]);
+
+async function assertAragonGovernancePreconditions(
+  ethers: any,
+  config: ReturnType<typeof loadConfig>,
+) {
+  if (!config.governance) return;
+
+  await Promise.all([
+    requireContract(
+      ethers.provider,
+      config.governance.adminPlugin,
+      "governance.adminPlugin",
+    ),
+    requireContract(
+      ethers.provider,
+      config.governance.proposerSafe,
+      "governance.proposerSafe",
+    ),
+  ]);
+
+  const adminPlugin = new ethersLib.Contract(
+    config.governance.adminPlugin,
+    [
+      "function dao() view returns (address)",
+      "function getTargetConfig() view returns (tuple(address target,uint8 operation))",
+      "function EXECUTE_PROPOSAL_PERMISSION_ID() view returns (bytes32)",
+    ],
+    ethers.provider,
+  );
+  const dao = new ethersLib.Contract(
+    config.protocolOwner,
+    [
+      "function hasPermission(address where,address who,bytes32 permissionId,bytes data) view returns (bool)",
+    ],
+    ethers.provider,
+  );
+
+  const daoAddress = address(await adminPlugin.dao(), "governance.dao");
+  if (daoAddress !== config.protocolOwner) {
+    throw new Error(
+      `Aragon Admin plugin DAO mismatch: expected ${config.protocolOwner}, got ${daoAddress}`,
+    );
+  }
+
+  const targetConfig = await adminPlugin.getTargetConfig();
+  const target = address(targetConfig.target, "governance.target");
+  const operation = Number(targetConfig.operation);
+  if (target !== config.protocolOwner || operation !== 0) {
+    throw new Error(
+      `Aragon Admin plugin target mismatch: expected (${config.protocolOwner}, 0), got (${target}, ${operation})`,
+    );
+  }
+
+  const executeProposalPermission =
+    await adminPlugin.EXECUTE_PROPOSAL_PERMISSION_ID();
+  const proposerCanExecute = await dao.hasPermission(
+    config.governance.adminPlugin,
+    config.governance.proposerSafe,
+    executeProposalPermission,
+    "0x",
+  );
+  if (!proposerCanExecute) {
+    throw new Error(
+      `governance.proposerSafe cannot execute proposals through ${config.governance.adminPlugin}`,
+    );
+  }
+
+  const pluginCanExecute = await dao.hasPermission(
+    config.protocolOwner,
+    config.governance.adminPlugin,
+    ethersLib.id("EXECUTE_PERMISSION"),
+    "0x",
+  );
+  if (!pluginCanExecute) {
+    throw new Error(
+      `Aragon Admin plugin cannot execute through DAO ${config.protocolOwner}`,
+    );
+  }
+}
 
 async function assertPreconditions(
   ethers: any,
@@ -86,6 +176,7 @@ async function assertPreconditions(
       `BondingRegistry ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${proxyAdminOwner}`,
     );
   }
+  await assertAragonGovernancePreconditions(ethers, config);
 }
 
 export async function actionDeploy(): Promise<void> {
@@ -114,6 +205,12 @@ export async function actionDeploy(): Promise<void> {
   );
   const batchFile = safeBatchPath(config);
   writeJson(batchFile, governanceBatch(config, txs));
+  const governanceSafeBuilderFile = config.governance
+    ? governanceSafeBuilderPath(config)
+    : undefined;
+  if (governanceSafeBuilderFile) {
+    writeJson(governanceSafeBuilderFile, aragonAdminSafeBatch(config, txs));
+  }
 
   const deployment: ProtocolDeployment = {
     name: config.name,
@@ -128,6 +225,7 @@ export async function actionDeploy(): Promise<void> {
     bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
     ...result.contracts,
     safeTransactions: batchFile,
+    governanceSafeBuilder: governanceSafeBuilderFile,
   };
   const deploymentFile = deploymentPath(config);
   writeJson(deploymentFile, deployment);
@@ -138,7 +236,14 @@ export async function actionDeploy(): Promise<void> {
   });
 
   if (hasFlag("propose-safe")) {
-    deployment.safeProposal = await proposeSafeBatch(config, txs);
+    const proposalTransactions = config.governance
+      ? aragonAdminSafeTransactions(config, txs)
+      : txs;
+    deployment.safeProposal = await proposeSafeBatch(
+      config,
+      proposalTransactions,
+      config.governance?.proposerSafe ?? config.safe,
+    );
     writeJson(deploymentFile, deployment);
     printProposal(deployment.safeProposal);
   }
@@ -165,6 +270,16 @@ Protocol contracts deployed
 Governance batch required
   file: ${batchFile}
   txs:  ${txs.length}
+${
+  governanceSafeBuilderFile
+    ? `
+Safe Builder wrapper
+  file: ${governanceSafeBuilderFile}
+  safe: ${config.governance!.proposerSafe}
+  txs:  1 (${txs.length} DAO actions)
+`
+    : ""
+}
 
 Deployment file
   ${deploymentFile}
@@ -194,13 +309,22 @@ Protocol configuration is valid
   ProxyAdmin:           ${config.bondingRegistryProxyAdmin}
   initial E3 program:   ${config.e3Programs[0]}
   ciphertext verifier:  ${config.ciphertextVerifier ?? "(not configured)"}
+  Aragon Admin plugin:  ${config.governance?.adminPlugin ?? "(not configured)"}
+  proposer Safe:        ${config.governance?.proposerSafe ?? "(not configured)"}
 `);
 }
 
 export async function actionProposeSafe(): Promise<void> {
   const config = loadConfig();
   const transactions = readGovernanceBatch(config);
-  const proposal = await proposeSafeBatch(config, transactions);
+  const proposalTransactions = config.governance
+    ? aragonAdminSafeTransactions(config, transactions)
+    : transactions;
+  const proposal = await proposeSafeBatch(
+    config,
+    proposalTransactions,
+    config.governance?.proposerSafe ?? config.safe,
+  );
 
   if (fs.existsSync(deploymentPath(config))) {
     const deployment = readJson<ProtocolDeployment>(deploymentPath(config));

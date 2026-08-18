@@ -4,12 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
+import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 import { network } from "hardhat";
 import os from "os";
 import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import {
+  aragonAdminSafeBatch,
+  aragonAdminSafeTransactions,
+  safeTx,
+} from "../../scripts/protocol/safe";
 import { buildSafeTransactions } from "../../scripts/protocol/transactions";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
@@ -18,6 +24,70 @@ import { BondingRegistry__factory as BondingRegistryFactory } from "../../types"
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("wraps DAO wiring actions in one Aragon Admin Safe transaction", async function () {
+    const [adminPlugin, proposerSafe, targetA, targetB] =
+      await ethers.getSigners();
+    const config = {
+      name: "mainnet-protocol",
+      chainId: 1,
+      protocolOwner: "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+      governance: {
+        adminPlugin: await adminPlugin.getAddress(),
+        proposerSafe: await proposerSafe.getAddress(),
+        proposalMetadata: "0x",
+      },
+    } as ProtocolConfigFile;
+    const actions = [
+      safeTx(await targetA.getAddress(), "0x12345678"),
+      safeTx(await targetB.getAddress(), "0xabcdef01"),
+    ];
+
+    const batch = aragonAdminSafeBatch(config, actions);
+    expect(batch.meta.createdFromSafeAddress).to.equal(
+      await proposerSafe.getAddress(),
+    );
+    expect(batch.transactions).to.have.lengthOf(1);
+
+    const [wrapper] = aragonAdminSafeTransactions(config, actions);
+    expect(wrapper.to).to.equal(await adminPlugin.getAddress());
+
+    const adminInterface = new ethersLib.Interface([
+      "function executeProposal(bytes metadata,tuple(address to,uint256 value,bytes data)[] actions,uint256 allowFailureMap)",
+    ]);
+    const decoded = adminInterface.decodeFunctionData(
+      "executeProposal",
+      wrapper.data,
+    );
+
+    expect(decoded.metadata).to.equal("0x");
+    expect(decoded.allowFailureMap).to.equal(0n);
+    expect(decoded.actions).to.have.lengthOf(actions.length);
+    for (const [index, action] of actions.entries()) {
+      expect(decoded.actions[index].to).to.equal(action.to);
+      expect(decoded.actions[index].value).to.equal(BigInt(action.value));
+      expect(decoded.actions[index].data).to.equal(action.data);
+    }
+  });
+
+  it("rejects non-call actions in Aragon Admin Safe wrappers", async function () {
+    const [adminPlugin, proposerSafe, target] = await ethers.getSigners();
+    const config = {
+      name: "mainnet-protocol",
+      chainId: 1,
+      protocolOwner: "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+      governance: {
+        adminPlugin: await adminPlugin.getAddress(),
+        proposerSafe: await proposerSafe.getAddress(),
+      },
+    } as ProtocolConfigFile;
+    const tx = safeTx(await target.getAddress(), "0x12345678");
+    tx.operation = 1;
+
+    expect(() => aragonAdminSafeTransactions(config, [tx])).to.throw(
+      "Governance transaction 1 is not a CALL operation",
+    );
+  });
+
   it("rejects a zero protocol owner and accepts a missing-owner override", function () {
     const source = new URL(
       "../../deploy/protocol/example.protocol.config.json",

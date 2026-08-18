@@ -119,6 +119,7 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
   if (!config.protocolOwner && config.safe) {
     config.protocolOwner = config.safe;
   }
+  applyGovernanceOverride(config);
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
   applyAddressOverride(
     config,
@@ -184,6 +185,30 @@ function applyAddressOverride(
   }
 }
 
+function applyGovernanceOverride(config: ProtocolConfigFile): void {
+  const adminPlugin =
+    arg("aragon-admin-plugin") ?? process.env.ARAGON_ADMIN_PLUGIN;
+  const proposerSafe = arg("governance-safe") ?? process.env.GOVERNANCE_SAFE;
+  const proposalMetadata =
+    arg("governance-proposal-metadata") ??
+    process.env.GOVERNANCE_PROPOSAL_METADATA;
+  if (!adminPlugin && !proposerSafe && !proposalMetadata) return;
+
+  config.governance ??= {
+    adminPlugin: ZERO,
+    proposerSafe: ZERO,
+  };
+  if (adminPlugin && config.governance.adminPlugin === ZERO) {
+    config.governance.adminPlugin = adminPlugin;
+  }
+  if (proposerSafe && config.governance.proposerSafe === ZERO) {
+    config.governance.proposerSafe = proposerSafe;
+  }
+  if (proposalMetadata && !config.governance.proposalMetadata) {
+    config.governance.proposalMetadata = proposalMetadata;
+  }
+}
+
 function validateConfig(config: ProtocolConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
   config.protocolOwner = address(config.protocolOwner, "protocolOwner");
@@ -197,6 +222,29 @@ function validateConfig(config: ProtocolConfigFile): void {
       throw new Error(
         "safe must equal protocolOwner when a Safe is configured",
       );
+    }
+  }
+  if (config.safe && config.governance) {
+    throw new Error("Configure either safe or governance, not both");
+  }
+  if (config.governance) {
+    config.governance.adminPlugin = address(
+      config.governance.adminPlugin,
+      "governance.adminPlugin",
+    );
+    config.governance.proposerSafe = address(
+      config.governance.proposerSafe,
+      "governance.proposerSafe",
+    );
+    if (config.governance.adminPlugin === ZERO) {
+      throw new Error("governance.adminPlugin must not be the zero address");
+    }
+    if (config.governance.proposerSafe === ZERO) {
+      throw new Error("governance.proposerSafe must not be the zero address");
+    }
+    config.governance.proposalMetadata ??= "0x";
+    if (!ethersLib.isHexString(config.governance.proposalMetadata)) {
+      throw new Error("governance.proposalMetadata must be hex bytes");
     }
   }
   config.fold = address(config.fold, "fold");

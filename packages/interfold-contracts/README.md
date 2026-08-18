@@ -98,6 +98,30 @@ Safe. The deploy action writes a governance transaction file. Use
 `--propose-safe` only for a Safe owner. Submit the transaction file through the
 native proposal flow for another governance contract.
 
+For an Aragon Admin plugin deployment, set `protocolOwner` to the DAO address
+and add the `governance` object:
+
+```json
+{
+  "protocolOwner": "0xInterfoldDao",
+  "governance": {
+    "adminPlugin": "0xAdminPlugin",
+    "proposerSafe": "0xSafeThatCanExecuteAdminProposals",
+    "proposalMetadata": "0x"
+  }
+}
+```
+
+The deploy action writes two files in this mode:
+
+- `<name>.safe-transactions.json`: the raw DAO action list, for review.
+- `<name>.governance.safe-builder.json`: one Safe Builder transaction that calls
+  `AdminPlugin.executeProposal(...)` with the raw actions.
+
+Import the Safe Builder wrapper into the configured proposer Safe. Do not import
+the raw action list into the Safe, because those calls must execute from the
+DAO.
+
 Set `e3Programs` in the protocol configuration to one deployed E3 program
 contract. The deploy action rejects any other list length or an address without
 contract code. It registers the program in `Interfold.initialize` before the
