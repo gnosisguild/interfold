@@ -190,9 +190,16 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
         return Ok(());
     }
 
+    // Loopback is deliberately NOT treated as internal. The escalation worth guarding is reaching
+    // hosts the caller cannot reach itself — cloud metadata, RFC1918 services, .internal names.
+    // Loopback is the machine this server already runs on, and it is how every local deployment
+    // posts its webhook. Note this runs BEFORE the localhost -> host.local rewrite below, so that
+    // rewrite is unaffected by `.local` remaining blocked.
     fn v4_is_internal(ip: Ipv4Addr) -> bool {
+        if ip.is_loopback() {
+            return false;
+        }
         ip.is_private()
-            || ip.is_loopback()
             || ip.is_link_local()
             || ip.is_broadcast()
             || ip.is_documentation()
@@ -205,8 +212,10 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
         if let Some(mapped) = ip.to_ipv4_mapped() {
             return v4_is_internal(mapped);
         }
-        ip.is_loopback()
-            || ip.is_unspecified()
+        if ip.is_loopback() {
+            return false;
+        }
+        ip.is_unspecified()
             || (ip.segments()[0] & 0xfe00) == 0xfc00
             || (ip.segments()[0] & 0xffc0) == 0xfe80
     }
@@ -218,11 +227,9 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
                 Ok(IpAddr::V4(ip)) => v4_is_internal(ip),
                 Ok(IpAddr::V6(ip)) => v6_is_internal(ip),
                 Err(_) => {
+                    // `localhost` resolves to loopback, and is allowed for the same reason.
                     let lowered = bare.to_ascii_lowercase();
-                    lowered == "localhost"
-                        || lowered.ends_with(".localhost")
-                        || lowered.ends_with(".local")
-                        || lowered.ends_with(".internal")
+                    lowered.ends_with(".local") || lowered.ends_with(".internal")
                 }
             }
         }

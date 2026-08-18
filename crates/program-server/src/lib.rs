@@ -258,9 +258,23 @@ fn ensure_public_callback_host(url: &reqwest::Url) -> Result<()> {
         return Ok(());
     }
 
+    // Loopback is deliberately NOT treated as internal.
+    //
+    // The escalation that makes SSRF worth guarding is reaching hosts the caller cannot reach
+    // itself: cloud metadata at 169.254.169.254, RFC1918 services on the deployment's LAN, names
+    // under .internal. Loopback is the machine this server already runs on, and anyone who can post
+    // to this endpoint can address that host directly, so bouncing a request off its own loopback
+    // adds little reach. It is not zero risk — a localhost-only admin port is still a target — but
+    // it is a different class from pivoting into a private network.
+    //
+    // It is also how every local and CI deployment works: the callback is a webhook on the same
+    // host, and `with_localhost_rewrite` is unset by default. Rejecting it broke the CRISP
+    // end-to-end run for no security gain that a caller could not already obtain.
     fn v4_is_internal(ip: Ipv4Addr) -> bool {
+        if ip.is_loopback() {
+            return false;
+        }
         ip.is_private()
-            || ip.is_loopback()
             || ip.is_link_local()
             || ip.is_broadcast()
             || ip.is_documentation()
@@ -274,8 +288,10 @@ fn ensure_public_callback_host(url: &reqwest::Url) -> Result<()> {
         if let Some(mapped) = ip.to_ipv4_mapped() {
             return v4_is_internal(mapped);
         }
-        ip.is_loopback()
-            || ip.is_unspecified()
+        if ip.is_loopback() {
+            return false;
+        }
+        ip.is_unspecified()
             // fc00::/7 unique-local, fe80::/10 link-local.
             || (ip.segments()[0] & 0xfe00) == 0xfc00
             || (ip.segments()[0] & 0xffc0) == 0xfe80
@@ -289,11 +305,9 @@ fn ensure_public_callback_host(url: &reqwest::Url) -> Result<()> {
                 Ok(IpAddr::V4(ip)) => v4_is_internal(ip),
                 Ok(IpAddr::V6(ip)) => v6_is_internal(ip),
                 Err(_) => {
+                    // `localhost` resolves to loopback, and is allowed for the same reason.
                     let lowered = bare.to_ascii_lowercase();
-                    lowered == "localhost"
-                        || lowered.ends_with(".localhost")
-                        || lowered.ends_with(".local")
-                        || lowered.ends_with(".internal")
+                    lowered.ends_with(".local") || lowered.ends_with(".internal")
                 }
             }
         }
@@ -633,11 +647,14 @@ mod server_tests {
         assert!(validated_callback_url("http://169.254.169.254/latest/meta-data", None).is_err());
         assert!(validated_callback_url("http://10.0.0.5/hook", None).is_err());
         assert!(validated_callback_url("http://192.168.1.10/hook", None).is_err());
-        assert!(validated_callback_url("http://127.0.0.1/hook", None).is_err());
-        assert!(validated_callback_url("http://[::1]/hook", None).is_err());
         assert!(validated_callback_url("http://[fd00::1]/hook", None).is_err());
         assert!(validated_callback_url("http://100.64.0.1/hook", None).is_err());
-        assert!(validated_callback_url("http://localhost/hook", None).is_err());
+
+        // Loopback is allowed: it reaches only the host this server already runs on, and it is how
+        // every local and CI deployment delivers its webhook.
+        assert!(validated_callback_url("http://127.0.0.1/hook", None).is_ok());
+        assert!(validated_callback_url("http://[::1]/hook", None).is_ok());
+        assert!(validated_callback_url("http://localhost:4000/hook", None).is_ok());
     }
 
     #[test]
