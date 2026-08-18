@@ -18,6 +18,14 @@ import {
   destroyBBApi,
 } from '@crisp-e3/sdk'
 import type { ProofData } from '@crisp-e3/sdk'
+import { setCircuits } from '@crisp-e3/sdk'
+import { loadCircuits } from '@crisp-e3/sdk/insecure-512'
+
+// The BFV-shaped circuits ship as a separate entry point per preset, so proving needs one
+// installed. These tests run against the insecure-512 parameters the contracts are deployed with.
+before(async () => {
+  setCircuits(await loadCircuits())
+})
 import { expect } from 'chai'
 import { mkdirSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
@@ -46,7 +54,20 @@ const REVOTE_FIXTURE = fileURLToPath(new URL('fixtures/input-tree-revote.json', 
 /// and records the resulting tree so `program/tests/onchain_root_agreement.rs` can assert that Rust
 /// reproduces the exact on-chain root.
 describe('CRISPProgram input tree (e2e)', function () {
-  this.timeout(600000)
+  // 600s was a per-test budget, not a per-file one, and the tests are unevenly weighted: the
+  // heaviest here generates three ballots where the lightest generates one. A CI runner proves
+  // roughly 4x slower than a dev machine, which put the three-ballot test over the line while
+  // every lighter test stayed comfortably inside it.
+  //
+  // A timeout here is also not contained. `destroyBBApi()` runs in `after()`, so one Barretenberg
+  // instance is shared by the whole file, and mocha abandons a timed-out test without stopping the
+  // proof it left in flight. The next test then fails inside witness generation with "Cannot
+  // satisfy constraint" rather than a timeout of its own — the fold circuit asserts the inner
+  // proofs verify, so a proof that came back from a contended instance fails there rather than
+  // where it was produced. Treat a constraint error immediately after a timeout as fallout from
+  // that timeout, not as a circuit bug. The per-leg `timeout-minutes` in CI is the real backstop
+  // for a genuine hang, so this only needs to clear honest work.
+  this.timeout(1_200_000)
 
   let honkVerifier: HonkVerifier
   let mockInterfold: MockInterfold

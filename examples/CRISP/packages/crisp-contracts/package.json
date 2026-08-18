@@ -42,7 +42,9 @@
     "test:input-tree": "hardhat test mocha tests/input-tree-e2e.test.ts",
     "test:ballots": "hardhat test mocha tests/crisp.contracts.test.ts tests/onchain-census.test.ts",
     "verify": "hardhat run deploy/verify.ts",
-    "updateSubmissionWindow": "hardhat ciphernode:window"
+    "updateSubmissionWindow": "hardhat ciphernode:window",
+    "check:presets": "node ../../scripts/check-presets.mjs",
+    "prepublishOnly": "pnpm check:presets"
   },
   "dependencies": {
     "@interfold/contracts": "workspace:*",

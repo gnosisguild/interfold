@@ -16,6 +16,36 @@ npm install @crisp-e3/sdk
 - **Merkle Tree Utilities**: Generate proofs for voter inclusion in the eligibility tree
 - **Vote Proof Generation**: Create zero-knowledge proofs for votes and mask votes
 - **Proof Verification**: Verify generated proofs using Noir circuits
+- **Selectable Parameters**: `insecure-512` and `secure-8192` circuits ship as separate entry points
+
+## Choosing a preset
+
+Proving needs the BFV-shaped circuits, and those exist once per parameter set. They are not part of
+the main entry point: the `secure-8192` set is far larger than `insecure-512`, and no consumer needs
+both. Each ships as its own subpath, so your bundler pulls only the one you import.
+
+```ts
+import { setCircuits } from '@crisp-e3/sdk'
+import { loadCircuits } from '@crisp-e3/sdk/insecure-512'   // or '@crisp-e3/sdk/secure-8192'
+
+setCircuits(await loadCircuits())
+```
+
+Register once at start-up, before the first `prepareBallot`/`generateProof`. There is deliberately
+no default: a ballot proved against the wrong parameters is rejected on chain rather than locally,
+so `generateProof` throws a directed error instead of guessing.
+
+In a browser, load it through a dynamic `import()` so the circuits become their own chunk and the
+app boots without them:
+
+```ts
+const { loadCircuits } = await import('@crisp-e3/sdk/insecure-512')
+setCircuits(await loadCircuits())
+```
+
+`verifyProof`, `encodeVote`, `decodeTally` and the round/token helpers need no preset. The
+aggregation circuits they use are proof-shaped rather than polynomial-shaped, so a single artifact
+covers every preset and ships in the main entry point.
 
 ## Usage
 

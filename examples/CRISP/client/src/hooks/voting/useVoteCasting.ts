@@ -8,6 +8,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId } from 'wagmi'
 import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
+import { ensureCircuits } from '@/utils/circuits'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
@@ -164,6 +165,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           numOptions: NUM_OPTIONS,
         } as const
 
+        await ensureCircuits()
         const prepared = await prepareBallot(head ? { ...ballot, previousCiphertext: head.ciphertext, previousIndex: head.index } : ballot)
 
         const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)

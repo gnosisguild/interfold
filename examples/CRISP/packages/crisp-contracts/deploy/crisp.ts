@@ -11,6 +11,7 @@ import { readFileSync } from 'fs'
 import hre from 'hardhat'
 
 import { CRISPProgram__factory as CRISPProgramFactory } from '../types'
+import { verifierNames } from '../scripts/verifiers'
 
 const imageIdContent = readFileSync('../../.interfold/generated/contracts/ImageID.sol', 'utf-8')
 const match = imageIdContent.match(/bytes32 public constant PROGRAM_ID = bytes32\((0x[a-fA-F0-9]+)\)/)
@@ -69,19 +70,23 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     )
   }
 
-  const zkTranscriptLib = await ethers.deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
+  // Every generated verifier declares a contract called `HonkVerifier`, and there is one stack per
+  // census mode per preset, so factory lookups have to be fully qualified by file. `verifierNames`
+  // owns that convention and the preset choice — see scripts/verifiers.ts.
+  const merkleVerifier = verifierNames('merkle')
+  console.log(`Deploying the ${merkleVerifier.preset} verifiers`)
+
+  const zkTranscriptLib = await ethers.deployContract(merkleVerifier.zkTranscriptLib)
   await zkTranscriptLib.waitForDeployment()
   const zkTranscriptLibAddress = await zkTranscriptLib.getAddress()
-  const relationsLib = await ethers.deployContract('contracts/CRISPVerifier.sol:RelationsLib')
+  const relationsLib = await ethers.deployContract(merkleVerifier.relationsLib)
   await relationsLib.waitForDeployment()
   const relationsLibAddress = await relationsLib.getAddress()
 
-  // Both generated verifiers declare a contract called `HonkVerifier`, so every factory lookup
-  // here has to be fully qualified by file. A bare 'HonkVerifier' is ambiguous.
-  const honkVerifierFactory = await ethers.getContractFactory('contracts/CRISPVerifier.sol:HonkVerifier', {
+  const honkVerifierFactory = await ethers.getContractFactory(merkleVerifier.honkVerifier, {
     libraries: {
-      'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': zkTranscriptLibAddress,
-      'project/contracts/CRISPVerifier.sol:RelationsLib': relationsLibAddress,
+      [merkleVerifier.libraryKeys.zkTranscriptLib]: zkTranscriptLibAddress,
+      [merkleVerifier.libraryKeys.relationsLib]: relationsLibAddress,
     },
   })
   const honkVerifier = await honkVerifierFactory.deploy()
@@ -99,15 +104,17 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
 
   // The `CensusMode.ONCHAIN` verifier. Generated from the `crisp_onchain` circuit, which has no
   // Merkle inputs and takes voting power as a public input, so it needs its own libraries.
-  const onchainZkTranscriptLib = await ethers.deployContract('contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib')
+  const onchainVerifier = verifierNames('onchain')
+
+  const onchainZkTranscriptLib = await ethers.deployContract(onchainVerifier.zkTranscriptLib)
   await onchainZkTranscriptLib.waitForDeployment()
-  const onchainRelationsLib = await ethers.deployContract('contracts/CRISPOnchainVerifier.sol:RelationsLib')
+  const onchainRelationsLib = await ethers.deployContract(onchainVerifier.relationsLib)
   await onchainRelationsLib.waitForDeployment()
 
-  const onchainHonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPOnchainVerifier.sol:HonkVerifier', {
+  const onchainHonkVerifierFactory = await ethers.getContractFactory(onchainVerifier.honkVerifier, {
     libraries: {
-      'project/contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib': await onchainZkTranscriptLib.getAddress(),
-      'project/contracts/CRISPOnchainVerifier.sol:RelationsLib': await onchainRelationsLib.getAddress(),
+      [onchainVerifier.libraryKeys.zkTranscriptLib]: await onchainZkTranscriptLib.getAddress(),
+      [onchainVerifier.libraryKeys.relationsLib]: await onchainRelationsLib.getAddress(),
     },
   })
   const onchainHonkVerifier = await onchainHonkVerifierFactory.deploy()
