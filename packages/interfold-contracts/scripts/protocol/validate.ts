@@ -319,7 +319,7 @@ export async function actionValidate(): Promise<void> {
     [
       "interfold.ciphertextVerifier",
       interfold.getCiphertextVerifier(encryptionSchemeId),
-      config.ciphertextVerifier,
+      deployment.ciphertextVerifier ?? config.ciphertextVerifier,
     ],
   ] as const) {
     if (!expected) continue;

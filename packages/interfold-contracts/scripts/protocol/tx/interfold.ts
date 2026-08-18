@@ -133,10 +133,9 @@ function appendVerifierTxs(
       ),
     );
   }
-  const ciphertext = optionalAddress(
-    config.ciphertextVerifier,
-    "ciphertextVerifier",
-  );
+  const ciphertext =
+    c.ciphertextVerifier ??
+    optionalAddress(config.ciphertextVerifier, "ciphertextVerifier");
   if (ciphertext) {
     txs.push(
       safeTx(

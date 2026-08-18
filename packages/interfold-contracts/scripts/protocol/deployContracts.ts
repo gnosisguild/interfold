@@ -202,6 +202,10 @@ export async function deployProtocolContracts(
           config.verifiers?.dkgFoldAttestationVerifier,
       };
 
+  const deployedCiphertextVerifier = config.deployMockCiphertextVerifier
+    ? await deployMockCiphertextVerifier(ethers)
+    : undefined;
+
   // `BondedVotes` is deliberately NOT deployed here. Its constructor asks the registry which token
   // it bonds and refuses to build unless that matches the token it will read votes from — and the
   // registry is only initialized later, by the governance batch this script writes. It is deployed by
@@ -234,6 +238,9 @@ export async function deployProtocolContracts(
       bondedCheckpoints,
       initialE3Program,
       ...deployedVerifiers,
+      ...(deployedCiphertextVerifier
+        ? { ciphertextVerifier: deployedCiphertextVerifier }
+        : {}),
     },
     interfaces: {
       ticket: ticketFactory.interface,
@@ -243,6 +250,15 @@ export async function deployProtocolContracts(
       bonding: bondingFactory.interface,
     },
   };
+}
+
+async function deployMockCiphertextVerifier(ethers: any) {
+  const factory = await ethers.getContractFactory(
+    "DeployableMockCiphertextVerifier",
+  );
+  const verifier = await factory.deploy();
+  await verifier.waitForDeployment();
+  return deployedAddress(verifier);
 }
 
 async function deployBfvVerifiers(ethers: any, registry: string) {

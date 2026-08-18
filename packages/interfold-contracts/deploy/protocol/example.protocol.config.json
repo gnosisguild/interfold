@@ -70,6 +70,7 @@
     "dkgFoldAttestationVerifier": "0x0000000000000000000000000000000000000000"
   },
   "ciphertextVerifier": "0x0000000000000000000000000000000000000000",
+  "deployMockCiphertextVerifier": false,
   "deployMockE3Program": true,
   "bindInitialE3Program": false,
   "e3Programs": ["0x0000000000000000000000000000000000000000"]

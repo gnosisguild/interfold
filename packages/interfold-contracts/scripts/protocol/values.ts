@@ -313,7 +313,22 @@ function validateConfig(config: ProtocolConfigFile): void {
     "ciphertextVerifier",
   );
   config.ciphertextVerifier = ciphertextVerifier;
-  if (config.bindInitialE3Program && !ciphertextVerifier) {
+  if (
+    config.deployMockCiphertextVerifier !== undefined &&
+    typeof config.deployMockCiphertextVerifier !== "boolean"
+  ) {
+    throw new Error("deployMockCiphertextVerifier must be a boolean");
+  }
+  if (config.deployMockCiphertextVerifier && ciphertextVerifier) {
+    throw new Error(
+      "ciphertextVerifier must be omitted when deployMockCiphertextVerifier is true",
+    );
+  }
+  if (
+    config.bindInitialE3Program &&
+    !ciphertextVerifier &&
+    !config.deployMockCiphertextVerifier
+  ) {
     throw new Error(
       "ciphertextVerifier is required when bindInitialE3Program is true",
     );

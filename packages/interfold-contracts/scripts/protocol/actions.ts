@@ -263,6 +263,7 @@ Protocol contracts deployed
   ciphernodeRegistry:     ${deployment.ciphernodeRegistry}
   interfold:              ${deployment.interfold}
   initialE3Program:       ${deployment.initialE3Program}
+  ciphertextVerifier:     ${deployment.ciphertextVerifier ?? config.ciphertextVerifier ?? "(not configured)"}
   interfoldLifecycle:     ${deployment.interfoldLifecycle}
   interfoldPricing:       ${deployment.interfoldPricing}
   e3RefundManager:        ${deployment.e3RefundManager}
@@ -318,7 +319,11 @@ Protocol configuration is valid
       ? "MockE3Program (deployed with protocol)"
       : config.e3Programs[0]
   }
-  ciphertext verifier:  ${config.ciphertextVerifier ?? "(not configured)"}
+  ciphertext verifier:  ${
+    config.deployMockCiphertextVerifier
+      ? "DeployableMockCiphertextVerifier (deployed with protocol)"
+      : (config.ciphertextVerifier ?? "(not configured)")
+  }
   Aragon Admin plugin:  ${config.governance?.adminPlugin ?? "(not configured)"}
   proposer Safe:        ${config.governance?.proposerSafe ?? "(not configured)"}
 `);
