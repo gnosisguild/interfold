@@ -14,6 +14,10 @@
 // Both the deploy script and the tests resolve names through here, so the preset is chosen in one
 // place rather than spelled into a dozen string literals.
 
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 /** BFV parameter sets the circuits can be compiled against. */
 export type CircuitPreset = 'insecure-512' | 'secure-8192'
 
@@ -32,21 +36,40 @@ const VERIFIER_FILES: Record<VerifierVariant, string> = {
   onchain: 'CRISPOnchainVerifier.sol',
 }
 
+const verifierDir = (preset: CircuitPreset) =>
+  resolve(dirname(fileURLToPath(import.meta.url)), '..', 'contracts', 'verifiers', preset)
+
+/** The presets this checkout actually has generated verifiers for. */
+export const availablePresets = (): CircuitPreset[] => CIRCUIT_PRESETS.filter((preset) => existsSync(verifierDir(preset)))
+
 /**
- * The preset to deploy against, from `CRISP_PRESET`.
+ * The preset to deploy against.
  *
- * Defaults to insecure-512, which is what the circuits compile to by default and what the tests
- * prove against. A deployment that means to use secure-8192 has to say so.
+ * `CRISP_PRESET` wins. Otherwise this resolves only when the choice is unambiguous — exactly one
+ * preset has generated verifiers — and throws when more than one does.
+ *
+ * There is deliberately no fallback to insecure-512. A verifier encodes its circuit's verification
+ * key, so deploying the wrong one produces a round that rejects every ballot, and defaulting
+ * quietly to the insecure parameters is the specific mistake worth making impossible.
  */
 export const activePreset = (): CircuitPreset => {
   const preset = process.env.CRISP_PRESET
 
-  if (preset === undefined) return 'insecure-512'
-  if (!CIRCUIT_PRESETS.includes(preset as CircuitPreset)) {
-    throw new Error(`CRISP_PRESET must be one of ${CIRCUIT_PRESETS.join(', ')}; got "${preset}".`)
+  if (preset !== undefined) {
+    if (!CIRCUIT_PRESETS.includes(preset as CircuitPreset)) {
+      throw new Error(`CRISP_PRESET must be one of ${CIRCUIT_PRESETS.join(', ')}; got "${preset}".`)
+    }
+
+    return preset as CircuitPreset
   }
 
-  return preset as CircuitPreset
+  const available = availablePresets()
+  if (available.length === 1) return available[0]
+  if (available.length === 0) {
+    throw new Error('No generated verifiers found under contracts/verifiers/. Run scripts/compile_circuits.sh.')
+  }
+
+  throw new Error(`Set CRISP_PRESET: verifiers exist for ${available.join(' and ')}, so the choice is not implied.`)
 }
 
 /**

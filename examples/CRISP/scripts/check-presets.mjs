@@ -5,25 +5,28 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// Refuse to publish an SDK or contracts package that carries only some of its presets.
+// Refuse to publish a channel whose artifacts do not match the preset that channel stands for.
 //
-// tsup skips a preset whose artifacts are not staged, and it warns rather than fails so an ordinary
-// development build still works from one preset. That is the right default locally and the wrong
-// one at publish time: the missing subpath is only discovered by the consumer who imports it.
+// The release channels are split by BFV preset: `testing` carries insecure-512 and `latest` carries
+// secure-8192. A tarball therefore has to carry exactly one preset — the missing one must be
+// missing, so importing it fails to resolve, and the wrong one must be absent, so a prod consumer
+// cannot reach insecure parameters at all.
 //
-// The two packages are checked together because they are a matched pair. The SDK inlines the
-// compiled circuit and the contracts package ships the verifier generated from that same circuit's
-// verification key, so publishing one preset's SDK against another's verifier fails on chain at
-// proof verification rather than anywhere a test would catch it.
+// The SDK and the contracts package are checked together because they are a matched pair. The SDK
+// inlines the compiled circuit and the contracts package ships the verifier generated from that
+// same circuit's verification key, so a channel that mixes them fails on chain at proof
+// verification rather than anywhere a test would catch it.
 
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SDK = join(CRISP, 'packages', 'crisp-sdk')
 const CONTRACTS = join(CRISP, 'packages', 'crisp-contracts')
-const PRESETS = ['insecure-512', 'secure-8192']
+
+/** Which preset each release channel stands for. */
+const CHANNEL_PRESET = { testing: 'insecure-512', latest: 'secure-8192' }
 
 /** Generated per census mode; both are needed for a preset to be deployable. */
 const VERIFIERS = ['CRISPVerifier.sol', 'CRISPOnchainVerifier.sol']
@@ -31,50 +34,62 @@ const VERIFIERS = ['CRISPVerifier.sol', 'CRISPOnchainVerifier.sol']
 /** Below this a "built" entry is a stub or a failed inline rather than a real circuit bundle. */
 const MIN_BYTES = 100 * 1024
 
+// npm gives `prepublishOnly` no way to see `--tag`, so the channel comes through the environment
+// when the publish scripts set it, and through argv when run by hand.
+const channel = process.argv[2] ?? process.env.CRISP_CHANNEL
+if (!Object.hasOwn(CHANNEL_PRESET, channel)) {
+  console.error(
+    channel === undefined
+      ? `Set CRISP_CHANNEL or pass a channel: check-presets.mjs <${Object.keys(CHANNEL_PRESET).join('|')}>`
+      : `Unknown channel "${channel}"; expected one of ${Object.keys(CHANNEL_PRESET).join(', ')}.`,
+  )
+  process.exit(1)
+}
+
+const wanted = CHANNEL_PRESET[channel]
+const others = Object.values(CHANNEL_PRESET).filter((preset) => preset !== wanted)
 const problems = []
-for (const preset of PRESETS) {
-  const built = join(SDK, 'dist', 'presets', `${preset}.js`)
-  if (!existsSync(built)) {
-    problems.push(`${preset}: dist/presets/${preset}.js is missing — run \`pnpm build:presets\` then rebuild.`)
-    continue
-  }
 
-  const { size } = statSync(built)
-  if (size < MIN_BYTES) {
-    problems.push(`${preset}: dist/presets/${preset}.js is only ${size} bytes; the circuits did not inline.`)
+// --- the SDK bundle ---
+const built = join(SDK, 'dist', 'presets', `${wanted}.js`)
+if (!existsSync(built)) {
+  problems.push(`${wanted}: dist/presets/${wanted}.js is missing — run \`pnpm build:presets\`, then \`CRISP_PRESET=${wanted} pnpm build\`.`)
+} else if (statSync(built).size < MIN_BYTES) {
+  problems.push(`${wanted}: dist/presets/${wanted}.js is only ${statSync(built).size} bytes; the circuits did not inline.`)
+}
+
+for (const other of others) {
+  if (existsSync(join(SDK, 'dist', 'presets', `${other}.js`))) {
+    problems.push(`${other}: dist/presets/${other}.js must not ship on "${channel}" — rebuild with CRISP_PRESET=${wanted}.`)
   }
 }
 
-// The exports map is what consumers actually resolve, so check it points at real files.
-const pkg = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(join(SDK, 'package.json'), 'utf8')))
-for (const preset of PRESETS) {
-  const entry = pkg.exports?.[`./${preset}`]
-  if (!entry) {
-    problems.push(`${preset}: package.json exports has no "./${preset}" subpath.`)
-    continue
-  }
-
+// The exports map is what consumers actually resolve, so check it points at a real file.
+const pkg = JSON.parse(readFileSync(join(SDK, 'package.json'), 'utf8'))
+const entry = pkg.exports?.[`./${wanted}`]
+if (!entry) {
+  problems.push(`${wanted}: package.json exports has no "./${wanted}" subpath.`)
+} else {
   for (const target of new Set(Object.values(entry))) {
-    if (!existsSync(join(SDK, target))) problems.push(`${preset}: exports points at ${target}, which does not exist.`)
+    if (!existsSync(join(SDK, target))) problems.push(`${wanted}: exports points at ${target}, which does not exist.`)
   }
 }
 
-// The generated verifiers are what a consumer deploys, and they are preset-specific because they
-// encode the circuit's verification key.
-for (const preset of PRESETS) {
-  for (const verifier of VERIFIERS) {
-    const path = join(CONTRACTS, 'contracts', 'verifiers', preset, verifier)
-    if (!existsSync(path)) {
-      problems.push(`${preset}: contracts/verifiers/${preset}/${verifier} is missing — regenerate with scripts/compile_circuits.sh.`)
-    }
+// --- the generated verifiers ---
+//
+// These are what a consumer deploys, and they encode the circuit's verification key, so the wrong
+// preset here is a verifier that rejects every proof the matching SDK produces.
+for (const verifier of VERIFIERS) {
+  if (!existsSync(join(CONTRACTS, 'contracts', 'verifiers', wanted, verifier))) {
+    problems.push(`${wanted}: contracts/verifiers/${wanted}/${verifier} is missing — regenerate with scripts/compile_circuits.sh.`)
   }
 }
 
 if (problems.length > 0) {
-  console.error('✗ Not publishable with both presets:')
+  console.error(`✗ Not publishable on "${channel}" (expects ${wanted}):`)
   for (const problem of problems) console.error(`  - ${problem}`)
   process.exit(1)
 }
 
-const sizes = PRESETS.map((p) => `${p} ${(statSync(join(SDK, 'dist/presets', `${p}.js`)).size / 1048576).toFixed(1)}MB`)
-console.log(`✓ both presets present: ${sizes.join(', ')}`)
+const size = (statSync(built).size / 1048576).toFixed(1)
+console.log(`✓ "${channel}" carries ${wanted} only (dist/presets/${wanted}.js ${size}MB, verifiers present).`)

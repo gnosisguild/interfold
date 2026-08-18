@@ -7,7 +7,8 @@
     "url": "https://github.com/gnosisguild"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/presets/*.map"
   ],
   "exports": {
     ".": {
@@ -42,11 +43,15 @@
     "compile:fold_onchain": "cd ../../circuits/bin/fold_onchain && nargo compile",
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
     "build": "pnpm build:wasm && pnpm compile:circuits && pnpm stage:preset insecure-512 && tsup",
-    "test": "vitest --run",
+    "test": "pnpm stage:preset insecure-512 && vitest --run",
     "stage:preset": "node ../../scripts/stage-preset-artifacts.mjs",
     "build:presets": "node ../../scripts/build-presets.mjs",
     "check:presets": "node ../../scripts/check-presets.mjs",
-    "prepublishOnly": "pnpm check:presets"
+    "prepublishOnly": "pnpm check:presets",
+    "build:testing": "pnpm build:wasm && CRISP_PRESET=insecure-512 tsup",
+    "build:prod": "pnpm build:wasm && CRISP_PRESET=secure-8192 tsup",
+    "publish:testing": "pnpm build:testing && CRISP_CHANNEL=testing npm publish --tag testing",
+    "publish:prod": "pnpm build:prod && CRISP_CHANNEL=latest npm publish --tag latest"
   },
   "publishConfig": {
     "access": "public"
