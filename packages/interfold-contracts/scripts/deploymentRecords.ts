@@ -83,7 +83,7 @@ export function syncProtocolDeploymentRecords(
       constructorArgs: {
         baseToken: config.ticketUnderlyingToken,
         registry: ADDRESS_ONE,
-        owner: config.safe,
+        owner: config.protocolOwner,
       },
     },
     "InterfoldTicketToken",
@@ -102,7 +102,7 @@ export function syncProtocolDeploymentRecords(
       blockNumber,
       constructorArgs: {
         initialDelay: config.slashing.initialDelay,
-        admin: config.safe,
+        admin: config.protocolOwner,
       },
       libraries: {
         SlashingEvidenceLib: deployment.slashingEvidenceLib,
@@ -137,19 +137,19 @@ export function syncProtocolDeploymentRecords(
 
   const registryInitData = interfaces.registry.encodeFunctionData(
     "initialize",
-    [config.safe, BigInt(config.registry.sortitionSubmissionWindow)],
+    [config.protocolOwner, BigInt(config.registry.sortitionSubmissionWindow)],
   );
   storeDeploymentArgs(
     {
       address: deployment.ciphernodeRegistry,
       blockNumber,
       constructorArgs: {
-        owner: config.safe,
+        owner: config.protocolOwner,
         submissionWindow: config.registry.sortitionSubmissionWindow,
       },
       proxyRecords: {
         initData: registryInitData,
-        initialOwner: config.safe,
+        initialOwner: config.protocolOwner,
         proxyAddress: deployment.ciphernodeRegistry,
         proxyAdminAddress: deployment.ciphernodeRegistryProxyAdmin,
         implementationAddress: deployment.ciphernodeRegistryImplementation,
@@ -235,7 +235,7 @@ export function syncProtocolDeploymentRecords(
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
     [
-      config.safe,
+      config.protocolOwner,
       deployment.ciphernodeRegistry,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
@@ -260,7 +260,7 @@ export function syncProtocolDeploymentRecords(
       address: deployment.interfold,
       blockNumber,
       constructorArgs: {
-        owner: config.safe,
+        owner: config.protocolOwner,
         registry: deployment.ciphernodeRegistry,
         bondingRegistry: config.bondingRegistryProxy,
         e3RefundManager: ADDRESS_ONE,
@@ -277,7 +277,7 @@ export function syncProtocolDeploymentRecords(
       },
       proxyRecords: {
         initData: interfoldInitData,
-        initialOwner: config.safe,
+        initialOwner: config.protocolOwner,
         proxyAddress: deployment.interfold,
         proxyAdminAddress: deployment.interfoldProxyAdmin,
         implementationAddress: deployment.interfoldImplementation,
@@ -289,20 +289,20 @@ export function syncProtocolDeploymentRecords(
 
   const refundInitData = interfacesFor("E3RefundManager").encodeFunctionData(
     "initialize",
-    [config.safe, deployment.interfold, config.protocolTreasury],
+    [config.protocolOwner, deployment.interfold, config.protocolTreasury],
   );
   storeDeploymentArgs(
     {
       address: deployment.e3RefundManager,
       blockNumber,
       constructorArgs: {
-        owner: config.safe,
+        owner: config.protocolOwner,
         interfold: deployment.interfold,
         treasury: config.protocolTreasury,
       },
       proxyRecords: {
         initData: refundInitData,
-        initialOwner: config.safe,
+        initialOwner: config.protocolOwner,
         proxyAddress: deployment.e3RefundManager,
         proxyAdminAddress: deployment.e3RefundManagerProxyAdmin,
         implementationAddress: deployment.e3RefundManagerImplementation,
@@ -313,7 +313,7 @@ export function syncProtocolDeploymentRecords(
   );
 
   const bondingInitData = interfaces.bonding.encodeFunctionData("initialize", [
-    config.safe,
+    config.protocolOwner,
     {
       ticketToken: deployment.ticketToken,
       ciphernodeBondToken: config.fold,
@@ -333,7 +333,7 @@ export function syncProtocolDeploymentRecords(
       address: config.bondingRegistryProxy,
       blockNumber,
       constructorArgs: {
-        owner: config.safe,
+        owner: config.protocolOwner,
         ticketToken: deployment.ticketToken,
         ciphernodeBondToken: config.fold,
         registry: deployment.ciphernodeRegistry,
@@ -354,7 +354,7 @@ export function syncProtocolDeploymentRecords(
       },
       proxyRecords: {
         initData: bondingInitData,
-        initialOwner: config.safe,
+        initialOwner: config.protocolOwner,
         proxyAddress: config.bondingRegistryProxy,
         proxyAdminAddress: config.bondingRegistryProxyAdmin,
         implementationAddress: deployment.bondingRegistryImplementation,

@@ -23,18 +23,19 @@ if (!IMAGE_ID) {
 export const deployCRISPContracts = async () => {
   const { ethers } = await hre.network.connect()
   const [owner] = await ethers.getSigners()
+  const ownerAddress = await owner.getAddress()
 
   const chain = hre.globalOptions.network
+  const configuredOwner = process.env.CRISP_INITIAL_OWNER
+  if (chain === 'mainnet' && !configuredOwner) {
+    throw new Error('CRISP_INITIAL_OWNER is required on mainnet')
+  }
+  const initialOwner = configuredOwner ? ethers.getAddress(configuredOwner) : ownerAddress
 
   const useMocks = Boolean(process.env.USE_MOCKS)
 
-  const verifier = await deployVerifier(useMocks)
+  const verifier = await deployVerifier(useMocks, ethers)
 
-  const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
-  if (!interfoldAddress) {
-    throw new Error('Interfold address not found, it must be deployed first')
-  }
-  const interfold = InterfoldFactory.connect(interfoldAddress, owner)
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
 
   const ciphertextVerifier = await ethers.deployContract('Risc0BfvCiphertextVerifier', [verifier, IMAGE_ID])
@@ -49,11 +50,19 @@ export const deployCRISPContracts = async () => {
     'Risc0BfvCiphertextVerifier',
     chain,
   )
-  await (await interfold.setCiphertextVerifier(encryptionSchemeId, ciphertextVerifierAddress)).wait()
-
-  const poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
-  if (!poseidonT3Address) {
-    throw new Error('PoseidonT3 address not found, it must be deployed first')
+  let poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
+  if (!poseidonT3Address || (await ethers.provider.getCode(poseidonT3Address)) === '0x') {
+    const poseidonT3 = await ethers.deployContract('PoseidonT3')
+    await poseidonT3.waitForDeployment()
+    poseidonT3Address = await poseidonT3.getAddress()
+    storeDeploymentArgs(
+      {
+        address: poseidonT3Address,
+        blockNumber: await ethers.provider.getBlockNumber(),
+      },
+      'PoseidonT3',
+      chain,
+    )
   }
 
   const zkTranscriptLib = await ethers.deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
@@ -118,7 +127,7 @@ export const deployCRISPContracts = async () => {
     owner,
   )
 
-  const crisp = await crispFactory.deploy(await owner.getAddress(), verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
+  const crisp = await crispFactory.deploy(initialOwner, verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
   await crisp.waitForDeployment()
 
   const crispAddress = await crisp.getAddress()
@@ -127,7 +136,7 @@ export const deployCRISPContracts = async () => {
       address: crispAddress,
       blockNumber: await ethers.provider.getBlockNumber(),
       constructorArgs: {
-        initialOwner: await owner.getAddress(),
+        initialOwner,
         verifierAddress: verifier,
         honkVerifierAddress,
         onchainHonkVerifierAddress,
@@ -138,10 +147,20 @@ export const deployCRISPContracts = async () => {
     chain,
   )
 
-  // Register the program before its permanent Interfold binding.
-  const tx = await interfold.registerE3Program(crispAddress)
-  await tx.wait()
-  await (await crisp.bindInterfold(interfoldAddress)).wait()
+  const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
+  if (interfoldAddress) {
+    const interfold = InterfoldFactory.connect(interfoldAddress, owner)
+    const interfoldOwner = await interfold.owner()
+    if (interfoldOwner.toLowerCase() === ownerAddress.toLowerCase() && initialOwner.toLowerCase() === ownerAddress.toLowerCase()) {
+      await (await interfold.setCiphertextVerifier(encryptionSchemeId, ciphertextVerifierAddress)).wait()
+      if (!(await interfold.e3Programs(crispAddress))) {
+        await (await interfold.registerE3Program(crispAddress)).wait()
+      }
+      await (await crisp.bindInterfold(interfoldAddress)).wait()
+    } else {
+      console.log('CRISP was deployed unbound. Protocol governance must set its ciphertext verifier and bind it after registration.')
+    }
+  }
 
   let tokenAddress
   if (useMocks) {
@@ -162,7 +181,7 @@ export const deployCRISPContracts = async () => {
   console.log(`
       Deployments:
       ----------------------------------------------------------------------
-      Interfold: ${interfoldAddress}
+      Interfold: ${interfoldAddress ?? '(bind during protocol governance wiring)'}
       Risc0Verifier: ${verifier}
       Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
@@ -177,13 +196,13 @@ export const deployCRISPContracts = async () => {
  * @param useMockVerifier - whether to use a mock verifier
  * @returns The address of the verifier
  */
-export const deployVerifier = async (useMockVerifier: boolean): Promise<string> => {
-  const { ethers } = await hre.network.connect()
+export const deployVerifier = async (useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
+  const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = hre.globalOptions.network
 
   if (!useMockVerifier) {
     const existingVerifier = readDeploymentArgs('RiscZeroGroth16Verifier', chain)
-    if (existingVerifier?.address) {
+    if (existingVerifier?.address && (await ethers.provider.getCode(existingVerifier.address)) !== '0x') {
       console.log('RiscZeroGroth16Verifier already deployed at:', existingVerifier.address)
       return existingVerifier.address
     }
@@ -204,7 +223,7 @@ export const deployVerifier = async (useMockVerifier: boolean): Promise<string> 
   }
   // Check if mock verifier already deployed
   const existingMockVerifier = readDeploymentArgs('MockRISC0Verifier', chain)
-  if (existingMockVerifier?.address) {
+  if (existingMockVerifier?.address && (await ethers.provider.getCode(existingMockVerifier.address)) !== '0x') {
     console.log('MockRISC0Verifier already deployed at:', existingMockVerifier.address)
     return existingMockVerifier.address
   }

@@ -47,6 +47,7 @@ describe("Protocol deployment", function () {
         "utf8",
       ),
     ) as ProtocolConfigFile;
+    config.protocolOwner = await safe.getAddress();
     config.safe = await safe.getAddress();
     config.fold = await fold.getAddress();
     config.bondingRegistryProxy = await bondingProxy.getAddress();
@@ -57,6 +58,7 @@ describe("Protocol deployment", function () {
     config.slashedFundsTreasury = await safe.getAddress();
     config.interfold.pricing.protocolTreasury = await safe.getAddress();
     config.e3Programs = [await program.getAddress()];
+    config.verifiers = { deploy: true };
 
     const result = await deployProtocolContracts(ethers, operator, config);
     const ticket = await ethers.getContractAt(
@@ -72,6 +74,9 @@ describe("Protocol deployment", function () {
       await ticketUnderlyingToken.getAddress(),
     );
     expect(await interfold.feeToken()).to.equal(await feeToken.getAddress());
+    expect(result.contracts.decryptionVerifier).to.not.equal(undefined);
+    expect(result.contracts.pkVerifier).to.not.equal(undefined);
+    expect(result.contracts.dkgFoldAttestationVerifier).to.not.equal(undefined);
 
     // Bonded voting has to be deployed and wired by the deployment itself. Shipping the registry
     // without it leaves the feature silently disabled: the sync is a no-op while unconfigured, so

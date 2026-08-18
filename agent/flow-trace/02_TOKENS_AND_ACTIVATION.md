@@ -503,7 +503,7 @@ token it reads votes from. Matching clocks prove the history speaks the token's 
 is _about_ that token — a history written by a registry custodying something else would add unbacked
 weight to every vote. Because this calls the registry, `BondedVotes` cannot be built before the
 registry is configured: `protocol/deployContracts` deploys `BondedCheckpoints` only, and
-`--action activate-voting` deploys `BondedVotes` after the Safe batch executes.
+`--action activate-voting` deploys `BondedVotes` after the governance batch executes.
 
 `BondedVotes` also carries a read-only ERC-20 surface — `balanceOf`, `totalSupply`, `decimals`,
 `name`, `symbol` — because Aragon's `TokenVotingSetup` gates installation on a `balanceOf` probe and

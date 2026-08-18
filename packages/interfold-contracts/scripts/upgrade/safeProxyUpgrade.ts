@@ -11,7 +11,7 @@ import {
   readJson,
   writeJson,
 } from "../protocol/files";
-import { proposeSafeBatch, safeBatch, safeTx } from "../protocol/safe";
+import { governanceBatch, proposeSafeBatch, safeTx } from "../protocol/safe";
 import type {
   ProtocolConfigFile,
   ProtocolDeployment,
@@ -54,7 +54,8 @@ interface UpgradePlan {
   pricingLibrary?: string;
   sortitionLibrary?: string;
   operator: string;
-  safe: string;
+  protocolOwner: string;
+  safe?: string;
   safeTransactions: string;
   safeProposal?: SafeProposal;
 }
@@ -85,9 +86,9 @@ export async function proposeProxyUpgrade(
   await requireContract(ethers.provider, proxyAdmin, `${target} ProxyAdmin`);
   const admin = await ethers.getContractAt("ProxyAdmin", proxyAdmin);
   const adminOwner = await admin.owner();
-  if (adminOwner.toLowerCase() !== config.safe.toLowerCase()) {
+  if (adminOwner.toLowerCase() !== config.protocolOwner.toLowerCase()) {
     throw new Error(
-      `${target} ProxyAdmin owner mismatch: expected ${config.safe}, got ${adminOwner}`,
+      `${target} ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${adminOwner}`,
     );
   }
 
@@ -108,7 +109,7 @@ export async function proposeProxyUpgrade(
   }
 
   const batchFile = upgradeBatchPath(config, target);
-  const batch = safeBatch(config, txs);
+  const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} ${target} upgrade`;
   batch.meta.description = `Upgrade ${target} implementation through its Safe-owned ProxyAdmin.`;
   writeJson(batchFile, batch);
@@ -131,6 +132,7 @@ export async function proposeProxyUpgrade(
     pricingLibrary: deployed.pricingLibrary,
     sortitionLibrary: deployed.sortitionLibrary,
     operator: operatorAddress,
+    protocolOwner: config.protocolOwner,
     safe: config.safe,
     safeTransactions: batchFile,
   };
@@ -153,7 +155,7 @@ export async function proposeProxyUpgrade(
  *
  * A missing selector means nothing is attached yet. Transport failures stay fatal: reading one as
  * "unattached" would queue a second `setBondedCheckpoints` that the one-shot setter rejects, and
- * the whole Safe batch would revert on execution.
+ * the whole governance batch would revert on execution.
  *
  * The two cases are told apart by re-reading the proxy's code rather than by matching an error
  * code: providers disagree on what they attach to a missing selector — Hardhat's in-process
@@ -428,8 +430,8 @@ Protocol upgrade prepared
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   sortitionLibrary: ${plan.sortitionLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}
-  Safe owner:      ${plan.safe}
-  Safe batch:      ${plan.safeTransactions}
+  protocol owner:  ${plan.protocolOwner}
+  governance batch:${plan.safeTransactions}
   txs:             ${txs.length}
   proposal:        ${plan.safeProposal?.url ?? "(not proposed)"}
 `);

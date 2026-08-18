@@ -6,6 +6,24 @@ import { deploymentPath, readJson } from "./files";
 import type { ProtocolDeployment } from "./types";
 import { loadConfig, requireContract } from "./values";
 
+function assertEqual(label: string, actual: unknown, expected: unknown): void {
+  if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+    throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  }
+  console.log(`  ok ${label}`);
+}
+
+async function assertStruct(
+  label: string,
+  actualPromise: Promise<Record<string, unknown>>,
+  expected: Record<string, unknown>,
+): Promise<void> {
+  const actual = await actualPromise;
+  for (const [field, value] of Object.entries(expected)) {
+    assertEqual(`${label}.${field}`, actual[field], value);
+  }
+}
+
 export async function actionValidate(): Promise<void> {
   const { ethers } = await connect();
   const config = loadConfig();
@@ -44,6 +62,13 @@ export async function actionValidate(): Promise<void> {
     deployment.bondedCheckpoints,
   );
 
+  const proxyAdmin = (target: string) =>
+    new ethersLib.Contract(
+      target,
+      ["function owner() view returns (address)"],
+      ethers.provider,
+    );
+
   for (const [label, address] of [
     ["bondingAssetLib", deployment.bondingAssetLib],
     ["bondingEligibilityLib", deployment.bondingEligibilityLib],
@@ -61,11 +86,16 @@ export async function actionValidate(): Promise<void> {
   }
 
   const checks: Array<[string, Promise<unknown>, unknown]> = [
-    ["ticket.owner", ticket.owner(), config.safe],
+    ["ticket.owner", ticket.owner(), config.protocolOwner],
     ["ticket.registry", ticket.registry(), deployment.bondingRegistryProxy],
     ["ticket.underlying", ticket.underlying(), config.ticketUnderlyingToken],
     ["ticket.decimals", ticket.decimals(), config.bonding.ticketTokenDecimals],
-    ["registry.owner", registry.owner(), config.safe],
+    [
+      "ticket.registryLocked",
+      ticket.registryLocked(),
+      config.ticketToken.lockRegistry,
+    ],
+    ["registry.owner", registry.owner(), config.protocolOwner],
     ["registry.interfold", registry.interfold(), deployment.interfold],
     [
       "registry.bondingRegistry",
@@ -77,7 +107,7 @@ export async function actionValidate(): Promise<void> {
       registry.slashingManager(),
       deployment.slashingManager,
     ],
-    ["interfold.owner", interfold.owner(), config.safe],
+    ["interfold.owner", interfold.owner(), config.protocolOwner],
     ["interfold.feeToken", interfold.feeToken(), config.feeToken],
     [
       "interfold.feeTokenDecimals",
@@ -104,15 +134,68 @@ export async function actionValidate(): Promise<void> {
       interfold.slashingManager(),
       deployment.slashingManager,
     ],
-    ["refund.owner", refund.owner(), config.safe],
-    ["bonding.owner", bonding.owner(), config.safe],
+    ["refund.owner", refund.owner(), config.protocolOwner],
+    ["bonding.owner", bonding.owner(), config.protocolOwner],
     ["bonding.ticketToken", bonding.ticketToken(), deployment.ticketToken],
     ["bonding.ciphernodeBondToken", bonding.ciphernodeBondToken(), config.fold],
+    ["bonding.ticketPrice", bonding.ticketPrice(), config.bonding.ticketPrice],
+    [
+      "bonding.requiredCiphernodeBond",
+      bonding.requiredCiphernodeBond(),
+      config.bonding.requiredCiphernodeBond,
+    ],
+    [
+      "bonding.minTicketBalance",
+      bonding.minTicketBalance(),
+      config.bonding.minTicketBalance,
+    ],
+    ["bonding.exitDelay", bonding.exitDelay(), config.bonding.exitDelay],
+    [
+      "bonding.slashedFundsTreasury",
+      bonding.slashedFundsTreasury(),
+      config.slashedFundsTreasury,
+    ],
     ["bonding.registry", bonding.registry(), deployment.ciphernodeRegistry],
     [
       "bonding.slashingManager",
       bonding.slashingManager(),
       deployment.slashingManager,
+    ],
+    [
+      "registry.sortitionSubmissionWindow",
+      registry.sortitionSubmissionWindow(),
+      config.registry.sortitionSubmissionWindow,
+    ],
+    [
+      "interfold.maxDuration",
+      interfold.maxDuration(),
+      config.interfold.maxDuration,
+    ],
+    [
+      "interfold.markFailedGracePeriod",
+      interfold.markFailedGracePeriod(),
+      config.interfold.markFailedGracePeriod,
+    ],
+    ["interfold.requestsPaused", interfold.requestsPaused(), true],
+    [
+      "bondingRegistryProxyAdmin.owner",
+      proxyAdmin(deployment.bondingRegistryProxyAdmin).owner(),
+      config.protocolOwner,
+    ],
+    [
+      "ciphernodeRegistryProxyAdmin.owner",
+      proxyAdmin(deployment.ciphernodeRegistryProxyAdmin).owner(),
+      config.protocolOwner,
+    ],
+    [
+      "interfoldProxyAdmin.owner",
+      proxyAdmin(deployment.interfoldProxyAdmin).owner(),
+      config.protocolOwner,
+    ],
+    [
+      "e3RefundManagerProxyAdmin.owner",
+      proxyAdmin(deployment.e3RefundManagerProxyAdmin).owner(),
+      config.protocolOwner,
     ],
     ["slashing.interfold", slashing.interfold(), deployment.interfold],
     [
@@ -171,10 +254,36 @@ export async function actionValidate(): Promise<void> {
 
   for (const [label, actualPromise, expected] of checks) {
     const actual = await actualPromise;
-    if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
-      throw new Error(`${label}: expected ${expected}, got ${actual}`);
-    }
-    console.log(`  ok ${label}`);
+    assertEqual(label, actual, expected);
+  }
+
+  await assertStruct("interfold.timeout", interfold.getTimeoutConfig(), {
+    dkgWindow: config.interfold.timeoutConfig.dkgWindow,
+    computeWindow: config.interfold.timeoutConfig.computeWindow,
+    decryptionWindow: config.interfold.timeoutConfig.decryptionWindow,
+  });
+  await assertStruct("interfold.pricing", interfold.getPricingConfig(), {
+    ...config.interfold.pricing,
+  });
+  await assertStruct("refund.workAllocation", refund.getWorkAllocation(), {
+    committeeFormationBps: 1000,
+    dkgBps: 4000,
+    decryptionBps: 4500,
+    protocolBps: 500,
+    successSlashedNodeBps: 5000,
+  });
+
+  for (const threshold of config.interfold.committeeThresholds) {
+    assertEqual(
+      `interfold.committeeThresholds(${threshold.size}).quorum`,
+      await interfold.committeeThresholds(threshold.size, 0),
+      threshold.quorum,
+    );
+    assertEqual(
+      `interfold.committeeThresholds(${threshold.size}).total`,
+      await interfold.committeeThresholds(threshold.size, 1),
+      threshold.total,
+    );
   }
 
   for (const program of config.e3Programs) {
@@ -185,9 +294,58 @@ export async function actionValidate(): Promise<void> {
     console.log(`  ok interfold.e3Programs(${program})`);
   }
 
+  const encryptionSchemeId = ethers.id("fhe.rs:BFV");
+  for (const [label, actualPromise, expected] of [
+    [
+      "interfold.decryptionVerifier",
+      interfold.decryptionVerifiers(encryptionSchemeId),
+      deployment.decryptionVerifier ?? config.verifiers?.decryptionVerifier,
+    ],
+    [
+      "interfold.pkVerifier",
+      interfold.pkVerifiers(encryptionSchemeId),
+      deployment.pkVerifier ?? config.verifiers?.pkVerifier,
+    ],
+    [
+      "registry.dkgFoldAttestationVerifier",
+      registry.dkgFoldAttestationVerifier(),
+      deployment.dkgFoldAttestationVerifier ??
+        config.verifiers?.dkgFoldAttestationVerifier,
+    ],
+    [
+      "interfold.ciphertextVerifier",
+      interfold.getCiphertextVerifier(encryptionSchemeId),
+      config.ciphertextVerifier,
+    ],
+  ] as const) {
+    if (!expected) continue;
+    const actual = await actualPromise;
+    if (String(actual).toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(`${label}: expected ${expected}, got ${actual}`);
+    }
+    console.log(`  ok ${label}`);
+  }
+
+  if (config.bindInitialE3Program) {
+    const program = new ethersLib.Contract(
+      config.e3Programs[0],
+      ["function interfold() view returns (address)"],
+      ethers.provider,
+    );
+    const bound = await program.interfold();
+    if (bound.toLowerCase() !== deployment.interfold.toLowerCase()) {
+      throw new Error(
+        `E3 Program binding: expected ${deployment.interfold}, got ${bound}`,
+      );
+    }
+    console.log("  ok E3 Program binding");
+  }
+
   const defaultAdmin = ethersLib.ZeroHash;
-  if (!(await slashing.hasRole(defaultAdmin, config.safe))) {
-    throw new Error("Safe does not have SlashingManager DEFAULT_ADMIN_ROLE");
+  if (!(await slashing.hasRole(defaultAdmin, config.protocolOwner))) {
+    throw new Error(
+      "Protocol owner does not have SlashingManager DEFAULT_ADMIN_ROLE",
+    );
   }
   console.log("Protocol validation complete");
 }

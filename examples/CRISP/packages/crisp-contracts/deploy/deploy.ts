@@ -3,7 +3,7 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-import { deployInterfold, updateE3Config } from '@interfold/contracts/scripts'
+import { deployInterfold, readDeploymentArgs, updateE3Config } from '@interfold/contracts/scripts'
 import { deployCRISPContracts } from './crisp'
 import { syncCrispEnvFromDeployments } from './syncCrispEnv'
 import path from 'path'
@@ -38,6 +38,11 @@ export const deploy = async () => {
     await deployInterfold(true, withZkVerification)
   }
   await deployCRISPContracts()
+
+  if (!readDeploymentArgs('Interfold', chain)?.address) {
+    console.log('CRISP prerequisites deployed. Bind the program during protocol governance wiring.')
+    return
+  }
 
   const interfoldConfigPath = path.join(__dirname, '..', '..', '..', 'interfold.config.yaml')
   updateE3Config(chain, interfoldConfigPath, contractMapping)

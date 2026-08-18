@@ -106,10 +106,9 @@ function appendVerifierTxs(
   c: ProtocolContracts,
   i: ProtocolInterfaces,
 ) {
-  const decryption = optionalAddress(
-    config.verifiers?.decryptionVerifier,
-    "decryptionVerifier",
-  );
+  const decryption =
+    c.decryptionVerifier ??
+    optionalAddress(config.verifiers?.decryptionVerifier, "decryptionVerifier");
   if (decryption) {
     txs.push(
       safeTx(
@@ -121,7 +120,8 @@ function appendVerifierTxs(
       ),
     );
   }
-  const pk = optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
+  const pk =
+    c.pkVerifier ?? optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
   if (pk) {
     txs.push(
       safeTx(
@@ -130,6 +130,32 @@ function appendVerifierTxs(
           ethersLib.id("fhe.rs:BFV"),
           pk,
         ]),
+      ),
+    );
+  }
+  const ciphertext = optionalAddress(
+    config.ciphertextVerifier,
+    "ciphertextVerifier",
+  );
+  if (ciphertext) {
+    txs.push(
+      safeTx(
+        c.interfold,
+        i.interfold.encodeFunctionData("setCiphertextVerifier", [
+          ethersLib.id("fhe.rs:BFV"),
+          ciphertext,
+        ]),
+      ),
+    );
+  }
+  if (config.bindInitialE3Program) {
+    const program = new ethersLib.Interface([
+      "function bindInterfold(address interfold)",
+    ]);
+    txs.push(
+      safeTx(
+        config.e3Programs[0],
+        program.encodeFunctionData("bindInterfold", [c.interfold]),
       ),
     );
   }

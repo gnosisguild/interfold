@@ -83,15 +83,25 @@ The protocol deploy happens after the sale/TGE prep and upgrades the existing
 placeholder bonding registry proxy:
 
 ```sh
-pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json --propose-safe
+pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 pnpm protocol --network sepolia --action validate --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 ```
 
+Set `protocolOwner` to the contract that owns and configures the protocol. Set
+the optional `safe` field to the same address only when the protocol owner is a
+Safe. The deploy action writes a governance transaction file. Use
+`--propose-safe` only for a Safe owner. Submit the transaction file through the
+native proposal flow for another governance contract.
+
 Set `e3Programs` in the protocol configuration to one deployed E3 program
 contract. The deploy action rejects any other list length or an address without
-contract code. It registers the program in `Interfold.initialize` before
-ownership transfers to the Safe. Later registrations require an owner
-transaction.
+contract code. It registers the program in `Interfold.initialize` before the
+governance transaction executes. Later registrations require an owner
+transaction. Set `bindInitialE3Program` to bind a compatible program in that
+governance transaction.
+
+Set `verifiers.deploy` to `true` to deploy the generated BFV verifier stack. Set
+`ciphertextVerifier` to the deployed application ciphertext verifier.
 
 The fee token and the ticket collateral token have separate configuration
 fields. For the planned launch, set `feeToken` to USDS and set

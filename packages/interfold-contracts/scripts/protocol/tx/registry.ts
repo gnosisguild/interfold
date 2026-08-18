@@ -31,10 +31,12 @@ export function appendRegistryTxs(
     ),
   );
 
-  const dkg = optionalAddress(
-    config.verifiers?.dkgFoldAttestationVerifier,
-    "dkgFoldAttestationVerifier",
-  );
+  const dkg =
+    c.dkgFoldAttestationVerifier ??
+    optionalAddress(
+      config.verifiers?.dkgFoldAttestationVerifier,
+      "dkgFoldAttestationVerifier",
+    );
   if (dkg) {
     txs.push(
       safeTx(

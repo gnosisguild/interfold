@@ -9,7 +9,7 @@ import { deployedAddress, loadConfig, requireContract } from "./values";
  *
  * Split from `--action deploy` because it cannot run there. The constructor asks the registry which
  * token it bonds and refuses to build unless that matches the token it will read votes from, and
- * the registry is only initialized by the Safe batch that `--action deploy` writes. Running this
+ * the registry is only initialized by the governance batch that `--action deploy` writes. Running this
  * before that batch executes fails loudly rather than producing an adapter bound to nothing.
  *
  * Nothing here needs a Safe transaction: `BondedVotes` holds no state and no privileges.
@@ -40,7 +40,7 @@ export async function actionActivateVoting(): Promise<void> {
   if (ciphernodeBondToken.toLowerCase() !== config.fold.toLowerCase()) {
     throw new Error(
       `BondingRegistry bonds ${ciphernodeBondToken}, not FOLD (${config.fold}). ` +
-        "Execute the Safe batch from --action deploy first.",
+        "Execute the governance batch from --action deploy first.",
     );
   }
 
@@ -48,7 +48,7 @@ export async function actionActivateVoting(): Promise<void> {
   if (attached.toLowerCase() !== deployment.bondedCheckpoints.toLowerCase()) {
     throw new Error(
       `BondingRegistry has ${attached} attached, not the deployed ` +
-        `${deployment.bondedCheckpoints}. Execute the Safe batch first.`,
+        `${deployment.bondedCheckpoints}. Execute the governance batch first.`,
     );
   }
 

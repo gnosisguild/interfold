@@ -67,8 +67,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   unbacked weight, and no reader downstream could tell. Because the check calls the registry,
   `BondedVotes` can only be constructed after the registry is configured —
   `protocol/deployContracts` therefore deploys `BondedCheckpoints` only, and
-  `--action activate-voting` deploys `BondedVotes` once the Safe batch has run. — `BondedVotes.sol`;
-  `protocol/activateVoting.ts`; `flow-trace/02`
+  `--action activate-voting` deploys `BondedVotes` once the governance batch has run. —
+  `BondedVotes.sol`; `protocol/activateVoting.ts`; `flow-trace/02`
 - **`BondedVotes.balanceOf` nets the registry down to its own surplus.** Bonding moves FOLD into the
   registry while the adapter attributes it to the bond owner, so counting it at both addresses would
   place the same tokens twice and push summed balances above total supply — the denominator every
@@ -179,9 +179,9 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   the remaining time for the latest request-time committee deadline. Each request raises a monotonic
   deadline watermark. The time-based floor decreases after old windows expire, and the
   BondingRegistry cannot clear its registry pointer. — `flow-trace/02`, `03`, `06`; INDEX Z-37
-- **E3 program allowlist:** production initialization registers one deployed E3 program before
-  ownership transfers to the Safe. Later registrations are append-only and owner-only. Every
-  registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
+- **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
+  ownership to the configured protocol owner. Later registrations are append-only and owner-only.
+  Every registered address must contain runtime code. — `Interfold.sol`; `flow-trace/03`
 
 ### Deadlines
 
@@ -423,8 +423,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   bond token) plus the BondingRegistry reward-distributor authorization for Interfold, and throws
   with the full list of mismatches. Add a read-back for each new cross-contract setter.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
-  `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the Safe
-  batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
+  `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
+  governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
   `--action activate-voting`: its constructor asks the registry which token it bonds, so it cannot
   be built until that batch has executed. `protocol/validate` reads back
   `bonding.bondedCheckpoints()` and `bondedCheckpoints.registry()`, and adds `bondedVotes.token()`,

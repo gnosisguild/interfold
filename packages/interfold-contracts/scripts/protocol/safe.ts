@@ -43,6 +43,25 @@ export function safeBatch(
   };
 }
 
+export function governanceBatch(
+  config: ProtocolConfigFile,
+  transactions: SafeTransaction[],
+) {
+  if (config.safe) return safeBatch(config, transactions);
+  return {
+    version: "1.0",
+    chainId: config.chainId.toString(),
+    createdAt: Date.now(),
+    meta: {
+      name: `${config.name} protocol wiring`,
+      description:
+        "Upgrade the existing bonding registry proxy and wire the Interfold protocol contracts.",
+      executor: config.protocolOwner,
+    },
+    transactions,
+  };
+}
+
 function safeAppPrefix(chainId: number): string | undefined {
   if (chainId === 1) return "eth";
   if (chainId === 11155111) return "sep";
@@ -99,6 +118,11 @@ export async function proposeSafeBatch(
   config: ProtocolConfigFile,
   transactions: SafeTransaction[],
 ): Promise<SafeProposal> {
+  if (!config.safe) {
+    throw new Error(
+      "This protocol owner is not configured as a Safe. Submit the governance transactions through its native proposal flow.",
+    );
+  }
   if (transactions.length === 0)
     throw new Error("Safe batch has no transactions to propose");
 

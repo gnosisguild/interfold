@@ -27,7 +27,10 @@ export interface PricingConfig {
 export interface ProtocolConfigFile {
   name: string;
   chainId: number;
-  safe: string;
+  /** Address that owns the protocol contracts and executes the wiring calls. */
+  protocolOwner: string;
+  /** Optional Safe address when the protocol owner is itself a Safe. */
+  safe?: string;
   fold: string;
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
@@ -70,10 +73,14 @@ export interface ProtocolConfigFile {
     allowFeeToken: boolean;
   };
   verifiers?: {
+    /** Deploy the generated BFV verifier stack with this protocol deployment. */
+    deploy?: boolean;
     decryptionVerifier?: string;
     pkVerifier?: string;
     dkgFoldAttestationVerifier?: string;
   };
+  ciphertextVerifier?: string;
+  bindInitialE3Program?: boolean;
   e3Programs: [string];
 }
 
@@ -81,7 +88,8 @@ export interface ProtocolDeployment {
   name: string;
   chainId: number;
   operator: string;
-  safe: string;
+  protocolOwner: string;
+  safe?: string;
   fold: string;
   feeToken: string;
   ticketUnderlyingToken: string;
@@ -95,10 +103,18 @@ export interface ProtocolDeployment {
   bondingOwnershipLib: string;
   bondedCheckpoints: string;
   /**
-   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
    * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
    */
   bondedVotes?: string;
+  decryptionVerifier?: string;
+  pkVerifier?: string;
+  dkgFoldAttestationVerifier?: string;
+  dkgAggregatorVerifier?: string;
+  decryptionAggregatorVerifier?: string;
+  verifierZkTranscriptLib?: string;
+  dkgVerifierRelationsLib?: string;
+  decryptionVerifierRelationsLib?: string;
   ticketToken: string;
   slashingManager: string;
   slashingEvidenceLib: string;
@@ -164,10 +180,18 @@ export interface ProtocolContracts {
   bondingOwnershipLib: string;
   bondedCheckpoints: string;
   /**
-   * Deployed by `--action activate-voting`, after the Safe batch initializes the registry: the
+   * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
    * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
    */
   bondedVotes?: string;
+  decryptionVerifier?: string;
+  pkVerifier?: string;
+  dkgFoldAttestationVerifier?: string;
+  dkgAggregatorVerifier?: string;
+  decryptionAggregatorVerifier?: string;
+  verifierZkTranscriptLib?: string;
+  dkgVerifierRelationsLib?: string;
+  decryptionVerifierRelationsLib?: string;
 }
 
 export interface ProtocolInterfaces {

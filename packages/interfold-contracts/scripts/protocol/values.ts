@@ -110,7 +110,15 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
   if (typeof config.ticketUnderlyingToken !== "string") {
     throw new Error("ticketUnderlyingToken is required and must be a string");
   }
-  applyAddressOverride(config, "safe", "safe", "SAFE_ADDRESS");
+  applyAddressOverride(
+    config,
+    "protocolOwner",
+    "protocol-owner",
+    "PROTOCOL_OWNER",
+  );
+  if (!config.protocolOwner && config.safe) {
+    config.protocolOwner = config.safe;
+  }
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
   applyAddressOverride(
     config,
@@ -156,6 +164,7 @@ function applyAddressOverride(
   key: keyof Pick<
     ProtocolConfigFile,
     | "safe"
+    | "protocolOwner"
     | "fold"
     | "bondingRegistryProxy"
     | "bondingRegistryProxyAdmin"
@@ -176,7 +185,16 @@ function applyAddressOverride(
 
 function validateConfig(config: ProtocolConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
-  config.safe = address(config.safe, "safe");
+  config.protocolOwner = address(config.protocolOwner, "protocolOwner");
+  if (config.safe === ZERO) config.safe = undefined;
+  if (config.safe) {
+    config.safe = address(config.safe, "safe");
+    if (config.safe !== config.protocolOwner) {
+      throw new Error(
+        "safe must equal protocolOwner when a Safe is configured",
+      );
+    }
+  }
   config.fold = address(config.fold, "fold");
   config.bondingRegistryProxy = address(
     config.bondingRegistryProxy,
@@ -213,10 +231,28 @@ function validateConfig(config: ProtocolConfigFile): void {
     throw new Error("e3Programs[0] must not be the zero address");
   }
   config.e3Programs = [initialE3Program];
-  optionalAddress(config.verifiers?.decryptionVerifier, "decryptionVerifier");
-  optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
-  optionalAddress(
-    config.verifiers?.dkgFoldAttestationVerifier,
-    "dkgFoldAttestationVerifier",
+  if (config.verifiers) {
+    config.verifiers.decryptionVerifier = optionalAddress(
+      config.verifiers.decryptionVerifier,
+      "decryptionVerifier",
+    );
+    config.verifiers.pkVerifier = optionalAddress(
+      config.verifiers.pkVerifier,
+      "pkVerifier",
+    );
+    config.verifiers.dkgFoldAttestationVerifier = optionalAddress(
+      config.verifiers.dkgFoldAttestationVerifier,
+      "dkgFoldAttestationVerifier",
+    );
+  }
+  const ciphertextVerifier = optionalAddress(
+    config.ciphertextVerifier,
+    "ciphertextVerifier",
   );
+  config.ciphertextVerifier = ciphertextVerifier;
+  if (config.bindInitialE3Program && !ciphertextVerifier) {
+    throw new Error(
+      "ciphertextVerifier is required when bindInitialE3Program is true",
+    );
+  }
 }

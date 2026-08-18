@@ -61,7 +61,7 @@ function bondingInitData(
   i: ProtocolInterfaces,
 ): string {
   return i.bonding.encodeFunctionData("initialize", [
-    config.safe,
+    config.protocolOwner,
     {
       ticketToken: c.ticketToken,
       ciphernodeBondToken: config.fold,
