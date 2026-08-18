@@ -148,23 +148,35 @@ export type ProofData = {
  */
 export type CensusVariant = 'merkle' | 'onchain'
 
+/**
+ * The two halves of a slot head, which only mean anything together.
+ *
+ * Modelled as a pair rather than two optional fields: a ciphertext without its index would be
+ * proven against one entry and published against another, and the mismatch only surfaces as a
+ * rejected proof.
+ */
+type SlotHeadInputs =
+  | {
+      /**
+       * The ciphertext currently in the slot: the end of its chain of usable entries, not simply
+       * the newest one published. An entry whose bytes do not reproduce its commitment is never
+       * selected by the Secure Process and is never a valid parent, so building on it would have
+       * this input dropped from the tally.
+       */
+      previousCiphertext: Uint8Array
+      /** The tree index of `previousCiphertext`, which this input names as its parent. */
+      previousIndex: number
+    }
+  | { previousCiphertext?: undefined; previousIndex?: undefined }
+
 type PrepareBallotInputsBase = {
-  /**
-   * The ciphertext currently in the slot: the end of its chain of usable entries, not simply the
-   * newest one published. An entry whose bytes do not reproduce its commitment is never selected
-   * by the Secure Process and is never a valid parent, so building on it would have this input
-   * dropped from the tally.
-   */
-  previousCiphertext?: Uint8Array
-  /** The tree index of `previousCiphertext`. Required whenever it is supplied. */
-  previousIndex?: number
   publicKey: Uint8Array
   slotAddress: string
   isMaskVote: boolean
   /// Read for a mask, where there is no vote to take a length from.
   numOptions: number
   vote: Vote
-}
+} & SlotHeadInputs
 
 /**
  * Everything needed to encrypt a ballot, before the voter has signed anything.

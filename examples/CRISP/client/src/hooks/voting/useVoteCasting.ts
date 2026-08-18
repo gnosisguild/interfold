@@ -150,7 +150,10 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         const e3Id = BigInt(votingRound.round_id)
         const slot = address as `0x${string}`
 
-        const prepared = await prepareBallot({
+        // The slot head is passed as a pair or not at all. A ciphertext without its index would be
+        // proven against one entry and published against another, so the SDK types the two together
+        // and this branches rather than spreading them as separate optional fields.
+        const ballot = {
           censusMode: 'merkle',
           vote,
           publicKey,
@@ -159,9 +162,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           slotAddress: address,
           isMaskVote: isAMask,
           numOptions: NUM_OPTIONS,
-          previousCiphertext: head?.ciphertext,
-          previousIndex: head?.index,
-        })
+        } as const
+
+        const prepared = await prepareBallot(head ? { ...ballot, previousCiphertext: head.ciphertext, previousIndex: head.index } : ballot)
 
         const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
         const digest = await getBallotDigest(publicClient, crispProgram, e3Id, slot, prepared.ctCommitment)

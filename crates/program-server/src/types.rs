@@ -43,6 +43,9 @@ pub struct ComputeRequest {
     /// The entry each input names as the one it extends, plus one, in the same order; zero means it
     /// extends nothing. Required alongside `input_slots`, because a policy that groups by slot may
     /// also order within one, and CRISP's does.
+    ///
+    /// Carried as `u64` because JSON has no narrower integer, but the published width is a Solidity
+    /// `uint40`. The handler refuses anything wider rather than truncating it.
     #[serde(default)]
     pub input_parents: Vec<u64>,
     pub callback_url: Option<String>,

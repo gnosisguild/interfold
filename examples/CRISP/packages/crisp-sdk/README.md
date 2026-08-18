@@ -173,8 +173,9 @@ const head = await getPreviousCiphertext(serverUrl, e3Id, slotAddress)
 - `getRoundDetails(serverUrl: string, e3Id: bigint): Promise<RoundDetails>` - Get round details
 - `getRoundTokenDetails(serverUrl: string, e3Id: bigint): Promise<TokenDetails>` - Get token details
   for a round
-- `getPreviousCiphertext(serverUrl: string, e3Id: bigint, address: string): Promise<Uint8Array | undefined>` -
-  Get previous ciphertext for a slot (undefined when slot is empty)
+- `getPreviousCiphertext(serverUrl: string, e3Id: bigint, address: string): Promise<SlotHead | undefined>` -
+  Get the end of a slot's chain of usable entries, as `{ ciphertext, index }`. `index` is what a new
+  input names as its parent. Undefined when the slot holds nothing usable.
 
 ### Token Functions
 

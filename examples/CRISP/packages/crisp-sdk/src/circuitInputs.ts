@@ -97,7 +97,16 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
   const ctCommitment = `0x${BigInt(circuitInputs.sum_ct_commitment).toString(16).padStart(64, '0')}` as `0x${string}`
 
   // Zero when there is nothing to extend, which is what the contract reads as `is_first_vote`.
-  const parentIndexPlusOne = inputs.previousCiphertext ? (inputs.previousIndex ?? 0) + 1 : 0
+  //
+  // Checked at runtime as well as in the type, because a caller reaching this through plain
+  // JavaScript or a widened object gets no type error. Defaulting a missing index to zero would
+  // name the slot's first entry as the parent, and the proof would be built against one commitment
+  // while the contract supplied another — visible only as a rejected proof.
+  if (inputs.previousCiphertext && !Number.isInteger(inputs.previousIndex)) {
+    throw new Error('previousCiphertext was supplied without its previousIndex; pass the slot head as a pair')
+  }
+
+  const parentIndexPlusOne = inputs.previousCiphertext ? (inputs.previousIndex as number) + 1 : 0
 
   return { circuitInputs, encryptedVote, ctCommitment, parentIndexPlusOne, censusMode: inputs.censusMode }
 }

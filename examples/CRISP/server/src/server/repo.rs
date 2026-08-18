@@ -128,6 +128,8 @@ pub struct InputSnapshot {
     pub slots: Vec<[u8; 20]>,
     /// The entry each input names as the one it extends, plus one; zero for none.
     pub parents: Vec<u64>,
+    /// Whether each input's bytes reproduce its commitment, decided when it was indexed.
+    pub usable: Vec<bool>,
 }
 
 pub struct CrispE3Repository<S: DataStore> {
@@ -177,8 +179,19 @@ impl<S: DataStore> CrispE3Repository<S> {
         commitment: [u8; 32],
         slot: [u8; 20],
         parent_index_plus_one: u64,
+        params: &BfvParameters,
     ) -> Result<()> {
         let key = self.crisp_key();
+
+        // Decided here, once, rather than on every read. An entry's bytes never change, so neither
+        // does the answer. `Err` means the bytes do not deserialize, which is itself unusable.
+        let usable = e3_bfv_client::client::compute_ct_commitment(
+            vote.clone(),
+            params.degree(),
+            params.plaintext(),
+            params.moduli().to_vec(),
+        )
+        .is_ok_and(|recomputed| recomputed == commitment);
 
         self.store
             .modify(&key, |e3_obj: Option<E3Crisp>| {
@@ -210,6 +223,11 @@ impl<S: DataStore> CrispE3Repository<S> {
                     } else {
                         e.input_parents.push((index, parent_index_plus_one));
                     }
+                    if let Some(existing) = e.input_usable.iter_mut().find(|(i, _)| *i == index) {
+                        existing.1 = usable;
+                    } else {
+                        e.input_usable.push((index, usable));
+                    }
                     e
                 })
             })
@@ -230,6 +248,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             input_commitments: Vec::new(),
             input_slots: Vec::new(),
             input_parents: Vec::new(),
+            input_usable: Vec::new(),
             has_voted: vec![],
             start_time: 0u64,
             status: "Requested".to_string(),
@@ -268,6 +287,15 @@ impl<S: DataStore> CrispE3Repository<S> {
     pub async fn get_vote_count(&self) -> Result<u64> {
         let e3_crisp = self.get_crisp().await?;
         Ok(u64::try_from(e3_crisp.has_voted.len())?)
+    }
+
+    /// The round's current status.
+    ///
+    /// Read by the deadline handler so a retry pass can tell a round it already moved on from. The
+    /// handler runs more than once, and computation is one-shot.
+    pub async fn get_status(&self) -> Result<String> {
+        let e3_crisp = self.get_crisp().await?;
+        Ok(e3_crisp.status)
     }
 
     pub async fn update_status(&mut self, value: &str) -> Result<()> {
@@ -398,6 +426,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         Self::require_indexed(expected, e3_crisp.input_commitments.len(), "commitments")?;
         Self::require_indexed(expected, e3_crisp.input_slots.len(), "slots")?;
         Self::require_indexed(expected, e3_crisp.input_parents.len(), "parents")?;
+        Self::require_indexed(expected, e3_crisp.input_usable.len(), "usability flags")?;
 
         let mut commitments = e3_crisp.input_commitments;
         commitments.sort_by_key(|(index, _)| *index);
@@ -405,12 +434,15 @@ impl<S: DataStore> CrispE3Repository<S> {
         slots.sort_by_key(|(index, _)| *index);
         let mut parents = e3_crisp.input_parents;
         parents.sort_by_key(|(index, _)| *index);
+        let mut usable = e3_crisp.input_usable;
+        usable.sort_by_key(|(index, _)| *index);
 
         Ok(InputSnapshot {
             ciphertexts,
             commitments: commitments.into_iter().map(|(_, value)| value).collect(),
             slots: slots.into_iter().map(|(_, value)| value).collect(),
             parents: parents.into_iter().map(|(_, value)| value).collect(),
+            usable: usable.into_iter().map(|(_, value)| value).collect(),
         })
     }
 
@@ -432,32 +464,19 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// bytes reproduce its commitment and it names the head before it, so an entry nobody can open
     /// never becomes one and never blocks the slot.
     ///
+    /// Reads the usability decision rather than recomputing it. Recomputing costs a BFV commitment
+    /// per candidate — about 5ms each, comparable to deserializing a thousand-input round — and
+    /// every voter calls this before every ballot. The decision is made once, when the input is
+    /// indexed.
+    ///
     /// `None` when the slot holds nothing usable, which is what a first vote sees.
-    pub async fn get_slot_head(
-        &self,
-        slot: [u8; 20],
-        params: &BfvParameters,
-    ) -> Result<Option<(Vec<u8>, u64)>> {
+    pub async fn get_slot_head(&self, slot: [u8; 20]) -> Result<Option<(Vec<u8>, u64)>> {
         let snapshot = self.get_input_snapshot().await?;
         let mut head: Option<u64> = None;
-        let mut selected: Option<(Vec<u8>, u64)> = None;
+        let mut selected: Option<usize> = None;
 
-        for (position, (bytes, index)) in snapshot.ciphertexts.iter().enumerate() {
-            if snapshot.slots[position] != slot {
-                continue;
-            }
-
-            let recomputed = e3_bfv_client::client::compute_ct_commitment(
-                bytes.clone(),
-                params.degree(),
-                params.plaintext(),
-                params.moduli().to_vec(),
-            );
-            let Ok(recomputed) = recomputed else {
-                // The bytes do not deserialize, so this entry can never be the head.
-                continue;
-            };
-            if recomputed != snapshot.commitments[position] {
+        for (position, (_, index)) in snapshot.ciphertexts.iter().enumerate() {
+            if snapshot.slots[position] != slot || !snapshot.usable[position] {
                 continue;
             }
 
@@ -466,10 +485,15 @@ impl<S: DataStore> CrispE3Repository<S> {
             }
 
             head = Some(*index);
-            selected = Some((bytes.clone(), *index));
+            // The position, not the bytes. Cloning a ciphertext for every candidate would copy the
+            // whole chain to return its last entry.
+            selected = Some(position);
         }
 
-        Ok(selected)
+        Ok(selected.map(|position| {
+            let (bytes, index) = &snapshot.ciphertexts[position];
+            (bytes.clone(), *index)
+        }))
     }
 
     #[allow(dead_code)]

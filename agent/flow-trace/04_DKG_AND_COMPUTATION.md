@@ -1315,7 +1315,7 @@ pub struct InputPolicy {
 }
 ```
 
-Both are program-specific. A leaf must equal what that program builds on chain, and no two programs
+Both are program-specific. A leaf must equal what that program builds on-chain, and no two programs
 need agree. Selection answers "what does a second input for the same participant mean?", which CRISP
 answers differently from a program where every input counts.
 
@@ -1338,7 +1338,7 @@ serialization. The guest is the first place both representations exist at once.
 
 `CRISPProgram.inputLeaf` therefore binds four values:
 
-```
+```text
 leaf = sha256(sha256(encryptedVote) || encryptedVoteCommitment || slotAddress || parentIndexPlusOne)
        mod SNARK_SCALAR_FIELD
 ```
@@ -1358,8 +1358,8 @@ would make every root mismatch and nothing else would detect it.
 
 SHA-256 rather than Keccak: the zkVM accelerates SHA-256 inline, while its Keccak accelerator emits
 a proof assumption the host must prove separately and compose. The extra on-chain cost is about 67k
-gas on a transaction that already carries the ciphertext — a secure-preset ciphertext is about
-348 KB, so calldata and log data dominate by orders of magnitude.
+gas on a transaction that already carries the ciphertext — a secure-preset ciphertext is about 348
+KB, so calldata and log data dominate by orders of magnitude.
 
 **The input tree is append-only.** `_processVote` always inserts and never updates in place. That is
 a security property, not a storage choice: the mask path requires no signature, so anyone can write
@@ -1379,17 +1379,17 @@ hold:
 - its bytes reproduce its commitment, so it is a ciphertext anyone can read; and
 - the entry it names is the slot's current head.
 
-Entries that fail either rule keep their leaf — removing one would change the root — but are skipped.
-The rule is a function of values the root binds, so any prover holding the same published data
-reaches the same set and none can choose what to drop.
+Entries that fail either rule keep their leaf — removing one would change the root — but are
+skipped. The rule is a function of values the root binds, so any prover holding the same published
+data reaches the same set and none can choose what to drop.
 
 Why the chain rather than "the most recent usable entry": `CRISPProgram` cannot tell that a
-submitter's bytes disagree with the commitment they published — only the Secure Process can, and only
-after the input window closes. With a single mutable slot head, anyone could therefore leave a slot
-whose head only they can open, and a slot nobody can mask is a slot where every later input is
-provably its owner voting again. That is a coercion receipt, and a cleaner one than the receipt masks
-exist to destroy. Because an unusable entry is never the head, it is never a valid parent either, so
-the next honest input names the same parent it did and masking continues.
+submitter's bytes disagree with the commitment they published — only the Secure Process can, and
+only after the input window closes. With a single mutable slot head, anyone could therefore leave a
+slot whose head only they can open, and a slot nobody can mask is a slot where every later input is
+provably its owner voting again. That is a coercion receipt, and a cleaner one than the receipt
+masks exist to destroy. Because an unusable entry is never the head, it is never a valid parent
+either, so the next honest input names the same parent it did and masking continues.
 
 The resulting properties:
 
@@ -1409,7 +1409,7 @@ counted.
 
 That is the deliberate side of a genuine trade-off, not an oversight. A stale parent is
 indistinguishable from a sibling that was simply built a moment earlier: both name an entry that is
-no longer the head, and only the circuit knows whether an entry *replaces* the slot or *adds* to it
+no longer the head, and only the circuit knows whether an entry _replaces_ the slot or _adds_ to it
 — which is precisely what `is_mask_vote` keeps private. Favour the earlier sibling and a re-vote can
 be delayed; favour the later one and a mask built on a superseded ciphertext can restore it over a
 vote. The first is visible to the voter (the server resolves the chain, so the client can see its
@@ -1423,21 +1423,21 @@ that distinction — the thing the whole design exists to hide.
 Capacity: `TREE_DEPTH = 20` gives 2^20 entries, against a physical ceiling of roughly three writes
 per block at the secure preset — append-only is not capacity-bound.
 
-A round where *every* entry is unusable fails at the output commitment, because the processor's
+A round where _every_ entry is unusable fails at the output commitment, because the processor's
 empty ciphertext does not deserialize. That is only reachable when no honest input exists, and is
 indistinguishable from a round that received none, which the protocol resolves as
 `NoInputsReceived`.
 
-`InputPublished` carries the slot, the commitment, and the parent alongside the bytes. All three were
-already public — the slot and the parent are plaintext `publishInput` arguments, and `getSlotIndex`
-and `inputCommitmentOf` expose the rest — so emitting them leaks nothing and saves every consumer
-from parsing transaction calldata.
+`InputPublished` carries the slot, the commitment, and the parent alongside the bytes. All three
+were already public — the slot and the parent are plaintext `publishInput` arguments, and
+`getSlotIndex` and `inputCommitmentOf` expose the rest — so emitting them leaks nothing and saves
+every consumer from parsing transaction calldata.
 
 ### One relation for voting, updating, and masking
 
 The ballot circuit proves the same statement for all three operations:
 
-```
+```text
 published ciphertext = addend + ballot ciphertext
 ```
 

@@ -75,11 +75,10 @@ export class CrispSDK {
   async prepareBallot(request: PrepareBallotRequest): Promise<PreparedBallot> {
     const head = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
 
-    return prepareBallot({
-      ...request,
-      previousCiphertext: head?.ciphertext,
-      previousIndex: head?.index,
-    })
+    // Branched rather than spread conditionally. The two halves of a slot head only mean anything
+    // together and the type models them as a pair, which a conditional spread widens back into two
+    // independent optional fields — the exact shape the pair exists to rule out.
+    return head ? prepareBallot({ ...request, previousCiphertext: head.ciphertext, previousIndex: head.index }) : prepareBallot(request)
   }
 
   /**

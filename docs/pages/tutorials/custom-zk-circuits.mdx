@@ -26,21 +26,34 @@ input validation circuits.
 
 ## What the Circuits Prove
 
-CRISP's circuit system handles two distinct cases:
+CRISP's circuit system proves one relation for every submission, and four things hold on every path:
 
-**Actual vote:**
+1. **Voter eligibility** — the slot's address is in a Merkle tree of eligible participants
+2. **Valid encryption** — the ballot ciphertext is a well-formed BFV encryption
+3. **Correct ciphertext addition** — the published ciphertext is `addend + ballot`, computed
+   correctly
+4. **A well-formed plaintext** — every coefficient of the ballot is constrained, not only the ones
+   the vote rules read
 
-1. **Voter eligibility** — the voter's address is in a Merkle tree of eligible participants
-2. **Valid encryption** — the ciphertext is a well-formed BFV encryption
-3. **Correct signature** — the submission was signed by the voter (ECDSA recovery)
-4. **Within balance** — the vote amount does not exceed the voter's token balance
+What changes between the two cases is the addend and the authorisation:
+
+**Actual vote** — the addend is the zero ciphertext, so the ballot replaces what the slot holds.
+Additionally proves:
+
+1. **Correct signature** — the submission was signed by the voter (ECDSA recovery)
+2. **Within balance** — the vote amount does not exceed the voter's token balance
 
 **Mask vote** (for
-[receipt-freeness](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)):
+[receipt-freeness](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)) —
+the addend is the ciphertext already in the slot, so the vote there is unchanged. Additionally
+proves:
 
-1. **Encryption of zero** — the ciphertext encrypts a zero-value vote
-2. **Correct ciphertext addition** — the sum of the previous slot ciphertext and the zero ciphertext
-   is computed correctly (`sum = prev + 0`)
+1. **Encryption of zero** — the plaintext is zero in every coefficient, so a mask can neither change
+   the tally nor carry a payload
+
+No signature is checked on the mask path, which is what lets a third party mask a slot at all. The
+flag that chooses between the two is private, so the two cases are not distinguishable once
+published.
 
 ---
 
@@ -124,10 +137,11 @@ leaf (voter address) exists at a specific index without revealing other leaves.
 **`ecdsa.nr`** — secp256k1 ECDSA signature verification and Ethereum address derivation. Recovers
 the signer address from the signature and verifies it matches the expected voter.
 
-**`ciphertext_addition.nr`** — Used in mask vote mode to prove that `sum = prev + new` for BFV
-ciphertexts (where `new` is an encryption of zero). Uses the Schwartz-Zippel lemma with a
-Fiat-Shamir challenge point to verify the polynomial identity at a single random point, avoiding the
-cost of checking every coefficient.
+**`ciphertext_addition.nr`** — Proves that `sum = addend + new` for BFV ciphertexts. Asserted on
+every path, not only for masks: the addend is the slot's ciphertext for a mask and the zero
+ciphertext otherwise, so the same relation covers a vote, a re-vote, and a mask. Uses the
+Schwartz-Zippel lemma with a Fiat-Shamir challenge point to verify the polynomial identity at a
+single random point, avoiding the cost of checking every coefficient.
 
 **`utils.nr`** — Vote validation helpers. Checks that vote coefficients are binary (0 or 1) and that
 the total doesn't exceed the voter's balance.
@@ -212,7 +226,12 @@ const generator = ZKInputsGenerator.withDefaults()
 // `previousCiphertext` is the end of the slot's chain of usable entries, or `undefined` when the
 // slot holds nothing. `keepPrevious` is set only for a mask over an occupied slot: it is what makes
 // the ballot add to that ciphertext rather than replace it.
-const { encryptedVote, inputs } = generator.generateInputs(previousCiphertext, publicKey, voteCoefficients, keepPrevious)
+const { encryptedVote, inputs } = generator.generateInputs(
+  previousCiphertext,
+  publicKey,
+  voteCoefficients,
+  keepPrevious,
+)
 ```
 
 The WASM module handles BFV encryption and produces the exact polynomial decompositions the Noir

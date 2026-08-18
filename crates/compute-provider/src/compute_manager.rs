@@ -50,9 +50,13 @@ where
     /// the full input set here instead would publish bytes the receipt does not describe: an E3
     /// program hashes the published ciphertext into the digest it rebuilds, so any excluded input
     /// would make every round unpublishable.
+    ///
+    /// One policy reaches both, from this one argument. Letting the provider choose its own would
+    /// reopen the same gap one layer down: the ciphertext returned here and the one the receipt
+    /// describes would be selected by different rules, and nothing would compare them.
     pub fn start(&mut self, policy: InputPolicy) -> Result<(P::Output, Vec<u8>), ComputeError> {
         let (_, ciphertext) = self.input.run(self.processor, policy)?;
 
-        Ok((self.provider.prove(&self.input), ciphertext))
+        Ok((self.provider.prove(&self.input, policy), ciphertext))
     }
 }

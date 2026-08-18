@@ -5,7 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
-use e3_compute_provider::{ComputeInput, ComputeManager, ComputeProvider, ComputeResult};
+use e3_compute_provider::{
+    ComputeInput, ComputeManager, ComputeProvider, ComputeResult, InputPolicy,
+};
 use e3_program_server::E3ProgramServer;
 use e3_user_program::fhe_processor;
 
@@ -14,11 +16,15 @@ struct MockProofProvider;
 impl ComputeProvider for MockProofProvider {
     type Output = ComputeResult;
 
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
+    fn prove(&self, input: &ComputeInput, policy: InputPolicy) -> Self::Output {
+        // The policy comes from the caller rather than from `e3_user_program::policy()` here.
+        // Reading it twice would let the ciphertext this run publishes and the one it proves be
+        // selected by different rules, which is the divergence the argument exists to remove.
+        //
         // This dev provider stands in for the zkVM, where a failure aborts the guest. Panicking
         // with the reason keeps that behaviour while naming the input that could not be used.
         input
-            .process(fhe_processor, e3_user_program::policy())
+            .process(fhe_processor, policy)
             .expect("the Secure Process rejected its inputs")
     }
 }

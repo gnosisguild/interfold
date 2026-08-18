@@ -125,13 +125,22 @@ published revision (`crates/support/Cargo.toml`, `crates/support/methods/guest/C
 
 A change to `crates/compute-provider` therefore has no effect on the guest until that pin moves, and
 the pin can only move to a pushed commit. Moving it changes the image ID, and
-`Risc0BfvCiphertextVerifier.imageId` is immutable — so a guest change is a redeployment, not a patch.
+`Risc0BfvCiphertextVerifier.imageId` is immutable — so a guest change is a redeployment, not a
+patch.
 
 The order matters:
 
 1. Merge the change to `crates/compute-provider`, then push.
-2. Bump both pins to the merge commit. They must name the same revision; `pnpm check:image-id`
-   fails if they diverge.
+2. Bump every Interfold pin to the merge commit. There are three, and `pnpm check:image-id` reads
+   all of them and fails when they do not name one revision:
+   - `e3-fhe-params` in `crates/support/Cargo.toml`
+   - `e3-compute-provider` in `crates/support/Cargo.toml`
+   - `e3-compute-provider` in `crates/support/methods/guest/Cargo.toml`
+
+   Then refresh both lockfiles (`crates/support/Cargo.lock` and
+   `crates/support/methods/guest/Cargo.lock`). The Docker guest build passes `--locked`, so a
+   lockfile one line behind its manifest stops the reproducible build before it starts.
+
 3. Update the `crates/support` call sites that track the crate's API — the compiler will point at
    them, since they built against the old revision until now.
 4. Rebuild the guest against the pinned code:

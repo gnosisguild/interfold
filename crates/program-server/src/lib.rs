@@ -64,6 +64,15 @@ impl ComputeDomain {
     }
 }
 
+/// The width of one slot address in published metadata: a Solidity `address`.
+const SLOT_BYTES: usize = 20;
+
+/// The width of one parent index in published metadata: a Solidity `uint40`.
+const PARENT_BYTES: usize = 5;
+
+/// The largest parent index that fits in [`PARENT_BYTES`].
+const MAX_PARENT: u64 = (1 << (8 * PARENT_BYTES as u64)) - 1;
+
 fn fixed<const N: usize>(value: &[u8], name: &str) -> Result<[u8; N], String> {
     value
         .try_into()
@@ -384,14 +393,31 @@ async fn handle_compute(
             // The metadata is opaque here — what a policy reads out of it is the E3 program's
             // business. It is assembled in the order the program packs it, which for CRISP is
             // `abi.encodePacked(address, uint40)`.
+            //
+            // Both widths are checked rather than coerced. This endpoint takes JSON from the
+            // network, and the packing is fixed-width: a slot of the wrong length shifts every
+            // byte after it, and a parent above `uint40` would be truncated into a different,
+            // valid-looking index. Either produces metadata the E3 program never published, and
+            // the only symptom is an input root the guest derives and the contract rejects.
             let mut metadata = Vec::new();
             if let Some(hex_slot) = req.input_slots.get(index) {
-                metadata
-                    .extend_from_slice(&hex::decode(hex_slot.trim_start_matches("0x")).map_err(
-                        |e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")),
-                    )?);
+                let slot = hex::decode(hex_slot.trim_start_matches("0x"))
+                    .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?;
+                if slot.len() != SLOT_BYTES {
+                    return Err(actix_web::error::ErrorBadRequest(format!(
+                        "each slot must be {SLOT_BYTES} bytes, got {}",
+                        slot.len()
+                    )));
+                }
+                metadata.extend_from_slice(&slot);
+
                 let parent = req.input_parents.get(index).copied().unwrap_or_default();
-                metadata.extend_from_slice(&parent.to_be_bytes()[3..]);
+                if parent > MAX_PARENT {
+                    return Err(actix_web::error::ErrorBadRequest(format!(
+                        "each parent must fit in {PARENT_BYTES} bytes (at most {MAX_PARENT}), got {parent}"
+                    )));
+                }
+                metadata.extend_from_slice(&parent.to_be_bytes()[8 - PARENT_BYTES..]);
             }
 
             Ok(PublishedData {

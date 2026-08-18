@@ -270,6 +270,19 @@ pub struct E3Crisp {
     /// append-only, so the Secure Process groups entries by slot.
     #[serde(default)]
     pub input_slots: Vec<(u64, [u8; 20])>,
+    /// Whether each input's published bytes reproduce the commitment stored with it, keyed by the
+    /// same on-chain index.
+    ///
+    /// Recomputing this costs a BFV commitment — about 5ms per entry — and the answer never changes,
+    /// because the tree is append-only and an entry's bytes are fixed once published. Deciding it
+    /// once here keeps it off the read path, where `state/previous-ciphertext` is called by every
+    /// voter before every ballot.
+    ///
+    /// A hint, not an authority. The Secure Process recomputes it from the ciphertexts it consumed
+    /// and never reads this, so a wrong value here can only send a client to the wrong parent — the
+    /// same outcome as a stale read, and the guest drops such an input either way.
+    #[serde(default)]
+    pub input_usable: Vec<(u64, bool)>,
     /// The entry each input names as the one it extends, plus one, keyed by the same on-chain
     /// index. Zero means it extends nothing.
     ///

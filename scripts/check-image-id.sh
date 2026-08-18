@@ -189,13 +189,22 @@ if [ "$REBUILD" = true ]; then
   # every downstream provenance manifest incomplete and keep this script warning about an image ID
   # that has in fact been reproduced.
   rebuilt_digest="$(guest_inputs_digest)"
-  cat > "$STAMP" <<STAMP_JSON
+
+  # Written to a temporary file in the same directory and renamed, never truncated in place. A
+  # partial stamp is worse than no stamp: `generate-provenance-manifest.ts` reads the absence of a
+  # literal `"imageIdVerified": false` as verified, so a write interrupted mid-JSON would let an
+  # unverified guest produce a complete provenance manifest. `mv` within one directory is atomic.
+  stamp_tmp="$(mktemp "$(dirname "$STAMP")/.ImageID.stamp.json.XXXXXX")"
+  trap 'rm -f "$stamp_tmp"' EXIT
+  cat > "$stamp_tmp" <<STAMP_JSON
 {
   "imageId": "$current_image_id",
   "guestInputsDigest": "$rebuilt_digest",
   "imageIdVerified": true
 }
 STAMP_JSON
+  mv "$stamp_tmp" "$STAMP"
+  trap - EXIT
   echo "✅ check:image-id: recorded the verified image ID in $STAMP."
 fi
 

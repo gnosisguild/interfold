@@ -46,17 +46,23 @@ The `init` subpackage handles both environments transparently.
 
 ```ts
 // Bad — the raw default loader doesn't work in Node.js contexts
-import init, { generateVoteInputs } from '@crisp-e3/zk-inputs'
+import init, { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 ```
 
 ### ✅ Use the universal subpackage loader
 
 ```ts
 import init from '@crisp-e3/zk-inputs/init'
-import { generateVoteInputs } from '@crisp-e3/zk-inputs'
+import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 
 await init()
-const inputs = generateVoteInputs(/* ... */)
+const generator = ZKInputsGenerator.withDefaults()
+const { encryptedVote, inputs } = generator.generateInputs(
+  previousCiphertext,
+  publicKey,
+  vote,
+  keepPrevious,
+)
 ```
 
 Call `init()` once before using any other imports from `@crisp-e3/zk-inputs`. In browser

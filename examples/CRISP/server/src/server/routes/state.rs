@@ -16,7 +16,6 @@ use crate::server::{
 };
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, B256};
-use e3_fhe_params::decode_bfv_params_arc;
 use e3_sdk::evm_helpers::contracts::{
     InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };
@@ -76,28 +75,9 @@ async fn handle_get_previous_ciphertext(
         }
     };
 
-    // The chain is resolved by recomputing each entry's commitment from its published bytes, which
-    // needs the round's BFV parameters.
-    let e3 = match store.e3(e3_key.clone()).get_e3().await {
-        Ok(e3) => e3,
-        Err(e) => {
-            error!("Error reading E3: {:?}", e);
-            return HttpResponse::InternalServerError().body("Failed to read E3");
-        }
-    };
-    let params = match decode_bfv_params_arc(&e3.e3_params) {
-        Ok(params) => params,
-        Err(e) => {
-            error!("Error decoding E3 params: {:?}", e);
-            return HttpResponse::InternalServerError().body("Failed to decode E3 params");
-        }
-    };
-
-    match store
-        .e3(e3_key)
-        .get_slot_head(address.into(), &params)
-        .await
-    {
+    // No BFV work and no parameters here. Whether an entry's bytes reproduce its commitment is
+    // decided once, when the indexer stores it, so resolving the chain is a walk over flags.
+    match store.e3(e3_key).get_slot_head(address.into()).await {
         Ok(Some((ciphertext, index))) => {
             HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext, index })
         }

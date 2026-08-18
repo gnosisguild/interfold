@@ -188,27 +188,52 @@ async function rpcCall(rpc: string, method: string, params: unknown[]): Promise<
 const SELECTOR_IMAGE_ID = '0xef3f7dd5'
 const SELECTOR_RISC0_VERIFIER = '0x5c9770c5'
 
+/**
+ * A `0x`-prefixed hex string of exactly `bytes` bytes, or null.
+ *
+ * An RPC result is only known to be a string. Everything downstream treats non-null as resolved, so
+ * a malformed answer that survives this far reads as a verified fact — which is the one thing a
+ * fail-closed manifest must not do.
+ */
+function hexOfLength(value: string | null, bytes: number): string | null {
+  if (!value) return null
+  return new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value) ? value : null
+}
+
+/** Any `0x`-prefixed hex string with a whole number of bytes, or null. */
+function hexBytes(value: string | null): string | null {
+  if (!value) return null
+  return /^0x([0-9a-fA-F]{2})*$/.test(value) ? value : null
+}
+
 async function chainFacts(rpc: string, verifier: string) {
-  const code = await rpcCall(rpc, 'eth_getCode', [verifier, 'latest'])
+  const code = hexBytes(await rpcCall(rpc, 'eth_getCode', [verifier, 'latest']))
+  const codePresent = Boolean(code && code !== '0x')
   // SHA-256, not keccak256: Node's crypto has no keccak256, and any fixed digest serves the
   // purpose here as long as the manifest names which one it is.
   const runtimeCodeSha256 =
-    code && code !== '0x'
+    code && codePresent
       ? `0x${createHash('sha256')
           .update(Buffer.from(code.slice(2), 'hex'))
           .digest('hex')}`
       : null
 
-  const onchainImageId = await rpcCall(rpc, 'eth_call', [{ to: verifier, data: SELECTOR_IMAGE_ID }, 'latest'])
-  const underlying = await rpcCall(rpc, 'eth_call', [{ to: verifier, data: SELECTOR_RISC0_VERIFIER }, 'latest'])
-  const chainId = await rpcCall(rpc, 'eth_chainId', [])
+  // Both calls return one ABI word. An image ID is that word; an address is its low 20 bytes.
+  const onchainImageId = hexOfLength(await rpcCall(rpc, 'eth_call', [{ to: verifier, data: SELECTOR_IMAGE_ID }, 'latest']), 32)
+  const underlyingWord = hexOfLength(await rpcCall(rpc, 'eth_call', [{ to: verifier, data: SELECTOR_RISC0_VERIFIER }, 'latest']), 32)
+
+  const chainIdHex = hexBytes(await rpcCall(rpc, 'eth_chainId', []))
+  const chainIdValue = chainIdHex ? Number.parseInt(chainIdHex, 16) : Number.NaN
 
   return {
-    chainId: chainId ? Number.parseInt(chainId, 16) : null,
+    // `Number.isSafeInteger` rather than a null check: `parseInt` yields NaN for a malformed
+    // answer, NaN passes `!== null`, and `JSON.stringify` then writes it as null — a manifest that
+    // claims to be complete while recording no chain.
+    chainId: Number.isSafeInteger(chainIdValue) ? chainIdValue : null,
     ciphertextVerifier: verifier,
     ciphertextVerifierRuntimeCodeSha256: runtimeCodeSha256,
-    ciphertextVerifierCodePresent: Boolean(code && code !== '0x'),
-    underlyingRisc0Verifier: underlying ? `0x${underlying.slice(-40)}` : null,
+    ciphertextVerifierCodePresent: codePresent,
+    underlyingRisc0Verifier: underlyingWord ? `0x${underlyingWord.slice(-40)}` : null,
     onchainImageId,
   }
 }
