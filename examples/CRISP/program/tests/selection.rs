@@ -134,22 +134,30 @@ fn a_poisoned_entry_does_not_freeze_the_slot() {
     );
 }
 
-/// An entry that names anything other than the current head is dropped.
+/// A mask cannot reach back past a re-vote to restore the ballot it replaced.
 ///
-/// Without this an entry could be built on a superseded ciphertext and put it back in the slot,
-/// erasing the vote in between — which a mask needs no signature to publish.
+/// The attack this rules out: a voter casts A, re-votes B, and a third party then masks the
+/// *original* entry rather than the re-vote. A mask adds zero, so its plaintext is whatever its
+/// parent held — taking it would put A back in the slot and erase B. No signature is needed to
+/// publish a mask, so anyone could do it to anyone.
 #[test]
-fn an_entry_naming_a_stale_parent_is_dropped() {
+fn a_mask_cannot_reach_back_past_a_re_vote() {
+    // vote A at 0, re-vote B at 1, then a mask naming 0 instead of 1.
     assert_eq!(
         select(&[good(1, None), good(1, Some(0)), good(1, Some(0))]),
         vec![1],
-        "reaching back past the head cannot erase it"
+        "the re-vote keeps the slot; the stale mask is dropped"
     );
     assert_eq!(
         select(&[good(1, None), good(1, Some(0)), good(1, None)]),
         vec![1],
-        "naming no parent on an occupied slot does not restart the chain"
+        "naming no parent on an occupied slot does not restart the chain either"
     );
+}
+
+/// A poisoned entry does not shift the head, so the entry after it names the head as it stands.
+#[test]
+fn an_entry_after_a_poisoned_one_names_the_unchanged_head() {
     assert_eq!(
         select(&[
             good(1, None),
@@ -173,21 +181,24 @@ fn an_entry_naming_another_slots_parent_is_dropped() {
     );
 }
 
-/// Two entries naming the same parent are siblings, and only the first usable one is taken.
+/// The same rule seen from the other side: whichever sibling lands first keeps the slot.
 ///
-/// This is the cost of the rule, and it is deliberate. An entry that reaches back past the head is
-/// indistinguishable from one that was simply built before a sibling landed: both name a parent
-/// that is no longer the head, and only the circuit knows whether the entry replaces the slot or
-/// adds to it — which is exactly what must stay hidden. Favouring the earlier sibling means a
-/// re-vote can be front-run into being dropped, which the voter can see and retry. Favouring the
-/// later one would mean a mask built on a superseded ciphertext could restore it over a vote, which
-/// is a silent tally corruption nobody can undo.
+/// Reverse the order of the previous test and the mask is the one that wins, so a re-vote built
+/// before it landed is dropped and has to be published again against the new head.
+///
+/// That asymmetry is deliberate, not an oversight. A stale parent is indistinguishable from a
+/// sibling built a moment earlier: both name an entry that is no longer the head, and only the
+/// circuit knows whether an entry replaces the slot or adds to it — which is exactly what
+/// `is_mask_vote` keeps private. Favouring the earlier sibling costs a dropped re-vote, which the
+/// voter can see and retry. Favouring the later one would let a mask on a superseded ciphertext
+/// restore it over a vote, which is a silent tally corruption nobody can detect or undo.
 #[test]
-fn a_later_sibling_is_dropped_rather_than_allowed_to_rewind() {
+fn whichever_sibling_lands_first_keeps_the_slot() {
+    // vote A at 0, a mask naming 0 at 1, then a re-vote that also names 0.
     assert_eq!(
         select(&[good(1, None), good(1, Some(0)), good(1, Some(0))]),
         vec![1],
-        "the first entry to extend the head keeps it"
+        "the mask got there first, so the re-vote behind it is dropped"
     );
 }
 
