@@ -1,0 +1,85 @@
+# Regenerate the guest image ID on a native amd64 runner.
+#
+# `check-image-id.sh --rebuild` builds the guest with the RISC Zero Docker builder, which is what
+# makes the image ID reproducible. The builder image is published for linux/amd64 only, so on an
+# Apple Silicon machine it runs under emulation — and the protoc that prost-build bundles dies
+# there with no diagnostic, which stops the build before it reaches the guest. A native runner
+# removes the emulation layer entirely.
+#
+# It is also the right home for the job on its own terms: the recorded image ID decides which
+# program the deployed verifier accepts, so it should come from an environment anyone can inspect
+# rather than from whichever laptop was free.
+#
+# This never commits. It uploads the regenerated ImageID.sol and stamp as artifacts, and you commit
+# them deliberately alongside the pin and lockfiles they belong with.
+name: Rebuild guest image ID
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to rebuild from'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    # The guest build compiles the whole dependency tree inside the container from cold.
+    timeout-minutes: 60
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # The pin-ancestry and staleness checks read history, so a shallow clone is not enough.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Record the pre-rebuild image ID
+        id: before
+        run: |
+          echo "image_id=$(grep -oE '0x[0-9a-fA-F]{64}' crates/support/contracts/ImageID.sol | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild the guest and regenerate the image ID
+        run: ./scripts/check-image-id.sh --rebuild
+
+      - name: Report what changed
+        run: |
+          after="$(grep -oE '0x[0-9a-fA-F]{64}' crates/support/contracts/ImageID.sol | head -1)"
+          {
+            echo "### Guest image ID"
+            echo
+            echo '| | value |'
+            echo '| --- | --- |'
+            echo "| before | \`${{ steps.before.outputs.image_id }}\` |"
+            echo "| after  | \`$after\` |"
+            echo
+            if [ "$after" = "${{ steps.before.outputs.image_id }}" ]; then
+              echo 'Unchanged — the recorded image ID reproduces from these inputs.'
+            else
+              echo 'Changed. Commit the regenerated `ImageID.sol` and stamp together with the pin and'
+              echo 'lockfiles that produced them, or the next `check:image-id` run fails on the drift.'
+            fi
+            echo
+            echo '#### Stamp'
+            echo '```json'
+            cat crates/support/contracts/ImageID.stamp.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the regenerated image ID and stamp
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: guest-image-id
+          path: |
+            crates/support/contracts/ImageID.sol
+            crates/support/contracts/ImageID.stamp.json
+          if-no-files-found: error
