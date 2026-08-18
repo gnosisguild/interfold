@@ -238,6 +238,11 @@ export async function actionValidate(): Promise<void> {
     checks.push(
       ["bondedVotes.token", bondedVotes.token(), config.fold],
       [
+        "bondedVotes.votesSource",
+        bondedVotes.votesSource(),
+        config.escrowVotesAdapter ?? config.fold,
+      ],
+      [
         "bondedVotes.checkpoints",
         bondedVotes.checkpoints(),
         deployment.bondedCheckpoints,

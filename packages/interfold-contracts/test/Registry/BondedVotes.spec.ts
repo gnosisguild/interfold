@@ -68,6 +68,8 @@ describe("BondedVotes", function () {
 
     const bondedVotes = await ethers.deployContract("BondedVotes", [
       await ciphernodeBondToken.getAddress(),
+      // Votes source == the token: wallet-held FOLD votes, the original behaviour.
+      await ciphernodeBondToken.getAddress(),
       await checkpoints.getAddress(),
     ]);
 
@@ -755,6 +757,7 @@ describe("BondedVotes", function () {
       await expect(
         ethers.deployContract("BondedVotes", [
           await ciphernodeBondToken.getAddress(),
+          await ciphernodeBondToken.getAddress(),
           await foreign.getAddress(),
         ]),
       ).to.be.revert(ethers);
@@ -1115,6 +1118,228 @@ describe("BondedVotes", function () {
       expect(await bondingRegistry.bondedCheckpoints()).to.equal(
         await checkpoints.getAddress(),
       );
+    });
+  });
+  /// Lock-to-vote. `votesSource` is an escrow adapter instead of the token, so idle wallet FOLD
+  /// carries no weight and a holder must lock to participate — while an operator keeps its weight
+  /// by bonding, without locking anything.
+  ///
+  /// The property that makes this sound is that the DENOMINATOR stays on FOLD. Locked and bonded
+  /// FOLD were both transferred rather than burned, so both are still inside FOLD's total supply
+  /// and summed votes can never exceed it. Reading the denominator off the escrow instead would
+  /// omit the bonded half entirely and let participation exceed 100%.
+  describe("escrow votes source", function () {
+    const LOCKED = ethers.parseEther("4000");
+
+    async function veSetup() {
+      const base = await setup();
+      const { ciphernodeBondToken, checkpoints } = base;
+
+      const foldAddress = await ciphernodeBondToken.getAddress();
+      const escrow = await ethers.deployContract("MockVotingEscrow", [
+        foldAddress,
+      ]);
+      const adapter = await ethers.deployContract("MockEscrowVotesAdapter", [
+        await escrow.getAddress(),
+      ]);
+
+      const veBondedVotes = await ethers.deployContract("BondedVotes", [
+        foldAddress,
+        await adapter.getAddress(),
+        await checkpoints.getAddress(),
+      ]);
+
+      return { ...base, escrow, adapter, veBondedVotes, foldAddress };
+    }
+
+    it("counts locked FOLD and bonded FOLD, but not idle wallet FOLD", async function () {
+      const { veBondedVotes, adapter, bond, bondOwnerAddress } =
+        await loadFixture(veSetup);
+
+      // The holder has a large wallet balance and has self-delegated on the token itself, which
+      // under the original configuration would have been their entire voting power.
+      await bond(BOND);
+      await adapter.setVotes(bondOwnerAddress, LOCKED);
+
+      await time.increase(1);
+      const timepoint = (await time.latest()) - 1;
+
+      expect(
+        await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+      ).to.equal(LOCKED + BOND);
+      expect(await veBondedVotes.getVotes(bondOwnerAddress)).to.equal(
+        LOCKED + BOND,
+      );
+    });
+
+    it("gives a holder who locked nothing and bonded nothing no voting power", async function () {
+      const { veBondedVotes, otherHolderAddress } = await loadFixture(veSetup);
+
+      // Holds MINTED FOLD and has self-delegated on the token. Under lock-to-vote that is
+      // deliberately worth nothing.
+      await time.increase(1);
+      const timepoint = (await time.latest()) - 1;
+
+      expect(
+        await veBondedVotes.getPastVotes(otherHolderAddress, timepoint),
+      ).to.equal(0n);
+    });
+
+    it("lets an operator vote by bonding alone, without locking", async function () {
+      const { veBondedVotes, bond, bondOwnerAddress } =
+        await loadFixture(veSetup);
+
+      await bond(BOND);
+
+      await time.increase(1);
+      const timepoint = (await time.latest()) - 1;
+
+      expect(
+        await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+      ).to.equal(BOND);
+    });
+
+    /// The whole reason the token reference is kept separate from the votes source.
+    it("measures quorum against FOLD's supply, not the escrow's", async function () {
+      const {
+        veBondedVotes,
+        adapter,
+        ciphernodeBondToken,
+        bond,
+        bondOwnerAddress,
+      } = await loadFixture(veSetup);
+
+      await bond(BOND);
+      await adapter.setVotes(bondOwnerAddress, LOCKED);
+
+      await time.increase(1);
+      const timepoint = (await time.latest()) - 1;
+
+      // The adapter reports zero supply. Had the denominator been read from it, any turnout at
+      // all would have cleared every quorum.
+      expect(await adapter.getPastTotalSupply(timepoint)).to.equal(0n);
+
+      const supply = await veBondedVotes.getPastTotalSupply(timepoint);
+      expect(supply).to.equal(
+        await ciphernodeBondToken.getPastTotalSupply(timepoint),
+      );
+      expect(supply).to.be.greaterThan(0n);
+
+      // Soundness: what one account can vote with is inside the supply it is measured against.
+      expect(
+        await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+      ).to.be.lessThanOrEqual(supply);
+    });
+
+    /// The escrow adapter has no `decimals`, `name`, `symbol` or `totalSupply`. Routing metadata
+    /// through it would revert — and `decimals` reverting is the dangerous one, because CRISP's
+    /// tally scaling catches the failure and silently falls back to a scale of 1.
+    it("reads metadata from FOLD, which the escrow adapter cannot answer for", async function () {
+      const { veBondedVotes, adapter, ciphernodeBondToken } =
+        await loadFixture(veSetup);
+
+      expect(await veBondedVotes.decimals()).to.equal(
+        await ciphernodeBondToken.decimals(),
+      );
+      expect(await veBondedVotes.name()).to.equal(
+        await ciphernodeBondToken.name(),
+      );
+      expect(await veBondedVotes.symbol()).to.equal(
+        await ciphernodeBondToken.symbol(),
+      );
+      expect(await veBondedVotes.totalSupply()).to.equal(
+        await ciphernodeBondToken.totalSupply(),
+      );
+
+      // Not merely different — unanswerable, which is why it must not be asked.
+      const adapterAsToken = await ethers.getContractAt(
+        "BondedVotes",
+        await adapter.getAddress(),
+      );
+      await expect(adapterAsToken.decimals()).to.be.revert(ethers);
+    });
+
+    it("attributes locked FOLD to the locker in balanceOf", async function () {
+      const {
+        veBondedVotes,
+        adapter,
+        escrow,
+        ciphernodeBondToken,
+        bond,
+        bondOwnerAddress,
+      } = await loadFixture(veSetup);
+
+      await bond(BOND);
+      await escrow.setLocked(bondOwnerAddress, LOCKED);
+      await adapter.setVotes(bondOwnerAddress, LOCKED);
+
+      const wallet = await ciphernodeBondToken.balanceOf(bondOwnerAddress);
+
+      // Wallet plus what the escrow and the registry each custody on the account's behalf.
+      expect(await veBondedVotes.balanceOf(bondOwnerAddress)).to.equal(
+        wallet + LOCKED + BOND,
+      );
+    });
+
+    it("routes delegation lookups to the votes source", async function () {
+      const { veBondedVotes, adapter, bondOwnerAddress, otherHolderAddress } =
+        await loadFixture(veSetup);
+
+      await adapter.setDelegate(bondOwnerAddress, otherHolderAddress);
+
+      expect(await veBondedVotes.delegates(bondOwnerAddress)).to.equal(
+        otherHolderAddress,
+      );
+    });
+
+    /// Same argument as `TokenMismatch`, applied to the other half of the numerator: an escrow
+    /// over a different token would mint voting power FOLD's supply does not back, and the
+    /// denominator would never reveal it.
+    it("rejects an escrow that custodies a different token", async function () {
+      const { checkpoints, foldAddress } = await loadFixture(veSetup);
+
+      const foreignToken = await (
+        await ethers.getContractFactory("MockLockAwareCiphernodeBondToken")
+      ).deploy(0);
+      const foreignEscrow = await ethers.deployContract("MockVotingEscrow", [
+        await foreignToken.getAddress(),
+      ]);
+      const foreignAdapter = await ethers.deployContract(
+        "MockEscrowVotesAdapter",
+        [await foreignEscrow.getAddress()],
+      );
+
+      await expect(
+        ethers.deployContract("BondedVotes", [
+          foldAddress,
+          await foreignAdapter.getAddress(),
+          await checkpoints.getAddress(),
+        ]),
+      ).to.be.revert(ethers);
+    });
+
+    it("rejects a votes source whose clock disagrees with the token", async function () {
+      const { checkpoints, adapter, foldAddress } = await loadFixture(veSetup);
+
+      // A block-numbered escrow summed with a timestamp-keyed history answers for two unrelated
+      // instants, and nothing downstream could detect it.
+      await adapter.setClock(1);
+
+      await expect(
+        ethers.deployContract("BondedVotes", [
+          foldAddress,
+          await adapter.getAddress(),
+          await checkpoints.getAddress(),
+        ]),
+      ).to.be.revert(ethers);
+    });
+
+    it("records the escrow it resolved, and leaves it zero without one", async function () {
+      const { veBondedVotes, bondedVotes, escrow } = await loadFixture(veSetup);
+
+      expect(await veBondedVotes.escrow()).to.equal(await escrow.getAddress());
+      // The original configuration resolves no escrow, so balanceOf never consults one.
+      expect(await bondedVotes.escrow()).to.equal(ethers.ZeroAddress);
     });
   });
 });

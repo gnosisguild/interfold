@@ -230,6 +230,7 @@ export function syncProtocolDeploymentRecords(
         blockNumber,
         constructorArgs: {
           token: config.fold,
+          votesSource: config.escrowVotesAdapter ?? config.fold,
           checkpoints: deployment.bondedCheckpoints,
         },
       },
