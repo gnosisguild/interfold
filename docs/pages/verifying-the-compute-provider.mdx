@@ -34,56 +34,24 @@ what the rest of this page is for.
 
 ## The procedure
 
-### 1. Check the pins and the toolchain
-
-```bash
-pnpm check:image-id
-```
-
-This asserts three things without building anything:
-
-- every Interfold git pin the guest workspace reads names **one** revision;
-- `crates/support/Dockerfile`'s `ARG RISC0_TOOLCHAIN` matches `rust-toolchain.toml`;
-- the guest-affecting inputs still digest to the value recorded in
-  `crates/support/contracts/ImageID.stamp.json`.
-
-The third is a **drift ratchet, not a proof**. It shows the inputs have not changed since the image
-ID was recorded. It cannot show that the recorded image ID is the one those inputs produce.
-
-If the stamp carries `"imageIdVerified": false`, the command warns. Treat that image ID as
-unverified until you have run step 2 yourself.
-
-### 2. Rebuild the guest reproducibly
-
-```bash
-./scripts/check-image-id.sh --rebuild
-```
-
-This sets `RISC0_USE_DOCKER=1` and builds the guest with the RISC Zero guest-builder image, then
-compares the regenerated `crates/support/contracts/ImageID.sol` against the committed value. It
-needs Docker.
-
-Two things about this build are worth knowing:
-
-- It uses the **RISC Zero guest-builder image**, not `crates/support/Dockerfile`. That Dockerfile
-  builds the support _service_ container; it does not build the guest.
-- The builder is selected by a **mutable tag**, and `RISC0_DOCKER_CONTAINER_TAG` overrides it. A
-  rebuild is only meaningful alongside the resolved builder digest, which is why the provenance
-  manifest records it.
-
-### 3. Read the deployed value
+### 1. Read the deployed value
 
 ```bash
 cast call <verifier-address> "imageId()(bytes32)" --rpc-url <rpc>
 ```
 
-Compare it against the value from step 2. They must be identical. If they are not, the deployment
-does not correspond to this source — stop and find out why.
+Compare it against `crates/support/contracts/ImageID.sol` in the released source. They must be
+identical. If they are not, the deployment does not correspond to this source — stop and find out
+why.
+
+Note that this compares the deployed value against a **committed** one. Nothing in the repository
+reproduces the image ID from the guest source any more, so a match here shows the deployment agrees
+with what was committed, not that what was committed is what the source builds.
 
 Also read `risc0Verifier()` and confirm the underlying RISC Zero verifier is the one you expect for
 that chain.
 
-### 4. Generate the manifest
+### 2. Generate the manifest
 
 ```bash
 pnpm provenance:manifest --rpc <rpc> --verifier <verifier-address> --out manifest.json

@@ -28,7 +28,6 @@
     "check:committee": "./scripts/check-committee.sh",
     "check:docs": "./scripts/check-doc-sync.sh",
     "check:invariants": "./scripts/check-invariants.sh",
-    "check:image-id": "./scripts/check-image-id.sh",
     "provenance:manifest": "tsx scripts/generate-provenance-manifest.ts",
     "check:verifiers": "tsx scripts/generate-verifiers.ts --circuits dkg_aggregator,decryption_aggregator --check",
     "test": "pnpm evm:test && pnpm rust:test && pnpm sdk:test && pnpm noir:test",

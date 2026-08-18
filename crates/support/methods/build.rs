@@ -47,12 +47,12 @@ fn use_docker() -> bool {
 /// risc0-build does not read that Dockerfile — it generates its own and, left alone, uses its
 /// compiled-in default tag. For risc0-build 3.0.3 that default is `r0.1.88.0`, which carries rustc
 /// 1.88, while the guest's dependency tree pins fhe.rs at an MSRV of 1.91.1. The guest then fails
-/// to compile inside the container with an MSRV error, long after `check-image-id.sh` has compared
-/// the Dockerfile against `rust-toolchain.toml` and found them in agreement — that check asserts a
-/// toolchain the ELF build was never given.
+/// to compile inside the container with an MSRV error, and the Dockerfile that says 1.91.1 has no
+/// bearing on it.
 ///
-/// Reading the value here rather than repeating it keeps the toolchain the script validates and the
-/// toolchain the guest is actually built with the same one.
+/// Reading the tag from `ARG RISC0_TOOLCHAIN` is what ties the two together: the toolchain the
+/// Dockerfile declares becomes the toolchain the ELF is actually built with, rather than the two
+/// being independent values that happen to agree.
 fn guest_builder_tag(support_dir: &Path) -> String {
     let dockerfile = support_dir.join("Dockerfile");
     println!("cargo:rerun-if-changed={}", dockerfile.display());

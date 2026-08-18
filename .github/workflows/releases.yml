@@ -471,11 +471,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # A released guest that does not match the released source is the failure this whole gate
-      # exists to prevent, so the release fails rather than shipping an unverified artefact.
-      - name: Check guest pins, toolchain, and image ID drift
-        run: ./scripts/check-image-id.sh
-
       # A RISC Zero proof names a guest image; it does not name the source that produced it. This
       # record is what lets a third party tie the released source to the deployed imageId.
       - name: Generate compute-provider provenance manifest

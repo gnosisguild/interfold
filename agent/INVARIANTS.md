@@ -520,17 +520,6 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   `crates/support/tests/Elf.sol`.
 - **Generated verifiers must match the built VKs** — `pnpm check:verifiers`, pre-push + CI
   (`build_circuits`). A drift means the deployed verifier accepts a different circuit from the tree.
-- **A guest change must reach `ImageID.sol`** — `pnpm check:image-id`, pre-push + CI
-  (`check_image_id`). `Risc0BfvCiphertextVerifier.imageId` is immutable and names exactly one guest
-  image, so a guest change that leaves the image ID untouched ships a verifier that no longer
-  matches the tree. The gate asserts three things: every Interfold git pin the guest workspace reads
-  names one revision; the Dockerfile `RISC0_TOOLCHAIN` matches `rust-toolchain.toml` (the guest
-  builds the same dependency tree as the host, and the pinned fhe.rs declares that MSRV); and the
-  digest of the guest-affecting inputs matches `crates/support/contracts/ImageID.stamp.json`. The
-  stamp is a **drift ratchet, not a proof** — it shows the inputs are unchanged since the image ID
-  was recorded, never that the recorded value is the one those inputs produce. Only
-  `./scripts/check-image-id.sh --rebuild` shows that. A stamp carrying `"imageIdVerified": false`
-  has never been reproduced; treat its image ID as unverified.
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties

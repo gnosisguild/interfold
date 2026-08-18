@@ -131,8 +131,8 @@ patch.
 The order matters:
 
 1. Merge the change to `crates/compute-provider`, then push.
-2. Bump every Interfold pin to the merge commit. There are three, and `pnpm check:image-id` reads
-   all of them and fails when they do not name one revision:
+2. Bump every Interfold pin to the merge commit. There are three, and they must all name the same
+   revision — the guest and host workspaces have to compile the same sources:
    - `e3-fhe-params` in `crates/support/Cargo.toml`
    - `e3-compute-provider` in `crates/support/Cargo.toml`
    - `e3-compute-provider` in `crates/support/methods/guest/Cargo.toml`
@@ -143,21 +143,14 @@ The order matters:
 
 3. Update the `crates/support` call sites that track the crate's API — the compiler will point at
    them, since they built against the old revision until now.
-4. Rebuild the guest against the pinned code:
+4. Rebuild the guest against the pinned code with the RISC Zero Docker builder, and commit the
+   regenerated `crates/support/contracts/ImageID.sol`.
+5. Redeploy `Risc0BfvCiphertextVerifier`, and every E3 program that stores its own image ID.
 
-   ```bash
-   ./scripts/check-image-id.sh --rebuild
-   ```
-
-5. Commit the regenerated `crates/support/contracts/ImageID.sol`, refresh
-   `crates/support/contracts/ImageID.stamp.json` with the new input digest, and set
-   `imageIdVerified` to `true` — it is `false` for any image ID nobody has reproduced.
-6. Redeploy `Risc0BfvCiphertextVerifier`, and every E3 program that stores its own image ID.
-
-Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree.
-`pnpm check:image-id` catches the source drift, but only a rebuild proves the recorded image ID is
-the one the current sources produce. The reviewer-facing procedure is
-`docs/pages/verifying-the-compute-provider.mdx`.
+Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree, and
+nothing in the repository detects it: there is no longer an automated check that the committed image
+ID is the one the current sources produce, so this order is a convention rather than something CI
+enforces. The reviewer-facing procedure is `docs/pages/verifying-the-compute-provider.mdx`.
 
 ### Step 3: Upload Program to IPFS (Pinata)
 

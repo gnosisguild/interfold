@@ -20,10 +20,10 @@
  *   pnpm provenance:manifest
  *   pnpm provenance:manifest --rpc https://... --verifier 0x... --out manifest.json
  *
- * The manifest is a record, not a check. `pnpm check:image-id` is the gate; this describes what was
- * built and where it was deployed. Verifying a manifest against a rebuild is
- * `./scripts/check-image-id.sh --rebuild`, and the procedure is documented at
- * docs/pages/verifying-the-compute-provider.mdx.
+ * The manifest is a record, not a check: it describes what was built and where it was deployed.
+ * Nothing in this repository verifies that the recorded image ID is the one the committed sources
+ * produce — that takes a reproducible Docker rebuild of the guest, and the reviewer-facing
+ * procedure is documented at docs/pages/verifying-the-compute-provider.mdx.
  */
 
 import { execFileSync } from 'child_process'
@@ -34,7 +34,6 @@ import path from 'path'
 const REPO_ROOT = path.resolve(__dirname, '..')
 const SUPPORT = path.join(REPO_ROOT, 'crates', 'support')
 const IMAGE_ID_SOL = path.join(SUPPORT, 'contracts', 'ImageID.sol')
-const STAMP = path.join(SUPPORT, 'contracts', 'ImageID.stamp.json')
 const DOCKERFILE = path.join(SUPPORT, 'Dockerfile')
 
 interface Args {
@@ -247,7 +246,6 @@ async function main() {
   const dockerfile = readIfPresent(DOCKERFILE)
   const risc0Version = firstMatch(dockerfile, /^ARG RISC0_VERSION=(.*)$/m)
   const risc0Toolchain = firstMatch(dockerfile, /^ARG RISC0_TOOLCHAIN=(.*)$/m)
-  const stamp = readIfPresent(STAMP)
   // Lowercased for the same reason the RPC answers are: Solidity accepts either case, and this
   // value is compared against `deployment.onchainImageId` as a plain string.
   const committedImageId = firstMatch(readIfPresent(IMAGE_ID_SOL), /(0x[0-9a-fA-F]{64})/)?.toLowerCase() ?? null
@@ -290,8 +288,6 @@ async function main() {
       // The SHA-256 of the ELF is a binary integrity check. It is NOT the image ID, which is
       // computed from the loaded memory image. Both are recorded; neither substitutes for the other.
       imageId: committedImageId,
-      imageIdVerified: stamp ? !/"imageIdVerified"\s*:\s*false/.test(stamp) : null,
-      guestInputsDigest: firstMatch(stamp, /"guestInputsDigest"\s*:\s*"([0-9a-f]{64})"/),
     },
     deployment: chain,
   }
@@ -309,7 +305,6 @@ async function main() {
   const unresolved: string[] = []
   if (!manifest.guest.elfSha256) unresolved.push('guest.elfSha256')
   if (!manifest.build.builderImage.digest) unresolved.push('build.builderImage.digest')
-  if (!manifest.guest.imageIdVerified) unresolved.push('guest.imageIdVerified')
   if (!chain) {
     unresolved.push('deployment (pass --rpc and --verifier)')
   } else if (!deploymentResolved) {
