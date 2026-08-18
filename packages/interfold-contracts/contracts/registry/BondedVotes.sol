@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { IERC5805 } from "@openzeppelin/contracts/interfaces/IERC5805.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IERC20Metadata
 } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -242,9 +243,11 @@ contract BondedVotes is IERC5805 {
     /// FOLD, plus — under an escrow votes source — the vesting-locked FOLD it cannot escrow. All
     /// three are FOLD-denominated and read at the same timepoint.
     ///
-    /// `getPastBonded` reverts on a timepoint that has not settled, and it is called before the
-    /// timepoint is narrowed to the clock's width, so the cast in {_lockedVotes} can only ever
-    /// see a timepoint the clock has already reached.
+    /// Cast through `SafeCast` rather than directly. `getPastBonded` already reverts on a
+    /// timepoint that has not settled, which leaves nothing wide enough to truncate — but that
+    /// makes the narrowing safe only because of the order these two lines run in, and only for
+    /// the history this contract happens to be bound to. Reverting on the narrowing itself keeps
+    /// the guarantee local to this line, where a reader can check it.
     function getPastVotes(
         address account,
         uint256 timepoint
@@ -254,7 +257,7 @@ contract BondedVotes is IERC5805 {
         return
             votesSource.getPastVotes(account, timepoint) +
             bonded +
-            _lockedVotes(account, uint64(timepoint), bonded);
+            _lockedVotes(account, SafeCast.toUint64(timepoint), bonded);
     }
 
     /// @dev The vesting-locked half of the numerator, netted down by the bond.
