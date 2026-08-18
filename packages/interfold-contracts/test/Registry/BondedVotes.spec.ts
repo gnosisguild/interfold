@@ -1281,6 +1281,36 @@ describe("BondedVotes", function () {
       );
     });
 
+    /// The mirror of the registry netting. The escrow custodies real FOLD and every unit of it is
+    /// already attributed above to the account that locked it, so leaving it at the escrow's own
+    /// address as well would place the same tokens twice and push summed balances past total
+    /// supply — the denominator every holder-percentage view divides by.
+    it("nets the escrow down to nothing in balanceOf", async function () {
+      const { veBondedVotes, escrow, ciphernodeBondToken, otherHolderAddress } =
+        await loadFixture(veSetup);
+
+      const escrowAddress = await escrow.getAddress();
+      const custodied = ethers.parseEther("9000");
+
+      // Stands in for FOLD deposited by lockers: the escrow holds it, and it is attributed to the
+      // lockers rather than to the escrow.
+      await ciphernodeBondToken.mint(
+        escrowAddress,
+        custodied,
+        ethers.encodeBytes32String("Escrow deposits"),
+      );
+      await escrow.setLocked(otherHolderAddress, custodied);
+
+      expect(await ciphernodeBondToken.balanceOf(escrowAddress)).to.equal(
+        custodied,
+      );
+      expect(await veBondedVotes.balanceOf(escrowAddress)).to.equal(0n);
+      // Counted exactly once, at the locker.
+      expect(await veBondedVotes.balanceOf(otherHolderAddress)).to.equal(
+        (await ciphernodeBondToken.balanceOf(otherHolderAddress)) + custodied,
+      );
+    });
+
     it("routes delegation lookups to the votes source", async function () {
       const { veBondedVotes, adapter, bondOwnerAddress, otherHolderAddress } =
         await loadFixture(veSetup);
@@ -1332,6 +1362,333 @@ describe("BondedVotes", function () {
           await checkpoints.getAddress(),
         ]),
       ).to.be.revert(ethers);
+    });
+
+    /// FOLD's own vesting locks, the third source under an escrow votes source.
+    ///
+    /// Lock-encumbered FOLD sits in the holder's wallet and the token's transfer hook refuses to
+    /// move it, so it can never reach the escrow. Without counting it here a locked holder would
+    /// be barred from governance for the whole vesting schedule by a rule they cannot act on.
+    describe("vesting-locked FOLD", function () {
+      const ALLOCATION = ethers.parseEther("6000");
+
+      /// Tge-anchored, and the fixture never fires TGE, so the allocation stays fully locked for
+      /// every timestamp the tests read. What is being measured is the netting, not the curve.
+      async function allocate(
+        token: Awaited<ReturnType<typeof setup>>["ciphernodeBondToken"],
+        recipient: string,
+        amount: bigint,
+        policyName = "VE_LOCK",
+      ) {
+        const policyId = ethers.encodeBytes32String(policyName);
+        await token.createLockPolicy(policyId, {
+          holdUntil: 0n,
+          unlock: {
+            anchor: 1,
+            start: 0n,
+            cliffDuration: 0n,
+            vestDuration: 2n * 365n * 24n * 60n * 60n,
+          },
+        });
+        await token.mintAllocations([
+          {
+            recipient,
+            amount,
+            policyId,
+            label: ethers.encodeBytes32String("ve-test"),
+          },
+        ]);
+        return policyId;
+      }
+
+      it("counts locked FOLD for a holder who escrowed and bonded nothing", async function () {
+        const { veBondedVotes, ciphernodeBondToken, otherHolderAddress } =
+          await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, otherHolderAddress, ALLOCATION);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await ciphernodeBondToken.lockedBalanceOf(otherHolderAddress),
+        ).to.equal(ALLOCATION);
+        expect(
+          await veBondedVotes.getPastVotes(otherHolderAddress, timepoint),
+        ).to.equal(ALLOCATION);
+        expect(await veBondedVotes.getVotes(otherHolderAddress)).to.equal(
+          ALLOCATION,
+        );
+      });
+
+      it("adds locked FOLD to escrowed and bonded FOLD", async function () {
+        const {
+          veBondedVotes,
+          ciphernodeBondToken,
+          adapter,
+          bond,
+          bondOwnerAddress,
+        } = await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, ALLOCATION);
+        await adapter.setVotes(bondOwnerAddress, LOCKED);
+        await bond(BOND);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        // The bond is smaller than the lock, so it covers only part of the obligation: the rest
+        // is FOLD the wallet is still holding and still cannot escrow.
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(LOCKED + ALLOCATION);
+      });
+
+      /// The one place a naive `locked + escrowed + bonded` sum goes wrong. A bond SATISFIES a
+      /// lock — {InterfoldToken.transferableBalanceOf} nets the bond against the obligation — so
+      /// bonded FOLD is reported by both `lockedBalanceAt` and the bonded history while existing
+      /// exactly once. Summing both would let an operator vote twice with the same token.
+      it("does not count FOLD twice when the bond covers the lock", async function () {
+        const { veBondedVotes, ciphernodeBondToken, bond, bondOwnerAddress } =
+          await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, BOND);
+        await bond(BOND);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await ciphernodeBondToken.lockedBalanceOf(bondOwnerAddress),
+        ).to.equal(BOND);
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(BOND);
+      });
+
+      it("counts a bond larger than the lock exactly once", async function () {
+        const { veBondedVotes, ciphernodeBondToken, bond, bondOwnerAddress } =
+          await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, BOND / 4n);
+        await bond(BOND);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(BOND);
+      });
+
+      /// Soundness: what one account votes with never exceeds the supply it is measured against,
+      /// which is what any double count would break first.
+      it("keeps a locked, escrowed and bonded holder inside total supply", async function () {
+        const {
+          veBondedVotes,
+          ciphernodeBondToken,
+          adapter,
+          bond,
+          bondOwnerAddress,
+        } = await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, ALLOCATION);
+        await adapter.setVotes(bondOwnerAddress, LOCKED);
+        await bond(BOND);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.be.lessThanOrEqual(
+          await veBondedVotes.getPastTotalSupply(timepoint),
+        );
+      });
+
+      /// Under an escrow votes source the lock schedule is the ONLY way an encumbered holder can
+      /// vote, so a token that cannot answer for it must be rejected at construction. Tolerating
+      /// the failure at read time would return zero and disenfranchise exactly the holders the
+      /// third source exists to enfranchise — silently, and for the whole vesting schedule.
+      it("refuses an escrow votes source over a token with no lock schedule", async function () {
+        const { veBondedVotes, foldAddress } = await loadFixture(veSetup);
+
+        // Carries the voting surface and a matching clock, but no `lockedBalanceAt`.
+        const lockless = await ethers.deployContract("MockVotesToken");
+        const locklessAddress = await lockless.getAddress();
+
+        const escrowOver = async (tokenAddress: string) => {
+          const escrow = await ethers.deployContract("MockVotingEscrow", [
+            tokenAddress,
+          ]);
+          return ethers.deployContract("MockEscrowVotesAdapter", [
+            await escrow.getAddress(),
+          ]);
+        };
+
+        await expect(
+          ethers.deployContract("BondedVotes", [
+            locklessAddress,
+            await (await escrowOver(locklessAddress)).getAddress(),
+            await (
+              await ethers.deployContract("MockBondedCheckpointsStub", [
+                locklessAddress,
+              ])
+            ).getAddress(),
+          ]),
+        ).to.be.revertedWithCustomError(
+          veBondedVotes,
+          "LockedBalancesUnsupported",
+        );
+
+        // Control: the same wiring over FOLD, which does answer, constructs. Without this the
+        // test would pass just as well if the stub were what rejected the deployment.
+        await expect(
+          ethers.deployContract("BondedVotes", [
+            foldAddress,
+            await (await escrowOver(foldAddress)).getAddress(),
+            await (
+              await ethers.deployContract("MockBondedCheckpointsStub", [
+                foldAddress,
+              ])
+            ).getAddress(),
+          ]),
+        ).to.not.be.revert(ethers);
+      });
+
+      /// The token votes for itself here, so the lock schedule is never read and a token without
+      /// one stays deployable. Probing unconditionally would break every such configuration for a
+      /// surface it does not use.
+      it("does not require a lock schedule when the token votes for itself", async function () {
+        const lockless = await ethers.deployContract("MockVotesToken");
+        const locklessAddress = await lockless.getAddress();
+
+        await expect(
+          ethers.deployContract("BondedVotes", [
+            locklessAddress,
+            locklessAddress,
+            await (
+              await ethers.deployContract("MockBondedCheckpointsStub", [
+                locklessAddress,
+              ])
+            ).getAddress(),
+          ]),
+        ).to.not.be.revert(ethers);
+      });
+
+      /// Netting the bond off the lock is only sound while the token's own transfer rule holds:
+      /// `balance >= locked - bonded`, checked on every transfer. SLASHING breaks it — it takes
+      /// the bond without touching the lock — so an operator that had already moved locked FOLD
+      /// out on the strength of that bond is left owing more than it holds. Uncapped, the locked
+      /// term would vote with FOLD that is now in the slash recipient's hands and countable
+      /// there too.
+      it("stops counting locked FOLD a slash left unbacked", async function () {
+        const { veBondedVotes, bondingRegistry, ciphernodeBondToken } =
+          await loadFixture(veSetup);
+
+        const [, , , , , locker, lockerOperator, sink] =
+          await ethers.getSigners();
+        const lockerAddress = await locker.getAddress();
+        const lockerOperatorAddress = await lockerOperator.getAddress();
+        const sinkAddress = await sink.getAddress();
+        const registryAddress = await bondingRegistry.getAddress();
+
+        // A wallet holding exactly one lock and an equal amount of free FOLD.
+        await allocate(ciphernodeBondToken, lockerAddress, BOND, "SLASH_LOCK");
+        await ciphernodeBondToken.mint(
+          lockerAddress,
+          BOND,
+          ethers.encodeBytes32String("Free"),
+        );
+
+        // Bonding the free half satisfies the lock, which frees the locked half to move.
+        await bondingRegistry
+          .connect(lockerOperator)
+          .setBondOwner(lockerAddress);
+        await ciphernodeBondToken
+          .connect(locker)
+          .approve(registryAddress, BOND);
+        await bondingRegistry
+          .connect(locker)
+          .bondCiphernodeFor(lockerOperatorAddress, BOND);
+
+        await ciphernodeBondToken.setTransferWhitelisted(sinkAddress, true);
+        await ciphernodeBondToken.connect(locker).transfer(sinkAddress, BOND);
+        expect(await ciphernodeBondToken.balanceOf(lockerAddress)).to.equal(0n);
+
+        // At this point the sum is honest: nothing in the wallet, the whole lock covered.
+        await time.increase(1);
+        expect(
+          await veBondedVotes.getPastVotes(
+            lockerAddress,
+            (await time.latest()) - 1,
+          ),
+        ).to.equal(BOND);
+
+        const managerAddress = await bondingRegistry.slashingManager();
+        await networkHelpers.setBalance(managerAddress, ethers.parseEther("1"));
+        await networkHelpers.impersonateAccount(managerAddress);
+        await bondingRegistry
+          .connect(await ethers.getSigner(managerAddress))
+          .slashCiphernodeBond(
+            lockerOperatorAddress,
+            BOND,
+            ethers.encodeBytes32String("TEST_SLASH"),
+          );
+        await networkHelpers.stopImpersonatingAccount(managerAddress);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        // The lock outlives the bond that covered it, so `locked - bonded` is the whole
+        // allocation — but the wallet holds none of it, and the slashed FOLD votes elsewhere.
+        expect(
+          await ciphernodeBondToken.lockedBalanceOf(lockerAddress),
+        ).to.equal(BOND);
+        expect(
+          await veBondedVotes.getPastVotes(lockerAddress, timepoint),
+        ).to.equal(0n);
+        expect(await veBondedVotes.getVotes(lockerAddress)).to.equal(0n);
+      });
+
+      /// The cap is a bound, not a source: it never lets an account vote with more than the
+      /// unbonded part of its lock, and never reaches into FOLD the lock does not encumber.
+      it("caps at the lock, not at the wallet balance", async function () {
+        const { veBondedVotes, ciphernodeBondToken, otherHolderAddress } =
+          await loadFixture(veSetup);
+
+        // The holder's wallet is far larger than the lock; only the locked part may vote.
+        await allocate(ciphernodeBondToken, otherHolderAddress, ALLOCATION);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await ciphernodeBondToken.balanceOf(otherHolderAddress),
+        ).to.be.greaterThan(ALLOCATION);
+        expect(
+          await veBondedVotes.getPastVotes(otherHolderAddress, timepoint),
+        ).to.equal(ALLOCATION);
+      });
+
+      /// When the token votes for itself, locked FOLD is wallet FOLD and the token's own
+      /// checkpoints already carry it. Adding the lock schedule there would double every locked
+      /// holder's weight.
+      it("is ignored when the votes source is the token itself", async function () {
+        const { bondedVotes, ciphernodeBondToken, otherHolderAddress } =
+          await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, otherHolderAddress, ALLOCATION);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        expect(
+          await bondedVotes.getPastVotes(otherHolderAddress, timepoint),
+        ).to.equal(
+          await ciphernodeBondToken.getPastVotes(otherHolderAddress, timepoint),
+        );
+      });
     });
 
     it("records the escrow it resolved, and leaves it zero without one", async function () {

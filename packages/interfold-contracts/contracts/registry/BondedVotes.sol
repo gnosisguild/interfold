@@ -12,6 +12,12 @@ import {
 } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+// FOLD's lock schedule, the same surface the bonding registry reads. Lock-encumbered FOLD sits in
+// the holder's own wallet and cannot be moved, so it can never be deposited into the escrow —
+// which is exactly why it needs counting here rather than being left to the escrow.
+import {
+    ILockAwareCiphernodeBondToken
+} from "../interfaces/ILockAwareCiphernodeBondToken.sol";
 
 /// @dev The slice of a voting-escrow IVotes adapter this contract needs to bind it to a token.
 /// Only consulted when the votes source is not the token itself.
@@ -60,8 +66,20 @@ interface IVotingEscrow {
  * never exceed the supply they are measured against. Reading the denominator off the escrow
  * instead would omit the bonded half entirely and let participation exceed 100%.
  *
- * Locked and bonded FOLD cannot overlap: locking custodies the token in the escrow and bonding
- * custodies it in the registry, so the same token can never be counted twice.
+ * A THIRD SOURCE, under an escrow votes source only: FOLD still encumbered by FOLD's own vesting
+ * locks. That FOLD sits in the holder's own wallet and {InterfoldToken._update} refuses to move
+ * it, so it can never reach the escrow — a locked holder would be disenfranchised for the whole
+ * lock schedule by a rule they cannot act on. {lockedBalanceAt} is read at the same timepoint as
+ * the other two and counted for them.
+ *
+ * Escrowed and bonded FOLD cannot overlap: the escrow and the registry custody the token at two
+ * different addresses, so the same token can never be at both. LOCKED AND BONDED DO OVERLAP, and
+ * that is the one place a naive sum would go wrong. A bond satisfies a lock — see
+ * {InterfoldToken.transferableBalanceOf}, which lets a wallet move its locked FOLD to the extent
+ * the bond already covers the obligation — so an account that bonds its locked FOLD reports the
+ * full amount under BOTH `lockedBalanceAt` and `getPastBonded` while holding it once. The locked
+ * half is therefore netted down by the bond: what remains is the part the wallet must still be
+ * holding, and `bonded + max(0, locked - bonded)` is just `max(bonded, locked)`.
  *
  * Delegation is deliberately not forwarded for the bonded part. `IVotes.delegate` here would have
  * to move a position the registry owns, which this contract cannot do. The primary source keeps
@@ -97,6 +115,10 @@ contract BondedVotes is IERC5805 {
 
     /// @notice Thrown when the history records bonds of a token other than the one read for votes.
     error TokenMismatch(address ciphernodeBondToken, address votingToken);
+
+    /// @notice Thrown when an escrow votes source is paired with a token that has no lock
+    /// schedule to read, which would silently disenfranchise every locked holder.
+    error LockedBalancesUnsupported(address votingToken);
 
     /// @notice Thrown for the delegation entry points, which this view cannot honour.
     error DelegationNotSupported();
@@ -183,6 +205,20 @@ contract BondedVotes is IERC5805 {
             revert VotesSourceMismatch(escrowToken, address(_token));
         }
 
+        // Probed once here rather than tolerated on every read. Under an escrow votes source the
+        // lock schedule is the ONLY way an encumbered holder can vote, so a token that cannot
+        // answer for it must not be deployed against silently: a `try/catch` at read time would
+        // return zero and disenfranchise exactly the holders this branch exists to enfranchise.
+        (bool ok, bytes memory result) = address(_token).staticcall(
+            abi.encodeCall(
+                ILockAwareCiphernodeBondToken.lockedBalanceAt,
+                (address(0), 0)
+            )
+        );
+        if (!ok || result.length != 32) {
+            revert LockedBalancesUnsupported(address(_token));
+        }
+
         return boundEscrow;
     }
 
@@ -203,15 +239,67 @@ contract BondedVotes is IERC5805 {
 
     /// @inheritdoc IVotes
     /// @dev The numerator: whatever the primary source attributes to the account, plus its bonded
-    /// FOLD. Both halves are FOLD-denominated and cannot overlap, since locking and bonding
-    /// custody the token in different places.
+    /// FOLD, plus — under an escrow votes source — the vesting-locked FOLD it cannot escrow. All
+    /// three are FOLD-denominated and read at the same timepoint.
+    ///
+    /// `getPastBonded` reverts on a timepoint that has not settled, and it is called before the
+    /// timepoint is narrowed to the clock's width, so the cast in {_lockedVotes} can only ever
+    /// see a timepoint the clock has already reached.
     function getPastVotes(
         address account,
         uint256 timepoint
     ) external view returns (uint256) {
+        uint256 bonded = checkpoints.getPastBonded(account, timepoint);
+
         return
             votesSource.getPastVotes(account, timepoint) +
-            checkpoints.getPastBonded(account, timepoint);
+            bonded +
+            _lockedVotes(account, uint64(timepoint), bonded);
+    }
+
+    /// @dev The vesting-locked half of the numerator, netted down by the bond.
+    ///
+    /// Zero unless the votes source is an escrow. When the token votes for itself, locked FOLD is
+    /// wallet FOLD and the token has already counted it — adding it again would simply double
+    /// every locked holder's weight.
+    ///
+    /// Netted, because a bond satisfies a lock: FOLD that is bonded is reported by BOTH
+    /// `lockedBalanceAt` and the bonded history while existing once, and `getPastVotes` already
+    /// counts the bonded side in full. What is left is the part of the obligation the wallet must
+    /// still be holding itself.
+    ///
+    /// UNLIKE the other two halves this is not a checkpointed history: `lockedBalanceAt` walks the
+    /// account's CURRENT locks and evaluates them against `timestamp`. A lock created after a
+    /// governance snapshot therefore shows up in that snapshot's answer. That is safe for the
+    /// vesting locks it exists for, which are minted or claimed rather than acquired at will, but
+    /// it is not a general-purpose past balance and must not be treated as one.
+    /// CAPPED at the wallet balance, because netting alone stops being enough once a bond can be
+    /// SLASHED. What makes `locked - bonded` a real holding is the token's own transfer rule,
+    /// `balance >= locked - bonded`, enforced on every transfer. Slashing cuts the bond without
+    /// cutting the lock, so an operator that had already moved locked FOLD out on the strength of
+    /// that bond is left owing more than it holds — and the uncapped term would vote with the
+    /// difference, FOLD that is now in the slash recipient's hands and countable there too.
+    ///
+    /// The cap reads the present balance even for a past timepoint. It is a bound, never a
+    /// source: it can only lower this term towards what the account demonstrably holds, and the
+    /// only power it can lower is the account's own. That is the right trade for a term already
+    /// evaluated from present-state locks.
+    /// @param bonded The account's bonded total at the same timepoint.
+    function _lockedVotes(
+        address account,
+        uint64 timestamp,
+        uint256 bonded
+    ) private view returns (uint256) {
+        if (escrow == address(0)) return 0;
+
+        uint256 locked = ILockAwareCiphernodeBondToken(address(token))
+            .lockedBalanceAt(account, timestamp);
+        if (locked <= bonded) return 0;
+
+        uint256 unbonded = locked - bonded;
+        uint256 held = IERC20Metadata(address(token)).balanceOf(account);
+
+        return unbonded > held ? held : unbonded;
     }
 
     /// @inheritdoc IVotes
@@ -227,12 +315,17 @@ contract BondedVotes is IERC5805 {
     }
 
     /// @inheritdoc IVotes
-    /// @dev Both halves read the present. Pairing a current wallet balance with
+    /// @dev Every half reads the present. Pairing a current wallet balance with
     /// `getPastBonded(account, clock() - 1)` would sum two different instants: a claim or a slash
     /// in this block would leave the bonded half stale and high, so the total could exceed what
     /// the owner holds — and, summed across owners, exceed total supply.
     function getVotes(address account) external view returns (uint256) {
-        return votesSource.getVotes(account) + checkpoints.bonded(account);
+        uint256 bonded = checkpoints.bonded(account);
+
+        return
+            votesSource.getVotes(account) +
+            bonded +
+            _lockedVotes(account, uint64(block.timestamp), bonded);
     }
 
     /// @inheritdoc IVotes
@@ -277,6 +370,18 @@ contract BondedVotes is IERC5805 {
                 .totalCiphernodeBondLiability();
             // Saturating: an accounting drift must not make the balance unreadable.
             held = held > custodied ? held - custodied : 0;
+        } else if (escrow != address(0) && account == escrow) {
+            // The escrow is netted for the same reason as the registry, and to the same end:
+            // every unit it holds is already attributed below to the account that locked it, so
+            // leaving it here too would place the same FOLD at two addresses and push summed
+            // balances past total supply.
+            //
+            // Netted to zero rather than by a liability figure, because the escrow exposes no
+            // such total, and inventing one from an interface this contract cannot verify would
+            // be the more dangerous guess. The cost is that FOLD donated to the escrow on its own
+            // account reads as nothing; the alternative cost is a double count, and only one of
+            // those breaks the denominator every holder-percentage view divides by.
+            held = 0;
         }
 
         // Locked FOLD is custodied by the escrow for the same reason bonded FOLD is custodied by

@@ -59,11 +59,29 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
   let participation exceed 100%. Summed voting power must never exceed total supply. —
   `BondedVotes.sol`; `flow-trace/02`
-- **Locked and bonded FOLD cannot overlap.** Locking custodies the token in the escrow and bonding
-  custodies it in the registry, so no token can be in both and the two halves of the numerator can
-  never count the same unit twice. Both were transferred rather than burned, so both are still
-  inside the token's total supply — which is what makes the ratio sound in either configuration. —
-  `BondedVotes.sol`; `flow-trace/02`
+- **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
+  Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
+  can be in both. Both were transferred rather than burned, so both are still inside the token's
+  total supply — which is what makes the ratio sound in either configuration. Under an escrow votes
+  source `BondedVotes` adds a third source, `InterfoldToken.lockedBalanceAt`, because vesting-locked
+  FOLD sits in the holder's own wallet and the transfer hook will not let it reach the escrow. That
+  source **does** overlap the bond: a bond satisfies a lock (`transferableBalanceOf` nets the two),
+  so bonded FOLD is reported by `lockedBalanceAt` and by the bonded history while existing once.
+  `_lockedVotes` therefore subtracts the bond from the locked balance, saturating at zero, making
+  the pair worth `max(bonded, locked)` — then caps the result at the account's wallet balance,
+  because slashing takes the bond without taking the lock and would otherwise leave the account
+  voting with FOLD the slash recipient now holds. The lock schedule is read **only** when the votes
+  source is an escrow: when the token votes for itself, locked FOLD is wallet FOLD the token has
+  already counted. — `BondedVotes.sol`; `InterfoldToken.sol`; `flow-trace/02`
+- **The lock schedule is present-state, not history.** `lockedBalanceAt` walks an account's
+  **current** locks and evaluates them against the timestamp given, so a lock created after a
+  governance snapshot appears in that snapshot's answer — unlike the bonded history, which is
+  checkpointed. Sound for vesting locks, which are minted or claimed rather than acquired at will;
+  it must not be treated as a general past balance. — `BondedVotes.sol`; `InterfoldToken.sol`
+- **An escrow votes source requires a token with a lock schedule.** `_bindVotesSource` staticcalls
+  `lockedBalanceAt` once at construction and reverts `LockedBalancesUnsupported` if it cannot
+  answer. Tolerating the failure at read time would return zero and disenfranchise exactly the
+  locked holders the third source exists to enfranchise. — `BondedVotes.sol`
 - **Every summed source must share the token's clock.** `BondedCheckpoints` keys by
   `block.timestamp` to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes`
   compares the history's clock **and** a non-token votes source's clock against the token's at
@@ -85,10 +103,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   account it belongs to, so counting it at the custodian's address as well would place the same
   tokens twice and push summed balances above total supply — the denominator every holder-percentage
   view divides by. The registry's entry subtracts `totalCiphernodeBondLiability`, saturating at
-  zero; locked FOLD is added per account via the escrow's `votingPowerForAccount`, which is
-  delegation-blind, rather than the adapter's own `balanceOf`, which counts lock NFTs rather than
-  tokens. `getVotes` needs no such adjustment: the registry never delegates, so bonded FOLD carries
-  no wallet votes to double. — `BondedVotes.sol`; `flow-trace/02`
+  zero, and the escrow's own entry is netted to zero for the same reason — every unit it holds is
+  attributed to a locker, and it publishes no liability total to subtract instead; locked FOLD is
+  added per account via the escrow's `votingPowerForAccount`, which is delegation-blind, rather than
+  the adapter's own `balanceOf`, which counts lock NFTs rather than tokens. `getVotes` needs no such
+  adjustment: the registry never delegates, so bonded FOLD carries no wallet votes to double. —
+  `BondedVotes.sol`; `flow-trace/02`
 - **`setBondedCheckpoints` is one-shot per ciphernode bond token, and self-verifying.** It requires
   the checkpoint contract to name this registry **and** to accept a write from it, checked by
   syncing the zero address, whose bonded total is always zero. `registry()` alone is insufficient:
