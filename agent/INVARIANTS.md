@@ -51,30 +51,64 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   value already latest — exact, because a lookup at the skipped timepoint resolves to the preceding
   entry — so the permissionless `resyncBondedCheckpoint` cannot be used to grow an owner's history
   by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
-- **Bonded voting power is additive to the token, never to its supply.** `BondedVotes.getPastVotes`
-  sums wallet voting power and bonded FOLD, but `getPastTotalSupply` passes through unchanged:
-  bonded FOLD was transferred, not burned, so it is already counted. Adding it again would inflate
-  every quorum denominator. Summed voting power must never exceed total supply. — `BondedVotes.sol`;
-  `flow-trace/02`
-- **Bonded history and the token must share a clock.** `BondedCheckpoints` keys by `block.timestamp`
-  to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes` compares both clocks at
-  construction. Summing a timestamp-keyed history with a block-numbered one answers for two
+- **The numerator comes from the votes source; the denominator is always the token.**
+  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and that
+  account's bonded FOLD, while `getPastTotalSupply` passes the **token's** supply through unchanged.
+  `votesSource` is either the token itself (wallet-held FOLD votes, the original behaviour) or an
+  escrow adapter (only locked FOLD votes, so holders must lock to participate while operators keep
+  weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
+  let participation exceed 100%. Summed voting power must never exceed total supply. —
+  `BondedVotes.sol`; `flow-trace/02`
+- **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
+  Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
+  can be in both. Both were transferred rather than burned, so both are still inside the token's
+  total supply — which is what makes the ratio sound in either configuration. Under an escrow votes
+  source `BondedVotes` adds a third source, `InterfoldToken.lockedBalanceAt`, because vesting-locked
+  FOLD sits in the holder's own wallet and the transfer hook will not let it reach the escrow. That
+  source **does** overlap the bond: a bond satisfies a lock (`transferableBalanceOf` nets the two),
+  so bonded FOLD is reported by `lockedBalanceAt` and by the bonded history while existing once.
+  `_lockedVotes` therefore subtracts the bond from the locked balance, saturating at zero, making
+  the pair worth `max(bonded, locked)` — then caps the result at the account's wallet balance,
+  because slashing takes the bond without taking the lock and would otherwise leave the account
+  voting with FOLD the slash recipient now holds. The lock schedule is read **only** when the votes
+  source is an escrow: when the token votes for itself, locked FOLD is wallet FOLD the token has
+  already counted. — `BondedVotes.sol`; `InterfoldToken.sol`; `flow-trace/02`
+- **The lock schedule is present-state, not history.** `lockedBalanceAt` walks an account's
+  **current** locks and evaluates them against the timestamp given, so a lock created after a
+  governance snapshot appears in that snapshot's answer — unlike the bonded history, which is
+  checkpointed. Sound for vesting locks, which are minted or claimed rather than acquired at will;
+  it must not be treated as a general past balance. — `BondedVotes.sol`; `InterfoldToken.sol`
+- **An escrow votes source requires a token with a lock schedule.** `_bindVotesSource` staticcalls
+  `lockedBalanceAt` once at construction and reverts `LockedBalancesUnsupported` if it cannot
+  answer. Tolerating the failure at read time would return zero and disenfranchise exactly the
+  locked holders the third source exists to enfranchise. — `BondedVotes.sol`
+- **Every summed source must share the token's clock.** `BondedCheckpoints` keys by
+  `block.timestamp` to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes`
+  compares the history's clock **and** a non-token votes source's clock against the token's at
+  construction. Summing a timestamp-keyed history with a block-numbered source answers for two
   unrelated points in time and is undetectable downstream. — `BondedVotes.sol`; `flow-trace/02`
-- **`BondedVotes` binds token, registry and history as one unit.** The constructor reads
-  `checkpoints.registry()` and requires that registry's `getCiphernodeBondToken()` to equal the
-  token it reads votes from. The clock check alone proves the history speaks the token's units, not
-  that it is _about_ that token: a history written by a registry custodying something else would add
-  unbacked weight, and no reader downstream could tell. Because the check calls the registry,
-  `BondedVotes` can only be constructed after the registry is configured —
-  `protocol/deployContracts` therefore deploys `BondedCheckpoints` only, and
-  `--action activate-voting` deploys `BondedVotes` once the governance batch has run. —
-  `BondedVotes.sol`; `protocol/activateVoting.ts`; `flow-trace/02`
-- **`BondedVotes.balanceOf` nets the registry down to its own surplus.** Bonding moves FOLD into the
-  registry while the adapter attributes it to the bond owner, so counting it at both addresses would
-  place the same tokens twice and push summed balances above total supply — the denominator every
-  holder-percentage view divides by. The registry's entry subtracts `totalCiphernodeBondLiability`,
-  saturating at zero. `getVotes` needs no such adjustment: the registry never delegates, so bonded
-  FOLD carries no wallet votes to double. — `BondedVotes.sol`; `flow-trace/02`
+- **`BondedVotes` binds token, votes source, registry and history as one unit.** The constructor
+  reads `checkpoints.registry()` and requires that registry's `getCiphernodeBondToken()` to equal
+  the token. A non-token votes source is bound the same way: `_bindVotesSource` resolves its
+  `escrow()` and requires that escrow's `token()` to equal the voting token, reverting
+  `VotesSourceMismatch` otherwise. The clock check alone proves a source speaks the token's units,
+  not that it is _about_ that token: a history written by a registry custodying something else, or
+  an escrow over a different asset, would mint weight the denominator does not back, and no reader
+  downstream could tell. Because the registry check calls the registry, `BondedVotes` can only be
+  constructed after the registry is configured — `protocol/deployContracts` therefore deploys
+  `BondedCheckpoints` only, and `--action activate-voting` deploys `BondedVotes` once the governance
+  batch has run. — `BondedVotes.sol`; `protocol/activateVoting.ts`; `flow-trace/02`
+- **`BondedVotes.balanceOf` attributes custodied FOLD to whoever it belongs to.** Bonding moves FOLD
+  into the registry and locking moves it into the escrow, while the adapter attributes each to the
+  account it belongs to, so counting it at the custodian's address as well would place the same
+  tokens twice and push summed balances above total supply — the denominator every holder-percentage
+  view divides by. The registry's entry subtracts `totalCiphernodeBondLiability`, saturating at
+  zero, and the escrow's own entry is netted to zero for the same reason — every unit it holds is
+  attributed to a locker, and it publishes no liability total to subtract instead; locked FOLD is
+  added per account via the escrow's `votingPowerForAccount`, which is delegation-blind, rather than
+  the adapter's own `balanceOf`, which counts lock NFTs rather than tokens. `getVotes` needs no such
+  adjustment: the registry never delegates, so bonded FOLD carries no wallet votes to double. —
+  `BondedVotes.sol`; `flow-trace/02`
 - **`setBondedCheckpoints` is one-shot per ciphernode bond token, and self-verifying.** It requires
   the checkpoint contract to name this registry **and** to accept a write from it, checked by
   syncing the zero address, whose bonded total is always zero. `registry()` alone is insufficient:

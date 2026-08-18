@@ -215,7 +215,11 @@ async function appendBondedVotingTxs(
   const bondedCheckpoints = await deployedAddress(checkpoints);
 
   const votesFactory = await ethers.getContractFactory("BondedVotes");
-  const votes = await votesFactory.deploy(config.fold, bondedCheckpoints);
+  const votes = await votesFactory.deploy(
+    config.fold,
+    config.escrowVotesAdapter ?? config.fold,
+    bondedCheckpoints,
+  );
   await votes.waitForDeployment();
   const bondedVotes = await deployedAddress(votes);
 

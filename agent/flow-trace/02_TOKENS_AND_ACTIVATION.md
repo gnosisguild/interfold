@@ -453,24 +453,71 @@ quorum denominator while being unable to help meet it.
 
 Two contracts restore that weight:
 
-| Contract                     | Role                                                                               |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.          |
-| `registry/BondedVotes`       | `IERC5805` view summing wallet voting power and bonded FOLD at the same timepoint. |
+| Contract                     | Role                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.            |
+| `registry/BondedVotes`       | `IERC5805` view summing a primary vote source and bonded FOLD at the same timepoint. |
 
 ```text
-BondedVotes.getPastVotes(account, t)
+BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
 │
-├─ InterfoldToken.getPastVotes(account, t)        ← wallet voting power (needs delegation)
-└─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
+├─ votesSource.getPastVotes(account, t)           ← either the token or an escrow adapter
+│    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
+│    └─ votesSource == escrow  → only escrowed FOLD; idle wallet FOLD carries no weight
+├─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
+└─ InterfoldToken.lockedBalanceAt(account, t)     ← vesting-locked FOLD, escrow source ONLY
+     minus the bonded total (saturating), because a bond satisfies a lock
 
-BondedVotes.getPastTotalSupply(t)
-└─ InterfoldToken.getPastTotalSupply(t)           ← passed through unchanged
+BondedVotes.getPastTotalSupply(t)                 ← the DENOMINATOR
+└─ InterfoldToken.getPastTotalSupply(t)           ← the TOKEN's supply, passed through unchanged
 ```
 
-Total supply is **not** adjusted. Bonded FOLD was transferred, not burned, so it is already in the
-supply — adding it again would inflate every quorum denominator, which is the distortion this is
-meant to remove.
+`votesSource` is fixed at construction. Passing the token itself gives the original behaviour:
+wallet-held FOLD votes through the token's own ERC20Votes delegation. Passing an escrow adapter
+means only FOLD locked in the escrow votes, so holders must lock to participate while operators keep
+their weight by bonding instead.
+
+Total supply is **not** adjusted, and is always read from the **token** rather than the votes
+source. Bonded and locked FOLD were both transferred, not burned, so both are already in the supply
+— adding either again would inflate every quorum denominator, which is the distortion this is meant
+to remove, and reading the escrow's supply instead would omit the bonded half entirely and let
+participation exceed 100%. Escrowed and bonded FOLD cannot overlap, because escrowing custodies the
+token in the escrow and bonding custodies it in the registry.
+
+### Vesting-locked FOLD
+
+Under an escrow votes source there is a third numerator: FOLD still encumbered by the token's own
+vesting locks. That FOLD sits in the holder's own wallet and `InterfoldToken._update` refuses to
+move it, so it can never be deposited into the escrow — without counting it, a locked holder would
+be barred from governance for the whole vesting schedule by a rule they cannot act on.
+
+Unlike the escrowed and bonded halves, this one **overlaps** the bond. A bond satisfies a lock:
+`transferableBalanceOf` lets a wallet move locked FOLD to the extent the bond already covers the
+obligation, so bonded FOLD is reported by both `lockedBalanceAt` and `getPastBonded` while existing
+exactly once. `_lockedVotes` subtracts the bonded total from the locked balance and saturates at
+zero, so the pair is worth `max(bonded, locked)` rather than their sum.
+
+The netting rests on the token's transfer rule, `balance >= locked - bonded`, enforced on every
+transfer. **Slashing breaks that rule**: it takes the bond without touching the lock, so an operator
+that had already moved locked FOLD out on the strength of the bond is left owing more than it holds,
+and the unbonded remainder would vote with FOLD the slash recipient now holds and can count too.
+`_lockedVotes` therefore caps the term at the account's wallet balance. The cap reads the present
+balance even for a past timepoint — a bound, never a source: it can only lower the term towards what
+the account demonstrably holds, and only that account's own power.
+
+Two limits worth holding on to:
+
+- The lock schedule is read **only** when the votes source is an escrow. When the token votes for
+  itself, locked FOLD is wallet FOLD its own checkpoints already carry, and adding it would double
+  every locked holder's weight.
+- `lockedBalanceAt` is not a checkpointed history — it walks the account's **current** locks and
+  evaluates them against the timestamp given. A lock created after a snapshot shows up in that
+  snapshot's answer. That is acceptable for vesting locks, which are minted or claimed rather than
+  acquired at will, but it is not a general past balance.
+
+The constructor staticcalls `lockedBalanceAt` once when binding an escrow votes source and reverts
+`LockedBalancesUnsupported` if the token cannot answer, rather than catching the failure at read
+time and silently returning zero for every locked holder.
 
 ### Checkpoint write sites
 
@@ -494,14 +541,18 @@ slashed. Voting power therefore stays with the owner for the duration of the exi
 ### Timepoints and configuration
 
 `BondedCheckpoints` keys history by `block.timestamp`, matching `InterfoldToken`'s ERC-6372
-`mode=timestamp` clock. `BondedVotes` compares the two clocks at construction and reverts on a
-mismatch: summing a timestamp-keyed history with a block-numbered one would answer for two unrelated
-points in time, and nothing downstream could detect it.
+`mode=timestamp` clock. `BondedVotes` compares the clocks at construction and reverts on a mismatch:
+summing a timestamp-keyed history with a block-numbered source would answer for two unrelated points
+in time, and nothing downstream could detect it. A votes source that is not the token is checked the
+same way.
 
 The constructor also reads `checkpoints.registry()` and requires that registry to bond the same
-token it reads votes from. Matching clocks prove the history speaks the token's units, not that it
-is _about_ that token — a history written by a registry custodying something else would add unbacked
-weight to every vote. Because this calls the registry, `BondedVotes` cannot be built before the
+token it reads votes from. Matching clocks prove a source speaks the token's units, not that it is
+_about_ that token — a history written by a registry custodying something else would add unbacked
+weight to every vote. A non-token votes source is bound by the same reasoning: `_bindVotesSource`
+resolves its `escrow()` and requires that escrow's `token()` to equal the voting token, reverting
+`VotesSourceMismatch` otherwise, because an escrow over a different asset would mint weight the
+denominator does not back. Because this calls the registry, `BondedVotes` cannot be built before the
 registry is configured: `protocol/deployContracts` deploys `BondedCheckpoints` only, and
 `--action activate-voting` deploys `BondedVotes` after the governance batch executes.
 
@@ -509,9 +560,16 @@ registry is configured: `protocol/deployContracts` deploys `BondedCheckpoints` o
 `name`, `symbol` — because Aragon's `TokenVotingSetup` gates installation on a `balanceOf` probe and
 the governance app renders amounts from the metadata. There is no `transfer`, `transferFrom`,
 `approve` or `allowance`: the contract owns no position, so a spend attempt reverts on a missing
-selector. `balanceOf` subtracts `totalLicenseLiability` for the registry itself, because bonding
-moves FOLD into the registry while the adapter attributes it to the bond owner, and counting it at
-both addresses would put summed balances above total supply.
+selector. `balanceOf` subtracts `totalCiphernodeBondLiability` for the registry itself, because
+bonding moves FOLD into the registry while the adapter attributes it to the bond owner, and counting
+it at both addresses would put summed balances above total supply. When a votes source is
+configured, the escrow's own entry is netted to zero — every unit it custodies is already attributed
+to a locker, and unlike the registry it publishes no liability total to subtract, so FOLD donated to
+the escrow on its own account reads as nothing rather than risking a double count. Locked FOLD is
+added per account from the escrow's `votingPowerForAccount` for the same reason — it is custodied by
+the escrow but belongs to the locker. That function is used rather than the adapter's own
+`balanceOf`, which counts lock NFTs rather than tokens, and it is delegation-blind, matching what
+`balanceOf` means here.
 
 `setBondedCheckpoints` is settable **once per license token**, and verifies the candidate two ways
 before the slot is spent. It must name this registry, and it must accept a write from it, which the

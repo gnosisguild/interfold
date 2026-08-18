@@ -57,9 +57,14 @@ export async function actionActivateVoting(): Promise<void> {
     return;
   }
 
+  // Defaults to FOLD itself, which counts wallet-held votes. Setting `escrowVotesAdapter` makes
+  // locking a precondition for voting; the constructor checks the escrow custodies this same FOLD.
+  const votesSource = config.escrowVotesAdapter ?? config.fold;
+
   const factory = await ethers.getContractFactory("BondedVotes");
   const bondedVotes = await factory.deploy(
     config.fold,
+    votesSource,
     deployment.bondedCheckpoints,
   );
   await bondedVotes.waitForDeployment();
@@ -70,6 +75,9 @@ export async function actionActivateVoting(): Promise<void> {
 Bonded voting activated
   BondedCheckpoints: ${deployment.bondedCheckpoints}
   BondedVotes:       ${deployment.bondedVotes}
+  Votes source:      ${votesSource}${
+    config.escrowVotesAdapter ? " (locked FOLD only)" : " (wallet-held FOLD)"
+  }
 
 Point the governance plugin at BondedVotes as its voting token.
 `);
