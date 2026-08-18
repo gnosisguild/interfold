@@ -11,13 +11,14 @@ import type { CRISPProgram } from '../types'
 
 const SNARK_SCALAR_FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
 
-/// The same vector is asserted by `leaf_layout_matches_the_contract` in
-/// `crates/compute-provider/src/compute_input.rs`. If either side changes, both tests fail.
+/// The same vector is asserted by `the_leaf_matches_the_contract_vector` in
+/// `program/tests/input_leaf.rs`. If either side changes, both tests fail.
 const VECTOR = {
   ciphertext: '0x' + Buffer.from(Array.from({ length: 64 }, (_, i) => i)).toString('hex'),
   commitment: '0x' + 'ab'.repeat(32),
   slot: '0x' + 'cd'.repeat(20),
-  leaf: 3005744733328395831398716072572247490877798047068525662443106668216528579058n,
+  parentIndexPlusOne: 0,
+  leaf: 10659496726189475271708972402425950109424933772832069858355301832948309535156n,
 }
 
 /// The input tree leaf binds the published ciphertext bytes to the commitment the Noir proof
@@ -39,7 +40,10 @@ describe('CRISPProgram input leaf', function () {
     crispProgram = await deployCRISPProgram()
   })
 
-  function expectedLeaf(ciphertext: string, commitment: string, slot: string): bigint {
+  function expectedLeaf(ciphertext: string, commitment: string, slot: string, parentIndexPlusOne: number): bigint {
+    const parent = Buffer.alloc(5)
+    parent.writeUIntBE(parentIndexPlusOne, 0, 5)
+
     const inner = createHash('sha256')
       .update(Buffer.from(ciphertext.slice(2), 'hex'))
       .digest()
@@ -47,18 +51,19 @@ describe('CRISPProgram input leaf', function () {
       .update(inner)
       .update(Buffer.from(commitment.slice(2), 'hex'))
       .update(Buffer.from(slot.slice(2), 'hex'))
+      .update(parent)
       .digest()
     return BigInt('0x' + outer.toString('hex')) % SNARK_SCALAR_FIELD
   }
 
   it('matches the shared cross-language vector', async () => {
-    const leaf = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot)
+    const leaf = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, VECTOR.parentIndexPlusOne)
     expect(leaf).to.equal(VECTOR.leaf)
   })
 
-  it('is sha256(sha256(bytes) || commitment || slot) reduced into the scalar field', async () => {
-    const leaf = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot)
-    expect(leaf).to.equal(expectedLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot))
+  it('is sha256(sha256(bytes) || commitment || slot || parent) reduced into the scalar field', async () => {
+    const leaf = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, VECTOR.parentIndexPlusOne)
+    expect(leaf).to.equal(expectedLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, VECTOR.parentIndexPlusOne))
   })
 
   it('always produces a leaf the Poseidon tree accepts', async () => {
@@ -66,7 +71,7 @@ describe('CRISPProgram input leaf', function () {
     for (let i = 0; i < 8; i += 1) {
       const ciphertext = ethers.hexlify(ethers.randomBytes(96))
       const commitment = ethers.hexlify(ethers.randomBytes(32))
-      const leaf = await crispProgram.inputLeaf(ciphertext, commitment, ethers.hexlify(ethers.randomBytes(20)))
+      const leaf = await crispProgram.inputLeaf(ciphertext, commitment, ethers.hexlify(ethers.randomBytes(20)), i)
       expect(leaf).to.be.lessThan(SNARK_SCALAR_FIELD)
     }
   })
@@ -74,35 +79,44 @@ describe('CRISPProgram input leaf', function () {
   it('changes when the ciphertext bytes change', async () => {
     // This is the property the whole fix rests on: swapping the bytes beside a valid commitment
     // must be visible.
-    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot)
-    const b = await crispProgram.inputLeaf(VECTOR.ciphertext.replace(/0f/, '1f'), VECTOR.commitment, VECTOR.slot)
+    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 0)
+    const b = await crispProgram.inputLeaf(VECTOR.ciphertext.replace(/0f/, '1f'), VECTOR.commitment, VECTOR.slot, 0)
     expect(a).to.not.equal(b)
   })
 
   it('changes when the commitment changes', async () => {
-    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot)
-    const b = await crispProgram.inputLeaf(VECTOR.ciphertext, '0x' + 'ef'.repeat(32), VECTOR.slot)
+    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 0)
+    const b = await crispProgram.inputLeaf(VECTOR.ciphertext, '0x' + 'ef'.repeat(32), VECTOR.slot, 0)
     expect(a).to.not.equal(b)
   })
 
   it('does not let the two fields be traded off against each other', async () => {
     // Hashing the bytes before concatenating means the boundary between the two fields is fixed,
     // so no pair of (bytes, commitment) can be rearranged into another pair with the same leaf.
-    const a = await crispProgram.inputLeaf('0x' + 'aa'.repeat(32) + 'bb'.repeat(32), '0x' + '11'.repeat(32), VECTOR.slot)
-    const b = await crispProgram.inputLeaf('0x' + 'aa'.repeat(32), '0x' + 'bb'.repeat(32), VECTOR.slot)
+    const a = await crispProgram.inputLeaf('0x' + 'aa'.repeat(32) + 'bb'.repeat(32), '0x' + '11'.repeat(32), VECTOR.slot, 0)
+    const b = await crispProgram.inputLeaf('0x' + 'aa'.repeat(32), '0x' + 'bb'.repeat(32), VECTOR.slot, 0)
     expect(a).to.not.equal(b)
   })
 
   it('accepts an empty ciphertext without reverting', async () => {
-    const leaf = await crispProgram.inputLeaf('0x', VECTOR.commitment, VECTOR.slot)
-    expect(leaf).to.equal(expectedLeaf('0x', VECTOR.commitment, VECTOR.slot))
+    const leaf = await crispProgram.inputLeaf('0x', VECTOR.commitment, VECTOR.slot, 0)
+    expect(leaf).to.equal(expectedLeaf('0x', VECTOR.commitment, VECTOR.slot, 0))
   })
 
   it('changes when the slot changes', async () => {
     // The tree is append-only and the Secure Process groups entries by slot, so a prover must not
     // be able to move an entry to a different slot.
-    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot)
-    const b = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, '0x' + '01'.repeat(20))
+    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 0)
+    const b = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, '0x' + '01'.repeat(20), 0)
     expect(a).to.not.equal(b)
+  })
+
+  it('changes when the parent changes', async () => {
+    // The Secure Process walks each slot's chain by the parent, so an unbound parent would let a
+    // prover re-point entries and change which one holds the slot.
+    const a = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 0)
+    const b = await crispProgram.inputLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 1)
+    expect(a).to.not.equal(b)
+    expect(b).to.equal(expectedLeaf(VECTOR.ciphertext, VECTOR.commitment, VECTOR.slot, 1))
   })
 })

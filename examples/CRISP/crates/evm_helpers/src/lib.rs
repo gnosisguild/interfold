@@ -28,11 +28,12 @@ sol! {
         function setMerkleRoot(uint256 e3_id, uint256 _root) external;
         function getSlotIndex(uint256 e3_id, address slot_address) external view returns (int256);
         function publishInput(uint256 e3_id, bytes data) external;
+        function getRoundData(uint256 e3_id) external view returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, uint8 creditMode, uint256 inputRoot, uint40 numberOfVotes);
     }
 }
 
 sol! {
-    event InputPublished(uint256 indexed e3Id, address indexed slotAddress, bytes32 encryptedVoteCommitment, bytes encryptedVote, uint256 index);
+    event InputPublished(uint256 indexed e3Id, address indexed slotAddress, bytes32 encryptedVoteCommitment, bytes encryptedVote, uint256 index, uint40 parentIndexPlusOne);
 }
 
 /// Type alias for read-only provider (no wallet)
@@ -127,6 +128,19 @@ impl CRISPContract<CRISPReadProvider> {
             provider: Arc::new(provider),
             contract_address,
         })
+    }
+
+    /// The number of inputs `CRISPProgram` accepted for a round.
+    ///
+    /// The authority on how many there are. An indexer's own count can be short: the contract
+    /// accepts an input while `block.timestamp == inputWindow[1]`, and the deadline callback can
+    /// run before that log is stored. Computing then would tally a subset and derive a root the
+    /// contract rejects, which fails the round with nothing to explain why.
+    pub async fn get_published_input_count(&self, e3_id: U256) -> Result<u64> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.clone());
+        let round = contract.getRoundData(e3_id).call().await?;
+
+        Ok(round.numberOfVotes.to::<u64>())
     }
 
     /// Get the slot index from a given slot address.

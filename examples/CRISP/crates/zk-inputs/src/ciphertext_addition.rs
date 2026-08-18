@@ -12,6 +12,7 @@ use eyre::{Context, Result};
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;
 use num_bigint::BigInt;
+use num_traits::Zero;
 
 /// Set of inputs for validation of a ciphertext addition.
 ///
@@ -38,65 +39,116 @@ pub struct CiphertextAdditionWitness {
     /// fine and is rejected on chain, because the digest the contract rebuilds does not match the
     /// one that was signed.
     pub ct_commitment: BigInt,
+    /// Commitment to the ciphertext that becomes the slot, which is what gets published.
+    ///
+    /// The circuit returns this value, `CRISPProgram` stores it, and `CRISPProgram.ballotDigest`
+    /// builds the digest the voter signs over it. Exported for the same reason as `ct_commitment`:
+    /// the digest is itself a circuit input, so the value has to be known before proving. It
+    /// equals `ct_commitment` whenever the ballot replaces the slot rather than adding to it.
+    pub sum_ct_commitment: BigInt,
 }
 
 impl CiphertextAdditionWitness {
     /// Computes the ciphertext addition inputs for zero-knowledge proof validation.
     ///
+    /// The circuit always proves `sum_ct = addend + ct`, and picks the addend itself from the
+    /// private mask flag: the ciphertext already in the slot for a mask, the zero ciphertext for a
+    /// vote, an update, or any input to an empty slot. This witness has to be built for the same
+    /// addend, which is what `keep_previous` selects.
+    ///
+    /// The previous ciphertext is exported and committed to whichever addend is used, because the
+    /// circuit checks it against the commitment `CRISPProgram` stored for the slot. Only the
+    /// quotient polynomials depend on the addend.
+    ///
+    /// An empty slot has no previous ciphertext and no stored commitment. It gets zero limbs and a
+    /// zero commitment, which is what the contract passes the circuit for such a slot.
+    ///
     /// # Arguments
     /// * `params` - BFV parameters
-    /// * `prev_ct` - The existing ciphertext to add to
-    /// * `ct` - The ciphertext being added
-    /// * `sum_ct` - The result of the ciphertext addition
+    /// * `previous_ct` - The ciphertext currently in the slot, or `None` when the slot is empty
+    /// * `ct` - The ballot ciphertext
+    /// * `sum_ct` - The ciphertext that becomes the slot
+    /// * `keep_previous` - Whether `sum_ct` adds to the previous ciphertext rather than replacing it
     ///
     /// # Returns
     /// CiphertextAdditionInputs containing all necessary proof data
     pub fn compute(
         params: &BfvParameters,
-        prev_ct: &Ciphertext,
+        previous_ct: Option<&Ciphertext>,
         ct: &Ciphertext,
         sum_ct: &Ciphertext,
+        keep_previous: bool,
     ) -> Result<CiphertextAdditionWitness> {
         let moduli = params.moduli();
-
-        let mut crt_polynomials = [
-            CrtPolynomial::from_fhe_polynomial(&prev_ct[0]),
-            CrtPolynomial::from_fhe_polynomial(&prev_ct[1]),
-            CrtPolynomial::from_fhe_polynomial(&ct[0]),
-            CrtPolynomial::from_fhe_polynomial(&ct[1]),
-            CrtPolynomial::from_fhe_polynomial(&sum_ct[0]),
-            CrtPolynomial::from_fhe_polynomial(&sum_ct[1]),
-        ];
+        let pk_bit = compute_modulus_bit(params);
 
         // fhe-math stores coefficients in ascending degree (c_0, c_1, …). But here we want
         // that each limb is stored in **descending** order (a_n, …, a_0) so circuit evaluation can use Horner's
         // method in one forward pass: `result = result * x + coefficients[i]` from i = 0,
         // i.e. P(x) = ((…((a_n·x + a_{n-1})·x + …)·x + a_0), with no extra reversing or reindexing.
         //
-        // We center so the quotient r = (sum − (prev + ct)) / q_i lies in {-1, 0, 1}.
+        // We center so the quotient r = (sum − (addend + ct)) / q_i lies in {-1, 0, 1}.
         // BFV/fhe-math already gives coefficients in [0, q_i), so reduce is redundant. We need centering
         // into (-q/2, q/2]: then the difference per coefficient is small in absolute value, and for valid
         // ciphertext addition that difference is a multiple of q_i, so the quotient is in {-1, 0, 1},
         // which the circuit and compute_quotient expect.
+        let mut crt_polynomials = [
+            CrtPolynomial::from_fhe_polynomial(&ct[0]),
+            CrtPolynomial::from_fhe_polynomial(&ct[1]),
+            CrtPolynomial::from_fhe_polynomial(&sum_ct[0]),
+            CrtPolynomial::from_fhe_polynomial(&sum_ct[1]),
+        ];
+
         for c in &mut crt_polynomials {
             c.reverse();
             c.center(moduli)?;
         }
 
-        let [prev_ct0, prev_ct1, ct0, ct1, sum_ct0, sum_ct1] = crt_polynomials;
+        let [ct0, ct1, sum_ct0, sum_ct1] = crt_polynomials;
 
-        // Compute quotient polynomials: r = (sum_centered - (ct_centered + prev_ct_centered)) / qi.
-        // For ciphertext addition: sum_centered = ct_centered + prev_ct_centered + r * qi.
-        // So: r = (sum_centered - (ct_centered + prev_ct_centered)) / qi.
-        let r0 = Self::compute_quotient(&sum_ct0, &ct0, &prev_ct0, moduli)
+        let (prev_ct0, prev_ct1, prev_ct_commitment) = match previous_ct {
+            Some(previous) => {
+                let mut limbs = [
+                    CrtPolynomial::from_fhe_polynomial(&previous[0]),
+                    CrtPolynomial::from_fhe_polynomial(&previous[1]),
+                ];
+
+                for c in &mut limbs {
+                    c.reverse();
+                    c.center(moduli)?;
+                }
+
+                let [p0, p1] = limbs;
+                let commitment = compute_ciphertext_commitment(&p0, &p1, pk_bit);
+
+                (p0, p1, commitment)
+            }
+            // Shaped from the ballot limbs, so the degree and the number of moduli follow the
+            // parameters rather than being restated here.
+            None => (
+                Self::select_addend(&ct0, false),
+                Self::select_addend(&ct1, false),
+                BigInt::zero(),
+            ),
+        };
+
+        // What the circuit adds the ballot to, which is the slot's ciphertext only for a mask over
+        // an occupied slot. An empty slot has nothing to keep, whatever the caller asked for.
+        let keep = keep_previous && previous_ct.is_some();
+        let addend_ct0 = Self::select_addend(&prev_ct0, keep);
+        let addend_ct1 = Self::select_addend(&prev_ct1, keep);
+
+        // Compute quotient polynomials: r = (sum_centered - (ct_centered + addend_centered)) / qi.
+        // For ciphertext addition: sum_centered = ct_centered + addend_centered + r * qi.
+        // So: r = (sum_centered - (ct_centered + addend_centered)) / qi.
+        let r0 = Self::compute_quotient(&sum_ct0, &ct0, &addend_ct0, moduli)
             .with_context(|| "Failed to compute r0 quotient")?;
-        let r1 = Self::compute_quotient(&sum_ct1, &ct1, &prev_ct1, moduli)
+        let r1 = Self::compute_quotient(&sum_ct1, &ct1, &addend_ct1, moduli)
             .with_context(|| "Failed to compute r1 quotient")?;
 
         // Coefficients are centered per modulus; no zkp reduce. The circuit reduces mod r when needed.
-        let pk_bit = compute_modulus_bit(params);
-        let prev_ct_commitment = compute_ciphertext_commitment(&prev_ct0, &prev_ct1, pk_bit);
         let ct_commitment = compute_ciphertext_commitment(&ct0, &ct1, pk_bit);
+        let sum_ct_commitment = compute_ciphertext_commitment(&sum_ct0, &sum_ct1, pk_bit);
 
         Ok(CiphertextAdditionWitness {
             prev_ct0is: prev_ct0,
@@ -107,7 +159,28 @@ impl CiphertextAdditionWitness {
             r1is: r1,
             prev_ct_commitment,
             ct_commitment,
+            sum_ct_commitment,
         })
+    }
+
+    /// The limbs the ballot is added to, mirroring `crisp_lib::ciphertext_addition::select_addend`.
+    ///
+    /// Zeroed rather than dropped so the quotient computation keeps the shape of the ciphertext it
+    /// replaces, whatever the degree and the number of moduli.
+    ///
+    /// # Arguments
+    ///
+    /// * `previous` - The limbs of the ciphertext currently in the slot
+    /// * `keep_previous` - Whether the ballot adds to them
+    fn select_addend(previous: &CrtPolynomial, keep_previous: bool) -> CrtPolynomial {
+        if keep_previous {
+            return previous.clone();
+        }
+
+        let mut zeroed = previous.clone();
+        zeroed.scalar_mul(&BigInt::zero());
+
+        zeroed
     }
 
     /// Computes the quotient CRT polynomial `(sum - (a + b)) / q_i` per modulus.
@@ -186,6 +259,7 @@ impl CiphertextAdditionWitness {
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
         let prev_ct_commitment = self.prev_ct_commitment.to_string();
         let ct_commitment = self.ct_commitment.to_string();
+        let sum_ct_commitment = self.sum_ct_commitment.to_string();
 
         let json = serde_json::json!({
             "prev_ct0is": prev_ct0is,
@@ -195,9 +269,11 @@ impl CiphertextAdditionWitness {
             "sum_r0is": r0is,
             "sum_r1is": r1is,
             "prev_ct_commitment": prev_ct_commitment,
-            // Not a crisp circuit input. The caller needs it to build the ballot digest before
-            // signing, so it rides along with the witness rather than being recomputed.
+            // Neither of these is a crisp circuit input. The caller needs `sum_ct_commitment` to
+            // build the ballot digest before signing, so both ride along with the witness rather
+            // than being recomputed.
             "ct_commitment": ct_commitment,
+            "sum_ct_commitment": sum_ct_commitment,
         });
 
         Ok(json)

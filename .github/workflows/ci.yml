@@ -291,6 +291,8 @@ jobs:
         with:
           # The pin-ancestry check reads history, so a shallow clone is not enough.
           fetch-depth: 0
+          # This job only reads; it never pushes, so it needs no credentials left on disk.
+          persist-credentials: false
 
       - name: Check guest pins, toolchain, and image ID drift
         run: ./scripts/check-image-id.sh

@@ -45,6 +45,7 @@ lean-imt = "=0.1.2"
 e3-compute-provider.workspace = true
 e3-sdk = { workspace = true, default-features = false, features=["full"] }
 e3-fhe-params = { workspace = true }
+e3-bfv-client = { workspace = true }
 evm-helpers = { path = "../crates/evm_helpers" }
 crisp-utils.workspace = true
 

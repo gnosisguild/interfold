@@ -25,7 +25,11 @@ const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 /// into telling a voter two different things about the same round.
 const ONCHAIN_UNSUPPORTED = 'This round uses an on-chain census, which this client cannot vote in yet.'
 
-const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uint8Array | undefined> => {
+/// The end of the slot's chain of usable entries, with the tree index the new input will name as
+/// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
+/// commitment is never selected by the Secure Process and is never a valid parent, so the server
+/// resolves the chain and answers with the entry that actually holds the slot.
+const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
   const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -46,7 +50,11 @@ const getPreviousCiphertext = async (e3Id: string, address: string): Promise<Uin
     throw new Error('Previous ciphertext response contains invalid bytes')
   }
 
-  return new Uint8Array(body.ciphertext)
+  if (!('index' in body) || typeof body.index !== 'number' || !Number.isInteger(body.index) || body.index < 0) {
+    throw new Error('Previous ciphertext response has no usable index')
+  }
+
+  return { ciphertext: new Uint8Array(body.ciphertext), index: body.index }
 }
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
@@ -138,7 +146,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
-        const previousCiphertext = await getPreviousCiphertext(votingRound.round_id, address)
+        const head = await getSlotHead(votingRound.round_id, address)
         const e3Id = BigInt(votingRound.round_id)
         const slot = address as `0x${string}`
 
@@ -151,7 +159,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           slotAddress: address,
           isMaskVote: isAMask,
           numOptions: NUM_OPTIONS,
-          previousCiphertext,
+          previousCiphertext: head?.ciphertext,
+          previousIndex: head?.index,
         })
 
         const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)

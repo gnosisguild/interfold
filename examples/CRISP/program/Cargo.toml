@@ -12,6 +12,7 @@ e3-fhe-params = { workspace = true }
 
 [dev-dependencies]
 hex = "=0.4.3"
+num-bigint = "=0.4.6"
 serde_json = "=1.0.145"
 sha3 = "=0.10.8"
 e3-bfv-client = { workspace = true }

@@ -104,13 +104,41 @@ function pinnedRevisions(): Record<string, string[]> {
 }
 
 /**
+ * The builder tag `risc0-build` will actually use, read from the pinned crate.
+ *
+ * Not derived from `RISC0_VERSION`. `risc0-build` has its own `DEFAULT_DOCKER_TAG`, which does not
+ * track the release version — 3.0.3 defaults to `r0.1.88.0`, not `v3.0.3` — so deriving it from the
+ * Dockerfile names an image the build never pulled, and the manifest would record a builder nobody
+ * used.
+ *
+ * Returns null when the crate source is not on this machine, which leaves the manifest incomplete
+ * and fails the release rather than recording a guess.
+ */
+function defaultBuilderTag(): string | null {
+  const pinned = firstMatch(readIfPresent(path.join(SUPPORT, 'Cargo.toml')), /risc0-build = \{ version = "=([0-9.]+)"/)
+  if (!pinned) return null
+
+  // The vendored source, which is present wherever the guest can be built at all.
+  const root = path.join(process.env.CARGO_HOME ?? path.join(process.env.HOME ?? '', '.cargo'), 'registry', 'src')
+  if (!fs.existsSync(root)) return null
+
+  for (const registry of fs.readdirSync(root)) {
+    const lib = path.join(root, registry, `risc0-build-${pinned}`, 'src', 'lib.rs')
+    const tag = firstMatch(readIfPresent(lib), /DEFAULT_DOCKER_TAG: &str = "([^"]+)"/)
+    if (tag) return tag
+  }
+  return null
+}
+
+/**
  * Resolves the RISC Zero guest builder image.
  *
  * The builder is selected by a mutable tag, and `RISC0_DOCKER_CONTAINER_TAG` overrides it, so the
  * tag alone does not identify a build. Record the resolved digest whenever Docker can supply it.
  */
-function builderImage(risc0Version: string | null) {
-  const tag = process.env.RISC0_DOCKER_CONTAINER_TAG ?? (risc0Version ? `risczero/risc0-guest-builder:v${risc0Version}` : null)
+function builderImage() {
+  const fromCrate = defaultBuilderTag()
+  const tag = process.env.RISC0_DOCKER_CONTAINER_TAG ?? (fromCrate ? `risczero/risc0-guest-builder:${fromCrate}` : null)
   if (!tag) return { tag: null, digest: null }
   const digest = sh('docker', ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', tag])
   return { tag, digest }
@@ -198,7 +226,7 @@ async function main() {
       risc0Version,
       risc0GuestToolchain: risc0Toolchain,
       hostToolchain: firstMatch(readIfPresent(path.join(REPO_ROOT, 'rust-toolchain.toml')), /channel = "([^"]+)"/),
-      builderImage: builderImage(risc0Version),
+      builderImage: builderImage(),
       pinnedRevisions: pinnedRevisions(),
       // Why the guest is pinned where it is, and what that pin does and does not certify. A
       // consumer reading only a commit hash would reasonably assume the code behind it was
@@ -228,11 +256,37 @@ async function main() {
     deployment: chain,
   }
 
+  // A deployment object exists even when every RPC call failed, so completeness is decided by the
+  // fields themselves. Without this a timed-out RPC would produce a manifest that reads as verified.
+  const deploymentResolved =
+    chain !== null &&
+    chain.chainId !== null &&
+    chain.ciphertextVerifierCodePresent &&
+    chain.ciphertextVerifierRuntimeCodeSha256 !== null &&
+    chain.underlyingRisc0Verifier !== null &&
+    chain.onchainImageId !== null
+
   const unresolved: string[] = []
   if (!manifest.guest.elfSha256) unresolved.push('guest.elfSha256')
   if (!manifest.build.builderImage.digest) unresolved.push('build.builderImage.digest')
   if (!manifest.guest.imageIdVerified) unresolved.push('guest.imageIdVerified')
-  if (!chain) unresolved.push('deployment (pass --rpc and --verifier)')
+  if (!chain) {
+    unresolved.push('deployment (pass --rpc and --verifier)')
+  } else if (!deploymentResolved) {
+    if (chain.chainId === null) unresolved.push('deployment.chainId')
+    if (!chain.ciphertextVerifierCodePresent) unresolved.push('deployment.ciphertextVerifier (no code at address)')
+    if (chain.ciphertextVerifierRuntimeCodeSha256 === null) unresolved.push('deployment.ciphertextVerifierRuntimeCodeSha256')
+    if (chain.underlyingRisc0Verifier === null) unresolved.push('deployment.underlyingRisc0Verifier')
+    if (chain.onchainImageId === null) unresolved.push('deployment.onchainImageId')
+  }
+
+  // The recorded image ID must also be the one deployed, or the manifest describes a different
+  // artefact from the one in use.
+  if (chain?.onchainImageId && committedImageId && chain.onchainImageId !== committedImageId) {
+    unresolved.push(
+      `deployment.onchainImageId (${chain.onchainImageId}) does not match ImageID.sol (${committedImageId})`,
+    )
+  }
 
   const output = { ...manifest, complete: unresolved.length === 0, unresolved }
   const json = `${JSON.stringify(output, null, 2)}\n`

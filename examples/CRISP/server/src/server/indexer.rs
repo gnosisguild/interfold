@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
     get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
 };
@@ -33,6 +34,8 @@ use eyre::Context;
 use log::{info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
+use std::time::Duration;
+use tokio::time::sleep;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -406,6 +409,35 @@ pub async fn register_e3_requested(
     Ok(indexer)
 }
 
+/// The number of inputs `CRISPProgram` accepted, once the indexer has caught up with it.
+///
+/// Polls rather than reading once: the deadline callback and the last `InputPublished` handler race,
+/// and the gap is the few seconds it takes one log to be delivered and stored. Returns the on-chain
+/// count either way, so the caller reports the shortfall rather than looping forever.
+async fn wait_for_indexed_inputs(e3_id: &str, indexed: usize) -> eyre::Result<usize> {
+    const ATTEMPTS: u32 = 10;
+    const INTERVAL: Duration = Duration::from_secs(3);
+
+    let e3_id_u256 = e3_id_to_u256(e3_id).map_err(|e| eyre::eyre!("{e}"))?;
+    let contract =
+        CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address).await?;
+
+    let mut published = contract.get_published_input_count(e3_id_u256).await? as usize;
+    let mut attempt = 0;
+
+    while published > indexed && attempt < ATTEMPTS {
+        info!(
+            "[e3_id={}] waiting for the indexer: {} of {} input(s) stored",
+            e3_id, indexed, published
+        );
+        sleep(INTERVAL).await;
+        attempt += 1;
+        published = contract.get_published_input_count(e3_id_u256).await? as usize;
+    }
+
+    Ok(published)
+}
+
 async fn handle_e3_input_deadline_expiration(
     e3_id: String,
     store: SharedStore<impl DataStore>,
@@ -416,9 +448,27 @@ async fn handle_e3_input_deadline_expiration(
     repo.update_status("Expired").await?;
 
     let voter_count = repo.get_vote_count().await?;
-    let votes = repo.get_ciphertext_inputs().await?;
-    let input_commitments = repo.get_input_commitments().await?;
-    let input_slots = repo.get_input_slots().await?;
+    // One read. Assembling the request from separate reads lets an `InputPublished` event land
+    // between them, which pairs a ciphertext with another input's commitment and derives a root
+    // `CRISPProgram` rejects.
+    let snapshot = repo.get_input_snapshot().await?;
+    let votes = snapshot.ciphertexts.clone();
+
+    // The contract is the authority on how many inputs there are, and this callback can run before
+    // the last of them is indexed: `publishInput` still accepts one while
+    // `block.timestamp == inputWindow[1]`. Computation is one-shot, so starting short would tally a
+    // subset and derive a root the contract rejects — a failure with no other symptom. Refusing
+    // here leaves the round to be retried once the indexer has caught up.
+    let published = wait_for_indexed_inputs(&e3_id, votes.len()).await?;
+    if published != votes.len() {
+        return Err(eyre::eyre!(
+            "[e3_id={}] the indexer holds {} input(s) but CRISPProgram accepted {}; \
+             refusing to compute over a subset",
+            e3_id,
+            votes.len(),
+            published
+        ));
+    }
 
     if voter_count > 0 && votes.is_empty() {
         warn!(
@@ -448,9 +498,10 @@ async fn handle_e3_input_deadline_expiration(
             e3.committee_public_key_hash,
             e3.e3_params,
             RoundInputs {
-                ciphertexts: votes,
-                commitments: input_commitments,
-                slots: input_slots,
+                ciphertexts: snapshot.ciphertexts,
+                commitments: snapshot.commitments,
+                slots: snapshot.slots,
+                parents: snapshot.parents,
             },
             format!(
                 "{}/state/add-result",
@@ -607,6 +658,7 @@ pub async fn register_input_published(
                     event.index.to::<u64>(),
                     event.encryptedVoteCommitment.into(),
                     event.slotAddress.into(),
+                    event.parentIndexPlusOne.to::<u64>(),
                 )
                 .await?;
                 Ok(())

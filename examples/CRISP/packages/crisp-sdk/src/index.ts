@@ -45,6 +45,7 @@ export type {
   PrepareBallotRequest,
   PreparedBallot,
   ProofData,
+  SlotHead,
   TallyResult,
   CurrentRoundResponse,
   E3StateLiteResponse,

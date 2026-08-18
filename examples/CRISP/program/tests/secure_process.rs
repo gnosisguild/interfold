@@ -75,14 +75,26 @@ impl Round {
         self.round_input_at(ballots, slots)
     }
 
-    /// Ballots published to the given slots, in order. Repeating a slot models an append.
+    /// `abi.encodePacked(address, uint40)`, which is what `CRISPProgram` publishes per input.
+    ///
+    /// `parent` is the tree index of the entry this one extends, or `None` for the first entry of a
+    /// slot's chain.
+    fn metadata(slot: [u8; 20], parent: Option<usize>) -> Vec<u8> {
+        let parent_plus_one = parent.map_or(0u64, |index| index as u64 + 1);
+
+        let mut bytes = slot.to_vec();
+        bytes.extend_from_slice(&parent_plus_one.to_be_bytes()[3..]);
+        bytes
+    }
+
+    /// Ballots published to the given slots, in order, each opening its slot's chain.
     fn round_input_at(&self, ballots: Vec<Vec<u8>>, slots: Vec<[u8; 20]>) -> ComputeInput {
         let published = ballots
             .iter()
             .zip(slots.iter())
             .map(|(bytes, slot)| PublishedData {
                 commitment: Some(self.commitment(bytes)),
-                metadata: slot.to_vec(),
+                metadata: Self::metadata(*slot, None),
             })
             .collect();
 
@@ -262,7 +274,7 @@ fn a_poisoned_append_does_not_erase_the_vote_already_in_the_slot() {
         .push((round.ballot(&[0, 9], 5), 1));
     input.published.push(PublishedData {
         commitment: reused_commitment,
-        metadata: victim.to_vec(),
+        metadata: Round::metadata(victim, Some(0)),
     });
 
     let result = round
@@ -295,7 +307,7 @@ fn an_honest_re_vote_replaces_the_earlier_ballot() {
     input.fhe_inputs.ciphertexts.push((second.clone(), 1));
     input.published.push(PublishedData {
         commitment: Some(round.commitment(&second)),
-        metadata: voter.to_vec(),
+        metadata: Round::metadata(voter, Some(0)),
     });
 
     let result = round.run(input).unwrap();

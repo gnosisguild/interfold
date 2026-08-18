@@ -385,14 +385,50 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   no universal answer. `InputPolicy::default` is the historical behaviour — leaf is the
   ciphertext's own commitment, every input counts — which matches the starter template. Every E3
   program exports `policy()` beside `fhe_processor`. — `flow-trace/04`
-- **CRISP binds bytes, commitment and slot into its leaf, and selects the latest usable entry per
-  slot.** `CRISPProgram.inputLeaf` is
-  `sha256(sha256(bytes) || commitment || slot) mod SNARK_SCALAR_FIELD` and
+- **CRISP binds bytes, commitment, slot and parent into its leaf, and selects the end of each
+  slot's chain.** `CRISPProgram.inputLeaf` is
+  `sha256(sha256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and
   `e3_user_program::policy` rebuilds it byte for byte; a divergence makes every root mismatch and
-  nothing else would catch it, so both sides pin the same vector and
-  `onchain_root_agreement.rs` asserts Rust reproduces a root a real contract produced. The tree is
-  append-only because the mask path checks no signature, so anyone can write to any census
-  member's slot and update-in-place would let a third party erase a counted vote. — `flow-trace/04`
+  nothing else would catch it, so both sides pin the same vector (`program/tests/input_leaf.rs`,
+  `tests/input-leaf.test.ts`) and `onchain_root_agreement.rs` asserts Rust reproduces a root a real
+  contract produced. The tree is append-only because the mask path checks no signature, so anyone
+  can write to any census member's slot and update-in-place would let a third party erase a counted
+  vote. — `flow-trace/04`
+- **A slot's head must be openable by anyone, so selection follows a parent chain rather than a
+  mutable pointer.** `chain_head_per_slot` takes an entry only when its bytes reproduce its
+  commitment *and* the entry it names is that slot's current head. `CRISPProgram` cannot check the
+  first — the commitment is a Poseidon sponge over CRT limbs and the circuit never sees the
+  serialization — so with one mutable head per slot, anyone could publish a valid proof beside
+  unusable bytes and leave a head only they can open. A slot nobody can mask is a slot where every
+  later input is provably its owner voting again, which is a coercion receipt. Because an unusable
+  entry is never the head, it is never a valid parent, and the next honest input names the same
+  parent it did.
+
+  The rule takes the **first** usable entry to extend a parent, so a later sibling is dropped and an
+  input can be front-run into not counting. Keep it that way: a stale parent cannot be told apart
+  from a sibling built a moment earlier, because only the circuit knows whether an entry replaces
+  the slot or adds to it. Preferring the later sibling would let a mask on a superseded ciphertext
+  restore it over a vote — a silent tally corruption, against a dropped re-vote the voter can see
+  and retry. — `flow-trace/04`
+- **CRISP's three ballot operations prove one relation and publish one shape.** Voting, updating,
+  and masking all prove `published = addend + ballot`, with the addend selected by the private
+  `is_mask_vote` and derived as `keep_previous = is_mask_vote & !is_first_vote`. The circuit returns
+  `sum_ct_commitment` on every path, the SDK has one code path, and `CrispSDK.prepareBallot` makes
+  the same server request either way. Branching any of these apart — a different published
+  ciphertext, a different commitment for the digest, a different request — makes the three
+  distinguishable on chain, which is what masks exist to prevent. Deriving the selector rather than
+  witnessing it is what stops a voter counting their old ballot twice and a masker erasing a vote.
+  — `flow-trace/04`
+- **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
+  witness generator reverses the message over the full degree, so the payload sits at
+  `k1[D - MAX_MSG_NON_ZERO_COEFFS ..]` with the options back to front;
+  `crisp_lib::utils::ballot_layout` derives that offset and both checkers use it. Coefficients
+  inside an option segment must be binary, everything outside the ballot region must be zero, and a
+  mask's plaintext must be zero everywhere. Indexing as if the polynomial were the message width
+  makes both checks read only padding: every vote passes any balance bound, and a mask — which
+  needs no signature and may be written to any eligible slot — can carry an arbitrary payload into
+  someone else's ballot. Tests must build `k1` at the compiled degree, not at
+  `MAX_MSG_NON_ZERO_COEFFS`. — `flow-trace/04`
 - **The SAFE ciphertext commitment requires exactly two components.** It covers `c[0]` and `c[1]`
   only, matching the Noir circuit, so `bfv_ciphertext_to_greco` rejects any other component count. A
   padded ciphertext would otherwise share a commitment with its two-component prefix while threshold

@@ -211,8 +211,9 @@ function verify(
   bytes32 paramsHash = getParamsHash(e3Id);
   bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root());
 
-  // The compute provider chooses the input root, so compare it against the root this program
-  // accumulated on chain before the journal is rebuilt.
+  // The Secure Process derives this root from the ciphertexts it processed, and the proof envelope
+  // carries that derived value. Compare it against the root this program accumulated on chain: the
+  // protocol verifier does not, so this is the only check that the result covers your inputs.
   Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
   if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot)
     revert InvalidComputeContext();

@@ -373,29 +373,46 @@ async fn handle_compute(
     let published = req
         .input_commitments
         .iter()
-        .zip(
-            req.input_slots
-                .iter()
-                .map(Some)
-                .chain(std::iter::repeat(None)),
-        )
-        .map(|(hex_commitment, hex_slot)| {
+        .enumerate()
+        .map(|(index, hex_commitment)| {
             let raw = hex::decode(hex_commitment.trim_start_matches("0x"))
                 .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad commitment: {e}")))?;
             let commitment = <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
                 actix_web::error::ErrorBadRequest("each commitment must be 32 bytes")
             })?;
-            let metadata = match hex_slot {
-                Some(slot) => hex::decode(slot.trim_start_matches("0x"))
-                    .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?,
-                None => Vec::new(),
-            };
+
+            // The metadata is opaque here — what a policy reads out of it is the E3 program's
+            // business. It is assembled in the order the program packs it, which for CRISP is
+            // `abi.encodePacked(address, uint40)`.
+            let mut metadata = Vec::new();
+            if let Some(hex_slot) = req.input_slots.get(index) {
+                metadata
+                    .extend_from_slice(&hex::decode(hex_slot.trim_start_matches("0x")).map_err(
+                        |e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")),
+                    )?);
+                let parent = req.input_parents.get(index).copied().unwrap_or_default();
+                metadata.extend_from_slice(&parent.to_be_bytes()[3..]);
+            }
+
             Ok(PublishedData {
                 commitment: Some(commitment),
                 metadata,
             })
         })
         .collect::<ActixResult<Vec<PublishedData>>>()?;
+
+    // One-sided metadata is a caller bug that would otherwise fall through to the default policy
+    // and silently produce a root the E3 program rejects.
+    if req.input_commitments.is_empty() != req.input_slots.is_empty() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_commitments and input_slots must be supplied together",
+        ));
+    }
+    if req.input_slots.len() != req.input_parents.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_slots and input_parents must have the same length",
+        ));
+    }
 
     if !published.is_empty() && published.len() != req.ciphertext_inputs.len() {
         return Err(actix_web::error::ErrorBadRequest(

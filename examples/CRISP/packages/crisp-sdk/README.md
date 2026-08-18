@@ -151,8 +151,11 @@ const address = await getAddressFromSignature(signature, messageHash)
 ```typescript
 import { getPreviousCiphertext } from '@crisp-e3/sdk'
 
-const previousCiphertext = await getPreviousCiphertext(serverUrl, e3Id, slotAddress)
-// Returns undefined when the slot is empty (404)
+const head = await getPreviousCiphertext(serverUrl, e3Id, slotAddress)
+// { ciphertext, index }, or undefined when the slot holds nothing usable (404).
+// `index` is the entry a new input names as its parent. It is the end of the slot's chain of
+// usable entries, not simply the newest one published: an entry whose bytes do not reproduce its
+// commitment is never selected by the Secure Process, and never a valid parent.
 ```
 
 ## API

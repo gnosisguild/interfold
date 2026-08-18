@@ -16,10 +16,10 @@ use crate::server::{
 };
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, B256};
+use e3_fhe_params::decode_bfv_params_arc;
 use e3_sdk::evm_helpers::contracts::{
     InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };
-use evm_helpers::CRISPContractFactory;
 use log::{error, info};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -44,13 +44,18 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
 }
 
-/// Endpoint to get the ciphertext input at a certain slot. Used for masking operations
+/// Endpoint to get the ciphertext a slot currently holds. Used for every ballot, not only masks.
+///
+/// Answers with the end of the slot's chain of usable entries, and the tree index of that entry.
+/// Not simply the newest entry published: an entry whose bytes do not reproduce its commitment is
+/// never selected by the Secure Process and is never a valid parent, so building on it would have
+/// the client's input dropped from the tally.
 ///
 /// # Arguments
-/// * `data` - The round id and the slot index
+/// * `data` - The round id and the slot address
 ///
 /// # Returns
-/// * A JSON response with the result of the operation. If sucessfull it includes the ciphertext input at the given slot
+/// * A JSON response with the ciphertext and its index, or 404 when the slot holds nothing usable.
 async fn handle_get_previous_ciphertext(
     data: web::Json<PreviousCiphertextRequest>,
     store: web::Data<AppData>,
@@ -63,17 +68,6 @@ async fn handle_get_previous_ciphertext(
     };
     let e3_key = e3_id.to_string();
 
-    let contract =
-        match CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
-            .await
-        {
-            Ok(contract) => contract,
-            Err(e) => {
-                error!("Failed to create CRISP contract: {:?}", e);
-                return HttpResponse::InternalServerError().body("Failed to create CRISP contract");
-            }
-        };
-
     let address = match Address::from_str(incoming.address.as_str()) {
         Ok(addr) => addr,
         Err(e) => {
@@ -82,18 +76,31 @@ async fn handle_get_previous_ciphertext(
         }
     };
 
-    let slot_index = match contract.get_slot_index_from_address(e3_id, address).await {
-        Ok(Some(index)) => index,
-        Ok(None) => return HttpResponse::NotFound().body("Ciphertext not found"),
+    // The chain is resolved by recomputing each entry's commitment from its published bytes, which
+    // needs the round's BFV parameters.
+    let e3 = match store.e3(e3_key.clone()).get_e3().await {
+        Ok(e3) => e3,
         Err(e) => {
-            error!("Error getting slot index from address: {:?}", e);
-            return HttpResponse::InternalServerError()
-                .body("Failed to get slot index from address");
+            error!("Error reading E3: {:?}", e);
+            return HttpResponse::InternalServerError().body("Failed to read E3");
+        }
+    };
+    let params = match decode_bfv_params_arc(&e3.e3_params) {
+        Ok(params) => params,
+        Err(e) => {
+            error!("Error decoding E3 params: {:?}", e);
+            return HttpResponse::InternalServerError().body("Failed to decode E3 params");
         }
     };
 
-    match store.e3(e3_key).get_ciphertext_input(slot_index).await {
-        Ok(Some(ciphertext)) => HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext }),
+    match store
+        .e3(e3_key)
+        .get_slot_head(address.into(), &params)
+        .await
+    {
+        Ok(Some((ciphertext, index))) => {
+            HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext, index })
+        }
         Ok(None) => HttpResponse::NotFound().body("Ciphertext not found"),
         Err(e) => {
             error!("Error getting previous ciphertext: {:?}", e);

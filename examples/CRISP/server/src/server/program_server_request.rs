@@ -29,6 +29,9 @@ pub struct ComputeRequest {
     /// The slot each input was published to, in the same order.
     #[serde(serialize_with = "serialize_hex_slots")]
     pub input_slots: Vec<[u8; 20]>,
+    /// The entry each input names as the one it extends, plus one, in the same order. Zero means it
+    /// extends nothing. The Secure Process walks each slot's chain by this.
+    pub input_parents: Vec<u64>,
     pub callback_url: Option<String>,
 }
 
@@ -91,12 +94,14 @@ fn build_compute_request(
 
 /// The published inputs for a round, in on-chain index order.
 ///
-/// Grouped because the three vectors are only meaningful together: entry `i` of each describes the
+/// Grouped because the four vectors are only meaningful together: entry `i` of each describes the
 /// same input, and a length mismatch mis-pairs ciphertexts with the commitments that prove them.
 pub struct RoundInputs {
     pub ciphertexts: Vec<(Vec<u8>, u64)>,
     pub commitments: Vec<[u8; 32]>,
     pub slots: Vec<[u8; 20]>,
+    /// The entry each input names as the one it extends, plus one; zero for none.
+    pub parents: Vec<u64>,
 }
 
 pub async fn run_compute(
@@ -120,6 +125,7 @@ pub async fn run_compute(
         ciphertext_inputs: inputs.ciphertexts,
         input_commitments: inputs.commitments,
         input_slots: inputs.slots,
+        input_parents: inputs.parents,
     };
 
     println!("Sending request");
@@ -166,6 +172,7 @@ mod tests {
             ciphertext_inputs: vec![],
             input_commitments: vec![],
             input_slots: vec![],
+            input_parents: vec![],
             callback_url: Some("http://127.0.0.1:4000/state/add-result".to_string()),
         };
 
@@ -192,6 +199,7 @@ mod tests {
             ciphertext_inputs: vec![(vec![0xaa], 0), (vec![0xbb], 1)],
             input_commitments: vec![[0x11; 32], [0x22; 32]],
             input_slots: vec![[0x01; 20], [0x02; 20]],
+            input_parents: vec![0, 1],
             callback_url: None,
         };
 

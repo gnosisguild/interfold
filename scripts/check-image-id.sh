@@ -166,6 +166,19 @@ if [ "$REBUILD" = true ]; then
   Commit the regenerated $IMAGE_ID_SOL and refresh $STAMP."
   fi
   echo "✅ check:image-id: rebuild reproduces the committed image ID."
+
+  # Record it. Leaving the stamp at imageIdVerified:false after a successful rebuild would keep
+  # every downstream provenance manifest incomplete and keep this script warning about an image ID
+  # that has in fact been reproduced.
+  rebuilt_digest="$(guest_inputs_digest)"
+  cat > "$STAMP" <<STAMP_JSON
+{
+  "imageId": "$current_image_id",
+  "guestInputsDigest": "$rebuilt_digest",
+  "imageIdVerified": true
+}
+STAMP_JSON
+  echo "✅ check:image-id: recorded the verified image ID in $STAMP."
 fi
 
 if [ ! -f "$STAMP" ]; then

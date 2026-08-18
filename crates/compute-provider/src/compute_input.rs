@@ -84,6 +84,20 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<ComputeResult, ComputeError> {
+        self.run(fhe_processor, policy).map(|(result, _)| result)
+    }
+
+    /// As [`Self::process`], and also returns the output ciphertext.
+    ///
+    /// A caller that publishes the ciphertext must take it from here rather than running the
+    /// processor itself. The two are not interchangeable once a policy excludes anything: an E3
+    /// program hashes the published bytes into the digest it rebuilds, so a ciphertext computed
+    /// over a different input set makes the receipt unverifiable and the round unpublishable.
+    pub fn run(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
         let params = decode_bfv_params(&self.fhe_inputs.params)
             .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
 
@@ -122,13 +136,16 @@ impl ComputeInput {
         .to_vec();
         let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
 
-        Ok(ComputeResult {
-            ciphertext_hash: processed_hash,
-            ciphertext_commitment,
-            params_hash,
-            merkle_root: hex::decode(merkle_root)
-                .map_err(|e| ComputeError::MerkleTree(e.to_string()))?,
-        })
+        Ok((
+            ComputeResult {
+                ciphertext_hash: processed_hash,
+                ciphertext_commitment,
+                params_hash,
+                merkle_root: hex::decode(merkle_root)
+                    .map_err(|e| ComputeError::MerkleTree(e.to_string()))?,
+            },
+            processed_ciphertext,
+        ))
     }
 }
 
@@ -385,5 +402,43 @@ mod tests {
             })
             .collect();
         assert_eq!(all_inputs(&entries), vec![0, 1, 2]);
+    }
+
+    /// The ciphertext a caller publishes must be the one the journal describes.
+    ///
+    /// An E3 program hashes the published bytes into the digest it rebuilds, so if the two are
+    /// computed over different input sets the receipt never verifies. That is exactly what happens
+    /// when a policy excludes anything and the caller runs the processor itself.
+    #[test]
+    fn the_returned_ciphertext_is_the_one_the_journal_describes() {
+        fn drop_the_first(inputs: &[PublishedInput]) -> Vec<usize> {
+            (1..inputs.len()).collect()
+        }
+
+        let inputs = encrypted_inputs(&[1, 2, 3]);
+        let policy = InputPolicy {
+            leaf: commitment_leaf,
+            select: drop_the_first,
+        };
+
+        let (result, ciphertext) = ComputeInput {
+            fhe_inputs: inputs.clone(),
+            published: Vec::new(),
+        }
+        .run(sum_processor, policy)
+        .unwrap();
+
+        assert_eq!(
+            result.ciphertext_hash,
+            Keccak256::digest(&ciphertext).to_vec(),
+            "the journal must describe the ciphertext the caller publishes"
+        );
+
+        // And it is genuinely the selected subset, not the whole set.
+        let over_everything = sum_processor(&inputs);
+        assert_ne!(
+            ciphertext, over_everything,
+            "the excluded input must not be in the published ciphertext"
+        );
     }
 }

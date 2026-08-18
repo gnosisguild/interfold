@@ -326,7 +326,11 @@ export const prepareBallot = async (inputs: PrepareBallotInputs): Promise<Prepar
 export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<ProofData> => {
   const circuitInputs = await attachSignatureImpl(prepared, digest, signature)
 
-  return { ...(await generateProof(circuitInputs, prepared.censusMode)), encryptedVote: prepared.encryptedVote }
+  return {
+    ...(await generateProof(circuitInputs, prepared.censusMode)),
+    encryptedVote: prepared.encryptedVote,
+    parentIndexPlusOne: prepared.parentIndexPlusOne,
+  }
 }
 
 /**
@@ -364,7 +368,7 @@ export const verifyProof = async (proof: ProofData, censusMode: CensusVariant = 
  * @param proof The proof data.
  * @returns The encoded proof data as a hex string.
  */
-export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote }: ProofData): Hex => {
+export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote, parentIndexPlusOne }: ProofData): Hex => {
   // Indices follow the fold circuit public inputs:
   //   0 prev_ct_commitment, 1 digest_hi, 2 digest_lo, 3 slot_address,
   //   4 merkle_root | voting_power, 5 is_first_vote, 6 num_options,
@@ -372,10 +376,11 @@ export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote }: Proo
   const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
   const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
 
-  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes'), [
+  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes, uint40'), [
     bytesToHex(proof),
     slotAddress,
     encryptedVoteCommitment,
     bytesToHex(encryptedVote),
+    parentIndexPlusOne,
   ])
 }

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crisp_lib::ciphertext_addition::CiphertextAddition;
+use crisp_lib::ciphertext_addition::{CiphertextAddition, select_addend};
 use crisp_lib::ecdsa::{address_to_field, derive_address, digest_from_halves, validate_signature};
 use crisp_lib::utils::{check_coefficient_values_with_balance, check_coefficient_zero};
 use interfold_lib::configs::default::threshold::{
@@ -28,9 +28,10 @@ use interfold_lib::math::{
 /// allowlist. This circuit is for a census that comes from an on-chain token. Removing the tree
 /// removes the trusted census producer, and it removes the Merkle path from each proof.
 ///
-/// The circuit handles two use cases:
-/// 1. **Actual Voting**: An eligible voter casts a vote
-/// 2. **Mask Vote**: Anyone submits a zero vote to mask slot activity
+/// The circuit covers three operations:
+/// 1. **Voting**: An eligible voter casts a ballot into an empty slot
+/// 2. **Updating**: The same voter replaces the ballot in their slot
+/// 3. **Masking**: Anyone adds a zero ballot to any eligible slot
 ///
 /// Votes are stored in an on-chain Merkle tree, where each vote ciphertext is stored at a specific
 /// index. A mapping stores the slot address (Ethereum address) to the index in the Merkle tree.
@@ -44,11 +45,27 @@ use interfold_lib::math::{
 /// impossible for a voter to prove which ciphertext was their actual vote, preventing them from
 /// providing a verifiable receipt to a coercer or briber.
 ///
-/// The circuit verifies all inputs and returns the appropriate ciphertext commitment.
-/// Specifically, it returns a Field commitment depending on the case:
-/// - **Actual vote**: `ct_commitment` - commitment to the new vote ciphertext
-/// - **Mask vote (first vote)**: `ct_commitment` - commitment to the zero ciphertext
-/// - **Mask vote (updating slot)**: `sum_ct_commitment` - commitment to the sum of previous votes in slot
+/// # One relation for all three operations
+///
+/// The circuit proves the same statement whichever operation is being performed:
+///
+/// ```text
+///   new slot ciphertext = addend + ballot ciphertext
+/// ```
+///
+/// where the ballot ciphertext is a fresh BFV encryption of `k1`, and the addend is the ciphertext
+/// already in the slot for a mask, or the zero ciphertext for a vote, an update, and any input to
+/// an empty slot. `is_mask_vote` chooses between them and is private, so the returned commitment,
+/// the public inputs, and the published ciphertext have the same shape in every case. An observer
+/// cannot tell a vote from an update from a mask; distinguishing them would mean distinguishing a
+/// fresh BFV ciphertext from a sum, which is what the encryption scheme hides.
+///
+/// The circuit returns:
+/// - `sum_ct_commitment` - the commitment to the ciphertext that becomes the slot, and the value
+///   the E3 program stores and the ballot digest is built over
+/// - `ct_commitment` - the commitment to the ballot ciphertext, which ties this proof to the
+///   `user_data_encryption` proof in the fold circuit
+/// - `k1_commitment` - the commitment to the ballot plaintext, for the same reason
 ///
 fn main(
     // Ciphertext Addition Section
@@ -89,6 +106,8 @@ fn main(
         k1,
         DS_USER_DATA_ENCRYPTION_COMMITMENT,
     );
+    let sum_ct_commitment =
+        compute_ciphertext_commitment::<N, L, USER_DATA_ENCRYPTION_BIT_CT>(sum_ct0is, sum_ct1is);
 
     // ============================================================================
     // STEP 2: Eligibility
@@ -102,17 +121,77 @@ fn main(
     // circuit.
 
     // ============================================================================
-    // STEP 3: Vote Type Detection and Return Logic
+    // STEP 3: The Previous Ciphertext
     // ============================================================================
-    // The circuit branches into two cases based on the is_mask_vote flag:
+    // Only a mask keeps what the slot holds. A real vote replaces it, and an empty slot holds
+    // nothing, so both add the ballot to the zero ciphertext. The selector is derived rather than
+    // taken as a witness: a voter cannot add their new ballot on top of their old one and count
+    // twice, and a masker cannot discard what the slot holds and erase a vote.
+    let keep_previous = is_mask_vote & !is_first_vote;
+    let addend_ct0is = select_addend(prev_ct0is, keep_previous);
+    let addend_ct1is = select_addend(prev_ct1is, keep_previous);
+
+    // A mask has to open `prev_ct_commitment`, the commitment the E3 program recorded for the entry
+    // this input names as its parent. Without it a mask could add its zero ballot to a ciphertext of
+    // its own choosing, and publish that as the slot.
     //
+    // Asserted only where the addend is used. A vote adds to nothing, so it has nothing to open,
+    // and it can write to its own slot whatever the parent turns out to be — which matters, because
+    // the E3 program cannot tell whether the bytes published beside a commitment deserialize to the
+    // ciphertext that commitment describes. Only the Secure Process can, and only once the input
+    // window closes.
+    let recomputed_prev_ct_commitment =
+        compute_ciphertext_commitment::<N, L, USER_DATA_ENCRYPTION_BIT_CT>(prev_ct0is, prev_ct1is);
+
+    if keep_previous {
+        assert(prev_ct_commitment == recomputed_prev_ct_commitment);
+    }
+
+    // ============================================================================
+    // STEP 4: Ciphertext Addition
+    // ============================================================================
+    // Prove that sum_ct = addend_ct + ct, where ct = (ct0is, ct1is) is the ballot ciphertext and
+    // sum_ct = (sum_ct0is, sum_ct1is) is what the E3 program will store for this slot.
+    //
+    // The verification uses commitments and the Fiat-Shamir transform with the Schwartz-Zippel
+    // lemma to prove the homomorphic addition without decrypting anything.
+    //
+    // Asserted on every path. That is what constrains the published ciphertext: it is the ballot
+    // the `user_data_encryption` proof covers, added to the ciphertext the slot already held, and
+    // nothing else. Without it a submitter could publish arbitrary bytes into someone's slot.
+    let ct_add: CiphertextAddition<N, L, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_CT> = CiphertextAddition::new(
+        QIS,
+        ct0is,
+        ct1is,
+        ct_commitment,
+        addend_ct0is,
+        addend_ct1is,
+        prev_ct_commitment,
+        sum_ct0is,
+        sum_ct1is,
+        sum_ct_commitment,
+        sum_r0is,
+        sum_r1is,
+    );
+
+    assert(ct_add.execute());
+
+    // ============================================================================
+    // STEP 5: Ballot Rules
+    // ============================================================================
     // CASE 1: ACTUAL VOTE (is_mask_vote == false)
-    //   - This is an eligible voter casting a vote
-    //   - Verify vote amount <= voting_power (checked via valid_vote)
-    //   - Validate the signature over the public digest (checked via valid_signature)
-    //     to authenticate the voter for this ballot
-    //   - Verify address matches slot address (checked via valid_address)
-    //   - Return new vote ciphertext commitment (ct_commitment)
+    //   - This is an eligible voter casting or replacing a ballot
+    //   - Verify the ballot is well formed and worth no more than the voting power (valid_vote)
+    //   - Validate the signature over the public digest (valid_signature) to authenticate the
+    //     voter for this ballot
+    //   - Verify the signing address matches the slot address (valid_address)
+    //
+    // CASE 2: MASK VOTE (is_mask_vote == true)
+    //   - This is anyone adding a zero ballot to mask slot activity
+    //   - Verify the plaintext is zero everywhere (valid_zero_vote), so a mask cannot change what
+    //     the slot decrypts to, and cannot carry a payload a coercer could read back out of the
+    //     tally
+    //   - No signature is required, which is what lets a third party mask a slot at all
     let valid_vote =
         check_coefficient_values_with_balance(k1, Q_MOD_T_CENTERED, voting_power, num_options);
 
@@ -124,62 +203,15 @@ fn main(
     let valid_address =
         slot_address == address_to_field(derive_address(public_key_x, public_key_y));
 
-    // CASE 2: MASK VOTE (is_mask_vote == true)
-    //   - This is anyone submitting a zero vote to mask slot activity
-    //   - Verify vote is zero: k1 must be zero (checked via valid_zero_vote)
-    //   - If first vote in slot: return zero ciphertext commitment (ct_commitment)
-    //   - If updating slot (is_first_vote == false):
-    //     * Verify prev_ct_commitment matches the computed commitment from (prev_ct0is, prev_ct1is)
-    //       to ensure the prover hasn't tampered with the previous ciphertext
-    //     * Verify ciphertext addition: prove that sum_ct = prev_ct + ct where:
-    //       - prev_ct = (prev_ct0is, prev_ct1is) is the previous ciphertext in the slot
-    //       - ct = (ct0is, ct1is) is the zero vote ciphertext being added
-    //       - sum_ct = (sum_ct0is, sum_ct1is) is the resulting ciphertext
-    //     * The verification uses commitments and Fiat-Shamir transform with Schwartz-Zippel
-    //       lemma to prove the homomorphic addition without decrypting
-    //     * Mask votes add zero to the previous ciphertext, creating a different ciphertext
-    //       with the same plaintext, preventing receipt sharing attacks
-    //     * Return sum ciphertext commitment (sum_ct_commitment)
-    let sum_ct_commitment =
-        compute_ciphertext_commitment::<N, L, USER_DATA_ENCRYPTION_BIT_CT>(sum_ct0is, sum_ct1is);
-    let _prev_ct_commitment =
-        compute_ciphertext_commitment::<N, L, USER_DATA_ENCRYPTION_BIT_CT>(prev_ct0is, prev_ct1is);
-
     let valid_zero_vote = check_coefficient_zero(k1, num_options);
-    let valid_prev_ct = prev_ct_commitment == _prev_ct_commitment;
-    let ct_add: CiphertextAddition<N, L, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_CT> = CiphertextAddition::new(
-        QIS,
-        ct0is,
-        ct1is,
-        ct_commitment,
-        prev_ct0is,
-        prev_ct1is,
-        prev_ct_commitment,
-        sum_ct0is,
-        sum_ct1is,
-        sum_ct_commitment,
-        sum_r0is,
-        sum_r1is,
-    );
-    let valid_ct_add = ct_add.execute();
 
-    // Actual conditional logic.
-    if is_mask_vote == false {
+    if is_mask_vote {
+        assert(valid_zero_vote);
+    } else {
         assert(valid_vote);
         assert(valid_signature);
         assert(valid_address);
-
-        (ct_commitment, ct_commitment, k1_commitment)
-    } else {
-        assert(valid_zero_vote);
-
-        if is_first_vote {
-            (ct_commitment, ct_commitment, k1_commitment)
-        } else {
-            assert(valid_prev_ct);
-            assert(valid_ct_add);
-
-            (sum_ct_commitment, ct_commitment, k1_commitment)
-        }
     }
+
+    (sum_ct_commitment, ct_commitment, k1_commitment)
 }

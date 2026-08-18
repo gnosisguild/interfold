@@ -40,6 +40,11 @@ pub struct ComputeRequest {
     /// `input_commitments`: the tree is append-only, so the Secure Process groups by slot.
     #[serde(default)]
     pub input_slots: Vec<String>,
+    /// The entry each input names as the one it extends, plus one, in the same order; zero means it
+    /// extends nothing. Required alongside `input_slots`, because a policy that groups by slot may
+    /// also order within one, and CRISP's does.
+    #[serde(default)]
+    pub input_parents: Vec<u64>,
     pub callback_url: Option<String>,
 }
 

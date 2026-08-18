@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { getZkInputsGenerator, encodeVote, encryptVote } from './encoding'
+import { getZkInputsGenerator, encodeVote } from './encoding'
 import { extractSignatureComponents, generateMerkleProof, getZeroVote, numberArrayToBigInt64Array } from './utils'
 import type { PreparedBallot, PrepareBallotInputs } from './types'
 
@@ -37,6 +37,11 @@ export const splitDigest = (digest: `0x${string}`): { digestHi: `0x${string}`; d
  * ciphertext has to exist first. The returned `ctCommitment` is what `CRISPProgram.ballotDigest`
  * takes as its `ciphertextCommitment` argument.
  *
+ * One path for all three operations. A first vote, a re-vote, and a mask reach the same generator
+ * with the same arguments, differ only in `isMaskVote` — which stays private to the proof — and
+ * produce the same shape of submission. Branching here would make the three tellable apart by
+ * anything watching the client, which is what masks exist to prevent.
+ *
  * Kept in a separate module so it can run in a worker.
  *
  * @param inputs The ballot to prepare.
@@ -46,32 +51,20 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
   const zkInputsGenerator = getZkInputsGenerator()
 
   const numOptions = inputs.isMaskVote ? inputs.numOptions : inputs.vote.length
-  const zeroVote = getZeroVote(numOptions)
-  const vote = inputs.isMaskVote ? zeroVote : inputs.vote
+  const vote = inputs.isMaskVote ? getZeroVote(numOptions) : inputs.vote
   const encodedVote = encodeVote(vote)
 
-  let circuitInputs: any
-  let encryptedVote: Uint8Array
+  // Only a mask adds to what the slot already holds. A vote replaces it, so a voter cannot have
+  // their old ballot counted alongside the new one. The circuit derives the same choice from
+  // `is_mask_vote` and rejects any witness built the other way.
+  const keepPrevious = inputs.isMaskVote && !!inputs.previousCiphertext
 
-  if (!inputs.previousCiphertext) {
-    const result = await zkInputsGenerator.generateInputs(
-      encryptVote(zeroVote, inputs.publicKey),
-      inputs.publicKey,
-      numberArrayToBigInt64Array(encodedVote),
-    )
-
-    circuitInputs = result.inputs
-    encryptedVote = result.encryptedVote
-  } else {
-    const result = await zkInputsGenerator.generateInputsForUpdate(
-      inputs.previousCiphertext,
-      inputs.publicKey,
-      numberArrayToBigInt64Array(encodedVote),
-    )
-
-    circuitInputs = result.inputs
-    encryptedVote = result.encryptedVote
-  }
+  const { inputs: circuitInputs, encryptedVote } = await zkInputsGenerator.generateInputs(
+    inputs.previousCiphertext,
+    inputs.publicKey,
+    numberArrayToBigInt64Array(encodedVote),
+    keepPrevious,
+  )
 
   circuitInputs.slot_address = inputs.slotAddress.toLowerCase()
   circuitInputs.is_first_vote = !inputs.previousCiphertext
@@ -93,18 +86,20 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
     circuitInputs.merkle_proof_siblings = merkleProof.proof.siblings.map((s) => s.toString())
   }
 
+  // The commitment to `encryptedVote`, which is the ciphertext this ballot publishes: the ballot
+  // itself for a vote or a re-vote, the slot plus the zero ballot for a mask over an occupied slot.
+  // The circuit returns the same value as `final_ct_commitment`, `CRISPProgram` stores it, and
+  // `CRISPProgram.ballotDigest` is built over it — so it is what a voter has to sign, and it has to
+  // be known before proving because the digest is itself a circuit input.
+  //
   // Exported by the wasm alongside the witness. Recomputing it here would have to match
   // `compute_ciphertext_commitment` exactly, so it is carried across instead.
-  const ctCommitment = `0x${BigInt(circuitInputs.ct_commitment).toString(16).padStart(64, '0')}` as `0x${string}`
+  const ctCommitment = `0x${BigInt(circuitInputs.sum_ct_commitment).toString(16).padStart(64, '0')}` as `0x${string}`
 
-  // `encryptedVote` is the ciphertext that gets published: the ballot for a first vote, the sum for
-  // an update. The circuit commits to exactly that, so its commitment is what the contract stores
-  // and what the ballot digest is built over. Computed by the same Rust that the circuit and the
-  // Secure Process use, rather than reimplemented here, so the three cannot drift.
-  const finalCommitmentBytes = zkInputsGenerator.computeCtCommitment(encryptedVote)
-  const finalCtCommitment = `0x${Buffer.from(finalCommitmentBytes).toString('hex').padStart(64, '0')}` as `0x${string}`
+  // Zero when there is nothing to extend, which is what the contract reads as `is_first_vote`.
+  const parentIndexPlusOne = inputs.previousCiphertext ? (inputs.previousIndex ?? 0) + 1 : 0
 
-  return { circuitInputs, encryptedVote, ctCommitment, finalCtCommitment, censusMode: inputs.censusMode }
+  return { circuitInputs, encryptedVote, ctCommitment, parentIndexPlusOne, censusMode: inputs.censusMode }
 }
 
 /**

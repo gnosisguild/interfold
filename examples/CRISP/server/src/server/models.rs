@@ -133,6 +133,8 @@ pub struct PreviousCiphertextRequest {
 #[derive(Serialize)]
 pub struct PreviousCiphertextResponse {
     pub ciphertext: Vec<u8>,
+    /// The tree index of that entry, which a client names as the parent of the input it builds.
+    pub index: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -268,6 +270,15 @@ pub struct E3Crisp {
     /// append-only, so the Secure Process groups entries by slot.
     #[serde(default)]
     pub input_slots: Vec<(u64, [u8; 20])>,
+    /// The entry each input names as the one it extends, plus one, keyed by the same on-chain
+    /// index. Zero means it extends nothing.
+    ///
+    /// The Secure Process walks each slot's chain by this, taking an entry only when the one it
+    /// names is the slot's current head. That is what keeps a slot writable after someone publishes
+    /// bytes nobody can open: such an entry is never the head, so it is never a valid parent, and
+    /// the next honest input names the same parent it did.
+    #[serde(default)]
+    pub input_parents: Vec<(u64, u64)>,
     pub requester: String,
     pub num_options: String,
     pub credit_mode: CreditMode,

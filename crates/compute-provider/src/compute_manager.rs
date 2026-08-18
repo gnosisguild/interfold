@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::ciphertext_output::ComputeProvider;
-use crate::compute_input::{ComputeInput, FHEInputs, PublishedData};
+use crate::compute_input::{ComputeError, ComputeInput, FHEInputs, PublishedData};
+use crate::policy::InputPolicy;
 use crate::FHEProcessor;
 
 pub struct ComputeManager<P>
@@ -43,12 +44,15 @@ where
         }
     }
 
-    pub fn start(&mut self) -> (P::Output, Vec<u8>) {
-        // The host computes the ciphertext only to return it to the caller for publication. The
-        // proof covers the copy the Secure Process computes for itself, so this value never
-        // reaches the journal.
-        let ciphertext = (self.processor)(&self.input.fhe_inputs);
+    /// Proves the computation and returns the ciphertext to publish.
+    ///
+    /// The ciphertext comes from the same selection the proof covers. Running the processor over
+    /// the full input set here instead would publish bytes the receipt does not describe: an E3
+    /// program hashes the published ciphertext into the digest it rebuilds, so any excluded input
+    /// would make every round unpublishable.
+    pub fn start(&mut self, policy: InputPolicy) -> Result<(P::Output, Vec<u8>), ComputeError> {
+        let (_, ciphertext) = self.input.run(self.processor, policy)?;
 
-        (self.provider.prove(&self.input), ciphertext)
+        Ok((self.provider.prove(&self.input), ciphertext))
     }
 }

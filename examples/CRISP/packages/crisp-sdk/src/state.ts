@@ -10,7 +10,7 @@ import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
 import { getRoundStateLite } from './api'
 import { getPublicClient } from './chain'
 
-import type { CreditMode, OnChainRoundData, RoundDetails, TokenDetails } from './types'
+import type { CreditMode, OnChainRoundData, RoundDetails, SlotHead, TokenDetails } from './types'
 
 /**
  * Get the details of a specific round in a camelCase convenience format
@@ -106,12 +106,7 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, 
  * @param chainId - The chain the program is deployed on
  * @returns The spendable voting power in ballot units, or 0 for a round that is not ONCHAIN
  */
-export const getOnchainVotingPower = async (
-  programAddress: string,
-  e3Id: bigint,
-  slot: string,
-  chainId: number,
-): Promise<bigint> => {
+export const getOnchainVotingPower = async (programAddress: string, e3Id: bigint, slot: string, chainId: number): Promise<bigint> => {
   const publicClient = getPublicClient(chainId)
 
   return publicClient.readContract({
@@ -129,9 +124,10 @@ export const getOnchainVotingPower = async (
  * @param serverUrl - The base URL of the CRISP server
  * @param e3Id - The e3Id of the round
  * @param address - The address of the slot
- * @returns The previous ciphertext for the slot, or undefined if the slot is empty
+ * @returns The end of the slot's chain of usable entries and its tree index, or undefined when the
+ *          slot holds nothing usable. The index is what a new input names as its parent.
  */
-export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, address: string): Promise<Uint8Array | undefined> => {
+export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, address: string): Promise<SlotHead | undefined> => {
   const response = await fetch(`${serverUrl}/${CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT}`, {
     method: 'POST',
     headers: {
@@ -150,5 +146,5 @@ export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, add
 
   const data = await response.json()
 
-  return new Uint8Array(data.ciphertext)
+  return { ciphertext: new Uint8Array(data.ciphertext), index: Number(data.index) }
 }

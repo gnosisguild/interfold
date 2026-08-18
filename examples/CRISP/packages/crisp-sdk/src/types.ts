@@ -129,6 +129,14 @@ export type ProofData = {
   publicInputs: string[]
   proof: Uint8Array
   encryptedVote: Uint8Array
+  /**
+   * The tree index of the entry this input extends, plus one; zero when it extends nothing.
+   *
+   * `CRISPProgram` reads the parent's commitment from this and hands it to the circuit as
+   * `prev_ct_commitment`, and the Secure Process walks each slot's chain by it. Offset by one so
+   * that zero means "no parent", which is what index 0 would otherwise be ambiguous with.
+   */
+  parentIndexPlusOne: number
 }
 
 /**
@@ -141,7 +149,15 @@ export type ProofData = {
 export type CensusVariant = 'merkle' | 'onchain'
 
 type PrepareBallotInputsBase = {
+  /**
+   * The ciphertext currently in the slot: the end of its chain of usable entries, not simply the
+   * newest one published. An entry whose bytes do not reproduce its commitment is never selected
+   * by the Secure Process and is never a valid parent, so building on it would have this input
+   * dropped from the tally.
+   */
   previousCiphertext?: Uint8Array
+  /** The tree index of `previousCiphertext`. Required whenever it is supplied. */
+  previousIndex?: number
   publicKey: Uint8Array
   slotAddress: string
   isMaskVote: boolean
@@ -165,19 +181,21 @@ export type PrepareBallotInputs =
  */
 export type PreparedBallot = {
   circuitInputs: any
-  encryptedVote: Uint8Array
-  ctCommitment: `0x${string}`
   /**
-   * The commitment the E3 program will store, and the value to pass to
-   * `CRISPProgram.ballotDigest`.
-   *
-   * For a first vote this equals `ctCommitment`. For an update — a re-vote, or a mask over a slot
-   * that already holds a ballot — the contract stores the commitment of the *summed* ciphertext,
-   * and so does the circuit. Since the digest is itself a circuit input, a caller has to know that
-   * value before proving; deriving it from `encryptedVote` is what makes the update path usable at
-   * all.
+   * The ciphertext to publish, which is the ballot itself for a vote or a re-vote, and the slot's
+   * ciphertext plus the zero ballot for a mask over an occupied slot.
    */
-  finalCtCommitment: `0x${string}`
+  encryptedVote: Uint8Array
+  /**
+   * The commitment to `encryptedVote`: what the circuit returns, what the E3 program stores, and
+   * what `CRISPProgram.ballotDigest` takes as its `ciphertextCommitment` argument.
+   *
+   * Since the digest is itself a circuit input, a caller has to know this value before proving,
+   * which is why the wasm exports it rather than leaving it to be read off the finished proof.
+   */
+  ctCommitment: `0x${string}`
+  /** The value {@link ProofData.parentIndexPlusOne} carries through to `encodeSolidityProof`. */
+  parentIndexPlusOne: number
   censusMode: CensusVariant
 }
 
@@ -192,9 +210,22 @@ type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K>
 /**
  * A {@link PrepareBallotInputs} plus the round it belongs to.
  *
- * The SDK resolves `previousCiphertext` from the server, so callers do not pass it.
+ * The SDK resolves the slot head from the server, so callers pass neither part of it.
  */
-export type PrepareBallotRequest = { e3Id: bigint } & DistributiveOmit<PrepareBallotInputs, 'previousCiphertext'>
+export type PrepareBallotRequest = { e3Id: bigint } & DistributiveOmit<PrepareBallotInputs, 'previousCiphertext' | 'previousIndex'>
+
+/**
+ * The end of a slot's chain of usable entries: what a new input extends.
+ *
+ * Not simply the newest entry published to the slot. An entry whose bytes do not reproduce its
+ * commitment is never selected by the Secure Process and is never a valid parent, so the server
+ * resolves the chain and answers with the entry that actually holds the slot.
+ */
+export type SlotHead = {
+  ciphertext: Uint8Array
+  /** The tree index of that entry. */
+  index: number
+}
 
 /**
  * Type representing the current round returned by the CRISP server (`rounds/current`)

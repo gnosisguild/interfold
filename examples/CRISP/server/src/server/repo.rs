@@ -12,6 +12,7 @@ use super::{
 };
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
 use eyre::Result;
+use fhe::bfv::BfvParameters;
 use log::info;
 use num_bigint::BigUint;
 
@@ -115,6 +116,20 @@ impl<S: DataStore> CurrentRoundRepository<S> {
     }
 }
 
+/// A round's inputs, read in one shot so the four vectors describe the same moment.
+///
+/// Every vector is in on-chain index order and has one entry per ciphertext.
+pub struct InputSnapshot {
+    /// The published ciphertexts, each paired with its on-chain index.
+    pub ciphertexts: Vec<(Vec<u8>, u64)>,
+    /// The commitment `CRISPProgram` stored for each input.
+    pub commitments: Vec<[u8; 32]>,
+    /// The slot each input was published to.
+    pub slots: Vec<[u8; 20]>,
+    /// The entry each input names as the one it extends, plus one; zero for none.
+    pub parents: Vec<u64>,
+}
+
 pub struct CrispE3Repository<S: DataStore> {
     store: SharedStore<S>,
     e3_id: String,
@@ -161,6 +176,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         index: u64,
         commitment: [u8; 32],
         slot: [u8; 20],
+        parent_index_plus_one: u64,
     ) -> Result<()> {
         let key = self.crisp_key();
 
@@ -189,6 +205,11 @@ impl<S: DataStore> CrispE3Repository<S> {
                     } else {
                         e.input_slots.push((index, slot));
                     }
+                    if let Some(existing) = e.input_parents.iter_mut().find(|(i, _)| *i == index) {
+                        existing.1 = parent_index_plus_one;
+                    } else {
+                        e.input_parents.push((index, parent_index_plus_one));
+                    }
                     e
                 })
             })
@@ -196,17 +217,6 @@ impl<S: DataStore> CrispE3Repository<S> {
             .map_err(|_| eyre::eyre!("Could not append ciphertext_input for '{key}'"))?;
 
         Ok(())
-    }
-
-    pub async fn get_ciphertext_input(&self, index: u64) -> Result<Option<Vec<u8>>> {
-        let e3_crisp = self.get_crisp().await?;
-        for (vote, i) in e3_crisp.ciphertext_inputs {
-            if i == index {
-                return Ok(Some(vote));
-            }
-        }
-
-        Ok(None)
     }
 
     pub async fn initialize_round(
@@ -219,6 +229,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         self.set_crisp(E3Crisp {
             input_commitments: Vec::new(),
             input_slots: Vec::new(),
+            input_parents: Vec::new(),
             has_voted: vec![],
             start_time: 0u64,
             status: "Requested".to_string(),
@@ -359,6 +370,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// Event handlers run concurrently, so arrival order is not chain order, and a leaf's position
     /// in the input tree is its position in this vector. Sorting here is what keeps the root the
     /// Secure Process derives equal to the one the contract accumulated.
+    #[allow(dead_code)]
     pub async fn get_ciphertext_inputs(&self) -> Result<Vec<(Vec<u8>, u64)>> {
         let e3_crisp = self.get_crisp().await?;
         let mut inputs = e3_crisp.ciphertext_inputs;
@@ -366,20 +378,98 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(inputs)
     }
 
-    /// Returns the commitments in the same on-chain index order as `get_ciphertext_inputs`.
-    pub async fn get_input_commitments(&self) -> Result<Vec<[u8; 32]>> {
+    /// Everything the compute request needs about a round's inputs, from one read.
+    ///
+    /// One read rather than four getters. Each is a separate `await`, and an `InputPublished` event
+    /// can land between them, so a request assembled from several reads can pair a ciphertext with
+    /// another input's commitment or leave the vectors different lengths. The Secure Process would
+    /// then derive a root `CRISPProgram` rejects, and nothing would say why.
+    pub async fn get_input_snapshot(&self) -> Result<InputSnapshot> {
         let e3_crisp = self.get_crisp().await?;
+
+        let mut ciphertexts = e3_crisp.ciphertext_inputs;
+        ciphertexts.sort_by_key(|(_, index)| *index);
+
+        // A round recorded before the event carried these fields loads with them empty, because
+        // they default. Computing over it would fall back to the pre-binding leaf layout and derive
+        // a root `CRISPProgram` rejects, with nothing to explain why. Such a round has to be
+        // re-indexed, not computed.
+        let expected = ciphertexts.len();
+        Self::require_indexed(expected, e3_crisp.input_commitments.len(), "commitments")?;
+        Self::require_indexed(expected, e3_crisp.input_slots.len(), "slots")?;
+        Self::require_indexed(expected, e3_crisp.input_parents.len(), "parents")?;
+
         let mut commitments = e3_crisp.input_commitments;
         commitments.sort_by_key(|(index, _)| *index);
-        Ok(commitments.into_iter().map(|(_, c)| c).collect())
-    }
-
-    /// Returns the slots in the same on-chain index order as `get_ciphertext_inputs`.
-    pub async fn get_input_slots(&self) -> Result<Vec<[u8; 20]>> {
-        let e3_crisp = self.get_crisp().await?;
         let mut slots = e3_crisp.input_slots;
         slots.sort_by_key(|(index, _)| *index);
-        Ok(slots.into_iter().map(|(_, s)| s).collect())
+        let mut parents = e3_crisp.input_parents;
+        parents.sort_by_key(|(index, _)| *index);
+
+        Ok(InputSnapshot {
+            ciphertexts,
+            commitments: commitments.into_iter().map(|(_, value)| value).collect(),
+            slots: slots.into_iter().map(|(_, value)| value).collect(),
+            parents: parents.into_iter().map(|(_, value)| value).collect(),
+        })
+    }
+
+    /// Refuses a round whose per-input records do not line up with its ciphertexts.
+    fn require_indexed(expected: usize, found: usize, field: &str) -> Result<()> {
+        if expected != found {
+            return Err(eyre::eyre!(
+                "round has {expected} inputs but {found} {field}; it is partially indexed or \
+                 predates the binding, and must be re-indexed"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The end of a slot's chain of usable entries: the entry a new input must name as its parent.
+    ///
+    /// Resolved the same way the Secure Process resolves it, so a client that builds on this answer
+    /// produces an input the tally will take. An entry is only ever the head when its published
+    /// bytes reproduce its commitment and it names the head before it, so an entry nobody can open
+    /// never becomes one and never blocks the slot.
+    ///
+    /// `None` when the slot holds nothing usable, which is what a first vote sees.
+    pub async fn get_slot_head(
+        &self,
+        slot: [u8; 20],
+        params: &BfvParameters,
+    ) -> Result<Option<(Vec<u8>, u64)>> {
+        let snapshot = self.get_input_snapshot().await?;
+        let mut head: Option<u64> = None;
+        let mut selected: Option<(Vec<u8>, u64)> = None;
+
+        for (position, (bytes, index)) in snapshot.ciphertexts.iter().enumerate() {
+            if snapshot.slots[position] != slot {
+                continue;
+            }
+
+            let recomputed = e3_bfv_client::client::compute_ct_commitment(
+                bytes.clone(),
+                params.degree(),
+                params.plaintext(),
+                params.moduli().to_vec(),
+            );
+            let Ok(recomputed) = recomputed else {
+                // The bytes do not deserialize, so this entry can never be the head.
+                continue;
+            };
+            if recomputed != snapshot.commitments[position] {
+                continue;
+            }
+
+            if snapshot.parents[position].checked_sub(1) != head {
+                continue;
+            }
+
+            head = Some(*index);
+            selected = Some((bytes.clone(), *index));
+        }
+
+        Ok(selected)
     }
 
     #[allow(dead_code)]
