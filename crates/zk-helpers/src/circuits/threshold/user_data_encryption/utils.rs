@@ -46,7 +46,9 @@ pub fn bfv_ciphertext_to_greco(
     // compound on the other. Spelling that out here rather than folding the two calls into one
     // helper, because a reused helper reads as though it might carry state across them.
     let wrap = |e: CrtPolynomialError| {
-        ZkHelpersUtilsError::ConversionError(format!("Failed to convert ciphertext polynomial: {e}"))
+        ZkHelpersUtilsError::ConversionError(format!(
+            "Failed to convert ciphertext polynomial: {e}"
+        ))
     };
 
     let ct0is = fhe_poly_to_crt_centered(&ciphertext[0], moduli).map_err(wrap)?;
@@ -172,12 +174,12 @@ pub fn compute_ciphertext_commitment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_bigint::BigInt;
     use crate::circuits::computation::Computation;
     use crate::threshold::user_data_encryption::computation::Inputs;
     use crate::threshold::user_data_encryption::UserDataEncryptionCircuitData;
     use e3_fhe_params::{build_pair_for_preset, BfvPreset};
     use fhe_traits::DeserializeParametrized;
+    use num_bigint::BigInt;
 
     #[test]
     fn test_bfv_public_key_to_greco() {
