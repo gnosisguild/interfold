@@ -674,19 +674,40 @@ jobs:
   crisp_unit:
     needs: [detect_changes, build_crisp_sdk]
     if: needs.detect_changes.outputs.crisp == 'true'
-    timeout-minutes: 30
+    # Per leg, because they are not remotely the same size. Anything that generates a ballot proves
+    # five Noir circuits, which a two-vCPU runner takes minutes to do; everything else is seconds.
+    timeout-minutes: ${{ matrix.timeout }}
     runs-on: 'ubuntu-latest'
     strategy:
       matrix:
         include:
           - test-suite: test:circuits
             command: pnpm test:circuits
+            timeout: 15
           - test-suite: test:sdk
             command: pnpm test:sdk
-          - test-suite: test:contracts
-            command: pnpm test:contracts
+            timeout: 45
+          # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
+          # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
+          # with every ballot a new test needs. Split, the critical path is the largest single leg
+          # rather than the sum, and the checks that prove nothing report in seconds instead of
+          # queueing behind twenty minutes of proving.
+          #
+          # Balanced by ballots, which is what the time is: input-tree 7, ballots 5, unit 0.
+          # `pnpm test:contracts` still runs all of it in one go for local use, and
+          # `crisp_contract_leg_coverage` fails if a test file ever belongs to no leg.
+          - test-suite: test:contracts:input-tree
+            command: pnpm test:contracts:input-tree
+            timeout: 45
+          - test-suite: test:contracts:ballots
+            command: pnpm test:contracts:ballots
+            timeout: 45
+          - test-suite: test:contracts:unit
+            command: pnpm test:contracts:unit
+            timeout: 15
           - test-suite: cargo test
             command: cargo test
+            timeout: 20
       fail-fast: false
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
