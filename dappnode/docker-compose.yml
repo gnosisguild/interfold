@@ -4,8 +4,8 @@ services:
     build:
       context: .
       args:
-        UPSTREAM_VERSION: 0.2.3
-    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.2.3'
+        UPSTREAM_VERSION: 0.10.0
+    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.10.0'
     restart: unless-stopped
     # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.
     stop_grace_period: 45s
@@ -17,19 +17,24 @@ services:
       # Required
       RPC_URL: ''
       # Network & node config
-      NETWORK: 'sepolia'
+      NETWORK: 'mainnet'
+      CHAIN_ID: '1'
       NODE_ADDRESS: ''
       QUIC_PORT: '37173'
       PEERS: ''
       LOG_LEVEL: 'info'
       EXTRA_OPTS: ''
       # Contracts (variants override these)
-      INTERFOLD_CONTRACT: ''
-      CIPHERNODE_REGISTRY_CONTRACT: ''
-      BONDING_REGISTRY_CONTRACT: ''
-      INTERFOLD_DEPLOY_BLOCK: '0'
-      CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '0'
-      BONDING_REGISTRY_DEPLOY_BLOCK: '0'
+      INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
+      CIPHERNODE_REGISTRY_CONTRACT: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7'
+      BONDING_REGISTRY_CONTRACT: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
+      SLASHING_MANAGER_CONTRACT: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'
+      FEE_TOKEN_CONTRACT: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
+      INTERFOLD_DEPLOY_BLOCK: '25786382'
+      CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '25786378'
+      BONDING_REGISTRY_DEPLOY_BLOCK: '25473398'
+      SLASHING_MANAGER_DEPLOY_BLOCK: '25786375'
+      FEE_TOKEN_DEPLOY_BLOCK: '20663730'
     security_opt:
       - no-new-privileges:true
     healthcheck:

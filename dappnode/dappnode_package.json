@@ -1,7 +1,7 @@
 {
   "name": "interfold-ciphernode.public.dappnode.eth",
-  "version": "0.2.3",
-  "upstreamVersion": "0.2.3",
+  "version": "0.10.0",
+  "upstreamVersion": "0.10.0",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",
   "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",
@@ -12,8 +12,8 @@
   "categories": ["Blockchain", "Developer tools"],
   "keywords": ["interfold", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
   "links": {
-    "homepage": "https://interfold.network",
-    "docs": "https://docs.interfold.network",
+    "homepage": "https://www.theinterfold.com",
+    "docs": "https://docs.theinterfold.com",
     "repository": "https://github.com/theinterfold/interfold"
   },
   "repository": {

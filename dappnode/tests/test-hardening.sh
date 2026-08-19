@@ -30,37 +30,33 @@ make_mock_interfold() {
         '#!/bin/bash' \
         'set -Eeuo pipefail' \
         'case "${1:-} ${2:-} ${3:-}" in' \
-        '  "password set "*) operation=password ;;' \
-        '  "net keypair set"*) operation=network ;;' \
-        '  "wallet set "*) operation=wallet ;;' \
+        '  "password set --password-stdin"*) operation=password ;;' \
+        '  "wallet set --private-key-stdin"*) operation=wallet ;;' \
         '  "start "*) operation=start ;;' \
         '  *) operation=unexpected ;;' \
         'esac' \
         'printf "%s\n" "$operation" >> "$CALL_LOG"' \
-        'tr "\0" " " < /proc/$$/cmdline >> "$ARGV_LOG"' \
+        'printf "%s" "$0" >> "$ARGV_LOG"' \
+        'for arg in "$@"; do printf " %s" "$arg" >> "$ARGV_LOG"; done' \
         'printf "\n" >> "$ARGV_LOG"' \
         '[ "${FAIL_ON:-}" != "$operation" ] || exit 42' \
-        '[ "$operation" != unexpected ]' \
+        'case "$operation" in' \
+        '  password)' \
+        '    IFS= read -r secret' \
+        '    mkdir -p "$(dirname "$PASSWORD_FILE")"' \
+        '    printf "%s" "$secret" > "$PASSWORD_FILE"' \
+        '    chmod 400 "$PASSWORD_FILE"' \
+        '    ;;' \
+        '  wallet)' \
+        '    IFS= read -r secret' \
+        '    ;;' \
+        '  start)' \
+        '    : ;;' \
+        '  *)' \
+        '    exit 2 ;;' \
+        'esac' \
         > "$bin_dir/interfold"
     chmod +x "$bin_dir/interfold"
-}
-
-make_mock_expect() {
-    local bin_dir=$1
-    printf '%s\n' \
-        '#!/bin/bash' \
-        'set -Eeuo pipefail' \
-        'read -r password_b64' \
-        'read -r private_key_b64' \
-        'password=$(printf "%s" "$password_b64" | base64 -d)' \
-        'interfold password set --config "$2"' \
-        'mkdir -p "$(dirname "$PASSWORD_FILE")"' \
-        'printf "%s" "$password" > "$PASSWORD_FILE"' \
-        'chmod 400 "$PASSWORD_FILE"' \
-        'interfold wallet set --config "$2"' \
-        'unset password password_b64 private_key_b64' \
-        > "$bin_dir/expect"
-    chmod +x "$bin_dir/expect"
 }
 
 write_secrets() {
@@ -87,7 +83,6 @@ run_entrypoint() {
     : > "$case_dir/calls"
     : > "$case_dir/argv"
     make_mock_interfold "$case_dir/bin"
-    make_mock_expect "$case_dir/bin"
 
     env -u ENCRYPTION_PASSWORD -u NETWORK_PRIVATE_KEY -u PRIVATE_KEY \
         PATH="$case_dir/bin:$PATH" \
@@ -95,23 +90,27 @@ run_entrypoint() {
         CONFIG_FILE="$case_dir/data/config.yaml" \
         TEMPLATE_FILE="$ROOT_DIR/config.template.yaml" \
         SECRETS_FILE="$case_dir/secrets/secrets.json" \
-        CREDENTIAL_PROVISIONER="$ROOT_DIR/provision-credentials.exp" \
         PASSWORD_FILE="$case_dir/data/password" \
         CALL_LOG="$case_dir/calls" \
         ARGV_LOG="$case_dir/argv" \
         RPC_URL="ws://127.0.0.1:8545" \
+        CHAIN_ID=1 \
         NODE_ADDRESS="0x3333333333333333333333333333333333333333" \
         INTERFOLD_CONTRACT="0x4444444444444444444444444444444444444444" \
         CIPHERNODE_REGISTRY_CONTRACT="0x5555555555555555555555555555555555555555" \
         BONDING_REGISTRY_CONTRACT="0x6666666666666666666666666666666666666666" \
+        SLASHING_MANAGER_CONTRACT="0x7777777777777777777777777777777777777777" \
+        FEE_TOKEN_CONTRACT="0x8888888888888888888888888888888888888888" \
         INTERFOLD_DEPLOY_BLOCK=1 \
         CIPHERNODE_REGISTRY_DEPLOY_BLOCK=2 \
         BONDING_REGISTRY_DEPLOY_BLOCK=3 \
+        SLASHING_MANAGER_DEPLOY_BLOCK=4 \
+        FEE_TOKEN_DEPLOY_BLOCK=5 \
         PRIVATE_KEY="${TEST_PRIVATE_KEY:-}" \
         "$@" bash "$ROOT_DIR/entrypoint.sh" > "$case_dir/output" 2>&1
 }
 
-# Successful provisioning uses the v0.2.3 atomic wallet command, removes the
+# Successful provisioning uses the current atomic wallet command, removes the
 # plaintext upload, and starts only after every credential command succeeds.
 success_dir="$TEST_ROOT/success"
 mkdir -p "$success_dir/secrets"
@@ -124,6 +123,11 @@ assert_not_contains "$success_dir/argv" '0x1111111111111111111111111111111111111
 assert_contains "$success_dir/data/config.yaml" 'autopassword: false'
 assert_contains "$success_dir/data/config.yaml" 'autonetkey: false'
 assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
+assert_contains "$success_dir/data/config.yaml" 'chain_id: 1'
+assert_contains "$success_dir/data/config.yaml" 'slashing_manager:'
+assert_contains "$success_dir/data/config.yaml" '0x7777777777777777777777777777777777777777'
+assert_contains "$success_dir/data/config.yaml" 'fee_token:'
+assert_contains "$success_dir/data/config.yaml" '0x8888888888888888888888888888888888888888'
 
 # A credential command failure must propagate and must never start the node.
 failure_dir="$TEST_ROOT/failure"
@@ -155,7 +159,7 @@ run_entrypoint "$matching_dir"
 [ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
 [ ! -e "$matching_dir/secrets/secrets.json" ] || fail "matching upload was not removed"
 
-# Legacy three-field uploads remain accepted; v0.2.3 derives the libp2p key
+# Legacy three-field uploads remain accepted; the wallet command derives the libp2p key
 # atomically from the wallet key and ignores the obsolete separate network key.
 legacy_credentials_dir="$TEST_ROOT/legacy-credentials"
 mkdir -p "$legacy_credentials_dir/secrets"
@@ -188,8 +192,8 @@ chmod 400 "$restart_dir/data/password"
 run_entrypoint "$restart_dir"
 [ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
 
-# The 0.1.8 -> 0.2.3 bridge moves the complete custom-config namespace in one
-# rename, preserving the unversioned DB/event log for v0.2.3 to stamp schema 1.
+# The 0.1.8 state bridge moves the complete custom-config namespace in one
+# rename, preserving the unversioned DB/event log for current releases.
 upgrade_dir="$TEST_ROOT/legacy-upgrade"
 mkdir -p "$upgrade_dir/data/.enclave/config/_default" "$upgrade_dir/data/.enclave/data/_default/db" \
     "$upgrade_dir/data/.enclave/data/_default/log.0"
@@ -221,8 +225,10 @@ fi
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
-assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.2.3"'
-assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.2.3'
+assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.10.0"'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.10.0'
+assert_contains "$ROOT_DIR/docker-compose.yml" "INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'"
+assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'"
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 
 # Health probe regression: require the exact process/config, protected files,

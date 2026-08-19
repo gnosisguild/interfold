@@ -9,8 +9,8 @@ fields:
     title: 'Network'
     description: 'Select the network to connect to.'
     enum:
-      - sepolia
       - mainnet
+      - sepolia
       - localhost
     required: true
 
@@ -30,6 +30,17 @@ fields:
     required: true
     pattern: '^wss?://.*'
     patternErrorMessage: 'Must be a WebSocket URL (wss:// or ws://)'
+
+  - id: CHAIN_ID
+    target:
+      type: environment
+      name: CHAIN_ID
+      service: ciphernode
+    title: 'Chain ID'
+    description: 'EIP-155 chain ID for the selected network. Mainnet is 1.'
+    required: true
+    pattern: '^[0-9]+$'
+    patternErrorMessage: 'Must be a chain ID (integer).'
 
   - id: NODE_ADDRESS
     target:
@@ -76,6 +87,28 @@ fields:
     pattern: '^0x[a-fA-F0-9]{40}$'
     patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
 
+  - id: SLASHING_MANAGER_CONTRACT
+    target:
+      type: environment
+      name: SLASHING_MANAGER_CONTRACT
+      service: ciphernode
+    title: 'Slashing Manager Contract'
+    description: 'Address of the SlashingManager contract.'
+    required: true
+    pattern: '^0x[a-fA-F0-9]{40}$'
+    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
+
+  - id: FEE_TOKEN_CONTRACT
+    target:
+      type: environment
+      name: FEE_TOKEN_CONTRACT
+      service: ciphernode
+    title: 'Fee Token Contract'
+    description: 'Address of the fee token contract. Mainnet uses USDS.'
+    required: true
+    pattern: '^0x[a-fA-F0-9]{40}$'
+    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
+
   - id: INTERFOLD_DEPLOY_BLOCK
     target:
       type: environment
@@ -109,6 +142,28 @@ fields:
     pattern: '^[0-9]+$'
     patternErrorMessage: 'Must be a block number (integer).'
 
+  - id: SLASHING_MANAGER_DEPLOY_BLOCK
+    target:
+      type: environment
+      name: SLASHING_MANAGER_DEPLOY_BLOCK
+      service: ciphernode
+    title: 'Slashing Manager Deploy Block'
+    description: 'Block number where the SlashingManager contract was deployed.'
+    required: true
+    pattern: '^[0-9]+$'
+    patternErrorMessage: 'Must be a block number (integer).'
+
+  - id: FEE_TOKEN_DEPLOY_BLOCK
+    target:
+      type: environment
+      name: FEE_TOKEN_DEPLOY_BLOCK
+      service: ciphernode
+    title: 'Fee Token Deploy Block'
+    description: 'Block number where the fee token contract was deployed.'
+    required: true
+    pattern: '^[0-9]+$'
+    patternErrorMessage: 'Must be a block number (integer).'
+
   - id: PEERS
     target:
       type: environment
@@ -117,7 +172,7 @@ fields:
     title: 'Bootstrap Peers'
     description: |
       Comma-separated peer addresses, e.g.:
-      /dns4/cn1/udp/9091/quic-v1, /dns4/cn2/udp/9092/quic-v1
+      /dns4/cn1/udp/37173/quic-v1, /dns4/cn2/udp/37173/quic-v1
       Leave empty for auto-discovery.
     required: false
 

@@ -8,10 +8,9 @@ CONFIG_DIR="${CONFIG_DIR:-/data}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.yaml}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-/opt/config.template.yaml}"
 SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
-CREDENTIAL_PROVISIONER="${CREDENTIAL_PROVISIONER:-/opt/provision-credentials.exp}"
 LEGACY_STATE_DIR="${LEGACY_STATE_DIR:-$CONFIG_DIR/.enclave}"
 CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
-# Interfold v0.2.3 resolves a relative `key_file: key` beside a discovered
+# Current Interfold releases resolve a relative `key_file: key` beside a discovered
 # /data/config.yaml to this path for the default node profile.
 PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
 
@@ -22,7 +21,7 @@ fail() {
 }
 
 echo "=========================================="
-echo "  Interfold Ciphernode - ${NETWORK:-sepolia}"
+echo "  Interfold Ciphernode - ${NETWORK:-mainnet}"
 echo "=========================================="
 
 # Environment variables are visible in Docker/DAppNode metadata. Refuse the
@@ -34,6 +33,18 @@ fi
 # Validate RPC URL (required).
 [ -n "${RPC_URL:-}" ] || fail "RPC_URL is required; set it in the DAppNode package configuration"
 [[ "$RPC_URL" =~ ^wss?:// ]] || fail "RPC_URL must be a WebSocket URL (ws:// or wss://)"
+
+require_uint() {
+    local name="$1"
+    local value="${!name:-}"
+    [[ "$value" =~ ^[0-9]+$ ]] || fail "$name must be an integer"
+}
+
+require_address() {
+    local name="$1"
+    local value="${!name:-}"
+    [[ "$value" =~ ^0x[0-9a-fA-F]{40}$ ]] || fail "$name must be a valid Ethereum address"
+}
 
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"
@@ -52,7 +63,7 @@ migrate_legacy_state() {
         fail "both legacy and current state directories exist; refusing an ambiguous upgrade"
     fi
     if [ -d "$LEGACY_STATE_DIR" ]; then
-        log "Migrating the v0.1.8 state namespace to Interfold v0.2.3..."
+        log "Migrating the v0.1.8 state namespace to the current Interfold state path..."
         mv -- "$LEGACY_STATE_DIR" "$CURRENT_STATE_DIR" \
             || fail "could not migrate legacy state into $CURRENT_STATE_DIR"
     fi
@@ -61,7 +72,7 @@ migrate_legacy_state() {
 migrate_legacy_state
 
 # Set non-secret defaults.
-export NETWORK="${NETWORK:-sepolia}"
+export NETWORK="${NETWORK:-mainnet}"
 export QUIC_PORT="${QUIC_PORT:-37173}"
 export NODE_ADDRESS="${NODE_ADDRESS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
@@ -70,6 +81,20 @@ case "$LOG_LEVEL" in
     info|debug|trace) ;;
     *) fail "LOG_LEVEL must be one of: info, debug, trace" ;;
 esac
+
+require_uint CHAIN_ID
+require_uint QUIC_PORT
+require_address NODE_ADDRESS
+require_address INTERFOLD_CONTRACT
+require_address CIPHERNODE_REGISTRY_CONTRACT
+require_address BONDING_REGISTRY_CONTRACT
+require_address SLASHING_MANAGER_CONTRACT
+require_address FEE_TOKEN_CONTRACT
+require_uint INTERFOLD_DEPLOY_BLOCK
+require_uint CIPHERNODE_REGISTRY_DEPLOY_BLOCK
+require_uint BONDING_REGISTRY_DEPLOY_BLOCK
+require_uint SLASHING_MANAGER_DEPLOY_BLOCK
+require_uint FEE_TOKEN_DEPLOY_BLOCK
 
 # Generate config from the fixed template. The 0077 umask keeps RPC
 # credentials in the rendered URL out of group/world-readable files.
@@ -118,15 +143,17 @@ configure_credentials() {
         return
     fi
 
-    [ -r "$CREDENTIAL_PROVISIONER" ] || fail "credential provisioner is not readable: $CREDENTIAL_PROVISIONER"
-    log "Provisioning encrypted credentials through hidden stdin prompts..."
-    jq -jr '[.password, .private_key][] | @base64 + "\n"' "$SECRETS_FILE" \
-        | expect "$CREDENTIAL_PROVISIONER" "$CONFIG_FILE" \
-        || fail "one or more credential commands failed"
+    log "Provisioning encrypted credentials through stdin..."
+    jq -jr '.password, "\n"' "$SECRETS_FILE" \
+        | interfold password set --password-stdin --config "$CONFIG_FILE" \
+        || fail "password command failed"
+    jq -jr '.private_key, "\n"' "$SECRETS_FILE" \
+        | interfold wallet set --private-key-stdin --config "$CONFIG_FILE" \
+        || fail "wallet command failed"
 
     # DAppNode copies fileUpload content into this container before startup.
-    # Wallet/network keys are encrypted in /data and v0.2.3 stores the password
-    # key there with mode 0400. Remove the combined plaintext upload.
+    # Wallet command derives both Ethereum and libp2p identities. Remove the
+    # combined plaintext upload after both encrypted records are persisted.
     rm -f "$SECRETS_FILE"
     log "Credential setup completed."
 }
