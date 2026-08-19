@@ -1,0 +1,9 @@
+{
+  "name": "@interfold/dappnode",
+  "version": "0.10.0",
+  "private": true,
+  "license": "LGPL-3.0-only",
+  "devDependencies": {
+    "@dappnode/dappnodesdk": "0.3.53"
+  }
+}

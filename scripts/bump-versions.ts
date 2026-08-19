@@ -66,7 +66,8 @@ class VersionBumper {
         console.log('      - packages/interfold-react')
         console.log('      - packages/interfold-mcp')
         console.log('      - crates/wasm')
-        console.log('   3. Update DAppNode package version for stable releases')
+        const dappNodeAction = this.isPrerelease() ? 'skip for pre-release' : `update to ${this.newVersion}`
+        console.log(`   3. DAppNode package: ${dappNodeAction}`)
         console.log('   4. Update lock files (Cargo.lock, pnpm-lock.yaml)')
         console.log('   5. Generate/update CHANGELOG.md')
         if (!this.options.skipGit) {
@@ -191,13 +192,17 @@ class VersionBumper {
       execSync('git add .', { cwd: this.rootDir })
 
       // Create commit message
-      const commitMessage = `chore(release): bump version to ${this.newVersion}
-  
-  - Updated all Rust crates to ${this.newVersion}
-  - Updated all npm packages to ${this.newVersion}
-  - Updated DAppNode package to ${this.newVersion}
-  - Updated lock files
-  - Generated CHANGELOG.md`
+      const commitMessageLines = [
+        `chore(release): bump version to ${this.newVersion}`,
+        '',
+        `- Updated all Rust crates to ${this.newVersion}`,
+        `- Updated all npm packages to ${this.newVersion}`,
+      ]
+      if (!this.isPrerelease()) {
+        commitMessageLines.push(`- Updated DAppNode package to ${this.newVersion}`)
+      }
+      commitMessageLines.push('- Updated lock files', '- Generated CHANGELOG.md')
+      const commitMessage = commitMessageLines.join('\n')
 
       // Commit changes
       console.log('   Committing changes...')

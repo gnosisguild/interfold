@@ -173,25 +173,26 @@ jobs:
     if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: dappnode/package-lock.json
+
+      - name: Install DAppNode SDK
+        working-directory: dappnode
+        run: npm ci --ignore-scripts
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build DAppNode package
         working-directory: dappnode
-        run: npx @dappnode/dappnodesdk@latest build --skip_upload --skip_save --arch linux/amd64
+        run: npx --no-install dappnodesdk build --skip_upload --skip_save --arch linux/amd64
 
   build-nix-flake:
     name: Build Nix Flake
@@ -584,11 +585,23 @@ jobs:
             # auto-changelog writes headings as "#### [v0.8.0](compare-url)", so the
             # leading "v" must be optional. VERSION has it stripped from the tag, and
             # matching the bare version produced an empty "What's Changed" section.
-            VERSION_RE="${VERSION//./\\.}"
-            awk -v ver="${VERSION_RE}" '
+            awk -v raw_ver="${VERSION}" '
+              function escape_ere(value,    i, char, escaped) {
+                escaped = ""
+                for (i = 1; i <= length(value); i++) {
+                  char = substr(value, i, 1)
+                  if (index("[]\\.^$*+?{}()|", char) > 0) {
+                    escaped = escaped "\\" char
+                  } else {
+                    escaped = escaped char
+                  }
+                }
+                return escaped
+              }
               BEGIN {
+                ver = escape_ere(raw_ver)
                 start = "^#+ \\[?v?" ver "\\]?"
-                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+"
+                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+([-+][a-zA-Z0-9.-]+)?"
               }
               !flag && $0 ~ start { flag = 1; next }
               flag && $0 ~ next_version { exit }
