@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
 import Loader from './Loader'
-import { CONTRACTS, bondingRegistryAbi, faucetAbi } from './lib/chain'
+import { CONTRACTS, NETWORK_NAME, bondingRegistryAbi, faucetAbi } from './lib/chain'
 import { LINKS, explorerAddress, explorerTx } from './lib/links'
 import { ZERO_ADDRESS, simulateAndWrite, useBonding, type BondingConfig, type OperatorStatus } from './lib/bonding'
 import { confirmTx, useWallet, walletErrorMessage } from './lib/wallet'
@@ -243,7 +243,7 @@ export default function Operator() {
           </div>
         </div>
       ) : loading && !config ? (
-        <Loader label='Loading bonding parameters' sub='Reading from Sepolia…' />
+        <Loader label='Loading bonding parameters' />
       ) : config ? (
         <>
           <ParameterStrip config={config} />
@@ -275,13 +275,13 @@ export default function Operator() {
                       <AddrLink address={wallet.address} />
                     </dd>
                     <dt>Network</dt>
-                    <dd>{wallet.onCorrectChain ? 'Sepolia' : `Wrong network (chain ${wallet.chainId ?? '—'})`}</dd>
+                    <dd>{wallet.onCorrectChain ? NETWORK_NAME : `Wrong network (chain ${wallet.chainId ?? '—'})`}</dd>
                   </dl>
                   {!wallet.onCorrectChain && (
                     <>
-                      <Note kind='warn'>Interfold is deployed on Sepolia. Switch networks to continue.</Note>
+                      <Note kind='warn'>Interfold is deployed on {NETWORK_NAME}. Switch networks to continue.</Note>
                       <button className='btn btn--primary' onClick={() => void wallet.switchChain()}>
-                        Switch to Sepolia
+                        Switch to {NETWORK_NAME}
                       </button>
                     </>
                   )}
@@ -294,7 +294,7 @@ export default function Operator() {
                   <div>
                     <div className='opfaucet__title'>Testnet tokens</div>
                     <div className='opfaucet__sub'>
-                      This is a Sepolia deployment. The faucet tops up {config.ciphernodeBondSymbol} for the ciphernode bond and{' '}
+                      This is a testnet deployment. The faucet tops up {config.ciphernodeBondSymbol} for the ciphernode bond and{' '}
                       {config.ticketSymbol} for tickets.
                     </div>
                   </div>

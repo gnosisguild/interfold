@@ -142,6 +142,7 @@ pub enum CiphernodeCommands {
     },
     /// Intentionally deactivate by withdrawing tickets and/or ciphernode bond
     Deactivate {
+        /// Ticket-token amount to withdraw, not a ticket count.
         #[arg(long = "tickets", value_name = "AMOUNT")]
         ticket_amount: Option<String>,
         #[arg(long = "bond", value_name = "AMOUNT")]
@@ -187,11 +188,14 @@ pub enum BondCommands {
 pub enum TicketCommands {
     /// Deposit stablecoins to mint tickets for an operator
     Buy {
+        /// Stablecoin amount to deposit, not a ticket count. Available tickets
+        /// are floor(total collateral balance / ticket price).
         #[arg(long = "amount")]
         amount: String,
     },
     /// Burn an operator's tickets and queue the stablecoins for exit
     Burn {
+        /// Ticket-token amount to burn, not a ticket count.
         #[arg(long = "amount")]
         amount: String,
     },

@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // External destinations. Only URLs we can verify (from the repo's docs/llms.txt,
-// README, and the Sepolia block explorer) — no guessed paths.
+// README, and the selected network's block explorer) — no guessed paths.
+
+import { EXPLORER_URL } from './chain'
 
 export const LINKS = {
   site: 'https://theinterfold.com/',
@@ -13,7 +15,7 @@ export const LINKS = {
   architecture: 'https://docs.theinterfold.com/architecture-overview',
   crisp: 'https://docs.theinterfold.com/CRISP/introduction',
   repo: 'https://github.com/gnosisguild/interfold',
-  explorer: 'https://sepolia.etherscan.io',
+  explorer: EXPLORER_URL,
 } as const
 
 export function explorerAddress(address: string): string {

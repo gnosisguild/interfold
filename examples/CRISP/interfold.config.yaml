@@ -27,26 +27,26 @@ chains:
     chain_id: 11155111
     contracts:
       e3_program:
-        address: "0x0376Bc3738A81A9B83B23648cC89Cc68A38253fd"
-        deploy_block: 11472595
+        address: "0x8D9c914446451fdE7FC0fdBcF20573E878c3DE5a"
+        deploy_block: 11508527
       interfold:
-        address: "0xDB3a68cC7B4F689c5226FEAa7593B3E1eAa0F6F7"
-        deploy_block: 11472528
+        address: "0x38A8A686A420023568E995b57B4FBEA371555Ba7"
+        deploy_block: 11508431
       ciphernode_registry:
-        address: "0x14D5640e74f79B957FD6b59d7347a9e8A48D16ba"
-        deploy_block: 11472506
+        address: "0xa639b9a7AB05B787fFE258735Cf9541152a0E610"
+        deploy_block: 11508403
       bonding_registry:
-        address: "0xF9b12c20e9D87101a7f6B74958DCED9A1E3b6122"
-        deploy_block: 11472507
+        address: "0x4b8560271CD78e071f0074f6Db7D344298187F8b"
+        deploy_block: 11508404
       slashing_manager:
-        address: "0x92a39556F16fF3cFff8ac19DB5770091feed632f"
-        deploy_block: 11472505
+        address: "0xe9643cdEFfa4a560DBAbB72330aaF923bc46a138"
+        deploy_block: 11508400
       fee_token:
-        address: "0x0028487557c5a01B9179b31BE894feBd755131A6"
-        deploy_block: 11472503
+        address: "0x1D4b4750A5A2CB04F22979cb3FC05e9Fc51141eA"
+        deploy_block: 11508395
       faucet:
-        address: "0x024d01Ea167655D348861B2A467356cc8a63c6ab"
-        deploy_block: 11472517
+        address: "0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA"
+        deploy_block: 11508419
 program:
   dev: true
   # risc0:

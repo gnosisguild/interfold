@@ -6,62 +6,102 @@
       "mocks": true,
       "contracts": {
         "interfold": {
-          "address": "0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7",
-          "deploy_block": 11459000
+          "address": "0x38A8A686A420023568E995b57B4FBEA371555Ba7",
+          "deploy_block": 11508431
         },
         "ciphernode_registry": {
-          "address": "0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A",
-          "deploy_block": 11458978
+          "address": "0xa639b9a7AB05B787fFE258735Cf9541152a0E610",
+          "deploy_block": 11508403
         },
         "bonding_registry": {
-          "address": "0x77384A924C18FfE00A9325815723121534105Abd",
-          "deploy_block": 11458979
+          "address": "0x4b8560271CD78e071f0074f6Db7D344298187F8b",
+          "deploy_block": 11508404
         },
         "slashing_manager": {
-          "address": "0x4CE0107239719003ad07F65e0ae18a09aD2dcfDE",
-          "deploy_block": 11458977
+          "address": "0xe9643cdEFfa4a560DBAbB72330aaF923bc46a138",
+          "deploy_block": 11508400
         },
         "fee_token": {
-          "address": "0xD4B8e32C718B87f81d8e58fB3a3f061D92CcBb27",
-          "deploy_block": 11458975
+          "address": "0x1D4b4750A5A2CB04F22979cb3FC05e9Fc51141eA",
+          "deploy_block": 11508395
         },
         "faucet": {
-          "address": "0x2797A03F78a4237D6ba97170589BBD1Dca382207",
-          "deploy_block": 11458989
+          "address": "0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA",
+          "deploy_block": 11508419
         }
       },
       "reference": {
         "InterfoldToken": {
-          "address": "0x7ffCCe335EEd0f3e3CbaD491ac68BF72a223606B",
-          "deploy_block": 11458986
+          "address": "0x99388D3261c5f1631cE06349FeA298a9900f23dD",
+          "deploy_block": 11508413
         },
         "InterfoldTicketToken": {
-          "address": "0x9e271C60139fA951EFb8954Dd0454B524630d767",
-          "deploy_block": 11458976
+          "address": "0x9581E8E0e1119A8e2f0e616Af40a67d39d0fEa5A",
+          "deploy_block": 11508397
         },
         "E3RefundManager": {
-          "address": "0x5967Ef0390760013Cc0A42e1ACf85DBb86619D17",
-          "deploy_block": 11459002
+          "address": "0x589cC6e05890bE5A512462F943B9f8dB9708fcCC",
+          "deploy_block": 11508434
         },
         "MockE3Program": {
-          "address": "0x90Ec1EA7db6a722154f688dFc2694024c3e6948f",
-          "deploy_block": 11458997
+          "address": "0x3D3F84d5c9dd75027F8c9e0A2203bF6a82C972d2",
+          "deploy_block": 11508427
         },
         "MockComputeProvider": {
-          "address": "0x7B1CAd2995e3b29E3c3B15d2ADfA51418C8A0775",
-          "deploy_block": 11458993
+          "address": "0x53F33E0aC775E507B1687Aee82FC8bbaf30be691",
+          "deploy_block": 11508423
         },
         "MockDecryptionVerifier": {
-          "address": "0xa40a028e15C0858AaE1E7DA851Bc39A0D7bf04Ab",
-          "deploy_block": 11458994
+          "address": "0xb7722047723f1995ef4809Fb33161355527C60f7",
+          "deploy_block": 11508424
         },
         "MockCiphertextVerifier": {
-          "address": "0xfef59f643085cD9D66B433DF563eDC329Fad17C7",
-          "deploy_block": 11458995
+          "address": "0x4581784FE902eFf5C405283C0583631265BDAE42",
+          "deploy_block": 11508425
         },
         "MockPkVerifier": {
-          "address": "0xf051f38554AA2db3577be06e6Bb5302DdEFbd2ef",
-          "deploy_block": 11458996
+          "address": "0x5a5d2C4157A6dD5304bB561A8d7F41Af6A143372",
+          "deploy_block": 11508426
+        }
+      }
+    },
+    "mainnet": {
+      "chain_id": 1,
+      "mocks": true,
+      "contracts": {
+        "interfold": {
+          "address": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
+          "deploy_block": 25786403
+        },
+        "ciphernode_registry": {
+          "address": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
+          "deploy_block": 25786403
+        },
+        "bonding_registry": {
+          "address": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
+          "deploy_block": 25786403
+        },
+        "slashing_manager": {
+          "address": "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9",
+          "deploy_block": 25786403
+        },
+        "fee_token": {
+          "address": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+          "deploy_block": 25786403
+        }
+      },
+      "reference": {
+        "InterfoldTicketToken": {
+          "address": "0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D",
+          "deploy_block": 25786403
+        },
+        "E3RefundManager": {
+          "address": "0x1940eF168f4E0B3dA24BEca539856684793B0F6e",
+          "deploy_block": 25786403
+        },
+        "MockE3Program": {
+          "address": "0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7",
+          "deploy_block": 25786403
         }
       }
     },

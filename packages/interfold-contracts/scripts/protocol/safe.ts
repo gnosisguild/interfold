@@ -3,7 +3,7 @@ import SafeApiKit from "@safe-global/api-kit";
 import Safe from "@safe-global/protocol-kit";
 import { MetaTransactionData, OperationType } from "@safe-global/types-kit";
 import { ethers as ethersLib } from "ethers";
-import { stdin, stderr } from "node:process";
+import { stderr, stdin } from "node:process";
 import readline from "node:readline/promises";
 import { Writable } from "node:stream";
 
