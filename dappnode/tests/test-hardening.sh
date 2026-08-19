@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+DAPPNODE_VERSION=$(node -p "require('$ROOT_DIR/dappnode_package.json').version")
+DAPPNODE_UPSTREAM_VERSION=$(node -p "require('$ROOT_DIR/dappnode_package.json').upstreamVersion")
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2
@@ -225,8 +227,11 @@ fi
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
-assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.10.0"'
-assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.10.0'
+[ "$DAPPNODE_VERSION" = "$DAPPNODE_UPSTREAM_VERSION" ] \
+    || fail "DAppNode version and upstreamVersion must match"
+assert_contains "$ROOT_DIR/docker-compose.yml" "UPSTREAM_VERSION: $DAPPNODE_VERSION"
+assert_contains "$ROOT_DIR/docker-compose.yml" "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION"
+assert_contains "$ROOT_DIR/Dockerfile" "ARG UPSTREAM_VERSION=$DAPPNODE_VERSION"
 assert_contains "$ROOT_DIR/docker-compose.yml" "INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'"
 assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'"
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
