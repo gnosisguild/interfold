@@ -2,7 +2,7 @@
 
 set -e
 
-git diff -w origin/$1...HEAD -- . ':!*.lock' ':!*lock.yaml' | \
+git diff -w origin/$1...HEAD -- . ':!*.lock' ':!*lock.yaml' ':!*lock.json' | \
   grep "^[+-]" | \
   grep -v "^[+-][+-][+-]" | \
   grep -v "^[+-]@@" | \
