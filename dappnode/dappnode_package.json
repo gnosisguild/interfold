@@ -1,6 +1,6 @@
 {
   "name": "interfold-ciphernode.public.dappnode.eth",
-  "version": "0.10.0",
+  "version": "0.1.0",
   "upstreamVersion": "0.10.0",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",

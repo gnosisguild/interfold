@@ -66,7 +66,9 @@ class VersionBumper {
         console.log('      - packages/interfold-react')
         console.log('      - packages/interfold-mcp')
         console.log('      - crates/wasm')
-        const dappNodeAction = this.isPrerelease() ? 'skip for pre-release' : `update to ${this.newVersion}`
+        const dappNodeAction = this.isPrerelease()
+          ? 'skip for pre-release'
+          : `update upstream image to ${this.newVersion} and bump wrapper version`
         console.log(`   3. DAppNode package: ${dappNodeAction}`)
         console.log('   4. Update lock files (Cargo.lock, pnpm-lock.yaml)')
         console.log('   5. Generate/update CHANGELOG.md')
@@ -199,7 +201,7 @@ class VersionBumper {
         `- Updated all npm packages to ${this.newVersion}`,
       ]
       if (!this.isPrerelease()) {
-        commitMessageLines.push(`- Updated DAppNode package to ${this.newVersion}`)
+        commitMessageLines.push(`- Updated DAppNode upstream image to ${this.newVersion}`)
       }
       commitMessageLines.push('- Updated lock files', '- Generated CHANGELOG.md')
       const commitMessage = commitMessageLines.join('\n')
@@ -431,16 +433,20 @@ class VersionBumper {
 
     const packagePath = join(this.rootDir, 'dappnode/dappnode_package.json')
     const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'))
-    packageJson.version = this.newVersion
+    const dappNodeVersion = this.nextDappNodeWrapperVersion(packageJson.version, packageJson.upstreamVersion, this.newVersion)
+
+    packageJson.version = dappNodeVersion
     packageJson.upstreamVersion = this.newVersion
     writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n')
     console.log('   ✓ dappnode_package.json')
+
+    this.updateDappNodeNpmVersion(dappNodeVersion)
 
     this.replaceInFile(join(this.rootDir, 'dappnode/docker-compose.yml'), [
       [/UPSTREAM_VERSION: [^\n]+/, `UPSTREAM_VERSION: ${this.newVersion}`],
       [
         /image: 'ciphernode\.interfold-ciphernode\.public\.dappnode\.eth:[^']+'/,
-        `image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:${this.newVersion}'`,
+        `image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:${dappNodeVersion}'`,
       ],
     ])
     console.log('   ✓ docker-compose.yml')
@@ -449,6 +455,49 @@ class VersionBumper {
       [/ARG UPSTREAM_VERSION=[^\n]+/, `ARG UPSTREAM_VERSION=${this.newVersion}`],
     ])
     console.log('   ✓ Dockerfile')
+    console.log(`   ✓ wrapper ${dappNodeVersion} uses upstream ${this.newVersion}`)
+  }
+
+  private updateDappNodeNpmVersion(dappNodeVersion: string): void {
+    const npmPackagePath = join(this.rootDir, 'dappnode/package.json')
+    const npmPackageJson = JSON.parse(readFileSync(npmPackagePath, 'utf-8'))
+    npmPackageJson.version = dappNodeVersion
+    writeFileSync(npmPackagePath, JSON.stringify(npmPackageJson, null, 2) + '\n')
+
+    const lockPath = join(this.rootDir, 'dappnode/package-lock.json')
+    const lockJson = JSON.parse(readFileSync(lockPath, 'utf-8'))
+    lockJson.version = dappNodeVersion
+    if (lockJson.packages?.['']) {
+      lockJson.packages[''].version = dappNodeVersion
+    }
+    writeFileSync(lockPath, JSON.stringify(lockJson, null, 2) + '\n')
+    console.log('   ✓ dappnode npm package metadata')
+  }
+
+  private nextDappNodeWrapperVersion(currentWrapperVersion: string, previousUpstreamVersion: string, nextUpstreamVersion: string): string {
+    const currentWrapper = this.parseSemverCore(currentWrapperVersion)
+    const previousUpstream = this.parseSemverCore(previousUpstreamVersion)
+    const nextUpstream = this.parseSemverCore(nextUpstreamVersion)
+
+    if (nextUpstream.major !== previousUpstream.major) {
+      return `${currentWrapper.major + 1}.0.0`
+    }
+    if (nextUpstream.minor !== previousUpstream.minor) {
+      return `${currentWrapper.major}.${currentWrapper.minor + 1}.0`
+    }
+    return `${currentWrapper.major}.${currentWrapper.minor}.${currentWrapper.patch + 1}`
+  }
+
+  private parseSemverCore(version: string): { major: number; minor: number; patch: number } {
+    const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
+    if (!match) {
+      throw new Error(`Invalid version format: ${version}`)
+    }
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2]),
+      patch: Number(match[3]),
+    }
   }
 
   private replaceInFile(filePath: string, replacements: [RegExp, string][]): void {

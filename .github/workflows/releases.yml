@@ -74,20 +74,26 @@ jobs:
           if [[ "${{ steps.get_version.outputs.is_prerelease }}" == "false" ]]; then
             DAPPNODE_VERSION=$(node -p "require('./dappnode/dappnode_package.json').version")
             DAPPNODE_UPSTREAM_VERSION=$(node -p "require('./dappnode/dappnode_package.json').upstreamVersion")
-            if [ "$DAPPNODE_VERSION" != "$VERSION" ]; then
-              echo "❌ DAppNode package version ($DAPPNODE_VERSION) doesn't match tag ($VERSION)"
-              exit 1
-            fi
+            DAPPNODE_NPM_VERSION=$(node -p "require('./dappnode/package.json').version")
+            DAPPNODE_LOCK_VERSION=$(node -p "require('./dappnode/package-lock.json').version")
             if [ "$DAPPNODE_UPSTREAM_VERSION" != "$VERSION" ]; then
               echo "❌ DAppNode upstreamVersion ($DAPPNODE_UPSTREAM_VERSION) doesn't match tag ($VERSION)"
+              exit 1
+            fi
+            if [ "$DAPPNODE_NPM_VERSION" != "$DAPPNODE_VERSION" ]; then
+              echo "❌ DAppNode package.json version ($DAPPNODE_NPM_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
+              exit 1
+            fi
+            if [ "$DAPPNODE_LOCK_VERSION" != "$DAPPNODE_VERSION" ]; then
+              echo "❌ DAppNode package-lock version ($DAPPNODE_LOCK_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
               exit 1
             fi
             if ! grep -Fq "UPSTREAM_VERSION: $VERSION" dappnode/docker-compose.yml; then
               echo "❌ DAppNode docker-compose UPSTREAM_VERSION doesn't match tag ($VERSION)"
               exit 1
             fi
-            if ! grep -Fq "ciphernode.interfold-ciphernode.public.dappnode.eth:$VERSION" dappnode/docker-compose.yml; then
-              echo "❌ DAppNode docker-compose image tag doesn't match tag ($VERSION)"
+            if ! grep -Fq "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION" dappnode/docker-compose.yml; then
+              echo "❌ DAppNode docker-compose image tag doesn't match package version ($DAPPNODE_VERSION)"
               exit 1
             fi
             if ! grep -Fq "ARG UPSTREAM_VERSION=$VERSION" dappnode/Dockerfile; then
