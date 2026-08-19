@@ -13,6 +13,7 @@ CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
 # Current Interfold releases resolve a relative `key_file: key` beside a discovered
 # /data/config.yaml to this path for the default node profile.
 PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
+CREDENTIALS_READY_FILE="${CREDENTIALS_READY_FILE:-$(dirname "$PASSWORD_FILE")/credentials.provisioned}"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1"; }
 fail() {
@@ -130,6 +131,43 @@ validate_persisted_password_file() {
     [ -r "$PASSWORD_FILE" ] || fail "persisted password file is not readable: $PASSWORD_FILE"
 }
 
+validate_credentials_ready_file() {
+    [ -f "$CREDENTIALS_READY_FILE" ] || fail "credential readiness marker is not a regular file: $CREDENTIALS_READY_FILE"
+    [ ! -L "$CREDENTIALS_READY_FILE" ] || fail "credential readiness marker must not be a symbolic link: $CREDENTIALS_READY_FILE"
+    chmod 400 "$CREDENTIALS_READY_FILE" || fail "could not restrict credential readiness marker permissions"
+}
+
+mark_credentials_ready() {
+    mkdir -p "$(dirname "$CREDENTIALS_READY_FILE")"
+    : > "$CREDENTIALS_READY_FILE"
+    chmod 400 "$CREDENTIALS_READY_FILE"
+}
+
+wallet_identity_available() {
+    interfold wallet get --config "$CONFIG_FILE" >/dev/null 2>&1
+}
+
+credentials_are_ready() {
+    if [ -e "$CREDENTIALS_READY_FILE" ]; then
+        validate_credentials_ready_file
+        return 0
+    fi
+
+    if wallet_identity_available; then
+        mark_credentials_ready
+        return 0
+    fi
+
+    return 1
+}
+
+provision_wallet() {
+    jq -jr '.private_key, "\n"' "$SECRETS_FILE" \
+        | interfold wallet set --private-key-stdin --config "$CONFIG_FILE" \
+        || fail "wallet command failed"
+    mark_credentials_ready
+}
+
 configure_credentials() {
     validate_secret_file
 
@@ -138,6 +176,10 @@ configure_credentials() {
         jq -er '.password' "$SECRETS_FILE" | tr -d '\n' | cmp -s - "$PASSWORD_FILE" \
             || fail "uploaded password does not match the persisted credential key"
         log "Using the matching persisted encryption password."
+        if ! credentials_are_ready; then
+            log "Encrypted wallet identity is incomplete; retrying wallet provisioning."
+            provision_wallet
+        fi
         rm -f "$SECRETS_FILE"
         log "Existing encrypted wallet/network identity was preserved."
         return
@@ -147,9 +189,7 @@ configure_credentials() {
     jq -jr '.password, "\n"' "$SECRETS_FILE" \
         | interfold password set --password-stdin --config "$CONFIG_FILE" \
         || fail "password command failed"
-    jq -jr '.private_key, "\n"' "$SECRETS_FILE" \
-        | interfold wallet set --private-key-stdin --config "$CONFIG_FILE" \
-        || fail "wallet command failed"
+    provision_wallet
 
     # DAppNode copies fileUpload content into this container before startup.
     # Wallet command derives both Ethereum and libp2p identities. Remove the
@@ -163,8 +203,10 @@ if [ -e "$SECRETS_FILE" ]; then
 elif [ -s "$PASSWORD_FILE" ]; then
     # Backward-compatible restart/upgrade path: DAppNode file uploads are copied
     # when configuring a container, while encrypted credentials persist in
-    # /data. Interfold itself will fail startup if wallet/network state is absent.
+    # /data. If an older complete install predates the readiness marker, stamp it
+    # after the wallet decrypts successfully.
     validate_persisted_password_file
+    credentials_are_ready || fail "credential upload is required to complete wallet provisioning: $SECRETS_FILE"
     log "No credential upload present; using persisted credential state."
 else
     fail "credentials file is required for first startup: $SECRETS_FILE"

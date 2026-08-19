@@ -34,6 +34,7 @@ make_mock_interfold() {
         'case "${1:-} ${2:-} ${3:-}" in' \
         '  "password set --password-stdin"*) operation=password ;;' \
         '  "wallet set --private-key-stdin"*) operation=wallet ;;' \
+        '  "wallet get --config"*) operation=wallet-get ;;' \
         '  "start "*) operation=start ;;' \
         '  *) operation=unexpected ;;' \
         'esac' \
@@ -51,6 +52,13 @@ make_mock_interfold() {
         '    ;;' \
         '  wallet)' \
         '    IFS= read -r secret' \
+        '    printf "%s" "$secret" > "$WALLET_FILE"' \
+        '    chmod 400 "$WALLET_FILE"' \
+        '    ;;' \
+        '  wallet-get)' \
+        '    [ "${WALLET_GET_FAIL:-}" != "1" ] || exit 43' \
+        '    [ -s "$WALLET_FILE" ] || exit 44' \
+        '    printf "0x3333333333333333333333333333333333333333\n"' \
         '    ;;' \
         '  start)' \
         '    : ;;' \
@@ -93,6 +101,8 @@ run_entrypoint() {
         TEMPLATE_FILE="$ROOT_DIR/config.template.yaml" \
         SECRETS_FILE="$case_dir/secrets/secrets.json" \
         PASSWORD_FILE="$case_dir/data/password" \
+        CREDENTIALS_READY_FILE="$case_dir/data/credentials.provisioned" \
+        WALLET_FILE="$case_dir/data/wallet" \
         CALL_LOG="$case_dir/calls" \
         ARGV_LOG="$case_dir/argv" \
         RPC_URL="ws://127.0.0.1:8545" \
@@ -141,6 +151,12 @@ fi
 assert_contains "$failure_dir/calls" 'wallet'
 assert_not_contains "$failure_dir/calls" 'start'
 [ -e "$failure_dir/secrets/secrets.json" ] || fail "failed setup removed recovery input"
+[ ! -e "$failure_dir/data/credentials.provisioned" ] || fail "failed setup created readiness marker"
+run_entrypoint "$failure_dir"
+[ "$(tr '\n' ' ' < "$failure_dir/calls")" = "wallet-get wallet start " ] \
+    || fail "wallet retry did not resume incomplete provisioning"
+[ ! -e "$failure_dir/secrets/secrets.json" ] || fail "retried setup did not remove plaintext credentials"
+[ -e "$failure_dir/data/credentials.provisioned" ] || fail "retried setup did not create readiness marker"
 
 # Existing state may only be reused with the password that encrypted it.
 mismatch_dir="$TEST_ROOT/password-mismatch"
@@ -156,6 +172,7 @@ fi
 matching_dir="$TEST_ROOT/password-match"
 mkdir -p "$matching_dir/data" "$matching_dir/secrets"
 printf '%s' 'correct horse battery staple' > "$matching_dir/data/password"
+printf '%s' 'ready' > "$matching_dir/data/credentials.provisioned"
 write_secrets "$matching_dir/secrets/secrets.json"
 run_entrypoint "$matching_dir"
 [ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
@@ -191,8 +208,27 @@ restart_dir="$TEST_ROOT/restart"
 mkdir -p "$restart_dir/data"
 printf '%s' 'persisted-password' > "$restart_dir/data/password"
 chmod 400 "$restart_dir/data/password"
+printf '%s' 'ready' > "$restart_dir/data/credentials.provisioned"
 run_entrypoint "$restart_dir"
 [ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
+
+old_restart_dir="$TEST_ROOT/old-restart"
+mkdir -p "$old_restart_dir/data"
+printf '%s' 'persisted-password' > "$old_restart_dir/data/password"
+printf '%s' 'wallet' > "$old_restart_dir/data/wallet"
+run_entrypoint "$old_restart_dir"
+[ "$(tr '\n' ' ' < "$old_restart_dir/calls")" = "wallet-get start " ] \
+    || fail "old complete state was not marked and started"
+[ -e "$old_restart_dir/data/credentials.provisioned" ] || fail "old complete state was not marked ready"
+
+incomplete_restart_dir="$TEST_ROOT/incomplete-restart"
+mkdir -p "$incomplete_restart_dir/data"
+printf '%s' 'persisted-password' > "$incomplete_restart_dir/data/password"
+if run_entrypoint "$incomplete_restart_dir"; then
+    fail "password-only state without upload was accepted"
+fi
+assert_contains "$incomplete_restart_dir/calls" 'wallet-get'
+assert_not_contains "$incomplete_restart_dir/calls" 'start'
 
 # The 0.1.8 state bridge moves the complete custom-config namespace in one
 # rename, preserving the unversioned DB/event log for current releases.
@@ -201,11 +237,12 @@ mkdir -p "$upgrade_dir/data/.enclave/config/_default" "$upgrade_dir/data/.enclav
     "$upgrade_dir/data/.enclave/data/_default/log.0"
 printf '%s' 'persisted-password' > "$upgrade_dir/data/.enclave/config/_default/key"
 printf '%s' 'legacy-state' > "$upgrade_dir/data/.enclave/data/_default/db/sentinel"
+printf '%s' 'wallet' > "$upgrade_dir/data/wallet"
 run_entrypoint "$upgrade_dir" \
     PASSWORD_FILE="$upgrade_dir/data/.interfold/config/_default/key"
 [ ! -e "$upgrade_dir/data/.enclave" ] || fail "legacy state namespace remained after upgrade"
 assert_contains "$upgrade_dir/data/.interfold/data/_default/db/sentinel" 'legacy-state'
-[ "$(tr '\n' ' ' < "$upgrade_dir/calls")" = "start " ] || fail "legacy state upgrade did not start"
+[ "$(tr '\n' ' ' < "$upgrade_dir/calls")" = "wallet-get start " ] || fail "legacy state upgrade did not start"
 
 ambiguous_dir="$TEST_ROOT/ambiguous-upgrade"
 mkdir -p "$ambiguous_dir/data/.enclave" "$ambiguous_dir/data/.interfold"
