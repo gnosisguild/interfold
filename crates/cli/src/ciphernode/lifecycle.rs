@@ -149,16 +149,26 @@ pub(crate) async fn deactivate(
             .get_receipt()
             .await?;
         require_successful_receipt("remove ticket balance", &receipt)?;
-        let tickets = ctx.bonding().availableTickets(operator).call().await?;
-        log!(
-            out,
-            "Removed {} {} from {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
-            amount,
-            symbol,
-            operator,
-            tickets,
-            receipt.transaction_hash
-        );
+        // The withdrawal already succeeded, so a failed read must not fail the command.
+        match ctx.bonding().availableTickets(operator).call().await {
+            Ok(tickets) => log!(
+                out,
+                "Removed {} {} from {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
+                amount,
+                symbol,
+                operator,
+                tickets,
+                receipt.transaction_hash
+            ),
+            Err(err) => log!(
+                out,
+                "Removed {} {} from {:#x} (tx: {:#x}). Could not read the ticket balance: {err}",
+                amount,
+                symbol,
+                operator,
+                receipt.transaction_hash
+            ),
+        }
     }
 
     if let Some(amount) = ciphernode_bond_amount {

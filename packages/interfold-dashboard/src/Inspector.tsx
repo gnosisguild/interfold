@@ -185,7 +185,7 @@ function EventLog({ events }: { events: any[] }) {
         </tbody>
       </table>
       <div className='evlog__foot'>
-        <span>Events stream live from the Interfold contract on Sepolia.</span>
+        <span>Events stream live from the Interfold contract on Ethereum mainnet.</span>
         <a className='link-inline' href={explorerAddress(CONTRACTS.Interfold) + '#events'} target='_blank' rel='noreferrer'>
           Open in block explorer →
         </a>
@@ -228,7 +228,7 @@ export default function Inspector({
             {`Failed to load on-chain data: ${error.message}.`}
           </div>
         ) : (
-          <Loader label='Loading E3 detail' sub='Reading from Sepolia…' />
+          <Loader label='Loading E3 detail' sub='Reading from Ethereum…' />
         )}
       </div>
     )
@@ -263,7 +263,7 @@ export default function Inspector({
             color: error ? '#8a1f1f' : '#3a3f4a',
           }}
         >
-          {error ? `Failed to load on-chain data: ${error.message}.` : 'Refreshing from Sepolia…'}
+          {error ? `Failed to load on-chain data: ${error.message}.` : 'Refreshing from Ethereum…'}
         </div>
       )}
       <section className='insp-head'>

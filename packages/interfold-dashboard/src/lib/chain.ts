@@ -3,15 +3,14 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-// Sepolia public client + contract addresses.
-// Addresses sourced from packages/interfold-contracts/deployed_contracts.json
-// and examples/CRISP/packages/crisp-contracts/deployed_contracts.json.
+// Ethereum mainnet public client + contract addresses.
+// Addresses sourced from deployments/manifest.json (networks.mainnet).
 //
 // ABIs are imported from the canonical typechain factories in
 // @interfold/contracts so they cannot drift from the deployed contracts.
 
 import { createPublicClient, http, type Address } from 'viem'
-import { sepolia } from 'viem/chains'
+import { mainnet } from 'viem/chains'
 import {
   BondingRegistry__factory,
   CiphernodeRegistryOwnable__factory,
@@ -36,7 +35,7 @@ export enum E3Stage {
 
 // All deployment-specific values are env-overridable (see .env.example) so the
 // dashboard can point at a different deployment without code changes. Defaults
-// are the current Sepolia deployment from deployed_contracts.json.
+// are the current mainnet deployment from deployments/manifest.json.
 const env = ((import.meta as any).env ?? {}) as Record<string, string | undefined>
 const envStr = (key: string, fallback: string): string => {
   const v = env[key]
@@ -47,27 +46,30 @@ const envStr = (key: string, fallback: string): string => {
 // unset variable (use the default) from an explicitly empty one (disable). Every
 // other setting is resolved with `envStr`, which folds empty into the fallback
 // and so can never yield the disabled state.
-const FAUCET_DEFAULT = '0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA'
+// No faucet on mainnet — disabled unless a testnet deployment sets the env var.
+const FAUCET_DEFAULT = ''
 const faucetAddress = (): string => {
   const configured = env['VITE_FAUCET_ADDRESS']
   return configured === undefined ? FAUCET_DEFAULT : configured.trim()
 }
 
-const RPC_URL = envStr('VITE_SEPOLIA_RPC', 'https://ethereum-sepolia.publicnode.com')
+const RPC_URL = envStr('VITE_MAINNET_RPC', 'https://ethereum-rpc.publicnode.com')
 
 export const publicClient = createPublicClient({
-  chain: sepolia,
+  chain: mainnet,
   transport: http(RPC_URL, { batch: true }),
 })
 
 export const CONTRACTS = {
-  Interfold: envStr('VITE_INTERFOLD_ADDRESS', '0x38A8A686A420023568E995b57B4FBEA371555Ba7') as Address,
-  CiphernodeRegistry: envStr('VITE_CIPHERNODE_REGISTRY_ADDRESS', '0xa639b9a7AB05B787fFE258735Cf9541152a0E610') as Address,
-  CRISPProgram: envStr('VITE_CRISP_PROGRAM_ADDRESS', '0x8D9c914446451fdE7FC0fdBcF20573E878c3DE5a') as Address,
+  Interfold: envStr('VITE_INTERFOLD_ADDRESS', '0x28cF63B459e6218C69EA97ea7D90541cf648c715') as Address,
+  CiphernodeRegistry: envStr('VITE_CIPHERNODE_REGISTRY_ADDRESS', '0xC927A5B2d8F68697bC28C0670df05178c93df2d7') as Address,
+  // CRISP is not deployed on mainnet yet; MockE3Program fills the slot so the
+  // poll views resolve until a real CRISP deployment replaces it via env.
+  CRISPProgram: envStr('VITE_CRISP_PROGRAM_ADDRESS', '0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7') as Address,
   // Operator-guide contracts. The bonding registry is the only address the guide
   // needs hardcoded — the ciphernode bond token, ticket wrapper, and ticket underlying
   // are all read back from it at runtime so they cannot drift.
-  BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x4b8560271CD78e071f0074f6Db7D344298187F8b') as Address,
+  BondingRegistry: envStr('VITE_BONDING_REGISTRY_ADDRESS', '0x0ec90465095C21830BEcED07e032809A2Bd2915F') as Address,
   // Testnet-only convenience faucet (FOLD + fee token). The zero address or an
   // empty string disables the faucet card in the operator guide.
   Faucet: faucetAddress() as Address,
@@ -75,19 +77,19 @@ export const CONTRACTS = {
 
 // The chain the dashboard writes to. Reads use `publicClient`; the operator guide
 // refuses to send a transaction unless the wallet is on this chain.
-export const CHAIN = sepolia
+export const CHAIN = mainnet
 
 // First block to scan from — lower bound for getLogs. This bounds queries against
 // Interfold, CiphernodeRegistry and CRISPProgram, so it must be the earliest of
-// those three deploy blocks (CiphernodeRegistry), not Interfold's: a later value
-// would silently drop registry events emitted before Interfold was deployed.
-export const DEPLOY_BLOCK = BigInt(envStr('VITE_DEPLOY_BLOCK', '11508403'))
+// those three deploy blocks: a later value would silently drop registry events
+// emitted before Interfold was deployed. On mainnet all three share one block.
+export const DEPLOY_BLOCK = BigInt(envStr('VITE_DEPLOY_BLOCK', '25786403'))
 
 // E3 timeout windows (seconds), matching the deployment's timeoutConfig. Used to
 // decide whether an E3 is still genuinely active vs. expired without completing.
 export const TIMEOUTS = {
-  computeWindow: Number(envStr('VITE_COMPUTE_WINDOW', '86400')),
-  decryptionWindow: Number(envStr('VITE_DECRYPTION_WINDOW', '3600')),
+  computeWindow: Number(envStr('VITE_COMPUTE_WINDOW', '604800')),
+  decryptionWindow: Number(envStr('VITE_DECRYPTION_WINDOW', '21600')),
 }
 
 export const interfoldAbi = Interfold__factory.abi

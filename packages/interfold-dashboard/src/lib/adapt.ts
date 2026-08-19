@@ -12,11 +12,11 @@ import { decodeCrispTally, isE3Active } from './e3'
 import { E3Stage } from './chain'
 import { formatE3Id, isCrispProgram, pollMetaFor, programName, shortHash } from './pollMeta'
 
-// Fee token is MockUSDC (6 decimals) on the Sepolia deployment.
-const FEE_DECIMALS = 6
-function fmtUsdc(v: bigint | undefined): string {
+// Fee token is USDS (18 decimals) on the mainnet deployment.
+const FEE_DECIMALS = 18
+function fmtFee(v: bigint | undefined): string {
   if (v == null) return '—'
-  return `${formatUnits(v, FEE_DECIMALS)} USDC`
+  return `${formatUnits(v, FEE_DECIMALS)} USDS`
 }
 
 export function adaptPoll(s: E3Summary): Poll {
@@ -181,9 +181,9 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
     },
 
     fees: {
-      feeEscrowed: fmtUsdc(detail.feeEscrowed),
-      committeeReward: fmtUsdc(detail.committeeReward),
-      currency: 'USDC · Sepolia',
+      feeEscrowed: fmtFee(detail.feeEscrowed),
+      committeeReward: fmtFee(detail.committeeReward),
+      currency: 'USDS · Ethereum',
     },
 
     keygen: {

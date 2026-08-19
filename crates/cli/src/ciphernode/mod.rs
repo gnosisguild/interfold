@@ -188,8 +188,8 @@ pub enum BondCommands {
 pub enum TicketCommands {
     /// Deposit stablecoins to mint tickets for an operator
     Buy {
-        /// Stablecoin amount to deposit, not a ticket count. The operator gets
-        /// floor(amount / ticket price) tickets.
+        /// Stablecoin amount to deposit, not a ticket count. Available tickets
+        /// are floor(total collateral balance / ticket price).
         #[arg(long = "amount")]
         amount: String,
     },

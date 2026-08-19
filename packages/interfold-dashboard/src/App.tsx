@@ -127,7 +127,7 @@ function SiteFooter() {
       <div className='site-foot__rule'>
         <span>© 2026 Interfold · Built in the open</span>
         <a className='mono' href={explorerAddress(CONTRACTS.Interfold)} target='_blank' rel='noreferrer'>
-          Interfold on Sepolia ↗
+          Interfold on Ethereum ↗
         </a>
       </div>
     </footer>
@@ -181,7 +181,7 @@ export default function App() {
   // Demo autoplay step, persisted so pausing/resuming continues where it left off.
   const liveStepRef = useRef(0)
 
-  // ─── On-chain data (Sepolia) ──────────────────────────────────────────────
+  // ─── On-chain data (Ethereum mainnet) ──────────────────────────────────────────────
   // CRISP tab: only CRISP-program polls. Inspector tab: every E3 on the network.
   const crispPolls = useCrispPolls()
   const allE3s = useAllE3s()
@@ -308,11 +308,11 @@ export default function App() {
         <main className='main'>
           {allE3s.status === 'error' ? (
             <div className='inspector'>
-              <StatusNote>Couldn't load E3s from Sepolia. Retrying automatically…</StatusNote>
+              <StatusNote>Couldn't load E3s from Ethereum. Retrying automatically…</StatusNote>
             </div>
           ) : !inspectorReady ? (
             <div className='inspector'>
-              <Loader label='Loading E3s' sub='Reading from Sepolia…' />
+              <Loader label='Loading E3s' sub='Reading from Ethereum…' />
             </div>
           ) : !hasE3s ? (
             <div className='inspector'>
@@ -334,9 +334,9 @@ export default function App() {
           <Intro />
 
           {crispPolls.status === 'error' ? (
-            <StatusNote>Couldn't load CRISP polls from Sepolia. Retrying automatically…</StatusNote>
+            <StatusNote>Couldn't load CRISP polls from Ethereum. Retrying automatically…</StatusNote>
           ) : !crispReady ? (
-            <Loader label='Loading CRISP polls' sub='Reading from Sepolia…' />
+            <Loader label='Loading CRISP polls' sub='Reading from Ethereum…' />
           ) : activePolls.length > 0 ? (
             <>
               {activePolls.map((s) => {

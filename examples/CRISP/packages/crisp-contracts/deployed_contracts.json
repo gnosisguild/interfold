@@ -1,7 +1,7 @@
 {
   "sepolia": {
     "PoseidonT3": {
-      "blockNumber": 11508536,
+      "blockNumber": 11508394,
       "address": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93"
     },
     "MockUSDC": {
