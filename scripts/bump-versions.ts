@@ -49,6 +49,10 @@ class VersionBumper {
       this.oldVersion = this.getCurrentVersion()
       console.log(`📌 Current version: ${this.oldVersion || 'unknown'}`)
 
+      if (!this.isPrerelease()) {
+        this.validateDappNodeUpstreamProgression()
+      }
+
       // Check for uncommitted changes
       if (!this.options.skipGit && !this.options.dryRun) {
         this.checkGitStatus()
@@ -479,6 +483,10 @@ class VersionBumper {
     const previousUpstream = this.parseSemverCore(previousUpstreamVersion)
     const nextUpstream = this.parseSemverCore(nextUpstreamVersion)
 
+    if (this.semverCoreLessThan(nextUpstream, previousUpstream)) {
+      throw new Error(`Upstream version cannot decrease: ${previousUpstreamVersion} -> ${nextUpstreamVersion}`)
+    }
+
     if (nextUpstream.major !== previousUpstream.major) {
       return `${currentWrapper.major + 1}.0.0`
     }
@@ -486,6 +494,17 @@ class VersionBumper {
       return `${currentWrapper.major}.${currentWrapper.minor + 1}.0`
     }
     return `${currentWrapper.major}.${currentWrapper.minor}.${currentWrapper.patch + 1}`
+  }
+
+  private validateDappNodeUpstreamProgression(): void {
+    const packagePath = join(this.rootDir, 'dappnode/dappnode_package.json')
+    const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'))
+    const previousUpstream = this.parseSemverCore(packageJson.upstreamVersion)
+    const nextUpstream = this.parseSemverCore(this.newVersion)
+
+    if (this.semverCoreLessThan(nextUpstream, previousUpstream)) {
+      throw new Error(`Upstream version cannot decrease: ${packageJson.upstreamVersion} -> ${this.newVersion}`)
+    }
   }
 
   private parseSemverCore(version: string): { major: number; minor: number; patch: number } {
@@ -498,6 +517,19 @@ class VersionBumper {
       minor: Number(match[2]),
       patch: Number(match[3]),
     }
+  }
+
+  private semverCoreLessThan(
+    left: { major: number; minor: number; patch: number },
+    right: { major: number; minor: number; patch: number },
+  ): boolean {
+    if (left.major !== right.major) {
+      return left.major < right.major
+    }
+    if (left.minor !== right.minor) {
+      return left.minor < right.minor
+    }
+    return left.patch < right.patch
   }
 
   private replaceInFile(filePath: string, replacements: [RegExp, string][]): void {
