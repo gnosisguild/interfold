@@ -11,6 +11,7 @@
 | `InterfoldTicketToken.sol`      | Collateral-backed tickets used by ciphernodes for sortition entry                                |
 | `SlashingManager.sol`           | Fault attribution and slashing for dishonest ciphernodes (accusation → quorum → slash)           |
 | `E3RefundManager.sol`           | Issues refunds to requesters when an E3 fails                                                    |
+| `test/MockE3Program.sol`        | Stateless BFV program for protocol tests without application-specific rules                      |
 
 ## Audits
 
@@ -46,7 +47,9 @@ import {
 contract MockE3Program is IE3Program {...}
 ```
 
-[Check out the E3 mock for an example](./contracts/test/MockE3Program.sol)
+[See the stateless mock program](./contracts/test/MockE3Program.sol) or its
+[test-only failure harness](./contracts/test/MockE3ProgramHarness.sol) for
+examples.
 
 ## To deploy
 
@@ -83,15 +86,62 @@ The protocol deploy happens after the sale/TGE prep and upgrades the existing
 placeholder bonding registry proxy:
 
 ```sh
-pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json --propose-safe
+pnpm protocol --network sepolia --action check-config --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
+pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 pnpm protocol --network sepolia --action validate --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 ```
 
-Set `e3Programs` in the protocol configuration to one deployed E3 program
-contract. The deploy action rejects any other list length or an address without
-contract code. It registers the program in `Interfold.initialize` before
-ownership transfers to the Safe. Later registrations require an owner
-transaction.
+Run `check-config` before `deploy`. This action validates the network, required
+contract addresses, ProxyAdmin owner, and initial E3 program owner. It does not
+send a transaction.
+
+Set `protocolOwner` to the contract that owns and configures the protocol. Set
+the optional `safe` field to the same address only when the protocol owner is a
+Safe. The deploy action writes a governance transaction file. Use
+`--propose-safe` only for a Safe owner. Submit the transaction file through the
+native proposal flow for another governance contract.
+
+For an Aragon Admin plugin deployment, set `protocolOwner` to the DAO address
+and add the `governance` object:
+
+```json
+{
+  "protocolOwner": "0xInterfoldDao",
+  "governance": {
+    "adminPlugin": "0xAdminPlugin",
+    "proposerSafe": "0xSafeThatCanExecuteAdminProposals",
+    "proposalMetadata": "0x"
+  }
+}
+```
+
+The deploy action writes two files in this mode:
+
+- `<name>.safe-transactions.json`: the raw DAO action list, for review.
+- `<name>.governance.safe-builder.json`: one Safe Builder transaction that calls
+  `AdminPlugin.executeProposal(...)` with the raw actions.
+
+Import the Safe Builder wrapper into the configured proposer Safe. Do not import
+the raw action list into the Safe, because those calls must execute from the
+DAO.
+
+Choose one initial E3 program in the protocol configuration. For an existing
+program, set `e3Programs` to its deployed address. The deploy action rejects an
+address without contract code. Set `bindInitialE3Program` to bind a compatible
+program in the governance transaction.
+
+Set `deployMockE3Program` to `true` and set `e3Programs[0]` to the zero address
+to deploy `MockE3Program` in the same run. This stateless program applies no
+application-specific input or output rules. It has no owner, controller,
+setters, or reentrancy hooks. Interfold still verifies each BFV ciphertext proof
+and committee decryption proof. Do not set `bindInitialE3Program` for this
+option.
+
+`Interfold.initialize` registers the selected program before the governance
+transaction executes. Later registrations require an owner transaction.
+
+Set `verifiers.deploy` to `true` to deploy the generated BFV verifier stack. Set
+`ciphertextVerifier` to the deployed application ciphertext verifier.
 
 The fee token and the ticket collateral token have separate configuration
 fields. For the planned launch, set `feeToken` to USDS and set

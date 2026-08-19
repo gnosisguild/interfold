@@ -11,15 +11,16 @@ use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    CommitteeMemberExpelled, ComputeRequest, ComputeResponse, ComputeResponseKind, CorrelationId,
-    DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending, Die,
-    DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType,
-    EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
-    Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
-    SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
-    ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
+    ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
+    DecryptionShareProofsPending, Die, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
+    E3RequestComplete, E3Stage, EType, EncryptionKey, EncryptionKeyCollectionFailed,
+    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
+    PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, ThresholdShare,
+    ThresholdShareCollectionFailed, ThresholdShareCreated, ThresholdShareDecryptionProofRequest,
+    ThresholdSharePending, TypedEvent, VerificationKind,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;

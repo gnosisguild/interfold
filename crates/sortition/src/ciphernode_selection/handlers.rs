@@ -21,6 +21,9 @@ impl Handler<InterfoldEvent> for CiphernodeSelector {
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
         }
@@ -182,6 +185,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                             params_preset: e3_meta.params_preset,
                             params: e3_meta.params.clone(),
                             seed: e3_meta.seed,
+                            committee: msg.committee.clone(),
                         },
                         ec.clone(),
                     )?;
@@ -216,6 +220,34 @@ impl Handler<TypedEvent<CommitteeMemberExpelled>> for CiphernodeSelector {
                 if !expelled.contains(&party_id) {
                     expelled.push(party_id);
                     expelled.sort_unstable();
+                }
+                Ok(state)
+            })?;
+
+            self.update_aggregator_status(&msg.e3_id, &ec, false)
+        })
+    }
+}
+
+impl Handler<TypedEvent<CommitteeMemberExcluded>> for CiphernodeSelector {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitteeMemberExcluded>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            let (msg, ec) = msg.into_components();
+            let Some(party_id) = msg.party_id else {
+                return Ok(());
+            };
+
+            self.state.try_mutate(&ec, |mut state| {
+                let excluded = state.expelled.entry(msg.e3_id.clone()).or_default();
+                if !excluded.contains(&party_id) {
+                    excluded.push(party_id);
+                    excluded.sort_unstable();
                 }
                 Ok(state)
             })?;

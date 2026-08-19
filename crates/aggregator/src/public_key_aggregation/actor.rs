@@ -29,7 +29,6 @@ use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 

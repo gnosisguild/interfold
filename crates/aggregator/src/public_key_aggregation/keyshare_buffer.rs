@@ -53,6 +53,10 @@ impl KeyshareCreatedFilterBuffer {
         }
     }
 
+    fn forward(dest: &Addr<PublicKeyAggregator>, event: InterfoldEvent) {
+        dest.do_send(event);
+    }
+
     fn process_buffered_events(&mut self) {
         if !self.is_aggregator {
             return;
@@ -68,15 +72,20 @@ impl KeyshareCreatedFilterBuffer {
                                 .parse::<Address>()
                                 .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
                     {
-                        self.dest.do_send(event);
+                        Self::forward(&self.dest, event);
                     }
                     InterfoldEventData::CommitteeMemberExpelled(data)
                         if data.party_id.is_none() =>
                     {
-                        self.dest.do_send(event);
+                        Self::forward(&self.dest, event);
+                    }
+                    InterfoldEventData::CommitteeMemberExcluded(data)
+                        if data.party_id.is_none() =>
+                    {
+                        Self::forward(&self.dest, event);
                     }
                     InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {
-                        self.dest.do_send(event);
+                        Self::forward(&self.dest, event);
                     }
                     _ => {}
                 }
@@ -106,7 +115,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                             .parse::<Address>()
                             .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
                 {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
                 }
                 None => {
                     self.buffer.push(msg);
@@ -134,7 +143,9 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 }
 
                 let node_addr = data.node;
-                self.expelled_nodes.insert(node_addr);
+                if !self.expelled_nodes.insert(node_addr) {
+                    return;
+                }
                 self.buffer.retain(|event| {
                     !matches!(
                         event.get_data(),
@@ -151,7 +162,30 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 }
 
                 if self.is_aggregator {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
+                } else {
+                    self.buffer.push(msg);
+                }
+            }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                if data.party_id.is_some() {
+                    return;
+                }
+
+                let node_addr = data.node;
+                if !self.expelled_nodes.insert(node_addr) {
+                    return;
+                }
+                self.buffer.retain(|event| {
+                    !matches!(
+                        event.get_data(),
+                        InterfoldEventData::KeyshareCreated(share)
+                            if address_matches(&share.node, node_addr)
+                    )
+                });
+
+                if self.is_aggregator {
+                    Self::forward(&self.dest, msg);
                 } else {
                     self.buffer.push(msg);
                 }
@@ -161,11 +195,11 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                 self.process_buffered_events();
             }
             InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {
-                self.dest.do_send(msg);
+                Self::forward(&self.dest, msg);
             }
             _ => {
                 if self.is_aggregator {
-                    self.dest.do_send(msg);
+                    Self::forward(&self.dest, msg);
                 }
             }
         }

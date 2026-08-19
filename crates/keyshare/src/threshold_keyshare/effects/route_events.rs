@@ -145,6 +145,9 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.handle_committee_member_expelled(data, ec);
             }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                self.handle_committee_member_excluded(data, ec);
+            }
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own
                 // in-flight work that a crash may have interrupted (idempotent downstream).

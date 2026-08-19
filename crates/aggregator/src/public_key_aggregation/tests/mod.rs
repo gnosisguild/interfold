@@ -11,7 +11,7 @@ use e3_events::{
     Unsequenced, ZkError,
 };
 use e3_test_helpers::get_common_setup;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -138,10 +138,12 @@ fn verifying_c1_non_square_state(
 
     let mut submission_order = Vec::with_capacity(threshold_n);
     let mut c1_proofs = Vec::with_capacity(threshold_n);
+    let mut canonical_party_nodes = HashMap::with_capacity(threshold_n);
     let mut rng = rand::rng();
 
     for party_id in 0..threshold_n as u64 {
         let node = format!("0x{:040x}", party_id + 1);
+        canonical_party_nodes.insert(party_id, node.clone());
         if party_id < circuit_h as u64 {
             let sk = SecretKey::random(&fhe.params, &mut rng);
             let pk_share = PublicKeyShare::new(&sk, fhe.crp.clone(), &mut rng)?;
@@ -167,6 +169,7 @@ fn verifying_c1_non_square_state(
             circuit_committee_h: circuit_h,
             c1_proofs,
             no_proof_parties: vec![],
+            canonical_party_nodes,
         },
         threshold_n,
         threshold_m,

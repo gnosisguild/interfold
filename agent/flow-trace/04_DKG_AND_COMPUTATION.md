@@ -7,7 +7,8 @@ using threshold BFV (TrBFV) cryptography. This produces a collective public key 
 party knowing the full secret key. Later, the committee produces decryption shares; all committee
 members buffer them, and the active aggregator combines them. The runtime first normalizes the
 finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
-non-expelled `party_id` in that normalized order.
+`party_id` that has not been excluded from the current E3. An exclusion can come from an on-chain
+expulsion or from a proof-fault quorum while the matching slash policy is disabled.
 
 Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
 by the hot operator key and verified against the operator address snapshotted into the committee.
@@ -589,16 +590,17 @@ phase.
 │
 ├─ KeyshareCreatedFilterBuffer gates events:
   │   └─ Only accepts KeyshareCreated from verified committee members
-  │   └─ Compares committee, keyshare, and expulsion identities as parsed EVM addresses;
-  │      EIP-55 casing differences cannot bypass an expulsion or its buffered-share purge
+  │   └─ Compares committee, keyshare, and exclusion identities as parsed EVM addresses;
+  │      EIP-55 casing differences cannot bypass an exclusion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On expulsion-driven handoff, the next active aggregator flushes its existing buffer
+  │   └─ On exclusion-driven handoff, the next active aggregator flushes its existing buffer
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │
-  ├─ When N distinct keyshares collected (committee size from on-chain `threshold_n`):
+  ├─ When every non-excluded member has submitted a keyshare:
+│   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
 │   │
-│   ├─ C1 verification runs over all N submitters; parties failing C1 are marked dishonest
+│   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
 │   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
@@ -618,7 +620,9 @@ phase.
 │   ├─ 2. Build C5 proof request (H canonical honest keyshares):
 │   │     proof_request.keyshare_bytes = [pk_share for each H party]
 │   │     proof_request.aggregated_pk_bytes = aggregate_pk
-│   │     proof_request.committee_n = committee_h = H  // C5 circuit sized for H, not N
+│   │     proof_request.committee_n = N
+│   │     proof_request.committee_h = H
+│   │     proof_request.committee_threshold = T
 │   │     (per-share compute_pk_commitment already checked against C1; aggregate
 │   │      commitment is proved as a C5 public output, not pre-published here)
 │   │
@@ -646,7 +650,8 @@ phase.
 │   │     │     node_fold_proofs, c5_proof, party_ids, params_preset
 │   │     │   })
 │   │     │   → exactly H NodeFold proofs and H unique party ids
-│   │     │   → exactly N ordered committee addresses (`topNodes`), where canonical H < N
+│   │     │   → exactly N ordered committee addresses from `CommitteeFinalized` (`topNodes`),
+│   │     │     including a member excluded before it submitted a keyshare
 │   │     │   → Rust validates both dimensions before invoking the compiled circuit
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
@@ -931,14 +936,14 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   All committee members receive DecryptionshareCreated events
 │
   ├─ DecryptionshareCreatedBuffer gates events:
-  │   ├─ Tracks expelled parties
+  │   ├─ Tracks parties excluded by on-chain expulsion or the disabled-policy fallback
   │   ├─ Buffers until AggregatorChanged(is_aggregator=true)
   │   └─ Flushes verified shares to ThresholdPlaintextAggregator when this node is active
   │
   ├─ ThresholdPlaintextAggregator receives flushed shares
   │   ├─ Verifies sender is in committee
   │   ├─ Adds the share if verified
-  │   └─ Ignores non-members or expelled parties
+  │   └─ Ignores non-members or excluded parties
 │
   ├─ C6 VERIFICATION (per-share, on active aggregator):
 │   ShareVerificationActor receives C6 signed proofs

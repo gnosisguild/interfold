@@ -110,8 +110,23 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
   if (typeof config.ticketUnderlyingToken !== "string") {
     throw new Error("ticketUnderlyingToken is required and must be a string");
   }
-  applyAddressOverride(config, "safe", "safe", "SAFE_ADDRESS");
+  applyAddressOverride(
+    config,
+    "protocolOwner",
+    "protocol-owner",
+    "PROTOCOL_OWNER",
+  );
+  if (!config.protocolOwner && config.safe) {
+    config.protocolOwner = config.safe;
+  }
+  applyGovernanceOverride(config);
   applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
+  applyAddressOverride(
+    config,
+    "escrowVotesAdapter",
+    "escrow-votes-adapter",
+    "ESCROW_VOTES_ADAPTER",
+  );
   applyAddressOverride(
     config,
     "bondingRegistryProxy",
@@ -156,7 +171,9 @@ function applyAddressOverride(
   key: keyof Pick<
     ProtocolConfigFile,
     | "safe"
+    | "protocolOwner"
     | "fold"
+    | "escrowVotesAdapter"
     | "bondingRegistryProxy"
     | "bondingRegistryProxyAdmin"
     | "feeToken"
@@ -169,15 +186,84 @@ function applyAddressOverride(
   envName: string,
 ): void {
   const override = arg(cliName) ?? process.env[envName];
-  if (override && config[key] === ZERO) {
+  const current = config[key];
+  if (override && (!current || current === ZERO)) {
     config[key] = override;
+  }
+}
+
+function applyGovernanceOverride(config: ProtocolConfigFile): void {
+  const adminPlugin =
+    arg("aragon-admin-plugin") ?? process.env.ARAGON_ADMIN_PLUGIN;
+  const proposerSafe = arg("governance-safe") ?? process.env.GOVERNANCE_SAFE;
+  const proposalMetadata =
+    arg("governance-proposal-metadata") ??
+    process.env.GOVERNANCE_PROPOSAL_METADATA;
+  if (!adminPlugin && !proposerSafe && !proposalMetadata) return;
+
+  config.governance ??= {
+    adminPlugin: ZERO,
+    proposerSafe: ZERO,
+  };
+  if (adminPlugin && config.governance.adminPlugin === ZERO) {
+    config.governance.adminPlugin = adminPlugin;
+  }
+  if (proposerSafe && config.governance.proposerSafe === ZERO) {
+    config.governance.proposerSafe = proposerSafe;
+  }
+  if (proposalMetadata && !config.governance.proposalMetadata) {
+    config.governance.proposalMetadata = proposalMetadata;
   }
 }
 
 function validateConfig(config: ProtocolConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
-  config.safe = address(config.safe, "safe");
+  if (!/^[A-Za-z0-9_-]+$/.test(config.name)) {
+    throw new Error(
+      "Config name may only contain letters, numbers, underscores and hyphens",
+    );
+  }
+  config.protocolOwner = address(config.protocolOwner, "protocolOwner");
+  if (config.protocolOwner === ZERO) {
+    throw new Error("protocolOwner must not be the zero address");
+  }
+  if (config.safe === ZERO) config.safe = undefined;
+  if (config.safe) {
+    config.safe = address(config.safe, "safe");
+    if (config.safe !== config.protocolOwner) {
+      throw new Error(
+        "safe must equal protocolOwner when a Safe is configured",
+      );
+    }
+  }
+  if (config.safe && config.governance) {
+    throw new Error("Configure either safe or governance, not both");
+  }
+  if (config.governance) {
+    config.governance.adminPlugin = address(
+      config.governance.adminPlugin,
+      "governance.adminPlugin",
+    );
+    config.governance.proposerSafe = address(
+      config.governance.proposerSafe,
+      "governance.proposerSafe",
+    );
+    if (config.governance.adminPlugin === ZERO) {
+      throw new Error("governance.adminPlugin must not be the zero address");
+    }
+    if (config.governance.proposerSafe === ZERO) {
+      throw new Error("governance.proposerSafe must not be the zero address");
+    }
+    config.governance.proposalMetadata ??= "0x";
+    if (!ethersLib.isHexString(config.governance.proposalMetadata)) {
+      throw new Error("governance.proposalMetadata must be hex bytes");
+    }
+  }
   config.fold = address(config.fold, "fold");
+  config.escrowVotesAdapter = optionalAddress(
+    config.escrowVotesAdapter,
+    "escrowVotesAdapter",
+  );
   config.bondingRegistryProxy = address(
     config.bondingRegistryProxy,
     "bondingRegistryProxy",
@@ -208,15 +294,64 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }
+  if (
+    config.deployMockE3Program !== undefined &&
+    typeof config.deployMockE3Program !== "boolean"
+  ) {
+    throw new Error("deployMockE3Program must be a boolean");
+  }
   const initialE3Program = address(config.e3Programs[0], "e3Programs[0]");
-  if (initialE3Program === ZERO) {
+  if (config.deployMockE3Program && initialE3Program !== ZERO) {
+    throw new Error(
+      "e3Programs[0] must be the zero address when deployMockE3Program is true",
+    );
+  }
+  if (!config.deployMockE3Program && initialE3Program === ZERO) {
     throw new Error("e3Programs[0] must not be the zero address");
   }
   config.e3Programs = [initialE3Program];
-  optionalAddress(config.verifiers?.decryptionVerifier, "decryptionVerifier");
-  optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
-  optionalAddress(
-    config.verifiers?.dkgFoldAttestationVerifier,
-    "dkgFoldAttestationVerifier",
+  if (config.verifiers) {
+    config.verifiers.decryptionVerifier = optionalAddress(
+      config.verifiers.decryptionVerifier,
+      "decryptionVerifier",
+    );
+    config.verifiers.pkVerifier = optionalAddress(
+      config.verifiers.pkVerifier,
+      "pkVerifier",
+    );
+    config.verifiers.dkgFoldAttestationVerifier = optionalAddress(
+      config.verifiers.dkgFoldAttestationVerifier,
+      "dkgFoldAttestationVerifier",
+    );
+  }
+  const ciphertextVerifier = optionalAddress(
+    config.ciphertextVerifier,
+    "ciphertextVerifier",
   );
+  config.ciphertextVerifier = ciphertextVerifier;
+  if (
+    config.deployMockCiphertextVerifier !== undefined &&
+    typeof config.deployMockCiphertextVerifier !== "boolean"
+  ) {
+    throw new Error("deployMockCiphertextVerifier must be a boolean");
+  }
+  if (config.deployMockCiphertextVerifier && ciphertextVerifier) {
+    throw new Error(
+      "ciphertextVerifier must be omitted when deployMockCiphertextVerifier is true",
+    );
+  }
+  if (
+    config.bindInitialE3Program &&
+    !ciphertextVerifier &&
+    !config.deployMockCiphertextVerifier
+  ) {
+    throw new Error(
+      "ciphertextVerifier is required when bindInitialE3Program is true",
+    );
+  }
+  if (config.deployMockE3Program && config.bindInitialE3Program) {
+    throw new Error(
+      "bindInitialE3Program must be false when deployMockE3Program is true",
+    );
+  }
 }

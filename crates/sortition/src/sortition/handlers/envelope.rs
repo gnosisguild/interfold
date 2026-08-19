@@ -50,6 +50,9 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::E3Failed(data) => self.notify_sync(ctx, TypedEvent::new(data, ec)),
             InterfoldEventData::E3StageChanged(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))

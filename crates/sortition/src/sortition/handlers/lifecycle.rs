@@ -134,6 +134,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
                     Ok(committees)
                 })?;
             self.pending_expulsions.remove(&msg.e3_id);
+            self.pending_exclusions.remove(&msg.e3_id);
             self.sortition_seeds.remove(&msg.e3_id);
             self.pending_requests.remove(&msg.e3_id);
             Ok(())

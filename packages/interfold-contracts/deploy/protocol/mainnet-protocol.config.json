@@ -1,0 +1,79 @@
+{
+  "name": "mainnet-protocol",
+  "chainId": 1,
+  "protocolOwner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+  "governance": {
+    "adminPlugin": "0xF21e25455988887EE797050080141eba67B33920",
+    "proposerSafe": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
+    "proposalMetadata": "0x"
+  },
+  "fold": "0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904",
+  "escrowVotesAdapter": "0x8f141B4D294d39e7D1530916A3eD65B3970C6FEc",
+  "bondingRegistryProxy": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
+  "bondingRegistryProxyAdmin": "0xf1511Fc32abf7Bd3a3213ddCF08C07259b53972b",
+  "feeToken": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+  "feeTokenDecimals": 18,
+  "ticketUnderlyingToken": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+  "protocolTreasury": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
+  "slashedFundsTreasury": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
+  "slasher": "0x0000000000000000000000000000000000000000",
+  "ticketToken": {
+    "lockRegistry": true
+  },
+  "bonding": {
+    "ticketPrice": "1000000000000000000000",
+    "requiredCiphernodeBond": "32000000000000000000000",
+    "ticketTokenDecimals": 18,
+    "ciphernodeBondTokenDecimals": 18,
+    "minTicketBalance": "1",
+    "exitDelay": "2592000"
+  },
+  "registry": {
+    "sortitionSubmissionWindow": "600"
+  },
+  "slashing": {
+    "initialDelay": "172800"
+  },
+  "interfold": {
+    "maxDuration": "2592000",
+    "markFailedGracePeriod": "3600",
+    "timeoutConfig": {
+      "dkgWindow": "21600",
+      "computeWindow": "604800",
+      "decryptionWindow": "21600"
+    },
+    "pricing": {
+      "keyGenFixedPerNode": "100000000000000000",
+      "keyGenPerEncryptionProof": "100000000000000000",
+      "coordinationPerPair": "10000000000000000",
+      "availabilityPerNodePerSec": "10000000000000",
+      "decryptionPerNode": "300000000000000000",
+      "publicationBase": "1000000000000000000",
+      "verificationPerProof": "5000000000000000",
+      "protocolTreasury": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
+      "marginBps": "1000",
+      "protocolShareBps": "182",
+      "dkgUtilizationBps": "3000",
+      "computeUtilizationBps": "4000",
+      "decryptUtilizationBps": "3000",
+      "minCommitteeSize": "3",
+      "minThreshold": "2"
+    },
+    "committeeThresholds": [
+      {
+        "size": "0",
+        "quorum": "2",
+        "total": "3"
+      }
+    ],
+    "registerActiveBfvParamSet": true,
+    "allowFeeToken": true
+  },
+  "verifiers": {
+    "deploy": true
+  },
+  "deployMockCiphertextVerifier": true,
+  "deployMockE3Program": true,
+  "bindInitialE3Program": false,
+  "e3Programs": ["0x0000000000000000000000000000000000000000"]
+}

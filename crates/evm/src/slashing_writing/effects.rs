@@ -4,6 +4,20 @@
 
 use super::*;
 
+pub(in crate::actors::slashing_manager_sol_writer) async fn read_slash_policy<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    proof_type: u8,
+) -> Result<ISlashingManager::SlashPolicy> {
+    let contract = ISlashingManager::new(contract_address, provider.provider());
+    Ok(contract
+        .getSlashPolicy(slash_reason(proof_type))
+        .call()
+        .await?)
+}
+
 pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposal<
     P: Provider + WalletProvider + Clone,
 >(

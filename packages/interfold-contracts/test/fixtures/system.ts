@@ -35,7 +35,7 @@ import {
   MockCiphertextVerifier__factory as MockCiphertextVerifierFactory,
   MockCircuitVerifier__factory as MockCircuitVerifierFactory,
   MockDecryptionVerifier__factory as MockDecryptionVerifierFactory,
-  MockE3Program__factory as MockE3ProgramFactory,
+  MockE3ProgramHarness__factory as MockE3ProgramFactory,
   MockPkVerifier__factory as MockPkVerifierFactory,
   MockUSDC__factory as MockUSDCFactory,
   SlashingManager__factory as SlashingManagerFactory,
@@ -49,7 +49,7 @@ import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiph
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
-import type { MockE3Program } from "../../types/contracts/test/MockE3Program";
+import type { MockE3ProgramHarness } from "../../types/contracts/test/MockE3ProgramHarness";
 import type { MockPkVerifier } from "../../types/contracts/test/MockPkVerifier";
 import type { MockCircuitVerifier } from "../../types/contracts/test/MockSlashingVerifier.sol/MockCircuitVerifier";
 import type { MockUSDC } from "../../types/contracts/test/MockStableToken.sol/MockUSDC";
@@ -166,7 +166,7 @@ export interface DeployInterfoldSystemOptions {
 
 /** Mock contract bundle returned by {@link deployInterfoldSystem}. */
 export interface InterfoldSystemMocks {
-  e3Program: MockE3Program;
+  e3Program: MockE3ProgramHarness;
   decryptionVerifier: MockDecryptionVerifier;
   ciphertextVerifier: MockCiphertextVerifier;
   pkVerifier: MockPkVerifier;

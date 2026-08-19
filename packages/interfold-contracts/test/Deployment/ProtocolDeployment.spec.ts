@@ -4,17 +4,226 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
+import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 import { network } from "hardhat";
+import os from "os";
+import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import {
+  aragonAdminSafeBatch,
+  aragonAdminSafeTransactions,
+  safeTx,
+} from "../../scripts/protocol/safe";
 import { buildSafeTransactions } from "../../scripts/protocol/transactions";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
+import { loadConfig } from "../../scripts/protocol/values";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("wraps DAO wiring actions in one Aragon Admin Safe transaction", async function () {
+    const [adminPlugin, proposerSafe, targetA, targetB] =
+      await ethers.getSigners();
+    const config = {
+      name: "mainnet-protocol",
+      chainId: 1,
+      protocolOwner: "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+      governance: {
+        adminPlugin: await adminPlugin.getAddress(),
+        proposerSafe: await proposerSafe.getAddress(),
+        proposalMetadata: "0x",
+      },
+    } as ProtocolConfigFile;
+    const actions = [
+      safeTx(await targetA.getAddress(), "0x12345678"),
+      safeTx(await targetB.getAddress(), "0xabcdef01"),
+    ];
+
+    const batch = aragonAdminSafeBatch(config, actions);
+    expect(batch.meta.createdFromSafeAddress).to.equal(
+      await proposerSafe.getAddress(),
+    );
+    expect(batch.transactions).to.have.lengthOf(1);
+
+    const [wrapper] = aragonAdminSafeTransactions(config, actions);
+    expect(wrapper.to).to.equal(await adminPlugin.getAddress());
+
+    const adminInterface = new ethersLib.Interface([
+      "function executeProposal(bytes metadata,tuple(address to,uint256 value,bytes data)[] actions,uint256 allowFailureMap)",
+    ]);
+    const decoded = adminInterface.decodeFunctionData(
+      "executeProposal",
+      wrapper.data,
+    );
+
+    expect(decoded.metadata).to.equal("0x");
+    expect(decoded.allowFailureMap).to.equal(0n);
+    expect(decoded.actions).to.have.lengthOf(actions.length);
+    for (const [index, action] of actions.entries()) {
+      expect(decoded.actions[index].to).to.equal(action.to);
+      expect(decoded.actions[index].value).to.equal(BigInt(action.value));
+      expect(decoded.actions[index].data).to.equal(action.data);
+    }
+  });
+
+  it("rejects non-call actions in Aragon Admin Safe wrappers", async function () {
+    const [adminPlugin, proposerSafe, target] = await ethers.getSigners();
+    const config = {
+      name: "mainnet-protocol",
+      chainId: 1,
+      protocolOwner: "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+      governance: {
+        adminPlugin: await adminPlugin.getAddress(),
+        proposerSafe: await proposerSafe.getAddress(),
+      },
+    } as ProtocolConfigFile;
+    const tx = safeTx(await target.getAddress(), "0x12345678");
+    tx.operation = 1;
+
+    expect(() => aragonAdminSafeTransactions(config, [tx])).to.throw(
+      "Governance transaction 1 is not a CALL operation",
+    );
+  });
+
+  it("rejects a zero protocol owner and accepts a missing-owner override", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-config-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const previousOwner = process.env.PROTOCOL_OWNER;
+
+    try {
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "protocolOwner must not be the zero address",
+      );
+
+      delete config.protocolOwner;
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      process.env.PROTOCOL_OWNER = "0x0000000000000000000000000000000000000001";
+      expect(loadConfig(configFile).protocolOwner).to.equal(
+        "0x0000000000000000000000000000000000000001",
+      );
+    } finally {
+      if (previousOwner === undefined) delete process.env.PROTOCOL_OWNER;
+      else process.env.PROTOCOL_OWNER = previousOwner;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects config names that cannot be used as deployment file names", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-config-name-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.name = "../mainnet-protocol";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "Config name may only contain letters, numbers, underscores and hyphens",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes the optional escrow votes adapter", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-escrow-votes-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const previousAdapter = process.env.ESCROW_VOTES_ADAPTER;
+    const adapter = "0x0000000000000000000000000000000000000002";
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(loadConfig(configFile).escrowVotesAdapter).to.equal(undefined);
+
+      process.env.ESCROW_VOTES_ADAPTER = adapter;
+      expect(loadConfig(configFile).escrowVotesAdapter).to.equal(adapter);
+    } finally {
+      if (previousAdapter === undefined) delete process.env.ESCROW_VOTES_ADAPTER;
+      else process.env.ESCROW_VOTES_ADAPTER = previousAdapter;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects external wiring for the deployed MockE3Program", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-mock-program-config-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.e3Programs = ["0x0000000000000000000000000000000000000002"];
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "e3Programs[0] must be the zero address when deployMockE3Program is true",
+      );
+
+      config.e3Programs = [ethersLib.ZeroAddress];
+      config.bindInitialE3Program = true;
+      config.ciphertextVerifier = "0x0000000000000000000000000000000000000002";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "bindInitialE3Program must be false when deployMockE3Program is true",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects configuring and deploying a ciphertext verifier at the same time", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-mock-ciphertext-config-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.deployMockCiphertextVerifier = true;
+      config.ciphertextVerifier =
+        "0x0000000000000000000000000000000000000002";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "ciphertextVerifier must be omitted when deployMockCiphertextVerifier is true",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses separate fee and ticket collateral tokens", async function () {
     const [operator, safe, bondingProxy, bondingProxyAdmin] =
       await ethers.getSigners();
@@ -29,14 +238,21 @@ describe("Protocol deployment", function () {
     await feeToken.waitForDeployment();
     const ticketUnderlyingToken = await tokenFactory.deploy(0);
     await ticketUnderlyingToken.waitForDeployment();
-    const programFactory = await ethers.getContractFactory("MockE3Program");
-    const program = await programFactory.deploy();
-    await program.waitForDeployment();
     // FOLD has to be a real votes token: the deployment builds `BondedVotes` against it, and that
     // constructor compares the token's ERC-6372 clock with the bonded history's.
     const foldFactory = await ethers.getContractFactory("MockVotesToken");
     const fold = await foldFactory.deploy();
     await fold.waitForDeployment();
+    const decryptionVerifier = await ethers.deployContract(
+      "MockDecryptionVerifier",
+    );
+    await decryptionVerifier.waitForDeployment();
+    const pkVerifier = await ethers.deployContract("MockPkVerifier");
+    await pkVerifier.waitForDeployment();
+    const dkgFoldAttestationVerifier = await ethers.deployContract(
+      "DkgFoldAttestationVerifier",
+    );
+    await dkgFoldAttestationVerifier.waitForDeployment();
 
     const config = JSON.parse(
       fs.readFileSync(
@@ -47,6 +263,7 @@ describe("Protocol deployment", function () {
         "utf8",
       ),
     ) as ProtocolConfigFile;
+    config.protocolOwner = await safe.getAddress();
     config.safe = await safe.getAddress();
     config.fold = await fold.getAddress();
     config.bondingRegistryProxy = await bondingProxy.getAddress();
@@ -56,7 +273,13 @@ describe("Protocol deployment", function () {
     config.protocolTreasury = await safe.getAddress();
     config.slashedFundsTreasury = await safe.getAddress();
     config.interfold.pricing.protocolTreasury = await safe.getAddress();
-    config.e3Programs = [await program.getAddress()];
+    config.verifiers = {
+      deploy: false,
+      decryptionVerifier: await decryptionVerifier.getAddress(),
+      pkVerifier: await pkVerifier.getAddress(),
+      dkgFoldAttestationVerifier: await dkgFoldAttestationVerifier.getAddress(),
+    };
+    config.deployMockCiphertextVerifier = true;
 
     const result = await deployProtocolContracts(ethers, operator, config);
     const ticket = await ethers.getContractAt(
@@ -67,11 +290,42 @@ describe("Protocol deployment", function () {
       "Interfold",
       result.contracts.interfold,
     );
+    const program = await ethers.getContractAt(
+      "MockE3Program",
+      result.contracts.initialE3Program,
+    );
 
     expect(await ticket.underlying()).to.equal(
       await ticketUnderlyingToken.getAddress(),
     );
     expect(await interfold.feeToken()).to.equal(await feeToken.getAddress());
+    expect(
+      await interfold.e3Programs(result.contracts.initialE3Program),
+    ).to.equal(true);
+    expect(await program.ENCRYPTION_SCHEME_ID()).to.equal(
+      ethersLib.id("fhe.rs:BFV"),
+    );
+    expect(result.contracts.decryptionVerifier).to.equal(
+      await decryptionVerifier.getAddress(),
+    );
+    expect(result.contracts.pkVerifier).to.equal(await pkVerifier.getAddress());
+    expect(result.contracts.dkgFoldAttestationVerifier).to.equal(
+      await dkgFoldAttestationVerifier.getAddress(),
+    );
+    expect(result.contracts.ciphertextVerifier).to.match(
+      /^0x[0-9a-fA-F]{40}$/,
+    );
+    for (const verifier of [
+      result.contracts.decryptionVerifier,
+      result.contracts.pkVerifier,
+      result.contracts.dkgFoldAttestationVerifier,
+      result.contracts.ciphertextVerifier,
+    ]) {
+      expect(verifier).to.match(/^0x[0-9a-fA-F]{40}$/);
+      expect(await ethers.provider.getCode(verifier as string)).to.not.equal(
+        "0x",
+      );
+    }
 
     // Bonded voting has to be deployed and wired by the deployment itself. Shipping the registry
     // without it leaves the feature silently disabled: the sync is a no-op while unconfigured, so
@@ -105,6 +359,19 @@ describe("Protocol deployment", function () {
     expect(attach).to.have.lengthOf(1);
     expect(attach[0].data.toLowerCase()).to.contain(
       result.contracts.bondedCheckpoints.slice(2).toLowerCase(),
+    );
+
+    const ciphertextSelector = interfold.interface.getFunction(
+      "setCiphertextVerifier",
+    )!.selector;
+    const ciphertextTx = txs.filter(
+      (tx) =>
+        tx.to.toLowerCase() === result.contracts.interfold.toLowerCase() &&
+        tx.data.startsWith(ciphertextSelector),
+    );
+    expect(ciphertextTx).to.have.lengthOf(1);
+    expect(ciphertextTx[0].data.toLowerCase()).to.contain(
+      result.contracts.ciphertextVerifier!.slice(2).toLowerCase(),
     );
   });
 });

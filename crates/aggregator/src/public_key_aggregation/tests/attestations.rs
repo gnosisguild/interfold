@@ -118,7 +118,6 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (initial_state, threshold_n, threshold_m, circuit_h) =
         verifying_c1_non_square_state(&fhe, &e3_id)?;
-
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe,
@@ -156,5 +155,59 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
                 && data.proof_request.keyshare_bytes.len() == circuit_h
     ));
 
+    Ok(())
+}
+
+#[actix::test]
+async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (mut state, threshold_n, _threshold_m, circuit_h) =
+        verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let PublicKeyAggregatorState::VerifyingC1 {
+        submission_order,
+        c1_proofs,
+        ..
+    } = &mut state
+    else {
+        unreachable!();
+    };
+    submission_order.truncate(circuit_h);
+    c1_proofs.truncate(circuit_h);
+
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Micro,
+            dkg_fold_attestation_context: None,
+        },
+        test_state(state),
+    );
+
+    let verification = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::PkGenerationProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    aggregator.handle_c1_verification_complete(TypedEvent::new(
+        verification.clone(),
+        test_ctx(verification),
+    ))?;
+
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        honest_party_ids,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof state");
+    };
+    assert_eq!(party_nodes.len(), threshold_n);
+    assert_eq!(honest_party_ids.len(), circuit_h);
     Ok(())
 }

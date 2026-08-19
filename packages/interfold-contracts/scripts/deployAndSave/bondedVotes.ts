@@ -19,9 +19,15 @@ import {
  * The arguments for the deployAndSaveBondedVotes function
  */
 export interface BondedVotesArgs {
-  /** FOLD. Supplies wallet-held voting power and the total supply. */
+  /** FOLD. Supplies the metadata, the total supply and the quorum denominator. */
   token: string;
-  /** The bonded-history contract to read alongside the token. */
+  /**
+   * Where per-account voting power is read. Pass `token` to count wallet-held FOLD, or an escrow
+   * IVotes adapter to count only locked FOLD. Defaults to `token`, preserving the original
+   * behaviour for callers that predate the lock-to-vote model.
+   */
+  votesSource?: string;
+  /** The bonded-history contract to read alongside the votes source. */
   checkpoints: string;
   hre: HardhatRuntimeEnvironment;
 }
@@ -38,18 +44,21 @@ export interface BondedVotesArgs {
  */
 export const deployAndSaveBondedVotes = async ({
   token,
+  votesSource,
   checkpoints,
   hre,
 }: BondedVotesArgs): Promise<{ bondedVotes: BondedVotes }> => {
+  const resolvedVotesSource = votesSource ?? token;
   const { ethers } = await hre.network.connect();
   const [signer] = await ethers.getSigners();
   const chain = getDeploymentChain(hre);
 
   const preDeployedArgs = readDeploymentArgs("BondedVotes", chain);
-  // Both references are immutable, so a record for a different pair cannot be reused.
+  // All three references are immutable, so a record for a different triple cannot be reused.
   if (
     preDeployedArgs?.address &&
     preDeployedArgs?.constructorArgs?.token === token &&
+    preDeployedArgs?.constructorArgs?.votesSource === resolvedVotesSource &&
     preDeployedArgs?.constructorArgs?.checkpoints === checkpoints
   ) {
     return {
@@ -58,13 +67,21 @@ export const deployAndSaveBondedVotes = async ({
   }
 
   const factory = await ethers.getContractFactory("BondedVotes");
-  const bondedVotes = await factory.deploy(token, checkpoints);
+  const bondedVotes = await factory.deploy(
+    token,
+    resolvedVotesSource,
+    checkpoints,
+  );
   await bondedVotes.waitForDeployment();
 
   const address = await bondedVotes.getAddress();
   storeDeploymentArgs(
     {
-      constructorArgs: { token, checkpoints },
+      constructorArgs: {
+        token,
+        votesSource: resolvedVotesSource,
+        checkpoints,
+      },
       blockNumber: await ethers.provider.getBlockNumber(),
       address,
     },

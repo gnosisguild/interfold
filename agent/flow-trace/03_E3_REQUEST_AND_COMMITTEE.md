@@ -36,6 +36,10 @@ Interfold starts with requests paused. Deployment wires and validates one comple
 generation before it enables requests. Governance must pause requests and drain the current
 generation before it replaces a registry, bonding registry, slashing manager, or refund manager.
 
+An E3 Program can deploy before its Interfold controller. Interfold must register the deployed
+program before the program owner binds that controller one time. This order removes the constructor
+dependency between Interfold and applications such as CRISP.
+
 ---
 
 ## Step 1: E3 Request (On-Chain)
@@ -74,8 +78,8 @@ Requester calls: Interfold.request({
 │
 ├─ FEE CALCULATION:
 │   ├─ fee = getE3Quote()
-│   │   → InterfoldPricing uses the active circuit [T, N].
-│   │   → The quote uses T for decryption work and H for on-chain viability only.
+│   │   → InterfoldPricing validates the active circuit [T, H, N].
+│   │   → The quote uses N for committee-wide work and H for required decryption shares.
 │   │   → It also uses the time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
 │   │   → availability covers at least request time through input-window end
@@ -567,9 +571,13 @@ A ready committee must finalize at or before its absolute DKG deadline.
    committee membership, and party IDs never use the bond-owner address.
 
 10. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
-    `Interfold.initialize` registers it before it transfers ownership to the Safe. Every
-    registration rejects an address without runtime code. After initialization, only the owner can
-    append another program.
+    `Interfold.initialize` registers it before it transfers ownership to `protocolOwner`. For
+    DAO-owned deployments, `protocolOwner` is the DAO, not a Safe. Every registration rejects an
+    address without runtime code. After initialization, only the owner can append another program.
+    The deployment can create `MockE3Program` as the initial program. This stateless program accepts
+    the active BFV scheme and applies no application rules. It has no owner, controller, or mutable
+    configuration. The request-time ciphertext verifier and decryption verifier still verify the
+    protocol proofs.
 
 ---
 

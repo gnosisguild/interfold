@@ -349,7 +349,7 @@ library InterfoldPricing {
 
         ActiveCryptoConfig.validateCommittee(committeeSize, threshold);
         uint256 n = ActiveCryptoConfig.N;
-        uint256 m = ActiveCryptoConfig.T;
+        uint256 h = uint256(threshold[0]);
 
         uint256 duration = _billableDuration(
             pc,
@@ -360,7 +360,7 @@ library InterfoldPricing {
             inputWindowEnd
         );
 
-        uint256 baseFee = _baseFee(pc, n, m, duration);
+        uint256 baseFee = _baseFee(pc, n, h, duration);
 
         // Apply margin markup
         fee =
@@ -384,7 +384,7 @@ library InterfoldPricing {
     function _baseFee(
         IInterfold.PricingConfig calldata pc,
         uint256 n,
-        uint256 m,
+        uint256 h,
         uint256 duration
     ) private pure returns (uint256 baseFee) {
         // ZK proof count per node: 14 fixed + 4 × (N-1) scaling.
@@ -405,11 +405,11 @@ library InterfoldPricing {
         // Availability cost (linear in n × duration)
         baseFee += pc.availabilityPerNodePerSec * n * duration;
 
-        // Decryption cost (linear in m)
-        baseFee += pc.decryptionPerNode * m;
-        // Decryption coordination cost (quadratic in m)
-        if (m > 1) {
-            baseFee += (pc.coordinationPerPair * (m * (m - 1))) / 2;
+        // Decryption cost (linear in the required H shares)
+        baseFee += pc.decryptionPerNode * h;
+        // Decryption coordination cost (quadratic in H)
+        if (h > 1) {
+            baseFee += (pc.coordinationPerPair * (h * (h - 1))) / 2;
         }
 
         // Publication base cost

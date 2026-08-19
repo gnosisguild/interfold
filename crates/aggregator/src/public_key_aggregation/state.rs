@@ -26,6 +26,9 @@ pub enum PublicKeyAggregatorState {
         /// and must be used for all downstream circuit slot indexing — arrival order
         /// is non-deterministic and does not match sortition's committee position.
         submission_order: Vec<(u64, String, ArcBytes)>,
+        /// Full finalized committee keyed by stable sortition party ID.
+        /// This roster is required to resume aggregation after a restart.
+        canonical_party_nodes: HashMap<u64, String>,
     },
     VerifyingC1 {
         /// Insertion-ordered (party_id, node, keyshare) triples from Collecting.
@@ -39,14 +42,17 @@ pub enum PublicKeyAggregatorState {
         c1_proofs: Vec<Option<SignedProofPayload>>,
         /// Real party_ids that submitted no C1 proof — treated as dishonest.
         no_proof_parties: Vec<u64>,
+        /// Full finalized committee keyed by stable sortition party ID.
+        /// This roster is required to resume aggregation after a restart.
+        canonical_party_nodes: HashMap<u64, String>,
     },
     GeneratingC5Proof {
         public_key: ArcBytes,
         keyshare_bytes: Vec<ArcBytes>,
         nodes: OrderedSet<String>,
-        /// Registered node address per sortition `party_id` for the **full** committee
-        /// (all `N` parties that submitted a keyshare, honest or not). Honest-only lookups
-        /// must intersect with `honest_party_ids`.
+        /// Registered node address per sortition `party_id` for the full finalized committee.
+        /// This contains all N parties even when one was excluded before submitting a keyshare.
+        /// Honest-only lookups must intersect with `honest_party_ids`.
         party_nodes: HashMap<u64, String>,
         /// DKG recursive proofs per party (restart-critical).
         dkg_node_proofs: HashMap<u64, Option<Proof>>,
@@ -115,7 +121,12 @@ impl PublicKeyAggregatorState {
         }
     }
 
-    pub fn init(threshold_n: usize, threshold_m: usize, seed: Seed) -> Self {
+    pub fn init(
+        threshold_n: usize,
+        threshold_m: usize,
+        seed: Seed,
+        canonical_party_nodes: HashMap<u64, String>,
+    ) -> Self {
         let circuit_committee_h = committee_h_for(threshold_m, threshold_n)
             .unwrap_or_else(|e| panic!("invalid committee at init: {e}"));
         PublicKeyAggregatorState::Collecting {
@@ -128,6 +139,7 @@ impl PublicKeyAggregatorState {
             seed,
             nodes: OrderedSet::new(),
             submission_order: Vec::new(),
+            canonical_party_nodes,
         }
     }
 }

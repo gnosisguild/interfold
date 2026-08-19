@@ -74,7 +74,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             return;
         }
 
-        let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
+        let Some(fhe) = ctx.get_dependency(FHE_KEY).cloned() else {
             self.bus.err(
                 EType::PublickeyAggregation,
                 anyhow!(ERROR_PUBKEY_FHE_MISSING),
@@ -87,16 +87,37 @@ impl E3Extension for PublicKeyAggregatorExtension {
             threshold_m,
             seed,
             params_preset,
+            committee,
             ..
         } = data.clone();
         let dkg_fold_attestation_context = ctx
             .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
             .copied();
+        let committee_addresses = match committee_addresses_from_node_strings(&committee) {
+            Ok(addresses) if addresses.len() == threshold_n => addresses,
+            Ok(addresses) => {
+                self.bus.err(
+                    EType::PublickeyAggregation,
+                    anyhow!(
+                        "Could not create PublicKeyAggregator for E3 {e3_id}: selected event has {} committee addresses; expected {threshold_n}.",
+                        addresses.len()
+                    ),
+                );
+                return;
+            }
+            Err(error) => {
+                self.bus.err(EType::PublickeyAggregation, error);
+                return;
+            }
+        };
+        ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, committee_addresses.clone());
+        let canonical_party_nodes = party_nodes_from_committee_addresses(&committee_addresses);
         let repo = ctx.repositories().publickey(&e3_id);
         let sync_state = repo.send(Some(PublicKeyAggregatorState::init(
             threshold_n,
             threshold_m,
             seed,
+            canonical_party_nodes,
         )));
 
         let committee_size = match CiphernodesCommitteeSize::from_threshold(
@@ -113,7 +134,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             }
         };
         let value = create_publickey_aggregator(
-            fhe.clone(),
+            fhe,
             self.bus.clone(),
             e3_id,
             sync_state,
@@ -138,6 +159,8 @@ impl E3Extension for PublicKeyAggregatorExtension {
         if !sync_state.has() {
             return Ok(());
         };
+        let recovered_state = sync_state.try_get()?;
+        remember_committee_dependencies_from_publickey_state(ctx, &recovered_state)?;
 
         // Get deps
         let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
@@ -349,6 +372,14 @@ fn addresses_for_sorted_party_ids(party_nodes: &HashMap<u64, String>) -> Result<
     committee_addresses_in_party_order(&party_ids, party_nodes)
 }
 
+fn party_nodes_from_committee_addresses(committee_addresses: &[Address]) -> HashMap<u64, String> {
+    committee_addresses
+        .iter()
+        .enumerate()
+        .map(|(party_id, node)| (party_id as u64, node.to_string()))
+        .collect()
+}
+
 fn publickey_state_committee_addresses(
     state: &PublicKeyAggregatorState,
 ) -> Result<Option<Vec<Address>>> {
@@ -361,6 +392,16 @@ fn publickey_state_committee_addresses(
             if !party_nodes.is_empty() =>
         {
             Ok(Some(addresses_for_sorted_party_ids(party_nodes)?))
+        }
+        PublicKeyAggregatorState::Collecting {
+            canonical_party_nodes,
+            ..
+        }
+        | PublicKeyAggregatorState::VerifyingC1 {
+            canonical_party_nodes,
+            ..
+        } if !canonical_party_nodes.is_empty() => {
+            Ok(Some(addresses_for_sorted_party_ids(canonical_party_nodes)?))
         }
         _ => Ok(None),
     }
@@ -666,7 +707,10 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
 mod tests {
     use super::*;
     use alloy::primitives::address;
-    use e3_events::OrderedSet;
+    use e3_data::{DataStore, InMemStore};
+    use e3_events::{OrderedSet, Seed};
+    use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
+    use e3_test_helpers::get_common_setup;
     use e3_utils::ArcBytes;
     use std::collections::{BTreeSet, HashMap};
 
@@ -721,6 +765,89 @@ mod tests {
                 address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn recovers_full_committee_addresses_from_collecting_state() -> Result<()> {
+        let committee_addresses = vec![
+            address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
+            address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+            address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        ];
+        let state = PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            party_nodes_from_committee_addresses(&committee_addresses),
+        );
+
+        let recovered = publickey_state_committee_addresses(&state)?.expect("addresses");
+
+        assert_eq!(recovered, committee_addresses);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn publickey_hydration_restores_committee_dependencies_first() -> Result<()> {
+        let (bus, rng, seed, params, crp, _errors, _history) =
+            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        let e3_id = E3id::new("42", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
+        ctx.set_dependency(
+            META_KEY,
+            E3Meta {
+                threshold_m: 1,
+                threshold_n: 3,
+                seed,
+                params_preset: BfvPreset::InsecureThreshold512,
+                params: ArcBytes::from_bytes(&[]),
+                error_size: ArcBytes::from_bytes(&[]),
+            },
+        );
+
+        let committee_addresses = vec![
+            address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
+            address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+            address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        ];
+        let honest_committee_addresses = committee_addresses[..2].to_vec();
+        let state = PublicKeyAggregatorState::Complete {
+            public_key: ArcBytes::from_bytes(&[1, 2, 3]),
+            keyshares: OrderedSet::new(),
+            nodes: OrderedSet::new(),
+            committee_addresses: committee_addresses.clone(),
+            honest_committee_addresses: honest_committee_addresses.clone(),
+        };
+        ctx.repositories()
+            .publickey(&e3_id)
+            .write_sync(&state)
+            .await?;
+        let snapshot = E3ContextSnapshot {
+            e3_id,
+            recipients: vec!["publickey".to_string()],
+            dependencies: Vec::new(),
+        };
+
+        PublicKeyAggregatorExtension::create(&bus)
+            .hydrate(&mut ctx, &snapshot)
+            .await?;
+
+        assert_eq!(
+            ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
+            Some(&committee_addresses)
+        );
+        assert_eq!(
+            ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
+            Some(&honest_committee_addresses)
+        );
+        assert!(ctx.get_event_recipient("publickey").is_some());
         Ok(())
     }
 

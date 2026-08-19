@@ -17,6 +17,10 @@ import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
 import { IERC6372Clock } from "./interfaces/IERC6372Clock.sol";
 
+interface IInterfoldProgramRegistry {
+  function e3Programs(IE3Program e3Program) external view returns (bool);
+}
+
 contract CRISPProgram is IE3Program, Ownable, EIP712 {
   using InternalLazyIMT for LazyIMTData;
 
@@ -118,6 +122,9 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   error CallerNotAuthorized();
   error E3AlreadyInitialized();
   error InterfoldAddressZero();
+  error InterfoldAlreadyBound();
+  error InterfoldNotContract();
+  error ProgramNotRegistered();
   error Risc0VerifierAddressZero();
   error InvalidHonkVerifier();
   error EmptyInputData();
@@ -159,30 +166,45 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   error InvalidComputeContext();
 
   // Events
+  event InterfoldBound(address indexed interfold);
   event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
 
-  /// @notice Initialize the contract, binding it to a specified RISC Zero verifier.
-  /// @param _interfold The interfold address
+  /// @notice Initialize the contract without an Interfold controller.
+  /// @dev The owner binds the controller after Interfold registers this program.
+  /// @param _initialOwner The account that can configure and bind this program.
   /// @param _risc0Verifier The RISC Zero verifier address
   /// @param _honkVerifier The honk verifier address
   /// @param _imageId The image ID for the guest program
   constructor(
-    IInterfold _interfold,
+    address _initialOwner,
     IRiscZeroVerifier _risc0Verifier,
     IHonkVerifier _honkVerifier,
     IHonkVerifier _onchainHonkVerifier,
     bytes32 _imageId
-  ) Ownable(msg.sender) EIP712("CRISP", "1") {
-    if (address(_interfold) == address(0)) revert InterfoldAddressZero();
+  ) Ownable(_initialOwner) EIP712("CRISP", "1") {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_onchainHonkVerifier) == address(0)) revert InvalidHonkVerifier();
 
-    interfold = _interfold;
     risc0Verifier = _risc0Verifier;
     honkVerifier = _honkVerifier;
     onchainHonkVerifier = _onchainHonkVerifier;
     imageId = _imageId;
+  }
+
+  /// @notice Bind this program to its permanent Interfold controller.
+  /// @dev Interfold must register this program before the owner calls this function.
+  /// @param _interfold The Interfold controller that registered this program.
+  function bindInterfold(IInterfold _interfold) external onlyOwner {
+    if (address(interfold) != address(0)) revert InterfoldAlreadyBound();
+    if (address(_interfold) == address(0)) revert InterfoldAddressZero();
+    if (address(_interfold).code.length == 0) revert InterfoldNotContract();
+    if (!IInterfoldProgramRegistry(address(_interfold)).e3Programs(IE3Program(address(this)))) {
+      revert ProgramNotRegistered();
+    }
+
+    interfold = _interfold;
+    emit InterfoldBound(address(_interfold));
   }
 
   /// @notice The digest a voter signs to authorise one ballot.

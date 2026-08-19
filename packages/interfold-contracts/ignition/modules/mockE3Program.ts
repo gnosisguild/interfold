@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
-export default buildModule("MockE3Program", (m) => {
-  const mockE3Program = m.contract("MockE3Program", []);
+export default buildModule("MockE3ProgramHarness", (m) => {
+  const mockE3Program = m.contract("MockE3ProgramHarness", []);
 
   return { mockE3Program };
 }) as any;

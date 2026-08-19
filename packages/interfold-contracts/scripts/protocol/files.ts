@@ -64,6 +64,12 @@ export function safeBatchPath(config: ProtocolConfigFile): string {
     : path.join(protocolDir, `${config.name}.safe-transactions.json`);
 }
 
+export function governanceSafeBuilderPath(config: ProtocolConfigFile): string {
+  return arg("governance-safe-builder")
+    ? resolvePath(arg("governance-safe-builder")!)
+    : path.join(protocolDir, `${config.name}.governance.safe-builder.json`);
+}
+
 export function safeProposalPath(config: ProtocolConfigFile): string {
   return arg("safe-proposal")
     ? resolvePath(arg("safe-proposal")!)

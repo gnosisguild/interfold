@@ -91,6 +91,9 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitteeMemberExcluded(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::ShareVerificationComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -247,6 +250,35 @@ impl Handler<TypedEvent<CommitteeMemberExpelled>> for ThresholdPlaintextAggregat
                     self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
                 }
 
+                Ok(())
+            },
+        )
+    }
+}
+
+impl Handler<TypedEvent<CommitteeMemberExcluded>> for ThresholdPlaintextAggregator {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitteeMemberExcluded>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(
+            EType::PlaintextAggregation,
+            &self.bus.with_ec(msg.get_ctx()),
+            || {
+                let (msg, ec) = msg.into_components();
+                let Some(party_id) = msg.party_id else {
+                    return Ok(());
+                };
+
+                self.handle_member_expelled(party_id, &ec)?;
+                if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
+                    self.state.get()
+                {
+                    self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                }
                 Ok(())
             },
         )

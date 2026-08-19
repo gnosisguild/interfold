@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
+import {
+  BFV_DKG_H,
+  BFV_THRESHOLD_T,
+  getBfvDecryptionSubCircuitVkHashPaths,
+  getBfvPkSubCircuitVkHashPaths,
+  readVkRecursiveHash,
+} from "../utils";
 import { ADDRESS_ONE } from "./constants";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
@@ -13,11 +20,19 @@ export async function deployProtocolContracts(
 ): Promise<ProtocolDeployResult> {
   const poseidonT3 = await ensurePoseidonT3(ethers);
 
+  let initialE3Program = config.e3Programs[0];
+  if (config.deployMockE3Program) {
+    const programFactory = await ethers.getContractFactory("MockE3Program");
+    const program = await programFactory.deploy();
+    await program.waitForDeployment();
+    initialE3Program = await deployedAddress(program);
+  }
+
   const ticketFactory = await ethers.getContractFactory("InterfoldTicketToken");
   const ticket = await ticketFactory.deploy(
     config.ticketUnderlyingToken,
     ADDRESS_ONE,
-    config.safe,
+    config.protocolOwner,
   );
   await ticket.waitForDeployment();
   const ticketToken = await deployedAddress(ticket);
@@ -33,7 +48,7 @@ export async function deployProtocolContracts(
   });
   const slashing = await slashingFactory.deploy(
     BigInt(config.slashing.initialDelay),
-    config.safe,
+    config.protocolOwner,
   );
   await slashing.waitForDeployment();
   const slashingManager = await deployedAddress(slashing);
@@ -60,9 +75,9 @@ export async function deployProtocolContracts(
   const registryProxy = await deployProxy(
     ethers,
     ciphernodeRegistryImplementation,
-    config.safe,
+    config.protocolOwner,
     registryFactory.interface.encodeFunctionData("initialize", [
-      config.safe,
+      config.protocolOwner,
       BigInt(config.registry.sortitionSubmissionWindow),
     ]),
   );
@@ -90,9 +105,9 @@ export async function deployProtocolContracts(
   const interfoldProxy = await deployProxy(
     ethers,
     interfoldImplementation,
-    config.safe,
+    config.protocolOwner,
     interfoldFactory.interface.encodeFunctionData("initialize", [
-      config.safe,
+      config.protocolOwner,
       registryProxy.proxy,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
@@ -103,7 +118,7 @@ export async function deployProtocolContracts(
       },
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
-      config.e3Programs[0],
+      initialE3Program,
     ]),
   );
 
@@ -114,9 +129,9 @@ export async function deployProtocolContracts(
   const refundProxy = await deployProxy(
     ethers,
     e3RefundManagerImplementation,
-    config.safe,
+    config.protocolOwner,
     refundFactory.interface.encodeFunctionData("initialize", [
-      config.safe,
+      config.protocolOwner,
       interfoldProxy.proxy,
       config.protocolTreasury,
     ]),
@@ -169,7 +184,7 @@ export async function deployProtocolContracts(
 
   // Bound to the proxy, not the implementation: the proxy is the address that calls `sync`, and
   // `BondedCheckpoints` accepts writes from exactly one address. The registry is pointed at this
-  // contract by a `setBondedCheckpoints` transaction in the Safe batch, after `initialize`.
+  // contract by a `setBondedCheckpoints` transaction in the governance batch, after `initialize`.
   const checkpointsFactory =
     await ethers.getContractFactory("BondedCheckpoints");
   const checkpoints = await checkpointsFactory.deploy(
@@ -178,9 +193,22 @@ export async function deployProtocolContracts(
   await checkpoints.waitForDeployment();
   const bondedCheckpoints = await deployedAddress(checkpoints);
 
+  const deployedVerifiers = config.verifiers?.deploy
+    ? await deployBfvVerifiers(ethers, registryProxy.proxy)
+    : {
+        decryptionVerifier: config.verifiers?.decryptionVerifier,
+        pkVerifier: config.verifiers?.pkVerifier,
+        dkgFoldAttestationVerifier:
+          config.verifiers?.dkgFoldAttestationVerifier,
+      };
+
+  const deployedCiphertextVerifier = config.deployMockCiphertextVerifier
+    ? await deployMockCiphertextVerifier(ethers)
+    : undefined;
+
   // `BondedVotes` is deliberately NOT deployed here. Its constructor asks the registry which token
   // it bonds and refuses to build unless that matches the token it will read votes from — and the
-  // registry is only initialized later, by the Safe batch this script writes. It is deployed by
+  // registry is only initialized later, by the governance batch this script writes. It is deployed by
   // `--action activate-voting`, once that batch has executed.
 
   return {
@@ -208,6 +236,11 @@ export async function deployProtocolContracts(
       bondingRegistrationLib,
       bondingOwnershipLib,
       bondedCheckpoints,
+      initialE3Program,
+      ...deployedVerifiers,
+      ...(deployedCiphertextVerifier
+        ? { ciphertextVerifier: deployedCiphertextVerifier }
+        : {}),
     },
     interfaces: {
       ticket: ticketFactory.interface,
@@ -216,5 +249,112 @@ export async function deployProtocolContracts(
       interfold: interfoldFactory.interface,
       bonding: bondingFactory.interface,
     },
+  };
+}
+
+async function deployMockCiphertextVerifier(ethers: any) {
+  const factory = await ethers.getContractFactory(
+    "DeployableMockCiphertextVerifier",
+  );
+  const verifier = await factory.deploy();
+  await verifier.waitForDeployment();
+  return deployedAddress(verifier);
+}
+
+async function deployBfvVerifiers(ethers: any, registry: string) {
+  const zkTranscriptFactory = await ethers.getContractFactory(
+    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
+  );
+  const zkTranscript = await zkTranscriptFactory.deploy();
+  await zkTranscript.waitForDeployment();
+  const verifierZkTranscriptLib = await deployedAddress(zkTranscript);
+
+  const dkgRelationsFactory = await ethers.getContractFactory(
+    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+  );
+  const dkgRelations = await dkgRelationsFactory.deploy();
+  await dkgRelations.waitForDeployment();
+  const dkgVerifierRelationsLib = await deployedAddress(dkgRelations);
+
+  const decryptionRelationsFactory = await ethers.getContractFactory(
+    "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib",
+  );
+  const decryptionRelations = await decryptionRelationsFactory.deploy();
+  await decryptionRelations.waitForDeployment();
+  const decryptionVerifierRelationsLib =
+    await deployedAddress(decryptionRelations);
+
+  const dkgAggregatorFactory = await ethers.getContractFactory(
+    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+    {
+      libraries: {
+        "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
+          verifierZkTranscriptLib,
+        "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+          dkgVerifierRelationsLib,
+      },
+    },
+  );
+  const dkgAggregator = await dkgAggregatorFactory.deploy();
+  await dkgAggregator.waitForDeployment();
+  const dkgAggregatorVerifier = await deployedAddress(dkgAggregator);
+
+  const decryptionAggregatorFactory = await ethers.getContractFactory(
+    "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+    {
+      libraries: {
+        "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:ZKTranscriptLib":
+          verifierZkTranscriptLib,
+        "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib":
+          decryptionVerifierRelationsLib,
+      },
+    },
+  );
+  const decryptionAggregator = await decryptionAggregatorFactory.deploy();
+  await decryptionAggregator.waitForDeployment();
+  const decryptionAggregatorVerifier =
+    await deployedAddress(decryptionAggregator);
+
+  const pkPaths = getBfvPkSubCircuitVkHashPaths();
+  const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
+  const pk = await pkFactory.deploy(
+    dkgAggregatorVerifier,
+    readVkRecursiveHash(pkPaths.nodesFold),
+    readVkRecursiveHash(pkPaths.c5),
+    BFV_DKG_H,
+  );
+  await pk.waitForDeployment();
+  const pkVerifier = await deployedAddress(pk);
+
+  const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths();
+  const decryptionFactory = await ethers.getContractFactory(
+    "BfvDecryptionVerifier",
+  );
+  const decryption = await decryptionFactory.deploy(
+    decryptionAggregatorVerifier,
+    registry,
+    readVkRecursiveHash(decryptionPaths.c6Fold),
+    readVkRecursiveHash(decryptionPaths.c7),
+    BFV_THRESHOLD_T,
+  );
+  await decryption.waitForDeployment();
+  const decryptionVerifier = await deployedAddress(decryption);
+
+  const dkgFoldFactory = await ethers.getContractFactory(
+    "DkgFoldAttestationVerifier",
+  );
+  const dkgFold = await dkgFoldFactory.deploy();
+  await dkgFold.waitForDeployment();
+  const dkgFoldAttestationVerifier = await deployedAddress(dkgFold);
+
+  return {
+    decryptionVerifier,
+    pkVerifier,
+    dkgFoldAttestationVerifier,
+    dkgAggregatorVerifier,
+    decryptionAggregatorVerifier,
+    verifierZkTranscriptLib,
+    dkgVerifierRelationsLib,
+    decryptionVerifierRelationsLib,
   };
 }

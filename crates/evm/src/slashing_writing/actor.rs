@@ -13,8 +13,9 @@ use crate::contracts::{ICiphernodeRegistry, ISlashingManager};
 use crate::domain::attestation_evidence::encode_attestation_evidence;
 use crate::domain::error_decoder::format_evm_error;
 use crate::domain::slash_submission::{
-    should_submit_slash, submission_delay, submission_rank, SlashIntentKey,
-    SlashSubmissionDecision, SlashSubmissionGate,
+    classify_slash_policy, is_slashable_outcome, should_submit_slash, slash_reason,
+    submission_delay, submission_rank, SlashIntentKey, SlashPolicyState, SlashSubmissionDecision,
+    SlashSubmissionGate,
 };
 use crate::helpers::{transaction_nonce_guard, EthProvider};
 use crate::send_tx_with_retry;
@@ -32,7 +33,7 @@ use e3_events::EventType;
 use e3_events::InterfoldEvent;
 use e3_events::InterfoldEventData;
 use e3_events::Shutdown;
-use e3_events::{AccusationQuorumReached, EType};
+use e3_events::{AccusationQuorumReached, CommitteeMemberExcluded, EType};
 use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
 use tracing::{info, warn};
 
@@ -86,6 +87,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
         bus.subscribe_all(
             &[
                 EventType::AccusationQuorumReached,
+                EventType::CommitteeMemberExcluded,
                 EventType::EffectsEnabled,
                 EventType::Shutdown,
             ],

@@ -22,6 +22,8 @@ pub struct CiphernodeSelected {
     pub params_preset: BfvPreset,
     pub params: ArcBytes,
     pub party_id: u64,
+    /// Full finalized committee in stable party-ID order.
+    pub committee: Vec<String>,
 }
 
 impl Default for CiphernodeSelected {
@@ -32,6 +34,7 @@ impl Default for CiphernodeSelected {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::from_bytes(&[]),
             party_id: 0,
+            committee: Vec::new(),
             seed: Seed([0u8; 32]),
             threshold_m: 0,
             threshold_n: 0,

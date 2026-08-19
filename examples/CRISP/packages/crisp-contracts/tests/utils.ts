@@ -105,6 +105,7 @@ export async function deployCRISPProgram(
     onchainHonkVerifier?: HonkVerifier
     poseidonT3?: PoseidonT3
     risc0Verifier?: MockRISC0Verifier
+    bindInterfold?: boolean
   } = {},
 ) {
   const poseidonT3 = contracts.poseidonT3 || (await deployPoseidonT3())
@@ -121,9 +122,10 @@ export async function deployCRISPProgram(
       'npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3': await poseidonT3.getAddress(),
     },
   })
+  const [owner] = await ethers.getSigners()
 
   const program = await programFactory.deploy(
-    await mockInterfold.getAddress(),
+    await owner.getAddress(),
     risc0Verifier,
     await honkVerifier.getAddress(),
     await onchainHonkVerifier.getAddress(),
@@ -131,6 +133,11 @@ export async function deployCRISPProgram(
   )
 
   await program.waitForDeployment()
+
+  if (contracts.bindInterfold !== false) {
+    await (await mockInterfold.registerE3Program(await program.getAddress())).wait()
+    await (await program.bindInterfold(await mockInterfold.getAddress())).wait()
+  }
 
   return program as unknown as CRISPProgram
 }

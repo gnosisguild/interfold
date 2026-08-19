@@ -3,6 +3,7 @@
 //! C1 verification and honest-keyshare selection.
 
 use super::*;
+use std::collections::HashMap;
 
 impl PublicKeyAggregator {
     pub fn add_keyshare(
@@ -111,6 +112,7 @@ impl PublicKeyAggregator {
             circuit_committee_n,
             circuit_committee_h,
             c1_proofs,
+            canonical_party_nodes,
             ..
         } = self
             .state
@@ -125,10 +127,6 @@ impl PublicKeyAggregator {
         let mut dishonest_parties = msg.dishonest_parties.clone();
         let collected = submission_order.len();
         let circuit_h = circuit_committee_h;
-
-        // Retain full N committee roster (party_id → node address) for the DKG aggregator
-        // `committee_members` input, which must cover all `topNodes` regardless of honesty.
-        let full_submission_order: Vec<(u64, String, ArcBytes)> = submission_order.clone();
 
         // Filter out parties that failed C1 ZK verification. Keyed by the real
         // sortition party_id carried in `submission_order`, not arrival index.
@@ -258,16 +256,15 @@ impl PublicKeyAggregator {
             ec.clone(),
         )?;
 
-        // `party_nodes` covers the FULL registered committee (all N keyshare submitters),
-        // not just the H honest set. The DKG aggregator circuit binds `committee_members`
-        // to on-chain `topNodes` which always carries the full committee — so we must keep
-        // the dishonest addresses available here to build the N-sized address vector.
-        // `submission_order` here is the unfiltered list captured pre–C1 verification
-        // (the original `VerifyingC1.submission_order`); `honest_entries` is the H subset.
-        let party_nodes: HashMap<u64, String> = full_submission_order
-            .iter()
-            .map(|(pid, node, _)| (*pid, node.clone()))
-            .collect();
+        // Proof binding uses the full immutable committee, including a member excluded before it
+        // produced a keyshare. Deriving this map from keyshare submitters would shorten the roster
+        // and make the final N-sized DKG proof impossible.
+        anyhow::ensure!(
+            canonical_party_nodes.len() == circuit_committee_n,
+            "finalized committee has {} entries; expected circuit N={circuit_committee_n}",
+            canonical_party_nodes.len()
+        );
+        let party_nodes = canonical_party_nodes;
 
         let circuit_committee_h = circuit_h;
         self.state.try_mutate(&ec, |_| {

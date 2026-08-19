@@ -45,6 +45,55 @@ impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {
                 }
             }
 
+            if let Some(buffered) = self.pending_exclusions.remove(&msg.e3_id) {
+                info!(
+                    e3_id = %msg.e3_id,
+                    count = buffered.len(),
+                    "Draining local exclusions received before committee finalization"
+                );
+                for (data, buffered_ec) in buffered {
+                    if let Err(error) = self.try_resolve_and_publish_exclusion(data, buffered_ec) {
+                        warn!(
+                            e3_id = %msg.e3_id,
+                            %error,
+                            "Failed to resolve a buffered local exclusion"
+                        );
+                    }
+                }
+            }
+
+            Ok(())
+        })
+    }
+}
+
+impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitteeMemberExcluded>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (data, ec) = msg.into_components();
+        if data.party_id.is_some() {
+            return;
+        }
+
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            if self.try_resolve_and_publish_exclusion(data.clone(), ec.clone())? {
+                return Ok(());
+            }
+
+            warn!(
+                node = %data.node,
+                e3_id = %data.e3_id,
+                "Local exclusion arrived before committee finalization; buffering it"
+            );
+            self.pending_exclusions
+                .entry(data.e3_id.clone())
+                .or_default()
+                .push((data, ec));
             Ok(())
         })
     }

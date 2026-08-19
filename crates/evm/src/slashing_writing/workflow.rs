@@ -6,20 +6,20 @@
 
 //! Pure decision logic for staggered, committee-attested slash submission.
 //!
-//! A node only submits a slash proposal when it is one of the top
-//! `MAX_SLASH_SUBMITTERS` voters (ranked ascending by signer address). The
-//! lowest-address voter submits immediately; higher-ranked fallback voters wait
-//! `rank * SUBMITTER_DELAY_SECS` so on-chain `DuplicateEvidence` protection lets
-//! at most one slash execute.
+//! Every node checks the proof-type policy after an accusation quorum. When the policy accepts
+//! proof attestations, only the top `MAX_SLASH_SUBMITTERS` voters can submit a slash proposal.
+//! The lowest-address voter submits immediately. Higher-ranked fallback voters wait
+//! `rank * SUBMITTER_DELAY_SECS`, and on-chain `DuplicateEvidence` protection limits execution to
+//! one proposal.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{keccak256, Address, B256, U256};
 use anyhow::{Context, Result};
-use e3_events::{AccusationOutcome, AccusationQuorumReached};
+use e3_events::{AccusationOutcome, AccusationQuorumReached, CommitteeMemberExcluded};
 
 /// Maximum number of voters eligible to attempt on-chain submission.
 /// Rank 0 submits immediately, rank 1 after one delay interval, etc.
@@ -50,6 +50,19 @@ impl SlashIntentKey {
                 .try_into()
                 .context("slash intent has a non-numeric E3 id")?,
             operator: event.accused,
+            proof_type: event.proof_type as u8,
+        })
+    }
+
+    pub(crate) fn from_exclusion(event: &CommitteeMemberExcluded) -> Result<Self> {
+        Ok(Self {
+            chain_id: event.e3_id.chain_id(),
+            e3_id: event
+                .e3_id
+                .clone()
+                .try_into()
+                .context("committee exclusion has a non-numeric E3 id")?,
+            operator: event.node,
             proof_type: event.proof_type as u8,
         })
     }
@@ -124,6 +137,12 @@ impl SlashSubmissionGate {
             self.completed.insert(key.clone());
         }
     }
+
+    pub(crate) fn mark_completed(&mut self, key: SlashIntentKey) {
+        self.deferred.remove(&key);
+        self.in_flight.remove(&key);
+        self.completed.insert(key);
+    }
 }
 
 /// Determine this node's submission rank: its position in the voter set after
@@ -140,6 +159,26 @@ where
 /// Outcomes that warrant an on-chain slash proposal.
 pub(crate) fn is_slashable_outcome(outcome: &AccusationOutcome) -> bool {
     matches!(outcome, AccusationOutcome::AccusedFaulted)
+}
+
+/// Derive the policy key exactly as `SlashingManager._proposeSlash` does for Lane A evidence.
+pub(crate) fn slash_reason(proof_type: u8) -> B256 {
+    keccak256(U256::from(proof_type).to_be_bytes::<32>())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlashPolicyState {
+    Disabled,
+    ProofEnabled,
+    InvalidForAttestations,
+}
+
+pub(crate) fn classify_slash_policy(enabled: bool, requires_proof: bool) -> SlashPolicyState {
+    match (enabled, requires_proof) {
+        (false, _) => SlashPolicyState::Disabled,
+        (true, true) => SlashPolicyState::ProofEnabled,
+        (true, false) => SlashPolicyState::InvalidForAttestations,
+    }
 }
 
 /// Whether this node should attempt submission for the given quorum result.
@@ -238,6 +277,58 @@ mod tests {
             &AccusationOutcome::Equivocation,
             Some(0)
         ));
+    }
+
+    #[test]
+    fn slash_reason_matches_uint256_packed_encoding() {
+        assert_eq!(
+            slash_reason(1),
+            keccak256([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ])
+        );
+    }
+
+    #[test]
+    fn persisted_local_exclusion_suppresses_a_deferred_replay() {
+        let event = quorum(vec![Address::repeat_byte(1)]);
+        let exclusion = CommitteeMemberExcluded {
+            e3_id: event.e3_id.clone(),
+            node: event.accused,
+            proof_type: event.proof_type,
+            party_id: Some(0),
+        };
+        let key = SlashIntentKey::from_exclusion(&exclusion).unwrap();
+        let mut gate = SlashSubmissionGate::new();
+
+        assert_eq!(
+            gate.admit(event.clone()).unwrap().1,
+            SlashSubmissionDecision::Defer
+        );
+        gate.mark_completed(key);
+
+        assert!(gate.enable_effects().is_empty());
+        assert_eq!(
+            gate.admit(event).unwrap().1,
+            SlashSubmissionDecision::IgnoreDuplicate
+        );
+    }
+
+    #[test]
+    fn disabled_policy_is_distinct_from_invalid_lane_configuration() {
+        assert_eq!(
+            classify_slash_policy(false, false),
+            SlashPolicyState::Disabled
+        );
+        assert_eq!(
+            classify_slash_policy(true, false),
+            SlashPolicyState::InvalidForAttestations
+        );
+        assert_eq!(
+            classify_slash_policy(true, true),
+            SlashPolicyState::ProofEnabled
+        );
     }
 
     #[test]
