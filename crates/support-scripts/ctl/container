@@ -75,11 +75,29 @@ if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
 
     if [[ "$EXISTING_LINUX_NETWORK_HOST_MODE" != "$LINUX_NETWORK_HOST_MODE" ]]; then
         echo "Existing container network mode does not match requested mode. Recreating container..." >&2
-        docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        if ! docker stop "$CONTAINER_NAME" >/dev/null; then
+            echo "Error: failed to stop container $CONTAINER_NAME." >&2
+            exit 1
+        fi
+
+        container_id="$CONTAINER_NAME"
+        for ((attempt = 0; attempt < 50; attempt++)); do
+            if ! container_id=$(docker ps -aq --filter "name=^/${CONTAINER_NAME}$"); then
+                echo "Error: failed to check removal of container $CONTAINER_NAME." >&2
+                exit 1
+            fi
+            [[ -z "$container_id" ]] && break
+            sleep 0.1
+        done
+
+        if [[ -n "$container_id" ]]; then
+            echo "Error: container $CONTAINER_NAME was not removed within 5 seconds." >&2
+            exit 1
+        fi
     else
         echo "Running exec $IMAGE..."
         docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
-        exit 0
+        exit $?
     fi
 fi
 
