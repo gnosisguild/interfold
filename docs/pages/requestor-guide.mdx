@@ -19,8 +19,8 @@ wrong, and how to read the security knobs on a request.
 
 ## 1. What you're paying for
 
-Every E3 request charges a one-time fee, paid in the protocol's fee token (USDC by default). The fee
-covers four things, in roughly this order of cost:
+Every E3 request charges a one-time fee, paid in the protocol's configured fee token. The Ethereum
+Mainnet launch uses USDS. The fee covers four things, in roughly this order of cost:
 
 1. **Selecting a Ciphernode committee** — a random subset of operators who will hold a share of the
    decryption key for your round.
@@ -38,6 +38,9 @@ normal protocol revenue.
 The fee is **charged once, when you submit the request**, and held in escrow until the round
 finishes. You don't get a refund on success — that's the price of the computation. You _do_ get a
 refund (full or partial, depending on when it failed) on failure.
+
+Mainnet deployments can keep E3 requests paused during operator onboarding. If requests are paused,
+`request()` reverts until governance enables them.
 
 ## 2. The lifecycle of a request
 

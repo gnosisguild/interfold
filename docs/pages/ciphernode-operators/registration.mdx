@@ -18,23 +18,23 @@ operator. Make sure your node is already [running](./running) before proceeding.
 Registration supports one or two wallets:
 
 - The **operator key** runs the node and authorizes its initial bond owner.
-- The **bond owner** holds FOLD and USDC and controls the position lifecycle.
+- The **bond owner** holds FOLD and the ticket collateral token. It controls the position lifecycle.
 
 Using a separate cold wallet or Safe as the bond owner is strongly recommended so the running node
 does not hold the key controlling collateral. Self-ownership is supported if an operator prefers a
 single-wallet setup. Ensure the selected bond-owner wallet has:
 
-| Token                   | Amount Required                             | Purpose                      |
-| ----------------------- | ------------------------------------------- | ---------------------------- |
-| **FOLD**                | ≥ 100 FOLD (check `requiredCiphernodeBond`) | Ciphernode bond collateral   |
-| **USDC** (or fee token) | ≥ 10 USDC per ticket (minimum 1 ticket)     | Ticket balance for sortition |
-| **ETH**                 | Sufficient for gas                          | Transaction fees             |
+| Token     | Amount Required                          | Purpose                      |
+| --------- | ---------------------------------------- | ---------------------------- |
+| **FOLD**  | Mainnet: `32,000 FOLD`                   | Ciphernode bond collateral   |
+| **sUSDS** | Mainnet: `1,000 sUSDS` shares per ticket | Ticket balance for sortition |
+| **ETH**   | Sufficient for gas                       | Transaction fees             |
 
 > **Testnet tokens:** on Sepolia you can self-serve test FOLD and mock USDC from the faucet with
 > `interfold faucet` (requires the `faucet` contract address in your config — see
 > [Running a Node → Contract Addresses](/ciphernode-operators/running#contract-addresses)). Each
 > call tops up FOLD and the fee token independently, only when your balance for that token is below
-> the faucet threshold. One call dispenses enough FOLD to meet the default 100 FOLD ciphernode bond.
+> the faucet threshold. One call dispenses enough FOLD to meet the default Sepolia ciphernode bond.
 > If the faucet runs dry, reach out on the [community Telegram](https://t.me/enclave_e3).
 
 ## Registration Steps
@@ -50,7 +50,7 @@ interfold ciphernode status
 Example output:
 
 ```
-Ciphernode status on sepolia:
+Ciphernode status on mainnet:
   Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   Bond owner: not configured
   Registered: false
@@ -59,7 +59,7 @@ Ciphernode status on sepolia:
   Ticket balance: 0 (0 available)
   Ciphernode bond: 0
   Pending exits: tickets=0, bond=0
-  Requirements: minTickets=1, ticketPrice=10 tFOLD, ciphernodeBond=100 FOLD
+  Requirements: minTickets=1, ticketPrice=1000 tFOLD, ciphernodeBond=32000 FOLD
 ```
 
 ### Step 2: Authorize the Bond Owner
@@ -82,18 +82,18 @@ that owner:
 
 ```bash
 interfold --config /path/to/owner.yaml ciphernode bond \
-  --operator 0xOPERATOR bond --amount 100
+  --operator 0xOPERATOR bond --amount 32000
 interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
 interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 100
+  --operator 0xOPERATOR buy --amount 1000
 ```
 
 The CLI submits any required token approval first. Safe owners can submit the same
 `bondCiphernodeFor`, `registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe
 interface. The owner supplies the assets, while the operator address is added to the registry Merkle
 tree and receives non-transferable tFOLD. With the recommended separate-owner setup, the hot
-operator key does not control FOLD or USDC withdrawals, and protocol rewards are credited to the
-bond owner.
+operator key does not control FOLD or ticket collateral withdrawals, and protocol rewards are
+credited to the bond owner.
 
 The number of usable tickets is calculated as:
 
@@ -101,7 +101,8 @@ The number of usable tickets is calculated as:
 availableTickets = floor(ticketTokenBalance / ticketPrice)
 ```
 
-With a ticket price of 10 USDC and a 100 USDC deposit, you get 10 available tickets.
+With a ticket price of 1,000 sUSDS shares and a 1,000 sUSDS share deposit, you get one available
+ticket.
 
 ### Step 4: Verify Active Status
 
@@ -114,16 +115,16 @@ interfold ciphernode status
 Expected output for an active operator:
 
 ```
-Ciphernode status on sepolia:
+Ciphernode status on mainnet:
   Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   Bond owner: 0xBOND_OWNER
   Registered: true
   Active: true
   Exit pending: false
-  Ticket balance: 100 (10 available)
-  Ciphernode bond: 100
+  Ticket balance: 1000 (1 available)
+  Ciphernode bond: 32000
   Pending exits: tickets=0, bond=0
-  Requirements: minTickets=1, ticketPrice=10 tFOLD, ciphernodeBond=100 FOLD
+  Requirements: minTickets=1, ticketPrice=1000 tFOLD, ciphernodeBond=32000 FOLD
 ```
 
 ## Operator CLI Commands
@@ -134,10 +135,10 @@ interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 
 # Fund and register from an EOA bond-owner config
 interfold --config /path/to/owner.yaml ciphernode bond \
-  --operator 0xOPERATOR bond --amount 100
+  --operator 0xOPERATOR bond --amount 32000
 interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
 interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 100
+  --operator 0xOPERATOR buy --amount 1000
 
 # The owner or operator can stop participation
 interfold ciphernode deregister --operator 0xOPERATOR
@@ -202,14 +203,16 @@ The `--chain` parameter matches the `name` field in your config's `chains` array
 
 ## Economic Parameters
 
-Current Sepolia defaults (verify on-chain before depositing):
+Current Ethereum Mainnet launch values (verify on-chain before depositing):
 
-| Parameter                | Value                | Description                        |
-| ------------------------ | -------------------- | ---------------------------------- |
-| `ticketPrice`            | 10,000,000 (10 USDC) | Cost per ticket in fee token units |
-| `requiredCiphernodeBond` | 100 FOLD             | Minimum FOLD to bond               |
-| `minTicketBalance`       | 1 ticket             | Minimum tickets to be active       |
-| `exitDelay`              | 604,800s (7 days)    | Wait time before claiming exits    |
+| Parameter                | Value                | Description                         |
+| ------------------------ | -------------------- | ----------------------------------- |
+| `ticketPrice`            | 1,000 sUSDS shares   | Ticket collateral needed per ticket |
+| `requiredCiphernodeBond` | 32,000 FOLD          | Minimum FOLD needed to register     |
+| `minTicketBalance`       | 1 ticket             | Minimum tickets to be active        |
+| `exitDelay`              | 2,592,000s (30 days) | Wait time before claiming exits     |
+
+Sepolia test deployments can use different mock-token values.
 
 Query these values on-chain:
 

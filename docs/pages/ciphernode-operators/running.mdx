@@ -93,6 +93,26 @@ node:
   autopassword: true
 
 chains:
+  - name: mainnet
+    rpc_url: 'wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'
+    chain_id: 1
+    contracts:
+      interfold:
+        address: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
+        deploy_block: 25786382
+      ciphernode_registry:
+        address: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7'
+        deploy_block: 25786378
+      bonding_registry:
+        address: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
+        deploy_block: 25473398
+      slashing_manager:
+        address: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'
+        deploy_block: 25786375
+      fee_token:
+        address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
+        deploy_block: 20663730
+
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     chain_id: 11155111
@@ -354,15 +374,15 @@ the check.
 
 Each chain requires these contract addresses:
 
-| Contract              | Description                             | Required for ciphernode |
-| --------------------- | --------------------------------------- | ----------------------- |
-| `interfold`           | Main Interfold coordinator contract     | Yes                     |
-| `ciphernode_registry` | Tracks registered operators             | Yes                     |
-| `bonding_registry`    | Manages bonds and tickets               | Yes                     |
-| `slashing_manager`    | Manages slashing penalties              | Yes                     |
-| `e3_program`          | E3 Program contract address             | No                      |
-| `fee_token`           | Stablecoin address for fees and tickets | No                      |
-| `faucet`              | Testnet faucet for FOLD + fee tokens    | No                      |
+| Contract              | Description                          | Required for ciphernode |
+| --------------------- | ------------------------------------ | ----------------------- |
+| `interfold`           | Main Interfold coordinator contract  | Yes                     |
+| `ciphernode_registry` | Tracks registered operators          | Yes                     |
+| `bonding_registry`    | Manages bonds and tickets            | Yes                     |
+| `slashing_manager`    | Manages slashing penalties           | Yes                     |
+| `e3_program`          | E3 Program contract address          | No                      |
+| `fee_token`           | Fee token address for E3 requests    | No                      |
+| `faucet`              | Testnet faucet for FOLD + fee tokens | No                      |
 
 Each contract can be specified as a simple address string or with a deploy block for faster syncing:
 

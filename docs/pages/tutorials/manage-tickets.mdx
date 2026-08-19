@@ -46,14 +46,14 @@ interfold --config /path/to/owner.yaml ciphernode tickets \
 
 This:
 
-1. Approves the ticket contract to spend your stablecoins (if needed)
-2. Deposits the stablecoins
+1. Approves the ticket contract to spend your ticket collateral, if needed
+2. Deposits the ticket collateral
 3. Mints equivalent tFOLD to your balance
 
 Your available ticket count is:
 
 ```text
-availableTickets = floor(etkBalance / ticketPrice)
+availableTickets = floor(ticketTokenBalance / ticketPrice)
 ```
 
 Check `ticketPrice` with `interfold ciphernode status` — it's set by governance and may change.
@@ -62,7 +62,7 @@ Check `ticketPrice` with `interfold ciphernode status` — it's set by governanc
 
 ## Burning Tickets
 
-Queue underlying stablecoins for withdrawal:
+Queue underlying ticket collateral for withdrawal:
 
 ```bash
 interfold --config /path/to/owner.yaml ciphernode tickets \
@@ -71,7 +71,7 @@ interfold --config /path/to/owner.yaml ciphernode tickets \
 
 Burning takes effect **immediately**. If it drops you below `minTicketBalance`, your node becomes
 inactive and won't be selected for any further committees until the owner tops it up. After the exit
-delay, the owner receives the stablecoin through `claimExitsFor`.
+delay, the owner receives the ticket collateral through `claimExitsFor`.
 
 ---
 
@@ -119,7 +119,7 @@ two requests ahead so they're captured in the snapshot.
 
 | Parameter             | What it means                 | How to check                  |
 | --------------------- | ----------------------------- | ----------------------------- |
-| `ticketPrice`         | Stablecoins per ticket        | `interfold ciphernode status` |
+| `ticketPrice`         | Ticket collateral per ticket  | `interfold ciphernode status` |
 | `minTicketBalance`    | Minimum to stay active        | `interfold ciphernode status` |
 | `availableTickets`    | Your current ticket count     | `interfold ciphernode status` |
 | Total network tickets | Sum of all operators' tickets | On-chain query (registry)     |
