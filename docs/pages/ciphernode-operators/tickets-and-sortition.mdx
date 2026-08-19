@@ -14,9 +14,11 @@ ticket system and sortition algorithm.
 | --------- | -------------------------------------------------- | ------------ |
 | **FOLD**  | Ciphernode bond - required to register             | Yes          |
 | **tFOLD** | Ticket token - determines committee selection odds | No           |
-| **USDC**  | Underlying asset for tickets (fee token)           | Yes          |
+| **sUSDS** | Mainnet ticket collateral token                    | Yes          |
+| **USDS**  | Mainnet fee token for E3 requests                  | Yes          |
 
-Tickets are priced in stablecoins and minted into non-transferable tFOLD balances:
+Tickets are priced in the configured ticket collateral token and minted into non-transferable tFOLD
+balances:
 
 ```
 availableTickets = floor(ticketTokenBalance / ticketPrice)
@@ -35,7 +37,7 @@ interfold --config /path/to/owner.yaml ciphernode tickets \
 
 This:
 
-1. Pulls stablecoin from the bond owner
+1. Pulls ticket collateral from the bond owner
 2. Mints equivalent tFOLD to the operator address
 3. Re-evaluates the operator's active status
 
@@ -53,8 +55,8 @@ interfold --config /path/to/owner.yaml ciphernode tickets \
 ```
 
 > Burning tickets takes effect immediately. Dropping below the minimum ticket balance makes you
-> inactive until the owner tops it up again. Underlying stablecoin is paid to the bond owner only
-> after the exit delay and `claimExitsFor`.
+> inactive until the owner tops it up again. Underlying ticket collateral is paid to the bond owner
+> only after the exit delay and `claimExitsFor`.
 
 ### Check Balance
 
@@ -151,13 +153,13 @@ After the window closes and ≥ `threshold_n` tickets are present:
 
 ## Parameters
 
-| Parameter                   | Sepolia Value       | Description                                 |
-| --------------------------- | ------------------- | ------------------------------------------- |
-| `ticketPrice`               | 10 USDC             | Cost per ticket                             |
-| `minTicketBalance`          | 1 ticket            | Minimum to be active                        |
-| `sortitionSubmissionWindow` | Deployment-specific | Time to resolve the seed and submit tickets |
-| `threshold_m`               | Varies              | Minimum operators needed for duties         |
-| `threshold_n`               | Varies              | Total committee size                        |
+| Parameter                   | Mainnet Launch Value | Description                                 |
+| --------------------------- | -------------------- | ------------------------------------------- |
+| `ticketPrice`               | 1,000 sUSDS shares   | Ticket collateral needed per ticket         |
+| `minTicketBalance`          | 1 ticket             | Minimum to be active                        |
+| `sortitionSubmissionWindow` | 600 seconds          | Time to resolve the seed and submit tickets |
+| `threshold_m`               | 2                    | Minimum operators needed for duties         |
+| `threshold_n`               | 3                    | Total committee size                        |
 
 ## Monitoring
 
