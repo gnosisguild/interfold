@@ -18,7 +18,7 @@ use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
-use crate::events::{NetCommand, NetEvent};
+use crate::events::{NetCommand, NetEvent, PeerRejectionKind};
 use e3_utils::{to_retry, OnceTake, RetryError};
 
 const INITIAL_DIAL_ATTEMPTS: u32 = 3;
@@ -201,12 +201,24 @@ async fn wait_for_connection(
                             return Ok(());
                         }
                     }
-                    NetEvent::PeerRejected { connection_id, reason } => {
+                    NetEvent::PeerRejected {
+                        connection_id,
+                        kind,
+                        reason,
+                    } => {
                         if connection_id == dial_connection {
-                            return Err(RetryError::Failure(std::io::Error::new(
+                            let error = std::io::Error::new(
                                 std::io::ErrorKind::PermissionDenied,
                                 reason,
-                            ).into()));
+                            );
+                            return match kind {
+                                PeerRejectionKind::Transient => {
+                                    Err(RetryError::Retry(error.into()))
+                                }
+                                PeerRejectionKind::Permanent => {
+                                    Err(RetryError::Failure(error.into()))
+                                }
+                            };
                         }
                     }
                     NetEvent::DialError { error } => {

@@ -4,7 +4,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::EventTranslationService;
-use crate::events::{GossipData, NetCommand, NetEvent};
+use crate::events::{GossipData, GossipPublishFailure, NetCommand, NetEvent};
 use crate::NetworkPolicy;
 use actix::prelude::*;
 use anyhow::Result;
@@ -31,6 +31,9 @@ pub struct NetEventTranslator {
 
 const MAX_GOSSIP_PUBLISH_ATTEMPTS: u8 = 3;
 const GOSSIP_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_NO_PEER_PUBLISH_ATTEMPTS: u8 = 20;
+const NO_PEER_RETRY_DELAY: Duration = Duration::from_secs(30);
+const GOSSIP_PUBLISH_RESULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct PendingPublish {
     event_id: EventId,
@@ -99,7 +102,7 @@ impl NetEventTranslator {
                         } => {
                             addr.send(TranslatorMessage::PublishFailed {
                                 correlation_id,
-                                reason: error.to_string(),
+                                failure: error.as_ref().clone(),
                             })
                             .await
                         }
@@ -155,13 +158,26 @@ impl NetEventTranslator {
                 attempt,
             },
         );
+        ctx.run_later(GOSSIP_PUBLISH_RESULT_TIMEOUT, move |actor, ctx| {
+            if actor.pending.contains_key(&correlation_id) {
+                actor.handle_publish_failed(
+                    correlation_id,
+                    GossipPublishFailure::transient(format!(
+                        "network did not report a gossip publish result within {GOSSIP_PUBLISH_RESULT_TIMEOUT:?}"
+                    )),
+                    ctx,
+                );
+            }
+        });
         let tx = self.tx.clone();
         ctx.spawn(async move { tx.send(command).await }.into_actor(self).map(
             move |result, actor, ctx| {
                 if let Err(error) = result {
                     actor.handle_publish_failed(
                         correlation_id,
-                        format!("network command queue closed: {error}"),
+                        GossipPublishFailure::permanent(format!(
+                            "network command queue closed: {error}"
+                        )),
                         ctx,
                     );
                 }
@@ -172,24 +188,29 @@ impl NetEventTranslator {
     fn handle_publish_failed(
         &mut self,
         correlation_id: CorrelationId,
-        reason: String,
+        failure: GossipPublishFailure,
         ctx: &mut Context<Self>,
     ) {
         let Some(pending) = self.pending.remove(&correlation_id) else {
             return;
         };
-        if pending.attempt < MAX_GOSSIP_PUBLISH_ATTEMPTS {
+        let retry = retry_policy(&failure);
+        if let Some((_, delay)) = retry.filter(|(max, _)| pending.attempt < *max) {
             warn!(
                 attempt = pending.attempt,
-                %reason,
+                %failure,
                 "Gossip publish failed; scheduling retry"
             );
-            ctx.run_later(GOSSIP_RETRY_DELAY, move |actor, ctx| {
+            ctx.run_later(delay, move |actor, ctx| {
                 actor.queue_publish(pending.event_id, pending.data, pending.attempt + 1, ctx);
             });
         } else {
             self.service.mark_failed(pending.event_id);
-            warn!(attempts = pending.attempt, %reason, "Gossip publish retries exhausted");
+            if retry.is_some() {
+                warn!(attempts = pending.attempt, %failure, "Gossip publish retries exhausted");
+            } else {
+                warn!(attempts = pending.attempt, %failure, "Gossip publish failed permanently");
+            }
         }
     }
 
@@ -209,7 +230,7 @@ enum TranslatorMessage {
     PublishSucceeded(CorrelationId),
     PublishFailed {
         correlation_id: CorrelationId,
-        reason: String,
+        failure: GossipPublishFailure,
     },
 }
 
@@ -229,9 +250,42 @@ impl Handler<TranslatorMessage> for NetEventTranslator {
             }
             TranslatorMessage::PublishFailed {
                 correlation_id,
-                reason,
-            } => self.handle_publish_failed(correlation_id, reason, ctx),
+                failure,
+            } => self.handle_publish_failed(correlation_id, failure, ctx),
         }
+    }
+}
+
+fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
+    match failure {
+        GossipPublishFailure::NoPeersSubscribed => {
+            Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
+        }
+        GossipPublishFailure::Transient(_) => {
+            Some((MAX_GOSSIP_PUBLISH_ATTEMPTS, GOSSIP_RETRY_DELAY))
+        }
+        GossipPublishFailure::Permanent(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_peer_failures_use_the_long_join_window() {
+        assert_eq!(
+            retry_policy(&GossipPublishFailure::NoPeersSubscribed),
+            Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
+        );
+    }
+
+    #[test]
+    fn permanent_publish_failures_are_not_retried() {
+        assert_eq!(
+            retry_policy(&GossipPublishFailure::permanent("invalid payload")),
+            None
+        );
     }
 }
 

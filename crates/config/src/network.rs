@@ -92,13 +92,12 @@ impl NetworkProfile {
             None => infer_name(chains)?,
         };
 
-        if let Some(mut profile) = Self::builtin(&name) {
+        if let Some(profile) = Self::builtin(&name) {
             if let Some(configured_id) = configured_id {
                 ensure!(
                     configured_id == profile.id,
                     "node.network_id does not match the fixed {name} network ID"
                 );
-                profile.id = configured_id;
             }
             profile.validate_chains(chains)?;
             return Ok(profile);

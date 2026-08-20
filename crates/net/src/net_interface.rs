@@ -7,8 +7,9 @@
 use crate::{
     dialer::dial_peers,
     events::{
-        GossipData, IncomingRequest, NetCommand, NetEvent, OutgoingRequestFailed,
-        OutgoingRequestSucceeded, PeerTarget, PutOrStoreError,
+        GossipData, GossipPublishFailure, IncomingRequest, NetCommand, NetEvent,
+        OutgoingRequestFailed, OutgoingRequestSucceeded, PeerRejectionKind, PeerTarget,
+        PutOrStoreError,
     },
     ContentHash,
 };
@@ -313,7 +314,27 @@ impl Libp2pNetInterface {
 
         loop {
             select! {
-                 // Process commands
+                biased;
+
+                _ = admission_tick.tick() => {
+                    prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
+                    for peer_id in peer_failures.quarantined_peers() {
+                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    }
+                    for (peer_id, pending_connections) in peer_admission.expired_pending() {
+                        debug!(%peer_id, "Peer did not complete Identify before the admission deadline");
+                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                        let _ = self.swarm.disconnect_peer_id(peer_id);
+                        for pending in pending_connections {
+                            let _ = event_tx.send(NetEvent::PeerRejected {
+                                connection_id: pending.connection_id,
+                                kind: PeerRejectionKind::Transient,
+                                reason: "peer did not complete Identify before the admission deadline".to_string(),
+                            });
+                        }
+                    }
+                }
+                // Process commands
                 Some(command) = cmd_rx.recv() => {
                     if let NetCommand::Shutdown = command {
                         if let Err(e) = handle_shutdown(&mut self.swarm).await {
@@ -331,21 +352,6 @@ impl Libp2pNetInterface {
                         command,
                     ).await {
                         error!("Error processing NetCommand: {e}")
-                    }
-                }
-                _ = admission_tick.tick() => {
-                    prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
-                    for peer_id in peer_failures.quarantined_peers() {
-                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                    }
-                    for (peer_id, pending) in peer_admission.expired_pending() {
-                        debug!(%peer_id, "Peer did not complete Identify before the admission deadline");
-                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                        let _ = self.swarm.disconnect_peer_id(peer_id);
-                        let _ = event_tx.send(NetEvent::PeerRejected {
-                            connection_id: pending.connection_id,
-                            reason: "peer did not complete Identify before the admission deadline".to_string(),
-                        });
                     }
                 }
                 // Process events
@@ -514,7 +520,7 @@ async fn process_swarm_event(
                         .add_address(&peer_id, remote_addr);
                 }
                 event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
-            } else if !peer_admission.stage(
+            } else if let Err(kind) = peer_admission.stage(
                 peer_id,
                 PeerAdmission::pending(
                     connection_id,
@@ -527,6 +533,7 @@ async fn process_swarm_event(
                 let _ = swarm.disconnect_peer_id(peer_id);
                 event_tx.send(NetEvent::PeerRejected {
                     connection_id,
+                    kind,
                     reason: "peer is temporarily blocked by the network admission policy"
                         .to_string(),
                 })?;
@@ -648,17 +655,20 @@ async fn process_swarm_event(
                 },
         })) => {
             let key_bytes = record.key.to_vec();
-            let peer_keys = dht_records_by_peer.entry(source).or_default();
             let now = Instant::now();
             let valid_expiry = record
                 .expires
                 .is_some_and(|expires| expires > now && expires <= now + DHT_MAX_TTL);
             let key_matches = key_bytes.len() == 32
                 && ContentHash::from_content(&record.value).as_ref() == key_bytes.as_slice();
+            if !peer_admission.is_admitted(&source) {
+                debug!(%source, "Rejected an inbound DHT record from an unadmitted peer");
+                return Ok(());
+            }
+            let peer_keys = dht_records_by_peer.entry(source).or_default();
             let within_quota =
                 peer_keys.contains(&key_bytes) || peer_keys.len() < DHT_MAX_RECORDS_PER_PEER;
-            if peer_admission.is_admitted(&source)
-                && record.value.len() <= MAX_DHT_DOCUMENT_BYTES
+            if record.value.len() <= MAX_DHT_DOCUMENT_BYTES
                 && valid_expiry
                 && key_matches
                 && within_quota
@@ -679,7 +689,6 @@ async fn process_swarm_event(
             } else {
                 debug!(
                     %source,
-                    admitted = peer_admission.is_admitted(&source),
                     valid_expiry,
                     key_matches,
                     within_quota,
@@ -941,7 +950,8 @@ async fn process_swarm_event(
             },
         )) => {
             if let Err(reason) = network.protocols().supports_peer(&info) {
-                let first_rejection = peer_admission.reject(peer_id);
+                let rejected_connections = peer_admission.pending_connections(&peer_id);
+                let first_rejection = peer_admission.reject(peer_id, PeerRejectionKind::Permanent);
                 swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                 status.disconnected(&peer_id.to_string(), 0);
                 let _ = swarm.disconnect_peer_id(peer_id);
@@ -956,14 +966,25 @@ async fn process_swarm_event(
                 } else {
                     debug!(%peer_id, %reason, "Rejected an incompatible peer again");
                 }
-                event_tx.send(NetEvent::PeerRejected {
-                    connection_id,
-                    reason: reason.to_string(),
-                })?;
+                if rejected_connections.is_empty() {
+                    event_tx.send(NetEvent::PeerRejected {
+                        connection_id,
+                        kind: PeerRejectionKind::Permanent,
+                        reason: reason.to_string(),
+                    })?;
+                } else {
+                    for pending in rejected_connections {
+                        event_tx.send(NetEvent::PeerRejected {
+                            connection_id: pending.connection_id,
+                            kind: PeerRejectionKind::Permanent,
+                            reason: reason.to_string(),
+                        })?;
+                    }
+                }
                 return Ok(());
             }
 
-            let Some(pending) = peer_admission.admit(peer_id) else {
+            let Some(pending_connections) = peer_admission.admit(peer_id) else {
                 debug!(%peer_id, "Received Identify for an admitted or unstaged peer");
                 return Ok(());
             };
@@ -974,19 +995,25 @@ async fn process_swarm_event(
                 network = %network.profile().name(),
                 "Peer admitted"
             );
+            let status_pending = pending_connections
+                .iter()
+                .max_by_key(|pending| pending.connections)
+                .expect("admitted peers have at least one staged connection");
             status.connected(
                 peer_id.to_string(),
-                pending.remote_address.to_string(),
-                pending.direction,
-                pending.connections,
+                status_pending.remote_address.to_string(),
+                status_pending.direction,
+                status_pending.connections,
             );
-            if !(should_filter_loopback(swarm) && is_loopback_addr(&pending.remote_address)) {
-                swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, strip_peer_id(pending.remote_address));
-            }
             let filter = should_filter_loopback(swarm);
+            for pending in &pending_connections {
+                if !(filter && is_loopback_addr(&pending.remote_address)) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, strip_peer_id(pending.remote_address.clone()));
+                }
+            }
             for addr in &info.listen_addrs {
                 if !(filter && is_loopback_addr(addr)) {
                     swarm
@@ -1004,9 +1031,11 @@ async fn process_swarm_event(
                 .filter(|peer| peer_admission.is_admitted(peer))
                 .count();
             event_tx.send(NetEvent::GossipSubscribed { count, topic })?;
-            event_tx.send(NetEvent::ConnectionEstablished {
-                connection_id: pending.connection_id,
-            })?;
+            for pending in pending_connections {
+                event_tx.send(NetEvent::ConnectionEstablished {
+                    connection_id: pending.connection_id,
+                })?;
+            }
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(libp2p::identify::Event::Error {
@@ -1022,11 +1051,12 @@ async fn process_swarm_event(
 
         SwarmEvent::ConnectionClosed {
             peer_id,
+            connection_id,
             num_established,
             cause,
             ..
         } => {
-            peer_admission.closed(&peer_id, num_established);
+            peer_admission.closed(&peer_id, connection_id, num_established);
             status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
@@ -1143,11 +1173,22 @@ fn handle_gossip_publish(
     topic: String,
     correlation_id: CorrelationId,
 ) -> Result<()> {
-    anyhow::ensure!(
-        topic == network.protocols().gossip_topic(),
-        "refusing to publish on an unconfigured gossip topic"
-    );
-    let bytes = encode_gossip(&data, network)?;
+    let bytes = match (|| -> Result<Vec<u8>> {
+        anyhow::ensure!(
+            topic == network.protocols().gossip_topic(),
+            "refusing to publish on an unconfigured gossip topic"
+        );
+        encode_gossip(&data, network)
+    })() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            event_tx.send(NetEvent::GossipPublishError {
+                correlation_id,
+                error: Arc::new(GossipPublishFailure::permanent(error.to_string())),
+            })?;
+            return Ok(());
+        }
+    };
     debug!("Publishing gossip message ({} bytes)", bytes.len());
     let gossipsub_behaviour = &mut swarm.behaviour_mut().gossipsub;
     match gossipsub_behaviour.publish(gossipsub::IdentTopic::new(topic), bytes) {
@@ -1161,7 +1202,7 @@ fn handle_gossip_publish(
             error!(error=?e, "Could not GossipPublish.");
             event_tx.send(NetEvent::GossipPublishError {
                 correlation_id,
-                error: Arc::new(e),
+                error: Arc::new(GossipPublishFailure::from_libp2p(e)),
             })?;
         }
     }

@@ -138,7 +138,7 @@ impl Default for NodeDefinition {
 }
 
 /// The config actually used throughout the app
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct AppConfig {
     /// The name of the node
     name: String,

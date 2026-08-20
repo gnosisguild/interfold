@@ -12,8 +12,8 @@ use e3_events::{E3id, Event, EventContextAccessors, InterfoldEvent, SeqState};
 use libp2p::{identify::Info, StreamProtocol};
 use sha2::{Digest, Sha256};
 
-const GOSSIP_WIRE_MAJOR: u16 = 2;
-const SYNC_WIRE_MAJOR: u16 = 2;
+pub(crate) const GOSSIP_WIRE_MAJOR: u16 = 2;
+pub(crate) const SYNC_WIRE_MAJOR: u16 = 2;
 const IDENTIFY_MAJOR: u16 = 1;
 const KADEMLIA_VERSION: &str = "1.0.0";
 
@@ -96,6 +96,7 @@ pub struct NetworkPolicy {
     profile: NetworkProfile,
     protocols: ProtocolSet,
     deployments: HashMap<u64, [u8; 20]>,
+    unrestricted: bool,
 }
 
 impl NetworkPolicy {
@@ -112,17 +113,32 @@ impl NetworkPolicy {
                 );
             }
         }
+        ensure!(
+            !deployment_map.is_empty(),
+            "network policy requires at least one Interfold deployment"
+        );
         let protocols =
             ProtocolSet::with_deployments(profile.id(), deployment_fingerprint(&deployment_map))?;
         Ok(Self {
             profile,
             protocols,
             deployments: deployment_map,
+            unrestricted: false,
         })
     }
 
     pub fn local_unrestricted() -> Self {
-        Self::new(NetworkProfile::local(), []).expect("local network protocols are valid")
+        let profile = NetworkProfile::local();
+        let deployments = HashMap::new();
+        let protocols =
+            ProtocolSet::with_deployments(profile.id(), deployment_fingerprint(&deployments))
+                .expect("local network protocols are valid");
+        Self {
+            profile,
+            protocols,
+            deployments,
+            unrestricted: true,
+        }
     }
 
     pub fn profile(&self) -> &NetworkProfile {
@@ -134,14 +150,14 @@ impl NetworkPolicy {
     }
 
     pub fn allows_chain(&self, chain_id: u64) -> bool {
-        self.deployments.is_empty() || self.deployments.contains_key(&chain_id)
+        self.unrestricted || self.deployments.contains_key(&chain_id)
     }
 
     /// Return the configured Interfold deployment binding for a chain.
     ///
     /// Local test policies use an all-zero binding because they do not configure contracts.
     pub fn deployment_binding(&self, chain_id: u64) -> Result<[u8; 20]> {
-        if self.deployments.is_empty() {
+        if self.unrestricted {
             return Ok([0; 20]);
         }
         self.deployments.get(&chain_id).copied().ok_or_else(|| {
@@ -233,5 +249,18 @@ mod tests {
         let error = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20]), (1, [2; 20])])
             .unwrap_err();
         assert!(error.to_string().contains("conflicting"));
+    }
+
+    #[test]
+    fn empty_production_policy_is_rejected() {
+        let error = NetworkPolicy::new(NetworkProfile::mainnet(), []).unwrap_err();
+        assert!(error.to_string().contains("at least one"));
+    }
+
+    #[test]
+    fn local_unrestricted_policy_explicitly_allows_unconfigured_chains() {
+        let policy = NetworkPolicy::local_unrestricted();
+        assert!(policy.allows_chain(31_337));
+        assert_eq!(policy.deployment_binding(31_337).unwrap(), [0; 20]);
     }
 }

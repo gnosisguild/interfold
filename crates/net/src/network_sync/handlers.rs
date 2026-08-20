@@ -191,7 +191,14 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
             let fetch_request: FetchEventsSince = pending.responder.try_request_into()?;
             for event in &events {
                 if EventTranslationService::is_forwardable_event(event) {
-                    self.network.validate_event(event)?;
+                    if let Err(error) = self.network.validate_event(event) {
+                        pending.responder.respond(ProtocolResponse::Error(
+                            "historical sync returned an event outside this network policy"
+                                .to_string(),
+                        ))?;
+                        return Err(error
+                            .context("event store returned an invalid event for historical sync"));
+                    }
                 }
             }
             match build_sync_batch(events, &fetch_request) {

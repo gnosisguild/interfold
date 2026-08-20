@@ -2331,7 +2331,9 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     let (event_tx, _) = broadcast::channel(100); // Receive byte events from the network
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
-    let system = EventSystem::new().with_aggregate_config(aggregate_config);
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
     let event_rx = Arc::new(event_tx.subscribe());

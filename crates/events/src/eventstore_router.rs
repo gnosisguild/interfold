@@ -9,7 +9,10 @@ use crate::{
     AggregateId, EventContextAccessors, EventLog, SequenceIndex,
 };
 use crate::{CorrelationId, Die, EventStoreQueryBy, InterfoldEvent, Seq, SeqAgg, Ts, TsAgg};
-use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Recipient, ResponseFuture};
+use actix::{
+    Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, Context, Handler, Recipient,
+    ResponseFuture, WrapFuture,
+};
 use anyhow::{Context as _, Result};
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::HashMap;
@@ -152,7 +155,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
     pub fn handle_event_store_query_ts(
         &mut self,
         msg: EventStoreQueryBy<TsAgg>,
-        _ctx: &mut Context<Self>,
+        ctx: &mut Context<Self>,
     ) -> Result<()> {
         debug!("Received request for timestamp query.");
         let parent_id = msg.id();
@@ -167,14 +170,21 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             .copied()
             .collect();
         if !missing.is_empty() {
-            sender
-                .try_send(EventStoreQueryResponse::from_result(
-                    parent_id,
-                    Err(anyhow::anyhow!(
-                        "No EventStore is configured for aggregates {missing:?}"
-                    )),
-                ))
-                .context("failed to return the missing aggregate error")?;
+            let response = EventStoreQueryResponse::from_result(
+                parent_id,
+                Err(anyhow::anyhow!(
+                    "No EventStore is configured for aggregates {missing:?}"
+                )),
+            );
+            ctx.spawn(
+                async move { sender.send(response).await }
+                    .into_actor(self)
+                    .map(|result, _, _| {
+                        if let Err(error) = result {
+                            error!(%error, "Failed to return the missing aggregate error");
+                        }
+                    }),
+            );
             return Ok(());
         }
 
@@ -214,7 +224,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
     pub fn handle_event_store_query_seq(
         &mut self,
         msg: EventStoreQueryBy<SeqAgg>,
-        _ctx: &mut Context<Self>,
+        ctx: &mut Context<Self>,
     ) -> Result<()> {
         debug!("Received request for sequence query.");
         let parent_id = msg.id();
@@ -229,14 +239,21 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             .copied()
             .collect();
         if !missing.is_empty() {
-            sender
-                .try_send(EventStoreQueryResponse::from_result(
-                    parent_id,
-                    Err(anyhow::anyhow!(
-                        "No EventStore is configured for aggregates {missing:?}"
-                    )),
-                ))
-                .context("failed to return the missing aggregate error")?;
+            let response = EventStoreQueryResponse::from_result(
+                parent_id,
+                Err(anyhow::anyhow!(
+                    "No EventStore is configured for aggregates {missing:?}"
+                )),
+            );
+            ctx.spawn(
+                async move { sender.send(response).await }
+                    .into_actor(self)
+                    .map(|result, _, _| {
+                        if let Err(error) = result {
+                            error!(%error, "Failed to return the missing aggregate error");
+                        }
+                    }),
+            );
             return Ok(());
         }
 

@@ -10,7 +10,12 @@ use e3_events::{Event, EventContextAccessors, InterfoldEvent, Unsequenced};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{domain::EventTranslationService, events::GossipData, NetworkPolicy};
+use crate::{
+    domain::EventTranslationService,
+    events::GossipData,
+    network::{GOSSIP_WIRE_MAJOR, SYNC_WIRE_MAJOR},
+    NetworkPolicy,
+};
 
 pub(crate) const MAX_GOSSIP_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_DIRECT_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
@@ -18,8 +23,8 @@ pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
 
 const GOSSIP_MAGIC: [u8; 4] = *b"IFG2";
 const SYNC_MAGIC: [u8; 4] = *b"IFS2";
-const GOSSIP_SCHEMA_VERSION: u16 = 2;
-const SYNC_SCHEMA_VERSION: u16 = 2;
+const GOSSIP_SCHEMA_VERSION: u16 = GOSSIP_WIRE_MAJOR;
+const SYNC_SCHEMA_VERSION: u16 = SYNC_WIRE_MAJOR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum GossipMessageKind {
@@ -246,7 +251,7 @@ mod tests {
     #[test]
     fn gossip_envelope_rejects_a_different_network() {
         let local = NetworkPolicy::local_unrestricted();
-        let mainnet = NetworkPolicy::new(NetworkProfile::mainnet(), []).unwrap();
+        let mainnet = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])]).unwrap();
         let bytes = encode_gossip(&forwardable_gossip(), &local).unwrap();
         let error = decode_gossip(&bytes, &mainnet).unwrap_err();
         assert!(error.to_string().contains("different network"));

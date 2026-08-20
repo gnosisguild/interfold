@@ -437,12 +437,16 @@ The network interface owns the QUIC swarm, signed gossipsub topic, Kademlia stor
 channels. A stable 32-byte network ID scopes Identify, gossipsub, Kademlia, and historical-sync
 protocol names. A connection does not enter network status, Kademlia, gossip, or direct sync until
 Identify reports the exact network and required capabilities. Connection counts, Kademlia records,
-record size, record lifetime, provider records, and per-peer insertions are bounded. Gossipsub uses
-strict signatures and application validation before forwarding. Gossip envelopes bind the network,
+record size, record lifetime, provider records, and per-peer insertions are bounded. Production
+network policies require an explicit deployment set; only the local test policy can be unrestricted.
+Identify retains all staged connections for a peer, permanently rejects incompatible peers, and
+applies a short retryable cooldown after an Identify timeout. Gossipsub uses strict signatures and
+application validation before forwarding. Gossip envelopes bind the network,
 Interfold deployment, chain aggregate, event ID, schema version, and payload hash. Gossipsub and
 direct-request/DHT decoding have explicit byte limits. Translation actors accept only the protocol
 event allowlist before publishing remote events, and their broadcast-to-actor ingress loops await
-mailbox acceptance and stop when the destination actor closes. Startup buffering is bounded by both
+mailbox acceptance and stop when the destination actor closes. Each publish attempt has a result
+timeout. No-peer failures use a longer retry window than other transient failures. Startup buffering is bounded by both
 event count and estimated bytes and fails readiness on overflow or broadcast lag; after `SyncEnded`,
 broadcast lag is warned and skipped without stopping the ingress loop. Historical direct sync
 requires advancing cursors and enforces one cumulative page, event, byte, and time budget across all

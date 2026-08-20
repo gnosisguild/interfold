@@ -487,13 +487,13 @@ impl CiphernodeBuilder {
     async fn create_aggregate_config(
         &self,
         provider_cache: &mut ProviderCache,
-    ) -> Result<(AggregateConfig, HashMap<String, u64>)> {
+    ) -> Result<(AggregateConfig, Vec<u64>)> {
         let mut chain_providers = Vec::new();
-        let mut chain_ids = HashMap::new();
+        let mut chain_ids = Vec::new();
         for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
             let provider = provider_cache.ensure_read_provider(chain).await?;
             chain_providers.push((chain.clone(), provider.chain_id()));
-            chain_ids.insert(chain.name.clone(), provider.chain_id());
+            chain_ids.push(provider.chain_id());
         }
 
         let delays = create_aggregate_delays(&chain_providers)?;
@@ -948,21 +948,26 @@ impl CiphernodeBuilder {
         }
     }
 
-    fn network_policy(&self, chain_ids: &HashMap<String, u64>) -> Result<NetworkPolicy> {
+    fn network_policy(&self, chain_ids: &[u64]) -> Result<NetworkPolicy> {
         let profile = self
             .net_config
             .as_ref()
             .map(|config| config.network.clone())
             .unwrap_or_else(NetworkProfile::local);
-        let mut deployments = Vec::new();
-        for chain in self
+        let enabled_chains: Vec<_> = self
             .chains
             .iter()
             .filter(|chain| chain.enabled.unwrap_or(true))
-        {
-            let chain_id = *chain_ids
-                .get(&chain.name)
-                .ok_or_else(|| anyhow::anyhow!("missing resolved chain ID for '{}'", chain.name))?;
+            .collect();
+        ensure!(
+            enabled_chains.len() == chain_ids.len(),
+            "resolved chain IDs do not match the enabled chain configuration"
+        );
+        if enabled_chains.is_empty() && profile.name() == "local" {
+            return Ok(NetworkPolicy::local_unrestricted());
+        }
+        let mut deployments = Vec::with_capacity(enabled_chains.len());
+        for (chain, chain_id) in enabled_chains.into_iter().zip(chain_ids.iter().copied()) {
             deployments.push((chain_id, chain.contracts.interfold.address()?.into_array()));
         }
         NetworkPolicy::new(profile, deployments)

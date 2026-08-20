@@ -44,11 +44,17 @@ pub async fn execute(
             setup::validate_rpc_url(&url)?;
             url
         }
-        None => Input::<String>::with_theme(&ColorfulTheme::default())
-            .with_prompt("Enter WebSocket devnet RPC URL")
-            .default("wss://ethereum-sepolia-rpc.publicnode.com".to_string())
-            .validate_with(|url: &String| setup::validate_rpc_url(url))
-            .interact_text()?,
+        None => {
+            let theme = ColorfulTheme::default();
+            let prompt = Input::<String>::with_theme(&theme).with_prompt("Enter WebSocket RPC URL");
+            let prompt = match default_rpc_url(&network) {
+                Some(default) => prompt.default(default.to_string()),
+                None => prompt,
+            };
+            prompt
+                .validate_with(|url: &String| setup::validate_rpc_url(url))
+                .interact_text()?
+        }
     };
 
     let private_key = ask_for_private_key(private_key)?;
@@ -85,6 +91,15 @@ pub async fn execute(
     let (address, peer_id) = e3_entrypoint::wallet::set::execute(&config, private_key).await?;
     print_info(out, &config, address, &peer_id.to_string(), &rpc_url)?;
     Ok(())
+}
+
+fn default_rpc_url(network: &str) -> Option<&'static str> {
+    match network.to_ascii_lowercase().as_str() {
+        "local" | "localhost" | "hardhat" | "devnet" => Some("ws://127.0.0.1:8545"),
+        "mainnet" => Some("wss://ethereum-rpc.publicnode.com"),
+        "sepolia" => Some("wss://ethereum-sepolia-rpc.publicnode.com"),
+        _ => None,
+    }
 }
 
 fn print_info(
@@ -129,4 +144,32 @@ fn print_info(
         colorize("interfold start", Color::Yellow)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_setup_defaults_to_the_local_rpc() {
+        assert_eq!(default_rpc_url("local"), Some("ws://127.0.0.1:8545"));
+    }
+
+    #[test]
+    fn sepolia_setup_keeps_the_public_rpc_default() {
+        assert!(default_rpc_url("sepolia").unwrap().contains("sepolia"));
+    }
+
+    #[test]
+    fn mainnet_setup_does_not_default_to_sepolia() {
+        assert_eq!(
+            default_rpc_url("mainnet"),
+            Some("wss://ethereum-rpc.publicnode.com")
+        );
+    }
+
+    #[test]
+    fn custom_network_setup_requires_an_explicit_rpc() {
+        assert_eq!(default_rpc_url("private-network"), None);
+    }
 }
