@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use e3_events::{E3Failed, E3Requested, E3StageChanged, FailureReason};
+use e3_events::{E3Failed, E3Requested, E3StageChanged, FailureReason, PlaintextAggregated};
+use e3_utils::ArcBytes;
 
 fn id(n: &str) -> E3id {
     E3id::new(n, 1)
@@ -138,6 +139,23 @@ fn non_lifecycle_event_is_ignored() {
     let mut svc = E3LifecycleService::new();
     let d = svc.observe(&InterfoldEventData::Shutdown(e3_events::Shutdown));
     assert_eq!(LifecycleDecision::NotLifecycle, d);
+}
+
+#[test]
+fn plaintext_aggregation_is_not_canonical_completion() {
+    let mut svc = E3LifecycleService::new();
+    svc.observe(&requested("a"));
+
+    let decision = svc.observe(&InterfoldEventData::PlaintextAggregated(
+        PlaintextAggregated {
+            e3_id: id("a"),
+            decrypted_output: vec![ArcBytes::from_bytes(b"result")],
+            decryption_aggregator_proofs: vec![],
+        },
+    ));
+
+    assert_eq!(LifecycleDecision::NotLifecycle, decision);
+    assert_eq!(E3Stage::Requested, svc.stage(&id("a")));
 }
 
 #[test]

@@ -1427,7 +1427,6 @@ async fn test_trbfv_actor() -> Result<()> {
             faucet: None,
         },
         finalization_ms: None,
-        reorg_confirmations: None,
         chain_id: Some(1),
     };
 

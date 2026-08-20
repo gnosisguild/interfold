@@ -58,7 +58,6 @@ impl EventTranslationService {
             InterfoldEventData::DecryptionshareCreated(_)
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
-                | InterfoldEventData::PlaintextAggregated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
@@ -131,7 +130,8 @@ impl EventTranslationService {
 mod tests {
     use super::*;
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, TestEvent,
+        E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated, PlaintextAggregated,
+        TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -147,6 +147,24 @@ mod tests {
     }
 
     fn local_forwardable_event() -> InterfoldEvent {
+        let unsequenced: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+                e3_id: E3id::new("1", 1),
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
+            }
+            .into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        unsequenced.into_sequenced(1)
+    }
+
+    fn local_plaintext_event() -> InterfoldEvent {
         let unsequenced: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             PlaintextAggregated {
                 e3_id: E3id::new("1", 1),
@@ -166,6 +184,13 @@ mod tests {
     fn test_events_are_not_forwardable() {
         assert!(!EventTranslationService::is_forwardable_event(
             &local_test_event()
+        ));
+    }
+
+    #[test]
+    fn plaintext_results_are_not_forwardable() {
+        assert!(!EventTranslationService::is_forwardable_event(
+            &local_plaintext_event()
         ));
     }
 

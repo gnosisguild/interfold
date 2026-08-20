@@ -53,8 +53,6 @@ use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tracing::{error, info, warn};
 
-const DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS: u64 = 1;
-
 #[derive(Clone, Debug)]
 enum EventSystemType {
     Persisted { log_path: PathBuf, kv_path: PathBuf },
@@ -1107,9 +1105,7 @@ async fn setup_evm_system(
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
         // An entropy block read at the chain head can disappear before the ticket transaction.
-        let reorg_confirmations = chain
-            .reorg_confirmations
-            .unwrap_or(DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS);
+        let ingestion_confirmations = chain.ingestion_confirmations()?;
         evm_config.insert(chain_id, chain.try_into()?);
 
         let rpc_url = chain.rpc_url()?;
@@ -1156,7 +1152,7 @@ async fn setup_evm_system(
                     &next,
                     registry_provider,
                     Some(registry_provider_factory),
-                    reorg_confirmations,
+                    ingestion_confirmations,
                 )
                 .recipient()
             });
@@ -1276,7 +1272,6 @@ mod tests {
                 faucet: None,
             },
             finalization_ms,
-            reorg_confirmations: None,
             chain_id: Some(1),
         }
     }

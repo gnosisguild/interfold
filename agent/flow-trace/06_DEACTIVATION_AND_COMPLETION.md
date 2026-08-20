@@ -200,9 +200,10 @@ publishPlaintextOutput() succeeds
 │
 └─ RUST-SIDE (cleanup via E3RequestComplete):
     │
-    ├─ E3Router detects PlaintextAggregated (or E3StageChanged(Complete)):
+    ├─ E3Router detects EVM-sourced E3StageChanged(Complete):
     │   └─ Publishes E3RequestComplete { e3_id }
     │       → Single cleanup signal for all per-E3 actors
+    │       → PlaintextAggregated alone cannot complete or tear down the request
     │
     ├─ Sortition: decrements activeJobs for each committee member
     │   → Node becomes available for future E3s
@@ -355,6 +356,8 @@ flowchart TD
 
     Replay --> Effects["EffectsEnabled"]
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
+    Replay --> PublicationGate["EVM writers retain local publication intents"]
+    Effects --> PublicationGate
 
     Effects --> Live["Live/historical chain events"]
     Live --> Ciphertext["CiphertextOutputPublished"]
@@ -371,6 +374,8 @@ flowchart TD
     Active -- yes --> Collect["Collect H honest shares<br/>verify C6, aggregate C7"]
     CCHydrate --> Collect
     Collect --> Plaintext["PlaintextAggregated"]
+    Plaintext --> PublicationGate
+    PublicationGate --> ChainComplete["on-chain publication and E3StageChanged(Complete)"]
 
     CanStart -- old failure --> Lost["Observed failure before fix:<br/>full committee restored, honest subset missing,<br/>active aggregator never started plaintext"]
 ```
@@ -445,7 +450,6 @@ E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build(
 │     CommitteeFinalized       → CommitteeFinalized
 │     PublicKeyAggregated      → KeyPublished
 │     CiphertextOutputPublished→ CiphertextReady
-│     PlaintextAggregated      → Complete
 │     PlaintextOutputPublished → Complete
 │     E3RequestComplete        → Complete
 │     E3Failed                 → Failed (terminal)

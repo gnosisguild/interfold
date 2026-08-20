@@ -15,6 +15,8 @@ use e3_events::EvmEventConfigChain;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
+const PUBLIC_RPC_CONFIRMATIONS: u64 = 1;
+
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Deserialize, Serialize)]
 pub struct ChainConfig {
     pub enabled: Option<bool>,
@@ -24,10 +26,6 @@ pub struct ChainConfig {
     pub rpc_auth: RpcAuth,
     pub contracts: ContractAddresses,
     pub finalization_ms: Option<u64>,
-    /// Number of block confirmations to wait before ingesting an on-chain log.
-    /// `None`/`0` reads to head; a positive value makes historical/backfill
-    /// ingestion reorg-safe by only acting on logs buried this deep.
-    pub reorg_confirmations: Option<u64>,
     pub chain_id: Option<u64>,
 }
 
@@ -35,6 +33,15 @@ impl ChainConfig {
     pub fn rpc_url(&self) -> Result<RPC> {
         Ok(RPC::from_url(&self.rpc_url)
             .map_err(|e| anyhow!("Failed to parse RPC URL for chain {}: {}", self.name, e))?)
+    }
+
+    /// Return the fixed ingestion depth for this RPC class.
+    pub fn ingestion_confirmations(&self) -> Result<u64> {
+        Ok(if self.rpc_url()?.is_local() {
+            0
+        } else {
+            PUBLIC_RPC_CONFIRMATIONS
+        })
     }
 }
 
@@ -62,7 +69,7 @@ impl TryFrom<&ChainConfig> for EvmEventConfigChain {
         }
         let start_block = lowest_block.unwrap_or(0);
         Ok(EvmEventConfigChain::new(start_block)
-            .with_confirmations(value.reorg_confirmations.unwrap_or(0)))
+            .with_confirmations(value.ingestion_confirmations()?))
     }
 }
 
@@ -71,5 +78,48 @@ impl TryFrom<ChainConfig> for EvmEventConfigChain {
     fn try_from(value: ChainConfig) -> std::result::Result<Self, Self::Error> {
         let r = &value;
         r.try_into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{contract::Contract, rpc::RpcAuth};
+
+    fn chain(rpc_url: &str) -> ChainConfig {
+        let contract = || Contract::Full {
+            address: "0x0000000000000000000000000000000000000000".to_string(),
+            deploy_block: Some(1),
+        };
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_string(),
+            rpc_url: rpc_url.to_string(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms: None,
+            chain_id: Some(1),
+        }
+    }
+
+    #[test]
+    fn non_local_chain_uses_a_safe_default() {
+        let config = EvmEventConfigChain::try_from(&chain("wss://example.com")).unwrap();
+        assert_eq!(config.confirmations(), PUBLIC_RPC_CONFIRMATIONS);
+    }
+
+    #[test]
+    fn local_chain_can_read_the_head() {
+        let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545")).unwrap();
+        assert_eq!(config.confirmations(), 0);
     }
 }

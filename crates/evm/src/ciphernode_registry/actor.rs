@@ -17,6 +17,7 @@ use crate::domain::ciphernode_registry_events::{
 };
 use crate::domain::error_decoder::{decode_error_from_str, format_evm_error};
 use crate::domain::log_timestamp::from_log_chain_id_to_ts;
+use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{
     encode_zk_proof, send_tx_idempotent, send_tx_with_retry, transaction_nonce_guard, EthProvider,
     ProviderFactory, TxOutcome,
@@ -36,7 +37,7 @@ use e3_events::{
     Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -288,9 +289,7 @@ pub struct CiphernodeRegistrySolWriter<P> {
     effects_enabled: bool,
     active_aggregators: HashMap<E3id, bool>,
     request_registries: HashMap<E3id, Address>,
-    /// Session-local concurrency guard. On-chain preflight is the durable
-    /// cross-restart idempotency boundary.
-    submitting: HashSet<E3id>,
+    publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
@@ -307,7 +306,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             effects_enabled: false,
             active_aggregators: HashMap::new(),
             request_registries,
-            submitting: HashSet::new(),
+            publication: ReplaySubmissionGate::new(),
         })
     }
 

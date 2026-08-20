@@ -4,6 +4,9 @@
 
 use super::effects::*;
 use super::*;
+use e3_events::EventSource;
+
+const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn update_request_registry(
     registries: &mut HashMap<E3id, Address>,
@@ -16,6 +19,24 @@ fn update_request_registry(
 
     registries.insert(event.e3_id.clone(), event.context.registry);
     true
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
+    fn try_start_public_key(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if !self.request_registries.contains_key(e3_id) {
+            return;
+        }
+
+        if let Some(intent) = self.publication.start(e3_id) {
+            ctx.notify(SubmitPublicKey(intent));
+        }
+    }
+
+    fn try_start_pending_public_keys(&mut self, ctx: &mut actix::Context<Self>) {
+        for e3_id in self.publication.pending_keys() {
+            self.try_start_public_key(&e3_id, ctx);
+        }
+    }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Actor for CiphernodeRegistrySolWriter<P> {
@@ -32,6 +53,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let source = msg.source();
         match msg.into_data() {
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::AggregatorChanged(data) => self.notify_sync(ctx, data),
@@ -41,8 +63,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 }
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
-                // Only publish if the src and destination chains match
-                if self.provider.chain_id() == data.e3_id.chain_id() {
+                if source == EventSource::Local && self.provider.chain_id() == data.e3_id.chain_id()
+                {
                     ctx.notify(data);
                 }
             }
@@ -69,8 +91,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
 {
     type Result = ();
 
-    fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
+        self.publication.enable_effects();
+        self.try_start_pending_public_keys(ctx);
     }
 }
 
@@ -79,8 +103,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
 {
     type Result = ();
 
-    fn handle(&mut self, msg: AggregatorChanged, _: &mut Self::Context) -> Self::Result {
-        self.active_aggregators.insert(msg.e3_id, msg.is_aggregator);
+    fn handle(&mut self, msg: AggregatorChanged, ctx: &mut Self::Context) -> Self::Result {
+        let e3_id = msg.e3_id;
+        self.active_aggregators
+            .insert(e3_id.clone(), msg.is_aggregator);
+        if msg.is_aggregator {
+            self.try_start_public_key(&e3_id, ctx);
+        }
     }
 }
 
@@ -92,7 +121,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<DkgFoldAttestationC
     fn handle(
         &mut self,
         msg: DkgFoldAttestationContextEstablished,
-        _: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if !update_request_registry(&mut self.request_registries, &msg) {
             error!(
@@ -101,7 +130,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<DkgFoldAttestationC
                 expected_schema_version = DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
                 "Rejected DKG attestation context with an unsupported schema version"
             );
+            return;
         }
+        self.try_start_public_key(&msg.e3_id, ctx);
     }
 }
 
@@ -112,8 +143,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
         self.active_aggregators.remove(&msg.e3_id);
-        self.request_registries.remove(&msg.e3_id);
-        self.submitting.remove(&msg.e3_id);
+        if !self.publication.contains(&msg.e3_id) {
+            self.request_registries.remove(&msg.e3_id);
+        }
     }
 }
 
@@ -266,27 +298,38 @@ mod tests {
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated>
     for CiphernodeRegistrySolWriter<P>
 {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
     fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled || !self.is_active_aggregator_for(&msg.e3_id) {
-            return Box::pin(async {});
+        let e3_id = msg.e3_id.clone();
+        if self.effects_enabled && !self.is_active_aggregator_for(&e3_id) {
+            info!(e3_id = %e3_id, "Ignoring public-key result while this node is not the active aggregator");
+            return;
         }
+        self.publication.record(e3_id.clone(), msg);
+        self.try_start_public_key(&e3_id, ctx);
+    }
+}
 
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubmitPublicKey(PublicKeyAggregated);
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ResponseActFuture<Self, ()>;
+
+    fn handle(&mut self, command: SubmitPublicKey, _ctx: &mut Self::Context) -> Self::Result {
+        let msg = command.0;
+        if !self.publication.contains(&msg.e3_id) {
+            self.publication.finish(&msg.e3_id, false);
+            return Box::pin(async {}.into_actor(self));
+        }
         let Some(contract_address) = self.request_registries.get(&msg.e3_id).copied() else {
-            error!(
-                e3_id = %msg.e3_id,
-                "Cannot publish a committee without its request-time registry"
-            );
-            return Box::pin(async {});
+            self.publication.finish(&msg.e3_id, false);
+            return Box::pin(async {}.into_actor(self));
         };
-
-        // Do not submit a second transaction while publishCommittee is in progress
-        // for this E3. The on-chain preflight prevents duplicates after a restart.
-        if !self.submitting.insert(msg.e3_id.clone()) {
-            info!(e3_id = %msg.e3_id, "publishCommittee already in flight; skipping duplicate submission");
-            return Box::pin(async {});
-        }
 
         let e3_id = msg.e3_id.clone();
         let pubkey = msg.pubkey.clone();
@@ -295,91 +338,88 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
         let dkg_attestation_bundle = msg.dkg_attestation_bundle.clone();
         let provider = self.provider.clone();
         let bus = self.bus.clone();
-        let self_addr = ctx.address();
 
-        Box::pin(async move {
-            let should_publish = match should_publish_committee(
-                provider.clone(),
-                contract_address,
-                e3_id.clone(),
-                pk_commitment,
-            )
-            .await
-            {
-                Ok(false) => {
-                    info!(e3_id = %e3_id, "Committee proof already published; publishing the key candidate");
-                    false
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to preflight publishCommittee: {}",
-                        format_evm_error(&err)
-                    );
-                    // Transient read failure: allow a later event to retry.
-                    self_addr.do_send(ClearSubmitting(e3_id));
-                    return;
-                }
-                Ok(true) => true,
-            };
-
-            let result: Result<()> = async {
-                if should_publish {
-                    let outcome = publish_committee_to_registry(
-                        provider.clone(),
-                        contract_address,
-                        e3_id.clone(),
-                        pk_commitment,
-                        dkg_aggregator_proof.as_ref(),
-                        dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
-                    )
-                    .await?;
-                    match outcome.receipt() {
-                        Some(receipt) => {
-                            info!(tx=%receipt.transaction_hash, "Committee proof published to registry")
-                        }
-                        None => {
-                            info!(e3_id = %e3_id, "Committee proof published by another aggregator; publishing the key candidate")
-                        }
-                    }
-                }
-
-                let receipt = publish_committee_public_key_to_registry(
-                    provider,
+        Box::pin(
+            async move {
+                let should_publish = match should_publish_committee(
+                    provider.clone(),
                     contract_address,
                     e3_id.clone(),
-                    pubkey,
+                    pk_commitment,
                 )
-                .await?;
-                info!(tx=%receipt.transaction_hash, "Committee public-key candidate published to registry");
-                Ok(())
+                .await
+                {
+                    Ok(false) => {
+                        info!(e3_id = %e3_id, "Committee proof already published; publishing the key candidate");
+                        false
+                    }
+                    Err(err) => {
+                        error!(
+                            "Failed to preflight publishCommittee: {}",
+                            format_evm_error(&err)
+                        );
+                        return (e3_id, false);
+                    }
+                    Ok(true) => true,
+                };
+
+                let result: Result<()> = async {
+                    if should_publish {
+                        let outcome = publish_committee_to_registry(
+                            provider.clone(),
+                            contract_address,
+                            e3_id.clone(),
+                            pk_commitment,
+                            dkg_aggregator_proof.as_ref(),
+                            dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
+                        )
+                        .await?;
+                        match outcome.receipt() {
+                            Some(receipt) => {
+                                info!(tx=%receipt.transaction_hash, "Committee proof published to registry")
+                            }
+                            None => {
+                                info!(e3_id = %e3_id, "Committee proof published by another aggregator; publishing the key candidate")
+                            }
+                        }
+                    }
+
+                    let receipt = publish_committee_public_key_to_registry(
+                        provider,
+                        contract_address,
+                        e3_id.clone(),
+                        pubkey,
+                    )
+                    .await?;
+                    info!(tx=%receipt.transaction_hash, "Committee public-key candidate published to registry");
+                    Ok(())
+                }
+                .await;
+
+                match result {
+                    Ok(()) => (e3_id, true),
+                    Err(err) => {
+                        error!(
+                            "Failed to publish committee data: {}",
+                            format_evm_error(&err)
+                        );
+                        bus.err(EType::Evm, err);
+                        (e3_id, false)
+                    }
+                }
             }
-            .await;
-
-            if let Err(err) = result {
-                error!(
-                    "Failed to publish committee data: {}",
-                    format_evm_error(&err)
-                );
-                self_addr.do_send(ClearSubmitting(e3_id));
-                bus.err(EType::Evm, err);
-            }
-        })
-    }
-}
-
-/// Internal message: clear the in-flight `publishCommittee` marker for an E3 so
-/// a subsequent submission attempt is allowed after a failure (H13).
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ClearSubmitting(E3id);
-
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<ClearSubmitting>
-    for CiphernodeRegistrySolWriter<P>
-{
-    type Result = ();
-
-    fn handle(&mut self, msg: ClearSubmitting, _: &mut Self::Context) -> Self::Result {
-        self.submitting.remove(&msg.0);
+            .into_actor(self)
+            .map(|(e3_id, terminal), actor, ctx| {
+                actor.publication.finish(&e3_id, terminal);
+                if terminal {
+                    actor.request_registries.remove(&e3_id);
+                } else {
+                    ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
+                        actor.try_start_public_key(&e3_id, ctx);
+                    });
+                }
+            }),
+        )
     }
 }
 

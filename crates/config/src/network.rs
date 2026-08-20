@@ -286,7 +286,6 @@ mod tests {
                 faucet: None,
             },
             finalization_ms: None,
-            reorg_confirmations: None,
             chain_id,
         }
     }

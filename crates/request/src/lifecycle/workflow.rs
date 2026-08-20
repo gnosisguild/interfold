@@ -78,7 +78,6 @@ fn implied(event: &InterfoldEventData) -> Option<(E3id, E3Stage)> {
         InterfoldEventData::CiphertextOutputPublished(d) => {
             Some((d.e3_id.clone(), E3Stage::CiphertextReady))
         }
-        InterfoldEventData::PlaintextAggregated(d) => Some((d.e3_id.clone(), E3Stage::Complete)),
         InterfoldEventData::PlaintextOutputPublished(d) => {
             Some((d.e3_id.clone(), E3Stage::Complete))
         }

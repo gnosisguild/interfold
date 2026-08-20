@@ -16,11 +16,13 @@ impl Handler<InterfoldEvent> for E3Router {
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-        trap(
-            EType::Event,
-            &self.bus.with_ec(msg.get_ctx()),
-            || {
-                match RequestRouter::route(&msg, &self.completed) {
+        trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
+            match RequestRouter::route_with_context(
+                    &msg,
+                    &self.completed,
+                    msg.get_e3_id()
+                        .is_some_and(|e3_id| self.contexts.contains_key(&e3_id)),
+                ) {
                 RoutingDecision::Broadcast => {
                     for context in self.contexts.values() {
                         context.forward_message_now(&msg)
@@ -36,6 +38,13 @@ impl Handler<InterfoldEvent> for E3Router {
                     msg.origin_id(),
                     msg.source(),
                     msg.block(),
+                )),
+                RoutingDecision::UnadmittedNetworkEvent(e3_id) => Err(anyhow!(
+                    "rejected {} for unknown E3 {} from the peer network (event={}, origin={})",
+                    msg.event_type(),
+                    e3_id,
+                    msg.id(),
+                    msg.origin_id(),
                 )),
                 RoutingDecision::Process {
                     e3_id,
@@ -78,7 +87,6 @@ impl Handler<InterfoldEvent> for E3Router {
                     Ok(())
                 }
             }
-            },
-        );
+        });
     }
 }

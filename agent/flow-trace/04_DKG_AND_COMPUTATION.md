@@ -667,8 +667,11 @@ phase.
 │       }
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Accepts publication intents only from locally produced events
+  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
+  ├─ During startup replay, retains one durable local intent even if an older release already
+  │  emitted E3RequestComplete and cleared the aggregator role
+  ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
@@ -683,6 +686,7 @@ phase.
   │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
+     → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
@@ -1060,14 +1064,18 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │       }
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Accepts publication intents only from locally produced events
+  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
+  ├─ During startup replay, retains one durable local intent even if an older release already
+  │  emitted E3RequestComplete and cleared the aggregator role
+  ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
+     → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │
@@ -1297,6 +1305,13 @@ During restart, `ComputeEffectGate` observes replay before compute workers are e
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
 E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
 durable event order or audit state.
+
+The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
+`PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
+coalesces the intent by E3, waits for `EffectsEnabled`, checks chain state before submitting, and
+keeps retryable failures for a later attempt. A replayed `E3RequestComplete` from an older release
+does not erase unfinished publication. `PlaintextAggregated` is not gossiped or returned by
+historical peer sync; only the producing node can create this EVM write intent.
 
 ### What the compute-provider crate guarantees, and what an E3 program decides
 

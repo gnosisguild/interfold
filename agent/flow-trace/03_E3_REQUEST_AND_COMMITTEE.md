@@ -201,7 +201,8 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 │
 └─ Stores the E3's request-time registry and verifier for signing, validation, and publication
 │
-├─ Decodes CommitteeRequested and waits until entropyBlock has the configured confirmations
+├─ Decodes CommitteeRequested and waits for the automatic ingestion confirmation depth
+│  → Public RPCs wait one block; loopback development RPCs read the head
 │  → Arbitrum RPC block numbers and the committed ArbSys block number both identify L2 blocks
 ├─ Reads the matching chain block through the execution RPC and derives
 │  keccak256(blockHash, e3Id) without sending a transaction
