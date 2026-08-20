@@ -24,9 +24,10 @@ env:
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
   RUST_BACKTRACE: 1
 
+# packages: write is granted per-job to the two image builds that can push
+# (workflow_dispatch from main); everything else only needs to read the repo.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   detect_changes:
@@ -52,15 +53,24 @@ jobs:
       build_interfold_cli: ${{ steps.jobs.outputs.build_interfold_cli }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          # Required for the '!' exclusions below. The default 'some' quantifier
+          # IGNORES negated patterns — worse, a bare '!**/*.md' rule under 'some'
+          # matches every non-markdown file, turning every filter always-true.
+          predicate-quantifier: 'some-with-excludes'
           filters: |
+            # Documentation never changes what a build or test produces, so every
+            # filter excludes it. A README edit under crates/ used to run the full
+            # rust + contracts + CRISP + docker matrix (~30 minutes).
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - '!**/*.md'
+              - '!**/*.mdx'
             contracts:
               - 'packages/interfold-contracts/**'
               # The manifest is generated from deployed_contracts.json and
@@ -68,24 +78,38 @@ jobs:
               # path a hand-edited manifest never runs the drift check and
               # reaches the release assets stale.
               - 'deployments/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
+              - '!**/*.md'
+              - '!**/*.mdx'
             crisp:
               - 'examples/CRISP/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             templates:
               - 'templates/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             sdk:
               - 'packages/interfold-sdk/**'
               - 'packages/interfold-react/**'
               - 'packages/interfold-config/**'
               - 'crates/wasm/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             integration_tests:
               - 'tests/integration/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             docker:
               - 'crates/Dockerfile'
               - 'crates/support/Dockerfile'
               - 'crates/support/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             ci:
               - '.github/**'
       - name: Compute job filters
@@ -108,19 +132,30 @@ jobs:
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
-          echo "crisp=$(any $FORCE $CRISP $CONTRACTS $CIRCUITS $RUST $CI)" >> $GITHUB_OUTPUT
-          echo "templates=$(any $FORCE $TEMPLATES $CI)" >> $GITHUB_OUTPUT
+          # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
+          # Cross-cutting ciphernode coverage comes from template_integration,
+          # which drives the same full E3 lifecycle with the same interfold
+          # binary and circuit preset, minus the CRISP-specific app layers.
+          echo "crisp=$(any $FORCE $CRISP $CI)" >> $GITHUB_OUTPUT
+          # template_integration is the repo's cross-cutting end-to-end test: it
+          # runs a full E3 round against real ciphernodes, so it must run on any
+          # change to the stack it drives, not just template changes.
+          echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "zk=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "contracts=$(any $FORCE $CONTRACTS $CI)" >> $GITHUB_OUTPUT
           echo "docker_support=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
-          echo "docker_ciphernode=$(any $FORCE $RUST $DOCKER $CI $CONTRACTS)" >> $GITHUB_OUTPUT
+          # The rust jobs already compile the workspace, so the image build only
+          # needs to run when the Dockerfiles or their build context change.
+          echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
           echo "net=$(any $FORCE $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI)" >> $GITHUB_OUTPUT
-          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $SDK $CI)" >> $GITHUB_OUTPUT
+          # Both feed template_integration, so each must cover every path that
+          # triggers it — a skipped dependency silently skips the e2e job.
+          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $CI)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI)" >> $GITHUB_OUTPUT
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -288,6 +323,9 @@ jobs:
     if: needs.detect_changes.outputs.docker_support == 'true'
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Generate tags
@@ -305,6 +343,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -328,6 +367,9 @@ jobs:
     if: needs.detect_changes.outputs.docker_ciphernode == 'true'
     timeout-minutes: 60
     runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
