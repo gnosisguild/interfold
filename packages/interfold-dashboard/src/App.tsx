@@ -15,6 +15,7 @@ import Inspector from './Inspector'
 import Loader from './Loader'
 import Operator from './Operator'
 import { useAllE3s, useCrispPolls, useE3Details, useRecentBallots } from './lib/useE3s'
+import { useNetworkStats } from './lib/network'
 import { adaptHistoryEntries, adaptInspectorDetail, adaptInspectorE3List, adaptPoll } from './lib/adapt'
 import { formatE3Id } from './lib/pollMeta'
 import { LINKS, explorerAddress } from './lib/links'
@@ -186,6 +187,7 @@ export default function App() {
   const crispPolls = useCrispPolls()
   const allE3s = useAllE3s()
   const recentBallots = useRecentBallots()
+  const networkStats = useNetworkStats()
 
   // Inspector keeps its own selection — track which id is currently selected.
   const [inspectorIdStr, setInspectorIdStr] = useState<string | null>(null)
@@ -300,6 +302,14 @@ export default function App() {
   return (
     <div className={`page page--${DENSITY}`}>
       <Header density={DENSITY} view={view} onNav={navigate} />
+      <Pulse
+        data={{
+          activeNow: activePolls.length,
+          ballots24h: recentBallots,
+          pollsAllTime: polls.length,
+        }}
+        network={networkStats}
+      />
       {view === 'operator' ? (
         <main className='main'>
           <Operator />
@@ -383,13 +393,6 @@ export default function App() {
         </main>
       )}
 
-      <Pulse
-        data={{
-          activeNow: activePolls.length,
-          ballots24h: recentBallots,
-          pollsAllTime: polls.length,
-        }}
-      />
       <SiteFooter />
     </div>
   )
