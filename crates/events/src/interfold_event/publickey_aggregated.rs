@@ -15,6 +15,10 @@ use std::fmt::{self, Display};
 #[derive(Derivative, Message, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 #[rtype(result = "()")]
+/// Local durable intent to publish the aggregated public key on-chain.
+///
+/// This event is not a canonical key-publication fact and is not forwarded to peers. The confirmed
+/// `CommitteePublished` chain event advances the request to the published-key stage.
 pub struct PublicKeyAggregated {
     #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
     pub pubkey: ArcBytes, // TODO: ArcBytes ?

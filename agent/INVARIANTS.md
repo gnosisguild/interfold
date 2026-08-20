@@ -325,9 +325,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### DKG / threshold structure
 
 - SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
-- `party_id` derives from the finalized committee normalized by ascending address; 1-indexed,
-  strictly increasing. Active aggregator = lowest non-expelled `party_id`. — `ARCHITECTURE.md`;
-  `flow-trace/04`
+- Runtime `party_id` derives from the finalized committee normalized by ascending address and is
+  zero-indexed. Circuit-side Shamir coordinates are `party_id + 1` and must be strictly increasing.
+  The active aggregator is the lowest eligible runtime `party_id` after exclusions and the current
+  phase's durable unresponsive-party set. — `ARCHITECTURE.md`; `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;

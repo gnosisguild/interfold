@@ -69,7 +69,7 @@ impl ThresholdPlaintextAggregator {
         self.fail_decryption_round(ec)
     }
 
-    /// Publish `PlaintextAggregated` when both C7 proofs and decryption aggregation are complete.
+    /// Publish the local `PlaintextAggregated` intent when C7 and decryption aggregation complete.
     pub(in crate::actors::threshold_plaintext_aggregator) fn try_publish_complete(
         &mut self,
     ) -> Result<()> {

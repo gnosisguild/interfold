@@ -103,7 +103,7 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
 async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<()> {
     let old_e3 = E3id::new("41", 1);
     let new_e3 = E3id::new("42", 1);
-    let legacy_e3 = E3id::new("40", 1);
+    let missing_context_e3 = E3id::new("40", 1);
     let old_context = DkgFoldAttestationContext {
         registry: "0x1111111111111111111111111111111111111111".parse()?,
         verifying_contract: "0x1212121212121212121212121212121212121212".parse()?,
@@ -138,7 +138,7 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
         .await?;
     router_store
         .write_sync(&E3RouterSnapshot {
-            contexts: vec![legacy_e3.clone(), old_e3.clone(), new_e3.clone()],
+            contexts: vec![missing_context_e3.clone(), old_e3.clone(), new_e3.clone()],
             completed: HashSet::new(),
         })
         .await?;
@@ -146,7 +146,7 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
     let restored = load_dkg_fold_attestation_contexts(&repositories).await?;
     assert_eq!(restored.get(&old_e3), Some(&old_context));
     assert_eq!(restored.get(&new_e3), Some(&new_context));
-    assert!(!restored.contains_key(&legacy_e3));
+    assert!(!restored.contains_key(&missing_context_e3));
 
     let extensions: Arc<Vec<Box<dyn E3Extension>>> = Arc::new(vec![E3MetaExtension::create()]);
     let recovered = E3Router::from_snapshot(

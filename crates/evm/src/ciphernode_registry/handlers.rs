@@ -23,7 +23,7 @@ fn update_request_registry(
 
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
     fn try_start_public_key(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
-        if !self.request_registries.contains_key(e3_id) {
+        if !self.is_active_aggregator_for(e3_id) || !self.request_registries.contains_key(e3_id) {
             return;
         }
 
@@ -322,7 +322,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
 
     fn handle(&mut self, command: SubmitPublicKey, _ctx: &mut Self::Context) -> Self::Result {
         let msg = command.0;
-        if !self.publication.contains(&msg.e3_id) {
+        if !self.is_active_aggregator_for(&msg.e3_id) || !self.publication.contains(&msg.e3_id) {
             self.publication.finish(&msg.e3_id, false);
             return Box::pin(async {}.into_actor(self));
         }

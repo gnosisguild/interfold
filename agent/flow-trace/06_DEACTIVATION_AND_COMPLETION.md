@@ -446,9 +446,8 @@ E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build(
 │
 ├─ Subscribes to lifecycle-bearing events:
 │     E3Requested              → Requested
-│     CommitteePublished       → CommitteeFinalized
 │     CommitteeFinalized       → CommitteeFinalized
-│     PublicKeyAggregated      → KeyPublished
+│     CommitteePublished       → KeyPublished
 │     CiphertextOutputPublished→ CiphertextReady
 │     PlaintextOutputPublished → Complete
 │     E3RequestComplete        → Complete

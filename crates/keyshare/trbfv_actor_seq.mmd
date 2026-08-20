@@ -1,5 +1,7 @@
 sequenceDiagram
   participant E as EVM
+  participant B as EventBus
+  participant W as InterfoldSolWriter
   participant L as LibP2p
   participant CS as CiphernodeSelector
   participant S as Sortition
@@ -68,9 +70,12 @@ sequenceDiagram
     P ->> M: ComputeRequest(TrBFV::ThresholdDecrypt)
     M ->> M: trbfv::calculate_threshold_decryption()
     M ->> P: ComputeResponse(TrBFV::ThresholdDecrypt)
-    P ->> E: PlaintextAggregated
+    P ->> B: PlaintextAggregated (local publication intent)
+    B ->> W: PlaintextAggregated
+    W ->> E: publishPlaintextOutput
+    E --) B: PlaintextOutputPublished
+    B --) P: E3RequestComplete
   end
   autonumber
-
 
 

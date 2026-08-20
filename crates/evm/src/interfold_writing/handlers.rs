@@ -10,6 +10,9 @@ const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_s
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
     fn try_start_plaintext(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if !self.is_active_aggregator_for(e3_id) {
+            return;
+        }
         if let Some(intent) = self.publication.start(e3_id) {
             ctx.notify(SubmitPlaintext(intent));
         }
@@ -100,9 +103,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
 
     fn handle(&mut self, msg: PlaintextAggregated, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
-        // During replay, the durable local result is the authority for an intent that may have
-        // survived an older release's premature request teardown. Live results still require
-        // this node to hold the active aggregator role when the intent enters the outbox.
+        // Replay retains the durable local intent while the persisted aggregator role is restored.
+        // Live results still require the active role when they enter the outbox, and every
+        // submission attempt is role-gated by `try_start_plaintext`.
         if self.effects_enabled && !self.is_active_aggregator_for(&e3_id) {
             info!(e3_id = %e3_id, "Ignoring plaintext result while this node is not the active aggregator");
             return;
@@ -123,7 +126,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
 
     fn handle(&mut self, command: SubmitPlaintext, _ctx: &mut Self::Context) -> Self::Result {
         let msg = command.0;
-        if !self.publication.contains(&msg.e3_id) {
+        if !self.is_active_aggregator_for(&msg.e3_id) || !self.publication.contains(&msg.e3_id) {
             self.publication.finish(&msg.e3_id, false);
             return Box::pin(async {}.into_actor(self));
         }

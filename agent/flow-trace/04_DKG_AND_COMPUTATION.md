@@ -669,8 +669,8 @@ phase.
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
   ├─ Accepts publication intents only from locally produced events
   ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
-  ├─ During startup replay, retains one durable local intent even if an older release already
-  │  emitted E3RequestComplete and cleared the aggregator role
+  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
+  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
   ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
@@ -1068,8 +1068,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 └─ InterfoldSolWriter receives PlaintextAggregated:
   ├─ Accepts publication intents only from locally produced events
   ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
-  ├─ During startup replay, retains one durable local intent even if an older release already
-  │  emitted E3RequestComplete and cleared the aggregator role
+  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
+  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
   ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
@@ -1317,9 +1317,10 @@ immediately. Canonical phase progress cancels the old timer and clears the phase
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
 coalesces the intent by E3, waits for `EffectsEnabled`, checks chain state before submitting, and
-keeps retryable failures for a later attempt. A replayed `E3RequestComplete` from an older release
-does not erase unfinished publication. `PlaintextAggregated` is not gossiped or returned by
-historical peer sync; only the producing node can create this EVM write intent.
+keeps retryable failures for a later attempt. `E3RequestComplete` does not erase an unfinished
+publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
+not gossiped or returned by historical peer sync; only the producing node can create this EVM write
+intent.
 
 ### What the compute-provider crate guarantees, and what an E3 program decides
 

@@ -79,14 +79,6 @@ impl Committee {
         self.members.is_empty()
     }
 
-    pub fn is_active_aggregator(&self, my_addr: &str, expelled: &[u64]) -> bool {
-        (0..self.members.len() as u64)
-            .find(|party_id| !expelled.contains(party_id))
-            .and_then(|party_id| self.members.get(party_id as usize))
-            .map(|addr| addr.eq_ignore_ascii_case(my_addr))
-            .unwrap_or(false)
-    }
-
     /// The party_id of the active aggregator given a set of `skipped` party_ids
     /// (the union of on-chain-expelled members and any locally presumed-down
     /// members during failover). Returns the lowest party_id not in `skipped`,
@@ -139,21 +131,6 @@ impl Committee {
 mod tests {
     use super::Committee;
 
-    #[test]
-    fn picks_lowest_non_expelled_party_in_sorted_committee_as_aggregator() {
-        // Committee order is canonical address-ascending before it is stored.
-        let committee = Committee::new(vec![
-            "0xbbb".to_string(),
-            "0xccc".to_string(),
-            "0xaaa".to_string(),
-        ]);
-
-        assert!(committee.is_active_aggregator("0xBbB", &[]));
-        assert!(committee.is_active_aggregator("0xccc", &[0]));
-        assert!(committee.is_active_aggregator("0xaaa", &[0, 1]));
-        assert!(!committee.is_active_aggregator("0xaaa", &[0, 1, 2]));
-    }
-
     fn committee() -> Committee {
         Committee::new(vec![
             "0xbbb".to_string(),
@@ -163,32 +140,17 @@ mod tests {
     }
 
     #[test]
-    fn effective_aggregator_promotes_next_standby_when_primary_unresponsive() {
+    fn effective_aggregator_promotes_next_standby_when_current_party_is_unresponsive() {
         let c = committee();
         assert!(c.effective_aggregator("0xbbb", &[], &[]));
         assert!(!c.effective_aggregator("0xccc", &[], &[]));
 
-        // Primary (party 0) presumed unresponsive: party 1 (0xccc) takes over.
+        // Party 0 is presumed unresponsive, so party 1 takes over.
         assert!(!c.effective_aggregator("0xbbb", &[], &[0]));
         assert!(c.effective_aggregator("0xccc", &[], &[0]));
 
         // Expelled and unresponsive combine: 0 expelled, 1 unresponsive -> party 2.
         assert!(c.effective_aggregator("0xaaa", &[0], &[1]));
-    }
-
-    #[test]
-    fn effective_aggregator_matches_primary_selection_without_timeouts() {
-        let c = committee();
-        for (addr, expelled) in [
-            ("0xbbb", &[][..]),
-            ("0xccc", &[0][..]),
-            ("0xaaa", &[0, 1][..]),
-        ] {
-            assert_eq!(
-                c.effective_aggregator(addr, expelled, &[]),
-                c.is_active_aggregator(addr, expelled),
-            );
-        }
     }
 
     #[test]

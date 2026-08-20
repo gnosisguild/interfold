@@ -481,7 +481,7 @@ stateDiagram-v2
     [*] --> None
     None --> Requested: E3Requested
     Requested --> CommitteeFinalized: CommitteeFinalized / CommitteePublished
-    CommitteeFinalized --> KeyPublished: PublicKeyAggregated
+    CommitteeFinalized --> KeyPublished: CommitteePublished / E3StageChanged(KeyPublished)
     KeyPublished --> CiphertextReady: CiphertextOutputPublished
     CiphertextReady --> Complete: PlaintextOutputPublished / E3StageChanged(Complete) / E3RequestComplete
     Requested --> Failed: E3Failed
@@ -560,13 +560,13 @@ validator must not silently infer that extension.
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
 produced `PlaintextAggregated` and `PublicKeyAggregated` events form durable publication intents.
 Their process-local gates are rebuilt from replay, coalesce by E3, and release work only after
-`EffectsEnabled`. Live admission requires the active aggregator role. Replayed local intents remain
-eligible after role cleanup so nodes upgrading from the earlier premature-completion behavior can
-finish missing transactions. Contract-state preflights provide cross-restart idempotency. Terminal
+`EffectsEnabled`. Live admission requires the active aggregator role. Replay can retain a local
+intent while the persisted role is restored, but the writer starts a submission only while the node
+is the active aggregator. Contract-state preflights provide cross-restart idempotency. Terminal
 outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
 
 Only locally sourced result events cross these EVM write boundaries. A remote result cannot make a
-node submit a transaction. `E3RequestComplete` no longer discards an unfinished publication intent,
+node submit a transaction. `E3RequestComplete` does not discard an unfinished publication intent,
 and only a canonical EVM `E3StageChanged(Complete)` makes the request router publish that cleanup
 signal.
 
