@@ -35,6 +35,8 @@ against `packages/interfold-contracts/deployed_contracts.json` for the target ne
 - `CiphernodeRegistryOwnable` — `CommitteeRequested` (threshold + seed), `CommitteeFinalized`
   (members), `CommitteePublished` (joint PK).
 - `BondingRegistry` — operator collateral and the write path behind the operator guide (see below).
+  Also feeds the network pulse strip: `totalCiphernodeBondLiability` (total bonded) and
+  `eligibilityAt` (active operator count), alongside `numCiphernodes` from the ciphernode registry.
 - `CRISPProgram` — emits `InputPublished` for every ballot. (Interfold's own `InputPublished` is
   declared but never emitted; inputs live on the program.) A re-vote reuses its Merkle-leaf `index`,
   so the true ballot count is the number of **distinct** indexes. Inputs are only observable for
