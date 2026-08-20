@@ -104,6 +104,22 @@ impl CRISPContract<CRISPWriteProvider> {
         Ok(receipt)
     }
 
+    /// Dry-run `publishInput` as an `eth_call` from the relay's own account.
+    ///
+    /// The relay signs and pays for whatever it is handed, so an input that would revert — a bad
+    /// proof, a stale parent, a closed window — must be refused before it costs a transaction.
+    /// A revert here surfaces the contract's error data instead of a spent-gas receipt.
+    pub async fn simulate_publish_input(&self, e3_id: U256, data: Bytes) -> Result<()> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        contract
+            .publishInput(e3_id, data)
+            .call()
+            .await
+            .map_err(|e| eyre::eyre!("publishInput simulation reverted: {e}"))?;
+
+        Ok(())
+    }
+
     // publish an input to the CRISPProgram contract
     pub async fn publish_input(&self, e3_id: U256, data: Bytes) -> Result<TransactionReceipt> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());

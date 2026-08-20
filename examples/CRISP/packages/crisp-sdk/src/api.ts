@@ -122,12 +122,13 @@ export const requestNewRound = async (serverUrl: string, request: NewRoundReques
     cron_api_key: request.cronApiKey,
     token_address: request.tokenAddress,
     balance_threshold: request.balanceThreshold,
+    census_mode: request.censusMode,
   })
 
 /**
  * Broadcast an encrypted vote through the CRISP server, which relays it on-chain.
  * @param serverUrl - The base URL of the CRISP server
- * @param request - The vote request (round id, hex encoded proof and voter address)
+ * @param request - The vote request (round id and hex encoded proof)
  * @returns The broadcast result, including the transaction hash on success
  */
 export const broadcastVote = async (serverUrl: string, request: BroadcastVoteRequest): Promise<BroadcastVoteResponse> => {
@@ -139,7 +140,6 @@ export const broadcastVote = async (serverUrl: string, request: BroadcastVoteReq
     body: JSON.stringify({
       round_id: request.e3Id.toString(),
       encoded_proof: request.encodedProof,
-      address: request.address,
     }),
   })
 

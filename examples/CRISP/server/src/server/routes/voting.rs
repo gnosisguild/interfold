@@ -10,13 +10,14 @@ use crate::server::{
         canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
         VoteStatusRequest, VoteStatusResponse,
     },
+    rate_limit::{RateLimitExceeded, RateLimiter},
     CONFIG,
 };
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::Bytes;
 use evm_helpers::CRISPContract;
 use eyre::Error;
-use log::{error, info};
+use log::{error, info, warn};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -26,7 +27,11 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
 }
 
-/// Get the vote status for a user in a specific round
+/// Get the slot activity for an address in a specific round.
+///
+/// Reports whether the slot holds any published entry, not whether its owner voted: a mask is
+/// indistinguishable from a vote by design, and the server does not track who submitted what.
+/// A client that wants "did I vote" must remember its own submissions.
 ///
 /// # Arguments
 ///
@@ -34,7 +39,7 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
 ///
 /// # Returns
 ///
-/// * A JSON response with the vote status
+/// * A JSON response with the slot activity
 async fn get_vote_status(
     data: web::Json<VoteStatusRequest>,
     store: web::Data<AppData>,
@@ -45,15 +50,15 @@ async fn get_vote_status(
         Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
     };
     info!(
-        "[e3_id={}] Checking vote status for address: {}",
+        "[e3_id={}] Checking slot activity for address: {}",
         e3_id, request.address
     );
 
-    let has_voted = match store.e3(&e3_id).has_voted(request.address.clone()).await {
-        Ok(voted) => voted,
+    let slot_active = match store.e3(&e3_id).slot_has_activity(&request.address).await {
+        Ok(active) => active,
         Err(e) => {
             error!(
-                "[e3_id={}] Database error checking vote status: {:?}",
+                "[e3_id={}] Database error checking slot activity: {:?}",
                 e3_id, e
             );
             return HttpResponse::InternalServerError().json("Internal server error");
@@ -68,12 +73,16 @@ async fn get_vote_status(
     HttpResponse::Ok().json(VoteStatusResponse {
         round_id: e3_id,
         address: request.address,
-        has_voted,
+        slot_active,
         round_status,
     })
 }
 
 /// Broadcast an encrypted vote to the blockchain
+///
+/// The relay signs and pays for the transaction, so the input is dry-run first — an invalid
+/// proof, a stale parent, or a closed window is refused as a client error instead of costing a
+/// reverted transaction — and traffic is rate limited per caller and globally.
 ///
 /// # Arguments
 ///
@@ -82,10 +91,51 @@ async fn get_vote_status(
 /// # Returns
 ///
 /// * A JSON response indicating the success or failure of the operation
+/// Ethereum mainnet, where the relay does not operate.
+const MAINNET_CHAIN_ID: u64 = 1;
+
 async fn broadcast_encrypted_vote(
+    request: HttpRequest,
     data: web::Json<VoteRequest>,
-    store: web::Data<AppData>,
+    limiter: web::Data<RateLimiter>,
 ) -> impl Responder {
+    // No relaying on mainnet: the relay key would pay real gas for anyone who posts a proof,
+    // which is an open faucet at mainnet prices. Voters submit `publishInput` from their own
+    // wallet there — the function is permissionless and the proof carries everything it needs.
+    // Refused before the rate limiter so a refused mainnet call never consumes a window slot.
+    if CONFIG.chain_id == MAINNET_CHAIN_ID {
+        return HttpResponse::Forbidden().json(VoteResponse {
+            status: VoteResponseStatus::FailedBroadcast,
+            tx_hash: None,
+            message: Some(
+                "The relay is disabled on mainnet. Submit the vote directly from your wallet."
+                    .to_string(),
+            ),
+        });
+    }
+    // `realip_remote_addr` honours `Forwarded`/`X-Forwarded-For`, which is right behind the
+    // deployment's reverse proxy and spoofable without one. Spoofing only widens the per-caller
+    // window though — the global window does not care whose traffic it is.
+    let caller = request
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+
+    if let Err(exceeded) = limiter.check(&caller) {
+        let (scope, message) = match exceeded {
+            RateLimitExceeded::Caller => ("caller", "Too many votes from this address, slow down"),
+            RateLimitExceeded::Global => ("global", "The relay is busy, please try again shortly"),
+        };
+        warn!("Rate limit ({scope}) refused a broadcast from {caller}");
+
+        return HttpResponse::TooManyRequests().json(VoteResponse {
+            status: VoteResponseStatus::FailedBroadcast,
+            tx_hash: None,
+            message: Some(message.to_string()),
+        });
+    }
+
     let vote = data.into_inner();
     let e3_id = match e3_id_to_u256(&vote.round_id) {
         Ok(e3_id) => e3_id,
@@ -94,25 +144,6 @@ async fn broadcast_encrypted_vote(
     let e3_key = e3_id.to_string();
 
     info!("[e3_id={}] Broadcasting encrypted vote", e3_key);
-
-    // Check if user has already voted
-    let has_voted = match store.e3(&e3_key).has_voted(vote.address.clone()).await {
-        Ok(voted) => voted,
-        Err(e) => {
-            error!(
-                "[e3_id={}] Database error checking vote status: {:?}",
-                e3_key, e
-            );
-            return HttpResponse::InternalServerError().json("Internal server error");
-        }
-    };
-
-    let is_vote_update = has_voted;
-    if is_vote_update {
-        info!("[e3_id={}] User is updating their vote", e3_key);
-    }
-
-    let mut repo = store.e3(&e3_key);
 
     // encoded_proof is already encoded in JavaScript, just decode from hex
     let hex_str = vote
@@ -128,7 +159,6 @@ async fn broadcast_encrypted_vote(
                 status: VoteResponseStatus::FailedBroadcast,
                 tx_hash: None,
                 message: Some("Invalid hex encoded proof".to_string()),
-                is_vote_update: Some(is_vote_update),
             });
         }
     };
@@ -148,34 +178,31 @@ async fn broadcast_encrypted_vote(
         }
     };
 
+    // The dry run: an input the contract would revert must not reach `send`, where the relay
+    // pays for the revert. It costs one `eth_call` on inputs that would succeed anyway.
+    if let Err(e) = contract
+        .simulate_publish_input(e3_id, encoded_proof.clone())
+        .await
+    {
+        warn!("[e3_id={}] Input refused by simulation: {:?}", e3_key, e);
+
+        return HttpResponse::BadRequest().json(VoteResponse {
+            status: VoteResponseStatus::FailedBroadcast,
+            tx_hash: None,
+            message: Some(extract_error_message(&e)),
+        });
+    }
+
     match contract.publish_input(e3_id, encoded_proof).await {
         Ok(hash) => {
-            if !has_voted {
-                if let Err(e) = repo.insert_voter_address(vote.address.clone()).await {
-                    error!(
-                        "[e3_id={}] Vote on-chain but failed to record voter locally: {:?}",
-                        e3_key, e
-                    );
-                }
-            }
-
-            let message = if is_vote_update {
-                "Vote Updated Successfully"
-            } else {
-                "Vote Successful"
-            };
-            info!(
-                "[e3_id={}] Vote broadcasted successfully (update: {})",
-                e3_key, is_vote_update
-            );
+            info!("[e3_id={}] Vote broadcasted successfully", e3_key);
             HttpResponse::Ok().json(VoteResponse {
                 status: VoteResponseStatus::Success,
                 tx_hash: Some(hash.transaction_hash.to_string()),
-                message: Some(message.to_string()),
-                is_vote_update: Some(is_vote_update),
+                message: Some("Vote Successful".to_string()),
             })
         }
-        Err(e) => handle_vote_error(e, has_voted).await,
+        Err(e) => handle_vote_error(e).await,
     }
 }
 
@@ -210,8 +237,7 @@ fn extract_error_message(e: &Error) -> String {
 /// # Arguments
 ///
 /// * `e` - The error that occurred
-/// * `was_update` - Whether this was a vote update
-async fn handle_vote_error(e: Error, was_update: bool) -> HttpResponse {
+async fn handle_vote_error(e: Error) -> HttpResponse {
     // Log the full error for debugging
     error!("Error while sending vote transaction: {:?}", e);
 
@@ -221,6 +247,5 @@ async fn handle_vote_error(e: Error, was_update: bool) -> HttpResponse {
         status: VoteResponseStatus::FailedBroadcast,
         tx_hash: None,
         message: Some(user_message),
-        is_vote_update: Some(was_update),
     })
 }

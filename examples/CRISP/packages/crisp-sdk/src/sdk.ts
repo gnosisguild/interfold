@@ -134,7 +134,7 @@ export class CrispSDK {
 
   /**
    * Broadcast an encrypted vote through the CRISP server, which relays it on-chain.
-   * @param request - The vote request (round id, hex encoded proof and voter address)
+   * @param request - The vote request (round id and hex encoded proof)
    * @returns The broadcast result, including the transaction hash on success
    */
   async broadcastVote(request: BroadcastVoteRequest): Promise<BroadcastVoteResponse> {
