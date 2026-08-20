@@ -60,6 +60,30 @@ export const isRegisteredIn = async (client: PublicClient, registry: Address, ac
 }
 
 /**
+ * A uniformly random index in `[0, total)`.
+ *
+ * Rejection sampling over a 256-bit draw. A plain modulo favours low indices whenever `total`
+ * does not divide the draw range, and the mask target must be uniform — a skew in who receives
+ * cover is a skew in who is deniable. The draw is as wide as the uint256 `total` itself, so no
+ * registry size can exceed the range: a narrower draw would make `range % total` degenerate to
+ * `range` once `total` outgrew it, leaving a zero limit that rejects every draw.
+ *
+ * @param total The exclusive upper bound; must be positive.
+ * @returns A uniform index below `total`.
+ */
+const uniformRandomIndex = (total: bigint): bigint => {
+  const range = 2n ** 256n
+  const limit = range - (range % total)
+
+  let draw: bigint
+  do {
+    draw = crypto.getRandomValues(new Uint8Array(32)).reduce((acc, byte) => (acc << 8n) | BigInt(byte), 0n)
+  } while (draw >= limit)
+
+  return draw % total
+}
+
+/**
  * A uniformly random registrant of a `SelfRegistry`, as a mask target.
  *
  * Read live from the registry rather than from the server's holder list, which is discovered
@@ -79,16 +103,7 @@ export const getRandomRegistrant = async (client: PublicClient, registry: Addres
 
   if (total === 0n) return undefined
 
-  // Rejection sampling: a plain modulo of a 32-bit draw favours low indices whenever `total` is
-  // not a power of two, and the mask target must be uniform — a skew in who receives cover is a
-  // skew in who is deniable.
-  const range = 2n ** 32n
-  const limit = range - (range % total)
-  let draw: bigint
-  do {
-    draw = BigInt(crypto.getRandomValues(new Uint32Array(1))[0])
-  } while (draw >= limit)
-  const index = draw % total
+  const index = uniformRandomIndex(total)
 
   return client.readContract({
     address: registry,
