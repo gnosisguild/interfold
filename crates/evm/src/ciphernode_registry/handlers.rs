@@ -5,6 +5,7 @@
 use super::effects::*;
 use super::*;
 use e3_events::EventSource;
+use std::collections::{HashMap, HashSet};
 
 const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -19,6 +20,31 @@ fn update_request_registry(
 
     registries.insert(event.e3_id.clone(), event.context.registry);
     true
+}
+
+fn mark_request_complete(
+    active_aggregators: &mut HashMap<E3id, bool>,
+    completed_requests: &mut HashSet<E3id>,
+    request_registries: &mut HashMap<E3id, Address>,
+    e3_id: E3id,
+    publication_pending: bool,
+) {
+    if publication_pending {
+        completed_requests.insert(e3_id);
+    } else {
+        active_aggregators.remove(&e3_id);
+        request_registries.remove(&e3_id);
+    }
+}
+
+fn finish_completed_publication(
+    active_aggregators: &mut HashMap<E3id, bool>,
+    completed_requests: &mut HashSet<E3id>,
+    e3_id: &E3id,
+) {
+    if completed_requests.remove(e3_id) {
+        active_aggregators.remove(e3_id);
+    }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
@@ -142,10 +168,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     type Result = ();
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
-        self.active_aggregators.remove(&msg.e3_id);
-        if !self.publication.contains(&msg.e3_id) {
-            self.request_registries.remove(&msg.e3_id);
-        }
+        let publication_pending = self.publication.contains(&msg.e3_id);
+        mark_request_complete(
+            &mut self.active_aggregators,
+            &mut self.completed_requests,
+            &mut self.request_registries,
+            msg.e3_id,
+            publication_pending,
+        );
     }
 }
 
@@ -250,13 +280,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteeFinalizeRe
 
 #[cfg(test)]
 mod tests {
-    use super::update_request_registry;
+    use super::{finish_completed_publication, mark_request_complete, update_request_registry};
     use alloy::primitives::Address;
     use e3_events::{
         DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id,
         DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn valid_context_records_the_request_time_registry() {
@@ -291,6 +321,34 @@ mod tests {
         let mut registries = HashMap::from([(e3_id.clone(), registry)]);
 
         assert!(!update_request_registry(&mut registries, &event));
+        assert!(!registries.contains_key(&e3_id));
+    }
+
+    #[test]
+    fn completion_retains_retryable_publication_state_until_terminal_outcome() {
+        let e3_id = E3id::new("9", 1);
+        let registry = Address::repeat_byte(0x55);
+        let mut active = HashMap::from([(e3_id.clone(), true)]);
+        let mut completed = HashSet::new();
+        let mut registries = HashMap::from([(e3_id.clone(), registry)]);
+
+        mark_request_complete(
+            &mut active,
+            &mut completed,
+            &mut registries,
+            e3_id.clone(),
+            true,
+        );
+
+        assert_eq!(active.get(&e3_id), Some(&true));
+        assert_eq!(registries.get(&e3_id), Some(&registry));
+        assert!(completed.contains(&e3_id));
+
+        finish_completed_publication(&mut active, &mut completed, &e3_id);
+        registries.remove(&e3_id);
+
+        assert!(!active.contains_key(&e3_id));
+        assert!(!completed.contains(&e3_id));
         assert!(!registries.contains_key(&e3_id));
     }
 }
@@ -413,6 +471,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                 actor.publication.finish(&e3_id, terminal);
                 if terminal {
                     actor.request_registries.remove(&e3_id);
+                    finish_completed_publication(
+                        &mut actor.active_aggregators,
+                        &mut actor.completed_requests,
+                        &e3_id,
+                    );
                 } else {
                     ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
                         actor.try_start_public_key(&e3_id, ctx);

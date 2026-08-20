@@ -70,6 +70,12 @@ pub async fn sync(
     // 3. Page post-snapshot EventStore history into sorted temporary runs. This preserves the
     // global HLC replay order without retaining the complete backlog in memory.
     info!("Loading EventStore replay pages...");
+    let request_router_checkpoint = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .context("request-router recovery checkpoint is missing after storage preflight")?;
+    snapshot.ensure_request_router_covers(&request_router_checkpoint.replay_cursors)?;
     let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;
     info!("{} EventStore events spooled.", replay_spool.total_events());
 

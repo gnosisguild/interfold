@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use e3_data::{InMemStore, RepositoriesFactory};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, EventBus, Sequencer, StoreEventRequested,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, EventBus, RequestRouterCheckpoint, Sequencer,
+    StoreEventRequested, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -73,12 +73,15 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         .await?;
 
     let hydrations = Arc::new(AtomicUsize::new(0));
+    let recovery_store = router_store.repositories().request_router_checkpoint();
     let params = E3RouterParams {
         extensions: Arc::new(vec![Box::new(RecoveryExtension {
             hydrations: hydrations.clone(),
         })]),
         bus: test_bus(),
         store: router_store,
+        replay_cursors: HashMap::new(),
+        recovery_store,
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -96,6 +99,38 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
     let roundtrip = recovered.snapshot()?;
     assert_eq!(roundtrip.contexts, vec![active]);
     assert_eq!(roundtrip.completed, HashSet::from([complete]));
+    Ok(())
+}
+
+#[actix::test]
+async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<()> {
+    let missing = E3id::new("8", 31337);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    let router_store = repositories.router();
+    let recovery_store = repositories.request_router_checkpoint();
+    let params = E3RouterParams {
+        extensions: Arc::new(vec![E3MetaExtension::create()]),
+        bus: test_bus(),
+        store: router_store,
+        replay_cursors: HashMap::new(),
+        recovery_store,
+    };
+
+    let error = match E3Router::from_snapshot(
+        params,
+        E3RouterSnapshot {
+            contexts: vec![missing.clone()],
+            completed: HashSet::new(),
+        },
+    )
+    .await
+    {
+        std::result::Result::Ok(_) => panic!("missing active context must fail startup"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains(&format!("E3 {missing}")));
     Ok(())
 }
 
@@ -138,8 +173,16 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
         .await?;
     router_store
         .write_sync(&E3RouterSnapshot {
-            contexts: vec![missing_context_e3.clone(), old_e3.clone(), new_e3.clone()],
+            contexts: vec![missing_context_e3.clone()],
             completed: HashSet::new(),
+        })
+        .await?;
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![old_e3.clone(), new_e3.clone()],
+            completed: HashSet::new(),
+            replay_cursors: HashMap::new(),
         })
         .await?;
 
@@ -149,11 +192,14 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
     assert!(!restored.contains_key(&missing_context_e3));
 
     let extensions: Arc<Vec<Box<dyn E3Extension>>> = Arc::new(vec![E3MetaExtension::create()]);
+    let recovery_store = router_store.repositories().request_router_checkpoint();
     let recovered = E3Router::from_snapshot(
         E3RouterParams {
             extensions,
             bus: test_bus(),
             store: router_store,
+            replay_cursors: HashMap::new(),
+            recovery_store,
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

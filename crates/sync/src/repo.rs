@@ -5,13 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_data::{Repositories, Repository};
-use e3_events::AggregateId;
 use e3_events::StoreKeys;
+use e3_events::{AggregateId, RequestRouterCheckpoint};
 
 pub trait SyncRepositoryFactory {
     fn aggregate_seq(&self, aggregate_id: AggregateId) -> Repository<u64>;
     fn aggregate_block(&self, aggregate_id: AggregateId) -> Repository<u64>;
     fn aggregate_ts(&self, aggregate_id: AggregateId) -> Repository<u128>;
+    fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint>;
     fn schema_version(&self) -> Repository<u32>;
 }
 
@@ -26,6 +27,10 @@ impl SyncRepositoryFactory for Repositories {
 
     fn aggregate_ts(&self, aggregate_id: AggregateId) -> Repository<u128> {
         Repository::new(self.store.scope(StoreKeys::aggregate_ts(aggregate_id)))
+    }
+
+    fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {
+        Repository::new(self.store.scope(StoreKeys::request_router_checkpoint()))
     }
 
     fn schema_version(&self) -> Repository<u32> {

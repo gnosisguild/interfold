@@ -36,8 +36,8 @@ use e3_net::{
     NetRepositoryFactory, NetworkPolicy,
 };
 use e3_request::{
-    load_dkg_fold_attestation_contexts, E3LifecycleCoordinator, E3LifecycleRepositoryFactory,
-    E3Router,
+    ensure_request_router_checkpoint, load_dkg_fold_attestation_contexts, E3LifecycleCoordinator,
+    E3LifecycleRepositoryFactory, E3Router,
 };
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
@@ -570,6 +570,7 @@ impl CiphernodeBuilder {
             &eventstore.seq(),
         )
         .await?;
+        ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =

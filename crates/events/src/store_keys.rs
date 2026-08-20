@@ -45,6 +45,10 @@ impl StoreKeys {
         String::from("//router")
     }
 
+    pub fn request_router_checkpoint() -> String {
+        String::from("//router/recovery_checkpoint")
+    }
+
     pub fn e3_lifecycle() -> String {
         String::from("//e3_lifecycle")
     }

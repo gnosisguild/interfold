@@ -1,6 +1,7 @@
 sequenceDiagram
   participant E as EVM
   participant B as EventBus
+  participant R as E3Router
   participant W as InterfoldSolWriter
   participant L as LibP2p
   participant P as PlaintextAggregator
@@ -18,8 +19,10 @@ sequenceDiagram
     B ->> W: PlaintextAggregated
     W ->> E: publishPlaintextOutput
     E --) B: PlaintextOutputPublished
+    E --) B: E3StageChanged(Complete)
+    B --) R: E3StageChanged(Complete)
+    R ->> B: E3RequestComplete
     B --) P: E3RequestComplete
   end
   autonumber
-
 

@@ -37,7 +37,7 @@ use e3_events::{
     Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -288,6 +288,7 @@ pub struct CiphernodeRegistrySolWriter<P> {
     bus: BusHandle,
     effects_enabled: bool,
     active_aggregators: HashMap<E3id, bool>,
+    completed_requests: HashSet<E3id>,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
 }
@@ -305,6 +306,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             bus: bus.clone(),
             effects_enabled: false,
             active_aggregators: HashMap::new(),
+            completed_requests: HashSet::new(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
         })

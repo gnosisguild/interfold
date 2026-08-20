@@ -342,7 +342,8 @@ flowchart TD
         Restart[restart] --> Index[reconcile timestamp index in 1024-record pages]
         Index --> Schema[schema-version preflight before runtime actor writes]
         Schema --> SnapshotMeta[load aggregate cursors and initial HLC floor]
-        SnapshotMeta --> Query[query every post-snapshot aggregate]
+        SnapshotMeta --> RouterCursor[verify the request router atomic checkpoint]
+        RouterCursor --> Query[query every post-snapshot aggregate]
         Query --> Runs[sort 1024-event pages into secure temporary runs]
         Runs --> GlobalOrder[bounded-fan-in merge by HLC timestamp]
         GlobalOrder --> ReplayFloor[advance HLC floor while loading the runs]
@@ -380,6 +381,14 @@ unavailable subscriber or a subscriber blocked beyond the bounded acceptance tim
 recovery. An `EventBusBarrier` therefore completes only after the last replay fanout has completed.
 A persisted `Shutdown` event from the previous process is classified as infrastructure and is not
 replayed into newly constructed actors.
+
+The request router stores its active-context index, completed set, and covered per-aggregate cursors
+in one recovery checkpoint. Startup refuses replay if an aggregate snapshot is ahead of this
+checkpoint. Replaying an older prefix to every actor would apply events twice to unrelated actor
+snapshots, so the node fails closed instead. A node upgraded from a version without the checkpoint
+can initialize it only when no E3 is active. If an active router checkpoint references a missing E3
+context snapshot, startup also fails explicitly instead of admitting later peer events against
+incomplete state.
 
 The EventBus mailbox remains bounded at `MAILBOX_LIMIT_LARGE` (2,560 messages). The replay producer
 no longer attempts to enqueue the entire backlog into that mailbox in one burst, and EventBus

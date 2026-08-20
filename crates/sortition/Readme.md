@@ -27,6 +27,7 @@ sequenceDiagram
     participant CiphernodeRegistry
     participant Interfold
     participant EventBus
+    participant E3Router
     participant NodeStateManager
     participant Sortition
     participant CiphernodeSelector
@@ -153,6 +154,9 @@ sequenceDiagram
         PlaintextAggregator->>EventBus: PlaintextAggregated (local publication intent)
         EventBus->>Interfold: publishPlaintextOutput(e3Id, plaintext, proof)
         Interfold->>EventBus: PlaintextOutputPublished
+        Interfold->>EventBus: E3StageChanged(Complete)
+        EventBus->>E3Router: E3StageChanged(Complete)
+        E3Router->>EventBus: E3RequestComplete
         EventBus->>PlaintextAggregator: E3RequestComplete
     end
 ```
@@ -303,7 +307,7 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 - **Purpose**: Identify position in threshold scheme
 - **Assignment**: Index in the committee after ascending-address normalization
-- **Range**: `0..threshold_n - 1`
+- **Range**: `0..threshold_n` (inclusive of `0`, exclusive of `threshold_n`)
 - **Critical**: Order must be consistent across all nodes
 - **Used In**: Keyshare creation, decryption share verification
 

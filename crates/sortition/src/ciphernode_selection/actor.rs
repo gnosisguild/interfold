@@ -337,15 +337,24 @@ impl CiphernodeSelector {
         })?;
 
         for e3_id in e3_ids {
-            if self
+            let result = if self
                 .state
                 .get()
                 .is_some_and(|state| state.committees.contains_key(&e3_id))
             {
-                self.reconcile_failover_assignment(&e3_id, None, ctx)?;
-                self.update_aggregator_status(&e3_id, None, true)?;
+                self.reconcile_failover_assignment(&e3_id, None, ctx)
+                    .and_then(|()| self.update_aggregator_status(&e3_id, None, true))
             } else {
                 self.arm_failover_timer(&e3_id, ctx);
+                Ok(())
+            };
+            if let Err(err) = result {
+                error!(
+                    e3_id = %e3_id,
+                    error = %err,
+                    "Failed to reconcile failover state after replay"
+                );
+                self.bus.err(EType::Sortition, err);
             }
         }
         Ok(())

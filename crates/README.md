@@ -58,7 +58,7 @@ sequenceDiagram
         PKA->>+S: has node?
         S--)-PKA: yes
     end
-    PKA--)BUS: PublicKeyAggregated (local publication intent)
+    PKA--)BUS: PublicKeyAggregated (publication intent and committee key distribution)
     BUS--)RW: PublicKeyAggregated
     RW->>EVM: publishCommittee
     EVM--)BUS: CommitteePublished

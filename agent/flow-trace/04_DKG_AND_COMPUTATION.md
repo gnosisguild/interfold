@@ -665,9 +665,11 @@ phase.
 │         honest_committee_addresses,  // length H — canonical honest subset
 │         dkg_aggregator_proof
 │       }
+│         → forwarded to peers so every committee member can bind C6 proofs to the aggregated key
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Accepts publication intents only from locally produced events
+  ├─ Accepts publication intents only from locally produced events; peer copies only distribute
+  │  protocol state
   ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
   ├─ During startup replay, can retain one durable local intent while the persisted role is restored
   ├─ Starts a retained submission only while active_aggregators[e3_id] == true
