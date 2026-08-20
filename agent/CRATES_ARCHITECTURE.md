@@ -435,7 +435,9 @@ flowchart LR
 
 The network interface owns the QUIC swarm, signed gossipsub topic, Kademlia store, and transport
 channels. A stable 32-byte network ID scopes Identify, gossipsub, Kademlia, and historical-sync
-protocol names. A connection does not enter network status, Kademlia, gossip, or direct sync until
+protocol names. Each built-in ID is the hardcoded SHA-256 digest of a documented, domain-separated
+label. The label makes the ID reproducible, but the released ID remains immutable. A connection does
+not enter network status, Kademlia, gossip, or direct sync until
 Identify reports the exact network and required capabilities. Connection counts, Kademlia records,
 record size, record lifetime, provider records, and per-peer insertions are bounded. Production
 network policies require an explicit deployment set; only the local test policy can be unrestricted.

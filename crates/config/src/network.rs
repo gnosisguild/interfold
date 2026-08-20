@@ -14,9 +14,17 @@ use crate::chain_config::ChainConfig;
 pub const MAINNET_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap.interfold.network";
 pub const SEPOLIA_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap-sepolia.interfold.network";
 
-const MAINNET_NETWORK_ID: &str = "7334c543e2347f84d95cb54e1428389d564691ba4a62d85451a0edcd891a46e2";
-const SEPOLIA_NETWORK_ID: &str = "0d953d3c037a4ca170afd2b9f8d2b400de3b34f2963ec8a71e3785a213aa0751";
-const LOCAL_NETWORK_ID: &str = "1289c74129da8c12de99b429b2fbd34e8e97406aa4a2757aaec956cacc69979a";
+// Built-in IDs are hardcoded SHA-256 digests of the documented UTF-8 labels.
+// The digest input does not include a trailing newline.
+// Do not change an ID after its network is released.
+// Changing an ID creates a separate P2P network.
+//
+// Label: `interfold:p2p-network:v1:mainnet`
+const MAINNET_NETWORK_ID: &str = "c3e81f904b0a8129dce0a85a8d48958a3ca5ee3aea6c32b623fcf66b35728acb";
+// Label: `interfold:p2p-network:v1:sepolia`
+const SEPOLIA_NETWORK_ID: &str = "ab33954b5b3fadf808f03a7c8a7dd159a29ac5950e6c3d724f76ed4c26c9e5c2";
+// Label: `interfold:p2p-network:v1:local`
+const LOCAL_NETWORK_ID: &str = "d7cec7f3c090b451f4ff10461b424728e320f72cf3dada907c5bdfe5570a5807";
 
 /// Stable network identity used by every Interfold libp2p protocol.
 ///
@@ -296,6 +304,22 @@ mod tests {
                 .unwrap()
                 .name(),
             "sepolia"
+        );
+    }
+
+    #[test]
+    fn builtin_network_ids_remain_stable() {
+        assert_eq!(
+            NetworkProfile::mainnet().id().to_string(),
+            "c3e81f904b0a8129dce0a85a8d48958a3ca5ee3aea6c32b623fcf66b35728acb"
+        );
+        assert_eq!(
+            NetworkProfile::sepolia().id().to_string(),
+            "ab33954b5b3fadf808f03a7c8a7dd159a29ac5950e6c3d724f76ed4c26c9e5c2"
+        );
+        assert_eq!(
+            NetworkProfile::local().id().to_string(),
+            "d7cec7f3c090b451f4ff10461b424728e320f72cf3dada907c5bdfe5570a5807"
         );
     }
 
