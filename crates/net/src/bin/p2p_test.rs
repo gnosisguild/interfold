@@ -5,7 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{Context, Result};
-use e3_events::CorrelationId;
+use e3_events::{
+    CorrelationId, E3id, Event, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, Unsequenced,
+};
 use e3_net::events::{GossipData, NetCommand, NetEvent};
 use e3_net::{ContentHash, Libp2pKeypair, Libp2pNetInterface, NetInterface};
 use e3_utils::ArcBytes;
@@ -118,6 +121,7 @@ fn get_next_id() -> u8 {
 }
 
 struct TestPeer {
+    name: String,
     sync_threshold: usize,
     rx: broadcast::Receiver<NetEvent>,
     tx: mpsc::Sender<NetCommand>,
@@ -140,7 +144,7 @@ impl TestPeer {
         if self.is_lead() {
             info!("LEAD IS SYNCING id={}", id);
             let threshold = self.sync_threshold - 1;
-            self.send_msg(&with_id(START_SYNC, id)).await?;
+            self.send_msg(START_SYNC, id).await?;
             for node in 0..threshold {
                 info!(
                     "SYNC: Waiting for reply {}/{} for id={} ...",
@@ -148,39 +152,38 @@ impl TestPeer {
                     threshold,
                     id
                 );
-                self.wait_for_msg(&with_id(SYNC, id)).await?;
+                self.wait_for_msg(SYNC, id).await?;
             }
-            self.send_msg(&with_id(END_SYNC, id)).await?;
+            self.send_msg(END_SYNC, id).await?;
             info!("LEAD SYNCED for id={}!", id);
         } else {
             info!("FOLLOWER IS SYNCING for id={}", id);
-            self.wait_for_msg(&with_id(START_SYNC, id)).await?;
-            self.send_msg(&with_id(SYNC, id)).await?;
-            self.wait_for_msg(&with_id(END_SYNC, id)).await?;
+            self.wait_for_msg(START_SYNC, id).await?;
+            self.send_msg(SYNC, id).await?;
+            self.wait_for_msg(END_SYNC, id).await?;
             info!("FOLLOWER SYNCED for id={}!", id);
         }
         sleep(Duration::from_secs(2)).await;
         Ok(())
     }
 
-    pub async fn send_msg(&self, msg: &[u8]) -> Result<()> {
+    pub async fn send_msg(&self, marker: &[u8], id: u8) -> Result<()> {
+        let data = network_signal(&self.name, marker, id)?;
         Ok(self
             .tx
             .send(NetCommand::GossipPublish {
                 correlation_id: CorrelationId::new(),
                 topic: self.topic.to_string(),
-                data: GossipData::GossipBytes(msg.to_vec()),
+                data,
             })
             .await?)
     }
 
-    pub async fn wait_for_msg(&mut self, msg: &[u8]) -> Result<Vec<NetEvent>> {
+    pub async fn wait_for_msg(&mut self, marker: &[u8], id: u8) -> Result<Vec<NetEvent>> {
         receive_until_collect(
             &mut self.rx,
             |e| match e {
-                NetEvent::GossipData(GossipData::GossipBytes(bytes)) => {
-                    msg.to_vec() == bytes.clone()
-                }
+                NetEvent::GossipData(data) => is_network_signal(data, marker, id),
                 _ => false,
             },
             self.test_timeout.unwrap_or(Duration::from_secs(120)),
@@ -236,6 +239,7 @@ impl TestPeer {
         sleep(Duration::from_secs(3)).await;
 
         Ok(TestPeer {
+            name,
             tx,
             rx,
             sync_threshold,
@@ -245,10 +249,49 @@ impl TestPeer {
     }
 }
 
-fn with_id(slice: &[u8], id: u8) -> Vec<u8> {
-    let mut vec = slice.to_vec();
-    vec.push(id);
-    vec
+const TEST_CHAIN_ID: u64 = 31_337;
+
+fn network_signal(name: &str, marker: &[u8], id: u8) -> Result<GossipData> {
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&signal_payload(marker, id)),
+            e3_id: signal_e3_id(id),
+            node: name.to_string(),
+            party_id: u64::from(id),
+            signed_pk_generation_proof: None,
+        }
+        .into(),
+        None,
+        u128::from(id),
+        None,
+        EventSource::Local,
+    );
+    Ok(GossipData::GossipBytes(event.to_bytes()?))
+}
+
+fn is_network_signal(data: &GossipData, marker: &[u8], id: u8) -> bool {
+    let GossipData::GossipBytes(bytes) = data else {
+        return false;
+    };
+    let Ok(event) = InterfoldEvent::<Unsequenced>::from_bytes(bytes) else {
+        return false;
+    };
+    matches!(
+        event.get_data(),
+        InterfoldEventData::KeyshareCreated(signal)
+            if signal.e3_id == signal_e3_id(id)
+                && signal.pubkey.extract_bytes() == signal_payload(marker, id)
+    )
+}
+
+fn signal_e3_id(id: u8) -> E3id {
+    E3id::new(id.to_string(), TEST_CHAIN_ID)
+}
+
+fn signal_payload(marker: &[u8], id: u8) -> Vec<u8> {
+    let mut payload = marker.to_vec();
+    payload.push(id);
+    payload
 }
 
 async fn wait_for_mesh_ready(
