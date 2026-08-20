@@ -1040,6 +1040,43 @@ fn assert_honest_run_safeguards(history: &[InterfoldEvent], e3_id: &E3id, contex
     );
 }
 
+async fn wait_for_history_match<F>(
+    nodes: &CiphernodeSystem,
+    node_index: usize,
+    after: usize,
+    description: &str,
+    total_timeout: Duration,
+    matches: F,
+) -> Result<CiphernodeHistory>
+where
+    F: Fn(&InterfoldEventData) -> bool,
+{
+    let start = Instant::now();
+    loop {
+        let history = nodes.get_history(node_index).await?;
+        if history
+            .iter()
+            .skip(after)
+            .any(|event| matches(event.get_data()))
+        {
+            return Ok(history);
+        }
+        if start.elapsed() >= total_timeout {
+            let observed_events = history
+                .iter()
+                .skip(after)
+                .map(InterfoldEvent::event_type)
+                .collect::<Vec<_>>();
+            bail!(
+                "Timed out after {:?} while waiting for {description} on node {node_index}; observed events after offset {after}: {:?}",
+                start.elapsed(),
+                observed_events
+            );
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Wall seconds between first `start_when` and last `end_when` event in `history` (HLC physical time).
 fn history_wall_seconds_between<F1, F2>(
     history: &[InterfoldEvent],
@@ -1752,11 +1789,7 @@ async fn test_trbfv_actor() -> Result<()> {
         "CiphernodeSelected",
         "AggregatorChanged",
     ];
-    if proof_aggregation_enabled {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
-    } else {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
-    }
+    expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
@@ -1883,47 +1916,53 @@ async fn test_trbfv_actor() -> Result<()> {
 
     println!("CiphertextOutputPublished event has been dispatched!");
 
-    // The collector only sees the shared ciphertext event, gossiped decryption shares, and the
-    // final gossiped plaintext output.
-    // Only the H honest parties decrypt and gossip a share; the (N - H) extras stay in the
-    // full committee but do not participate in decryption.
-    let ds_n: Vec<&'static str> = vec!["DecryptionshareCreated"; committee_h];
-    let mut expected_events: Vec<&'static str> = vec!["CiphertextOutputPublished"];
-    expected_events.extend_from_slice(&ds_n);
-    expected_events.push("PlaintextAggregated");
-
+    // PlaintextAggregated is a local publication intent and is not gossiped. Wait for it on the
+    // active aggregator, then inspect the observer for the shared ciphertext and decryption shares.
     println!(
-        "[bench-progress] waiting for PlaintextAggregated flow on observer node (expected events: {})",
-        expected_events.len()
+        "[bench-progress] waiting for PlaintextAggregated on active aggregator node {active_aggregator_index}"
     );
-    // Gossip can duplicate DecryptionshareCreated on the collector path (same as KeyshareCreated
-    // in the pubkey flow); wait until `PlaintextAggregated` rather than a fixed take count, then
-    // assert the multiset matches with duplicates removed.
-    let h = nodes
-        .take_history_until_last_event(
-            0,
-            "PlaintextAggregated",
-            Some(plaintext_flow_timeout),
-            Some(plaintext_flow_timeout),
-        )
+    let active_aggregator_history = wait_for_history_match(
+        &nodes,
+        active_aggregator_index,
+        active_aggregator_pubkey_history_len,
+        "PlaintextAggregated",
+        plaintext_flow_timeout,
+        |data| matches!(data, InterfoldEventData::PlaintextAggregated(event) if event.e3_id == e3_id),
+    )
         .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node 0 plaintext flow: {e}"))?;
-    let actual_types = h.event_types();
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "FAILURE on active aggregator node {active_aggregator_index} plaintext flow: {e}"
+            )
+        })?;
+
+    let observer_history = nodes.get_history(0).await?;
+    let actual_types = project_history(&observer_history, |data| match data {
+        InterfoldEventData::CiphertextOutputPublished(event) if event.e3_id == e3_id => {
+            Some("CiphertextOutputPublished")
+        }
+        InterfoldEventData::DecryptionshareCreated(event) if event.e3_id == e3_id => {
+            Some("DecryptionshareCreated")
+        }
+        InterfoldEventData::PlaintextAggregated(event) if event.e3_id == e3_id => {
+            Some("PlaintextAggregated")
+        }
+        _ => None,
+    });
     println!("node 0 >> {:?}", actual_types);
     assert_eq!(
-        actual_types.first().map(String::as_str),
+        actual_types.first().copied(),
         Some("CiphertextOutputPublished"),
         "collector: first plaintext-flow event must be CiphertextOutputPublished"
     );
-    assert_eq!(
-        actual_types.last().map(String::as_str),
-        Some("PlaintextAggregated"),
-        "collector: last plaintext-flow event must be PlaintextAggregated"
+    assert!(
+        !actual_types.contains(&"PlaintextAggregated"),
+        "collector: PlaintextAggregated must remain local to the active aggregator"
     );
-    let unique_ds_parties: HashSet<u64> = h
+    let unique_ds_parties: HashSet<u64> = observer_history
         .iter()
         .filter_map(|e| match e.get_data() {
-            InterfoldEventData::DecryptionshareCreated(d) => Some(d.party_id),
+            InterfoldEventData::DecryptionshareCreated(d) if d.e3_id == e3_id => Some(d.party_id),
             _ => None,
         })
         .collect();
@@ -1935,9 +1974,10 @@ async fn test_trbfv_actor() -> Result<()> {
         "collector: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
         unique_ds_parties.len()
     );
-    println!("[bench-progress] PlaintextAggregated observed on collector path");
+    println!(
+        "[bench-progress] PlaintextAggregated observed on active aggregator node {active_aggregator_index}"
+    );
 
-    let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
     let active_aggregator_plaintext_events = project_history(
         &active_aggregator_history[active_aggregator_pubkey_history_len..],
         |data| plaintext_aggregator_marker(data, &e3_id),
@@ -2087,7 +2127,7 @@ async fn test_trbfv_actor() -> Result<()> {
         publishing_ct_timer.elapsed(),
     );
 
-    let (plaintext, decryption_aggregator_proofs) = h
+    let (plaintext, decryption_aggregator_proofs) = active_aggregator_history
         .iter()
         .rev()
         .find_map(|e| {
@@ -2107,8 +2147,8 @@ async fn test_trbfv_actor() -> Result<()> {
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "Expected PlaintextAggregated in events, got: {:?}",
-                h.event_types()
+                "Expected PlaintextAggregated in active aggregator events, got: {:?}",
+                active_aggregator_history.event_types()
             )
         })?;
 
