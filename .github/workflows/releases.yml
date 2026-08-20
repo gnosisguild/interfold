@@ -540,24 +540,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # A RISC Zero proof names a guest image; it does not name the source that produced it. This
-      # record is what lets a third party tie the released source to the deployed imageId.
-      - name: Generate compute-provider provenance manifest
-        run: |
-          pnpm provenance:manifest --out compute-provider-provenance.json
-          # `complete: false` means a field could not be resolved. Publishing it would put a
-          # partial record beside the release as though it were a verification.
-          if ! node -e "process.exit(require('./compute-provider-provenance.json').complete ? 0 : 1)"; then
-            echo "provenance manifest is incomplete; refusing to publish it" >&2
-            node -e "console.error(require('./compute-provider-provenance.json').unresolved.join('\n'))"
-            exit 1
-          fi
+      # The compute-provider provenance manifest is NOT generated here: it can only be complete on
+      # a machine that built the guest (Elf.sol + builder image digest) with a deployed ciphertext
+      # verifier to read (--rpc/--verifier), none of which this job has. It is produced manually per
+      # docs/pages/verifying-the-compute-provider.mdx until the guest-build job can attach it.
 
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
           find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
-          cp compute-provider-provenance.json release-assets/
           # `interfold config check` fetches this asset from the latest release,
           # so a release without it leaves operators unable to detect a redeploy.
           if [ ! -f deployments/manifest.json ]; then
