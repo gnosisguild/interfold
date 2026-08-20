@@ -287,9 +287,10 @@ export type NewRoundRequest = {
   /**
    * The census source, as a `CRISPProgram.CensusMode` discriminant: 0 (TOKEN, the default) or
    * 2 (ONCHAIN). ONCHAIN reads eligibility from the token per input — with a `SelfRegistry` as
-   * the token, that is what lets voters register during the input window.
+   * the token, that is what lets voters register during the input window. Typed as the literals
+   * the server accepts — any other explicit value is refused with HTTP 400.
    */
-  censusMode?: number
+  censusMode?: 0 | 2
 }
 
 /**

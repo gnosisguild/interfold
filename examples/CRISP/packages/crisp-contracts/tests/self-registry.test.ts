@@ -63,6 +63,15 @@ describe('SelfRegistry', function () {
     expect(await registry.registrants(5, 10)).to.deep.equal([])
   })
 
+  it('clamps a count that would overflow the page end', async () => {
+    await (await registry.connect(accounts[0]).register()).wait()
+    await (await registry.connect(accounts[1]).register()).wait()
+
+    // `start + count` exceeds uint256; a naive sum would revert under checked arithmetic
+    // instead of clamping to the end of the list.
+    expect(await registry.registrants(1, ethers.MaxUint256)).to.deep.equal([accounts[1].address])
+  })
+
   it('emits the registrant index', async () => {
     await expect(registry.connect(accounts[1]).register()).to.emit(registry, 'Registered').withArgs(accounts[1].address, 0)
     await expect(registry.connect(accounts[2]).register()).to.emit(registry, 'Registered').withArgs(accounts[2].address, 1)

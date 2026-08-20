@@ -31,15 +31,6 @@ export const getChain = (): Chain => {
 }
 
 /**
- * Whether the test-token mint is available.
- *
- * Derived from the chain, not only from configuration: minting is a dev/testnet convenience, and
- * a mainnet build that forgot to flip a flag must not offer it — mainnet tokens are not mintable
- * from a faucet button, and the dead button would only fail against the real token. Anvil carries
- * no `testnet` marker in viem, so it is allowed by id. `VITE_ENABLE_TEST_TOKEN_MINT=false` turns
- * the button off on test networks too, for deployments that want the faucet hidden.
- */
-/**
  * Whether votes are submitted straight from the voter's wallet instead of through the relay.
  *
  * Always true on mainnet, where the relay refuses to pay gas for callers — `publishInput` is
@@ -67,6 +58,15 @@ export const txExplorerUrl = (txHash: string): string | undefined => {
   return explorer ? `${explorer}/tx/${txHash}` : undefined
 }
 
+/**
+ * Whether the test-token mint is available.
+ *
+ * Derived from the chain, not only from configuration: minting is a dev/testnet convenience, and
+ * a mainnet build that forgot to flip a flag must not offer it — mainnet tokens are not mintable
+ * from a faucet button, and the dead button would only fail against the real token. Anvil carries
+ * no `testnet` marker in viem, so it is allowed by id. `VITE_ENABLE_TEST_TOKEN_MINT=false` turns
+ * the button off on test networks too, for deployments that want the faucet hidden.
+ */
 export const isTestTokenMintEnabled = (): boolean => {
   const chain = getChain()
   const isTestNetwork = chain.id === anvil.id || chain.testnet === true

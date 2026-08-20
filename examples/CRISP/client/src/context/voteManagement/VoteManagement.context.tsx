@@ -7,7 +7,7 @@
 import { createGenericContext } from '@/utils/create-generic-context'
 import { VoteManagementContextType, VoteManagementProviderProps } from '@/context/voteManagement'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAccount } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import { VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
 import { convertPollData, convertTimestampToDate } from '@/utils/methods'
@@ -20,10 +20,11 @@ const [useVoteManagementContext, VoteManagementContextProvider] = createGenericC
 /// "Did I vote in this round" is a fact only this client holds. The server cannot answer it — a
 /// mask is indistinguishable from a vote by design, so all it can report is slot activity, which
 /// says "someone wrote to your slot", not "you voted". Kept in localStorage so it survives a
-/// reload, keyed per round and address so switching wallets does not leak one account's state
-/// into another's.
-const getVoteCacheKey = (roundId: string, address: string): string => {
-  return `crisp-voted-${roundId}-${address.toLowerCase()}`
+/// reload, keyed per chain, round and address: switching wallets must not leak one account's
+/// state into another's, and a round id can repeat across chains — deterministic deployments give
+/// two networks the same Interfold address, and round ids are derived from it.
+const getVoteCacheKey = (chainId: number, roundId: string, address: string): string => {
+  return `crisp-voted-${chainId}-${roundId}-${address.toLowerCase()}`
 }
 
 const nowInSeconds = (): number => Math.floor(Date.now() / 1000)
@@ -33,6 +34,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
    * Wagmi Account State
    **/
   const { address, isConnected } = useAccount()
+  const chainId = useChainId()
 
   /**
    * Voting Management States
@@ -69,23 +71,26 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
   /// Purely local — see the note on `getVoteCacheKey`. Async only to keep the signature the
   /// consumers already use.
-  const checkVoteStatus = useCallback(async (roundId: string, userAddress: string): Promise<boolean> => {
-    if (!userAddress || roundId === null || roundId === undefined) return false
+  const checkVoteStatus = useCallback(
+    async (roundId: string, userAddress: string): Promise<boolean> => {
+      if (!userAddress || roundId === null || roundId === undefined) return false
 
-    try {
-      return localStorage.getItem(getVoteCacheKey(roundId, userAddress)) === 'true'
-    } catch {
-      // Storage can be unavailable (private browsing); treat as "not voted".
-      return false
-    }
-  }, [])
+      try {
+        return localStorage.getItem(getVoteCacheKey(chainId, roundId, userAddress)) === 'true'
+      } catch {
+        // Storage can be unavailable (private browsing); treat as "not voted".
+        return false
+      }
+    },
+    [chainId],
+  )
 
   const markVotedInRound = useCallback(
     (roundId: string) => {
       if (!userAddress) return
 
       try {
-        localStorage.setItem(getVoteCacheKey(roundId, userAddress), 'true')
+        localStorage.setItem(getVoteCacheKey(chainId, roundId, userAddress), 'true')
       } catch {
         // Best effort: without storage the flag only lives until the next reload.
       }
@@ -94,7 +99,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         return roundId === currentRoundId ? true : prevHasVoted
       })
     },
-    [userAddress, currentRoundId],
+    [chainId, userAddress, currentRoundId],
   )
 
   const initialLoad = async () => {

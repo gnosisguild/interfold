@@ -88,7 +88,10 @@ contract SelfRegistry {
     uint256 total = _registrants.length;
     if (start >= total) return new address[](0);
 
-    uint256 end = start + count > total ? total : start + count;
+    // Compared by subtraction, not by `start + count > total`: the addition runs under checked
+    // arithmetic, so a large `count` would revert before the clamp it exists to trigger.
+    // `total - start` cannot underflow — `start < total` is established above.
+    uint256 end = count > total - start ? total : start + count;
     page = new address[](end - start);
 
     for (uint256 i = start; i < end; i++) {

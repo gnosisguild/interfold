@@ -10,12 +10,13 @@ use crate::server::{
         canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
         VoteStatusRequest, VoteStatusResponse,
     },
-    rate_limit::{RateLimitExceeded, RateLimiter},
+    rate_limit::RateLimiter,
+    repo::parse_slot_address,
     CONFIG,
 };
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::Bytes;
-use evm_helpers::CRISPContract;
+use evm_helpers::{CRISPContract, SimulateError};
 use eyre::Error;
 use log::{error, info, warn};
 
@@ -54,7 +55,14 @@ async fn get_vote_status(
         e3_id, request.address
     );
 
-    let slot_active = match store.e3(&e3_id).slot_has_activity(&request.address).await {
+    // Validated before any storage access: a malformed address is the client's error, not a
+    // database failure.
+    let slot = match parse_slot_address(&request.address) {
+        Ok(slot) => slot,
+        Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
+    };
+
+    let slot_active = match store.e3(&e3_id).slot_has_activity(slot).await {
         Ok(active) => active,
         Err(e) => {
             error!(
@@ -122,17 +130,16 @@ async fn broadcast_encrypted_vote(
         .unwrap_or("unknown")
         .to_string();
 
-    if let Err(exceeded) = limiter.check(&caller) {
-        let (scope, message) = match exceeded {
-            RateLimitExceeded::Caller => ("caller", "Too many votes from this address, slow down"),
-            RateLimitExceeded::Global => ("global", "The relay is busy, please try again shortly"),
-        };
-        warn!("Rate limit ({scope}) refused a broadcast from {caller}");
+    // Caller admission only. The global transaction quota is reserved after parsing and
+    // simulation, right before the relay pays — reserving it here would let invalid requests
+    // sprayed across addresses drain it and deny honest voters.
+    if limiter.check_caller(&caller).is_err() {
+        warn!("Rate limit (caller) refused a broadcast from {caller}");
 
         return HttpResponse::TooManyRequests().json(VoteResponse {
             status: VoteResponseStatus::FailedBroadcast,
             tx_hash: None,
-            message: Some(message.to_string()),
+            message: Some("Too many votes from this address, slow down".to_string()),
         });
     }
 
@@ -179,17 +186,47 @@ async fn broadcast_encrypted_vote(
     };
 
     // The dry run: an input the contract would revert must not reach `send`, where the relay
-    // pays for the revert. It costs one `eth_call` on inputs that would succeed anyway.
-    if let Err(e) = contract
+    // pays for the revert. It costs one `eth_call` on inputs that would succeed anyway. Only a
+    // revert blames the input — a provider failure judged nothing, so it answers retryable 503
+    // rather than telling a voter their valid ballot was refused.
+    match contract
         .simulate_publish_input(e3_id, encoded_proof.clone())
         .await
     {
-        warn!("[e3_id={}] Input refused by simulation: {:?}", e3_key, e);
+        Ok(()) => {}
+        Err(SimulateError::Reverted(reason)) => {
+            warn!("[e3_id={}] Input refused by simulation: {}", e3_key, reason);
 
-        return HttpResponse::BadRequest().json(VoteResponse {
+            return HttpResponse::BadRequest().json(VoteResponse {
+                status: VoteResponseStatus::FailedBroadcast,
+                tx_hash: None,
+                message: Some("Transaction was reverted by the contract".to_string()),
+            });
+        }
+        Err(SimulateError::Provider(reason)) => {
+            error!(
+                "[e3_id={}] Simulation unavailable (provider failure): {}",
+                e3_key, reason
+            );
+
+            return HttpResponse::ServiceUnavailable().json(VoteResponse {
+                status: VoteResponseStatus::FailedBroadcast,
+                tx_hash: None,
+                message: Some(
+                    "The relay could not reach the blockchain, please try again".to_string(),
+                ),
+            });
+        }
+    }
+
+    // The relay is about to pay; this is the point the global quota protects.
+    if limiter.try_reserve_global().is_err() {
+        warn!("Rate limit (global) refused a broadcast from {caller}");
+
+        return HttpResponse::TooManyRequests().json(VoteResponse {
             status: VoteResponseStatus::FailedBroadcast,
             tx_hash: None,
-            message: Some(extract_error_message(&e)),
+            message: Some("The relay is busy, please try again shortly".to_string()),
         });
     }
 

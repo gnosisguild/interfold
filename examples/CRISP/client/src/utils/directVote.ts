@@ -43,7 +43,13 @@ export const submitVoteDirectly = async (
   })
 
   const hash = await walletClient.writeContract(request)
-  await publicClient.waitForTransactionReceipt({ hash })
+  const receipt = await publicClient.waitForTransactionReceipt({ hash })
+
+  // `waitForTransactionReceipt` resolves for a reverted transaction too. Without this check the
+  // caller would mark a vote as cast when the chain refused it.
+  if (receipt.status !== 'success') {
+    throw new Error(`Vote transaction reverted: ${hash}`)
+  }
 
   return hash
 }

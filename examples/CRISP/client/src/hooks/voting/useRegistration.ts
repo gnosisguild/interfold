@@ -74,7 +74,13 @@ export const useRegistration = () => {
         functionName: 'register',
         chain: getChain(),
       })
-      await publicClient.waitForTransactionReceipt({ hash })
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+
+      // The receipt resolves for a reverted transaction too; a revert must not mark the
+      // account as registered.
+      if (receipt.status !== 'success') {
+        throw new Error(`Registration transaction reverted: ${hash}`)
+      }
 
       setIsRegistered(true)
       showToast({ type: 'success', message: 'Registered — you can vote in this round' })

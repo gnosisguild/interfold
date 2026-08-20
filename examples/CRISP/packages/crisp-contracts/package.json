@@ -38,7 +38,7 @@
     "deploy:contracts:full:mock": "export DEPLOY_INTERFOLD=true USE_MOCKS=true PRINT_ENV_VARS=true && pnpm deploy:contracts",
     "test": "hardhat test mocha",
     "check:test-legs": "node scripts/check-test-legs.mjs",
-    "test:unit": "pnpm check:test-legs && hardhat test mocha tests/census-mode.test.ts tests/crisp.journal.test.ts tests/input-leaf.test.ts tests/interfold-binding.test.ts tests/tally.decoding.test.ts",
+    "test:unit": "pnpm check:test-legs && hardhat test mocha tests/census-mode.test.ts tests/crisp.journal.test.ts tests/input-leaf.test.ts tests/interfold-binding.test.ts tests/self-registry.test.ts tests/tally.decoding.test.ts",
     "test:input-tree": "hardhat test mocha tests/input-tree-e2e.test.ts",
     "test:ballots": "hardhat test mocha tests/crisp.contracts.test.ts tests/onchain-census.test.ts",
     "verify": "hardhat run deploy/verify.ts",

@@ -8,8 +8,15 @@
 //!
 //! `/voting/broadcast` signs and pays for a transaction on behalf of whoever calls it, so an
 //! unthrottled caller can spend the relay's funds as fast as it can post proofs. Two windows
-//! bound that: a per-caller window against one hot client, and a global window that caps what
-//! the relay key can spend regardless of how many addresses the traffic arrives from.
+//! bound that, and they are consumed at different points on purpose:
+//!
+//! - **Caller admission** ([`RateLimiter::check_caller`]) runs first, before any work, against
+//!   one hot client.
+//! - **Global reservation** ([`RateLimiter::try_reserve_global`]) caps what the relay key can
+//!   spend across all callers, and is taken only once a request has parsed and simulated
+//!   successfully — right before the transaction. Consuming it earlier would let an attacker
+//!   spray *invalid* requests across many addresses and exhaust the global window without the
+//!   relay ever paying for anything, denying honest voters instead of protecting them.
 //!
 //! The limits are deliberately generous for people and tight for loops: one honest ballot costs
 //! minutes of client-side proving, so a human cannot reach them.
@@ -21,7 +28,7 @@ use std::time::{Duration, Instant};
 /// Broadcasts one caller may relay per window.
 const PER_CALLER_LIMIT: usize = 10;
 
-/// Broadcasts the relay accepts per window across all callers.
+/// Transactions the relay pays for per window across all callers.
 const GLOBAL_LIMIT: usize = 120;
 
 /// The sliding window both limits are counted over.
@@ -32,7 +39,7 @@ const WINDOW: Duration = Duration::from_secs(60);
 pub enum RateLimitExceeded {
     /// The caller sent more than [`PER_CALLER_LIMIT`] requests inside the window.
     Caller,
-    /// The relay as a whole received more than [`GLOBAL_LIMIT`] requests inside the window.
+    /// The relay reserved more than [`GLOBAL_LIMIT`] transactions inside the window.
     Global,
 }
 
@@ -47,8 +54,12 @@ struct State {
     /// Recent request instants per caller. Pruned on every check, so a caller that goes quiet
     /// costs nothing after one window.
     per_caller: HashMap<String, Vec<Instant>>,
-    /// Recent request instants across all callers.
+    /// Recent global reservations across all callers.
     global: Vec<Instant>,
+}
+
+fn within_window(cutoff: Option<Instant>) -> impl Fn(&Instant) -> bool {
+    move |t| cutoff.is_none_or(|c| *t > c)
 }
 
 impl RateLimiter {
@@ -61,23 +72,25 @@ impl RateLimiter {
         }
     }
 
-    /// Record one request from `caller` and answer whether it is within both windows.
+    /// Record one request from `caller` and answer whether it is within the caller window.
     ///
     /// A refused request is not recorded, so being refused does not extend the refusal.
-    pub fn check(&self, caller: &str) -> Result<(), RateLimitExceeded> {
-        self.check_at(caller, Instant::now())
+    pub fn check_caller(&self, caller: &str) -> Result<(), RateLimitExceeded> {
+        self.check_caller_at(caller, Instant::now())
     }
 
-    fn check_at(&self, caller: &str, now: Instant) -> Result<(), RateLimitExceeded> {
-        let cutoff = now.checked_sub(WINDOW);
-        let within = |t: &Instant| cutoff.is_none_or(|c| *t > c);
+    /// Reserve one slot of the global transaction quota.
+    ///
+    /// Call only when a transaction is about to be sent — after parsing and simulation — so
+    /// invalid traffic cannot drain the quota honest voters depend on.
+    pub fn try_reserve_global(&self) -> Result<(), RateLimitExceeded> {
+        self.try_reserve_global_at(Instant::now())
+    }
+
+    fn check_caller_at(&self, caller: &str, now: Instant) -> Result<(), RateLimitExceeded> {
+        let within = within_window(now.checked_sub(WINDOW));
 
         let mut state = self.state.lock().expect("rate limiter mutex poisoned");
-
-        state.global.retain(|t| within(t));
-        if state.global.len() >= GLOBAL_LIMIT {
-            return Err(RateLimitExceeded::Global);
-        }
 
         // Prune every caller, not only this one, so idle callers do not accumulate forever.
         state.per_caller.retain(|_, times| {
@@ -91,6 +104,19 @@ impl RateLimiter {
         }
 
         times.push(now);
+        Ok(())
+    }
+
+    fn try_reserve_global_at(&self, now: Instant) -> Result<(), RateLimitExceeded> {
+        let within = within_window(now.checked_sub(WINDOW));
+
+        let mut state = self.state.lock().expect("rate limiter mutex poisoned");
+
+        state.global.retain(|t| within(t));
+        if state.global.len() >= GLOBAL_LIMIT {
+            return Err(RateLimitExceeded::Global);
+        }
+
         state.global.push(now);
         Ok(())
     }
@@ -106,12 +132,15 @@ mod tests {
         let now = Instant::now();
 
         for _ in 0..PER_CALLER_LIMIT {
-            assert_eq!(limiter.check_at("a", now), Ok(()));
+            assert_eq!(limiter.check_caller_at("a", now), Ok(()));
         }
-        assert_eq!(limiter.check_at("a", now), Err(RateLimitExceeded::Caller));
+        assert_eq!(
+            limiter.check_caller_at("a", now),
+            Err(RateLimitExceeded::Caller)
+        );
 
         // Another caller is unaffected by the first one's refusal.
-        assert_eq!(limiter.check_at("b", now), Ok(()));
+        assert_eq!(limiter.check_caller_at("b", now), Ok(()));
     }
 
     #[test]
@@ -120,28 +149,46 @@ mod tests {
         let start = Instant::now();
 
         for _ in 0..PER_CALLER_LIMIT {
-            assert_eq!(limiter.check_at("a", start), Ok(()));
+            assert_eq!(limiter.check_caller_at("a", start), Ok(()));
         }
-        assert_eq!(limiter.check_at("a", start), Err(RateLimitExceeded::Caller));
+        assert_eq!(
+            limiter.check_caller_at("a", start),
+            Err(RateLimitExceeded::Caller)
+        );
 
         let later = start + WINDOW + Duration::from_secs(1);
-        assert_eq!(limiter.check_at("a", later), Ok(()));
+        assert_eq!(limiter.check_caller_at("a", later), Ok(()));
     }
 
     #[test]
-    fn the_global_window_caps_traffic_across_callers() {
+    fn the_global_window_caps_reservations() {
         let limiter = RateLimiter::new();
         let now = Instant::now();
 
-        // Enough distinct callers to stay under every per-caller limit.
-        for i in 0..GLOBAL_LIMIT {
-            let caller = format!("caller-{}", i / (PER_CALLER_LIMIT - 1));
-            assert_eq!(limiter.check_at(&caller, now), Ok(()));
+        for _ in 0..GLOBAL_LIMIT {
+            assert_eq!(limiter.try_reserve_global_at(now), Ok(()));
         }
         assert_eq!(
-            limiter.check_at("one-more", now),
+            limiter.try_reserve_global_at(now),
             Err(RateLimitExceeded::Global)
         );
+
+        let later = now + WINDOW + Duration::from_secs(1);
+        assert_eq!(limiter.try_reserve_global_at(later), Ok(()));
+    }
+
+    #[test]
+    fn caller_admission_does_not_consume_global_quota() {
+        let limiter = RateLimiter::new();
+        let now = Instant::now();
+
+        // Invalid traffic stops at caller admission; the global window must stay untouched so
+        // it cannot be drained by requests that never reach a transaction.
+        for i in 0..GLOBAL_LIMIT * 2 {
+            let _ = limiter.check_caller_at(&format!("caller-{i}"), now);
+        }
+
+        assert_eq!(limiter.try_reserve_global_at(now), Ok(()));
     }
 
     #[test]
@@ -150,14 +197,17 @@ mod tests {
         let start = Instant::now();
 
         for _ in 0..PER_CALLER_LIMIT {
-            assert_eq!(limiter.check_at("a", start), Ok(()));
+            assert_eq!(limiter.check_caller_at("a", start), Ok(()));
         }
         // Hammering while refused must not push the recovery point further out.
         for _ in 0..100 {
-            assert_eq!(limiter.check_at("a", start), Err(RateLimitExceeded::Caller));
+            assert_eq!(
+                limiter.check_caller_at("a", start),
+                Err(RateLimitExceeded::Caller)
+            );
         }
 
         let later = start + WINDOW + Duration::from_secs(1);
-        assert_eq!(limiter.check_at("a", later), Ok(()));
+        assert_eq!(limiter.check_caller_at("a", later), Ok(()));
     }
 }

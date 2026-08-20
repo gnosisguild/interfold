@@ -125,15 +125,20 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let delay = BASE_DELAY_MS
+    // Single-flight: `tick` is async, and while a request is pending `timer` is null, so a
+    // visibility change during that window would otherwise start a second concurrent polling
+    // chain — each one rescheduling itself, multiplying load and leaking timers past unmount.
+    let running = false
 
     const tick = async () => {
-      if (cancelled) return
+      if (cancelled || running) return
 
       if (typeof document !== 'undefined' && document.hidden) {
         timer = setTimeout(tick, BASE_DELAY_MS)
         return
       }
 
+      running = true
       try {
         const result = await getWebResultByRoundRef.current(roundState.id)
         if (cancelled) return
@@ -144,6 +149,8 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
         delay = Math.min(delay * 2, MAX_DELAY_MS)
       } catch {
         delay = Math.min(delay * 2, MAX_DELAY_MS)
+      } finally {
+        running = false
       }
 
       timer = setTimeout(tick, delay)
@@ -152,6 +159,9 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     const tickNow = () => {
       if (timer) clearTimeout(timer)
       timer = null
+      // A foreground check is a fresh look, not a continuation of the backoff that grew while
+      // nothing was watching.
+      delay = BASE_DELAY_MS
       void tick()
     }
 

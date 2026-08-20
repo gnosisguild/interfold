@@ -79,7 +79,16 @@ export const getRandomRegistrant = async (client: PublicClient, registry: Addres
 
   if (total === 0n) return undefined
 
-  const index = BigInt(crypto.getRandomValues(new Uint32Array(1))[0]) % total
+  // Rejection sampling: a plain modulo of a 32-bit draw favours low indices whenever `total` is
+  // not a power of two, and the mask target must be uniform — a skew in who receives cover is a
+  // skew in who is deniable.
+  const range = 2n ** 32n
+  const limit = range - (range % total)
+  let draw: bigint
+  do {
+    draw = BigInt(crypto.getRandomValues(new Uint32Array(1))[0])
+  } while (draw >= limit)
+  const index = draw % total
 
   return client.readContract({
     address: registry,

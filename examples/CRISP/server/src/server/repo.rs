@@ -546,8 +546,10 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// Deliberately not "has this address voted" — the server cannot know that. Anyone can mask
     /// any eligible slot, and a mask is indistinguishable from a vote, so activity is the only
     /// per-slot fact there is.
-    pub async fn slot_has_activity(&self, address: &str) -> Result<bool> {
-        let slot = parse_slot_address(address)?;
+    ///
+    /// Takes parsed slot bytes so address validation stays with the route, where a malformed
+    /// address is client error rather than a storage failure.
+    pub async fn slot_has_activity(&self, slot: [u8; 20]) -> Result<bool> {
         let e3_crisp = self.get_crisp().await?;
         Ok(e3_crisp.input_slots.iter().any(|(_, s)| *s == slot))
     }
@@ -631,7 +633,7 @@ fn count_active_slots(input_slots: &[(u64, [u8; 20])]) -> u64 {
 }
 
 /// Parse a `0x`-prefixed or bare hex address into the slot bytes the indexer stores.
-fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
+pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(address.strip_prefix("0x").unwrap_or(address))
         .map_err(|e| eyre::eyre!("'{address}' is not a hex address: {e}"))?;
     <[u8; 20]>::try_from(bytes).map_err(|_| eyre::eyre!("'{address}' is not 20 bytes of address"))
