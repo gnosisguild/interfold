@@ -71,6 +71,44 @@ jobs:
             fi
           fi
 
+          if [[ "${{ steps.get_version.outputs.is_prerelease }}" == "false" ]]; then
+            DAPPNODE_VERSION=$(node -p "require('./dappnode/dappnode_package.json').version")
+            DAPPNODE_UPSTREAM_VERSION=$(node -p "require('./dappnode/dappnode_package.json').upstreamVersion")
+            DAPPNODE_NPM_VERSION=$(node -p "require('./dappnode/package.json').version")
+            DAPPNODE_LOCK_VERSION=$(node -p "require('./dappnode/package-lock.json').version")
+            DAPPNODE_LOCK_PACKAGE_VERSION=$(node -p "require('./dappnode/package-lock.json').packages[''].version")
+            if [ "$DAPPNODE_UPSTREAM_VERSION" != "$VERSION" ]; then
+              echo "❌ DAppNode upstreamVersion ($DAPPNODE_UPSTREAM_VERSION) doesn't match tag ($VERSION)"
+              exit 1
+            fi
+            if [ "$DAPPNODE_NPM_VERSION" != "$DAPPNODE_VERSION" ]; then
+              echo "❌ DAppNode package.json version ($DAPPNODE_NPM_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
+              exit 1
+            fi
+            if [ "$DAPPNODE_LOCK_VERSION" != "$DAPPNODE_VERSION" ]; then
+              echo "❌ DAppNode package-lock version ($DAPPNODE_LOCK_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
+              exit 1
+            fi
+            if [ "$DAPPNODE_LOCK_PACKAGE_VERSION" != "$DAPPNODE_VERSION" ]; then
+              echo "❌ DAppNode package-lock root package version ($DAPPNODE_LOCK_PACKAGE_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
+              exit 1
+            fi
+            if ! grep -Fq "UPSTREAM_VERSION: $VERSION" dappnode/docker-compose.yml; then
+              echo "❌ DAppNode docker-compose UPSTREAM_VERSION doesn't match tag ($VERSION)"
+              exit 1
+            fi
+            if ! grep -Fq "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION" dappnode/docker-compose.yml; then
+              echo "❌ DAppNode docker-compose image tag doesn't match package version ($DAPPNODE_VERSION)"
+              exit 1
+            fi
+            if ! grep -Fq "ARG UPSTREAM_VERSION=$VERSION" dappnode/Dockerfile; then
+              echo "❌ DAppNode Dockerfile default UPSTREAM_VERSION doesn't match tag ($VERSION)"
+              exit 1
+            fi
+          else
+            echo "Skipping DAppNode package version check for pre-release tag."
+          fi
+
           echo "✅ All versions match: $VERSION"
 
   build-ciphernode-image-release:
@@ -138,6 +176,34 @@ jobs:
             type=gha,scope=e3-support
           cache-to: |
             type=gha,mode=max,scope=e3-support
+
+  build-dappnode-package-release:
+    name: Build DAppNode package (release)
+    runs-on: ubuntu-latest
+    needs: [validate-and-prepare, build-ciphernode-image-release]
+    if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dappnode/package-lock.json
+
+      - name: Install DAppNode SDK
+        working-directory: dappnode
+        run: npm ci --ignore-scripts
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build DAppNode package
+        working-directory: dappnode
+        run: npx --no-install dappnodesdk build --skip_upload --skip_save --arch linux/amd64
 
   build-nix-flake:
     name: Build Nix Flake
@@ -443,8 +509,11 @@ jobs:
         publish-npm-packages,
         download-circuits,
         build-nix-flake,
+        build-dappnode-package-release,
       ]
-    if: always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success'
+    if:
+      always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success' &&
+      (needs.validate-and-prepare.outputs.is_prerelease == 'true' || needs.build-dappnode-package-release.result == 'success')
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -518,11 +587,23 @@ jobs:
             # auto-changelog writes headings as "#### [v0.8.0](compare-url)", so the
             # leading "v" must be optional. VERSION has it stripped from the tag, and
             # matching the bare version produced an empty "What's Changed" section.
-            VERSION_RE="${VERSION//./\\.}"
-            awk -v ver="${VERSION_RE}" '
+            awk -v raw_ver="${VERSION}" '
+              function escape_ere(value,    i, char, escaped) {
+                escaped = ""
+                for (i = 1; i <= length(value); i++) {
+                  char = substr(value, i, 1)
+                  if (index("[]\\.^$*+?{}()|", char) > 0) {
+                    escaped = escaped "\\" char
+                  } else {
+                    escaped = escaped char
+                  }
+                }
+                return escaped
+              }
               BEGIN {
+                ver = escape_ere(raw_ver)
                 start = "^#+ \\[?v?" ver "\\]?"
-                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+"
+                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+([-+][a-zA-Z0-9.-]+)?"
               }
               !flag && $0 ~ start { flag = 1; next }
               flag && $0 ~ next_version { exit }

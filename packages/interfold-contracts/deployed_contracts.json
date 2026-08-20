@@ -217,7 +217,7 @@
   "mainnet": {
     "InterfoldTicketToken": {
       "address": "0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D",
-      "blockNumber": 25786403,
+      "blockNumber": 25786372,
       "constructorArgs": {
         "baseToken": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
         "registry": "0x0000000000000000000000000000000000000001",
@@ -226,11 +226,11 @@
     },
     "SlashingEvidenceLib": {
       "address": "0x689Ac1548f2943d5B29DF4E0260518F2871eb4cE",
-      "blockNumber": 25786403
+      "blockNumber": 25786373
     },
     "SlashingManager": {
       "address": "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9",
-      "blockNumber": 25786403,
+      "blockNumber": 25786375,
       "constructorArgs": {
         "initialDelay": "172800",
         "admin": "0x652a31c669f9AB37f6040f279139a75D04F2679e"
@@ -241,23 +241,23 @@
     },
     "PoseidonT3": {
       "address": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93",
-      "blockNumber": 25786403
+      "blockNumber": 22399615
     },
     "RegistrySortitionLib": {
       "address": "0xD7E39f50014B8246d65E51306bAd72990a409537",
-      "blockNumber": 25786403
+      "blockNumber": 25786376
     },
     "MockUSDC": {
       "address": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-      "blockNumber": 25786403
+      "blockNumber": 20663730
     },
     "MockE3Program": {
       "address": "0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7",
-      "blockNumber": 25786403
+      "blockNumber": 25786371
     },
     "CiphernodeRegistryOwnable": {
       "address": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
-      "blockNumber": 25786403,
+      "blockNumber": 25786378,
       "constructorArgs": {
         "owner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
         "submissionWindow": "600"
@@ -276,42 +276,42 @@
     },
     "InterfoldPricing": {
       "address": "0xacdF7F0Eebe8b7604f3C6596E3f934948C013697",
-      "blockNumber": 25786403
+      "blockNumber": 25786379
     },
     "InterfoldLifecycle": {
       "address": "0x6EACA5603C702Bbce3467DE8E9A0A113C0321828",
-      "blockNumber": 25786403
+      "blockNumber": 25786380
     },
     "BondingAssetLib": {
       "address": "0x073534b7DFc4cca243Bd1429A8681d4D116a5ca4",
-      "blockNumber": 25786403
+      "blockNumber": 25786385
     },
     "BondingEligibilityLib": {
       "address": "0xa4a5a2df4E37725f4A218d8057AD3256A8d9A16d",
-      "blockNumber": 25786403
+      "blockNumber": 25786386
     },
     "BondingSlashingLib": {
       "address": "0xB5015cFFff8092065703aa7B01022E5bC0AE8bb6",
-      "blockNumber": 25786403
+      "blockNumber": 25786387
     },
     "BondingRegistrationLib": {
       "address": "0x4d1A89547C6e0ACAd51aF968Df83396088e7b85D",
-      "blockNumber": 25786403
+      "blockNumber": 25786388
     },
     "BondingOwnershipLib": {
       "address": "0x9434dCf5007fAEA915a83c4f2baA592876eb8C6A",
-      "blockNumber": 25786403
+      "blockNumber": 25786389
     },
     "BondedCheckpoints": {
       "address": "0xDbCaeec5B040A134314FfD43aA2ca0D16006f963",
-      "blockNumber": 25786403,
+      "blockNumber": 25786391,
       "constructorArgs": {
         "registry": "0x0ec90465095C21830BEcED07e032809A2Bd2915F"
       }
     },
     "Interfold": {
       "address": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
-      "blockNumber": 25786403,
+      "blockNumber": 25786382,
       "constructorArgs": {
         "owner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
         "registry": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
@@ -338,7 +338,7 @@
     },
     "E3RefundManager": {
       "address": "0x1940eF168f4E0B3dA24BEca539856684793B0F6e",
-      "blockNumber": 25786403,
+      "blockNumber": 25786384,
       "constructorArgs": {
         "owner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
         "interfold": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
@@ -354,7 +354,7 @@
     },
     "BondingRegistry": {
       "address": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
-      "blockNumber": 25786403,
+      "blockNumber": 25473398,
       "constructorArgs": {
         "owner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
         "ticketToken": "0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D",

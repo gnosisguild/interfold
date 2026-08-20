@@ -14,6 +14,7 @@ node:
 chains:
   - name: '${NETWORK}'
     rpc_url: '${RPC_URL}'
+    chain_id: ${CHAIN_ID}
     contracts:
       interfold:
         address: '${INTERFOLD_CONTRACT}'
@@ -24,3 +25,9 @@ chains:
       bonding_registry:
         address: '${BONDING_REGISTRY_CONTRACT}'
         deploy_block: ${BONDING_REGISTRY_DEPLOY_BLOCK}
+      slashing_manager:
+        address: '${SLASHING_MANAGER_CONTRACT}'
+        deploy_block: ${SLASHING_MANAGER_DEPLOY_BLOCK}
+      fee_token:
+        address: '${FEE_TOKEN_CONTRACT}'
+        deploy_block: ${FEE_TOKEN_DEPLOY_BLOCK}

@@ -1,6 +1,6 @@
 ---
 title: 'Running a Ciphernode'
-description: 'Three ways to run a ciphernode: DappNode, Interfold CLI, or Docker'
+description: 'Three ways to run a ciphernode: DAppNode, Interfold CLI, or Docker'
 ---
 
 # Running a Ciphernode
@@ -8,36 +8,48 @@ description: 'Three ways to run a ciphernode: DappNode, Interfold CLI, or Docker
 This guide covers three methods to run a ciphernode, from easiest to most flexible. Choose the
 method that best fits your infrastructure.
 
-## Method 1: DappNode (Easiest)
+## Method 1: DAppNode (Easiest)
 
-DappNode provides a user-friendly interface for running a ciphernode with minimal configuration.
+DAppNode provides a user-friendly interface for running a ciphernode with minimal configuration.
 
 ### Installation
 
-1. Open your DappNode UI (`http://my.dappnode`)
+1. Open your DAppNode UI (`http://my.dappnode`)
 2. Search for **"Interfold Ciphernode"** (the current package name for the Interfold ciphernode) and
    install the package
 3. The setup wizard will prompt you for:
-   - `RPC_URL` - WebSocket RPC endpoint (e.g., `wss://ethereum-sepolia-rpc.publicnode.com`)
-   - `NETWORK` - Network name (e.g., `sepolia`, `mainnet`)
+   - `RPC_URL` - WebSocket RPC endpoint
+   - `NETWORK` and `CHAIN_ID`
    - Contract addresses and deploy blocks
-   - Optional: encryption password, network key, private key
+   - Ciphernode credentials JSON file
+   - Optional bootstrap peers
 
 4. Confirm and complete the installation
 5. Check **Packages → interfold-ciphernode → Logs** to verify the node started
 
 ### Configuration via Environment Variables
 
-| Variable              | Description                                  | Required |
-| --------------------- | -------------------------------------------- | -------- |
-| `RPC_URL`             | WebSocket RPC endpoint                       | Yes      |
-| `NETWORK`             | Network name (sepolia, mainnet, etc.)        | No       |
-| `NODE_ADDRESS`        | Your Ethereum address                        | No       |
-| `QUIC_PORT`           | UDP port for P2P networking (default: 37173) | No       |
-| `ENCRYPTION_PASSWORD` | Password to encrypt local data               | No       |
-| `NETWORK_PRIVATE_KEY` | libp2p network key (ed25519)                 | No       |
-| `PRIVATE_KEY`         | Ethereum private key for node transactions   | No       |
-| `PEERS`               | Comma-separated peer multiaddresses          | No       |
+| Variable                           | Description                                  | Required |
+| ---------------------------------- | -------------------------------------------- | -------- |
+| `RPC_URL`                          | WebSocket RPC endpoint                       | Yes      |
+| `NETWORK`                          | Network name (mainnet, sepolia, etc.)        | Yes      |
+| `CHAIN_ID`                         | EIP-155 chain ID                             | Yes      |
+| `NODE_ADDRESS`                     | Your Ethereum address                        | Yes      |
+| `INTERFOLD_CONTRACT`               | Interfold coordinator contract               | Yes      |
+| `CIPHERNODE_REGISTRY_CONTRACT`     | Ciphernode registry contract                 | Yes      |
+| `BONDING_REGISTRY_CONTRACT`        | Bonding registry contract                    | Yes      |
+| `SLASHING_MANAGER_CONTRACT`        | Slashing manager contract                    | Yes      |
+| `FEE_TOKEN_CONTRACT`               | Fee token contract                           | Yes      |
+| `INTERFOLD_DEPLOY_BLOCK`           | Interfold contract deploy block              | Yes      |
+| `CIPHERNODE_REGISTRY_DEPLOY_BLOCK` | Ciphernode registry deploy block             | Yes      |
+| `BONDING_REGISTRY_DEPLOY_BLOCK`    | Bonding registry deploy block                | Yes      |
+| `SLASHING_MANAGER_DEPLOY_BLOCK`    | Slashing manager deploy block                | Yes      |
+| `FEE_TOKEN_DEPLOY_BLOCK`           | Fee token deploy block                       | Yes      |
+| `QUIC_PORT`                        | UDP port for P2P networking (default: 37173) | No       |
+| `PEERS`                            | Comma-separated peer multiaddresses          | No       |
+
+Upload the credentials JSON file through the DAppNode setup wizard. The package copies it to
+`/run/secrets/secrets.json` before startup.
 
 ---
 
@@ -212,7 +224,7 @@ Pull and run an explicit versioned release tag for an operator node. Do not use 
 tag:
 
 ```bash
-export CIPHERNODE_IMAGE='ghcr.io/gnosisguild/ciphernode:<release-version>'
+export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:<release-version>'
 docker pull "$CIPHERNODE_IMAGE"
 ```
 
@@ -270,13 +282,13 @@ ${EDITOR:-vi} secrets.json
 ```json
 {
   "password": "<strong-key-encryption-password>",
-  "private_key": "<operator-wallet-private-key>",
-  "network_private_key": "<unique-libp2p-network-private-key>"
+  "private_key": "<operator-wallet-private-key>"
 }
 ```
 
-All three values are required. Back up the encrypted node data, this password, and the network key
-through your secret-management system. Keep the wallet key in the project-approved signing system.
+Both values are required. The wallet command derives the libp2p identity from the operator wallet
+key. Back up the encrypted node data and this password through your secret-management system. Keep
+the wallet key in the project-approved signing system.
 
 ### Run the Container
 

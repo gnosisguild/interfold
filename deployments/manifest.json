@@ -71,37 +71,37 @@
       "contracts": {
         "interfold": {
           "address": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
-          "deploy_block": 25786403
+          "deploy_block": 25786382
         },
         "ciphernode_registry": {
           "address": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
-          "deploy_block": 25786403
+          "deploy_block": 25786378
         },
         "bonding_registry": {
           "address": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
-          "deploy_block": 25786403
+          "deploy_block": 25473398
         },
         "slashing_manager": {
           "address": "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9",
-          "deploy_block": 25786403
+          "deploy_block": 25786375
         },
         "fee_token": {
           "address": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-          "deploy_block": 25786403
+          "deploy_block": 20663730
         }
       },
       "reference": {
         "InterfoldTicketToken": {
           "address": "0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D",
-          "deploy_block": 25786403
+          "deploy_block": 25786372
         },
         "E3RefundManager": {
           "address": "0x1940eF168f4E0B3dA24BEca539856684793B0F6e",
-          "deploy_block": 25786403
+          "deploy_block": 25786384
         },
         "MockE3Program": {
           "address": "0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7",
-          "deploy_block": 25786403
+          "deploy_block": 25786371
         }
       }
     }

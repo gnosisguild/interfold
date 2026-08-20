@@ -49,6 +49,10 @@ class VersionBumper {
       this.oldVersion = this.getCurrentVersion()
       console.log(`📌 Current version: ${this.oldVersion || 'unknown'}`)
 
+      if (!this.isPrerelease()) {
+        this.validateDappNodeUpstreamProgression()
+      }
+
       // Check for uncommitted changes
       if (!this.options.skipGit && !this.options.dryRun) {
         this.checkGitStatus()
@@ -64,14 +68,19 @@ class VersionBumper {
         console.log('      - packages/interfold-contracts')
         console.log('      - packages/interfold-config')
         console.log('      - packages/interfold-react')
+        console.log('      - packages/interfold-mcp')
         console.log('      - crates/wasm')
-        console.log('   3. Update lock files (Cargo.lock, pnpm-lock.yaml)')
-        console.log('   4. Generate/update CHANGELOG.md')
+        const dappNodeAction = this.isPrerelease()
+          ? 'skip for pre-release'
+          : `update upstream image to ${this.newVersion} and bump wrapper version`
+        console.log(`   3. DAppNode package: ${dappNodeAction}`)
+        console.log('   4. Update lock files (Cargo.lock, pnpm-lock.yaml)')
+        console.log('   5. Generate/update CHANGELOG.md')
         if (!this.options.skipGit) {
-          console.log('   5. Commit changes')
-          console.log(`   6. Create tag: v${this.newVersion}`)
+          console.log('   6. Commit changes')
+          console.log(`   7. Create tag: v${this.newVersion}`)
           if (!this.options.skipPush) {
-            console.log('   7. Push commits and tag to origin')
+            console.log('   8. Push commits and tag to origin')
           }
         }
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
@@ -83,6 +92,9 @@ class VersionBumper {
 
       // Bump npm packages
       this.bumpNpmPackages()
+
+      // Bump DAppNode package for stable releases
+      this.bumpDappNodePackage()
 
       // Update lock files
       this.updateLockFiles()
@@ -101,6 +113,7 @@ class VersionBumper {
       console.log(`   New version: ${this.newVersion}`)
       console.log(`   Rust crates: ✓`)
       console.log(`   NPM packages: ✓`)
+      console.log(`   DAppNode package: ${this.isPrerelease() ? 'skipped for pre-release' : '✓'}`)
       console.log(`   Lock files: ✓`)
       console.log(`   Changelog: ✓`)
 
@@ -185,12 +198,17 @@ class VersionBumper {
       execSync('git add .', { cwd: this.rootDir })
 
       // Create commit message
-      const commitMessage = `chore(release): bump version to ${this.newVersion}
-  
-  - Updated all Rust crates to ${this.newVersion}
-  - Updated all npm packages to ${this.newVersion}
-  - Updated lock files
-  - Generated CHANGELOG.md`
+      const commitMessageLines = [
+        `chore(release): bump version to ${this.newVersion}`,
+        '',
+        `- Updated all Rust crates to ${this.newVersion}`,
+        `- Updated all npm packages to ${this.newVersion}`,
+      ]
+      if (!this.isPrerelease()) {
+        commitMessageLines.push(`- Updated DAppNode upstream image to ${this.newVersion}`)
+      }
+      commitMessageLines.push('- Updated lock files', '- Generated CHANGELOG.md')
+      const commitMessage = commitMessageLines.join('\n')
 
       // Commit changes
       console.log('   Committing changes...')
@@ -404,6 +422,129 @@ class VersionBumper {
       const packageName = this.getPackageName(packageJsonPath)
       console.log(`   ✓ ${packageName}`)
     }
+  }
+
+  /**
+   * Bump the DAppNode wrapper when publishing a stable ciphernode image.
+   */
+  private bumpDappNodePackage(): void {
+    console.log('\n🧩 Bumping DAppNode package version...')
+
+    if (this.isPrerelease()) {
+      console.log('   Skipping DAppNode package for pre-release tag')
+      return
+    }
+
+    const packagePath = join(this.rootDir, 'dappnode/dappnode_package.json')
+    const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'))
+    const dappNodeVersion = this.nextDappNodeWrapperVersion(packageJson.version, packageJson.upstreamVersion, this.newVersion)
+
+    packageJson.version = dappNodeVersion
+    packageJson.upstreamVersion = this.newVersion
+    writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n')
+    console.log('   ✓ dappnode_package.json')
+
+    this.updateDappNodeNpmVersion(dappNodeVersion)
+
+    this.replaceInFile(join(this.rootDir, 'dappnode/docker-compose.yml'), [
+      [/UPSTREAM_VERSION: [^\n]+/, `UPSTREAM_VERSION: ${this.newVersion}`],
+      [
+        /image: 'ciphernode\.interfold-ciphernode\.public\.dappnode\.eth:[^']+'/,
+        `image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:${dappNodeVersion}'`,
+      ],
+    ])
+    console.log('   ✓ docker-compose.yml')
+
+    this.replaceInFile(join(this.rootDir, 'dappnode/Dockerfile'), [
+      [/ARG UPSTREAM_VERSION=[^\n]+/, `ARG UPSTREAM_VERSION=${this.newVersion}`],
+    ])
+    console.log('   ✓ Dockerfile')
+    console.log(`   ✓ wrapper ${dappNodeVersion} uses upstream ${this.newVersion}`)
+  }
+
+  private updateDappNodeNpmVersion(dappNodeVersion: string): void {
+    const npmPackagePath = join(this.rootDir, 'dappnode/package.json')
+    const npmPackageJson = JSON.parse(readFileSync(npmPackagePath, 'utf-8'))
+    npmPackageJson.version = dappNodeVersion
+    writeFileSync(npmPackagePath, JSON.stringify(npmPackageJson, null, 2) + '\n')
+
+    const lockPath = join(this.rootDir, 'dappnode/package-lock.json')
+    const lockJson = JSON.parse(readFileSync(lockPath, 'utf-8'))
+    lockJson.version = dappNodeVersion
+    if (lockJson.packages?.['']) {
+      lockJson.packages[''].version = dappNodeVersion
+    }
+    writeFileSync(lockPath, JSON.stringify(lockJson, null, 2) + '\n')
+    console.log('   ✓ dappnode npm package metadata')
+  }
+
+  private nextDappNodeWrapperVersion(currentWrapperVersion: string, previousUpstreamVersion: string, nextUpstreamVersion: string): string {
+    const currentWrapper = this.parseSemverCore(currentWrapperVersion)
+    const previousUpstream = this.parseSemverCore(previousUpstreamVersion)
+    const nextUpstream = this.parseSemverCore(nextUpstreamVersion)
+
+    if (this.semverCoreLessThan(nextUpstream, previousUpstream)) {
+      throw new Error(`Upstream version cannot decrease: ${previousUpstreamVersion} -> ${nextUpstreamVersion}`)
+    }
+
+    if (nextUpstream.major !== previousUpstream.major) {
+      return `${currentWrapper.major + 1}.0.0`
+    }
+    if (nextUpstream.minor !== previousUpstream.minor) {
+      return `${currentWrapper.major}.${currentWrapper.minor + 1}.0`
+    }
+    return `${currentWrapper.major}.${currentWrapper.minor}.${currentWrapper.patch + 1}`
+  }
+
+  private validateDappNodeUpstreamProgression(): void {
+    const packagePath = join(this.rootDir, 'dappnode/dappnode_package.json')
+    const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'))
+    const previousUpstream = this.parseSemverCore(packageJson.upstreamVersion)
+    const nextUpstream = this.parseSemverCore(this.newVersion)
+
+    if (this.semverCoreLessThan(nextUpstream, previousUpstream)) {
+      throw new Error(`Upstream version cannot decrease: ${packageJson.upstreamVersion} -> ${this.newVersion}`)
+    }
+  }
+
+  private parseSemverCore(version: string): { major: number; minor: number; patch: number } {
+    const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
+    if (!match) {
+      throw new Error(`Invalid version format: ${version}`)
+    }
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2]),
+      patch: Number(match[3]),
+    }
+  }
+
+  private semverCoreLessThan(
+    left: { major: number; minor: number; patch: number },
+    right: { major: number; minor: number; patch: number },
+  ): boolean {
+    if (left.major !== right.major) {
+      return left.major < right.major
+    }
+    if (left.minor !== right.minor) {
+      return left.minor < right.minor
+    }
+    return left.patch < right.patch
+  }
+
+  private replaceInFile(filePath: string, replacements: [RegExp, string][]): void {
+    let content = readFileSync(filePath, 'utf-8')
+    for (const [pattern, replacement] of replacements) {
+      if (!pattern.test(content)) {
+        throw new Error(`Could not find pattern ${pattern} in ${filePath}`)
+      }
+      content = content.replace(pattern, replacement)
+    }
+    writeFileSync(filePath, content)
+  }
+
+  private isPrerelease(): boolean {
+    return this.newVersion.includes('-')
   }
 
   /**

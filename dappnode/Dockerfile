@@ -1,8 +1,8 @@
 # DAppNode Interfold Ciphernode Dockerfile
 # Uses official upstream image from GitHub Container Registry
 
-ARG UPSTREAM_VERSION
-FROM ghcr.io/gnosisguild/ciphernode:${UPSTREAM_VERSION} AS upstream
+ARG UPSTREAM_VERSION=0.10.0
+FROM ghcr.io/theinterfold/ciphernode:${UPSTREAM_VERSION} AS upstream
 
 # Runtime image
 FROM debian:stable-slim
@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext-base \
     iproute2 \
     jq \
-    expect \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,11 +31,10 @@ RUN chmod +x /usr/local/bin/interfold
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=755 healthcheck.sh /usr/local/bin/healthcheck.sh
 COPY --chmod=644 config.template.yaml /opt/config.template.yaml
-COPY --chmod=444 provision-credentials.exp /opt/provision-credentials.exp
 
 # Labels
 LABEL maintainer="Gnosis Guild <https://gnosisguild.org>"
-LABEL org.opencontainers.image.source="https://github.com/gnosisguild/interfold"
+LABEL org.opencontainers.image.source="https://github.com/theinterfold/interfold"
 LABEL org.opencontainers.image.description="Interfold Ciphernode for DAppNode"
 
 USER ciphernode
