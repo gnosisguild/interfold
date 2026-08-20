@@ -17,7 +17,7 @@ use tracing::info;
 use crate::{
     direct_requester::{DirectRequester, WithPeer, WithoutPeer},
     domain::sync_coordinator::effective_sync_limit,
-    domain::wire::{decode, MAX_DIRECT_MESSAGE_BYTES},
+    domain::wire::{decode_sync, encode_sync, SyncMessageKind},
     events::PeerTarget,
 };
 
@@ -132,7 +132,7 @@ where
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self> {
-        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize EventBatch")
+        decode_sync(&value, SyncMessageKind::EventBatch).context("failed to deserialize EventBatch")
     }
 }
 
@@ -143,7 +143,7 @@ where
     type Error = anyhow::Error;
 
     fn try_from(value: EventBatch<E>) -> Result<Self> {
-        bincode::serialize(&value).context("failed to serialize EventBatch")
+        encode_sync(SyncMessageKind::EventBatch, &value).context("failed to serialize EventBatch")
     }
 }
 
@@ -180,7 +180,8 @@ impl TryFrom<FetchEventsSince> for Vec<u8> {
     type Error = anyhow::Error;
 
     fn try_from(value: FetchEventsSince) -> Result<Self> {
-        bincode::serialize(&value).context("failed to serialize FetchEventsSince")
+        encode_sync(SyncMessageKind::FetchEvents, &value)
+            .context("failed to serialize FetchEventsSince")
     }
 }
 
@@ -188,7 +189,8 @@ impl TryFrom<Vec<u8>> for FetchEventsSince {
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self> {
-        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize FetchEventsSince")
+        decode_sync(&value, SyncMessageKind::FetchEvents)
+            .context("failed to deserialize FetchEventsSince")
     }
 }
 

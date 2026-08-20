@@ -10,6 +10,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     aggregate_id: AggregateId,
     since: u128,
     budget: &mut SyncFetchBudget,
+    network: &NetworkPolicy,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
         .max_retries(SYNC_FETCH_MAX_RETRIES)
@@ -26,12 +27,13 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     )
     .await?;
 
-    validate_historical_events(aggregate_id, events)
+    validate_historical_events(aggregate_id, events, network)
 }
 
 pub(in crate::actors::net_sync_manager) fn validate_historical_events(
     aggregate_id: AggregateId,
     events: Vec<InterfoldEvent<Unsequenced>>,
+    network: &NetworkPolicy,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     for event in &events {
         if event.aggregate_id() != aggregate_id {
@@ -47,6 +49,7 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
                 event.event_type()
             );
         }
+        network.validate_event(event)?;
     }
     Ok(events)
 }
@@ -57,6 +60,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     event: TypedEvent<HistoricalNetSyncStart>,
     address: impl Into<Recipient<TypedEvent<SyncRequestSucceeded>>>,
     wait_for_event: bool,
+    network: NetworkPolicy,
 ) -> Result<()> {
     info!("Sync request event received");
     let (event, ctx) = event.into_components();
@@ -111,6 +115,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
             *aggregate_id,
             *since,
             &mut budget,
+            &network,
         )
         .await
         {
@@ -191,6 +196,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                     aggregate_id,
                     since,
                     &mut budget,
+                    &network,
                 )
                 .await
                 {

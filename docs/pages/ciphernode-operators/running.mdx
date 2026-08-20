@@ -97,10 +97,9 @@ Edit `~/.config/interfold/interfold.config.yaml`:
 
 ```yaml
 node:
+  network: mainnet
   address: '0xYourAddress'
   quic_port: 9091
-  peers:
-    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
@@ -126,6 +125,7 @@ chains:
         deploy_block: 20663730
 
   - name: sepolia
+    enabled: false
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     chain_id: 11155111
     contracts:
@@ -234,10 +234,9 @@ Create a `config.yaml` file:
 
 ```yaml
 node:
+  network: sepolia
   address: '0xYourAddress'
   quic_port: 9091
-  peers:
-    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
@@ -358,15 +357,17 @@ docker logs -f ciphernode
 
 ### Node Configuration
 
-| Field          | Description                         | Default                    |
-| -------------- | ----------------------------------- | -------------------------- |
-| `address`      | Your Ethereum address               | Required                   |
-| `quic_port`    | UDP port for QUIC/libp2p networking | `9091`                     |
-| `peers`        | Bootstrap peer multiaddresses       | `[]`                       |
-| `autopassword` | Auto-generate password if missing   | `false`                    |
-| `autowallet`   | Auto-load wallet from environment   | `false`                    |
-| `data_dir`     | Override data directory             | `~/.local/share/interfold` |
-| `config_dir`   | Override config directory           | `~/.config/interfold`      |
+| Field          | Description                                    | Default                    |
+| -------------- | ---------------------------------------------- | -------------------------- |
+| `network`      | P2P profile: `mainnet`, `sepolia`, or `local`  | Inferred from chain ID     |
+| `network_id`   | Stable 32-byte hex ID for a custom P2P network | Required for custom names  |
+| `address`      | Your Ethereum address                          | Required                   |
+| `quic_port`    | UDP port for QUIC/libp2p networking            | `9091`                     |
+| `peers`        | Explicit bootstrap overrides                   | Profile DNS bootstrap      |
+| `autopassword` | Auto-generate password if missing              | `false`                    |
+| `autowallet`   | Auto-load wallet from environment              | `false`                    |
+| `data_dir`     | Override data directory                        | `~/.local/share/interfold` |
+| `config_dir`   | Override config directory                      | `~/.config/interfold`      |
 
 ### Chain Configuration
 
@@ -426,19 +427,25 @@ Open the following ports:
 
 ### Bootstrap Peers
 
-Connect to the Interfold bootstrap network:
+Set the network profile and omit `peers` to use its DNS bootstrap address:
 
 ```yaml
-peers:
-  - '/dnsaddr/bootstrap.interfold.network'
+node:
+  network: mainnet
 ```
+
+Mainnet uses `/dnsaddr/bootstrap.interfold.network`. Sepolia uses
+`/dnsaddr/bootstrap-sepolia.interfold.network`. The profile scopes every libp2p protocol, so a node
+cannot join the other network even if DNS or an explicit peer address is wrong.
 
 Or specify individual peers:
 
 ```yaml
-peers:
-  - '/dns4/node1.example.com/udp/9091/quic-v1'
-  - '/ip4/192.168.1.100/udp/9091/quic-v1'
+node:
+  network: mainnet
+  peers:
+    - '/dns4/node1.example.com/udp/9091/quic-v1'
+    - '/ip4/192.168.1.100/udp/9091/quic-v1'
 ```
 
 ---

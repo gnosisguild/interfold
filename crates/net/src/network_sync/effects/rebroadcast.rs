@@ -46,9 +46,13 @@ impl NetSyncManager {
         &mut self,
         events: Vec<InterfoldEvent>,
     ) {
-        let mut count = 0usize;
+        let mut commands = Vec::new();
         for event in events {
             if !EventTranslationService::is_forwardable_event(&event) {
+                continue;
+            }
+            if let Err(error) = self.network.validate_event(&event) {
+                warn!(%error, "Skipping own artifact that does not match the active network");
                 continue;
             }
             let data: GossipData = match event.try_into() {
@@ -58,16 +62,22 @@ impl NetSyncManager {
                     continue;
                 }
             };
-            if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
+            commands.push(NetCommand::GossipPublish {
                 topic: self.topic.clone(),
                 data,
                 correlation_id: CorrelationId::new(),
-            }) {
-                warn!("Failed to re-broadcast own artifact (channel full or closed): {e}");
-            } else {
-                count += 1;
-            }
+            });
         }
-        info!("NetSyncManager: re-broadcast {count} own forwardable artifact(s) after restart");
+        let count = commands.len();
+        let tx = self.tx.clone();
+        actix::spawn(async move {
+            for command in commands {
+                if let Err(error) = tx.send(command).await {
+                    warn!(%error, "Failed to queue own artifact for re-broadcast");
+                    break;
+                }
+            }
+        });
+        info!("NetSyncManager: queued {count} own forwardable artifact(s) after restart");
     }
 }

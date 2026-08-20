@@ -226,6 +226,11 @@ pub enum NetEvent {
     ConnectionEstablished {
         connection_id: ConnectionId,
     },
+    /// A transport connection failed the Interfold Identify admission policy.
+    PeerRejected {
+        connection_id: ConnectionId,
+        reason: String,
+    },
     /// There was an error creating a connection
     OutgoingConnectionError {
         connection_id: ConnectionId,
@@ -314,6 +319,7 @@ impl NetEvent {
             Self::GossipPublishError { .. }
             | Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
+            | Self::PeerRejected { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtPutRecordError { .. }

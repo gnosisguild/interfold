@@ -125,7 +125,7 @@ pub async fn build_ciphernode(
     peers: Vec<String>,
 ) -> Result<CiphernodeHandle> {
     // add cli peers to the config
-    config.add_peers(peers);
+    config.add_peers(peers)?;
 
     let node = e3_entrypoint::start::start::execute(config).await?;
 

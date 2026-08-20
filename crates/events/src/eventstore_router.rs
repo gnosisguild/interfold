@@ -23,6 +23,19 @@ struct QueryAggregator {
     collected_events: Vec<InterfoldEvent>,
 }
 
+fn quarantine_misrouted_events(
+    events: Vec<InterfoldEvent>,
+    aggregate_id: AggregateId,
+) -> (Vec<InterfoldEvent>, usize) {
+    let before = events.len();
+    let events: Vec<_> = events
+        .into_iter()
+        .filter(|event| event.aggregate_id() == aggregate_id)
+        .collect();
+    let quarantined = before.saturating_sub(events.len());
+    (events, quarantined)
+}
+
 impl QueryAggregator {
     fn new(parent_id: CorrelationId, sender: Recipient<EventStoreQueryResponse>) -> Self {
         Self {
@@ -75,7 +88,15 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                     return;
                 }
             };
+            let (events, quarantined) = quarantine_misrouted_events(events, aggregate_id);
             self.collected_events.extend(events);
+            if quarantined > 0 {
+                warn!(
+                    %aggregate_id,
+                    quarantined,
+                    "Ignoring legacy events that were written to the wrong aggregate store"
+                );
+            }
 
             if self.pending.is_empty() {
                 debug!("All aggregates fulfilled, sending response");
@@ -119,9 +140,9 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         debug!("Handling store event requested....");
         let aggregate_id = msg.event.aggregate_id();
         let store_addr = self.stores.get(&aggregate_id).unwrap_or_else(|| {
-            self.stores
-                .get(&AggregateId::new(0))
-                .expect("Default EventStore for AggregateId(0) not found")
+            panic!(
+                "No EventStore is configured for aggregate {aggregate_id}; refusing to write it to another aggregate"
+            )
         });
         let event = msg.event;
         let sender = msg.sender;
@@ -139,6 +160,23 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
+
+        let missing: Vec<_> = query
+            .keys()
+            .filter(|aggregate_id| !self.stores.contains_key(aggregate_id))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            sender
+                .try_send(EventStoreQueryResponse::from_result(
+                    parent_id,
+                    Err(anyhow::anyhow!(
+                        "No EventStore is configured for aggregates {missing:?}"
+                    )),
+                ))
+                .context("failed to return the missing aggregate error")?;
+            return Ok(());
+        }
 
         let sub_queries: Vec<_> = query
             .into_iter()
@@ -184,6 +222,23 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let limit = msg.limit();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
+
+        let missing: Vec<_> = query
+            .keys()
+            .filter(|aggregate_id| !self.stores.contains_key(aggregate_id))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            sender
+                .try_send(EventStoreQueryResponse::from_result(
+                    parent_id,
+                    Err(anyhow::anyhow!(
+                        "No EventStore is configured for aggregates {missing:?}"
+                    )),
+                ))
+                .context("failed to return the missing aggregate error")?;
+            return Ok(());
+        }
 
         let sub_queries: Vec<_> = query
             .into_iter()
@@ -272,5 +327,38 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<SeqAgg>> for Event
         if let Err(e) = self.handle_event_store_query_seq(msg, ctx) {
             error!("Failed to route get events after request: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{E3id, EventConstructorWithTimestamp, EventSource, TestEvent, Unsequenced};
+
+    fn event(chain_id: Option<u64>, sequence: u64) -> InterfoldEvent {
+        let mut data = TestEvent::new("router", sequence);
+        if let Some(chain_id) = chain_id {
+            data = data.with_e3_id(E3id::new(sequence.to_string(), chain_id));
+        }
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.into(),
+            None,
+            u128::from(sequence),
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(sequence)
+    }
+
+    #[test]
+    fn legacy_events_in_the_wrong_store_are_quarantined() {
+        let expected = event(Some(1), 1);
+        let (events, quarantined) = quarantine_misrouted_events(
+            vec![expected.clone(), event(Some(11_155_111), 2), event(None, 3)],
+            AggregateId::new(1),
+        );
+
+        assert_eq!(events, vec![expected]);
+        assert_eq!(quarantined, 2);
     }
 }

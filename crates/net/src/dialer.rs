@@ -113,6 +113,14 @@ async fn wait_for_connection(
                             return Ok(());
                         }
                     }
+                    NetEvent::PeerRejected { connection_id, reason } => {
+                        if connection_id == dial_connection {
+                            return Err(RetryError::Failure(std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                reason,
+                            ).into()));
+                        }
+                    }
                     NetEvent::DialError { error } => {
                         warn!("DialError!");
                         return match error.as_ref() {

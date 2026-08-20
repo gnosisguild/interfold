@@ -5,6 +5,9 @@
   "running": {
     "title": "Running a Ciphernode"
   },
+  "network-migration": {
+    "title": "P2P Network Migration"
+  },
   "registration": {
     "title": "Registration & Bonding"
   },

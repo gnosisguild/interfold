@@ -1,0 +1,80 @@
+---
+title: 'P2P Network Migration'
+description: 'Move mainnet and Sepolia ciphernodes to isolated libp2p networks'
+---
+
+# P2P Network Migration
+
+This release replaces the shared, unscoped libp2p overlay with separate mainnet and Sepolia
+overlays. It is an intentional network cutover. The old protocol cannot identify its network, so the
+new release does not offer it as a compatibility fallback.
+
+## DNS Prerequisites
+
+Create the Sepolia record before any node upgrade:
+
+```text
+_dnsaddr.bootstrap-sepolia.interfold.network TXT
+dnsaddr=/ip4/18.233.222.222/udp/9501/quic-v1/p2p/12D3KooWPgeL5zZCd3EbhKrxNxgmcSce7m2S2bfo1B42Uw44W7CE
+```
+
+Keep `_dnsaddr.bootstrap.interfold.network` on the old Sepolia node until the new mainnet bootstrap
+node is running the new release. Then change that record to the new mainnet bootstrap multiaddress.
+DNS TTLs determine how long clients can retain the previous answer.
+
+## Upgrade a Node
+
+1. Stop the ciphernode cleanly.
+2. Back up its configuration and data directory.
+3. Set the P2P profile in the configuration:
+
+   ```yaml
+   node:
+     network: mainnet # Use sepolia for a Sepolia node.
+   ```
+
+4. Remove `node.peers` to use the profile default. You can instead set the corresponding alias:
+   - Mainnet: `/dnsaddr/bootstrap.interfold.network`
+   - Sepolia: `/dnsaddr/bootstrap-sepolia.interfold.network`
+
+5. Install the release and run the offline integrity check:
+
+   ```bash
+   interfold node validate
+   ```
+
+6. Start the node and confirm that its admitted peers use the selected network.
+
+The loader infers the built-in profile when `node.network` is absent and the enabled chain has a
+known chain ID. It also rewrites the old mainnet alias or the retired fixed Sepolia address to the
+Sepolia alias when the selected profile is Sepolia. A mainnet profile rejects the retired Sepolia
+address instead of dialing it.
+
+## Existing Data
+
+Do not delete the ciphernode database for this migration. libp2p peer routing and connection state
+are in memory and disappear when the process stops. The upgrade keeps the encrypted libp2p identity,
+event history, snapshots, and active E3 state.
+
+Older releases could route an event for an unknown chain into the global aggregate store. The new
+router rejects such writes. During reads, it ignores a legacy event whose embedded aggregate does
+not match the store that contains it. This logical quarantine does not rewrite or delete the event
+log.
+
+The new node stages every transport connection until Identify confirms the exact network and
+required protocols. Incompatible old peers are disconnected before they enter Kademlia, gossip, or
+historical sync. Repeated rejection messages are suppressed for ten minutes, so old peers do not
+fill the terminal with connection warnings.
+
+## Cutover Order
+
+1. Create and verify the Sepolia DNS alias.
+2. Upgrade the Sepolia bootstrap node and a small Sepolia canary group.
+3. Upgrade the new mainnet bootstrap node and verify its advertised Peer ID.
+4. Change the mainnet DNS alias to the mainnet bootstrap node.
+5. Upgrade mainnet canaries, then the remaining mainnet nodes.
+6. Upgrade all remaining Sepolia nodes.
+
+Future software releases can roll normally while their scoped protocol names and wire schemas stay
+compatible. A later wire change can advertise multiple safe, network-scoped request-response
+versions in newest-first order. Never re-enable the old unscoped protocol as a fallback.

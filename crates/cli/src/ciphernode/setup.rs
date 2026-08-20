@@ -22,6 +22,7 @@ use crate::wallet_set::ask_for_private_key;
 #[instrument(name = "app", skip_all)]
 pub async fn execute(
     out: Console,
+    network: String,
     rpc_url: Option<String>,
     mut password: Option<Zeroizing<String>>,
     password_stdin: bool,
@@ -76,7 +77,7 @@ pub async fn execute(
     let node_address = setup::derive_address(&private_key)?;
 
     // Execute
-    let config = setup::execute(&rpc_url, &node_address, &config_dir)?;
+    let config = setup::execute(&rpc_url, &node_address, &config_dir, &network)?;
 
     e3_entrypoint::password::set::preflight(&config).await?;
     e3_entrypoint::password::set::execute(&config, pw).await?;
@@ -106,6 +107,11 @@ fn print_info(
     log!(out, " address: {}", colorize(address, Color::Cyan));
     log!(out, " peer_id: {}", colorize(peer_id, Color::Cyan));
     log!(out, " rpc_url: {}", colorize(rpc_url, Color::Cyan));
+    log!(
+        out,
+        " network: {}",
+        colorize(config.network().name(), Color::Cyan)
+    );
     log!(out, "");
     if config.using_custom_config() {
         log!(

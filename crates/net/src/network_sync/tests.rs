@@ -55,7 +55,14 @@ fn manager_with_recording_store(
         .recipient();
 
     (
-        NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic"),
+        NetSyncManager::new(
+            &bus,
+            &tx,
+            &evt_rx,
+            eventstore,
+            "my-topic",
+            NetworkPolicy::local_unrestricted(),
+        ),
         rx,
     )
 }
@@ -117,6 +124,7 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
     let error = validate_historical_events(
         AggregateId::new(0),
         vec![remote_unsequenced(local_non_forwardable_event())],
+        &NetworkPolicy::local_unrestricted(),
     )
     .unwrap_err();
 
@@ -129,7 +137,12 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
 fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
-    let error = validate_historical_events(AggregateId::new(999), vec![event]).unwrap_err();
+    let error = validate_historical_events(
+        AggregateId::new(999),
+        vec![event],
+        &NetworkPolicy::local_unrestricted(),
+    )
+    .unwrap_err();
 
     assert!(error.to_string().contains("while fetching 999"));
 }
@@ -143,7 +156,14 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let evt_rx = Arc::new(evt_rx);
     let eventstore = NoopEventStore.start().recipient();
 
-    let mut mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
+    let mut mgr = NetSyncManager::new(
+        &bus,
+        &tx,
+        &evt_rx,
+        eventstore,
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    );
 
     mgr.handle_rebroadcast_response(vec![
         local_forwardable_event("1234"),
@@ -151,7 +171,10 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     ]);
 
     // Exactly one GossipPublish for the forwardable artifact, on the configured topic.
-    let cmd = rx.try_recv().expect("expected a GossipPublish command");
+    let cmd = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for GossipPublish")
+        .expect("network command channel closed");
     let NetCommand::GossipPublish { topic, data, .. } = cmd else {
         panic!("expected GossipPublish, got {cmd:?}");
     };
