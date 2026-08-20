@@ -14,9 +14,6 @@ use crate::chain_config::ChainConfig;
 pub const MAINNET_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap.interfold.network";
 pub const SEPOLIA_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap-sepolia.interfold.network";
 
-const LEGACY_SEPOLIA_BOOTSTRAP_PEER: &str =
-    "/ip4/18.233.222.222/udp/9501/quic-v1/p2p/12D3KooWPgeL5zZCd3EbhKrxNxgmcSce7m2S2bfo1B42Uw44W7CE";
-
 const MAINNET_NETWORK_ID: &str = "7334c543e2347f84d95cb54e1428389d564691ba4a62d85451a0edcd891a46e2";
 const SEPOLIA_NETWORK_ID: &str = "0d953d3c037a4ca170afd2b9f8d2b400de3b34f2963ec8a71e3785a213aa0751";
 const LOCAL_NETWORK_ID: &str = "1289c74129da8c12de99b429b2fbd34e8e97406aa4a2757aaec956cacc69979a";
@@ -156,18 +153,13 @@ impl NetworkProfile {
         let mut resolved = BTreeSet::new();
         for peer in peers {
             let peer = match (self.name.as_str(), peer.as_str()) {
-                ("sepolia", MAINNET_BOOTSTRAP_PEER | LEGACY_SEPOLIA_BOOTSTRAP_PEER) => {
-                    SEPOLIA_BOOTSTRAP_PEER.to_string()
-                }
-                ("mainnet", SEPOLIA_BOOTSTRAP_PEER | LEGACY_SEPOLIA_BOOTSTRAP_PEER) => {
+                ("sepolia", MAINNET_BOOTSTRAP_PEER) => SEPOLIA_BOOTSTRAP_PEER.to_string(),
+                ("mainnet", SEPOLIA_BOOTSTRAP_PEER) => {
                     bail!(
                         "the configured peer is a Sepolia bootstrap; remove it or use {MAINNET_BOOTSTRAP_PEER}"
                     )
                 }
-                (
-                    "local",
-                    MAINNET_BOOTSTRAP_PEER | SEPOLIA_BOOTSTRAP_PEER | LEGACY_SEPOLIA_BOOTSTRAP_PEER,
-                ) => {
+                ("local", MAINNET_BOOTSTRAP_PEER | SEPOLIA_BOOTSTRAP_PEER) => {
                     bail!("the local network profile cannot use a public Interfold bootstrap peer")
                 }
                 _ => peer,
@@ -314,14 +306,6 @@ mod tests {
             .resolve_peers(vec![MAINNET_BOOTSTRAP_PEER.to_string()])
             .unwrap();
         assert_eq!(peers, vec![SEPOLIA_BOOTSTRAP_PEER]);
-    }
-
-    #[test]
-    fn rejects_the_retired_sepolia_peer_on_mainnet() {
-        let error = NetworkProfile::mainnet()
-            .resolve_peers(vec![LEGACY_SEPOLIA_BOOTSTRAP_PEER.to_string()])
-            .unwrap_err();
-        assert!(error.to_string().contains("Sepolia bootstrap"));
     }
 
     #[test]

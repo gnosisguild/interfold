@@ -72,8 +72,7 @@ async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> 
     tokio::spawn(async move { node_a.start().await });
 
     // Phase 1: the dial must fail with WrongPeerId, then A must recover and
-    // connect to B under its real identity (via the re-keyed routing entry
-    // and the bootstrap triggered by the first mismatch).
+    // connect to B under its real identity through the corrected direct dial.
     let mut mismatches = 0usize;
     let mut connected = false;
     timeout(Duration::from_secs(30), async {

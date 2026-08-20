@@ -68,7 +68,8 @@ const DHT_MAX_RECORDS: usize = 1024;
 const DHT_MAX_RECORDS_PER_PEER: usize = 64;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
-const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 40;
+const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
+const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 
@@ -82,6 +83,7 @@ type GossipBehaviour =
 struct PeerConnectionFailures {
     dial: PeerFailureTracker,
     identity_mismatch: PeerFailureTracker,
+    quarantined_until: HashMap<libp2p::PeerId, Instant>,
 }
 
 impl PeerConnectionFailures {
@@ -89,7 +91,46 @@ impl PeerConnectionFailures {
         Self {
             dial: PeerFailureTracker::new(),
             identity_mismatch: PeerFailureTracker::new(),
+            quarantined_until: HashMap::new(),
         }
+    }
+
+    fn connection_succeeded(&mut self, peer_id: &libp2p::PeerId) {
+        self.dial.reset(peer_id);
+        self.identity_mismatch.reset(peer_id);
+        self.quarantined_until.remove(peer_id);
+    }
+
+    fn record_dial_failure(&mut self, peer_id: &libp2p::PeerId) -> Option<u32> {
+        if self.is_quarantined(peer_id) {
+            None
+        } else {
+            Some(self.dial.record_failure(peer_id))
+        }
+    }
+
+    fn quarantine(&mut self, peer_id: &libp2p::PeerId) {
+        self.dial.reset(peer_id);
+        self.quarantined_until
+            .insert(*peer_id, Instant::now() + STALE_PEER_COOLDOWN);
+    }
+
+    fn is_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
+        let now = Instant::now();
+        match self.quarantined_until.get(peer_id) {
+            Some(until) if *until > now => true,
+            Some(_) => {
+                self.quarantined_until.remove(peer_id);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn quarantined_peers(&mut self) -> Vec<libp2p::PeerId> {
+        let now = Instant::now();
+        self.quarantined_until.retain(|_, until| *until > now);
+        self.quarantined_until.keys().copied().collect()
     }
 }
 
@@ -294,6 +335,9 @@ impl Libp2pNetInterface {
                 }
                 _ = admission_tick.tick() => {
                     prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
+                    for peer_id in peer_failures.quarantined_peers() {
+                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    }
                     for (peer_id, pending) in peer_admission.expired_pending() {
                         debug!(%peer_id, "Peer did not complete Identify before the admission deadline");
                         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
@@ -449,8 +493,6 @@ async fn process_swarm_event(
         } => {
             // The authenticated transport identity is necessary but not sufficient. Keep the
             // connection staged until Identify confirms the Interfold network and capabilities.
-            peer_failures.dial.reset(&peer_id);
-            peer_failures.identity_mismatch.reset(&peer_id);
             let remote_addr = endpoint.get_remote_address().clone();
             let direction = if endpoint.is_dialer() {
                 "outbound"
@@ -458,6 +500,7 @@ async fn process_swarm_event(
                 "inbound"
             };
             if peer_admission.is_admitted(&peer_id) {
+                peer_failures.connection_succeeded(&peer_id);
                 status.connected(
                     peer_id.to_string(),
                     remote_addr.to_string(),
@@ -504,15 +547,12 @@ async fn process_swarm_event(
                 {
                     // The node at this address has a new PeerId (e.g. restarted with new keys).
                     // Remove the stale entry and add the new one so we don't loop.
-                    // The stale entry can be re-learned from other peers' routing tables,
-                    // so repeats are expected: handle them quietly (debug, no bootstrap)
-                    // to avoid flooding the logs and re-fueling the dial loop.
+                    // Other routing tables can advertise the stale identity again. Quarantine
+                    // prevents reinsertion, and concurrent failures remain debug events.
                     let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
-                    // The stale ID is being removed from the routing table, so its
-                    // generic dial-failure history is no longer meaningful.
-                    peer_failures.dial.reset(failed_peer);
+                    peer_failures.quarantine(failed_peer);
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
@@ -545,35 +585,28 @@ async fn process_swarm_event(
                             debug!("Redial of {obtained} after peer ID replacement skipped: {e}");
                         }
                     }
-
-                    // Trigger Kademlia bootstrap to discover peers beyond direct
-                    // connections — but only on the first mismatch: bootstrapping on
-                    // every repeat re-learns the stale entry from neighbours and
-                    // redials it, creating a self-sustaining loop.
-                    if mismatch_count == 1 {
-                        if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
+                } else {
+                    match peer_failures.record_dial_failure(failed_peer) {
+                        None => {
+                            debug!(%failed_peer, %error, "Dial failed while the peer is quarantined");
+                        }
+                        Some(count) if count >= MAX_CONSECUTIVE_DIAL_FAILURES => {
+                            info!(
+                                cooldown_secs = STALE_PEER_COOLDOWN.as_secs(),
+                                "Evicting unreachable peer {failed_peer} after {count} consecutive failures"
+                            );
+                            swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
+                            peer_failures.quarantine(failed_peer);
+                        }
+                        Some(count) => {
                             debug!(
-                                "Kademlia bootstrap after peer ID replacement not possible yet: {e}"
+                                "Dial failure for {failed_peer} (attempt {count}/{MAX_CONSECUTIVE_DIAL_FAILURES}): {error}"
                             );
                         }
                     }
-                } else {
-                    let count = peer_failures.dial.record_failure(failed_peer);
-
-                    if count >= MAX_CONSECUTIVE_DIAL_FAILURES {
-                        info!(
-                            "Evicting unreachable peer {failed_peer} after {count} consecutive failures"
-                        );
-                        swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
-                        peer_failures.dial.reset(failed_peer);
-                    } else {
-                        debug!(
-                            "Dial failure for {failed_peer} (attempt {count}/{MAX_CONSECUTIVE_DIAL_FAILURES}): {error}"
-                        );
-                    }
                 }
             } else {
-                warn!("Failed to dial unknown peer: {error}");
+                debug!("Failed to dial a peer without a known identity: {error}");
             }
 
             event_tx.send(NetEvent::OutgoingConnectionError {
@@ -593,6 +626,16 @@ async fn process_swarm_event(
             } else {
                 status.record_error(format!("incoming connection: {error_str}"));
                 warn!("Incoming connection error: {}", error_str);
+            }
+        }
+
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+            peer,
+            ..
+        })) => {
+            if peer_failures.is_quarantined(&peer) {
+                swarm.behaviour_mut().kademlia.remove_peer(&peer);
+                debug!(%peer, "Ignored a quarantined Kademlia routing update");
             }
         }
 
@@ -924,6 +967,7 @@ async fn process_swarm_event(
                 debug!(%peer_id, "Received Identify for an admitted or unstaged peer");
                 return Ok(());
             };
+            peer_failures.connection_succeeded(&peer_id);
             info!(
                 %peer_id,
                 peer_agent = %info.agent_version,
@@ -940,7 +984,7 @@ async fn process_swarm_event(
                 swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(&peer_id, pending.remote_address);
+                    .add_address(&peer_id, strip_peer_id(pending.remote_address));
             }
             let filter = should_filter_loopback(swarm);
             for addr in &info.listen_addrs {
@@ -948,13 +992,10 @@ async fn process_swarm_event(
                     swarm
                         .behaviour_mut()
                         .kademlia
-                        .add_address(&peer_id, addr.clone());
+                        .add_address(&peer_id, strip_peer_id(addr.clone()));
                 }
             }
             trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
-            if let Err(error) = swarm.behaviour_mut().kademlia.bootstrap() {
-                debug!(%error, "Kademlia bootstrap is not available after peer admission");
-            }
             let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash();
             let count = swarm
                 .behaviour()
@@ -989,7 +1030,7 @@ async fn process_swarm_event(
             status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
-                info!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
+                debug!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
             }
         }
 
@@ -1360,6 +1401,34 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::PeerId;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn quarantined_peer_is_restored_after_a_successful_admission() {
+        let peer = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        failures.quarantine(&peer);
+        assert!(failures.is_quarantined(&peer));
+
+        failures.connection_succeeded(&peer);
+        assert!(!failures.is_quarantined(&peer));
+    }
+
+    #[test]
+    fn three_consecutive_failures_reach_the_eviction_threshold() {
+        let peer = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        assert_eq!(failures.record_dial_failure(&peer), Some(1));
+        assert_eq!(failures.record_dial_failure(&peer), Some(2));
+        assert_eq!(
+            failures.record_dial_failure(&peer),
+            Some(super::MAX_CONSECUTIVE_DIAL_FAILURES)
+        );
+
+        failures.quarantine(&peer);
+        assert_eq!(failures.record_dial_failure(&peer), None);
+    }
 
     #[test]
     fn strip_peer_id_removes_trailing_p2p_component() {

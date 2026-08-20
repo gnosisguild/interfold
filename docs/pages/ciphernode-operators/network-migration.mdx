@@ -15,7 +15,7 @@ Create the Sepolia record before any node upgrade:
 
 ```text
 _dnsaddr.bootstrap-sepolia.interfold.network TXT
-dnsaddr=/ip4/18.233.222.222/udp/9501/quic-v1/p2p/12D3KooWPgeL5zZCd3EbhKrxNxgmcSce7m2S2bfo1B42Uw44W7CE
+dnsaddr=/ip4/<SEPOLIA_BOOTSTRAP_IP>/udp/9501/quic-v1/p2p/<SEPOLIA_BOOTSTRAP_PEER_ID>
 ```
 
 Keep `_dnsaddr.bootstrap.interfold.network` on the old Sepolia node until the new mainnet bootstrap
@@ -46,9 +46,9 @@ DNS TTLs determine how long clients can retain the previous answer.
 6. Start the node and confirm that its admitted peers use the selected network.
 
 The loader infers the built-in profile when `node.network` is absent and the enabled chain has a
-known chain ID. It also rewrites the old mainnet alias or the retired fixed Sepolia address to the
-Sepolia alias when the selected profile is Sepolia. A mainnet profile rejects the retired Sepolia
-address instead of dialing it.
+known chain ID. It rewrites the old mainnet alias to the Sepolia alias when the selected profile is
+Sepolia. A mainnet profile rejects the Sepolia alias instead of dialing it. The executable does not
+contain the address or Peer ID of a retired bootstrap node.
 
 ## Existing Data
 
@@ -64,7 +64,16 @@ log.
 The new node stages every transport connection until Identify confirms the exact network and
 required protocols. Incompatible old peers are disconnected before they enter Kademlia, gossip, or
 historical sync. Repeated rejection messages are suppressed for ten minutes, so old peers do not
-fill the terminal with connection warnings.
+fill the terminal with connection warnings. A discovered peer is removed after three consecutive
+dial failures. Discovery cannot reinsert that peer into the routing table for 30 minutes. A later
+connection that passes Identify clears the cooldown early. A peer-ID mismatch quarantines the stale
+identity immediately. This state is in memory and resets when the process restarts.
+
+The node makes three bounded attempts to reach each configured bootstrap peer during startup. It
+reports one summary warning if a bootstrap peer is unavailable, finishes the startup dial phase,
+and retries that peer every 60 seconds in the background. The existing readiness fallback can then
+continue without waiting for all background retries. Background failures are debug events. A later
+successful retry is reported once at the information level.
 
 ## Cutover Order
 
