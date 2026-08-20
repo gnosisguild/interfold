@@ -13,41 +13,97 @@ use libp2p::{
 use tokio::select;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep, Duration};
-use tracing::error;
+use tracing::debug;
 use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
-use crate::events::{NetCommand, NetEvent};
-use e3_utils::{retry_with_backoff, to_retry, OnceTake, RetryError};
+use crate::events::{NetCommand, NetEvent, PeerRejectionKind};
+use e3_utils::{to_retry, OnceTake, RetryError};
 
-const DIAL_DELAY: u64 = 3000;
-const DIAL_RETRIES: u32 = 10;
+const INITIAL_DIAL_ATTEMPTS: u32 = 3;
+const INITIAL_DIAL_DELAY: Duration = Duration::from_secs(3);
+const BOOTSTRAP_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Per-connection timeout: if no swarm events arrive within this window during
-/// a single dial attempt, we treat it as timed out and retry.
-const DIAL_EVENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Maximum time to wait for a swarm result from one connection attempt.
+const DIAL_EVENT_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Dial a single Multiaddr with retries and return an error should those retries not work
+enum InitialDialError {
+    Retryable(anyhow::Error),
+    Permanent(anyhow::Error),
+}
+
+/// Dial one address during the bounded startup phase.
 async fn dial_multiaddr(
     cmd_tx: &mpsc::Sender<NetCommand>,
     event_tx: &broadcast::Sender<NetEvent>,
     multiaddr_str: &str,
-) -> Result<()> {
-    let multiaddr = &multiaddr_str.parse()?;
-    info!("Now dialing in to {}", multiaddr);
-    retry_with_backoff(
-        || attempt_connection(cmd_tx, event_tx, multiaddr),
-        DIAL_RETRIES,
-        DIAL_DELAY,
-    )
-    .await?;
-    Ok(())
+) -> std::result::Result<(), InitialDialError> {
+    let multiaddr: Multiaddr = multiaddr_str
+        .parse()
+        .map_err(|error: libp2p::multiaddr::Error| InitialDialError::Permanent(error.into()))?;
+    info!(%multiaddr, "Dialing a configured bootstrap peer");
+    let mut delay = INITIAL_DIAL_DELAY;
+
+    for attempt in 1..=INITIAL_DIAL_ATTEMPTS {
+        match attempt_connection(cmd_tx, event_tx, &multiaddr).await {
+            Ok(()) => return Ok(()),
+            Err(RetryError::Failure(error)) => {
+                return Err(InitialDialError::Permanent(error));
+            }
+            Err(RetryError::Retry(error)) if attempt == INITIAL_DIAL_ATTEMPTS => {
+                return Err(InitialDialError::Retryable(anyhow::anyhow!(
+                    "bootstrap dial failed after {INITIAL_DIAL_ATTEMPTS} attempts: {error}"
+                )));
+            }
+            Err(RetryError::Retry(error)) => {
+                debug!(
+                    %multiaddr,
+                    attempt,
+                    max_attempts = INITIAL_DIAL_ATTEMPTS,
+                    retry_delay_ms = delay.as_millis(),
+                    %error,
+                    "Bootstrap dial failed; the startup retry will continue"
+                );
+                sleep(delay).await;
+                delay = delay.saturating_mul(2);
+            }
+        }
+    }
+
+    unreachable!("the startup dial loop always returns")
 }
 
-fn trace_error(r: Result<()>) {
-    if let Err(err) = r {
-        error!("{}", err);
+async fn retry_multiaddr_in_background(
+    cmd_tx: mpsc::Sender<NetCommand>,
+    event_tx: broadcast::Sender<NetEvent>,
+    multiaddr_str: String,
+) {
+    let Ok(multiaddr) = multiaddr_str.parse() else {
+        debug!(address = %multiaddr_str, "Bootstrap address is invalid; background retry stopped");
+        return;
+    };
+
+    loop {
+        sleep(BOOTSTRAP_RETRY_INTERVAL).await;
+        match attempt_connection(&cmd_tx, &event_tx, &multiaddr).await {
+            Ok(()) => {
+                info!(%multiaddr, "Connected to a bootstrap peer after a background retry");
+                return;
+            }
+            Err(RetryError::Failure(error)) => {
+                debug!(%multiaddr, %error, "Bootstrap dial cannot be retried");
+                return;
+            }
+            Err(RetryError::Retry(error)) => {
+                debug!(
+                    %multiaddr,
+                    retry_interval_secs = BOOTSTRAP_RETRY_INTERVAL.as_secs(),
+                    %error,
+                    "Background bootstrap dial failed"
+                );
+            }
+        }
     }
 }
 
@@ -71,7 +127,39 @@ pub async fn dial_peers(
         .collect();
     let results = join_all(futures).await;
     let connected = results.iter().filter(|r| r.is_ok()).count();
-    results.into_iter().for_each(trace_error);
+    let unavailable: Vec<_> = peers
+        .iter()
+        .zip(results)
+        .filter_map(|(address, result)| result.err().map(|error| (address.clone(), error)))
+        .collect();
+    let retryable = unavailable
+        .iter()
+        .filter(|(_, error)| matches!(error, InitialDialError::Retryable(_)))
+        .count();
+
+    if retryable > 0 {
+        warn!(
+            unavailable = retryable,
+            total = peers.len(),
+            retry_interval_secs = BOOTSTRAP_RETRY_INTERVAL.as_secs(),
+            "Some bootstrap peers are unavailable; background retries will continue"
+        );
+    }
+    for (address, error) in unavailable {
+        match error {
+            InitialDialError::Retryable(error) => {
+                debug!(%address, %error, "Initial bootstrap dial did not connect");
+                tokio::spawn(retry_multiaddr_in_background(
+                    cmd_tx.clone(),
+                    event_tx.clone(),
+                    address,
+                ));
+            }
+            InitialDialError::Permanent(error) => {
+                debug!(%address, %error, "Configured bootstrap dial cannot be retried");
+            }
+        }
+    }
     Ok(connected)
 }
 
@@ -92,7 +180,7 @@ async fn attempt_connection(
     cmd_tx
         .send(NetCommand::Dial(OnceTake::new(opts)))
         .await
-        .map_err(to_retry)?;
+        .map_err(|error| RetryError::Failure(error.into()))?;
     wait_for_connection(&mut event_rx, dial_connection).await
 }
 
@@ -113,15 +201,31 @@ async fn wait_for_connection(
                             return Ok(());
                         }
                     }
+                    NetEvent::PeerRejected {
+                        connection_id,
+                        kind,
+                        reason,
+                    } => {
+                        if connection_id == dial_connection {
+                            let error = std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                reason,
+                            );
+                            return match kind {
+                                PeerRejectionKind::Transient => {
+                                    Err(RetryError::Retry(error.into()))
+                                }
+                                PeerRejectionKind::Permanent => {
+                                    Err(RetryError::Failure(error.into()))
+                                }
+                            };
+                        }
+                    }
                     NetEvent::DialError { error } => {
-                        warn!("DialError!");
                         return match error.as_ref() {
-                            // If we are dialing ourself then we should just fail
                             DialError::NoAddresses => {
-                                warn!("DialError received. Returning RetryError::Failure");
                                 Err(RetryError::Failure(error.clone().into()))
                             }
-                            // Try again otherwise
                             _ => Err(RetryError::Retry(error.clone().into())),
                         };
                     }
@@ -132,7 +236,6 @@ async fn wait_for_connection(
                         trace!("OutgoingConnectionError!");
                         if connection_id == dial_connection {
                             return match error.as_ref() {
-                                // If we are dialing ourself then we should just fail
                                 DialError::NoAddresses => {
                                     Err(RetryError::Failure(error.clone().into()))
                                 }
@@ -141,20 +244,13 @@ async fn wait_for_connection(
                                 // same address can never succeed. The swarm event handler
                                 // has already re-keyed the routing entry to the new peer.
                                 DialError::WrongPeerId { .. } => {
-                                    warn!(
+                                    debug!(
                                         "Connection {} failed: {}. Not retrying stale address.",
                                         connection_id, error
                                     );
                                     Err(RetryError::Failure(error.clone().into()))
                                 }
-                                // Try again otherwise
-                                _ => {
-                                    warn!(
-                                        "Connection {} failed because of error {}. Retrying...",
-                                        connection_id, error
-                                    );
-                                    Err(RetryError::Retry(error.clone().into()))
-                                }
+                                _ => Err(RetryError::Retry(error.clone().into())),
                             };
                         }
                     }
@@ -162,10 +258,9 @@ async fn wait_for_connection(
                 }
             }
             _ = sleep(DIAL_EVENT_TIMEOUT) => {
-                warn!("Connection attempt timed out after {:?} of no events", DIAL_EVENT_TIMEOUT);
                 return Err(RetryError::Retry(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
-                    "Connection attempt timed out",
+                    format!("connection attempt timed out after {DIAL_EVENT_TIMEOUT:?}"),
                 ).into()));
             }
         }

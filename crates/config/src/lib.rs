@@ -8,6 +8,7 @@ mod app_config;
 pub mod chain_config;
 pub mod contract;
 pub mod load_config;
+mod network;
 pub mod paths_engine;
 pub mod program_config;
 pub mod rpc;
@@ -16,5 +17,6 @@ mod yaml;
 
 pub use app_config::*;
 pub use contract::*;
+pub use network::*;
 pub use program_config::*;
 pub use rpc::*;

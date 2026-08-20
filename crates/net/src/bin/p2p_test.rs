@@ -208,10 +208,11 @@ impl TestPeer {
             .and_then(|p| p.parse::<usize>().ok())
             .unwrap_or(3);
 
-        let topic = IdentTopic::new("test");
         let peers: Vec<String> = dial_to.iter().cloned().collect();
         let keypair = Libp2pKeypair::generate();
-        let mut peer = Libp2pNetInterface::new(keypair, peers, udp_port, &topic.to_string())?;
+        let network = e3_net::NetworkPolicy::local_unrestricted();
+        let topic = IdentTopic::new(network.protocols().gossip_topic());
+        let mut peer = Libp2pNetInterface::new(keypair, peers, udp_port, network)?;
         let handle = peer.handle();
         let tx = handle.tx();
         let mut rx = handle.rx();

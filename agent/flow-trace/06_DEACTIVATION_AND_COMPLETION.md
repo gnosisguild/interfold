@@ -268,8 +268,10 @@ On restart:
 │        an unavailable or blocked listener aborts recovery after a bounded wait
 │      → Structured progress is emitted every 10,000 EventBus-handled events
 │   4. Fetch historical EVM events from last known block
-│   5. Historical libp2p sync retries failed aggregate fetches after reconnects
-│      and also on bounded retry intervals even without a new connection event
+│   5. Historical libp2p sync requests only chain-bound aggregates allowed by the
+│      active network policy; local aggregate 0 never enters peer fetch or recovery
+│      → Failed eligible aggregates retry after reconnects and on bounded intervals
+│        even without a new connection event
 │   6. Sort & publish merged events by HLC timestamp
 │      → A logical event returned by a peer with its source changed from Local to Net is
 │        idempotent when timestamp, stable event ID, and payload match the stored record;

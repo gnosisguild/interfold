@@ -204,6 +204,9 @@ not required again. Uploading a different password while state already exists fa
   interfold start ... --peer /dns4/cn1/udp/37173/quic-v1 --peer /dns4/cn2/udp/37173/quic-v1
   ```
 
+  Leave `PEERS` empty to use the DNS bootstrap address for the selected `NETWORK`. Mainnet uses
+  `bootstrap.interfold.network`; Sepolia uses `bootstrap-sepolia.interfold.network`.
+
 If a variable is not set in the wizard, it still appears (with its default) in the package config
 screen after installation, as per DAppNode’s env behavior.
 
@@ -215,7 +218,7 @@ At container startup, `entrypoint.sh`:
 2. Applies sensible defaults for `NETWORK`, `QUIC_PORT`, and `LOG_LEVEL`.
 3. Uses `envsubst` to render `config.template.yaml` into `/data/config.yaml`, substituting:
 
-- node address and ports
+- node address, network identity, and ports
 - network name and RPC URL
 - chain ID, contract addresses, and deploy blocks
 

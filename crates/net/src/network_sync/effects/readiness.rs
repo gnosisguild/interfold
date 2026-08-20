@@ -44,9 +44,10 @@ impl NetSyncManager {
         rx: &Arc<broadcast::Receiver<NetEvent>>,
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
+        network: NetworkPolicy,
     ) -> Addr<Self> {
         let mut events = rx.resubscribe();
-        let addr = Self::new(bus, tx, rx, eventstore, topic).start();
+        let addr = Self::new(bus, tx, rx, eventstore, topic, network).start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
 

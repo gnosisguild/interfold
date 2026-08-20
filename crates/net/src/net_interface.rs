@@ -7,8 +7,9 @@
 use crate::{
     dialer::dial_peers,
     events::{
-        GossipData, IncomingRequest, NetCommand, NetEvent, OutgoingRequestFailed,
-        OutgoingRequestSucceeded, PeerTarget, PutOrStoreError,
+        GossipData, GossipPublishFailure, IncomingRequest, NetCommand, NetEvent,
+        OutgoingRequestFailed, OutgoingRequestSucceeded, PeerRejectionKind, PeerTarget,
+        PutOrStoreError,
     },
     ContentHash,
 };
@@ -17,12 +18,13 @@ use crate::{
     domain::{
         correlator::Correlator,
         peer_failure_tracker::PeerFailureTracker,
-        wire::{MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
+        wire::{decode_gossip, encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
     keypair::Libp2pKeypair,
     net_interface_handle::NetInterfaceHandle,
-    NetworkStatus,
+    peer_admission::PeerAdmission,
+    NetworkPolicy, NetworkStatus,
 };
 use anyhow::{bail, Context, Result};
 use e3_events::CorrelationId;
@@ -36,8 +38,8 @@ use libp2p::{
     kad::{
         self,
         store::{MemoryStore, MemoryStoreConfig, RecordStore},
-        Behaviour as KademliaBehaviour, Config as KademliaConfig, GetRecordOk, QueryResult, Quorum,
-        Record, RecordKey,
+        Behaviour as KademliaBehaviour, Config as KademliaConfig, GetRecordOk, InboundRequest,
+        QueryResult, Quorum, Record, RecordKey, StoreInserts,
     },
     multiaddr::Protocol,
     request_response::{
@@ -45,10 +47,12 @@ use libp2p::{
         ProtocolSupport,
     },
     swarm::{dial_opts::DialOpts, DialError, NetworkBehaviour, SwarmEvent},
-    Multiaddr, StreamProtocol, Swarm,
+    Multiaddr, Swarm,
 };
 use rand::prelude::IteratorRandom;
+use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     io::Error,
     sync::Arc,
     time::{Duration, Instant},
@@ -56,15 +60,22 @@ use std::{
 use tokio::{
     select,
     sync::{broadcast, mpsc},
+    time::MissedTickBehavior,
 };
 use tracing::{debug, error, info, trace, warn};
 
-const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/interfold/kad/1.0.0");
-const MAX_KADEMLIA_PAYLOAD_MB: usize = 100;
-const DHT_MAX_RECORDS: usize = 4096;
-const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 40;
+const MAX_KADEMLIA_PAYLOAD_BYTES: usize = 26 * 1024 * 1024;
+const DHT_MAX_RECORDS: usize = 1024;
+const DHT_MAX_RECORDS_PER_PEER: usize = 64;
+const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
+const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
+const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
+const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
+
+type GossipBehaviour =
+    gossipsub::Behaviour<gossipsub::IdentityTransform, gossipsub::WhitelistSubscriptionFilter>;
 
 /// Independent failure counters used to recover peer connectivity.
 ///
@@ -73,6 +84,7 @@ const CMD_CHANNEL_SIZE: usize = 1000;
 struct PeerConnectionFailures {
     dial: PeerFailureTracker,
     identity_mismatch: PeerFailureTracker,
+    quarantined_until: HashMap<libp2p::PeerId, Instant>,
 }
 
 impl PeerConnectionFailures {
@@ -80,7 +92,46 @@ impl PeerConnectionFailures {
         Self {
             dial: PeerFailureTracker::new(),
             identity_mismatch: PeerFailureTracker::new(),
+            quarantined_until: HashMap::new(),
         }
+    }
+
+    fn connection_succeeded(&mut self, peer_id: &libp2p::PeerId) {
+        self.dial.reset(peer_id);
+        self.identity_mismatch.reset(peer_id);
+        self.quarantined_until.remove(peer_id);
+    }
+
+    fn record_dial_failure(&mut self, peer_id: &libp2p::PeerId) -> Option<u32> {
+        if self.is_quarantined(peer_id) {
+            None
+        } else {
+            Some(self.dial.record_failure(peer_id))
+        }
+    }
+
+    fn quarantine(&mut self, peer_id: &libp2p::PeerId) {
+        self.dial.reset(peer_id);
+        self.quarantined_until
+            .insert(*peer_id, Instant::now() + STALE_PEER_COOLDOWN);
+    }
+
+    fn is_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
+        let now = Instant::now();
+        match self.quarantined_until.get(peer_id) {
+            Some(until) if *until > now => true,
+            Some(_) => {
+                self.quarantined_until.remove(peer_id);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn quarantined_peers(&mut self) -> Vec<libp2p::PeerId> {
+        let now = Instant::now();
+        self.quarantined_until.retain(|_, until| *until > now);
+        self.quarantined_until.keys().copied().collect()
     }
 }
 
@@ -129,7 +180,7 @@ fn is_unspecified_addr(addr: &Multiaddr) -> bool {
 
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
-    gossipsub: gossipsub::Behaviour,
+    gossipsub: GossipBehaviour,
     kademlia: KademliaBehaviour<MemoryStore>,
     connection_limits: connection_limits::Behaviour,
     identify: IdentifyBehaviour,
@@ -156,6 +207,8 @@ pub struct Libp2pNetInterface {
     cmd_rx: mpsc::Receiver<NetCommand>,
     /// Live operational connection state exposed to node operators.
     status: NetworkStatus,
+    /// Immutable identity and deployment policy for this process.
+    network: NetworkPolicy,
 }
 
 impl Libp2pNetInterface {
@@ -163,7 +216,7 @@ impl Libp2pNetInterface {
         id: Libp2pKeypair,
         peers: Vec<String>,
         udp_port: Option<u16>,
-        topic: &str,
+        network: NetworkPolicy,
     ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_SIZE);
@@ -174,11 +227,10 @@ impl Libp2pNetInterface {
             .with_quic()
             .with_dns()
             .map_err(|e| anyhow::anyhow!("Failed to enable DNS: {e}"))?
-            .with_behaviour(create_behaviour)?
+            .with_behaviour(|key| create_behaviour(key, &network))?
             .build();
 
-        // TODO: Use topics to manage network traffic instead of just using a single topic
-        let topic = gossipsub::IdentTopic::new(topic);
+        let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic());
 
         Ok(Self {
             swarm,
@@ -189,6 +241,7 @@ impl Libp2pNetInterface {
             cmd_tx,
             cmd_rx,
             status,
+            network,
         })
     }
 
@@ -206,8 +259,22 @@ impl Libp2pNetInterface {
         let cmd_rx = &mut self.cmd_rx;
         let mut correlator = Correlator::new();
         let mut peer_failures = PeerConnectionFailures::new();
-        // This is to make sure we dont spam warnings in the logs
+        let mut peer_admission = PeerAdmission::default();
+        let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
+        let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
+        admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        // Limit repeated backpressure warnings.
         let mut last_backpressure_warn = Instant::now();
+
+        info!(
+            network = %self.network.profile().name(),
+            network_id = %self.network.profile().id(),
+            identify = %self.network.protocols().identify_protocol(),
+            gossip = %self.network.protocols().gossip_topic(),
+            kademlia = %self.network.protocols().kademlia_protocol(),
+            sync = ?self.network.protocols().sync_protocols(),
+            "Starting the scoped Interfold P2P network"
+        );
 
         // Subscribe to topic
         self.swarm
@@ -247,7 +314,27 @@ impl Libp2pNetInterface {
 
         loop {
             select! {
-                 // Process commands
+                biased;
+
+                _ = admission_tick.tick() => {
+                    prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
+                    for peer_id in peer_failures.quarantined_peers() {
+                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    }
+                    for (peer_id, pending_connections) in peer_admission.expired_pending() {
+                        debug!(%peer_id, "Peer did not complete Identify before the admission deadline");
+                        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                        let _ = self.swarm.disconnect_peer_id(peer_id);
+                        for pending in pending_connections {
+                            let _ = event_tx.send(NetEvent::PeerRejected {
+                                connection_id: pending.connection_id,
+                                kind: PeerRejectionKind::Transient,
+                                reason: "peer did not complete Identify before the admission deadline".to_string(),
+                            });
+                        }
+                    }
+                }
+                // Process commands
                 Some(command) = cmd_rx.recv() => {
                     if let NetCommand::Shutdown = command {
                         if let Err(e) = handle_shutdown(&mut self.swarm).await {
@@ -256,13 +343,31 @@ impl Libp2pNetInterface {
                         break;
                     }
 
-                    if let Err(e) = process_swarm_command(&mut self.swarm, &event_tx, &mut correlator, command).await {
+                    if let Err(e) = process_swarm_command(
+                        &mut self.swarm,
+                        &event_tx,
+                        &mut correlator,
+                        &peer_admission,
+                        &self.network,
+                        command,
+                    ).await {
                         error!("Error processing NetCommand: {e}")
                     }
                 }
                 // Process events
                 event = self.swarm.select_next_some() =>  {
-                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &self.status, event).await {
+                    match process_swarm_event(
+                        &mut self.swarm,
+                        &event_tx,
+                        &cmd_tx,
+                        &mut correlator,
+                        &mut peer_failures,
+                        &mut peer_admission,
+                        &mut dht_records_by_peer,
+                        &self.network,
+                        &self.status,
+                        event,
+                    ).await {
                         Ok(_) => (),
                         Err(e) => error!("Error processing NetEvent: {e}")
                     }
@@ -286,11 +391,24 @@ impl Libp2pNetInterface {
 /// Create the libp2p behaviour
 fn create_behaviour(
     key: &Keypair,
+    network: &NetworkPolicy,
 ) -> std::result::Result<NodeBehaviour, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let peer_id = key.public().to_peer_id();
-    let connection_limits = connection_limits::Behaviour::new(ConnectionLimits::default());
+    let connection_limits = connection_limits::Behaviour::new(
+        ConnectionLimits::default()
+            .with_max_pending_incoming(Some(64))
+            .with_max_pending_outgoing(Some(64))
+            .with_max_established_incoming(Some(80))
+            .with_max_established_outgoing(Some(64))
+            .with_max_established_per_peer(Some(2))
+            .with_max_established(Some(128)),
+    );
     let identify = IdentifyBehaviour::new(
-        IdentifyConfig::new("/interfold/0.0.1".into(), key.public())
+        IdentifyConfig::new(network.protocols().identify_protocol().into(), key.public())
+            .with_agent_version(format!(
+                "interfold-ciphernode/{}",
+                env!("CARGO_PKG_VERSION")
+            ))
             .with_interval(Duration::from_secs(60)),
     );
 
@@ -298,31 +416,51 @@ fn create_behaviour(
         .heartbeat_interval(Duration::from_secs(10))
         .max_transmit_size(MAX_GOSSIP_BYTES)
         .validation_mode(gossipsub::ValidationMode::Strict)
+        .validate_messages()
+        .message_id_fn(|message| gossipsub::MessageId::from(Sha256::digest(&message.data).to_vec()))
         .build()
         .map_err(Error::other)?;
 
-    let gossipsub = gossipsub::Behaviour::new(
+    let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic());
+    let filter = gossipsub::WhitelistSubscriptionFilter(HashSet::from([topic.hash()]));
+    let mut gossipsub = GossipBehaviour::new_with_subscription_filter(
         gossipsub::MessageAuthenticity::Signed(key.clone()),
         gossipsub_config,
+        filter,
     )?;
+    let mut score_params = gossipsub::PeerScoreParams::default();
+    let mut topic_score = gossipsub::TopicScoreParams::default();
+    topic_score.time_in_mesh_quantum = Duration::from_secs(1);
+    topic_score.time_in_mesh_cap = 10.0;
+    topic_score.first_message_deliveries_cap = 100.0;
+    topic_score.mesh_message_deliveries_weight = 0.0;
+    topic_score.mesh_failure_penalty_weight = 0.0;
+    topic_score.invalid_message_deliveries_weight = -10.0;
+    score_params.topics.insert(topic.hash(), topic_score);
+    gossipsub
+        .with_peer_score(score_params, gossipsub::PeerScoreThresholds::default())
+        .map_err(Error::other)?;
     let request_response_config =
         request_response::Config::default().with_request_timeout(Duration::from_secs(30));
 
     let request_response = cbor::Behaviour::<Vec<u8>, ProtocolResponse>::new(
-        [(
-            StreamProtocol::new("/interfold/sync/0.0.1"),
-            ProtocolSupport::Full,
-        )],
+        network
+            .protocols()
+            .sync_protocols()
+            .iter()
+            .cloned()
+            .map(|protocol| (protocol, ProtocolSupport::Full)),
         request_response_config,
     );
-    let mut config = KademliaConfig::new(PROTOCOL_NAME);
+    let mut config = KademliaConfig::new(network.protocols().kademlia_protocol());
     config
-        .set_max_packet_size(MAX_KADEMLIA_PAYLOAD_MB * 1024 * 1024)
-        .set_query_timeout(Duration::from_secs(30));
+        .set_max_packet_size(MAX_KADEMLIA_PAYLOAD_BYTES)
+        .set_query_timeout(Duration::from_secs(30))
+        .set_record_filtering(StoreInserts::FilterBoth);
     let store_config = MemoryStoreConfig {
         max_records: DHT_MAX_RECORDS,
         max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
-        max_providers_per_key: usize::MAX,
+        max_providers_per_key: DHT_MAX_PROVIDERS_PER_KEY,
         max_provided_keys: DHT_MAX_RECORDS,
     };
     let store = MemoryStore::with_config(peer_id, store_config);
@@ -345,6 +483,9 @@ async fn process_swarm_event(
     cmd_tx: &mpsc::Sender<NetCommand>,
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
+    peer_admission: &mut PeerAdmission,
+    dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
+    network: &NetworkPolicy,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
@@ -356,43 +497,47 @@ async fn process_swarm_event(
             num_established,
             ..
         } => {
-            // Reset failure counts on successful connection
-            peer_failures.dial.reset(&peer_id);
-            peer_failures.identity_mismatch.reset(&peer_id);
-            if num_established.get() == 1 {
-                let total = swarm.connected_peers().count();
-                info!("Peer connected: {peer_id} (total: {total})");
-            }
+            // The authenticated transport identity is necessary but not sufficient. Keep the
+            // connection staged until Identify confirms the Interfold network and capabilities.
             let remote_addr = endpoint.get_remote_address().clone();
-            // Only track/advertise peers we consider routable. Filtered loopback
-            // connections are excluded from both the dashboard peer count and
-            // Kademlia so the two stay consistent.
-            let filter_loopback = should_filter_loopback(swarm) && is_loopback_addr(&remote_addr);
-            if !filter_loopback {
+            let direction = if endpoint.is_dialer() {
+                "outbound"
+            } else {
+                "inbound"
+            };
+            if peer_admission.is_admitted(&peer_id) {
+                peer_failures.connection_succeeded(&peer_id);
                 status.connected(
                     peer_id.to_string(),
                     remote_addr.to_string(),
-                    if endpoint.is_dialer() {
-                        "outbound"
-                    } else {
-                        "inbound"
-                    },
+                    direction,
                     num_established.get(),
                 );
-                swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, remote_addr.clone());
-            }
-
-            // Trigger Kademlia bootstrap to discover peers beyond direct connections
-            if num_established.get() == 1 {
-                if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
-                    debug!("Kademlia bootstrap not possible yet: {e}");
+                if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, remote_addr);
                 }
+                event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
+            } else if let Err(kind) = peer_admission.stage(
+                peer_id,
+                PeerAdmission::pending(
+                    connection_id,
+                    remote_addr,
+                    direction,
+                    num_established.get(),
+                ),
+            ) {
+                debug!(%peer_id, "Disconnecting a peer rejected during the admission TTL");
+                let _ = swarm.disconnect_peer_id(peer_id);
+                event_tx.send(NetEvent::PeerRejected {
+                    connection_id,
+                    kind,
+                    reason: "peer is temporarily blocked by the network admission policy"
+                        .to_string(),
+                })?;
             }
-
-            event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
         }
 
         SwarmEvent::OutgoingConnectionError {
@@ -409,15 +554,12 @@ async fn process_swarm_event(
                 {
                     // The node at this address has a new PeerId (e.g. restarted with new keys).
                     // Remove the stale entry and add the new one so we don't loop.
-                    // The stale entry can be re-learned from other peers' routing tables,
-                    // so repeats are expected: handle them quietly (debug, no bootstrap)
-                    // to avoid flooding the logs and re-fueling the dial loop.
+                    // Other routing tables can advertise the stale identity again. Quarantine
+                    // prevents reinsertion, and concurrent failures remain debug events.
                     let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
-                    // The stale ID is being removed from the routing table, so its
-                    // generic dial-failure history is no longer meaningful.
-                    peer_failures.dial.reset(failed_peer);
+                    peer_failures.quarantine(failed_peer);
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
@@ -436,15 +578,6 @@ async fn process_swarm_event(
                         // new peer via this address fail with WrongPeerId forever.
                         let corrected_addr = strip_peer_id(remote_addr.clone());
 
-                        // Only publish the address to Kademlia if it wouldn't leak a
-                        // loopback address to remote peers (see should_filter_loopback).
-                        if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
-                            swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&obtained, corrected_addr.clone());
-                        }
-
                         // Redial the node under its actual identity — a direct dial
                         // doesn't propagate the address, so no loopback filtering is
                         // needed. The default dial condition (DisconnectedAndNotDialing)
@@ -459,35 +592,28 @@ async fn process_swarm_event(
                             debug!("Redial of {obtained} after peer ID replacement skipped: {e}");
                         }
                     }
-
-                    // Trigger Kademlia bootstrap to discover peers beyond direct
-                    // connections — but only on the first mismatch: bootstrapping on
-                    // every repeat re-learns the stale entry from neighbours and
-                    // redials it, creating a self-sustaining loop.
-                    if mismatch_count == 1 {
-                        if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
+                } else {
+                    match peer_failures.record_dial_failure(failed_peer) {
+                        None => {
+                            debug!(%failed_peer, %error, "Dial failed while the peer is quarantined");
+                        }
+                        Some(count) if count >= MAX_CONSECUTIVE_DIAL_FAILURES => {
+                            info!(
+                                cooldown_secs = STALE_PEER_COOLDOWN.as_secs(),
+                                "Evicting unreachable peer {failed_peer} after {count} consecutive failures"
+                            );
+                            swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
+                            peer_failures.quarantine(failed_peer);
+                        }
+                        Some(count) => {
                             debug!(
-                                "Kademlia bootstrap after peer ID replacement not possible yet: {e}"
+                                "Dial failure for {failed_peer} (attempt {count}/{MAX_CONSECUTIVE_DIAL_FAILURES}): {error}"
                             );
                         }
                     }
-                } else {
-                    let count = peer_failures.dial.record_failure(failed_peer);
-
-                    if count >= MAX_CONSECUTIVE_DIAL_FAILURES {
-                        info!(
-                            "Evicting unreachable peer {failed_peer} after {count} consecutive failures"
-                        );
-                        swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
-                        peer_failures.dial.reset(failed_peer);
-                    } else {
-                        debug!(
-                            "Dial failure for {failed_peer} (attempt {count}/{MAX_CONSECUTIVE_DIAL_FAILURES}): {error}"
-                        );
-                    }
                 }
             } else {
-                warn!("Failed to dial unknown peer: {error}");
+                debug!("Failed to dial a peer without a known identity: {error}");
             }
 
             event_tx.send(NetEvent::OutgoingConnectionError {
@@ -508,6 +634,75 @@ async fn process_swarm_event(
                 status.record_error(format!("incoming connection: {error_str}"));
                 warn!("Incoming connection error: {}", error_str);
             }
+        }
+
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+            peer,
+            ..
+        })) => {
+            if peer_failures.is_quarantined(&peer) {
+                swarm.behaviour_mut().kademlia.remove_peer(&peer);
+                debug!(%peer, "Ignored a quarantined Kademlia routing update");
+            }
+        }
+
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+            request:
+                InboundRequest::PutRecord {
+                    source,
+                    record: Some(record),
+                    ..
+                },
+        })) => {
+            let key_bytes = record.key.to_vec();
+            let now = Instant::now();
+            let valid_expiry = record
+                .expires
+                .is_some_and(|expires| expires > now && expires <= now + DHT_MAX_TTL);
+            let key_matches = key_bytes.len() == 32
+                && ContentHash::from_content(&record.value).as_ref() == key_bytes.as_slice();
+            if !peer_admission.is_admitted(&source) {
+                debug!(%source, "Rejected an inbound DHT record from an unadmitted peer");
+                return Ok(());
+            }
+            let peer_keys = dht_records_by_peer.entry(source).or_default();
+            let within_quota =
+                peer_keys.contains(&key_bytes) || peer_keys.len() < DHT_MAX_RECORDS_PER_PEER;
+            if record.value.len() <= MAX_DHT_DOCUMENT_BYTES
+                && valid_expiry
+                && key_matches
+                && within_quota
+            {
+                let key_exists = swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .store_mut()
+                    .get(&record.key)
+                    .is_some();
+                match swarm.behaviour_mut().kademlia.store_mut().put(record) {
+                    Ok(()) if !key_exists => {
+                        peer_keys.insert(key_bytes);
+                    }
+                    Ok(()) => {}
+                    Err(error) => debug!(%source, %error, "Rejected DHT record at the local store"),
+                }
+            } else {
+                debug!(
+                    %source,
+                    valid_expiry,
+                    key_matches,
+                    within_quota,
+                    value_bytes = record.value.len(),
+                    "Rejected an inbound DHT record"
+                );
+            }
+        }
+
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+            request: InboundRequest::AddProvider { .. },
+        })) => {
+            // Interfold does not use provider records. FilterBoth prevents remote peers from
+            // consuming the provider-record budget.
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -588,8 +783,42 @@ async fn process_swarm_event(
             message,
         })) => {
             trace!("Got message with id: {id} from peer: {peer_id}");
-            let gossip_data = GossipData::from_bytes(&message.data)?;
-            event_tx.send(NetEvent::GossipData(gossip_data))?;
+            if !peer_admission.is_admitted(&peer_id) {
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .report_message_validation_result(
+                        &id,
+                        &peer_id,
+                        gossipsub::MessageAcceptance::Ignore,
+                    );
+                debug!(%peer_id, %id, "Ignored gossip from a peer that has not passed Identify");
+            } else {
+                match decode_gossip(&message.data, network) {
+                    Ok(gossip_data) => {
+                        swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .report_message_validation_result(
+                                &id,
+                                &peer_id,
+                                gossipsub::MessageAcceptance::Accept,
+                            );
+                        event_tx.send(NetEvent::GossipData(gossip_data))?;
+                    }
+                    Err(error) => {
+                        swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .report_message_validation_result(
+                                &id,
+                                &peer_id,
+                                gossipsub::MessageAcceptance::Reject,
+                            );
+                        debug!(%peer_id, %id, %error, "Rejected invalid gossip message");
+                    }
+                }
+            }
         }
 
         SwarmEvent::NewListenAddr { address, .. } => {
@@ -601,8 +830,17 @@ async fn process_swarm_event(
             peer_id,
             topic,
         })) => {
+            if !peer_admission.is_admitted(&peer_id) {
+                debug!(%peer_id, %topic, "Ignoring a subscription before peer admission");
+                return Ok(());
+            }
             debug!("Peer {} subscribed to {}", peer_id, topic);
-            let count = swarm.behaviour().gossipsub.mesh_peers(&topic).count();
+            let count = swarm
+                .behaviour()
+                .gossipsub
+                .mesh_peers(&topic)
+                .filter(|peer| peer_admission.is_admitted(peer))
+                .count();
             event_tx.send(NetEvent::GossipSubscribed { count, topic })?;
         }
 
@@ -618,6 +856,10 @@ async fn process_swarm_event(
                     },
             },
         )) => {
+            if !peer_admission.is_admitted(&peer) {
+                debug!(%peer, "Ignoring a historical-sync request from a peer that has not passed Identify");
+                return Ok(());
+            }
             debug!(
                 "Incoming request received (peer={}, connection={}, id={})",
                 peer, connection_id, request_id
@@ -701,33 +943,124 @@ async fn process_swarm_event(
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
-            libp2p::identify::Event::Received { peer_id, info, .. },
+            libp2p::identify::Event::Received {
+                connection_id,
+                peer_id,
+                info,
+            },
         )) => {
-            debug!("Identify received from {peer_id}: {:?}", info.observed_addr);
+            if let Err(reason) = network.protocols().supports_peer(&info) {
+                let rejected_connections = peer_admission.pending_connections(&peer_id);
+                let first_rejection = peer_admission.reject(peer_id, PeerRejectionKind::Permanent);
+                swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                status.disconnected(&peer_id.to_string(), 0);
+                let _ = swarm.disconnect_peer_id(peer_id);
+                if first_rejection {
+                    info!(
+                        %peer_id,
+                        peer_protocol = %info.protocol_version,
+                        peer_agent = %info.agent_version,
+                        %reason,
+                        "Rejected an incompatible Interfold peer"
+                    );
+                } else {
+                    debug!(%peer_id, %reason, "Rejected an incompatible peer again");
+                }
+                if rejected_connections.is_empty() {
+                    event_tx.send(NetEvent::PeerRejected {
+                        connection_id,
+                        kind: PeerRejectionKind::Permanent,
+                        reason: reason.to_string(),
+                    })?;
+                } else {
+                    for pending in rejected_connections {
+                        event_tx.send(NetEvent::PeerRejected {
+                            connection_id: pending.connection_id,
+                            kind: PeerRejectionKind::Permanent,
+                            reason: reason.to_string(),
+                        })?;
+                    }
+                }
+                return Ok(());
+            }
+
+            let Some(pending_connections) = peer_admission.admit(peer_id) else {
+                debug!(%peer_id, "Received Identify for an admitted or unstaged peer");
+                return Ok(());
+            };
+            peer_failures.connection_succeeded(&peer_id);
+            info!(
+                %peer_id,
+                peer_agent = %info.agent_version,
+                network = %network.profile().name(),
+                "Peer admitted"
+            );
+            let status_pending = pending_connections
+                .iter()
+                .max_by_key(|pending| pending.connections)
+                .expect("admitted peers have at least one staged connection");
+            status.connected(
+                peer_id.to_string(),
+                status_pending.remote_address.to_string(),
+                status_pending.direction,
+                status_pending.connections,
+            );
             let filter = should_filter_loopback(swarm);
+            for pending in &pending_connections {
+                if !(filter && is_loopback_addr(&pending.remote_address)) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, strip_peer_id(pending.remote_address.clone()));
+                }
+            }
             for addr in &info.listen_addrs {
                 if !(filter && is_loopback_addr(addr)) {
                     swarm
                         .behaviour_mut()
                         .kademlia
-                        .add_address(&peer_id, addr.clone());
+                        .add_address(&peer_id, strip_peer_id(addr.clone()));
                 }
             }
-            if !is_loopback_addr(&info.observed_addr) {
-                swarm.add_external_address(info.observed_addr);
+            trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
+            let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash();
+            let count = swarm
+                .behaviour()
+                .gossipsub
+                .mesh_peers(&topic)
+                .filter(|peer| peer_admission.is_admitted(peer))
+                .count();
+            event_tx.send(NetEvent::GossipSubscribed { count, topic })?;
+            for pending in pending_connections {
+                event_tx.send(NetEvent::ConnectionEstablished {
+                    connection_id: pending.connection_id,
+                })?;
             }
+        }
+
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(libp2p::identify::Event::Error {
+            connection_id,
+            peer_id,
+            error,
+        })) => {
+            // A transient connection close can race with Identify, especially during peer-ID
+            // replacement or simultaneous dialing. It is not compatibility evidence. Keep the
+            // peer staged until another Identify response succeeds or the admission timer expires.
+            debug!(%peer_id, %connection_id, %error, "Peer Identify exchange failed");
         }
 
         SwarmEvent::ConnectionClosed {
             peer_id,
+            connection_id,
             num_established,
             cause,
             ..
         } => {
+            peer_admission.closed(&peer_id, connection_id, num_established);
             status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
-                info!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
+                debug!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
             }
         }
 
@@ -756,6 +1089,8 @@ async fn process_swarm_command(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &broadcast::Sender<NetEvent>,
     correlator: &mut Correlator,
+    peer_admission: &PeerAdmission,
+    network: &NetworkPolicy,
     command: NetCommand,
 ) -> Result<()> {
     match command {
@@ -764,7 +1099,7 @@ async fn process_swarm_command(
             topic,
             correlation_id,
         } => {
-            handle_gossip_publish(swarm, event_tx, data, topic, correlation_id)?;
+            handle_gossip_publish(swarm, event_tx, network, data, topic, correlation_id)?;
             Ok(())
         }
         NetCommand::Dial(env) => {
@@ -805,9 +1140,14 @@ async fn process_swarm_command(
             payload,
             target,
         }) => {
-            if let Err(e) =
-                handle_outgoing_request(swarm, correlator, correlation_id, payload, target)
-            {
+            if let Err(e) = handle_outgoing_request(
+                swarm,
+                correlator,
+                peer_admission,
+                correlation_id,
+                payload,
+                target,
+            ) {
                 event_tx.send(NetEvent::OutgoingRequestFailed(OutgoingRequestFailed {
                     correlation_id,
                     error: e.to_string(),
@@ -828,11 +1168,27 @@ async fn process_swarm_command(
 fn handle_gossip_publish(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &broadcast::Sender<NetEvent>,
+    network: &NetworkPolicy,
     data: GossipData,
     topic: String,
     correlation_id: CorrelationId,
 ) -> Result<()> {
-    let bytes = data.to_bytes()?;
+    let bytes = match (|| -> Result<Vec<u8>> {
+        anyhow::ensure!(
+            topic == network.protocols().gossip_topic(),
+            "refusing to publish on an unconfigured gossip topic"
+        );
+        encode_gossip(&data, network)
+    })() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            event_tx.send(NetEvent::GossipPublishError {
+                correlation_id,
+                error: Arc::new(GossipPublishFailure::permanent(error.to_string())),
+            })?;
+            return Ok(());
+        }
+    };
     debug!("Publishing gossip message ({} bytes)", bytes.len());
     let gossipsub_behaviour = &mut swarm.behaviour_mut().gossipsub;
     match gossipsub_behaviour.publish(gossipsub::IdentTopic::new(topic), bytes) {
@@ -846,7 +1202,7 @@ fn handle_gossip_publish(
             error!(error=?e, "Could not GossipPublish.");
             event_tx.send(NetEvent::GossipPublishError {
                 correlation_id,
-                error: Arc::new(e),
+                error: Arc::new(GossipPublishFailure::from_libp2p(e)),
             })?;
         }
     }
@@ -912,6 +1268,18 @@ fn prune_expired_dht_records(swarm: &mut Swarm<NodeBehaviour>) {
             after
         );
     }
+}
+
+/// Release per-peer quota entries after the corresponding local record is removed.
+fn prune_dht_peer_quotas(
+    swarm: &mut Swarm<NodeBehaviour>,
+    records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
+) {
+    let store = swarm.behaviour_mut().kademlia.store_mut();
+    for keys in records_by_peer.values_mut() {
+        keys.retain(|key| store.get(&RecordKey::new(key)).is_some());
+    }
+    records_by_peer.retain(|_, keys| !keys.is_empty());
 }
 
 fn handle_put_record(
@@ -1018,6 +1386,7 @@ async fn handle_shutdown(swarm: &mut Swarm<NodeBehaviour>) -> Result<()> {
 fn handle_outgoing_request(
     swarm: &mut Swarm<NodeBehaviour>,
     correlator: &mut Correlator,
+    peer_admission: &PeerAdmission,
     correlation_id: CorrelationId,
     payload: Vec<u8>,
     target: PeerTarget,
@@ -1025,10 +1394,17 @@ fn handle_outgoing_request(
     let peer = match target {
         PeerTarget::Random => swarm
             .connected_peers()
+            .filter(|peer| peer_admission.is_admitted(peer))
             .choose(&mut rand::rng())
             .copied()
             .context("No connected peers available")?,
-        PeerTarget::Specific(peer_id) => peer_id,
+        PeerTarget::Specific(peer_id) => {
+            anyhow::ensure!(
+                peer_admission.is_admitted(&peer_id),
+                "requested peer has not passed network admission"
+            );
+            peer_id
+        }
     };
 
     debug!("Outgoing request payload size: {:?}", payload.len());
@@ -1066,6 +1442,34 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::PeerId;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn quarantined_peer_is_restored_after_a_successful_admission() {
+        let peer = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        failures.quarantine(&peer);
+        assert!(failures.is_quarantined(&peer));
+
+        failures.connection_succeeded(&peer);
+        assert!(!failures.is_quarantined(&peer));
+    }
+
+    #[test]
+    fn three_consecutive_failures_reach_the_eviction_threshold() {
+        let peer = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        assert_eq!(failures.record_dial_failure(&peer), Some(1));
+        assert_eq!(failures.record_dial_failure(&peer), Some(2));
+        assert_eq!(
+            failures.record_dial_failure(&peer),
+            Some(super::MAX_CONSECUTIVE_DIAL_FAILURES)
+        );
+
+        failures.quarantine(&peer);
+        assert_eq!(failures.record_dial_failure(&peer), None);
+    }
 
     #[test]
     fn strip_peer_id_removes_trailing_p2p_component() {

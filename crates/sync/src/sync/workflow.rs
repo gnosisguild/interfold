@@ -53,8 +53,9 @@ impl SyncPlanner {
         )
     }
 
-    /// Build the net sync cursor: the aggregates that still need libp2p syncing mapped to the
-    /// original snapshot HLC timestamps.
+    /// Build the net sync cursor: chain-bound aggregates that still need libp2p syncing, mapped to
+    /// the original snapshot HLC timestamps. Aggregate 0 contains local process events and must not
+    /// be requested from peers.
     ///
     /// We use [`Self::find_net_hlc`] to determine WHICH aggregates need syncing (filtering closed
     /// E3s), but replace the timestamps with the original ones from the snapshot. Re-read EVM
@@ -66,6 +67,7 @@ impl SyncPlanner {
     ) -> BTreeMap<AggregateId, u128> {
         Self::find_net_hlc(historical_evm_events)
             .into_keys()
+            .filter(|id| id.to_chain_id().is_some())
             .map(|id| {
                 let ts = snapshot_net_config.get(&id).copied().unwrap_or(0);
                 (id, ts)
@@ -257,13 +259,13 @@ mod tests {
         let mut snapshot_net_config = BTreeMap::new();
         // original snapshot timestamp for aggregate 3 differs from the re-read HLC (5000).
         snapshot_net_config.insert(AggregateId::new(3), 42);
-        // aggregate 0 missing from snapshot -> defaults to 0.
+        // Aggregate 0 contains local events and is not eligible for peer sync.
 
         let cursor = SyncPlanner::net_sync_cursor(&events, &snapshot_net_config);
 
         assert_eq!(cursor[&AggregateId::new(3)], 42);
-        assert_eq!(cursor[&AggregateId::new(0)], 0);
-        assert_eq!(cursor.len(), 2);
+        assert!(!cursor.contains_key(&AggregateId::new(0)));
+        assert_eq!(cursor.len(), 1);
     }
 
     #[test]

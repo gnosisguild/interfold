@@ -14,7 +14,7 @@ use anyhow::{ensure, Result};
 use derivative::Derivative;
 use e3_aggregator::ext::{PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension};
 use e3_aggregator::CommitteeFinalizer;
-use e3_config::chain_config::ChainConfig;
+use e3_config::{chain_config::ChainConfig, NetworkProfile};
 use e3_crypto::Cipher;
 use e3_data::{InMemStore, RepositoriesFactory};
 use e3_events::DkgFoldAttestationContext;
@@ -33,7 +33,7 @@ use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
-    NetRepositoryFactory,
+    NetRepositoryFactory, NetworkPolicy,
 };
 use e3_request::{
     load_dkg_fold_attestation_contexts, E3LifecycleCoordinator, E3LifecycleRepositoryFactory,
@@ -70,6 +70,8 @@ enum EventSystemType {
 #[derivative(Debug)]
 pub struct CiphernodeBuilder {
     address: Option<String>,
+    #[cfg(feature = "test-helpers")]
+    eventstore_aggregate_config_override: Option<AggregateConfig>,
     chains: Vec<ChainConfig>,
     #[derivative(Debug = "ignore")]
     cipher: Arc<Cipher>,
@@ -107,11 +109,16 @@ pub struct CiphernodeBuilder {
 struct NetConfig {
     pub peers: Vec<String>,
     pub quic_port: u16,
+    pub network: NetworkProfile,
 }
 
 impl NetConfig {
-    pub fn new(peers: Vec<String>, quic_port: u16) -> Self {
-        Self { peers, quic_port }
+    pub fn new(network: NetworkProfile, peers: Vec<String>, quic_port: u16) -> Self {
+        Self {
+            peers,
+            quic_port,
+            network,
+        }
     }
 }
 
@@ -140,6 +147,8 @@ impl CiphernodeBuilder {
     pub fn new(rng: SharedRng, cipher: Arc<Cipher>) -> Self {
         Self {
             address: None,
+            #[cfg(feature = "test-helpers")]
+            eventstore_aggregate_config_override: None,
             chains: vec![],
             cipher,
             contract_components: ContractComponents::default(),
@@ -233,6 +242,13 @@ impl CiphernodeBuilder {
     /// given chains.
     pub fn with_chains(mut self, chains: &[ChainConfig]) -> Self {
         self.chains = chains.to_vec();
+        self
+    }
+
+    /// Add event stores for aggregates that have no EVM provider in an in-process test.
+    #[cfg(feature = "test-helpers")]
+    pub fn with_eventstore_aggregate_config_for_testing(mut self, config: AggregateConfig) -> Self {
+        self.eventstore_aggregate_config_override = Some(config);
         self
     }
 
@@ -459,7 +475,18 @@ impl CiphernodeBuilder {
 
     /// Setup net package components.
     pub fn with_net(mut self, peers: Vec<String>, quic_port: u16) -> Self {
-        self.net_config = Some(NetConfig::new(peers, quic_port));
+        self.net_config = Some(NetConfig::new(NetworkProfile::local(), peers, quic_port));
+        self
+    }
+
+    /// Set up networking for an explicit Interfold network profile.
+    pub fn with_network(
+        mut self,
+        network: NetworkProfile,
+        peers: Vec<String>,
+        quic_port: u16,
+    ) -> Self {
+        self.net_config = Some(NetConfig::new(network, peers, quic_port));
         self
     }
 
@@ -471,15 +498,17 @@ impl CiphernodeBuilder {
     async fn create_aggregate_config(
         &self,
         provider_cache: &mut ProviderCache,
-    ) -> Result<AggregateConfig> {
+    ) -> Result<(AggregateConfig, Vec<u64>)> {
         let mut chain_providers = Vec::new();
+        let mut chain_ids = Vec::new();
         for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
             let provider = provider_cache.ensure_read_provider(chain).await?;
             chain_providers.push((chain.clone(), provider.chain_id()));
+            chain_ids.push(provider.chain_id());
         }
 
         let delays = create_aggregate_delays(&chain_providers)?;
-        Ok(AggregateConfig::new(delays))
+        Ok((AggregateConfig::new(delays), chain_ids))
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
@@ -517,10 +546,18 @@ impl CiphernodeBuilder {
         } else {
             ProviderCache::new()
         };
-        let aggregate_config = self.create_aggregate_config(&mut provider_cache).await?;
+        let (aggregate_config, resolved_chain_ids) =
+            self.create_aggregate_config(&mut provider_cache).await?;
+        #[cfg(feature = "test-helpers")]
+        let eventstore_aggregate_config = self
+            .eventstore_aggregate_config_override
+            .take()
+            .unwrap_or_else(|| aggregate_config.clone());
+        #[cfg(not(feature = "test-helpers"))]
+        let eventstore_aggregate_config = aggregate_config.clone();
 
         // Build the event system (store + eventstore)
-        let event_system = self.create_event_system(local_bus, &aggregate_config);
+        let event_system = self.create_event_system(local_bus, &eventstore_aggregate_config);
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
         let repositories = Arc::new(store.repositories());
@@ -528,7 +565,12 @@ impl CiphernodeBuilder {
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(&repositories, &aggregate_config, &eventstore.seq()).await?;
+        preflight_schema_version(
+            &repositories,
+            &eventstore_aggregate_config,
+            &eventstore.seq(),
+        )
+        .await?;
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =
@@ -578,11 +620,11 @@ impl CiphernodeBuilder {
         ciphernode_selector.do_send(EmitPersistedAggregatorState);
 
         // Setup networking
-        let topic = "interfold-gossip";
-        let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
+        let network = self.network_policy(&resolved_chain_ids)?;
+        let (peer_id, interface, net_kind) = self.setup_networking(&store, &network).await?;
         let network_status = interface.status();
         let net_buffer = setup_net_with_limits(
-            topic,
+            &network,
             bus.clone(),
             eventstore.ts(),
             interface,
@@ -614,7 +656,7 @@ impl CiphernodeBuilder {
             net_interface: net_kind,
             network_status,
             eventstore,
-            aggregate_ids: aggregate_config.indexed_ids(),
+            aggregate_ids: eventstore_aggregate_config.indexed_ids(),
         })
     }
 
@@ -905,14 +947,14 @@ impl CiphernodeBuilder {
     async fn setup_networking(
         &self,
         store: &e3_data::DataStore,
-        topic: &str,
+        network: &NetworkPolicy,
     ) -> Result<(PeerId, e3_net::NetInterfaceHandle, NetInterfaceKind)> {
         if let Some(ref net_config) = self.net_config {
             let repositories = store.repositories();
             let keypair = setup_libp2p_keypair(repositories.libp2p_keypair(), &self.cipher).await?;
             let peer_id = keypair.peer_id();
             let interface = setup_net_interface(
-                topic,
+                network.clone(),
                 keypair,
                 net_config.peers.clone(),
                 net_config.quic_port,
@@ -927,6 +969,31 @@ impl CiphernodeBuilder {
                 NetInterfaceKind::ChannelBridge(channel_bridge),
             ))
         }
+    }
+
+    fn network_policy(&self, chain_ids: &[u64]) -> Result<NetworkPolicy> {
+        let profile = self
+            .net_config
+            .as_ref()
+            .map(|config| config.network.clone())
+            .unwrap_or_else(NetworkProfile::local);
+        let enabled_chains: Vec<_> = self
+            .chains
+            .iter()
+            .filter(|chain| chain.enabled.unwrap_or(true))
+            .collect();
+        ensure!(
+            enabled_chains.len() == chain_ids.len(),
+            "resolved chain IDs do not match the enabled chain configuration"
+        );
+        if enabled_chains.is_empty() && profile.name() == "local" {
+            return Ok(NetworkPolicy::local_unrestricted());
+        }
+        let mut deployments = Vec::with_capacity(enabled_chains.len());
+        for (chain, chain_id) in enabled_chains.into_iter().zip(chain_ids.iter().copied()) {
+            deployments.push((chain_id, chain.contracts.interfold.address()?.into_array()));
+        }
+        NetworkPolicy::new(profile, deployments)
     }
 
     fn ensure_multithread(&mut self, bus: &BusHandle) -> Addr<Multithread> {

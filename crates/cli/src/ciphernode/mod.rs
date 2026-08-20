@@ -39,6 +39,10 @@ impl ChainArgs {
 pub enum CiphernodeCommands {
     /// Setup local ciphernode configuration
     Setup {
+        /// P2P network profile for this development configuration
+        #[arg(long, value_parser = ["sepolia", "local"], default_value = "sepolia")]
+        network: String,
+
         /// An rpc url for interfold to connect to
         #[arg(long = "rpc-url", short = 'r')]
         rpc_url: Option<String>,

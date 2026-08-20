@@ -168,6 +168,12 @@ fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
                 log!(out, "{}", peer);
             }
         }
+        Some("network") => {
+            log!(out, "{}", config.network().name());
+        }
+        Some("network_id") => {
+            log!(out, "{}", config.network().id());
+        }
         Some("quic_port") => {
             log!(out, "{}", config.quic_port());
         }
@@ -230,6 +236,8 @@ fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
         None => {
             log!(out, "name: {}", config.name());
             log!(out, "peers: {:?}", config.peers());
+            log!(out, "network: {}", config.network().name());
+            log!(out, "network_id: {}", config.network().id());
             log!(out, "quic_port: {}", config.quic_port());
             log!(out, "ctrl_port: {}", config.ctrl_port());
             log!(out, "address: {:?}", config.address());
