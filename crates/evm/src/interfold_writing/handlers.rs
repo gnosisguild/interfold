@@ -136,8 +136,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
             let provider = self.provider.clone();
             let bus = self.bus.clone();
             async move {
-                // HACK: plaintext format is now a Vec of ArcBytes for legacy tests for now we are extracting
-                // the first entry and writing this will change once we make our legacy tests catch up
+                // The event can represent multiple ciphertext outputs, but the contract accepts one
+                // plaintext output per E3. Validation rejects multi-output results before indexing.
                 if let Err(msg_err) = validate_plaintext_output(
                     &e3_id,
                     &decrypted_output,
