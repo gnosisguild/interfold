@@ -11,6 +11,7 @@ use crate::{
 };
 use actix::{Actor, Context as ActixContext, Handler};
 use e3_ciphernode_builder::EventSystem;
+use e3_config::NetworkProfile;
 use e3_events::{E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced};
 use e3_utils::ArcBytes;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
@@ -55,7 +56,14 @@ fn manager_with_recording_store(
         .recipient();
 
     (
-        NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic"),
+        NetSyncManager::new(
+            &bus,
+            &tx,
+            &evt_rx,
+            eventstore,
+            "my-topic",
+            NetworkPolicy::local_unrestricted(),
+        ),
         rx,
     )
 }
@@ -117,6 +125,7 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
     let error = validate_historical_events(
         AggregateId::new(0),
         vec![remote_unsequenced(local_non_forwardable_event())],
+        &NetworkPolicy::local_unrestricted(),
     )
     .unwrap_err();
 
@@ -129,9 +138,60 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
 fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
-    let error = validate_historical_events(AggregateId::new(999), vec![event]).unwrap_err();
+    let error = validate_historical_events(
+        AggregateId::new(999),
+        vec![event],
+        &NetworkPolicy::local_unrestricted(),
+    )
+    .unwrap_err();
 
     assert!(error.to_string().contains("while fetching 999"));
+}
+
+#[test]
+fn historical_sync_cursor_keeps_only_active_network_chains() {
+    let policy = NetworkPolicy::new(NetworkProfile::mainnet(), [(31_337, [1; 20])]).unwrap();
+    let cursor = BTreeMap::from([
+        (AggregateId::new(0), 10),
+        (AggregateId::new(31_337), 20),
+        (AggregateId::new(11_155_111), 30),
+    ]);
+
+    assert_eq!(
+        eligible_sync_cursor(&cursor, &policy),
+        BTreeMap::from([(AggregateId::new(31_337), 20)])
+    );
+}
+
+#[actix::test]
+async fn local_only_cursor_completes_without_a_peer_request() {
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(1);
+    let (_event_tx, event_rx) = broadcast::channel::<NetEvent>(1);
+    let event_rx = Arc::new(event_rx);
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(0), 10)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        event_rx,
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        true,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    let response = response_rx.await.unwrap().into_inner().response;
+    assert!(response.events.is_empty());
+    assert_eq!(response.ts, 0);
+    assert!(
+        net_rx.try_recv().is_err(),
+        "local aggregate caused an outbound peer request"
+    );
 }
 
 #[actix::test]
@@ -143,7 +203,14 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let evt_rx = Arc::new(evt_rx);
     let eventstore = NoopEventStore.start().recipient();
 
-    let mut mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
+    let mut mgr = NetSyncManager::new(
+        &bus,
+        &tx,
+        &evt_rx,
+        eventstore,
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    );
 
     mgr.handle_rebroadcast_response(vec![
         local_forwardable_event("1234"),
@@ -151,7 +218,10 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     ]);
 
     // Exactly one GossipPublish for the forwardable artifact, on the configured topic.
-    let cmd = rx.try_recv().expect("expected a GossipPublish command");
+    let cmd = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for GossipPublish")
+        .expect("network command channel closed");
     let NetCommand::GossipPublish { topic, data, .. } = cmd else {
         panic!("expected GossipPublish, got {cmd:?}");
     };

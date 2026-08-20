@@ -15,6 +15,8 @@ pub mod events;
 mod keypair;
 mod net_interface;
 mod net_interface_handle;
+mod network;
+mod peer_admission;
 mod repo;
 
 use std::sync::Arc;
@@ -36,6 +38,7 @@ pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
 pub use net_interface::*;
 pub use net_interface_handle::*;
+pub use network::*;
 pub use repo::*;
 
 pub async fn setup_libp2p_keypair(
@@ -54,12 +57,12 @@ pub async fn setup_libp2p_keypair(
 }
 
 pub fn setup_net_interface(
-    topic: &str,
+    network: NetworkPolicy,
     keypair: Libp2pKeypair,
     peers: Vec<String>,
     quic_port: u16,
 ) -> Result<NetInterfaceHandle> {
-    let mut interface = Libp2pNetInterface::new(keypair, peers, Some(quic_port), topic)?;
+    let mut interface = Libp2pNetInterface::new(keypair, peers, Some(quic_port), network)?;
 
     let handle = interface.handle();
 
@@ -75,13 +78,13 @@ pub fn setup_net_interface(
 /// Spawn a Libp2p interface and hook it up to this actor
 #[instrument(name = "libp2p", skip_all)]
 pub fn setup_net(
-    topic: &str,
+    network: &NetworkPolicy,
     bus: BusHandle,
     eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
     interface: impl NetInterface,
 ) -> Result<()> {
     setup_net_with_limits(
-        topic,
+        network,
         bus,
         eventstore,
         interface,
@@ -94,7 +97,7 @@ pub fn setup_net(
 /// Set up networking with an explicit fail-closed startup buffer bound and return the readiness
 /// handle used by production startup.
 pub fn setup_net_with_limits(
-    topic: &str,
+    network: &NetworkPolicy,
     bus: BusHandle,
     eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
     interface: impl NetInterface,
@@ -104,6 +107,7 @@ pub fn setup_net_with_limits(
     if max_buffered_events == 0 || max_buffered_bytes == 0 {
         bail!("network startup buffer limits must both be greater than zero");
     }
+    let topic = network.protocols().gossip_topic();
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -112,6 +116,7 @@ pub fn setup_net_with_limits(
         &Arc::new(interface.rx()),
         eventstore.into(),
         topic,
+        network.clone(),
     );
 
     // Buffer all incoming events until SyncEnded
@@ -123,6 +128,7 @@ pub fn setup_net_with_limits(
     );
     let rx = Arc::new(rx);
     let tx = interface.tx();
+    let network = network.clone();
 
     let runner = run_once::<EffectsEnabled>({
         let bus = bus.clone();
@@ -130,7 +136,7 @@ pub fn setup_net_with_limits(
         let topic = topic.to_owned();
         let tx = tx.clone();
         move |_| {
-            NetEventTranslator::setup(&bus, &tx, &rx, &topic);
+            NetEventTranslator::setup(&bus, &tx, &rx, &topic, network.clone());
             DocumentPublisher::setup(&bus, &tx, &rx, &topic);
             Ok(())
         }

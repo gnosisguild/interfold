@@ -7,6 +7,7 @@
 use crate::chain_config::ChainConfig;
 use crate::load_config::find_in_parent;
 use crate::load_config::resolve_config_path;
+use crate::network::{NetworkId, NetworkProfile};
 use crate::paths_engine::PathsEngine;
 use crate::paths_engine::DEFAULT_CONFIG_NAME;
 use crate::program_config::ProgramConfig;
@@ -32,6 +33,10 @@ pub struct NodeDefinition {
     pub address: Option<Address>,
     /// A list of libp2p multiaddrs to dial to as peers when joining the network
     pub peers: Vec<String>,
+    /// Stable P2P network name. Built-in profiles are mainnet, sepolia, and local.
+    pub network: Option<String>,
+    /// Stable 32-byte identity for a custom P2P network.
+    pub network_id: Option<NetworkId>,
     /// The port to use for the quic listener
     pub quic_port: u16,
     /// The port to use for the ctrl socket listener
@@ -105,7 +110,10 @@ fn default_max_buffered_net_bytes() -> usize {
 impl Default for NodeDefinition {
     fn default() -> Self {
         Self {
-            peers: vec![], // NOTE: We should look at generation via ipns fetch for the latest nodes
+            // The resolved network profile supplies its DNS bootstrap when this list is empty.
+            peers: vec![],
+            network: None,
+            network_id: None,
             address: None,
             quic_port: 9091,
             ctrl_port: 50505,
@@ -130,7 +138,7 @@ impl Default for NodeDefinition {
 }
 
 /// The config actually used throughout the app
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct AppConfig {
     /// The name of the node
     name: String,
@@ -156,6 +164,9 @@ pub struct AppConfig {
     program: ProgramConfig,
     /// A custom bb implementation has been provided do not download and checksum a binary
     using_custom_bb: bool,
+    /// Resolved P2P network identity. This value is derived from user configuration.
+    #[serde(skip)]
+    network: NetworkProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +219,7 @@ impl AppConfig {
             bail!("Could not find node definition for node '{}'. Did you forget to include it in your configuration?", name);
         };
 
-        let node = node.clone();
+        let mut node = node.clone();
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
         }
@@ -221,6 +232,13 @@ impl AppConfig {
         if node.max_buffered_net_bytes == 0 {
             bail!("node.max_buffered_net_bytes must be greater than zero");
         }
+
+        let network =
+            NetworkProfile::resolve(node.network.as_deref(), node.network_id, &config.chains)?;
+        node.network = Some(network.name().to_string());
+        node.network_id = Some(network.id());
+        node.peers = network.normalize_explicit_peers(node.peers)?;
+        config.nodes.insert(name.to_string(), node.clone());
 
         let config_dir_override = (node.config_dir != PathBuf::new())
             .then_some(&node.config_dir)
@@ -257,12 +275,15 @@ impl AppConfig {
             autonetkey: node.autonetkey,
             program: config.program.unwrap_or_default(),
             using_custom_bb: config.custom_bb.is_some(),
+            network,
         })
     }
 
     /// Add the given peers to the peers vector
-    pub fn add_peers(&mut self, peers: Vec<String>) {
-        self.peers = combine_unique(&self.peers, &peers)
+    pub fn add_peers(&mut self, peers: Vec<String>) -> Result<()> {
+        let peers = self.network.normalize_explicit_peers(peers)?;
+        self.peers = combine_unique(&self.peers, &peers);
+        Ok(())
     }
 
     /// Get the key_file
@@ -324,7 +345,14 @@ impl AppConfig {
     pub fn peers(&self) -> Vec<String> {
         let config_peers = self.node_def().peers.clone();
         let cli_peers = self.peers.clone();
-        combine_unique(&config_peers, &cli_peers)
+        self.network
+            .resolve_peers(combine_unique(&config_peers, &cli_peers))
+            .expect("active node peers were validated during configuration load")
+    }
+
+    /// Get the immutable P2P network profile for this node.
+    pub fn network(&self) -> &NetworkProfile {
+        &self.network
     }
 
     /// get the quic port
@@ -652,6 +680,34 @@ nodes:
                 PathBuf::from("/myconfig/interfold/ag/key")
             );
         };
+        Ok(())
+    }
+
+    #[test]
+    fn crisp_local_config_selects_only_the_local_network() -> Result<()> {
+        let yaml = include_str!("../../../examples/CRISP/interfold.config.yaml");
+
+        for name in ["_default", "cn1"] {
+            let config: UnscopedAppConfig = serde_yaml::from_str(yaml)?;
+            let config = config.into_scoped_with_defaults(
+                name,
+                &PathBuf::from("/default/data"),
+                &PathBuf::from("/default/config"),
+                &PathBuf::from("/crisp"),
+            )?;
+
+            assert_eq!(config.network().name(), "local");
+            assert_eq!(
+                config
+                    .chains()
+                    .iter()
+                    .filter(|chain| chain.enabled.unwrap_or(true))
+                    .map(|chain| chain.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["localhost"]
+            );
+        }
+
         Ok(())
     }
 

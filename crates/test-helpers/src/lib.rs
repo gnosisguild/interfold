@@ -16,8 +16,9 @@ use alloy::primitives::Address;
 use anyhow::Result;
 use e3_ciphernode_builder::{CiphernodeHandle, EventSystem};
 use e3_events::{
-    BusHandle, CiphernodeAdded, EventBus, EventBusConfig, EventPublisher, EventType,
-    HistoryCollector, InterfoldEvent, InterfoldEventData, Seed, Subscribe,
+    AggregateConfig, AggregateId, BusHandle, CiphernodeAdded, EventBus, EventBusConfig,
+    EventPublisher, EventType, HistoryCollector, InterfoldEvent, InterfoldEventData, Seed,
+    Subscribe,
 };
 use e3_fhe_params::BfvParamSet;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
@@ -33,7 +34,7 @@ pub use public_key_writer::*;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 pub use utils::*;
 
 use std::path::PathBuf;
@@ -155,8 +156,13 @@ pub fn get_common_setup(
     let moduli = param_set.moduli;
     let (crp_bytes, params) = create_crp_bytes_params(moduli, degree, plaintext_modulus);
     let crpoly = CommonRandomPoly::deserialize(&crp_bytes.clone(), &params)?;
+    let aggregate_config = AggregateConfig::new(HashMap::from([
+        (AggregateId::new(1), Duration::ZERO),
+        (AggregateId::new(2), Duration::ZERO),
+    ]));
     let handle = EventSystem::in_mem()
         .with_event_bus(bus)
+        .with_aggregate_config(aggregate_config)
         .handle()?
         .enable("cn1");
     Ok((handle, rng, seed, params, crpoly, errors, history))

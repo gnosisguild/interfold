@@ -13,11 +13,11 @@ use e3_ciphernode_builder::{CiphernodeBuilder, EventSystem};
 use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_events::{
-    hlc::HlcTimestamp, prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized,
-    CommitteeRequested, ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated,
-    DkgFoldAttestationContextEstablished, E3Requested, E3id, InterfoldEvent, InterfoldEventData,
-    OperatorActivationChanged, PlaintextAggregated, ProofType, Seed, TakeEvents,
-    TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
+    CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
+    ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
+    E3id, InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated,
+    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
@@ -41,7 +41,7 @@ use e3_zk_prover::{VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1335,7 +1335,11 @@ async fn test_trbfv_actor() -> Result<()> {
     const BENCHMARK_NODE_RNG_BASE: u64 = 42;
 
     // Create "trigger" bus
-    let system = EventSystem::new().with_fresh_bus();
+    let benchmark_aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(benchmark_aggregate_config.clone());
     let bus = system.handle()?.enable("test");
 
     // Parameters selected by benchmark mode.
@@ -1452,6 +1456,9 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
                     .with_forked_bus(bus.event_bus())
+                    .with_eventstore_aggregate_config_for_testing(
+                        benchmark_aggregate_config.clone(),
+                    )
                     .with_chains(std::slice::from_ref(&bench_chain_config))
                     .with_logging();
                 if !proof_aggregation_enabled {
@@ -1479,6 +1486,9 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
                         .with_forked_bus(bus.event_bus())
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
                         .with_chains(std::slice::from_ref(&bench_chain_config))
                         .with_logging();
                     if !proof_aggregation_enabled {
@@ -2329,12 +2339,22 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     // Setup elements in test
     let (cmd_tx, mut cmd_rx) = mpsc::channel(100); // Transmit byte events to the network
     let (event_tx, _) = broadcast::channel(100); // Receive byte events from the network
-    let system = EventSystem::new();
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
     let event_rx = Arc::new(event_tx.subscribe());
     // Pas cmd and event channels to NetEventTranslator
-    NetEventTranslator::setup(&bus, &cmd_tx, &event_rx, "my-topic");
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &event_rx,
+        "my-topic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+    );
 
     // Capture messages from output on msgs vec
     let msgs: Arc<Mutex<Vec<InterfoldEventData>>> = Arc::new(Mutex::new(Vec::new()));
@@ -2418,11 +2438,21 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     // Setup elements in test
     let (cmd_tx, _) = mpsc::channel(100); // Transmit byte events to the network
     let (event_tx, event_rx) = broadcast::channel(100); // Receive byte events from the network
-    let system = EventSystem::new().with_fresh_bus();
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
 
-    NetEventTranslator::setup(&bus, &cmd_tx, &Arc::new(event_rx), "mytopic");
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &Arc::new(event_rx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+    );
 
     // Capture messages from output on msgs vec
     // Only protocol artifacts may cross the gossip trust boundary. Requests originate from the

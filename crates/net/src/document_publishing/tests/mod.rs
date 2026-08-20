@@ -14,9 +14,9 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{
-    BusHandle, CiphernodeSelected, DocumentKind, DocumentMeta, E3id, EncryptionKey,
-    EncryptionKeyCreated, GetEvents, HistoryCollector, InterfoldError, InterfoldEvent,
-    PublishDocumentRequested, TakeEvents,
+    AggregateConfig, AggregateId, BusHandle, CiphernodeSelected, DocumentKind, DocumentMeta, E3id,
+    EncryptionKey, EncryptionKeyCreated, GetEvents, HistoryCollector, InterfoldError,
+    InterfoldEvent, PublishDocumentRequested, TakeEvents,
 };
 use e3_utils::ArcBytes;
 use libp2p::kad::{GetRecordError, PutRecordError, RecordKey};
@@ -48,7 +48,11 @@ fn setup_test() -> Result<(
 
     let guard = tracing::subscriber::set_default(subscriber);
 
-    let system = EventSystem::new().with_fresh_bus();
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let (net_cmd_tx, net_cmd_rx) = mpsc::channel(100);
     let (net_evt_tx, net_evt_rx) = broadcast::channel(100);

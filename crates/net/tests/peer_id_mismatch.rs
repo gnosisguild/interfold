@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use e3_net::events::{NetCommand, NetEvent};
-use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface};
+use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
 use libp2p::swarm::DialError;
 use tokio::time::{sleep, timeout};
 
@@ -45,8 +45,12 @@ async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> 
         .try_init();
     // Node B: the "restarted" node, listening with its real (new) identity.
     let port_b = free_udp_port();
-    let mut node_b =
-        Libp2pNetInterface::new(Libp2pKeypair::generate(), vec![], Some(port_b), "test")?;
+    let mut node_b = Libp2pNetInterface::new(
+        Libp2pKeypair::generate(),
+        vec![],
+        Some(port_b),
+        NetworkPolicy::local_unrestricted(),
+    )?;
     let handle_b = node_b.handle();
     tokio::spawn(async move { node_b.start().await });
 
@@ -57,15 +61,18 @@ async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> 
     // identity), exactly like a stale routing/config entry.
     let stale_id = Libp2pKeypair::generate().peer_id();
     let stale_addr = format!("/ip4/127.0.0.1/udp/{port_b}/quic-v1/p2p/{stale_id}");
-    let mut node_a =
-        Libp2pNetInterface::new(Libp2pKeypair::generate(), vec![stale_addr], None, "test")?;
+    let mut node_a = Libp2pNetInterface::new(
+        Libp2pKeypair::generate(),
+        vec![stale_addr],
+        None,
+        NetworkPolicy::local_unrestricted(),
+    )?;
     let handle_a = node_a.handle();
     let mut rx_a = handle_a.rx();
     tokio::spawn(async move { node_a.start().await });
 
     // Phase 1: the dial must fail with WrongPeerId, then A must recover and
-    // connect to B under its real identity (via the re-keyed routing entry
-    // and the bootstrap triggered by the first mismatch).
+    // connect to B under its real identity through the corrected direct dial.
     let mut mismatches = 0usize;
     let mut connected = false;
     timeout(Duration::from_secs(30), async {

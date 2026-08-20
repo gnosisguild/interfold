@@ -173,7 +173,7 @@ fields:
     description: |
       Comma-separated peer addresses, e.g.:
       /dns4/cn1/udp/37173/quic-v1, /dns4/cn2/udp/37173/quic-v1
-      Leave empty for auto-discovery.
+      Leave empty to use the selected network's DNS bootstrap address.
     required: false
 
   # Credentials are uploaded as a file so they are not stored in container

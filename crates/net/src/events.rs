@@ -34,6 +34,48 @@ use tracing::{error, trace, warn};
 
 use libp2p::PeerId;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerRejectionKind {
+    Transient,
+    Permanent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GossipPublishFailure {
+    NoPeersSubscribed,
+    Transient(String),
+    Permanent(String),
+}
+
+impl GossipPublishFailure {
+    pub fn from_libp2p(error: PublishError) -> Self {
+        match error {
+            PublishError::NoPeersSubscribedToTopic => Self::NoPeersSubscribed,
+            PublishError::AllQueuesFull(count) => {
+                Self::Transient(PublishError::AllQueuesFull(count).to_string())
+            }
+            error => Self::Permanent(error.to_string()),
+        }
+    }
+
+    pub fn transient(reason: impl Into<String>) -> Self {
+        Self::Transient(reason.into())
+    }
+
+    pub fn permanent(reason: impl Into<String>) -> Self {
+        Self::Permanent(reason.into())
+    }
+}
+
+impl std::fmt::Display for GossipPublishFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPeersSubscribed => formatter.write_str("no peers are subscribed to the topic"),
+            Self::Transient(reason) | Self::Permanent(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum PeerTarget {
     Random,
@@ -211,7 +253,7 @@ pub enum NetEvent {
     /// There was an Error publishing bytes over the network
     GossipPublishError {
         correlation_id: CorrelationId,
-        error: Arc<PublishError>,
+        error: Arc<GossipPublishFailure>,
     },
     /// Data was successfully published over the network as far as we know.
     GossipPublished {
@@ -225,6 +267,12 @@ pub enum NetEvent {
     /// A connection was established to a peer
     ConnectionEstablished {
         connection_id: ConnectionId,
+    },
+    /// A transport connection failed the Interfold Identify admission policy.
+    PeerRejected {
+        connection_id: ConnectionId,
+        kind: PeerRejectionKind,
+        reason: String,
     },
     /// There was an error creating a connection
     OutgoingConnectionError {
@@ -311,8 +359,9 @@ impl NetEvent {
             Self::IncomingRequest(request) => request.responder.request_len(),
             Self::OutgoingRequestSucceeded(response) => serialized_size(&response.payload),
             Self::OutgoingRequestFailed(response) => response.error.len(),
-            Self::GossipPublishError { .. }
-            | Self::DialError { .. }
+            Self::GossipPublishError { error, .. } => error.to_string().len(),
+            Self::PeerRejected { reason, .. } => reason.len(),
+            Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
