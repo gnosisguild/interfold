@@ -17,14 +17,14 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, bail, ensure, Result};
 use e3_data::Persistable;
 use e3_events::{
-    prelude::*, trap, AggregationProofPending, AggregationProofSigned, BusHandle,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
-    ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind, CorrelationId,
-    DecryptedSharesAggregationProofRequest, DecryptionAggregationRequest, DecryptionshareCreated,
-    Die, E3Failed, E3Stage, E3id, EType, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, PlaintextAggregated, Proof, Sequenced, ShareVerificationComplete,
-    ShareVerificationDispatched, SignedProofPayload, TypedEvent, VerificationKind, ZkRequest,
-    ZkResponse,
+    prelude::*, trap, AggregationProofPending, AggregationProofSigned, AggregatorChanged,
+    BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
+    ComputeRequestError, ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind,
+    CorrelationId, DecryptedSharesAggregationProofRequest, DecryptionAggregationRequest,
+    DecryptionshareCreated, Die, E3Failed, E3Stage, E3id, EType, EventContext, FailureReason,
+    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, Sequenced,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::BfvPreset;
 use e3_sortition::{E3CommitteeContainsRequest, E3CommitteeContainsResponse, Sortition};
@@ -113,6 +113,7 @@ pub struct ThresholdPlaintextAggregator {
     /// `PublicKeyAggregated.honest_committee_addresses`). Drives share-collection
     /// gating (expects one share from each H party) and sender checks after sortition.
     honest_committee_addresses: Vec<Address>,
+    is_aggregator: bool,
     pending: PendingDecryptionWork,
 }
 
@@ -123,6 +124,7 @@ pub struct ThresholdPlaintextAggregatorParams {
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,
     pub proof_aggregation_enabled: bool,
+    pub initial_is_aggregator: bool,
     /// Full committee from `PublicKeyAggregated.committee_addresses` (length `N`).
     /// Used for `committee_hash_*` payload binding to on-chain `topNodes`.
     pub committee_addresses: Vec<Address>,
@@ -163,6 +165,7 @@ impl ThresholdPlaintextAggregator {
             state,
             committee_addresses: params.committee_addresses,
             honest_committee_addresses: params.honest_committee_addresses,
+            is_aggregator: params.initial_is_aggregator,
             pending: PendingDecryptionWork::default(),
         }
     }
@@ -184,6 +187,32 @@ impl ThresholdPlaintextAggregator {
             node,
             party_id,
         )
+    }
+
+    fn arm_collection_timeout(&mut self, ctx: &mut Context<Self>) {
+        if !self.is_aggregator || self.pending.timeout_handle.is_some() {
+            return;
+        }
+        if !matches!(
+            self.state.get(),
+            Some(ThresholdPlaintextAggregatorState::Collecting(_))
+        ) {
+            return;
+        }
+
+        let timeout = decryption_collection_timeout();
+        info!(
+            e3_id = %self.e3_id,
+            ?timeout,
+            "Active plaintext aggregator is collecting decryption shares"
+        );
+        self.pending.timeout_handle = Some(ctx.notify_later(DecryptionCollectionTimeout, timeout));
+    }
+
+    fn cancel_collection_timeout(&mut self, ctx: &mut Context<Self>) {
+        if let Some(handle) = self.pending.timeout_handle.take() {
+            ctx.cancel_future(handle);
+        }
     }
 }
 

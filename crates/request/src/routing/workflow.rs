@@ -102,7 +102,8 @@ impl RequestRouter {
             // On-chain confirmation events that lag behind local teardown are expected and
             // should be silently ignored rather than treated as an error.
             let is_late_terminal = match msg.get_data() {
-                // E3StageChanged(Complete) always lags local PlaintextAggregated completion.
+                // A canonical terminal stage can arrive after another canonical terminal event
+                // has already removed the local context.
                 InterfoldEventData::E3StageChanged(data)
                     if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
                 {

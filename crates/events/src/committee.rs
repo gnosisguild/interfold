@@ -92,17 +92,15 @@ impl Committee {
     /// members during failover). Returns the lowest party_id not in `skipped`,
     /// or `None` if every member is skipped.
     ///
-    /// Because the committee order is deterministic for all nodes and `skipped`
-    /// is derived from shared signals, every node computes the same aggregator,
-    /// so failover needs no leader-election protocol.
+    /// Because the committee order is deterministic for all nodes, the same
+    /// skip set produces the same aggregator without a leader-election round.
     pub fn active_aggregator_party_id(&self, skipped: &[u64]) -> Option<u64> {
         (0..self.members.len() as u64).find(|party_id| !skipped.contains(party_id))
     }
 
     /// Whether `my_addr` is the active aggregator once both on-chain-expelled and
-    /// locally-presumed-unresponsive members are skipped. This is the failover
-    /// generalisation of [`Self::is_active_aggregator`]: passing an empty
-    /// `unresponsive` slice reproduces the original behaviour exactly.
+    /// locally-presumed-unresponsive members are skipped. An empty
+    /// `unresponsive` slice selects from on-chain eligibility only.
     pub fn effective_aggregator(
         &self,
         my_addr: &str,
@@ -179,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_aggregator_matches_legacy_when_no_unresponsive() {
+    fn effective_aggregator_matches_primary_selection_without_timeouts() {
         let c = committee();
         for (addr, expelled) in [
             ("0xbbb", &[][..]),

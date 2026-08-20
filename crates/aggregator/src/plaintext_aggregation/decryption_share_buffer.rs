@@ -136,6 +136,7 @@ impl Handler<InterfoldEvent> for DecryptionshareCreatedBuffer {
             }
             InterfoldEventData::AggregatorChanged(AggregatorChanged { is_aggregator, .. }) => {
                 self.is_aggregator = *is_aggregator;
+                Self::forward(&self.dest, msg);
                 self.flush();
             }
             InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {

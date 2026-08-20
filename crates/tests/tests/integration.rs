@@ -2063,7 +2063,7 @@ async fn test_trbfv_actor() -> Result<()> {
     assert_eq!(
         plaintext_aggregated_index,
         aggregation_flow.len() - 1,
-        "PlaintextAggregated must be the last active aggregator completion event"
+        "PlaintextAggregated must be the final local aggregation event"
     );
 
     if let Some(secs) = history_wall_seconds_between(

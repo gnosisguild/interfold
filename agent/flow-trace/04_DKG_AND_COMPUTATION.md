@@ -6,9 +6,9 @@ After committee finalization, the selected ciphernodes perform Distributed Key G
 using threshold BFV (TrBFV) cryptography. This produces a collective public key without any single
 party knowing the full secret key. Later, the committee produces decryption shares; all committee
 members buffer them, and the active aggregator combines them. The runtime first normalizes the
-finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
-`party_id` that has not been excluded from the current E3. An exclusion can come from an on-chain
-expulsion or from a proof-fault quorum while the matching slash policy is disabled.
+finalized committee into ascending address order. The active aggregator is the lowest eligible
+`party_id`. A party can be ineligible because of an on-chain expulsion, a proof-fault exclusion, or
+a phase-local aggregator progress timeout.
 
 Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
 by the hot operator key and verified against the operator address snapshotted into the committee.
@@ -593,7 +593,7 @@ phase.
   │   └─ Compares committee, keyshare, and exclusion identities as parsed EVM addresses;
   │      EIP-55 casing differences cannot bypass an exclusion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On exclusion-driven handoff, the next active aggregator flushes its existing buffer
+  │   └─ On exclusion- or timeout-driven handoff, the next active aggregator flushes its buffer
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │
@@ -980,9 +980,11 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ DecryptionshareCreatedBuffer gates events:
   │   ├─ Tracks parties excluded by on-chain expulsion or the disabled-policy fallback
   │   ├─ Buffers until AggregatorChanged(is_aggregator=true)
-  │   └─ Flushes verified shares to ThresholdPlaintextAggregator when this node is active
+  │   └─ Forwards the role change, then flushes verified shares when this node is active
   │
   ├─ ThresholdPlaintextAggregator receives flushed shares
+  │   ├─ Arms its 30-minute collection timeout only while this node is active
+  │   ├─ Starts a fresh collection window after promotion and cancels it after demotion
   │   ├─ Verifies sender is in committee
   │   ├─ Adds the share if verified
   │   └─ Ignores non-members or excluded parties
@@ -1305,6 +1307,12 @@ During restart, `ComputeEffectGate` observes replay before compute workers are e
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
 E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
 durable event order or audit state.
+
+`CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
+repository stores the pending phase, assigned party, absolute deadline, and locally unresponsive
+party IDs. An unchanged phase and assignment preserve the original deadline. A new assignment gets
+the full budget. `EffectsEnabled` re-arms the remaining duration or processes an overdue deadline
+immediately. Canonical phase progress cancels the old timer and clears the phase-local skip set.
 
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer

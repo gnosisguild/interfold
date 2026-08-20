@@ -329,6 +329,7 @@ impl ThresholdPlaintextAggregatorExtension {
                             }
                         },
                         proof_aggregation_enabled: self.proof_aggregation_enabled,
+                        initial_is_aggregator,
                         committee_addresses,
                         honest_committee_addresses,
                     },
@@ -686,6 +687,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                     )
                 })?,
                 proof_aggregation_enabled: self.proof_aggregation_enabled,
+                initial_is_aggregator,
                 committee_addresses,
                 honest_committee_addresses,
             },

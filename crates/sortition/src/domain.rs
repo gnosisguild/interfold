@@ -8,6 +8,8 @@
 
 #[path = "sortition/selection_backend.rs"]
 pub mod backends;
+#[path = "failover.rs"]
+pub mod failover;
 #[path = "sortition/finalized_committee_retention.rs"]
 mod finalized_committee_retention;
 #[path = "sortition/node_registry.rs"]
@@ -18,6 +20,7 @@ pub mod ticket;
 pub mod ticket_sortition;
 
 pub use backends::*;
+pub use failover::*;
 pub use finalized_committee_retention::*;
 pub use node_registry::*;
 pub use ticket::*;

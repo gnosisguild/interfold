@@ -330,17 +330,17 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 ### Interfold Events
 
-| Event                       | Parameters                                                     | Purpose               |
-| --------------------------- | -------------------------------------------------------------- | --------------------- |
-| `E3Requested`               | e3Id, thresholdM, thresholdN, computationSeed, params, chainId | Computation request   |
-| `TicketGenerated`           | e3Id, node, ticketId, chainId                                  | Sortition ticket      |
-| `CommitteeFinalized`        | e3Id, committee[], chainId                                     | Committee selected    |
-| `CiphernodeSelected`        | e3Id, node, chainId                                            | Node is in committee  |
-| `KeyshareCreated`           | e3Id, node, pubkey, chainId                                    | Keyshare generated    |
-| `PublicKeyAggregated`       | e3Id, pubkey, nodes, chainId                                   | Public key ready      |
-| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                                      | Encrypted computation |
-| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId                  | Decryption share      |
-| `PlaintextAggregated`       | e3Id, plaintext, nodes, chainId                                | Decryption complete   |
+| Event                       | Parameters                                                     | Purpose                 |
+| --------------------------- | -------------------------------------------------------------- | ----------------------- |
+| `E3Requested`               | e3Id, thresholdM, thresholdN, computationSeed, params, chainId | Computation request     |
+| `TicketGenerated`           | e3Id, node, ticketId, chainId                                  | Sortition ticket        |
+| `CommitteeFinalized`        | e3Id, committee[], chainId                                     | Committee selected      |
+| `CiphernodeSelected`        | e3Id, node, chainId                                            | Node is in committee    |
+| `KeyshareCreated`           | e3Id, node, pubkey, chainId                                    | Keyshare generated      |
+| `PublicKeyAggregated`       | e3Id, pubkey, nodes, chainId                                   | Public key ready        |
+| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                                      | Encrypted computation   |
+| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId                  | Decryption share        |
+| `PlaintextAggregated`       | e3Id, plaintext, nodes, chainId                                | Local aggregation ready |
 
 ## Testing Flow
 

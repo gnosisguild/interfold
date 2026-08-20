@@ -89,7 +89,11 @@ impl StoreKeys {
     }
 
     pub fn ciphernode_selector() -> String {
-        String::from("//ciphernode_selector")
+        String::from("//ciphernode_selector/v2")
+    }
+
+    pub fn aggregator_failover() -> String {
+        String::from("//aggregator_failover")
     }
 
     pub fn aggregate_seq(aggregate_id: AggregateId) -> String {
