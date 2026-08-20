@@ -70,6 +70,8 @@ enum EventSystemType {
 #[derivative(Debug)]
 pub struct CiphernodeBuilder {
     address: Option<String>,
+    #[cfg(feature = "test-helpers")]
+    aggregate_config_override: Option<AggregateConfig>,
     chains: Vec<ChainConfig>,
     #[derivative(Debug = "ignore")]
     cipher: Arc<Cipher>,
@@ -145,6 +147,8 @@ impl CiphernodeBuilder {
     pub fn new(rng: SharedRng, cipher: Arc<Cipher>) -> Self {
         Self {
             address: None,
+            #[cfg(feature = "test-helpers")]
+            aggregate_config_override: None,
             chains: vec![],
             cipher,
             contract_components: ContractComponents::default(),
@@ -238,6 +242,13 @@ impl CiphernodeBuilder {
     /// given chains.
     pub fn with_chains(mut self, chains: &[ChainConfig]) -> Self {
         self.chains = chains.to_vec();
+        self
+    }
+
+    /// Override the derived aggregate stores for an in-process test.
+    #[cfg(feature = "test-helpers")]
+    pub fn with_aggregate_config_for_testing(mut self, config: AggregateConfig) -> Self {
+        self.aggregate_config_override = Some(config);
         self
     }
 
@@ -535,8 +546,12 @@ impl CiphernodeBuilder {
         } else {
             ProviderCache::new()
         };
-        let (aggregate_config, resolved_chain_ids) =
+        let (mut aggregate_config, resolved_chain_ids) =
             self.create_aggregate_config(&mut provider_cache).await?;
+        #[cfg(feature = "test-helpers")]
+        if let Some(config) = self.aggregate_config_override.take() {
+            aggregate_config = config;
+        }
 
         // Build the event system (store + eventstore)
         let event_system = self.create_event_system(local_bus, &aggregate_config);

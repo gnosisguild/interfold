@@ -1335,7 +1335,11 @@ async fn test_trbfv_actor() -> Result<()> {
     const BENCHMARK_NODE_RNG_BASE: u64 = 42;
 
     // Create "trigger" bus
-    let system = EventSystem::new().with_fresh_bus();
+    let benchmark_aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(benchmark_aggregate_config.clone());
     let bus = system.handle()?.enable("test");
 
     // Parameters selected by benchmark mode.
@@ -1452,6 +1456,7 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
                     .with_forked_bus(bus.event_bus())
+                    .with_aggregate_config_for_testing(benchmark_aggregate_config.clone())
                     .with_chains(std::slice::from_ref(&bench_chain_config))
                     .with_logging();
                 if !proof_aggregation_enabled {
@@ -1479,6 +1484,7 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
                         .with_forked_bus(bus.event_bus())
+                        .with_aggregate_config_for_testing(benchmark_aggregate_config.clone())
                         .with_chains(std::slice::from_ref(&bench_chain_config))
                         .with_logging();
                     if !proof_aggregation_enabled {
