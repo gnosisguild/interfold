@@ -1173,9 +1173,25 @@ button {
   font-size: 11px;
   color: var(--ink-3);
 }
+.netpulse__groups {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.netpulse__group {
+  min-width: 0;
+}
+.netpulse__group-label {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
 .netpulse__grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   background: var(--paper-2);
   border: 1px solid var(--rule);
   border-radius: var(--radius-lg);
@@ -1204,18 +1220,9 @@ button {
   color: var(--ink-3);
 }
 @media (max-width: 980px) {
-  .netpulse__grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  /* Wrapped rows: keep the vertical divider off the row starts, rule the rows apart. */
-  .netpulse__tile + .netpulse__tile {
-    border-left: none;
-  }
-  .netpulse__tile:not(:nth-child(3n + 1)) {
-    border-left: 1px solid var(--rule-soft);
-  }
-  .netpulse__tile:nth-child(n + 4) {
-    border-top: 1px solid var(--rule-soft);
+  /* Stack the Network / Activity groups; each keeps its own 3-across grid. */
+  .netpulse__groups {
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 560px) {
@@ -1223,20 +1230,8 @@ button {
     margin-top: 24px;
     padding: 0 18px;
   }
-  .netpulse__grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .netpulse__tile {
     padding: 16px 18px 14px;
-  }
-  .netpulse__tile:not(:nth-child(3n + 1)) {
-    border-left: none;
-  }
-  .netpulse__tile:not(:nth-child(2n + 1)) {
-    border-left: 1px solid var(--rule-soft);
-  }
-  .netpulse__tile:nth-child(n + 3) {
-    border-top: 1px solid var(--rule-soft);
   }
   .netpulse__value {
     font-size: 22px;
