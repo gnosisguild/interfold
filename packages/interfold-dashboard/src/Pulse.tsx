@@ -41,16 +41,26 @@ export default function Pulse({
         <span className='netpulse__title'>Interfold network</span>
         <span className='netpulse__net'>{NETWORK_NAME}</span>
       </div>
-      <div className='netpulse__grid'>
-        <Tile value={network ? network.registeredNodes.toLocaleString() : '—'} label='ciphernodes registered' />
-        <Tile value={network ? network.activeOperators.toLocaleString() : '—'} label='active now' />
-        <Tile
-          value={network ? fmtBonded(network.totalBonded, network.bondDecimals) : '—'}
-          label={`${network?.bondSymbol ?? ''} bonded`.trim() || 'bonded'}
-        />
-        <Tile value={String(data.activeNow)} label={`active E3${data.activeNow === 1 ? '' : 's'} right now`} />
-        <Tile value={data.ballots24h.toLocaleString()} label='encrypted ballots, last 24h' />
-        <Tile value={data.pollsAllTime.toLocaleString()} label='CRISP polls, all-time' />
+      <div className='netpulse__groups'>
+        <div className='netpulse__group'>
+          <div className='netpulse__group-label'>Network</div>
+          <div className='netpulse__grid'>
+            <Tile value={network ? network.registeredNodes.toLocaleString() : '—'} label='ciphernodes registered' />
+            <Tile value={network ? network.activeOperators.toLocaleString() : '—'} label='active now' />
+            <Tile
+              value={network ? fmtBonded(network.totalBonded, network.bondDecimals) : '—'}
+              label={`${network?.bondSymbol ?? ''} bonded`.trim() || 'bonded'}
+            />
+          </div>
+        </div>
+        <div className='netpulse__group'>
+          <div className='netpulse__group-label'>Activity</div>
+          <div className='netpulse__grid'>
+            <Tile value={String(data.activeNow)} label={`active E3${data.activeNow === 1 ? '' : 's'} right now`} />
+            <Tile value={data.ballots24h.toLocaleString()} label='encrypted ballots, last 24h' />
+            <Tile value={data.pollsAllTime.toLocaleString()} label='CRISP polls, all-time' />
+          </div>
+        </div>
       </div>
     </section>
   )

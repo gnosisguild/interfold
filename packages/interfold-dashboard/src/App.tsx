@@ -326,7 +326,7 @@ export default function App() {
             </div>
           ) : !hasE3s ? (
             <div className='inspector'>
-              <StatusNote>No E3s on the network yet. They will appear here once one is requested on-chain.</StatusNote>
+              <StatusNote>No active E3s yet. New requests will appear here onchain.</StatusNote>
             </div>
           ) : (
             <Inspector
