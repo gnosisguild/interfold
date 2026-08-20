@@ -51,6 +51,38 @@ where
 - `leaf` builds a tree leaf. It must equal what the E3 program builds on chain for the same input.
 - `select` chooses which inputs the computation runs over, by index.
 
+Both are plain function pointers, so a policy is a value rather than a trait implementation:
+
+```rust
+pub type LeafFn = fn(&PublishedInput) -> Result<String, ComputeError>;
+pub type SelectFn = fn(&[PublishedInput]) -> Vec<usize>;
+```
+
+A leaf is returned as hex, already reduced into the BN254 scalar field. `leaf_from_digest` does that
+reduction, so a program hashing its own fields does not restate the modulus:
+
+```rust
+use e3_compute_provider::policy::{all_inputs, leaf_from_digest, InputPolicy, PublishedInput};
+use e3_compute_provider::ComputeError;
+use sha2::{Digest, Sha256};
+
+fn my_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
+    let digest = Sha256::digest([input.ciphertext, input.metadata].concat());
+    Ok(leaf_from_digest(&digest))
+}
+
+pub fn policy() -> InputPolicy {
+    InputPolicy {
+        leaf: my_leaf,
+        select: all_inputs,
+    }
+}
+```
+
+`PublishedInput` carries the input's `index`, its `ciphertext` bytes, the `commitment` the program
+stored when it stores one, whatever `metadata` it published, and `recomputed`, the commitment
+derived from the bytes. `matches_commitment()` compares the last two.
+
 `InputPolicy::default()` is the behaviour every E3 program had before policies existed. The leaf is
 the ciphertext's own SAFE commitment, and every input is computed over. A program whose contract
 inserts something else, or that treats a second input from one participant as a replacement,
