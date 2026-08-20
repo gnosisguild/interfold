@@ -2368,7 +2368,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, InterfoldEvent, TakeEvents, Unsequenced};
+    use e3_events::{CiphernodeSelected, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced};
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -2424,16 +2424,20 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         anyhow::Ok(())
     });
 
-    let evt_1 = PlaintextAggregated {
+    let evt_1 = KeyshareCreated {
         e3_id: E3id::new("1235", 1),
-        decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3, 4])],
-        decryption_aggregator_proofs: vec![],
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: "node-1".to_string(),
+        party_id: 0,
+        signed_pk_generation_proof: None,
     };
 
-    let evt_2 = PlaintextAggregated {
+    let evt_2 = KeyshareCreated {
         e3_id: E3id::new("1236", 1),
-        decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3, 4])],
-        decryption_aggregator_proofs: vec![],
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: "node-2".to_string(),
+        party_id: 1,
+        signed_pk_generation_proof: None,
     };
 
     let local_evt_3 = CiphernodeSelected {
@@ -2474,6 +2478,8 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
+    use e3_events::KeyshareCreated;
+
     // Setup elements in test
     let (cmd_tx, _) = mpsc::channel(100); // Transmit byte events to the network
     let (event_tx, event_rx) = broadcast::channel(100); // Receive byte events from the network
@@ -2493,13 +2499,13 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
         e3_net::NetworkPolicy::local_unrestricted(),
     );
 
-    // Capture messages from output on msgs vec
-    // Only protocol artifacts may cross the gossip trust boundary. Requests originate from the
-    // canonical chain listener, so use a genuinely forwardable result artifact here.
-    let event = PlaintextAggregated {
+    // Only protocol artifacts can cross the gossip trust boundary. Use a forwardable keyshare.
+    let event = KeyshareCreated {
         e3_id: E3id::new("1235", 1),
-        decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3, 4])],
-        decryption_aggregator_proofs: vec![],
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: "node-1".to_string(),
+        party_id: 0,
+        signed_pk_generation_proof: None,
     };
 
     // lets send an event from the network
