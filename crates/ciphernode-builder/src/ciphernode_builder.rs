@@ -71,7 +71,7 @@ enum EventSystemType {
 pub struct CiphernodeBuilder {
     address: Option<String>,
     #[cfg(feature = "test-helpers")]
-    aggregate_config_override: Option<AggregateConfig>,
+    eventstore_aggregate_config_override: Option<AggregateConfig>,
     chains: Vec<ChainConfig>,
     #[derivative(Debug = "ignore")]
     cipher: Arc<Cipher>,
@@ -148,7 +148,7 @@ impl CiphernodeBuilder {
         Self {
             address: None,
             #[cfg(feature = "test-helpers")]
-            aggregate_config_override: None,
+            eventstore_aggregate_config_override: None,
             chains: vec![],
             cipher,
             contract_components: ContractComponents::default(),
@@ -245,10 +245,10 @@ impl CiphernodeBuilder {
         self
     }
 
-    /// Override the derived aggregate stores for an in-process test.
+    /// Add event stores for aggregates that have no EVM provider in an in-process test.
     #[cfg(feature = "test-helpers")]
-    pub fn with_aggregate_config_for_testing(mut self, config: AggregateConfig) -> Self {
-        self.aggregate_config_override = Some(config);
+    pub fn with_eventstore_aggregate_config_for_testing(mut self, config: AggregateConfig) -> Self {
+        self.eventstore_aggregate_config_override = Some(config);
         self
     }
 
@@ -546,15 +546,18 @@ impl CiphernodeBuilder {
         } else {
             ProviderCache::new()
         };
-        let (mut aggregate_config, resolved_chain_ids) =
+        let (aggregate_config, resolved_chain_ids) =
             self.create_aggregate_config(&mut provider_cache).await?;
         #[cfg(feature = "test-helpers")]
-        if let Some(config) = self.aggregate_config_override.take() {
-            aggregate_config = config;
-        }
+        let eventstore_aggregate_config = self
+            .eventstore_aggregate_config_override
+            .take()
+            .unwrap_or_else(|| aggregate_config.clone());
+        #[cfg(not(feature = "test-helpers"))]
+        let eventstore_aggregate_config = aggregate_config.clone();
 
         // Build the event system (store + eventstore)
-        let event_system = self.create_event_system(local_bus, &aggregate_config);
+        let event_system = self.create_event_system(local_bus, &eventstore_aggregate_config);
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
         let repositories = Arc::new(store.repositories());
@@ -562,7 +565,12 @@ impl CiphernodeBuilder {
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(&repositories, &aggregate_config, &eventstore.seq()).await?;
+        preflight_schema_version(
+            &repositories,
+            &eventstore_aggregate_config,
+            &eventstore.seq(),
+        )
+        .await?;
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =
@@ -648,7 +656,7 @@ impl CiphernodeBuilder {
             net_interface: net_kind,
             network_status,
             eventstore,
-            aggregate_ids: aggregate_config.indexed_ids(),
+            aggregate_ids: eventstore_aggregate_config.indexed_ids(),
         })
     }
 

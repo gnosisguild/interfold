@@ -1456,7 +1456,9 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
                     .with_forked_bus(bus.event_bus())
-                    .with_aggregate_config_for_testing(benchmark_aggregate_config.clone())
+                    .with_eventstore_aggregate_config_for_testing(
+                        benchmark_aggregate_config.clone(),
+                    )
                     .with_chains(std::slice::from_ref(&bench_chain_config))
                     .with_logging();
                 if !proof_aggregation_enabled {
@@ -1484,7 +1486,9 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
                         .with_forked_bus(bus.event_bus())
-                        .with_aggregate_config_for_testing(benchmark_aggregate_config.clone())
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
                         .with_chains(std::slice::from_ref(&bench_chain_config))
                         .with_logging();
                     if !proof_aggregation_enabled {
