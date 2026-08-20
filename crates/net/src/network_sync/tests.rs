@@ -11,6 +11,7 @@ use crate::{
 };
 use actix::{Actor, Context as ActixContext, Handler};
 use e3_ciphernode_builder::EventSystem;
+use e3_config::NetworkProfile;
 use e3_events::{E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced};
 use e3_utils::ArcBytes;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
@@ -145,6 +146,52 @@ fn historical_sync_rejects_events_from_another_aggregate() {
     .unwrap_err();
 
     assert!(error.to_string().contains("while fetching 999"));
+}
+
+#[test]
+fn historical_sync_cursor_keeps_only_active_network_chains() {
+    let policy = NetworkPolicy::new(NetworkProfile::mainnet(), [(31_337, [1; 20])]).unwrap();
+    let cursor = BTreeMap::from([
+        (AggregateId::new(0), 10),
+        (AggregateId::new(31_337), 20),
+        (AggregateId::new(11_155_111), 30),
+    ]);
+
+    assert_eq!(
+        eligible_sync_cursor(&cursor, &policy),
+        BTreeMap::from([(AggregateId::new(31_337), 20)])
+    );
+}
+
+#[actix::test]
+async fn local_only_cursor_completes_without_a_peer_request() {
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(1);
+    let (_event_tx, event_rx) = broadcast::channel::<NetEvent>(1);
+    let event_rx = Arc::new(event_rx);
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(0), 10)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        event_rx,
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        true,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    let response = response_rx.await.unwrap().into_inner().response;
+    assert!(response.events.is_empty());
+    assert_eq!(response.ts, 0);
+    assert!(
+        net_rx.try_recv().is_err(),
+        "local aggregate caused an outbound peer request"
+    );
 }
 
 #[actix::test]

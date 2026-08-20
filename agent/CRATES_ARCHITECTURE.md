@@ -348,7 +348,7 @@ flowchart TD
         GlobalOrder --> ReplayFloor[advance HLC floor while loading the runs]
         ReplayFloor -->|EventBus acknowledged fanout one event at a time| Dispatch
         Dispatch -->|EventBusBarrier after completed fanout| EvmBackfill[configured-confirmation EVM backfill]
-        EvmBackfill --> NetBackfill[bounded historical network sync]
+        EvmBackfill --> NetBackfill[bounded chain-scoped historical network sync]
         NetBackfill --> Merge[merge and sort EVM plus network history by HLC]
         Merge --> Enable[EffectsEnabled]
         Enable -->|durable pipeline and fanout fence| PersistHistory[persist and dispatch reconciled history]
@@ -369,7 +369,9 @@ construction then performs a full integrity scan and reconciles missing timestam
 the log in strict 1,024-record pages. Timestamp admission deduplicates by stable event ID plus
 payload, so the same logical event may return through historical network sync with a different
 transport source without colliding. A different payload at an already-indexed HLC timestamp remains
-an integrity failure. Post-snapshot events are queried per aggregate in 1,024-event pages and sorted
+an integrity failure. Historical peer-sync cursors contain only chain-bound aggregates allowed by
+the active network policy; local aggregate 0 is never requested from peers or added to recovery
+retries. Post-snapshot events are queried per aggregate in 1,024-event pages and sorted
 into secure temporary runs. Runs are compacted with bounded fan-in and merged globally by persisted
 HLC timestamp, so memory and open-file use do not scale with the entire backlog. Before fanout, the
 HLC floor advances to the maximum replay timestamp, which covers a snapshot cursor stalled behind

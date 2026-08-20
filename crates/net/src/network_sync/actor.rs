@@ -16,7 +16,7 @@ use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
     time::Duration,
@@ -163,7 +163,7 @@ use effects::historical_sync::handle_sync_request_event;
 use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]
-use effects::historical_sync::validate_historical_events;
+use effects::historical_sync::{eligible_sync_cursor, validate_historical_events};
 
 #[cfg(test)]
 #[path = "tests.rs"]

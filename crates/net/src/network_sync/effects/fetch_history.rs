@@ -54,6 +54,21 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
     Ok(events)
 }
 
+pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
+    since: &BTreeMap<AggregateId, u128>,
+    network: &NetworkPolicy,
+) -> BTreeMap<AggregateId, u128> {
+    since
+        .iter()
+        .filter_map(|(aggregate_id, timestamp)| {
+            aggregate_id
+                .to_chain_id()
+                .filter(|chain_id| network.allows_chain(*chain_id))
+                .map(|_| (*aggregate_id, *timestamp))
+        })
+        .collect()
+}
+
 pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: Arc<broadcast::Receiver<NetEvent>>,
@@ -64,6 +79,27 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 ) -> Result<()> {
     info!("Sync request event received");
     let (event, ctx) = event.into_components();
+    let sync_cursor = eligible_sync_cursor(&event.since, &network);
+    let excluded_aggregates = event.since.len().saturating_sub(sync_cursor.len());
+    if excluded_aggregates > 0 {
+        info!(
+            excluded_aggregates,
+            "Excluded local or foreign aggregates from historical peer sync"
+        );
+    }
+    if sync_cursor.is_empty() {
+        address.into().try_send(TypedEvent::new(
+            SyncRequestSucceeded {
+                response: SyncResponseValue {
+                    events: vec![],
+                    ts: 0,
+                },
+            },
+            ctx,
+        ))?;
+        return Ok(());
+    }
+
     info!("Checking for AllPeersDialed...");
     if wait_for_event {
         info!("Waiting for peer connection...");
@@ -104,7 +140,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
     let mut budget = SyncFetchBudget::production();
 
-    for (aggregate_id, since) in event.since.iter() {
+    for (aggregate_id, since) in &sync_cursor {
         info!(
             "Requesting batched events for aggregate_id={} since={}",
             aggregate_id, since
@@ -189,7 +225,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 
             let mut still_failed = Vec::new();
             for aggregate_id in failed_aggregates {
-                let since = event.since.get(&aggregate_id).copied().unwrap_or(0);
+                let since = sync_cursor.get(&aggregate_id).copied().unwrap_or(0);
                 match fetch_historical_events_for_aggregate(
                     &net_cmds,
                     &net_events,
@@ -244,7 +280,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     info!(
         "Sync complete: collected {} events across {} aggregates, latest_timestamp={}",
         all_events.len(),
-        event.since.len(),
+        sync_cursor.len(),
         latest_timestamp
     );
 
