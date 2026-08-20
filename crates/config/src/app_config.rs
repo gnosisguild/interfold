@@ -684,6 +684,34 @@ nodes:
     }
 
     #[test]
+    fn crisp_local_config_selects_only_the_local_network() -> Result<()> {
+        let yaml = include_str!("../../../examples/CRISP/interfold.config.yaml");
+
+        for name in ["_default", "cn1"] {
+            let config: UnscopedAppConfig = serde_yaml::from_str(yaml)?;
+            let config = config.into_scoped_with_defaults(
+                name,
+                &PathBuf::from("/default/data"),
+                &PathBuf::from("/default/config"),
+                &PathBuf::from("/crisp"),
+            )?;
+
+            assert_eq!(config.network().name(), "local");
+            assert_eq!(
+                config
+                    .chains()
+                    .iter()
+                    .filter(|chain| chain.enabled.unwrap_or(true))
+                    .map(|chain| chain.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["localhost"]
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_defaults() {
         Jail::expect_with(|jail| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/home/testuser".to_string());
