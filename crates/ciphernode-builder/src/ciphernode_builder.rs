@@ -46,7 +46,7 @@ use e3_sortition::{
     FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
     SortitionRepositoryFactory,
 };
-use e3_sync::{preflight_schema_version, sync};
+use e3_sync::{preflight_schema_version, reconcile_request_router_checkpoint, sync};
 use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
@@ -559,18 +559,21 @@ impl CiphernodeBuilder {
         let event_system = self.create_event_system(local_bus, &eventstore_aggregate_config);
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
+        let seq_eventstore = eventstore.seq();
         let repositories = Arc::new(store.repositories());
 
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(
+        preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
+            .await?;
+        ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
+        reconcile_request_router_checkpoint(
             &repositories,
-            &eventstore_aggregate_config,
-            &eventstore.seq(),
+            aggregate_config.aggregates(),
+            &seq_eventstore,
         )
         .await?;
-        ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =
@@ -633,7 +636,6 @@ impl CiphernodeBuilder {
         )?;
 
         // Run the sync routine
-        let seq_eventstore = eventstore.seq();
         tokio::try_join!(
             sync(
                 &bus,

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use e3_data::{Repositories, Repository};
 use e3_events::{
     AggregateId, DkgFoldAttestationContextEstablished, E3Stage, E3id, RequestRouterCheckpoint,
@@ -78,10 +78,9 @@ impl E3LifecycleRepositoryFactory for Repositories {
     }
 }
 
-/// Create the atomic router checkpoint for a store written by an older binary.
+/// Create a router checkpoint for a store that an older binary wrote.
 ///
-/// The migration is safe only when no E3 is active. An active request can have router and context
-/// snapshots from different events, so the node must stop instead of accepting an unsafe cursor.
+/// The sync preflight rebuilds an initial checkpoint from EventStore before it starts the actors.
 pub async fn ensure_request_router_checkpoint(
     repositories: &Repositories,
     aggregate_ids: impl IntoIterator<Item = AggregateId>,
@@ -91,45 +90,15 @@ pub async fn ensure_request_router_checkpoint(
         return Ok(());
     }
 
-    let legacy_snapshot = repositories.router().read().await?;
-    let (contexts, completed) = legacy_snapshot
-        .map(|snapshot| (snapshot.contexts, snapshot.completed))
-        .unwrap_or_default();
-    let lifecycle = repositories
-        .e3_lifecycle()
-        .read()
-        .await?
-        .unwrap_or_default();
-    let active_lifecycle = lifecycle
-        .iter()
-        .filter(|(_, stage)| !matches!(stage, E3Stage::Complete | E3Stage::Failed))
-        .map(|(e3_id, _)| e3_id.to_string())
-        .collect::<Vec<_>>();
-
-    ensure!(
-        contexts.is_empty() && active_lifecycle.is_empty(),
-        "cannot initialize the request-router recovery checkpoint while E3 requests are active; active router contexts: {:?}; active lifecycle entries: {:?}",
-        contexts,
-        active_lifecycle
-    );
-
-    let mut replay_cursors = HashMap::new();
-    for aggregate_id in aggregate_ids {
-        let cursor = Repository::<u64>::new(
-            repositories
-                .store
-                .scope(StoreKeys::aggregate_seq(aggregate_id)),
-        )
-        .read()
-        .await?
-        .unwrap_or(0);
-        replay_cursors.insert(aggregate_id, cursor);
-    }
+    let replay_cursors = aggregate_ids
+        .into_iter()
+        .map(|aggregate_id| (aggregate_id, 0))
+        .collect::<HashMap<_, _>>();
 
     checkpoint_store
         .write_sync(&RequestRouterCheckpoint {
-            contexts,
-            completed,
+            contexts: Vec::new(),
+            completed: Default::default(),
             replay_cursors,
         })
         .await

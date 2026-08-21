@@ -291,6 +291,8 @@ pub struct CiphernodeRegistrySolWriter<P> {
     completed_requests: HashSet<E3id>,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
+    ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
+    committee_finalizations: ReplaySubmissionGate<E3id, CommitteeFinalizeRequested>,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
@@ -309,6 +311,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             completed_requests: HashSet::new(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
+            ticket_submissions: ReplaySubmissionGate::new(),
+            committee_finalizations: ReplaySubmissionGate::new(),
         })
     }
 

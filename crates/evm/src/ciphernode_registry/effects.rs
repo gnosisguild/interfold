@@ -56,6 +56,21 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
     .await
 }
 
+/// Return true when retrying the same ticket can no longer change chain state.
+pub(in crate::actors::ciphernode_registry_sol) fn ticket_submission_error_is_terminal(
+    error: &anyhow::Error,
+) -> bool {
+    let message = format!("{error:#?}");
+    [
+        "CommitteeAlreadyFinalized",
+        "CommitteeDeadlineReached",
+        "InvalidTicketNumber",
+        "NodeNotEligible",
+    ]
+    .iter()
+    .any(|name| message.contains(name))
+}
+
 /// Report whether this node's ticket is already recorded on chain.
 ///
 /// `submitTicket` reverts with `NodeAlreadySubmitted` for a sender that is
@@ -151,39 +166,6 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
         },
     )
     .await
-}
-
-pub(in crate::actors::ciphernode_registry_sol) async fn should_finalize_committee<
-    P: Provider + WalletProvider + Clone + 'static,
->(
-    provider: EthProvider<P>,
-    contract_address: Address,
-    e3_id: E3id,
-) -> Result<bool> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
-    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-    if contract.isOpen(e3_id_u256).call().await? {
-        return Ok(false);
-    }
-
-    match contract.finalizeCommittee(e3_id_u256).call().await {
-        Ok(_) => Ok(true),
-        Err(err) => {
-            let err = anyhow::Error::from(err);
-            let decoded = decode_error_from_str(&format!("{err:?}"));
-
-            if decoded.as_deref().is_some_and(|message| {
-                message.contains("CommitteeAlreadyFinalized")
-                    || message.contains("CommitteeNotRequested")
-                    || message.contains("SubmissionWindowNotClosed")
-                    || message.contains("ThresholdNotMet")
-            }) {
-                return Ok(false);
-            }
-
-            Err(err)
-        }
-    }
 }
 
 pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee<
@@ -359,5 +341,31 @@ pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
         Ok(None)
     } else {
         Ok(Some(validity))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ticket_submission_error_is_terminal;
+
+    #[test]
+    fn ticket_retry_stops_only_for_permanent_contract_outcomes() {
+        for name in [
+            "CommitteeAlreadyFinalized",
+            "CommitteeDeadlineReached",
+            "InvalidTicketNumber",
+            "NodeNotEligible",
+        ] {
+            assert!(ticket_submission_error_is_terminal(&anyhow::anyhow!(
+                "contract reverted with {name}"
+            )));
+        }
+
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "CommitteeNotRequested"
+        )));
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "RPC connection reset"
+        )));
     }
 }

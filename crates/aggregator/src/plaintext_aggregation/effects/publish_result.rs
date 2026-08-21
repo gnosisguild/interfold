@@ -111,6 +111,14 @@ impl ThresholdPlaintextAggregator {
             decryption_aggregator_proofs,
         };
 
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.c7_proofs = Some(c7_proofs);
+            recovery.decryption_aggregator_proofs =
+                Some(event.decryption_aggregator_proofs.clone());
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+
         info!("Dispatching plaintext event {:?}", event);
         self.bus.publish(event, ec.clone())?;
 

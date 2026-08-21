@@ -8,8 +8,8 @@ use super::handlers::CollectionTimeoutArmed;
 use super::*;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, Committee, ComputeRequestErrorKind, HistoryCollector, Seed, TakeEvents,
-    Unsequenced, ZkError,
+    CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled,
+    HistoryCollector, Seed, TakeEvents, Unsequenced, ZkError,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, DEFAULT_BFV_PRESET};
 use e3_sortition::{
@@ -180,6 +180,7 @@ async fn build_plaintext_aggregator_with_role(
             initial_is_aggregator,
             committee_addresses: vec![test_committee_address()],
             honest_committee_addresses: vec![test_committee_address()],
+            recovery: test_persistable(ThresholdPlaintextAggregatorRecoveryState::default()),
         },
         test_persistable(initial_state),
     );
@@ -231,6 +232,28 @@ async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<
     let mut result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
     assert!(!result.timed_out, "timed out waiting for an event");
     Ok(result.events.pop().expect("expected one event"))
+}
+
+#[actix::test]
+async fn restart_redrives_threshold_decryption() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator(computing_state(), false).await?;
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ComputeRequest(data)
+            if data.e3_id == e3_id
+                && matches!(
+                    data.request,
+                    ComputeRequestKind::TrBFV(
+                        TrBFVRequest::CalculateThresholdDecryption(_)
+                    )
+                )
+    ));
+    Ok(())
 }
 
 mod completion;

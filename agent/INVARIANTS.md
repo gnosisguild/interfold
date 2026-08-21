@@ -11,6 +11,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 `scripts/invariant-baselines.env`). The rest are review-enforced — the `invariant-reviewer` agent
 (`/invariant-review`) checks a diff against this file.
 
+An entry is a requirement or review claim, not proof that the implementation satisfies it. Verify
+the cited contract, test, schema, and runtime path. If a higher-authority source contradicts this
+file, preserve the higher-authority behavior and correct this file in the same change. A target
+design citation alone does not establish current runtime behavior.
+
 ## Meta-invariants
 
 - **Sources of authority, descending:** (1) deployed contract behavior and protocol/circuit
@@ -568,12 +573,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ## Known open issues (check before assuming current behavior is correct)
 
 The authoritative list is the "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md`.
-Still open as of 2026-07:
+Known residual gaps:
 
 - `gracePeriod` is dead code in timeout checks (concern #3).
 - CLI `activate` actually calls `register` and reverts for registered operators (#4).
-- EventBus fan-out still uses unacknowledged `do_send`; replay materializes the full range in memory
-  (#11).
+- Live EventBus subscriber fan-out still includes unacknowledged `do_send` edges (#11). EventStore
+  replay is paged through bounded temporary runs and uses an acknowledged fan-out barrier.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - Residual runtime risks: `e3-evm` in-process nonce serialization without a durable tx outbox or
   full reorg rollback; accusation votes/timers lack complete durable reconstruction;

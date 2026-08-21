@@ -63,6 +63,30 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             self.try_start_public_key(&e3_id, ctx);
         }
     }
+
+    fn try_start_ticket(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if let Some(intent) = self.ticket_submissions.start(e3_id) {
+            ctx.notify(SubmitTicket(intent));
+        }
+    }
+
+    fn try_start_pending_tickets(&mut self, ctx: &mut actix::Context<Self>) {
+        for e3_id in self.ticket_submissions.pending_keys() {
+            self.try_start_ticket(&e3_id, ctx);
+        }
+    }
+
+    fn try_start_finalization(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if let Some(intent) = self.committee_finalizations.start(e3_id) {
+            ctx.notify(SubmitCommitteeFinalization(intent));
+        }
+    }
+
+    fn try_start_pending_finalizations(&mut self, ctx: &mut actix::Context<Self>) {
+        for e3_id in self.committee_finalizations.pending_keys() {
+            self.try_start_finalization(&e3_id, ctx);
+        }
+    }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Actor for CiphernodeRegistrySolWriter<P> {
@@ -120,7 +144,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
     fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
         self.publication.enable_effects();
+        self.ticket_submissions.enable_effects();
+        self.committee_finalizations.enable_effects();
         self.try_start_pending_public_keys(ctx);
+        self.try_start_pending_tickets(ctx);
+        self.try_start_pending_finalizations(ctx);
     }
 }
 
@@ -169,6 +197,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
         let publication_pending = self.publication.contains(&msg.e3_id);
+        self.ticket_submissions.finish(&msg.e3_id, true);
+        self.committee_finalizations.finish(&msg.e3_id, true);
         mark_request_complete(
             &mut self.active_aggregators,
             &mut self.completed_requests,
@@ -182,45 +212,76 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
     for CiphernodeRegistrySolWriter<P>
 {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
-    fn handle(&mut self, msg: TicketGenerated, _: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled {
-            return Box::pin(async {});
-        }
+    fn handle(&mut self, msg: TicketGenerated, ctx: &mut Self::Context) -> Self::Result {
+        let e3_id = msg.e3_id.clone();
+        self.ticket_submissions.record(e3_id.clone(), msg);
+        self.try_start_ticket(&e3_id, ctx);
+    }
+}
 
-        match msg.ticket_id {
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubmitTicket(TicketGenerated);
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitTicket>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ResponseActFuture<Self, ()>;
+
+    fn handle(&mut self, command: SubmitTicket, _: &mut Self::Context) -> Self::Result {
+        match command.0.ticket_id {
             TicketId::Score(ticket_id) => {
+                let e3_id = command.0.e3_id;
                 info!(
                     "Score sortition ticket generated for E3 {:?}, submitting to contract",
-                    msg.e3_id
+                    e3_id
                 );
 
-                let e3_id = msg.e3_id.clone();
-                let log_e3_id = msg.e3_id.clone();
                 let contract_address = self.contract_address;
                 let provider = self.provider.clone();
                 let bus = self.bus.clone();
 
-                Box::pin(async move {
+                Box::pin(
+                    async move {
                     info!("Submitting ticket {} for E3 {:?}", ticket_id, e3_id);
 
-                    let result =
-                        submit_ticket_to_registry(provider, contract_address, e3_id, ticket_id)
-                            .await;
-                    match result {
+                    let terminal = match submit_ticket_to_registry(
+                        provider,
+                        contract_address,
+                        e3_id.clone(),
+                        ticket_id,
+                    )
+                    .await
+                    {
                         Ok(TxOutcome::Mined(receipt)) => {
                             info!(tx=%receipt.transaction_hash, "Ticket submitted to registry");
+                            true
                         }
                         Ok(TxOutcome::AlreadySettled) => {
-                            info!(e3_id = %log_e3_id, "Ticket already recorded on chain; skipping submission");
+                            info!(e3_id = %e3_id, "Ticket already recorded on chain; skipping submission");
+                            true
                         }
                         Err(err) => {
+                            let terminal = ticket_submission_error_is_terminal(&err);
                             error!("Failed to submit ticket: {}", format_evm_error(&err));
                             bus.err(EType::Evm, err);
+                            terminal
                         }
-                    }
-                })
+                    };
+                    (e3_id, terminal)
+                }
+                    .into_actor(self)
+                    .map(|(e3_id, terminal), actor, ctx| {
+                        actor.ticket_submissions.finish(&e3_id, terminal);
+                        if !terminal {
+                            ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
+                                actor.try_start_ticket(&e3_id, ctx);
+                            });
+                        }
+                    }),
+                )
             }
         }
     }
@@ -229,52 +290,71 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteeFinalizeRequested>
     for CiphernodeRegistrySolWriter<P>
 {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
-    fn handle(&mut self, msg: CommitteeFinalizeRequested, _: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled {
-            return Box::pin(async {});
-        }
-
+    fn handle(&mut self, msg: CommitteeFinalizeRequested, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
+        self.committee_finalizations.record(e3_id.clone(), msg);
+        self.try_start_finalization(&e3_id, ctx);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubmitCommitteeFinalization(CommitteeFinalizeRequested);
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitCommitteeFinalization>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ResponseActFuture<Self, ()>;
+
+    fn handle(
+        &mut self,
+        command: SubmitCommitteeFinalization,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let e3_id = command.0.e3_id;
         let contract_address = self.contract_address;
         let provider = self.provider.clone();
         let bus = self.bus.clone();
 
-        Box::pin(async move {
-            match should_finalize_committee(provider.clone(), contract_address, e3_id.clone()).await
-            {
-                Ok(false) => {
-                    info!(e3_id = %e3_id, "Skipping finalizeCommittee; on-chain state is not finalizable");
-                    return;
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to preflight finalizeCommittee: {}",
-                        format_evm_error(&err)
-                    );
-                    return;
-                }
-                Ok(true) => {}
-            }
-
+        Box::pin(
+            async move {
             info!("Finalizing committee for E3 {:?}", e3_id);
 
-            let log_e3_id = e3_id.clone();
-            let result = finalize_committee_on_registry(provider, contract_address, e3_id).await;
-            match result {
+            let terminal = match finalize_committee_on_registry(
+                provider,
+                contract_address,
+                e3_id.clone(),
+            )
+            .await
+            {
                 Ok(TxOutcome::Mined(receipt)) => {
                     info!(tx=%receipt.transaction_hash, "Committee finalized on registry");
+                    true
                 }
                 Ok(TxOutcome::AlreadySettled) => {
-                    info!(e3_id = %log_e3_id, "Committee finalized by another sender; nothing left to do");
+                    info!(e3_id = %e3_id, "Committee finalized by another sender; nothing left to do");
+                    true
                 }
                 Err(err) => {
                     error!("Failed to finalize committee: {}", format_evm_error(&err));
                     bus.err(EType::Evm, err);
+                    false
                 }
-            }
-        })
+            };
+            (e3_id, terminal)
+        }
+            .into_actor(self)
+            .map(|(e3_id, terminal), actor, ctx| {
+                actor.committee_finalizations.finish(&e3_id, terminal);
+                if !terminal {
+                    ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
+                        actor.try_start_finalization(&e3_id, ctx);
+                    });
+                }
+            }),
+        )
     }
 }
 

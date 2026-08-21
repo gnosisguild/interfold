@@ -100,28 +100,8 @@ impl ThresholdKeyshare {
             .take()
             .unwrap_or_default();
 
-        // Transition to ReadyForDecryption
-        self.state.try_mutate(&ec, |s| {
-            use KeyshareState as K;
-            info!("Try store decryption key");
-
-            let current: AggregatingDecryptionKey = s.clone().try_into()?;
-
-            let next = K::ReadyForDecryption(ReadyForDecryption {
-                pk_share: current.pk_share,
-                sk_poly_sum,
-                es_poly_sum,
-                signed_pk_generation_proof: current.signed_pk_generation_proof,
-                signed_sk_share_computation_proof: current.signed_sk_share_computation_proof,
-                signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
-                signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
-                signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
-            });
-
-            s.new_state(next)
-        })?;
-
-        // Publish DecryptionShareProofsPending to ProofRequestActor
+        // Accept the C4 proof intent before advancing the primary phase. A crash cannot then
+        // leave ReadyForDecryption without the input required to recreate its proof job.
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let party_id = state.party_id;
@@ -134,16 +114,43 @@ impl ThresholdKeyshare {
             esm_requests.len()
         );
 
-        self.bus.publish(
-            DecryptionShareProofsPending {
-                e3_id: e3_id.clone(),
-                party_id,
-                node,
-                sk_request,
-                esm_requests,
-            },
-            ec.clone(),
-        )?;
+        let event = DecryptionShareProofsPending {
+            e3_id: e3_id.clone(),
+            party_id,
+            node,
+            sk_request,
+            esm_requests,
+        };
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.decryption_share_proofs_pending =
+                Some(TypedEvent::new(event.clone(), ec.clone()));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+
+        // Transition to ReadyForDecryption only after the recovery input is accepted.
+        self.state.try_mutate(&ec, |s| {
+            use KeyshareState as K;
+            info!("Try store decryption key");
+
+            let current: AggregatingDecryptionKey = s.clone().try_into()?;
+
+            let next = K::ReadyForDecryption(ReadyForDecryption {
+                pk_share: current.pk_share,
+                sk_poly_sum: sk_poly_sum.clone(),
+                es_poly_sum: es_poly_sum.clone(),
+                signed_pk_generation_proof: current.signed_pk_generation_proof,
+                signed_sk_share_computation_proof: current.signed_sk_share_computation_proof,
+                signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
+                signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
+                signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
+            });
+
+            s.new_state(next)
+        })?;
+
+        // Publish DecryptionShareProofsPending to ProofRequestActor.
+        self.bus.publish(event, ec.clone())?;
 
         // Create collector and replay any early-arriving DecryptionKeyShared events
         let state = self.state.try_get()?;

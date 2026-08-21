@@ -62,6 +62,12 @@ use crate::domain::{
     ProofRequestData, ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
+#[path = "recovery_state.rs"]
+mod recovery_state;
+pub use recovery_state::{
+    ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+};
+
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]
 pub struct GenPkShareAndSkSss(CiphernodeSelected);
@@ -114,13 +120,10 @@ pub struct ThresholdKeyshareParams {
     pub state: Persistable<ThresholdKeyshareState>,
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
+    pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
 }
 
-/// Ephemeral bridge data for operations already represented by the persisted keyshare phase.
-///
-/// Keeping these values behind one boundary makes their lifetime and recovery status explicit. A
-/// recovery-safe replacement can move this bundle to a versioned workflow/outbox record without
-/// growing the actor itself again.
+/// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
 struct PendingKeyshareWork {
     /// Shares awaiting the C2/C3 verification result.
@@ -145,6 +148,7 @@ pub struct ThresholdKeyshare {
     encryption_key_collector: Option<Addr<EncryptionKeyCollector>>,
     decryption_key_shared_collector: Option<Addr<DecryptionKeySharedCollector>>,
     state: Persistable<ThresholdKeyshareState>,
+    recovery: Persistable<ThresholdKeyshareRecoveryState>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     pending: PendingKeyshareWork,
@@ -152,6 +156,25 @@ pub struct ThresholdKeyshare {
 
 impl ThresholdKeyshare {
     pub fn new(params: ThresholdKeyshareParams) -> Self {
+        let recovered = params.recovery.get().unwrap_or_default();
+        let own_party_id = params.state.get().map(|state| state.party_id);
+        let pending_shares = recovered
+            .threshold_shares
+            .values()
+            .filter(|event| Some(event.share.party_id) != own_party_id)
+            .map(|event| event.share.clone())
+            .collect();
+        let share_decryption_data = recovered
+            .decryption_share_proofs_pending
+            .as_ref()
+            .map(|event| (event.sk_request.clone(), event.esm_requests.clone()));
+        let c4_verification_shares = (!recovered.decryption_key_shares.is_empty()).then(|| {
+            recovered
+                .decryption_key_shares
+                .values()
+                .map(|event| (event.party_id, event.clone().into_inner()))
+                .collect()
+        });
         Self {
             bus: params.bus,
             cipher: params.cipher,
@@ -159,9 +182,16 @@ impl ThresholdKeyshare {
             encryption_key_collector: None,
             decryption_key_shared_collector: None,
             state: params.state,
+            recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
-            pending: PendingKeyshareWork::default(),
+            pending: PendingKeyshareWork {
+                shares: pending_shares,
+                share_decryption_data,
+                c4_verification_shares,
+                keyshare_publish: recovered.keyshare_publish_authorized,
+                ..Default::default()
+            },
         }
     }
 

@@ -17,12 +17,24 @@ impl StoreKeys {
         format!("//threshold_keyshare/{e3_id}")
     }
 
+    pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_recovery/v1/{e3_id}")
+    }
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }
 
+    pub fn plaintext_recovery(e3_id: &E3id) -> String {
+        format!("//plaintext_recovery/v1/{e3_id}")
+    }
+
     pub fn publickey(e3_id: &E3id) -> String {
         format!("//publickey/{e3_id}")
+    }
+
+    pub fn publickey_recovery(e3_id: &E3id) -> String {
+        format!("//publickey_recovery/v1/{e3_id}")
     }
 
     pub fn fhe(e3_id: &E3id) -> String {

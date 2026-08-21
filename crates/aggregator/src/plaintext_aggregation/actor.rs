@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::workflow::threshold_plaintext_aggregation::{
     build_decryption_aggregation_jobs, format_decrypted_plaintext, ThresholdPlaintextAggregation,
@@ -70,8 +70,8 @@ struct DecryptionCollectionTimeout;
 // `crate::workflow::threshold_plaintext_aggregation`; re-exported here to preserve the public path
 // `e3_aggregator::threshold_plaintext_aggregator::*` (and the crate-level glob re-export).
 pub use crate::workflow::threshold_plaintext_aggregation::{
-    Collecting, Complete, Computing, GeneratingC7Proof, ThresholdPlaintextAggregatorState,
-    VerifyingC6,
+    Collecting, Complete, Computing, GeneratingC7Proof, ThresholdPlaintextAggregatorRecoveryState,
+    ThresholdPlaintextAggregatorState, VerifyingC6, THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
 };
 
 /// Process-local effect state. Persisted protocol progression remains in
@@ -106,6 +106,7 @@ pub struct ThresholdPlaintextAggregator {
     committee_size: CiphernodesCommitteeSize,
     proof_aggregation_enabled: bool,
     state: Persistable<ThresholdPlaintextAggregatorState>,
+    recovery: Persistable<ThresholdPlaintextAggregatorRecoveryState>,
     /// Full registered committee (`topNodes`, length `N`) for decryption-aggregator
     /// `committee_hash_*` inputs. Same value as `PublicKeyAggregated.committee_addresses`.
     committee_addresses: Vec<Address>,
@@ -131,6 +132,26 @@ pub struct ThresholdPlaintextAggregatorParams {
     /// Honest committee from `PublicKeyAggregated.honest_committee_addresses`
     /// (length `H`). Roster for decryption-share collection and sender gating.
     pub honest_committee_addresses: Vec<Address>,
+    pub recovery: Persistable<ThresholdPlaintextAggregatorRecoveryState>,
+}
+
+pub(crate) fn new_threshold_plaintext_recovery(
+    ec: EventContext<Sequenced>,
+) -> ThresholdPlaintextAggregatorRecoveryState {
+    ThresholdPlaintextAggregatorRecoveryState {
+        last_ec: Some(ec),
+        collection_deadline_unix_secs: Some(
+            now_unix_secs().saturating_add(decryption_collection_timeout().as_secs()),
+        ),
+        ..Default::default()
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn node_owns_committee_party_slot(
@@ -155,6 +176,7 @@ impl ThresholdPlaintextAggregator {
         params: ThresholdPlaintextAggregatorParams,
         state: Persistable<ThresholdPlaintextAggregatorState>,
     ) -> Self {
+        let recovered = params.recovery.get().unwrap_or_default();
         ThresholdPlaintextAggregator {
             bus: params.bus,
             sortition: params.sortition,
@@ -163,10 +185,19 @@ impl ThresholdPlaintextAggregator {
             committee_size: params.committee_size,
             proof_aggregation_enabled: params.proof_aggregation_enabled,
             state,
+            recovery: params.recovery,
             committee_addresses: params.committee_addresses,
             honest_committee_addresses: params.honest_committee_addresses,
             is_aggregator: params.initial_is_aggregator,
-            pending: PendingDecryptionWork::default(),
+            pending: PendingDecryptionWork {
+                honest_c6_proofs_for_agg: (!recovered.honest_c6_proofs.is_empty())
+                    .then_some(recovered.honest_c6_proofs),
+                c7_proofs_pending: recovered.c7_proofs,
+                decryption_aggregator_proofs: recovered.decryption_aggregator_proofs,
+                last_ec: recovered.last_ec.clone(),
+                timeout_ec: recovered.last_ec,
+                ..Default::default()
+            },
         }
     }
 
@@ -200,7 +231,12 @@ impl ThresholdPlaintextAggregator {
             return;
         }
 
-        let timeout = decryption_collection_timeout();
+        let timeout = self
+            .recovery
+            .get()
+            .and_then(|recovery| recovery.collection_deadline_unix_secs)
+            .map(|deadline| Duration::from_secs(deadline.saturating_sub(now_unix_secs())))
+            .unwrap_or_else(decryption_collection_timeout);
         info!(
             e3_id = %self.e3_id,
             ?timeout,

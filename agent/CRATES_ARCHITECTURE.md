@@ -383,12 +383,15 @@ A persisted `Shutdown` event from the previous process is classified as infrastr
 replayed into newly constructed actors.
 
 The request router stores its active-context index, completed set, and covered per-aggregate cursors
-in one recovery checkpoint. Startup refuses replay if an aggregate snapshot is ahead of this
-checkpoint. Replaying an older prefix to every actor would apply events twice to unrelated actor
-snapshots, so the node fails closed instead. A node upgraded from a version without the checkpoint
-can initialize it only when no E3 is active. If an active router checkpoint references a missing E3
-context snapshot, startup also fails explicitly instead of admitting later peer events against
-incomplete state.
+in one recovery checkpoint. Contextual writes from different aggregates can reach durable storage
+out of HLC order, so startup compares every checkpoint cursor with its aggregate snapshot cursor.
+If any cursor differs, startup rebuilds only the router admission projection from EventStore history
+through the exact snapshot cursor for each aggregate and persists the repaired checkpoint before it
+constructs protocol actors. It does not replay those prefixes into actors that already hydrate from
+snapshots. The normal replay preflight still fails closed if the repaired checkpoint does not match
+the aggregate snapshot cut. A node upgraded from a version without the checkpoint uses the same
+rebuild path. If an active router checkpoint references a missing E3 context snapshot, startup also
+fails explicitly instead of admitting later peer events against incomplete state.
 
 The EventBus mailbox remains bounded at `MAILBOX_LIMIT_LARGE` (2,560 messages). The replay producer
 no longer attempts to enqueue the entire backlog into that mailbox in one burst, and EventBus
@@ -720,13 +723,13 @@ flowchart LR
 | Chain sync cursor                        | Aggregate snapshot metadata                                                          | Automatic-confirmation EVM backfill                                                                                         |
 | Network document history                 | Event log plus network repository                                                    | Historical net sync                                                                                                         |
 | E3 actor contexts                        | `E3Router` in memory                                                                 | Durable replay and canonical chain observations                                                                             |
-| Request-local DKG/aggregation state      | Per-E3 actors plus repositories                                                      | Snapshots, replay, and `EffectsEnabled` redrive                                                                             |
+| Request-local DKG/aggregation state      | Per-E3 actors plus versioned state and recovery repositories                           | Snapshots restore protocol phases and restart inputs; `EffectsEnabled` recreates collectors and jobs with new process-local correlation IDs          |
 | Active-aggregator failover state         | Versioned sortition repository                                                       | Phase, assigned party, absolute deadline, and phase-local unresponsive parties; re-armed after `EffectsEnabled`             |
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
 | Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay; not a durable outbox                                                                                   |
-| Result-publication replay gates          | Interfold and registry writer process memory                                         | Rebuilt from durable local result events; contract preflight reconciles landed transactions                                 |
+| Registry transaction replay gates        | Interfold and registry writer process memory                                          | Rebuilt from durable ticket, committee-finalization, public-key, and plaintext intents; idempotent contract checks reconcile landed transactions      |
 | Pending transaction nonce allocation     | Per-chain writer mutex in memory                                                     | Provider pending nonce on restart                                                                                           |
 | In-flight accusation votes and timers    | Per-E3 accusation actor memory                                                       | No complete durable reconstruction; only events inside the replay window may be observed again                              |
 | libp2p identity                          | Encrypted keypair repository                                                         | Decrypt at startup                                                                                                          |

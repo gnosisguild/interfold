@@ -103,6 +103,11 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
             InterfoldEventData::AggregatorChanged(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::EffectsEnabled(_) => {
+                trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                    self.resume_in_flight_work(ec)
+                });
+            }
             _ => (),
         }
     }
