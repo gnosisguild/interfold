@@ -119,7 +119,8 @@ pub fn setup_net_with_limits(
         network.clone(),
     );
 
-    // Buffer all incoming events until SyncEnded
+    // Buffer application events until SyncEnded. The sync manager consumes control events from
+    // its raw receiver.
     let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
         &bus,
         &interface.rx(),

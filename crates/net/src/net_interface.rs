@@ -46,7 +46,7 @@ use libp2p::{
         self, cbor, Event as RequestResponseEvent, Message as RequestResponseMessage,
         ProtocolSupport,
     },
-    swarm::{dial_opts::DialOpts, DialError, NetworkBehaviour, SwarmEvent},
+    swarm::{dial_opts::DialOpts, DialError, ListenError, NetworkBehaviour, SwarmEvent},
     Multiaddr, Swarm,
 };
 use rand::prelude::IteratorRandom;
@@ -176,6 +176,24 @@ fn is_unspecified_addr(addr: &Multiaddr) -> bool {
         Protocol::Ip6(ip) => ip.is_unspecified(),
         _ => false,
     })
+}
+
+fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
+    let ListenError::Denied { cause } = error else {
+        return false;
+    };
+    let mut current: &(dyn std::error::Error + 'static) = cause;
+    loop {
+        if let Some(exceeded) = current.downcast_ref::<connection_limits::Exceeded>() {
+            return exceeded
+                .to_string()
+                .contains("established connections per peer");
+        }
+        let Some(source) = current.source() else {
+            return false;
+        };
+        current = source;
+    }
 }
 
 #[derive(NetworkBehaviour)]
@@ -623,12 +641,17 @@ async fn process_swarm_event(
         }
 
         SwarmEvent::IncomingConnectionError { error, .. } => {
+            let is_redundant_connection = is_redundant_peer_connection_denial(&error);
             let error_str = format!("{:#}", anyhow::Error::from(error));
             // Downgrade benign handshake failures to debug:
             // - "Local peer ID": self-dial attempt
             // - "aborted by peer": simultaneous connection dedup (both sides dialed,
             //   libp2p keeps one connection and the other side aborts the handshake)
-            if error_str.contains("Local peer ID") || error_str.contains("aborted by peer") {
+            // - connection-limit denial: an existing peer opened a redundant connection
+            if is_redundant_connection
+                || error_str.contains("Local peer ID")
+                || error_str.contains("aborted by peer")
+            {
                 debug!("{}", error_str);
             } else {
                 status.record_error(format!("incoming connection: {error_str}"));
@@ -1438,9 +1461,11 @@ fn handle_response(swarm: &mut Swarm<NodeBehaviour>, responder: DirectResponder)
 
 #[cfg(test)]
 mod tests {
+    use libp2p::connection_limits::{Behaviour, ConnectionLimits};
     use libp2p::kad::store::{MemoryStore, MemoryStoreConfig, RecordStore};
     use libp2p::kad::{Record, RecordKey};
-    use libp2p::PeerId;
+    use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
+    use libp2p::{Multiaddr, PeerId};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1486,6 +1511,27 @@ mod tests {
         );
         // Idempotent on addresses without a /p2p/ suffix
         assert_eq!(super::strip_peer_id(stripped.clone()), stripped);
+    }
+
+    #[test]
+    fn nested_per_peer_connection_limit_denial_is_expected() {
+        let mut behaviour =
+            Behaviour::new(ConnectionLimits::default().with_max_established_per_peer(Some(0)));
+        let address: Multiaddr = "/memory/1".parse().unwrap();
+        let limit_error = match behaviour.handle_established_inbound_connection(
+            ConnectionId::new_unchecked(1),
+            PeerId::random(),
+            &address,
+            &address,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a zero per-peer connection limit must reject the connection"),
+        };
+        let error = ListenError::Denied {
+            cause: ConnectionDenied::new(limit_error),
+        };
+
+        assert!(super::is_redundant_peer_connection_denial(&error));
     }
 
     #[test]

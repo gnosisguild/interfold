@@ -326,6 +326,23 @@ pub enum PutOrStoreError {
 }
 
 impl NetEvent {
+    /// Whether post-sync application consumers need this event.
+    ///
+    /// Historical-sync and connection-control events use the raw network receiver and must not
+    /// also occupy the startup application buffer.
+    pub(crate) fn requires_application_delivery(&self) -> bool {
+        matches!(
+            self,
+            Self::GossipData(_)
+                | Self::GossipPublishError { .. }
+                | Self::GossipPublished { .. }
+                | Self::DhtGetRecordSucceeded { .. }
+                | Self::DhtPutRecordSucceeded { .. }
+                | Self::DhtGetRecordError { .. }
+                | Self::DhtPutRecordError { .. }
+        )
+    }
+
     /// Conservative size used by the bounded startup buffer.
     ///
     /// The enum's inline storage is always counted. Heap-backed protocol payloads that can be

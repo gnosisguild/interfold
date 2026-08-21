@@ -23,11 +23,12 @@ impl Actor for NetEventBuffer {
         actix::spawn(async move {
             loop {
                 match input_rx.recv().await {
-                    Ok(event) => {
+                    Ok(event) if event.requires_application_delivery() => {
                         if addr.send(IncomingNetEvent(event)).await.is_err() {
                             break;
                         }
                     }
+                    Ok(_) => {}
                     Err(RecvError::Lagged(skipped)) => {
                         if addr.send(NetInputLagged(skipped)).await.is_err() {
                             break;
@@ -50,6 +51,9 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
     type Result = ();
 
     fn handle(&mut self, msg: IncomingNetEvent, ctx: &mut Self::Context) {
+        if !msg.0.requires_application_delivery() {
+            return;
+        }
         let event_bytes = if self.state.is_running() {
             0
         } else {

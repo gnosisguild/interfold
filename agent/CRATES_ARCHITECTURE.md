@@ -426,7 +426,9 @@ flowchart LR
     Identify -->|rejected| Drop[disconnect and suppress repeated warnings]
     Signed --> Envelope[network, deployment, schema, aggregate, and hash checks]
     Envelope --> Raw[bounded NetEvent broadcast]
-    Raw --> Startup[NetEventBuffer count + byte limits]
+    Raw --> AppFilter{application delivery event?}
+    AppFilter -->|yes| Startup[NetEventBuffer count + byte limits]
+    AppFilter -->|no| Control[raw sync / connection consumer only]
     Raw --> SyncManager[NetSyncManager]
     Startup -->|await actor acceptance after SyncEnded| Translator[NetEventTranslator]
     Translator --> Allowlist{forwardable event type?}
@@ -462,9 +464,12 @@ ID, schema version, and payload hash. Gossipsub and direct-request/DHT decoding 
 limits. Translation actors accept only the protocol event allowlist before publishing remote events,
 and their broadcast-to-actor ingress loops await mailbox acceptance and stop when the destination
 actor closes. Each publish attempt has a result timeout. No-peer failures use a longer retry window
-than other transient failures. Startup buffering is bounded by both event count and estimated bytes
-and fails readiness on overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and
-skipped without stopping the ingress loop. Historical direct sync requires advancing cursors and
+than other transient failures. The startup buffer admits only gossip payloads and publish or DHT
+results that post-sync application consumers use. Historical-sync and connection-control events
+remain available on the raw receiver but do not consume the application buffer or its actor mailbox.
+The application buffer is bounded by both event count and estimated bytes and fails readiness on
+overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and skipped without stopping
+the ingress loop. Historical direct sync requires advancing cursors and
 enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery
 retries in a startup attempt. Bootstrap dialing makes three bounded startup attempts and then
 retries unavailable peers every 60 seconds in the background. Kademlia peers are evicted after three

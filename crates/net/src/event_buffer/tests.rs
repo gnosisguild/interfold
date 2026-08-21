@@ -7,10 +7,9 @@
 use std::time::Duration;
 
 use super::*;
-use crate::events::{GossipData, NetEvent};
+use crate::events::{GossipData, NetEvent, OutgoingRequestSucceeded, ProtocolResponse};
 use e3_ciphernode_builder::EventSystem;
-use e3_events::EventPublisher;
-use e3_events::SyncEnded;
+use e3_events::{CorrelationId, EventPublisher, SyncEnded};
 use tokio::{
     sync::broadcast,
     time::{sleep, timeout},
@@ -122,5 +121,39 @@ async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
         error.contains(&format!("next_event_bytes={estimated_bytes}")),
         "{error}"
     );
+    Ok(())
+}
+
+#[actix::test]
+async fn sync_control_flood_does_not_consume_the_application_buffer() -> Result<()> {
+    const CONTROL_EVENTS: usize = 100_000;
+
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("net-control-flood");
+    let (input_tx, input_rx) = broadcast::channel(CONTROL_EVENTS.next_power_of_two());
+    let (mut output_rx, handle) =
+        NetEventBuffer::setup_with_limits(&bus, &input_rx, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
+
+    for _ in 0..CONTROL_EVENTS {
+        input_tx.send(NetEvent::OutgoingRequestSucceeded(
+            OutgoingRequestSucceeded {
+                payload: ProtocolResponse::Ok(Vec::new()),
+                correlation_id: CorrelationId::new(),
+            },
+        ))?;
+    }
+    input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![7])))?;
+    bus.publish_without_context(SyncEnded::new())?;
+
+    handle.wait_until_running().await?;
+    let forwarded = timeout(Duration::from_secs(5), output_rx.recv()).await??;
+    assert!(matches!(
+        forwarded,
+        NetEvent::GossipData(GossipData::GossipBytes(bytes)) if bytes == vec![7]
+    ));
+    assert!(matches!(
+        output_rx.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
     Ok(())
 }

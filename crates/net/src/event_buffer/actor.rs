@@ -34,9 +34,9 @@ impl NetEventBufferHandle {
     }
 }
 
-/// Actor that controls a broadcast channel which will buffer NetEvents until it receives a
-/// `SyncEnded` event, at which time it releases all buffered events to the output channel. The
-/// buffering decision logic lives in [`NetEventBufferState`].
+/// Actor that buffers application NetEvents until it receives `SyncEnded` and then releases them
+/// to the output channel. Sync and connection-control events bypass this actor. The buffering
+/// decision logic lives in [`NetEventBufferState`].
 pub struct NetEventBuffer {
     state: NetEventBufferState,
     input_rx: Option<broadcast::Receiver<NetEvent>>,

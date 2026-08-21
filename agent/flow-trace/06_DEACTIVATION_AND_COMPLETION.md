@@ -299,7 +299,10 @@ receive task. A lag can still drop the reported `n` events, but a single burst n
 disables gossip translation, document notifications, or historical-sync/readiness handling.
 `NetEventBuffer` applies the same continue policy only after `SyncEnded`; lag during its startup
 buffering window remains a fail-closed readiness error because those skipped events cannot yet be
-reconciled safely.
+reconciled safely. Before events reach its mailbox, the buffer admits only gossip payloads and
+publish or DHT results that post-sync application consumers use. Historical-sync and
+connection-control events remain on the raw receiver for `NetSyncManager`; they do not consume the
+application startup buffer.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
