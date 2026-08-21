@@ -16,7 +16,14 @@ export const getRandomVoterToMask = (voters: EligibleVoter[]): EligibleVoter => 
     throw new Error('No eligible voters available to select from.')
   }
 
-  const randomIndex = crypto.getRandomValues(new Uint32Array(1))[0] % voters.length
+  // Rejection sampling: a plain modulo of a 32-bit draw favours low indices whenever the list
+  // length is not a power of two, and the mask target must be uniform.
+  const range = 2 ** 32
+  const limit = range - (range % voters.length)
+  let draw: number
+  do {
+    draw = crypto.getRandomValues(new Uint32Array(1))[0]
+  } while (draw >= limit)
 
-  return voters[randomIndex]
+  return voters[draw % voters.length]
 }

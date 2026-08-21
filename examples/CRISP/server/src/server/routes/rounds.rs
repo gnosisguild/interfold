@@ -58,7 +58,20 @@ async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
         });
     }
 
-    let result = initialize_crisp_round(&data.token_address, &data.balance_threshold).await;
+    // TOKEN (0) and ONCHAIN (2) are the modes this route can request. BY_REQUESTER asks the
+    // requesting contract for its census, and the requester here is the server's own EOA, which
+    // cannot answer — such a round would validate and then be unusable.
+    let census_mode = data.census_mode.unwrap_or(0);
+    if census_mode != 0 && census_mode != 2 {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!(
+                "Unsupported census mode {census_mode}: this route can request 0 (TOKEN) or 2 (ONCHAIN)"
+            ),
+        });
+    }
+
+    let result =
+        initialize_crisp_round(&data.token_address, &data.balance_threshold, census_mode).await;
 
     match result {
         Ok(_) => HttpResponse::Ok().json(JsonResponse {
@@ -169,7 +182,10 @@ async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -
 /// # Arguments
 ///
 /// * `token_address` - The token contract address
-/// * `balance_threshold` - The balance threshold
+/// * `balance_threshold` - The balance threshold. For an ONCHAIN round this becomes the round's
+///   `minVotingPower` floor, in the token's raw units — `1` for a `SelfRegistry`, whose power is
+///   1 or 0.
+/// * `census_mode` - The `CRISPProgram.CensusMode` discriminant: 0 (TOKEN) or 2 (ONCHAIN)
 ///
 /// # Returns
 ///
@@ -177,6 +193,7 @@ async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -
 pub async fn initialize_crisp_round(
     token_address: &str,
     balance_threshold: &str,
+    census_mode: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!(
         "Starting new CRISP round with token address: {} and balance threshold: {}",
@@ -218,15 +235,18 @@ pub async fn initialize_crisp_round(
     // here rather than left, because a route that silently produces unusable rounds is worse than
     // one that does not exist.
     //
-    // Two options, constant credits of one and token-derived eligibility are the defaults this
-    // route always implied; it carries no way to express anything else.
+    // Two options and constant credits of one are the defaults this route always implied. The
+    // census source is the caller's choice between token discovery and the on-chain read; for
+    // ONCHAIN the threshold doubles as the contract's `minVotingPower` floor, which the tuple
+    // position below already carries.
     let num_options = U256::from(2);
     let credit_mode = U256::from(0); // Constant
     let credits = U256::from(1);
-    let census_mode = U256::from(0); // Token
-                                     // Seventh field: the ONCHAIN voting-power divisor, unused by a TOKEN round. Zero is also the
-                                     // "derive from the token's decimals" sentinel. Required regardless — `_initRound` decodes
-                                     // exactly seven fields, so a shorter encoding reverts the request with empty data.
+    let census_mode = U256::from(census_mode);
+    // Seventh field: the ONCHAIN voting-power divisor. Zero is the "derive from the token's
+    // decimals" sentinel — for a token without `decimals()`, such as `SelfRegistry`, that derives
+    // to 1. Required regardless — `_initRound` decodes exactly seven fields, so a shorter
+    // encoding reverts the request with empty data.
     let voting_power_divisor = U256::from(0);
     let custom_params_bytes = Bytes::from(
         (

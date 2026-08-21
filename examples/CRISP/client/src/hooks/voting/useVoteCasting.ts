@@ -6,8 +6,10 @@
 
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useSignTypedData, usePublicClient, useChainId } from 'wagmi'
+import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
+import type { Address } from 'viem'
 import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
+import type { PrepareBallotInputs } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
@@ -19,12 +21,11 @@ import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
 import { ballotTypedData, getBallotDigest, getCrispProgramAddress } from '@/utils/ballotDigest'
+import { getRandomRegistrant, getVotingPower, isRegisteredIn } from '@/utils/onchainCensus'
+import { submitVoteDirectly } from '@/utils/directVote'
+import { isDirectVoteEnabled, txExplorerUrl } from '@/utils/methods'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
-
-/// Shared so the guard in `castVoteWithProof` and the one in `handleProofGeneration` cannot drift
-/// into telling a voter two different things about the same round.
-const ONCHAIN_UNSUPPORTED = 'This round uses an on-chain census, which this client cannot vote in yet.'
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
 /// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
@@ -59,6 +60,9 @@ const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext:
 }
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
+
+/** Whose slot a mask is written to: a randomly drawn eligible slot, or the caller's own. */
+export type MaskTarget = 'random' | 'self'
 
 const extractCleanErrorMessage = (errorMessage: string | undefined): string => {
   if (!errorMessage) return 'Failed to broadcast the vote. Please try again.'
@@ -111,6 +115,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
   const { signTypedDataAsync } = useSignTypedData()
   const publicClient = usePublicClient()
+  const { data: walletClient } = useWalletClient()
   const chainId = useChainId()
   const { getEligibleVoters, getMerkleLeaves } = useInterfoldServer()
   const { showToast } = useNotificationAlertContext()
@@ -131,44 +136,62 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
    * A mask follows the same path and carries the same digest — `publishInput` computes one for
    * every input regardless of branch, so a mask that skipped it would be rejected, and one that
    * looked different on chain would defeat the point of masking.
+   *
+   * The two census families differ only in how eligibility reaches the circuit. A Merkle round
+   * proves membership of the census tree from `merkleLeaves`; an ONCHAIN round proves against the
+   * voting power `CRISPProgram.votingPowerOf` reports, read from the same contract that will
+   * verify the proof so the two cannot drift.
    */
   const handleProofGeneration = useCallback(
-    async (vote: Vote, address: string, balance: bigint, isAMask: boolean, merkleLeaves: bigint[]): Promise<string | undefined> => {
+    async (
+      vote: Vote,
+      address: string,
+      balance: bigint,
+      isAMask: boolean,
+      merkleLeaves: bigint[] | undefined,
+    ): Promise<string | undefined> => {
       if (!votingRound) throw new Error('No voting round available for proof generation')
       if (!roundState) throw new Error('No round state available for proof generation')
       if (!publicClient) throw new Error('No RPC client available for proof generation')
-
-      // Defence in depth. `castVoteWithProof` refuses these rounds before fetching a census, but
-      // this path builds a Merkle witness and must not do so for a round whose ballots are
-      // verified by `crisp_onchain` — that proof could never be published.
-      if (roundState.census_mode === CensusMode.Onchain) {
-        throw new Error(ONCHAIN_UNSUPPORTED)
-      }
 
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
         const head = await getSlotHead(votingRound.round_id, address)
         const e3Id = BigInt(votingRound.round_id)
         const slot = address as `0x${string}`
+        const isOnchain = roundState.census_mode === CensusMode.Onchain
 
-        // The slot head is passed as a pair or not at all. A ciphertext without its index would be
-        // proven against one entry and published against another, so the SDK types the two together
-        // and this branches rather than spreading them as separate optional fields.
-        const ballot = {
-          censusMode: 'merkle',
+        const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+
+        const ballotBase = {
           vote,
           publicKey,
-          balance,
-          merkleLeaves,
           slotAddress: address,
           isMaskVote: isAMask,
           numOptions: NUM_OPTIONS,
         } as const
 
+        // Typed as the full input union: the head fields are optional-undefined in the SDK type,
+        // so a ballot without them still satisfies it, and a plain `Omit` would collapse the
+        // census discriminant.
+        let ballot: PrepareBallotInputs
+        if (isOnchain) {
+          // The exact value `publishInput` will hand the circuit as public input 4.
+          const votingPower = await getVotingPower(publicClient, crispProgram, e3Id, slot)
+          ballot = { ...ballotBase, censusMode: 'onchain', votingPower }
+        } else {
+          if (!merkleLeaves || merkleLeaves.length === 0) {
+            throw new Error('No merkle leaves available for proof generation')
+          }
+          ballot = { ...ballotBase, censusMode: 'merkle', balance, merkleLeaves }
+        }
+
         await ensureCircuits()
+        // The slot head is passed as a pair or not at all. A ciphertext without its index would be
+        // proven against one entry and published against another, so the SDK types the two together
+        // and this branches rather than spreading them as separate optional fields.
         const prepared = await prepareBallot(head ? { ...ballot, previousCiphertext: head.ciphertext, previousIndex: head.index } : ballot)
 
-        const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
         const digest = await getBallotDigest(publicClient, crispProgram, e3Id, slot, prepared.ctCommitment)
 
         // A mask is not signed. The circuit skips the signature check on that branch, so the
@@ -210,40 +233,95 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   }, [])
 
   /**
-   * Handles masking a vote by selecting a random eligible voter.
+   * Handles masking a vote, either of a random eligible slot or of the caller's own.
+   *
+   * Both targets matter for deniability, in different directions. Masking a random voter gives
+   * *their* slot a later entry that might be their update. Masking your own slot is what makes
+   * your own on-chain activity ambiguous: once self-masks are something people actually do, an
+   * observer who sees your address write to your slot again cannot read it as "voted, then
+   * updated" — it is just as plausibly "voted, then self-masked", or even two masks and no vote
+   * at all. The circuit has always allowed it — the mask path checks slot eligibility, never who
+   * submits — this only surfaces it.
+   *
+   * A Merkle round draws the target from the census the server built. An ONCHAIN round reads the
+   * registrant list from the round's token instead — the server's list is discovered once at
+   * round start, and a registry admits voters during the input window, so only the chain knows
+   * who is maskable now.
    */
-  const handleMask = useCallback(async (): Promise<VoteData> => {
-    if (!user || !roundState) {
-      throw new Error('Cannot mask vote: Missing user or round state.')
-    }
-
-    const eligibleVoters = await getEligibleVoters(roundState.id)
-
-    if (!eligibleVoters || eligibleVoters.length === 0) {
-      throw new Error('No eligible voters available for masking')
-    }
-
-    try {
-      const randomVoterToMask = getRandomVoterToMask(eligibleVoters)
-
-      return {
-        vote: [0, 0],
-        slotAddress: randomVoterToMask.address,
-        balance: BigInt(randomVoterToMask.balance),
-        signature: '',
-        messageHash: '' as `0x${string}`,
+  const handleMask = useCallback(
+    async (target: MaskTarget): Promise<VoteData> => {
+      if (!user || !roundState) {
+        throw new Error('Cannot mask vote: Missing user or round state.')
       }
-    } catch (error) {
-      return {
+
+      const empty = {
         vote: [0, 0],
-        slotAddress: '',
         balance: 0n,
         signature: '',
         messageHash: '' as `0x${string}`,
-        error: (error as Error).message,
       }
-    }
-  }, [user, roundState, getEligibleVoters])
+
+      try {
+        if (roundState.census_mode === CensusMode.Onchain) {
+          if (!publicClient) throw new Error('No RPC client available for masking')
+
+          if (target === 'self') {
+            const registered = await isRegisteredIn(publicClient, roundState.token_address as Address, user.address as Address).catch(
+              () => null,
+            )
+            if (registered === false) {
+              throw new Error('You are not registered for this round, so your slot cannot be masked. Register first.')
+            }
+
+            // The balance is unused on the onchain path: the circuit takes voting power as a
+            // public input, and `handleProofGeneration` reads it from the contract.
+            return { ...empty, slotAddress: user.address }
+          }
+
+          const randomTarget = await getRandomRegistrant(publicClient, roundState.token_address as Address)
+          if (!randomTarget) throw new Error('Nobody has registered in this round yet, so there is no slot to mask')
+
+          return { ...empty, slotAddress: randomTarget }
+        }
+
+        const eligibleVoters = await getEligibleVoters(roundState.id)
+
+        if (!eligibleVoters || eligibleVoters.length === 0) {
+          throw new Error('No eligible voters available for masking')
+        }
+
+        if (target === 'self') {
+          // The census leaf is hash(address, balance), so a self-mask must prove against the
+          // balance the census recorded, not a locally assumed one.
+          const self = eligibleVoters.find((voter) => voter.address.toLowerCase() === user.address.toLowerCase())
+          if (!self) {
+            throw new Error("Your address is not in this round's census, so your slot cannot be masked.")
+          }
+
+          return {
+            ...empty,
+            slotAddress: self.address,
+            balance: BigInt(self.balance),
+          }
+        }
+
+        const randomVoterToMask = getRandomVoterToMask(eligibleVoters)
+
+        return {
+          ...empty,
+          slotAddress: randomVoterToMask.address,
+          balance: BigInt(randomVoterToMask.balance),
+        }
+      } catch (error) {
+        return {
+          ...empty,
+          slotAddress: '',
+          error: (error as Error).message,
+        }
+      }
+    },
+    [user, roundState, publicClient, getEligibleVoters],
+  )
 
   /**
    * Handles the voting process including signing the message.
@@ -274,7 +352,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   )
 
   const castVoteWithProof = useCallback(
-    async (pollSelected: Poll | null, isAMask: boolean = false) => {
+    async (pollSelected: Poll | null, isAMask: boolean = false, maskTarget: MaskTarget = 'random') => {
       if (!isAMask && !pollSelected) {
         console.log('Cannot cast vote: Poll option not selected.')
         showToast({ type: 'danger', message: 'Please select a poll option first.' })
@@ -293,11 +371,27 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       try {
         let voteData
 
+        const isOnchain = roundState.census_mode === CensusMode.Onchain
+
         if (isAMask) {
           setIsMasking(true)
-          voteData = await handleMask()
+          voteData = await handleMask(maskTarget)
         } else {
           setIsVoting(true)
+
+          // An unregistered voter's proof would only fail at the relay's simulation with an
+          // opaque revert, so catch it here where the fix — registering — can be named. Best
+          // effort: a round whose token is not a readable registry skips the check and lets the
+          // relay's simulation be the arbiter.
+          if (isOnchain && publicClient) {
+            const registered = await isRegisteredIn(publicClient, roundState.token_address as Address, user.address as Address).catch(
+              () => null,
+            )
+            if (registered === false) {
+              throw new Error('You are not registered for this round. Register first, then vote.')
+            }
+          }
+
           voteData = await handleVote(pollSelected!, user.address)
         }
 
@@ -305,30 +399,21 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           throw new Error(voteData.error)
         }
 
-        // Checked before the census is fetched. An ONCHAIN round has no Merkle census, so the
-        // empty-leaves error below would fire first and blame the coordinator for a round this
-        // client simply cannot vote in.
-        if (roundState.census_mode === CensusMode.Onchain) {
-          throw new Error(ONCHAIN_UNSUPPORTED)
-        }
-
         // Step 2: Encrypting vote
         setVotingStep('encrypting')
         setLastActiveStep('encrypting')
         setStepMessage('')
 
-        const merkleLeaves = await getMerkleLeaves(roundState.id)
-
-        if (!merkleLeaves || merkleLeaves?.length === 0) {
-          throw new Error('No merkle leaves available for proof generation')
-        }
+        // A Merkle witness only exists for the census families that build a tree. An ONCHAIN
+        // round has no census tree — eligibility is read from the token per input.
+        const merkleLeaves = isOnchain ? undefined : await getMerkleLeaves(roundState.id)
 
         const encodedProof = await handleProofGeneration(
           voteData.vote,
           voteData.slotAddress,
           voteData.balance,
           isAMask,
-          merkleLeaves.map((s: string) => BigInt(`0x${s}`)),
+          merkleLeaves?.map((s: string) => BigInt(`0x${s}`)),
         )
 
         if (!encodedProof) {
@@ -342,62 +427,63 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         // small delay for UX
         await new Promise((resolve) => setTimeout(resolve, 500))
 
-        // Step 4: Broadcasting
+        // Step 4: Broadcasting — through the relay where it runs, straight from the wallet where
+        // it does not (mainnet, or a deployment that forces the direct path). The relay's uniform
+        // sender is what hides *who* submitted an input; a direct transaction gives that up, so
+        // the relay stays the default wherever it exists.
         setVotingStep('broadcasting')
         setLastActiveStep('broadcasting')
 
-        const voteRequest: BroadcastVoteRequest = {
-          round_id: roundState.id,
-          encoded_proof: encodedProof,
-          address: voteData.slotAddress,
-        }
+        let txHash: string | undefined
 
-        const broadcastVoteResponse = await broadcastVote(voteRequest)
-
-        if (broadcastVoteResponse) {
-          switch (broadcastVoteResponse.status) {
-            case 'success': {
-              setVotingStep('complete')
-              setStepMessage(`${isAMask ? 'Masking' : 'Vote'} submitted successfully!'`)
-
-              const url = `https://sepolia.etherscan.io/tx/${broadcastVoteResponse.tx_hash}`
-              setTxUrl(url)
-
-              if (!isAMask) markVotedInRound(roundState.id)
-
-              const successMessage = isAMask
-                ? 'Slot masked successfully'
-                : broadcastVoteResponse.is_vote_update
-                  ? 'Vote updated successfully!'
-                  : 'Vote submitted successfully!'
-              showToast({
-                type: 'success',
-                message: successMessage,
-                linkUrl: url,
-              })
-              navigate(`/result/${roundState.id}/confirmation`)
-              break
-            }
-            case 'failed_broadcast':
-              setVotingStep('error')
-              showToast({
-                type: 'danger',
-                message: extractCleanErrorMessage(broadcastVoteResponse.message),
-                persistent: true,
-              })
-              break
-            default:
-              setVotingStep('error')
-              showToast({
-                type: 'danger',
-                message: extractCleanErrorMessage(broadcastVoteResponse.message),
-                persistent: true,
-              })
-              break
+        if (isDirectVoteEnabled()) {
+          if (!walletClient || !publicClient) {
+            throw new Error('No wallet available to submit the vote directly')
           }
+
+          setStepMessage('Please confirm the transaction in your wallet...')
+
+          const e3Id = BigInt(roundState.id)
+          const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+          txHash = await submitVoteDirectly(walletClient, publicClient, crispProgram, e3Id, encodedProof as `0x${string}`)
         } else {
-          throw new Error('Received no response after broadcasting vote.')
+          const voteRequest: BroadcastVoteRequest = {
+            round_id: roundState.id,
+            encoded_proof: encodedProof,
+          }
+
+          const broadcastVoteResponse = await broadcastVote(voteRequest)
+
+          if (!broadcastVoteResponse) {
+            throw new Error('Received no response after broadcasting vote.')
+          }
+          if (broadcastVoteResponse.status !== 'success') {
+            setVotingStep('error')
+            showToast({
+              type: 'danger',
+              message: extractCleanErrorMessage(broadcastVoteResponse.message),
+              persistent: true,
+            })
+            return
+          }
+
+          txHash = broadcastVoteResponse.tx_hash
         }
+
+        setVotingStep('complete')
+        setStepMessage(`${isAMask ? 'Masking' : 'Vote'} submitted successfully!`)
+
+        const url = txHash ? txExplorerUrl(txHash) : undefined
+        setTxUrl(url)
+
+        if (!isAMask) markVotedInRound(roundState.id)
+
+        showToast({
+          type: 'success',
+          message: isAMask ? 'Slot masked successfully' : 'Vote submitted successfully!',
+          linkUrl: url,
+        })
+        navigate(`/result/${roundState.id}/confirmation`)
       } catch (error) {
         setVotingStep('error')
         console.error('Vote processing failed:', error)
@@ -414,6 +500,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
     [
       user,
       roundState,
+      publicClient,
+      walletClient,
       broadcastVote,
       setTxUrl,
       showToast,

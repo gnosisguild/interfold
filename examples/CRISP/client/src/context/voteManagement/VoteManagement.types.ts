@@ -9,12 +9,6 @@ import { ReactNode } from 'react'
 import { BroadcastVoteRequest, BroadcastVoteResponse, VotingRound, VoteStateLite } from '@/model/vote.model'
 import { Poll, PollRequestResult, PollResult } from '@/model/poll.model'
 
-export type VoteStatus = {
-  hasVoted: boolean
-  roundId: string
-  lastChecked: number
-}
-
 export type VoteManagementContextType = {
   isLoading: boolean
   user: { address: string } | null
@@ -28,8 +22,6 @@ export type VoteManagementContextType = {
   currentRoundId: string | null
   displayedRoundIsFallback: boolean
   hasVotedInCurrentRound: boolean
-  voteStatusLoading: boolean
-  sessionId: string
   setPollResult: React.Dispatch<React.SetStateAction<PollResult | null>>
   getWebResultByRound: (round_id: string) => Promise<PollRequestResult | undefined>
   setTxUrl: React.Dispatch<React.SetStateAction<string | undefined>>
@@ -41,7 +33,7 @@ export type VoteManagementContextType = {
   getRoundStateLite: (roundId: string) => Promise<void>
   setPastPolls: React.Dispatch<React.SetStateAction<PollResult[]>>
   getWebResult: () => Promise<PollRequestResult[] | undefined>
-  checkVoteStatus: (roundId: string, address: string, forceRefresh?: boolean) => Promise<boolean>
+  checkVoteStatus: (roundId: string, address: string) => Promise<boolean>
   markVotedInRound: (roundId: string) => void
 }
 
