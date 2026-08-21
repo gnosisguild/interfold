@@ -51,7 +51,11 @@ It exposes three main functions:
   directly. In CRISP, the data providers are the voters and the input is the vote itself. The
   function checks the stage and the input window, resolves the voter's eligibility from the census,
   and verifies a Noir proof over nine public inputs, which is what establishes that the ciphertext
-  was encrypted correctly under the committee public key (`contracts/CRISPProgram.sol:493-554`). The
-  Greco relations that proof checks are built by
+  was encrypted correctly under the committee public key
+  (`examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol:493-554`, paths from the
+  repository root). The verifier is the one the round's census selects: `CRISPVerifier.sol` for a
+  census posted as a Merkle root, `CRISPOnchainVerifier.sol` for one read from token balances on
+  chain. Both files declare a contract named `HonkVerifier`, which is why they are named by file.
+  The Greco relations that proof checks are built by
   `crates/zk-helpers/src/circuits/threshold/user_data_encryption/` and proved by the circuits under
   `circuits/bin/threshold/`. See the Greco [paper](https://eprint.iacr.org/2024/594).
