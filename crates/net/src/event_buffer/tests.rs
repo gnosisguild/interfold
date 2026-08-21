@@ -13,6 +13,8 @@ use crate::{
         GossipData, IncomingRequest, NetEvent, OutgoingRequestFailed, OutgoingRequestSucceeded,
         PeerRejectionKind, ProtocolResponse,
     },
+    net_interface::EVENT_CHANNEL_SIZE,
+    NetEventSender,
 };
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{CorrelationId, EventPublisher, SyncEnded};
@@ -182,12 +184,14 @@ async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
 }
 
 #[actix::test]
-async fn sync_control_flood_does_not_consume_the_application_buffer() -> Result<()> {
+async fn sync_control_burst_does_not_lag_or_consume_the_application_buffer() -> Result<()> {
     const CONTROL_EVENTS: usize = 100_000;
 
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("net-control-flood");
-    let (input_tx, input_rx) = broadcast::channel(1_024);
+    let event_tx = NetEventSender::new(EVENT_CHANNEL_SIZE, 1);
+    let _raw_rx = event_tx.subscribe();
+    let input_rx = event_tx.application_subscribe();
     let (mut output_rx, handle) =
         NetEventBuffer::setup_with_limits(&bus, &input_rx, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
 
@@ -196,15 +200,10 @@ async fn sync_control_flood_does_not_consume_the_application_buffer() -> Result<
         .iter()
         .all(|event| !event.requires_application_delivery()));
 
-    let producer = actix::spawn(async move {
-        for index in 0..CONTROL_EVENTS {
-            input_tx.send(control_events[index % control_events.len()].clone())?;
-            tokio::task::yield_now().await;
-        }
-        anyhow::Ok(input_tx)
-    });
-    let input_tx = producer.await??;
-    input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![7])))?;
+    for index in 0..CONTROL_EVENTS {
+        event_tx.send(control_events[index % control_events.len()].clone())?;
+    }
+    event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![7])))?;
     bus.publish_without_context(SyncEnded::new())?;
 
     handle.wait_until_running().await?;

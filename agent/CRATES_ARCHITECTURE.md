@@ -425,11 +425,12 @@ flowchart LR
     Identify -->|accepted| Signed[application-validated signed gossipsub]
     Identify -->|rejected| Drop[disconnect and suppress repeated warnings]
     Signed --> Envelope[network, deployment, schema, aggregate, and hash checks]
-    Envelope --> Raw[bounded NetEvent broadcast]
-    Raw --> AppFilter{application delivery event?}
-    AppFilter -->|yes| Startup[NetEventBuffer count + byte limits]
-    AppFilter -->|no| Control[raw sync / connection consumer only]
+    Envelope --> EventRouter{application delivery event?}
+    EventRouter --> Raw[bounded raw NetEvent broadcast]
+    EventRouter -->|yes| App[bounded application broadcast]
+    EventRouter -->|no| Control[raw channel only]
     Raw --> SyncManager[NetSyncManager]
+    App --> Startup[NetEventBuffer count + byte limits]
     Startup -->|await actor acceptance after SyncEnded| Translator[NetEventTranslator]
     Translator --> Allowlist{forwardable event type?}
     Allowlist -->|yes| Domain[bounded decode to InterfoldEvent]
@@ -464,10 +465,11 @@ ID, schema version, and payload hash. Gossipsub and direct-request/DHT decoding 
 limits. Translation actors accept only the protocol event allowlist before publishing remote events,
 and their broadcast-to-actor ingress loops await mailbox acceptance and stop when the destination
 actor closes. Each publish attempt has a result timeout. No-peer failures use a longer retry window
-than other transient failures. The startup buffer admits only gossip payloads and publish or DHT
-results that post-sync application consumers use. Historical-sync and connection-control events
-remain available on the raw receiver but do not consume the application buffer or its actor mailbox.
-The application buffer is bounded by both event count and estimated bytes and fails readiness on
+than other transient failures. The network producer sends all events to the raw channel. It also
+sends gossip payloads and publish or DHT results to a separate application channel. The startup
+buffer subscribes only to the application channel. Historical-sync and connection-control bursts
+cannot lag the application receiver or consume its actor mailbox. The application buffer is bounded
+by both event count and estimated bytes and fails readiness on
 overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and skipped without stopping
 the ingress loop. Historical direct sync requires advancing cursors and
 enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery

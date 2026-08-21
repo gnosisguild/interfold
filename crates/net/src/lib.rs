@@ -61,8 +61,15 @@ pub fn setup_net_interface(
     keypair: Libp2pKeypair,
     peers: Vec<String>,
     quic_port: u16,
+    max_buffered_events: usize,
 ) -> Result<NetInterfaceHandle> {
-    let mut interface = Libp2pNetInterface::new(keypair, peers, Some(quic_port), network)?;
+    let mut interface = Libp2pNetInterface::new_with_application_event_capacity(
+        keypair,
+        peers,
+        Some(quic_port),
+        network,
+        max_buffered_events,
+    )?;
 
     let handle = interface.handle();
 
@@ -119,11 +126,11 @@ pub fn setup_net_with_limits(
         network.clone(),
     );
 
-    // Buffer application events until SyncEnded. The sync manager consumes control events from
-    // its raw receiver.
+    // Buffer application events until SyncEnded. The producer keeps control events on the raw
+    // channel that the sync manager consumes.
     let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
         &bus,
-        &interface.rx(),
+        &interface.application_rx(),
         max_buffered_events,
         max_buffered_bytes,
     );
