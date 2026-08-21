@@ -735,6 +735,9 @@ jobs:
           # /proc/*/cmdline; it cannot read another process's environment as easily. The config
           # stores the helper only — the token is read from the environment when git invokes it.
           git config --local credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
-          git push origin stable --force
+          # --no-verify: `pnpm install` installs the husky pre-push hook, which needs tools the
+          # runner lacks (nargo). The hook gates development pushes; this job only moves a tag to
+          # a commit that already passed CI.
+          git push origin stable --force --no-verify
           git config --local --unset credential.helper
           echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"
