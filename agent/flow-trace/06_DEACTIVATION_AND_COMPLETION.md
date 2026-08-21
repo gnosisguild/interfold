@@ -431,10 +431,10 @@ finalized-committee repository and `CiphernodeSelectorState.e3_cache` before rep
 Threshold keyshare, public-key aggregation, and plaintext aggregation also store versioned recovery
 records with their protocol snapshots. These records retain collector inputs, pending proof jobs,
 verified proof bundles, terminal publication intents, causal event contexts, and the absolute
-plaintext-share collection deadline. After replay, `EffectsEnabled` recreates collectors and
-compute jobs with new process-local correlation IDs. It re-publishes determined outputs
-idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
-has an unsupported schema version.
+plaintext-share collection deadline. After replay, `EffectsEnabled` recreates collectors and compute
+jobs with new process-local correlation IDs. It re-publishes determined outputs idempotently.
+Startup fails closed if an active phase requires a recovery record that is missing or has an
+unsupported schema version.
 
 The registry writer rebuilds ticket, committee-finalization, and public-key submission gates from
 durable local events. It does not submit during replay. After `EffectsEnabled`, it retries temporary
