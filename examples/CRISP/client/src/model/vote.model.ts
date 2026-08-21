@@ -25,10 +25,11 @@ export interface CurrentRound {
   id: string
 }
 
+/// Carries no address: the slot is already inside the encoded proof, and every byte the relay
+/// does not receive is a byte it cannot log against a masker's session.
 export interface BroadcastVoteRequest {
   round_id: string
   encoded_proof: string
-  address: string
 }
 
 export type VoteResponseStatus = 'success' | 'failed_broadcast'
@@ -36,7 +37,6 @@ export interface BroadcastVoteResponse {
   status: VoteResponseStatus
   tx_hash?: string
   message?: string
-  is_vote_update?: boolean
 }
 
 export interface VoteStatusRequest {
@@ -44,10 +44,12 @@ export interface VoteStatusRequest {
   address: string
 }
 
+/// `slot_active` reports that the slot holds at least one published entry — not that its owner
+/// voted. Masks are indistinguishable from votes, so activity is all the server can answer.
 export interface VoteStatusResponse {
   round_id: string
   address: string
-  has_voted: boolean
+  slot_active: boolean
   round_status?: string
 }
 
@@ -66,6 +68,10 @@ export interface VoteStateLite {
 
   committee_public_key: number[]
   emojis: [string, string]
+
+  /// The token the round reads eligibility from. For an ONCHAIN round this is what the client
+  /// reads registrants and voting power from; unused for the Merkle modes.
+  token_address: string
 
   credit_mode: CreditMode
   census_mode: CensusMode

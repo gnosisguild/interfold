@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_events::{E3Stage, E3id, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{
+    E3Stage, E3id, Event, EventContextAccessors, EventSource, InterfoldEvent, InterfoldEventData,
+};
 use std::collections::HashSet;
 
 /// The completion action a router should perform *after* running extension hooks and
@@ -29,6 +31,8 @@ pub enum RoutingDecision {
     Ignore,
     /// The event targets a request that has already completed; this is an error.
     AlreadyCompleted(E3id),
+    /// A network event targets an E3 that was not admitted by canonical chain state.
+    UnadmittedNetworkEvent(E3id),
     /// Process the event for the given request, applying `post_forward` after forwarding.
     Process {
         e3_id: E3id,
@@ -44,8 +48,18 @@ pub enum RoutingDecision {
 pub struct RequestRouter;
 
 impl RequestRouter {
-    /// Decide how an incoming event should be routed given the set of completed requests.
+    /// Decide how an incoming event should be routed without an existing request context.
+    #[cfg(test)]
     pub fn route(msg: &InterfoldEvent, completed: &HashSet<E3id>) -> RoutingDecision {
+        Self::route_with_context(msg, completed, false)
+    }
+
+    /// Decide how an incoming event should be routed.
+    pub fn route_with_context(
+        msg: &InterfoldEvent,
+        completed: &HashSet<E3id>,
+        has_context: bool,
+    ) -> RoutingDecision {
         // Broadcast non-E3-scoped lifecycle signals to every active context:
         //   * `Shutdown` so children can tear themselves down, and
         //   * `EffectsEnabled` so a hydrated request can re-drive its own in-flight work
@@ -88,7 +102,8 @@ impl RequestRouter {
             // On-chain confirmation events that lag behind local teardown are expected and
             // should be silently ignored rather than treated as an error.
             let is_late_terminal = match msg.get_data() {
-                // E3StageChanged(Complete) always lags local PlaintextAggregated completion.
+                // A canonical terminal stage can arrive after another canonical terminal event
+                // has already removed the local context.
                 InterfoldEventData::E3StageChanged(data)
                     if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
                 {
@@ -108,12 +123,16 @@ impl RequestRouter {
             return RoutingDecision::AlreadyCompleted(e3_id);
         }
 
+        // Chain events create request contexts. Peer events can only contribute to a request
+        // that the node already admitted from canonical chain state or restored from a snapshot.
+        if msg.source() == EventSource::Net && !has_context {
+            return RoutingDecision::UnadmittedNetworkEvent(e3_id);
+        }
+
         let post_forward = match msg.get_data() {
-            // Receiving the PlaintextAggregated event means the request is complete and we can
-            // notify everyone. This might change as we consider other completion factors.
-            InterfoldEventData::PlaintextAggregated(_) => PostForward::PublishComplete,
             InterfoldEventData::E3StageChanged(data)
-                if matches!(data.new_stage, E3Stage::Complete) =>
+                if msg.source() == EventSource::Evm
+                    && matches!(data.new_stage, E3Stage::Complete) =>
             {
                 PostForward::PublishComplete
             }

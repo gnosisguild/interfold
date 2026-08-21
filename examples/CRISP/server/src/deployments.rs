@@ -21,6 +21,8 @@ struct ChainDeployments {
     crisp_program: Option<DeploymentEntry>,
     #[serde(rename = "MockVotingToken")]
     mock_voting_token: Option<DeploymentEntry>,
+    #[serde(rename = "SelfRegistry")]
+    self_registry: Option<DeploymentEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +51,24 @@ pub fn localhost_mock_voting_token() -> Result<Option<String>> {
     Ok(file
         .localhost
         .and_then(|c| c.mock_voting_token)
+        .map(|e| e.address))
+}
+
+/// `SelfRegistry` address from the latest localhost deploy, if present.
+///
+/// The open census for ONCHAIN rounds: pass it as the round's token to run a round anyone can
+/// register into during the input window.
+pub fn localhost_self_registry() -> Result<Option<String>> {
+    let path = deployments_json_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let file: DeployedContractsFile =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    Ok(file
+        .localhost
+        .and_then(|c| c.self_registry)
         .map(|e| e.address))
 }
 

@@ -17,7 +17,7 @@ use crate::server::{
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, B256};
 use e3_sdk::evm_helpers::contracts::{
-    InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
+    E3Stage, InterfoldContract, InterfoldContractFactory, InterfoldRead, InterfoldWrite, ReadWrite,
 };
 use log::{error, info};
 
@@ -157,13 +157,15 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
                     }
                 };
 
+            let e3_id_u256 = match e3_id_to_u256(&e3_id) {
+                Ok(e3_id) => e3_id,
+                Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+            };
+
             // Try the direct call
             let tx_result = contract
                 .publish_ciphertext_output(
-                    match e3_id_to_u256(&e3_id) {
-                        Ok(e3_id) => e3_id,
-                        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-                    },
+                    e3_id_u256,
                     Bytes::from(ciphertext.clone()),
                     B256::from_slice(&ciphertext_commitment),
                     Bytes::from(proof.clone()),
@@ -173,6 +175,24 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
             let pending_tx = match tx_result {
                 Ok(tx) => tx,
                 Err(e) => {
+                    // A revert can mean the output already landed on chain — a retry of this
+                    // webhook, or our own earlier transaction confirming first. Publication is
+                    // this handler's goal, so an E3 already past KeyPublished is a success.
+                    match contract.get_e3_stage(e3_id_u256).await {
+                        Ok(stage)
+                            if stage == E3Stage::CiphertextReady || stage == E3Stage::Complete =>
+                        {
+                            info!(
+                                "Ciphertext output already published for E3 ID: {} (stage: {:?})",
+                                e3_id, stage
+                            );
+                            return HttpResponse::Ok().json(format!(
+                                "Ciphertext output already published for E3 ID: {}",
+                                e3_id
+                            ));
+                        }
+                        _ => {}
+                    }
                     error!("Failed to send transaction: {:?}", e);
                     return HttpResponse::InternalServerError()
                         .json(format!("Failed to send transaction: {}", e));
@@ -254,7 +274,13 @@ async fn get_all_round_results(
                 }
             }
             Err(e) => {
-                info!("Error retrieving state for round {}: {:?}", e3_id, e);
+                // Expected for a round whose committee key is not published yet — the `_e3:`
+                // record only exists after CommitteePublished. See the note in
+                // `get_current_round_for_requester`.
+                info!(
+                    "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
+                    e3_id, e
+                );
                 continue;
             }
         }

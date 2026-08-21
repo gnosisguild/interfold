@@ -8,7 +8,8 @@
 //!
 //! `PkAggregationProofSigned` is published by [`ProofRequestActor`] after
 //! generating and ECDSA-signing the C5 proof. [`PublicKeyAggregator`]
-//! consumes this to transition to Complete and publish `PublicKeyAggregated`.
+//! consumes this to complete its local aggregation state and publish the
+//! `PublicKeyAggregated` publication intent.
 
 use crate::{E3id, SignedProofPayload};
 use serde::{Deserialize, Serialize};

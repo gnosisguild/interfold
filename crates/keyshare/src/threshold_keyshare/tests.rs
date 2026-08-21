@@ -12,9 +12,10 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, BusHandle, E3Stage, E3id, EffectsEnabled, EventBus, EventBusConfig,
-    EventSource, FailureReason, HistoryCollector, InterfoldEvent, InterfoldEventData, Sequencer,
-    StoreEventRequested, StoreEventResponse, TakeEvents, Unsequenced,
+    hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled,
+    EventBus, EventBusConfig, EventSource, FailureReason, HistoryCollector, InterfoldEvent,
+    InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse, TakeEvents,
+    Unsequenced,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::sync::Arc;
@@ -69,6 +70,12 @@ fn test_state(
     (repo.send(Some(state)), repo)
 }
 
+fn test_recovery() -> Persistable<ThresholdKeyshareRecoveryState> {
+    let store = InMemStore::new(false).start();
+    let repo = Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&store));
+    repo.send(Some(ThresholdKeyshareRecoveryState::default()))
+}
+
 async fn start_actor_with_state(
     keyshare_state: KeyshareState,
 ) -> Result<(
@@ -86,6 +93,7 @@ async fn start_actor_with_state(
         state,
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
+        recovery: test_recovery(),
     })
     .start();
 
@@ -251,6 +259,46 @@ async fn restart_redrives_a_persisted_terminal_failure() -> Result<()> {
             if data.e3_id == e3_id
                 && data.failed_at_stage == failed_at_stage
                 && data.reason == reason
+    ));
+
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_redrives_a_decryption_share_compute_request() -> Result<()> {
+    let decrypting = Decrypting {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        ciphertext_output: vec![ArcBytes::from_bytes(&[4])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (actor, history, e3_id, _) =
+        start_actor_with_state(KeyshareState::Decrypting(decrypting)).await?;
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(effects_enabled).await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ComputeRequest(data)
+            if data.e3_id == e3_id
+                && matches!(
+                    data.request,
+                    ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionShare(_))
+                )
     ));
 
     Ok(())

@@ -12,7 +12,7 @@ use crate::{
 use actix::{Actor, Context as ActixContext, Handler};
 use e3_ciphernode_builder::EventSystem;
 use e3_config::NetworkProfile;
-use e3_events::{E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced};
+use e3_events::{E3id, EventSource, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced};
 use e3_utils::ArcBytes;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
 
@@ -91,10 +91,12 @@ fn protocol_response(command: NetCommand) -> ProtocolResponse {
 
 fn local_forwardable_event(e3: &str) -> InterfoldEvent {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        PlaintextAggregated {
+        KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
             e3_id: E3id::new(e3, 1),
-            decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3, 4])],
-            decryption_aggregator_proofs: vec![],
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
         }
         .into(),
         None,
@@ -229,7 +231,7 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let event: InterfoldEvent<Unsequenced> = data.try_into().unwrap();
     assert!(matches!(
         event.get_data(),
-        InterfoldEventData::PlaintextAggregated(_)
+        InterfoldEventData::KeyshareCreated(_)
     ));
 
     // The non-forwardable event must not have produced a second command.

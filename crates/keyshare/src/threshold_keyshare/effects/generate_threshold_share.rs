@@ -143,19 +143,22 @@ impl ThresholdKeyshare {
         info!("Publishing ThresholdSharePending for E3 {}", e3_id);
 
         // Publish ThresholdSharePending - ProofRequestActor will generate proof, sign, and publish ThresholdShareCreated
-        self.bus.publish(
-            ThresholdSharePending {
-                e3_id,
-                full_share: Arc::new(plan.full_share),
-                proof_request: plan.proof_request,
-                sk_share_computation_request: plan.sk_share_computation_request,
-                e_sm_share_computation_request: plan.e_sm_share_computation_request,
-                sk_share_encryption_requests: plan.sk_share_encryption_requests,
-                e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
-                recipient_party_ids: plan.recipient_party_ids,
-            },
-            ec,
-        )?;
+        let event = ThresholdSharePending {
+            e3_id,
+            full_share: Arc::new(plan.full_share),
+            proof_request: plan.proof_request,
+            sk_share_computation_request: plan.sk_share_computation_request,
+            e_sm_share_computation_request: plan.e_sm_share_computation_request,
+            sk_share_encryption_requests: plan.sk_share_encryption_requests,
+            e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
+            recipient_party_ids: plan.recipient_party_ids,
+        };
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.threshold_share_pending = Some(TypedEvent::new(event.clone(), ec.clone()));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        self.bus.publish(event, ec)?;
 
         Ok(())
     }

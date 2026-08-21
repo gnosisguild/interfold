@@ -201,6 +201,22 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     )
   }
 
+  // The open census for ONCHAIN rounds: anyone registers themselves and votes with weight 1.
+  // Deployed alongside the program so a self-registration round only needs its address passed as
+  // the round's token — no census indexer, no merkle root, no minting.
+  const selfRegistry = await ethers.deployContract('SelfRegistry')
+  await selfRegistry.waitForDeployment()
+  const selfRegistryAddress = await selfRegistry.getAddress()
+
+  storeDeploymentArgs(
+    {
+      address: selfRegistryAddress,
+      blockNumber: await ethers.provider.getBlockNumber(),
+    },
+    'SelfRegistry',
+    chain,
+  )
+
   console.log(`
       Deployments:
       ----------------------------------------------------------------------
@@ -211,6 +227,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
       OnchainHonkVerifier: ${onchainHonkVerifierAddress}
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}
+      SelfRegistry: ${selfRegistryAddress}
       `)
 
   return { governanceComplete }

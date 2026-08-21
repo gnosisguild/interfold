@@ -4,6 +4,26 @@
 
 use super::effects::*;
 use super::*;
+use e3_events::EventSource;
+
+const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
+    fn try_start_plaintext(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if !self.is_active_aggregator_for(e3_id) {
+            return;
+        }
+        if let Some(intent) = self.publication.start(e3_id) {
+            ctx.notify(SubmitPlaintext(intent));
+        }
+    }
+
+    fn try_start_pending_plaintexts(&mut self, ctx: &mut actix::Context<Self>) {
+        for e3_id in self.publication.pending_keys() {
+            self.try_start_plaintext(&e3_id, ctx);
+        }
+    }
+}
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     for InterfoldSolWriter<P>
@@ -11,12 +31,15 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let source = msg.source();
         match msg.into_data() {
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::AggregatorChanged(data) => self.notify_sync(ctx, data),
             InterfoldEventData::PlaintextAggregated(data) => {
-                // Only publish if the src and destination chains match
-                if self.provider.chain_id() == data.e3_id.chain_id() {
+                // Only a locally computed result is a publication intent. Peer results are
+                // inputs for protocol observers and must not cross the EVM write boundary.
+                if source == EventSource::Local && self.provider.chain_id() == data.e3_id.chain_id()
+                {
                     ctx.notify(data);
                 }
             }
@@ -41,8 +64,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
 {
     type Result = ();
 
-    fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
+        self.publication.enable_effects();
+        self.try_start_pending_plaintexts(ctx);
     }
 }
 
@@ -51,8 +76,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
 {
     type Result = ();
 
-    fn handle(&mut self, msg: AggregatorChanged, _: &mut Self::Context) -> Self::Result {
-        self.active_aggregators.insert(msg.e3_id, msg.is_aggregator);
+    fn handle(&mut self, msg: AggregatorChanged, ctx: &mut Self::Context) -> Self::Result {
+        let e3_id = msg.e3_id;
+        self.active_aggregators
+            .insert(e3_id.clone(), msg.is_aggregator);
+        if msg.is_aggregator {
+            self.try_start_plaintext(&e3_id, ctx);
+        }
     }
 }
 
@@ -63,45 +93,61 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
         self.active_aggregators.remove(&msg.e3_id);
-        self.submitting.remove(&msg.e3_id);
     }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated>
     for InterfoldSolWriter<P>
 {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
     fn handle(&mut self, msg: PlaintextAggregated, ctx: &mut Self::Context) -> Self::Result {
-        if !self.effects_enabled || !self.is_active_aggregator_for(&msg.e3_id) {
-            return Box::pin(async {});
+        let e3_id = msg.e3_id.clone();
+        // Replay retains the durable local intent while the persisted aggregator role is restored.
+        // Live results still require the active role when they enter the outbox, and every
+        // submission attempt is role-gated by `try_start_plaintext`.
+        if self.effects_enabled && !self.is_active_aggregator_for(&e3_id) {
+            info!(e3_id = %e3_id, "Ignoring plaintext result while this node is not the active aggregator");
+            return;
+        }
+        self.publication.record(e3_id.clone(), msg);
+        self.try_start_plaintext(&e3_id, ctx);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubmitPlaintext(PlaintextAggregated);
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
+    for InterfoldSolWriter<P>
+{
+    type Result = ResponseActFuture<Self, ()>;
+
+    fn handle(&mut self, command: SubmitPlaintext, _ctx: &mut Self::Context) -> Self::Result {
+        let msg = command.0;
+        if !self.is_active_aggregator_for(&msg.e3_id) || !self.publication.contains(&msg.e3_id) {
+            self.publication.finish(&msg.e3_id, false);
+            return Box::pin(async {}.into_actor(self));
         }
 
-        // Don't fire a second on-chain submission for an E3 whose
-        // publishPlaintextOutput tx is already in flight (H13).
-        if !self.submitting.insert(msg.e3_id.clone()) {
-            info!(e3_id = %msg.e3_id, "publishPlaintextOutput already in flight; skipping duplicate submission");
-            return Box::pin(async {});
-        }
-        let self_addr = ctx.address();
-
-        Box::pin({
+        Box::pin(
+            {
             let e3_id = msg.e3_id.clone();
             let decrypted_output = msg.decrypted_output.clone();
             let contract_address = self.contract_address;
             let provider = self.provider.clone();
             let bus = self.bus.clone();
             async move {
-                // HACK: plaintext format is now a Vec of ArcBytes for legacy tests for now we are extracting
-                // the first entry and writing this will change once we make our legacy tests catch up
+                // The event can represent multiple ciphertext outputs, but the contract accepts one
+                // plaintext output per E3. Validation rejects multi-output results before indexing.
                 if let Err(msg_err) = validate_plaintext_output(
                     &e3_id,
                     &decrypted_output,
                     &msg.decryption_aggregator_proofs,
                 ) {
-                    self_addr.do_send(ClearSubmitting(e3_id.clone()));
                     bus.err(EType::Evm, anyhow::anyhow!(msg_err));
-                    return;
+                    return (e3_id, true);
                 }
                 // Safe: `validate_plaintext_output` guarantees exactly one output.
                 let decrypted = &decrypted_output[0];
@@ -110,10 +156,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
                 {
                     Ok(false) => {
                         info!(e3_id = %e3_id, "Skipping publishPlaintextOutput; plaintext already published");
-                        return;
+                        return (e3_id, true);
                     }
                     Err(err) => {
-                        self_addr.do_send(ClearSubmitting(e3_id.clone()));
                         bus.err(
                             EType::Evm,
                             anyhow::anyhow!(
@@ -121,7 +166,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
                                 format_evm_error(&err)
                             ),
                         );
-                        return;
+                        return (e3_id, false);
                     }
                     Ok(true) => {}
                 }
@@ -137,9 +182,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
                 match result {
                     Ok(receipt) => {
                         info!(tx=%receipt.transaction_hash, "Published plaintext output");
+                        (e3_id, true)
                     }
                     Err(err) => {
-                        self_addr.do_send(ClearSubmitting(e3_id));
                         bus.err(
                             EType::Evm,
                             anyhow::anyhow!(
@@ -147,26 +192,21 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
                                 format_evm_error(&err)
                             ),
                         );
+                        (e3_id, false)
                     }
                 }
             }
-        })
-    }
-}
-
-/// Internal message: clear the in-flight `publishPlaintextOutput` marker for an
-/// E3 so a subsequent submission attempt is allowed after a failure (H13).
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ClearSubmitting(E3id);
-
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<ClearSubmitting>
-    for InterfoldSolWriter<P>
-{
-    type Result = ();
-
-    fn handle(&mut self, msg: ClearSubmitting, _: &mut Self::Context) -> Self::Result {
-        self.submitting.remove(&msg.0);
+        }
+            .into_actor(self)
+            .map(|(e3_id, terminal), actor, ctx| {
+                actor.publication.finish(&e3_id, terminal);
+                if !terminal {
+                    ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
+                        actor.try_start_plaintext(&e3_id, ctx);
+                    });
+                }
+            }),
+        )
     }
 }
 

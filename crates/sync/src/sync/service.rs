@@ -13,13 +13,13 @@ use crate::domain::{
 use crate::replay_spool::ReplaySpool;
 use crate::SyncRepositoryFactory;
 use actix::{Message, Recipient};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
+    AggregateConfig, AggregateId, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
     EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
+    InterfoldEventData, RequestRouterCheckpoint, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
 };
 #[cfg(test)]
 use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
@@ -30,6 +30,66 @@ use tracing::info;
 
 #[cfg(test)]
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
+
+/// Rebuild the request-router checkpoint when its cursors differ from aggregate snapshots.
+///
+/// The rebuild projects EventStore history only into router admission state. It does not replay
+/// protocol actors, which already hydrate from their aggregate snapshots.
+pub async fn reconcile_request_router_checkpoint(
+    repositories: &Repositories,
+    aggregate_ids: impl IntoIterator<Item = AggregateId>,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+) -> Result<()> {
+    let mut target_cursors = std::collections::HashMap::new();
+    for aggregate_id in aggregate_ids {
+        let cursor = repositories
+            .aggregate_seq(aggregate_id)
+            .read()
+            .await?
+            .unwrap_or(0);
+        target_cursors.insert(aggregate_id, cursor);
+    }
+
+    let checkpoint_store = repositories.request_router_checkpoint();
+    let checkpoint = checkpoint_store
+        .read()
+        .await?
+        .context("request-router checkpoint is missing after storage preflight")?;
+    if checkpoint.replay_cursors == target_cursors {
+        return Ok(());
+    }
+
+    info!(
+        checkpoint_cursors = ?checkpoint.replay_cursors,
+        target_cursors = ?target_cursors,
+        "Rebuilding the request-router checkpoint from EventStore"
+    );
+    let spool = ReplaySpool::load_bounded(eventstore, target_cursors.clone()).await?;
+    let mut rebuilt = RequestRouterCheckpoint {
+        replay_cursors: target_cursors
+            .keys()
+            .copied()
+            .map(|aggregate_id| (aggregate_id, 0))
+            .collect(),
+        ..Default::default()
+    };
+    let projected = spool.project(|event| {
+        e3_request::project_request_router_event(&mut rebuilt, event);
+        Ok(())
+    })?;
+    ensure!(
+        rebuilt.replay_cursors == target_cursors,
+        "request-router rebuild produced cursors {:?}, but aggregate snapshots require {:?}",
+        rebuilt.replay_cursors,
+        target_cursors
+    );
+    checkpoint_store.write_sync(&rebuilt).await?;
+    info!(
+        projected_events = projected,
+        "Request-router checkpoint rebuilt"
+    );
+    Ok(())
+}
 
 pub async fn sync(
     bus: &BusHandle,
@@ -70,6 +130,12 @@ pub async fn sync(
     // 3. Page post-snapshot EventStore history into sorted temporary runs. This preserves the
     // global HLC replay order without retaining the complete backlog in memory.
     info!("Loading EventStore replay pages...");
+    let request_router_checkpoint = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .context("request-router recovery checkpoint is missing after storage preflight")?;
+    snapshot.ensure_request_router_covers(&request_router_checkpoint.replay_cursors)?;
     let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;
     info!("{} EventStore events spooled.", replay_spool.total_events());
 
@@ -101,10 +167,10 @@ pub async fn sync(
     // unsafe on a value-bearing protocol (it can double-emit or race the canonical chain state)
     // and is therefore deliberately left out of the sync path.
     //
-    // Note: this is *not* a global absence of restart recovery. Actors that hold determined,
-    // idempotent in-flight results re-drive themselves when `EffectsEnabled` is broadcast at the
-    // end of this sync (e.g. `ThresholdKeyshare::resume_in_flight_work` re-publishes a computed
-    // keyshare / decryption share). What sync deliberately avoids is replaying *request* events.
+    // Note: this is *not* a global absence of restart recovery. Per-E3 actors restore versioned
+    // recovery inputs and re-create collectors, proof jobs, compute jobs, and determined outputs
+    // when `EffectsEnabled` is broadcast at the end of this sync. What sync deliberately avoids is
+    // replaying request prefixes into actors that already hydrated from protocol snapshots.
     //
     // Detection of loose ends that cannot be locally re-driven is exposed offline and
     // non-destructively via `interfold node validate`, which cross-checks the persisted committee

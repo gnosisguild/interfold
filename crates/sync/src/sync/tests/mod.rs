@@ -6,17 +6,17 @@
 
 use super::{
     collect_historical_evm_events, has_schema_governed_kv_state, preflight_schema_version,
-    publish_reconciled_history, replay_eventstore_events,
+    publish_reconciled_history, reconcile_request_router_checkpoint, replay_eventstore_events,
 };
 use crate::{SyncRepositoryFactory, SCHEMA_VERSION};
 use e3_ciphernode_builder::EventSystem;
 use e3_data::Repositories;
 use e3_events::{
     hlc::{Hlc, HlcTimestamp},
-    EffectsEnabled, Event, EventContextAccessors, EventPublisher, EventSubscriber, EventType,
-    EvmEventConfig, EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived,
-    HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, StoreKeys, SyncEnded, TakeEvents,
-    Unsequenced,
+    AggregateId, E3Stage, E3StageChanged, E3id, EffectsEnabled, Event, EventContextAccessors,
+    EventPublisher, EventSubscriber, EventType, EvmEventConfig, EvmEventConfigChain, GetEvents,
+    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData,
+    RequestRouterCheckpoint, StoreKeys, SyncEnded, TakeEvents, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::BTreeMap;

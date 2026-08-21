@@ -5,10 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use e3_data::{AutoPersist, DataStore, InMemStore, Repository};
+use alloy::primitives::Address;
+use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, HistoryCollector, ProofPayload, ProofType, TakeEvents,
-    Unsequenced, ZkError,
+    CircuitName, ComputeRequestErrorKind, EffectsEnabled, HistoryCollector, ProofPayload,
+    ProofType, TakeEvents, Unsequenced, ZkError,
 };
 use e3_test_helpers::get_common_setup;
 use std::collections::{BTreeSet, HashMap};
@@ -17,10 +18,8 @@ fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
 }
 
-fn test_state(initial_state: PublicKeyAggregatorState) -> Persistable<PublicKeyAggregatorState> {
-    let repo = Repository::<PublicKeyAggregatorState>::new(DataStore::from_in_mem(
-        &InMemStore::new(false).start(),
-    ));
+fn test_state<T: PersistableData>(initial_state: T) -> Persistable<T> {
+    let repo = Repository::<T>::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
     repo.to_connector().send(Some(initial_state))
 }
 
@@ -95,6 +94,7 @@ async fn build_public_key_aggregator_with_committee(
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size,
             dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
         },
         test_state(initial_state),
     );
@@ -181,6 +181,32 @@ async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<
     let mut result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
     assert!(!result.timed_out, "timed out waiting for an event");
     Ok(result.events.pop().expect("expected one event"))
+}
+
+#[actix::test]
+async fn restart_redrives_c1_verification() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let keyshare = ArcBytes::from_bytes(&[1, 2, 3]);
+    let state = PublicKeyAggregatorState::VerifyingC1 {
+        submission_order: vec![(0, Address::ZERO.to_string(), keyshare)],
+        threshold_m: 0,
+        circuit_committee_n: 1,
+        circuit_committee_h: 1,
+        c1_proofs: vec![Some(c1_proof_with_pk_commitment(&e3_id, [7; 32]))],
+        no_proof_parties: Vec::new(),
+        canonical_party_nodes: HashMap::from([(0, Address::ZERO.to_string())]),
+    };
+    let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.e3_id == e3_id && data.kind == VerificationKind::PkGenerationProofs
+    ));
+    Ok(())
 }
 
 mod attestations;

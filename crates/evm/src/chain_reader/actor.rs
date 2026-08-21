@@ -89,7 +89,7 @@ impl Filters {
         self
     }
 
-    /// The configured confirmation depth (0 = read to head).
+    /// The selected confirmation depth (`0` reads the chain head).
     pub fn confirmations(&self) -> u64 {
         self.confirmations
     }

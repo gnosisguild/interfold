@@ -14,6 +14,10 @@ use std::fmt::{self, Display};
 #[derive(Derivative, Message, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 #[rtype(result = "()")]
+/// Local durable intent to publish the aggregated plaintext on-chain.
+///
+/// This event is not a canonical completion fact and is not forwarded to peers. The request
+/// completes only after the node observes the confirmed `E3StageChanged(Complete)` chain event.
 pub struct PlaintextAggregated {
     pub e3_id: E3id,
     pub decrypted_output: Vec<ArcBytes>,

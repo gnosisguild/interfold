@@ -17,42 +17,52 @@ type Group = 'community' | 'other'
 
 type Slice = {
   key: string
-  pct: number
-  // Printed share, when the rounded pct would misstate it or leave the column
-  // short of 100%. The donut geometry always uses the exact pct.
+  // Minted FOLD, exactly as recorded onchain.
+  total: number
+  // Months of linear unlock after UNLOCK_START. A value of 1 marks an
+  // allocation with no lock policy: it is liquid in full from the TGE.
+  vestMonths: number
+  // Printed share, when the rounded share would leave the column short of
+  // 100%. The donut geometry always uses the exact share.
   displayPct?: number
   color: string
   group: Group
 }
 
-// FOLD sold at the CCA sits inside Investors. FOLD left unsold returns to the
-// Foundation but carries no vest, so it is tracked as its own category.
-// Shares are the allocation sheet's exact values, which sum to exactly 100%.
-// Rounding them all to two decimals would print a column summing to 100.01%,
-// because three of them round up and none rounds down. The largest-remainder
-// method settles which one gives up its round-up: Treasury has the smallest
-// remainder of the three (0.0051), so it prints at its floor of 41.28%.
+// Single source of truth for the donut, the unlock chart and the unlock table,
+// so the three can never drift apart. The CCA sale, the investor rounds
+// (Legion included) and the team allocation (BlockScience included) are each
+// carried as one category, matching how they are minted onchain.
+// Amounts sum to TOTAL_SUPPLY; the 1e-6 residual is the allocation sheet's own
+// display rounding, and is far below anything either chart can resolve.
+// Rounding every share to two decimals would print a column summing to
+// 100.01%, because three of them round up and none rounds down. The
+// largest-remainder method settles which one gives up its round-up: Investors
+// has the smallest remainder of the three (0.536), so it prints at its floor.
 // Community = vivid brand greens; Other = dark brand neutrals.
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
-  // Community (51.65%)
-  { key: 'Foundation Treasury', pct: 41.28512231, displayPct: 41.28, color: '#3A7D44', group: 'community' }, // vivid forest
-  { key: 'Unsold CCA Tokens', pct: 6.36, color: '#687d71', group: 'community' }, // brand sage
-  { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
-  // Other (48.35%)
-  { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
-  { key: 'Investors', pct: 18.84799884, color: '#3A4E42', group: 'other' }, // dark muted forest
-  { key: 'Team and Advisors', pct: 9.50687885, color: '#8FAE96', group: 'other' }, // muted sage
+  // Community (55.50%)
+  { key: 'Foundation Treasury', total: 468_668_644.211315, vestMonths: 48, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'CCA Sale', total: 150_000_000, vestMonths: 1, color: '#687d71', group: 'community' }, // brand sage
+  { key: 'Airdrop', total: 47_280_000, vestMonths: 24, color: '#82F5AD', group: 'community' }, // brand bright mint
+  // Other (44.50%)
+  { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, color: '#252525', group: 'other' }, // brand dark charcoal
+  { key: 'Investors', total: 176_584_349.104518, displayPct: 14.71, vestMonths: 1, color: '#3A4E42', group: 'other' }, // dark muted forest
+  { key: 'Team and Advisors', total: 117_467_006.684168, vestMonths: 24, color: '#8FAE96', group: 'other' }, // muted sage
 ]
 
-// Ceilings rather than fixed amounts, so their share is shown as "at most".
-// These are the categories the allocation sheet marks "up to".
-const UP_TO = new Set(['Airdrop', 'Unsold CCA Tokens'])
+const pctOf = (total: number) => (total / TOTAL_SUPPLY) * 100
 
 const communitySlices = ALLOCATION.filter((d) => d.group === 'community')
 const otherSlices = ALLOCATION.filter((d) => d.group === 'other')
-const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 51.64512231
-const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 48.35487769
+const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + pctOf(d.total), 0) // 55.49572035
+const OTHER_PCT = otherSlices.reduce((s, d) => s + pctOf(d.total), 0) // 44.50427965
+
+// Unlocked allocations are transferable in full at the TGE, while linear
+// unlocks release nothing at t = 0, so their combined share is exactly the
+// circulating supply at the TGE.
+const TGE_PCT = ALLOCATION.filter((d) => d.vestMonths <= 1).reduce((s, d) => s + pctOf(d.total), 0) // 27.21536243
 
 const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(ALLOCATION.map((s) => [s.key, s.color]))
 
@@ -66,7 +76,6 @@ const GROUP_COLOR: Record<Group, string> = {
 // ---------------------------------------------------------------------------
 
 const round2 = (n: number) => Math.round(n * 100) / 100
-const ceil2 = (n: number) => Math.ceil(n * 100) / 100
 
 // Percentages display to two decimal places, whole numbers included, so the
 // column reads as one aligned set of figures. Exact values are kept in
@@ -76,12 +85,9 @@ const fmtNum = (n: number) => n.toFixed(2)
 
 const fmtPct = (n: number) => `${fmtNum(round2(n))}%`
 
-// Slice shares honour displayPct when set. Without one, a ceiling rounds up so
-// the printed figure stays a true bound.
-const fmtShare = (d: Slice) => {
-  const v = d.displayPct ?? (UP_TO.has(d.key) ? ceil2(d.pct) : round2(d.pct))
-  return `${UP_TO.has(d.key) ? '≤ ' : ''}${fmtNum(v)}%`
-}
+// Slice shares honour displayPct when set, and otherwise round the exact share
+// derived from the minted amount.
+const fmtShare = (d: Slice) => `${fmtNum(d.displayPct ?? round2(pctOf(d.total)))}%`
 
 function polar(cx: number, cy: number, r: number, angleDeg: number): [number, number] {
   const a = ((angleDeg - 90) * Math.PI) / 180
@@ -110,7 +116,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '≤ 25.21%' },
+    { label: 'Circulating Supply at TGE', value: fmtPct(TGE_PCT) },
   ]
   return (
     <div className={classes.stats}>
@@ -158,7 +164,7 @@ export function AllocationPie() {
 
     for (const d of communitySlices) {
       const start = cur
-      const span = (d.pct / COMMUNITY_PCT) * COMMUNITY_SPAN_DEG
+      const span = (pctOf(d.total) / COMMUNITY_PCT) * COMMUNITY_SPAN_DEG
       cur += span
       const end = cur
       const mid = (((start + end) / 2 - 90) * Math.PI) / 180
@@ -169,7 +175,7 @@ export function AllocationPie() {
 
     for (const d of otherSlices) {
       const start = cur
-      const span = (d.pct / OTHER_PCT) * OTHER_SPAN_DEG
+      const span = (pctOf(d.total) / OTHER_PCT) * OTHER_SPAN_DEG
       cur += span
       const end = cur
       const mid = (((start + end) / 2 - 90) * Math.PI) / 180
@@ -325,36 +331,17 @@ export function AllocationPie() {
 // Vesting schedule — cumulative stacked-area chart (circulating supply)
 // ---------------------------------------------------------------------------
 
-type Vest = {
-  key: string
-  total: number
-  vestMonths: number
-}
-
 // Stacking order: bottom → top. Shorter unlock periods at the base so the
-// chart reads as progressively longer commitments toward the top.
-// Token counts come from the allocation sheet and sum to exactly TOTAL_SUPPLY.
-// A vestMonths of 1 marks an allocation with no restrictions: the sheet gives
-// it a single payment at TGE, so it is liquid in full from the start.
-const VESTING: Vest[] = [
-  { key: 'Investors', total: 226_175_986, vestMonths: 1 },
-  { key: 'Unsold CCA Tokens', total: 76_320_000, vestMonths: 1 },
-  { key: 'Airdrop', total: 48_000_000, vestMonths: 24 },
-  { key: 'Team and Advisors', total: 114_082_546, vestMonths: 24 },
-  { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48 },
-  { key: 'Foundation Treasury', total: 495_421_468, vestMonths: 48 },
-]
+// chart reads as progressively longer commitments toward the top. Amounts and
+// unlock lengths come straight from ALLOCATION, so the bands, the donut and
+// the unlock table can never disagree.
+const VESTING: Slice[] = ['Investors', 'CCA Sale', 'Airdrop', 'Team and Advisors', 'Gnosis Guild', 'Foundation Treasury'].map(
+  (k) => ALLOCATION.find((d) => d.key === k)!,
+)
 
 const UNLOCK_START = 'Sep 1, 2026'
 
-const VESTING_TERMS = [
-  { key: 'Foundation Treasury', schedule: `48 month linear unlock from ${UNLOCK_START}`, group: 'community' as Group },
-  { key: 'Unsold CCA Tokens', schedule: 'No restrictions from TGE', group: 'community' as Group },
-  { key: 'Airdrop', schedule: `24 month linear unlock from ${UNLOCK_START}`, group: 'community' as Group },
-  { key: 'Gnosis Guild', schedule: `48 month linear unlock from ${UNLOCK_START}`, group: 'other' as Group },
-  { key: 'Investors', schedule: 'No restrictions from TGE', group: 'other' as Group },
-  { key: 'Team and Advisors', schedule: `24 month linear unlock from ${UNLOCK_START}`, group: 'other' as Group },
-]
+const scheduleOf = (d: Slice) => (d.vestMonths <= 1 ? 'Unlocked' : `${d.vestMonths} month linear unlock from ${UNLOCK_START}`)
 
 const MONTHS_AXIS = 48
 const X_TICKS = [0, 12, 24, 36, 48]
@@ -365,8 +352,8 @@ const Y_LABELS = ['0', '300M', '600M', '900M', '1.2B']
 
 // Linear unlocks start after the TGE, so they release nothing at t = 0 and the
 // curve at TGE is only the unrestricted allocations. This is what puts
-// circulating supply at TGE at 25.21% of total supply.
-function cumulative(v: Vest, t: number): number {
+// circulating supply at TGE at 27.22% of total supply.
+function cumulative(v: Slice, t: number): number {
   if (v.vestMonths <= 1) return v.total
   return (v.total * Math.min(t, v.vestMonths)) / v.vestMonths
 }
@@ -446,9 +433,6 @@ export function VestingSchedule() {
     return null
   }
 
-  const communityVT = VESTING_TERMS.filter((v) => v.group === 'community')
-  const otherVT = VESTING_TERMS.filter((v) => v.group === 'other')
-
   return (
     <div className={classes.vesting} ref={wrapRef} onMouseMove={onMove}>
       <div className={classes.svgScroll}>
@@ -526,7 +510,7 @@ export function VestingSchedule() {
                 Community
               </td>
             </tr>
-            {communityVT.map((v) => (
+            {communitySlices.map((v) => (
               <tr
                 key={v.key}
                 onMouseEnter={() => onBandTableEnter(v.key)}
@@ -537,7 +521,7 @@ export function VestingSchedule() {
                   <span className={classes.swatch} style={{ background: COLOR_BY_KEY[v.key] }} />
                   {v.key}
                 </td>
-                <td className={classes.num}>{v.schedule}</td>
+                <td className={classes.num}>{scheduleOf(v)}</td>
               </tr>
             ))}
 
@@ -546,7 +530,7 @@ export function VestingSchedule() {
                 Other
               </td>
             </tr>
-            {otherVT.map((v) => (
+            {otherSlices.map((v) => (
               <tr
                 key={v.key}
                 onMouseEnter={() => onBandTableEnter(v.key)}
@@ -557,7 +541,7 @@ export function VestingSchedule() {
                   <span className={classes.swatch} style={{ background: COLOR_BY_KEY[v.key] }} />
                   {v.key}
                 </td>
-                <td className={classes.num}>{v.schedule}</td>
+                <td className={classes.num}>{scheduleOf(v)}</td>
               </tr>
             ))}
           </tbody>

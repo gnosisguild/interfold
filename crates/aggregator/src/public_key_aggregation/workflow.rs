@@ -33,7 +33,10 @@ mod transitions;
 #[path = "validation.rs"]
 mod validation;
 
-pub use state::PublicKeyAggregatorState;
+pub use state::{
+    PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
+    PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
+};
 pub(crate) use transitions::{C1Dispatch, HonestSelection, PublicKeyAggregation};
 pub(crate) use validation::{
     check_c1_keyshare_commitments, committee_h_for, extract_pk_commitment,

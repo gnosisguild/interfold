@@ -35,13 +35,17 @@ use tracing::{error, info, warn};
 // Public-key aggregation state machine + pure transition logic now live in
 // `crate::workflow::publickey_aggregation`; re-exported here to preserve the public path
 // `e3_aggregator::publickey_aggregator::PublicKeyAggregatorState`.
-pub use crate::workflow::publickey_aggregation::PublicKeyAggregatorState;
+pub use crate::workflow::publickey_aggregation::{
+    PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
+    PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
+};
 
 pub struct PublicKeyAggregator {
     fhe: Arc<Fhe>,
     bus: BusHandle,
     e3_id: E3id,
     state: Persistable<PublicKeyAggregatorState>,
+    recovery: Persistable<PublicKeyAggregatorRecoveryState>,
     params_preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
@@ -56,6 +60,7 @@ pub struct PublicKeyAggregatorParams {
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,
     pub dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
+    pub recovery: Persistable<PublicKeyAggregatorRecoveryState>,
 }
 
 /// Aggregate PublicKey for a committee of nodes. This actor listens for KeyshareCreated events
@@ -71,6 +76,7 @@ impl PublicKeyAggregator {
             bus: params.bus,
             e3_id: params.e3_id,
             state,
+            recovery: params.recovery,
             params_preset: params.params_preset,
             committee_size: params.committee_size,
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,

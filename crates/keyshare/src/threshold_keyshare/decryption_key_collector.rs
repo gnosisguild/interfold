@@ -66,14 +66,16 @@ impl DecryptionKeySharedCollector {
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
-        let collector = Self {
-            collection: DecryptionKeySharedCollection::new(e3_id.clone(), expected_parties),
-            e3_id,
-            parent,
-            timeout,
-            timeout_handle: None,
-        };
-        collector.start()
+        Self::create(|ctx| {
+            ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+            Self {
+                collection: DecryptionKeySharedCollection::new(e3_id.clone(), expected_parties),
+                e3_id,
+                parent,
+                timeout,
+                timeout_handle: None,
+            }
+        })
     }
 
     fn complete(
@@ -99,7 +101,6 @@ impl Actor for DecryptionKeySharedCollector {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         info!(
             e3_id = %self.e3_id,
             "DecryptionKeySharedCollector started, expecting {} parties, timeout {:?}",

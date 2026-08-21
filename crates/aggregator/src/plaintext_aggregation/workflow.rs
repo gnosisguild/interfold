@@ -36,8 +36,8 @@ mod transitions;
 
 pub(crate) use intents::{build_decryption_aggregation_jobs, format_decrypted_plaintext};
 pub use state::{
-    Collecting, Complete, Computing, GeneratingC7Proof, ThresholdPlaintextAggregatorState,
-    VerifyingC6,
+    Collecting, Complete, Computing, GeneratingC7Proof, ThresholdPlaintextAggregatorRecoveryState,
+    ThresholdPlaintextAggregatorState, VerifyingC6, THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
 };
 pub(crate) use transitions::ThresholdPlaintextAggregation;
 

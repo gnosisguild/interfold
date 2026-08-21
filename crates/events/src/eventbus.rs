@@ -198,7 +198,9 @@ impl<E: Event> EventBus<E> {
             );
         }
 
-        tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
+        // The logger crate's `EventLogging::log` already emits each protocol event as a
+        // structured line at a calibrated severity; this full dump is for tracing only.
+        tracing::debug!("{} {}", colorize(">>>", Color::Yellow), event);
         self.track(event);
         Some((event_type, listeners))
     }

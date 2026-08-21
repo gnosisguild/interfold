@@ -86,42 +86,22 @@ impl ThresholdKeyshare {
 
         let (sk_poly_sum, es_poly_sum) = (output.sk_poly_sum, output.es_poly_sum);
 
-        // Extract C4 data from the actor (stored by proceed_with_decryption_key_calculation)
+        // Keep C4 inputs until the recovery record and phase transition succeed.
         let (sk_request, esm_requests) = self
             .pending
             .share_decryption_data
-            .take()
+            .clone()
             .ok_or_else(|| anyhow!("No pending share decryption data — CalculateDecryptionKey responded before proof requests were built"))?;
 
-        // Take early shares from the actor before transitioning
+        // Keep early shares until they are handed to the collector.
         let early_shares = self
             .pending
             .c4_verification_shares
-            .take()
+            .clone()
             .unwrap_or_default();
 
-        // Transition to ReadyForDecryption
-        self.state.try_mutate(&ec, |s| {
-            use KeyshareState as K;
-            info!("Try store decryption key");
-
-            let current: AggregatingDecryptionKey = s.clone().try_into()?;
-
-            let next = K::ReadyForDecryption(ReadyForDecryption {
-                pk_share: current.pk_share,
-                sk_poly_sum,
-                es_poly_sum,
-                signed_pk_generation_proof: current.signed_pk_generation_proof,
-                signed_sk_share_computation_proof: current.signed_sk_share_computation_proof,
-                signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
-                signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
-                signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
-            });
-
-            s.new_state(next)
-        })?;
-
-        // Publish DecryptionShareProofsPending to ProofRequestActor
+        // Accept the C4 proof intent before advancing the primary phase. A crash cannot then
+        // leave ReadyForDecryption without the input required to recreate its proof job.
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let party_id = state.party_id;
@@ -134,16 +114,43 @@ impl ThresholdKeyshare {
             esm_requests.len()
         );
 
-        self.bus.publish(
-            DecryptionShareProofsPending {
-                e3_id: e3_id.clone(),
-                party_id,
-                node,
-                sk_request,
-                esm_requests,
-            },
-            ec.clone(),
-        )?;
+        let event = DecryptionShareProofsPending {
+            e3_id: e3_id.clone(),
+            party_id,
+            node,
+            sk_request,
+            esm_requests,
+        };
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.decryption_share_proofs_pending =
+                Some(TypedEvent::new(event.clone(), ec.clone()));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+
+        // Transition to ReadyForDecryption only after the recovery input is accepted.
+        self.state.try_mutate(&ec, |s| {
+            use KeyshareState as K;
+            info!("Try store decryption key");
+
+            let current: AggregatingDecryptionKey = s.clone().try_into()?;
+
+            let next = K::ReadyForDecryption(ReadyForDecryption {
+                pk_share: current.pk_share,
+                sk_poly_sum: sk_poly_sum.clone(),
+                es_poly_sum: es_poly_sum.clone(),
+                signed_pk_generation_proof: current.signed_pk_generation_proof,
+                signed_sk_share_computation_proof: current.signed_sk_share_computation_proof,
+                signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
+                signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
+                signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
+            });
+
+            s.new_state(next)
+        })?;
+
+        // Publish DecryptionShareProofsPending to ProofRequestActor.
+        self.bus.publish(event, ec.clone())?;
 
         // Create collector and replay any early-arriving DecryptionKeyShared events
         let state = self.state.try_get()?;
@@ -161,6 +168,9 @@ impl ThresholdKeyshare {
                 collector.do_send(TypedEvent::new(share, ec.clone()));
             }
         }
+
+        self.pending.share_decryption_data = None;
+        self.pending.c4_verification_shares = None;
 
         Ok(())
     }

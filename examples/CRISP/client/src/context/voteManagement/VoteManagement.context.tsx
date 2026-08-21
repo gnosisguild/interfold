@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { createGenericContext } from '@/utils/create-generic-context'
-import { VoteManagementContextType, VoteManagementProviderProps, VoteStatus } from '@/context/voteManagement'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAccount } from 'wagmi'
+import { VoteManagementContextType, VoteManagementProviderProps } from '@/context/voteManagement'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAccount, useChainId } from 'wagmi'
 import { VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
 import { convertPollData, convertTimestampToDate } from '@/utils/methods'
@@ -17,28 +17,24 @@ import { handleGenericError } from '@/utils/handle-generic-error'
 
 const [useVoteManagementContext, VoteManagementContextProvider] = createGenericContext<VoteManagementContextType>()
 
-const generateSessionId = (): string => {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-}
-
-const getVoteCacheKey = (sessionId: string, roundId: string, address: string): string => {
-  return `crisp-vote-status-${sessionId}-${roundId}-${address.toLowerCase()}`
+/// "Did I vote in this round" is a fact only this client holds. The server cannot answer it — a
+/// mask is indistinguishable from a vote by design, so all it can report is slot activity, which
+/// says "someone wrote to your slot", not "you voted". Kept in localStorage so it survives a
+/// reload, keyed per chain, round and address: switching wallets must not leak one account's
+/// state into another's, and a round id can repeat across chains — deterministic deployments give
+/// two networks the same Interfold address, and round ids are derived from it.
+const getVoteCacheKey = (chainId: number, roundId: string, address: string): string => {
+  return `crisp-voted-${chainId}-${roundId}-${address.toLowerCase()}`
 }
 
 const nowInSeconds = (): number => Math.floor(Date.now() / 1000)
-
-const VOTE_CACHE_DURATION = 5 * 60 * 1000
 
 const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   /**
    * Wagmi Account State
    **/
   const { address, isConnected } = useAccount()
-
-  /**
-   * Session ID for cache uniqueness (regenerated on page load)
-   **/
-  const sessionId = useMemo(() => generateSessionId(), [])
+  const chainId = useChainId()
 
   /**
    * Voting Management States
@@ -53,8 +49,6 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null)
   const [displayedRoundIsFallback, setDisplayedRoundIsFallback] = useState<boolean>(false)
   const [hasVotedInCurrentRound, setHasVotedInCurrentRound] = useState<boolean>(false)
-  const [voteStatusLoading, setVoteStatusLoading] = useState<boolean>(false)
-  const voteStatusCache = useRef<Map<string, VoteStatus>>(new Map())
 
   /**
    * The connected wallet is the source of truth for the user, so it is derived
@@ -73,62 +67,39 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     getWebResult,
     getCurrentRound,
     broadcastVote,
-    getVoteStatus,
   } = useInterfoldServer()
 
+  /// Purely local — see the note on `getVoteCacheKey`. Async only to keep the signature the
+  /// consumers already use.
   const checkVoteStatus = useCallback(
-    async (roundId: string, userAddress: string, forceRefresh: boolean = false): Promise<boolean> => {
+    async (roundId: string, userAddress: string): Promise<boolean> => {
       if (!userAddress || roundId === null || roundId === undefined) return false
 
-      const cacheKey = getVoteCacheKey(sessionId, roundId, userAddress)
-
-      if (!forceRefresh) {
-        const cached = voteStatusCache.current.get(cacheKey)
-        if (cached && Date.now() - cached.lastChecked < VOTE_CACHE_DURATION) {
-          return cached.hasVoted
-        }
-      }
-
-      setVoteStatusLoading(true)
       try {
-        const response = await getVoteStatus({ round_id: roundId, address: userAddress })
-        if (response) {
-          const status: VoteStatus = {
-            hasVoted: response.has_voted,
-            roundId: roundId,
-            lastChecked: Date.now(),
-          }
-          voteStatusCache.current.set(cacheKey, status)
-          return response.has_voted
-        }
+        return localStorage.getItem(getVoteCacheKey(chainId, roundId, userAddress)) === 'true'
+      } catch {
+        // Storage can be unavailable (private browsing); treat as "not voted".
         return false
-      } catch (error) {
-        console.error('Error checking vote status:', error)
-        return false
-      } finally {
-        setVoteStatusLoading(false)
       }
     },
-    [sessionId, getVoteStatus],
+    [chainId],
   )
 
   const markVotedInRound = useCallback(
     (roundId: string) => {
       if (!userAddress) return
 
-      const cacheKey = getVoteCacheKey(sessionId, roundId, userAddress)
-      const status: VoteStatus = {
-        hasVoted: true,
-        roundId: roundId,
-        lastChecked: Date.now(),
+      try {
+        localStorage.setItem(getVoteCacheKey(chainId, roundId, userAddress), 'true')
+      } catch {
+        // Best effort: without storage the flag only lives until the next reload.
       }
-      voteStatusCache.current.set(cacheKey, status)
 
       setHasVotedInCurrentRound((prevHasVoted) => {
         return roundId === currentRoundId ? true : prevHasVoted
       })
     },
-    [sessionId, userAddress, currentRoundId],
+    [chainId, userAddress, currentRoundId],
   )
 
   const initialLoad = async () => {
@@ -198,14 +169,6 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     }
   }
 
-  // The cached vote statuses are keyed by address, so drop them when the wallet
-  // disconnects.
-  useEffect(() => {
-    if (!userAddress) {
-      voteStatusCache.current.clear()
-    }
-  }, [userAddress])
-
   useEffect(() => {
     let cancelled = false
     const checkStatus = async () => {
@@ -239,8 +202,6 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         currentRoundId,
         displayedRoundIsFallback,
         hasVotedInCurrentRound,
-        voteStatusLoading,
-        sessionId,
         setPollResult,
         getWebResultByRound,
         setTxUrl,

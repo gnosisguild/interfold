@@ -13,8 +13,8 @@ use anyhow::Result;
 use anyhow::{anyhow, ensure};
 use e3_events::IntoKey;
 use e3_events::{
-    Flush, FlushPendingSnapshots, Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync,
-    Remove, SnapshotBuffer,
+    EventContext, Flush, FlushPendingSnapshots, Get, Insert, InsertBatch, InsertBatchIfAbsent,
+    InsertSync, Remove, Sequenced, SnapshotBuffer,
 };
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -140,6 +140,26 @@ impl DataStore {
         };
         let msg = Insert::new(&self.scope, serialized);
         self.insert.do_send(msg)
+    }
+
+    /// Queue a snapshot in the atomic batch for the event that produced it.
+    pub fn write_with_context<T: Serialize>(
+        &self,
+        value: T,
+        context: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let serialized = bincode::serialize(&value).with_context(|| {
+            let key = self.get_scope().unwrap_or(Cow::Borrowed("<bad key>"));
+            anyhow!("Could not serialize contextual value passed to {key}")
+        })?;
+        self.insert
+            .try_send(Insert::new_with_context(
+                &self.scope,
+                serialized,
+                context.clone(),
+            ))
+            .context("snapshot buffer rejected a contextual write")?;
+        Ok(())
     }
 
     /// Writes data syncronously to the scope location

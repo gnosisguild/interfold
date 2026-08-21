@@ -224,6 +224,7 @@ impl ThresholdKeyshare {
             );
             return Ok(());
         }
+        self.record_threshold_share(&msg)?;
 
         info!(
             "Received ThresholdShareCreated from party {} for us (party {}), forwarding to collector!",
@@ -262,6 +263,7 @@ impl ThresholdKeyshare {
             );
             return Ok(());
         }
+        self.record_encryption_key(&msg)?;
         info!("Received EncryptionKeyCreated forwarding to encryption key collector!");
         let collector = self.ensure_encryption_key_collector(self_addr)?;
         collector.do_send(msg);
