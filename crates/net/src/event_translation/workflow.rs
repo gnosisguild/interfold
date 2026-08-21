@@ -10,7 +10,7 @@ use anyhow::{ensure, Result};
 use e3_events::{
     prelude::*, Event, EventId, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced,
 };
-use tracing::{trace, warn};
+use tracing::{debug, trace};
 
 use crate::{events::GossipData, NetworkPolicy};
 
@@ -85,7 +85,7 @@ impl EventTranslationService {
         }
         self.network.validate_event(&event)?;
 
-        warn!("GossipPublish event: {}", event.event_type());
+        debug!("GossipPublish event: {}", event.event_type());
         let data: GossipData = event.try_into()?;
         self.pending_events.insert(id);
         Ok(Some((id, data)))

@@ -47,7 +47,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex, OnceLock},
 };
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
-use tracing::info;
+use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
 /// ABI-encodes a ZK proof for EVM verifiers (C5 pk, C7 decryption, etc.).
@@ -338,7 +338,10 @@ where
                             info!("{}: error, will retry: {}", op_name, display_error);
                             Err(RetryError::Retry(e))
                         } else {
-                            info!("{}: error: {}", op_name, display_error);
+                            warn!(
+                                "{}: permanent error, not retrying: {}",
+                                op_name, display_error
+                            );
                             Err(RetryError::Failure(e))
                         }
                     }

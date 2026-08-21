@@ -12,7 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 use e3_events::AggregateId;
 use serde::Serialize;
 use tokio::time::Instant;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     direct_requester::{DirectRequester, WithPeer, WithoutPeer},
@@ -305,7 +305,10 @@ where
         }
     }
 
-    info!("Batch is done returning {} events", all_events.len());
+    debug!(
+        "Historical sync fetch complete: {} events",
+        all_events.len()
+    );
 
     Ok(all_events)
 }
