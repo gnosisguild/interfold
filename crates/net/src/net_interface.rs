@@ -628,7 +628,13 @@ async fn process_swarm_event(
             // - "Local peer ID": self-dial attempt
             // - "aborted by peer": simultaneous connection dedup (both sides dialed,
             //   libp2p keeps one connection and the other side aborts the handshake)
-            if error_str.contains("Local peer ID") || error_str.contains("aborted by peer") {
+            // - "connection limit exceeded": the connection_limits behaviour denied a dial
+            //   from a peer that already holds its allowed connections; the peer stays
+            //   connected and loses nothing
+            if error_str.contains("Local peer ID")
+                || error_str.contains("aborted by peer")
+                || error_str.contains("connection limit exceeded")
+            {
                 debug!("{}", error_str);
             } else {
                 status.record_error(format!("incoming connection: {error_str}"));
@@ -742,7 +748,7 @@ async fn process_swarm_event(
                 trace!("Finished cache={:?} step={:?}", c, step);
             }
             Err(e) => {
-                error!("step={:?} error={}", step, e);
+                error!("DHT get record failed: step={:?} error={}", step, e);
                 event_tx.send(NetEvent::DhtGetRecordError {
                     correlation_id: correlator.expire(id)?,
                     error: e,
@@ -761,14 +767,14 @@ async fn process_swarm_event(
             match record {
                 Ok(record) => {
                     let key = ContentHash(record.key.to_vec());
-                    debug!("PUT RECORD SUCCESS: {:?}", key);
+                    debug!("DHT put record succeeded: {:?}", key);
                     event_tx.send(NetEvent::DhtPutRecordSucceeded {
                         key,
                         correlation_id,
                     })?;
                 }
                 Err(error) => {
-                    error!("PUT RECORD FAILED: {}", error);
+                    error!("DHT put record failed: {}", error);
                     event_tx.send(NetEvent::DhtPutRecordError {
                         correlation_id,
                         error: PutOrStoreError::PutRecordError(error),
@@ -923,7 +929,9 @@ async fn process_swarm_event(
                 error,
             },
         )) => {
-            warn!(
+            // Routine during peer churn (a connection closes while a request is in
+            // flight); the remote side retries against another peer.
+            debug!(
                 "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
                 peer, connection_id, request_id, error
             );
@@ -1218,7 +1226,9 @@ fn handle_dial(
     match swarm.dial(dial_opts) {
         Ok(v) => trace!("Dial returned {:?}", v),
         Err(error) => {
-            warn!("Dialing error! {}", error);
+            // The DialError event carries the failure to the dialer, which logs one
+            // warn-level summary and keeps retrying in the background.
+            debug!("Dialing error! {}", error);
             event_tx.send(NetEvent::DialError {
                 error: error.into(),
             })?;
