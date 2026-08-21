@@ -84,6 +84,10 @@ This matches the format expected by CRISP and `E3ProgramServer` in `crates/progr
 4. **Boundless wallet** — an Ethereum private key with ETH (for gas) and ZKC (for collateral) on the
    Boundless-supported chain
 5. **Interfold CLI** — `cargo install --locked --path ./crates/cli --bin interfold -f`
+6. **An Interfold project** — `interfold init <path>`, then work from that directory. The steps
+   below run against a project, not against a checkout of this repository. Without one,
+   `interfold program compile` exits with `Configuration file not found`, because `interfold init`
+   is what writes `.interfold/support/ctl`, the scripts every `program` subcommand shells out to.
 
 ### Step 1: Configure `interfold.config.yaml`
 
