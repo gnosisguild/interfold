@@ -221,15 +221,17 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use e3_config::NetworkProfile;
-    use e3_events::{E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated};
+    use e3_events::{E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated};
     use e3_utils::ArcBytes;
 
     fn forwardable_gossip() -> GossipData {
         let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            PlaintextAggregated {
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(b"public-key"),
                 e3_id: E3id::new("1", 1),
-                decrypted_output: vec![ArcBytes::from_bytes(b"result")],
-                decryption_aggregator_proofs: vec![],
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
             }
             .into(),
             None,

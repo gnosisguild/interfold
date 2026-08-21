@@ -122,6 +122,13 @@ pub fn default_voting_token_hint() -> String {
         .unwrap_or_else(|| ZERO_ADDRESS.to_string())
 }
 
+pub fn default_registry_hint() -> String {
+    deployments::localhost_self_registry()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| ZERO_ADDRESS.to_string())
+}
+
 fn resolve_voting_token(
     token_address: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -142,6 +149,30 @@ fn resolve_voting_token(
     Err(anyhow!(
         "Voting token address is unset. After `pnpm dev:up`, copy `CRISP_VOTING_TOKEN` from deploy \
          output into server/.env, or pass `--token-address <MockVotingToken>`."
+    )
+    .into())
+}
+
+/// The token of an open-registration round: an explicit address, or the deployed `SelfRegistry`.
+///
+/// Deliberately not falling through to `resolve_voting_token`'s config and mock-token defaults.
+/// An ONCHAIN round against an ERC20Votes token is a valid thing to request explicitly, but a
+/// *defaulted* one would silently swap "anyone can register" for "whoever held the mock token",
+/// which is a different electorate with nothing to show for it.
+fn resolve_registry(
+    token_address: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let trimmed = token_address.trim();
+    if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case(ZERO_ADDRESS) {
+        return Ok(trimmed.to_string());
+    }
+    if let Some(addr) = deployments::localhost_self_registry()? {
+        info!("Using SelfRegistry from deployed_contracts.json: {addr}");
+        return Ok(addr);
+    }
+    Err(anyhow!(
+        "No SelfRegistry found. Deploy the CRISP contracts (which now include it), or pass \
+         `--token-address <SelfRegistry or votes token>`."
     )
     .into())
 }
@@ -205,6 +236,7 @@ pub async fn check_committee_key_published(
 pub async fn initialize_crisp_round(
     token_address: &str,
     balance_threshold: &str,
+    onchain: bool,
 ) -> Result<U256, Box<dyn std::error::Error + Send + Sync>> {
     let contract = InterfoldContract::new(
         &CONFIG.http_rpc_url,
@@ -231,7 +263,11 @@ pub async fn initialize_crisp_round(
         Err(e) => info!("Error checking E3 Program enabled: {:?}", e),
     }
 
-    let token_address_str = resolve_voting_token(token_address)?;
+    let token_address_str = if onchain {
+        resolve_registry(token_address)?
+    } else {
+        resolve_voting_token(token_address)?
+    };
 
     info!(
         "Starting new CRISP round with token address: {} and balance threshold: {}",
@@ -248,9 +284,12 @@ pub async fn initialize_crisp_round(
     let credits = U256::from(1);
 
     // Serialize the custom parameters to bytes.
-    // Census mode 0 = Token: the CLI has no application contract to ask, so the coordinator derives
-    // the electorate from token balances as it always has.
-    let census_mode = U256::from(0);
+    // Census mode 0 = Token: the coordinator derives the electorate from token balances, as this
+    // CLI always has. Census mode 2 = Onchain: eligibility is read from the token per input, and
+    // the threshold above doubles as the round's `minVotingPower` floor — `1` for a
+    // `SelfRegistry`, whose power is 1 or 0. BY_REQUESTER is not offered: the requester here is
+    // this CLI's EOA, which cannot answer `getCensus`.
+    let census_mode = U256::from(if onchain { 2u64 } else { 0u64 });
     // Seventh field: the ONCHAIN voting-power divisor. Zero here for two reasons — a TOKEN round
     // never reads it, and zero is also the "derive it from the token's decimals" sentinel. It is
     // not optional: `_initRound` decodes exactly seven fields, so a six-field encoding reverts the

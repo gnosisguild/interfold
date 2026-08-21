@@ -342,12 +342,13 @@ flowchart TD
         Restart[restart] --> Index[reconcile timestamp index in 1024-record pages]
         Index --> Schema[schema-version preflight before runtime actor writes]
         Schema --> SnapshotMeta[load aggregate cursors and initial HLC floor]
-        SnapshotMeta --> Query[query every post-snapshot aggregate]
+        SnapshotMeta --> RouterCursor[verify the request router atomic checkpoint]
+        RouterCursor --> Query[query every post-snapshot aggregate]
         Query --> Runs[sort 1024-event pages into secure temporary runs]
         Runs --> GlobalOrder[bounded-fan-in merge by HLC timestamp]
         GlobalOrder --> ReplayFloor[advance HLC floor while loading the runs]
         ReplayFloor -->|EventBus acknowledged fanout one event at a time| Dispatch
-        Dispatch -->|EventBusBarrier after completed fanout| EvmBackfill[configured-confirmation EVM backfill]
+        Dispatch -->|EventBusBarrier after completed fanout| EvmBackfill[automatic-confirmation EVM backfill]
         EvmBackfill --> NetBackfill[bounded chain-scoped historical network sync]
         NetBackfill --> Merge[merge and sort EVM plus network history by HLC]
         Merge --> Enable[EffectsEnabled]
@@ -371,15 +372,26 @@ payload, so the same logical event may return through historical network sync wi
 transport source without colliding. A different payload at an already-indexed HLC timestamp remains
 an integrity failure. Historical peer-sync cursors contain only chain-bound aggregates allowed by
 the active network policy; local aggregate 0 is never requested from peers or added to recovery
-retries. Post-snapshot events are queried per aggregate in 1,024-event pages and sorted
-into secure temporary runs. Runs are compacted with bounded fan-in and merged globally by persisted
-HLC timestamp, so memory and open-file use do not scale with the entire backlog. Before fanout, the
-HLC floor advances to the maximum replay timestamp, which covers a snapshot cursor stalled behind
-newer log records. Replay then waits for concurrent acceptance by all current EventBus subscribers.
-An unavailable subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts
+retries. Post-snapshot events are queried per aggregate in 1,024-event pages and sorted into secure
+temporary runs. Runs are compacted with bounded fan-in and merged globally by persisted HLC
+timestamp, so memory and open-file use do not scale with the entire backlog. Before fanout, the HLC
+floor advances to the maximum replay timestamp, which covers a snapshot cursor stalled behind newer
+log records. Replay then waits for concurrent acceptance by all current EventBus subscribers. An
+unavailable subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts
 recovery. An `EventBusBarrier` therefore completes only after the last replay fanout has completed.
 A persisted `Shutdown` event from the previous process is classified as infrastructure and is not
 replayed into newly constructed actors.
+
+The request router stores its active-context index, completed set, and covered per-aggregate cursors
+in one recovery checkpoint. Contextual writes from different aggregates can reach durable storage
+out of HLC order, so startup compares every checkpoint cursor with its aggregate snapshot cursor.
+If any cursor differs, startup rebuilds only the router admission projection from EventStore history
+through the exact snapshot cursor for each aggregate and persists the repaired checkpoint before it
+constructs protocol actors. It does not replay those prefixes into actors that already hydrate from
+snapshots. The normal replay preflight still fails closed if the repaired checkpoint does not match
+the aggregate snapshot cut. A node upgraded from a version without the checkpoint uses the same
+rebuild path. If an active router checkpoint references a missing E3 context snapshot, startup also
+fails explicitly instead of admitting later peer events against incomplete state.
 
 The EventBus mailbox remains bounded at `MAILBOX_LIMIT_LARGE` (2,560 messages). The replay producer
 no longer attempts to enqueue the entire backlog into that mailbox in one burst, and EventBus
@@ -439,27 +451,33 @@ The network interface owns the QUIC swarm, signed gossipsub topic, Kademlia stor
 channels. A stable 32-byte network ID scopes Identify, gossipsub, Kademlia, and historical-sync
 protocol names. Each built-in ID is the hardcoded SHA-256 digest of a documented, domain-separated
 label. The label makes the ID reproducible, but the released ID remains immutable. A connection does
-not enter network status, Kademlia, gossip, or direct sync until
-Identify reports the exact network and required capabilities. Connection counts, Kademlia records,
-record size, record lifetime, provider records, and per-peer insertions are bounded. Production
-network policies require an explicit deployment set; only the local test policy can be unrestricted.
-Identify retains all staged connections for a peer, permanently rejects incompatible peers, and
-applies a short retryable cooldown after an Identify timeout. Gossipsub uses strict signatures and
-application validation before forwarding. Gossip envelopes bind the network,
-Interfold deployment, chain aggregate, event ID, schema version, and payload hash. Gossipsub and
-direct-request/DHT decoding have explicit byte limits. Translation actors accept only the protocol
-event allowlist before publishing remote events, and their broadcast-to-actor ingress loops await
-mailbox acceptance and stop when the destination actor closes. Each publish attempt has a result
-timeout. No-peer failures use a longer retry window than other transient failures. Startup buffering is bounded by both
-event count and estimated bytes and fails readiness on overflow or broadcast lag; after `SyncEnded`,
-broadcast lag is warned and skipped without stopping the ingress loop. Historical direct sync
-requires advancing cursors and enforces one cumulative page, event, byte, and time budget across all
-aggregate fetches and recovery retries in a startup attempt. Bootstrap dialing makes three bounded
-startup attempts and then retries unavailable peers every 60 seconds in the background. Kademlia
-peers are evicted after three consecutive dial failures and quarantined from discovery-based
-routing-table reinsertion for up to 30 minutes. An admitted connection clears the cooldown early. A
-peer-ID mismatch quarantines the stale identity immediately. Peer health and quarantine state are
-process-local and are rebuilt after restart.
+not enter network status, Kademlia, gossip, or direct sync until Identify reports the exact network
+and required capabilities. Connection counts, Kademlia records, record size, record lifetime,
+provider records, and per-peer insertions are bounded. Production network policies require an
+explicit deployment set; only the local test policy can be unrestricted. Identify retains all staged
+connections for a peer, permanently rejects incompatible peers, and applies a short retryable
+cooldown after an Identify timeout. Gossipsub uses strict signatures and application validation
+before forwarding. Gossip envelopes bind the network, Interfold deployment, chain aggregate, event
+ID, schema version, and payload hash. Gossipsub and direct-request/DHT decoding have explicit byte
+limits. Translation actors accept only the protocol event allowlist before publishing remote events,
+and their broadcast-to-actor ingress loops await mailbox acceptance and stop when the destination
+actor closes. Each publish attempt has a result timeout. No-peer failures use a longer retry window
+than other transient failures. Startup buffering is bounded by both event count and estimated bytes
+and fails readiness on overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and
+skipped without stopping the ingress loop. Historical direct sync requires advancing cursors and
+enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery
+retries in a startup attempt. Bootstrap dialing makes three bounded startup attempts and then
+retries unavailable peers every 60 seconds in the background. Kademlia peers are evicted after three
+consecutive dial failures and quarantined from discovery-based routing-table reinsertion for up to
+30 minutes. An admitted connection clears the cooldown early. A peer-ID mismatch quarantines the
+stale identity immediately. Peer health and quarantine state are process-local and are rebuilt after
+restart.
+
+`PlaintextAggregated` is excluded from gossip and historical peer sync. It remains a local durable
+publication intent, and canonical chain observations report completion. The request router rejects a
+network event for an E3 that has no chain-admitted or hydrated context, so peer traffic cannot
+create a durable request context. Once admitted, committee and proof validation—not the libp2p
+identity alone—decides whether the artifact is usable.
 
 The gossiped `DocumentMeta` is independent of the DHT content hash, so
 `EventConversionService::validate_received` decodes the fetched payload and binds the metadata E3
@@ -475,9 +493,9 @@ stateDiagram-v2
     [*] --> None
     None --> Requested: E3Requested
     Requested --> CommitteeFinalized: CommitteeFinalized / CommitteePublished
-    CommitteeFinalized --> KeyPublished: PublicKeyAggregated
+    CommitteeFinalized --> KeyPublished: CommitteePublished / E3StageChanged(KeyPublished)
     KeyPublished --> CiphertextReady: CiphertextOutputPublished
-    CiphertextReady --> Complete: PlaintextAggregated / PlaintextOutputPublished
+    CiphertextReady --> Complete: PlaintextOutputPublished / E3StageChanged(Complete) / E3RequestComplete
     Requested --> Failed: E3Failed
     CommitteeFinalized --> Failed: E3Failed
     KeyPublished --> Failed: E3Failed
@@ -549,6 +567,21 @@ C3b multiplicity would be `Z * L_THRESHOLD` per recipient. Supporting multiple E
 sets requires coordinated producer, validator, NodeFold, wire, and circuit work; the current
 validator must not silently infer that extension.
 
+## Replay-safe EVM result publication
+
+`InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
+produced `PlaintextAggregated` and `PublicKeyAggregated` events form durable publication intents.
+Their process-local gates are rebuilt from replay, coalesce by E3, and release work only after
+`EffectsEnabled`. Live admission requires the active aggregator role. Replay can retain a local
+intent while the persisted role is restored, but the writer starts a submission only while the node
+is the active aggregator. Contract-state preflights provide cross-restart idempotency. Terminal
+outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
+
+Only locally sourced result events cross these EVM write boundaries. A remote result cannot make a
+node submit a transaction. `E3RequestComplete` does not discard an unfinished publication intent,
+and only a canonical EVM `E3StageChanged(Complete)` makes the request router publish that cleanup
+signal.
+
 ## Failure, accusation, slashing, expulsion, and timeout
 
 ```mermaid
@@ -597,11 +630,11 @@ E3-scoped `CommitteeMemberExcluded` fact instead of a transaction that must reve
 an on-chain expulsion: it changes only the current E3's collectors and aggregator selection. The
 canonical N-member roster remains unchanged for proof binding, rewards, and registry state.
 
-The gate is deliberately described as in-memory: there is no durable external-effect outbox or
+The slash gate is deliberately described as in-memory: it has no durable external-effect outbox or
 persisted transaction intent. A crash after snapshot advancement but before receipt classification
-can therefore lose the local redrive state, and a crash after submission can require on-chain
-reconciliation to distinguish landed from missing work. Closing that gap requires a durable
-intent/result state machine and receipt reconciliation, not another process-local set.
+can therefore lose its local redrive state. This differs from result publication, whose local
+aggregate events rebuild the writer gates during replay. A crash after any submission can still
+require on-chain reconciliation to distinguish landed from missing work.
 
 ## Program-server trust boundary
 
@@ -687,14 +720,16 @@ flowchart LR
 | Protocol event history                   | Per-aggregate append-only event logs                                                 | Direct log scan                                                                                                             |
 | Aggregate snapshots and repositories     | Sled-backed `Repositories`                                                           | Event replay after snapshot cursors                                                                                         |
 | Timestamp index                          | `SequenceIndex`                                                                      | Reconciled from event log on startup                                                                                        |
-| Chain sync cursor                        | Aggregate snapshot metadata                                                          | Configured-confirmation EVM backfill                                                                                        |
+| Chain sync cursor                        | Aggregate snapshot metadata                                                          | Automatic-confirmation EVM backfill                                                                                         |
 | Network document history                 | Event log plus network repository                                                    | Historical net sync                                                                                                         |
 | E3 actor contexts                        | `E3Router` in memory                                                                 | Durable replay and canonical chain observations                                                                             |
-| Request-local DKG/aggregation state      | Per-E3 actors plus repositories                                                      | Snapshots, replay, and `EffectsEnabled` redrive                                                                             |
+| Request-local DKG/aggregation state      | Per-E3 actors plus versioned state and recovery repositories                           | Snapshots restore protocol phases and restart inputs; `EffectsEnabled` recreates collectors and jobs with new process-local correlation IDs          |
+| Active-aggregator failover state         | Versioned sortition repository                                                       | Phase, assigned party, absolute deadline, and phase-local unresponsive parties; re-armed after `EffectsEnabled`             |
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
 | Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay; not a durable outbox                                                                                   |
+| Registry transaction replay gates        | Interfold and registry writer process memory                                          | Rebuilt from durable ticket, committee-finalization, public-key, and plaintext intents; idempotent contract checks reconcile landed transactions      |
 | Pending transaction nonce allocation     | Per-chain writer mutex in memory                                                     | Provider pending nonce on restart                                                                                           |
 | In-flight accusation votes and timers    | Per-E3 accusation actor memory                                                       | No complete durable reconstruction; only events inside the replay window may be observed again                              |
 | libp2p identity                          | Encrypted keypair repository                                                         | Decrypt at startup                                                                                                          |
@@ -858,22 +893,22 @@ persist recovery intent.
 
 ## Subsystem contracts
 
-| Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                   | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                         | Extension boundary / must not own                                                                                         |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `e3-events`                        | Admit, timestamp, persist, deduplicate, and fan out typed events.                                    | HLC factory, subscriber registry, sequencer, event stores, and snapshot bridge; depends on Actix and protocol payload types.                   | Event log append precedes live dispatch; startup index reads are paged; query responses and shutdown/replay/recovery-phase barriers are acknowledged. Storage or mailbox failures reach a caller where the path is awaited, but live append/response `do_send` edges remain.                                                                                           | Event/subscription APIs; must not own request-specific protocol policy.                                                   |
-| `e3-data`                          | Serve typed repository reads/writes and append-only event-log/index records.                         | Sled/in-memory stores, log handles, batch writes, and flush failure state.                                                                     | Acknowledged sync/batch writes flush before success; decode corruption and recorded write failures fail closed.                                                                                                                                                                                                                                                        | Repository/store factories; must not decide committees, proofs, or lifecycle transitions.                                 |
-| `e3-sync`                          | Reconstruct actor state and reconcile EVM/network history before live mode.                          | Startup plan, disk-backed local replay runs, and bounded reconciled-history vectors; depends on repositories, EventBus, EVM, and net adapters. | Schema is checked before state-writing actors; HLC includes post-snapshot history; replay is global-HLC ordered with acknowledged subscriber acceptance; Effects/history/SyncEnded phases are downstream-acknowledged; history gaps or bounded-net-sync failure abort startup.                                                                                         | Historical collectors/planners; must not submit live transactions.                                                        |
-| `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, and document interests.                                              | Stable network IDs scope every protocol surface; Identify gates peer admission; signed gossip is application-validated and type-allowlisted; envelopes, decodes, startup backlog, DHT storage, and sync fetches are bounded; deployment and document metadata must match their payloads. Errors fail readiness or stop the affected ingress loop.                      | `NetInterface` and pure translation services; must not own E3 transitions or infer committee authority from PeerId alone. |
-| `e3-evm`                           | Read chain history under the configured confirmation policy and submit typed contract transactions.  | Per-chain gateways, provider handles, chain buffers, nonce mutexes, and slash replay gate.                                                     | Malformed logs and reverted receipts fail. A well-formed `E3Requested` with an unsupported committee/preset enum is marked processed and skipped so an older node stays live without participating. Nonce allocation is serialized in-process; no durable transaction outbox or full reorg rollback exists.                                                            | Provider/contract helpers; must not own off-chain proof policy.                                                           |
-| `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs.            | Legal progress is monotonic; buffered history precedes the recipient-creating event; terminal teardown purges absent-role buffers. Active buffer size and child `do_send` remain residual risks.                                                                                                                                                                       | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
-| `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, and chain-derived committee state.                                                              | On-chain ordering is authoritative; terminal cleanup releases local participation state and removes durable finalized-committee and pending-expulsion records.                                                                                                                                                                                                         | Sortition backend; must not construct cryptographic proofs.                                                               |
-| `e3-keyshare`                      | Coordinate request-local DKG, shares, and decryption work.                                           | Threshold keyshare actor state and repositories; depends on FHE/ZK services and the event bus.                                                 | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row. Resumable determined outputs redrive only after `EffectsEnabled`. Fatal collector timeouts commit `Failed` before `E3Failed`, freeze its payload, and redrive that failure after hydration.                                                      | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |
-| `e3-zk-prover`                     | Build and verify typed proof jobs/statements.                                                        | Backend job state, circuit registry, verification outcomes, and durable-seeded in-memory committee/preset caches.                              | Statement shapes, canonical committee dimensions, signer/slot binding, and proof multiplicity are checked before acceptance; DKG presets normalize to their threshold counterpart when deriving C3 row counts. Finalized slots plus C0 preset/threshold context load before replay so snapshot cursors cannot erase signer authority or artifact selection on restart. | ZK backend and registry; must not add committee policy absent from the proof statement.                                   |
-| `e3-aggregator`                    | Aggregate canonical verified public-key/plaintext shares.                                            | Explicit per-E3 aggregation state machines and repositories.                                                                                   | One signer-bound share/proof occupies each canonical party slot and output multiplicity is exact; invalid or duplicate contributions are rejected.                                                                                                                                                                                                                     | Pure aggregation states and proof backend; must not own EVM transaction policy.                                           |
-| `e3-slashing`                      | Attribute proof failures, collect authenticated votes, and emit quorum outcomes.                     | Accusation/evidence/vote state; depends on committee data, verification, and events.                                                           | Honest threshold decides quorum and only structurally attributable failures become evidence.                                                                                                                                                                                                                                                                           | Voting/evidence domain modules; must not generate proofs or assign ambiguous blame.                                       |
-| `e3-program-server`                | Serve bounded development compute requests and deliver results to caller-supplied HTTP(S) callbacks. | Runner closure, callback client, and job semaphore.                                                                                            | Zero job capacity fails build; overload returns 429; callbacks reject unsafe URL forms and use bounded delivery timeouts. The test endpoint does not authenticate callers, does not allowlist callback targets, and must not be exposed as a production service. Detached tasks are not recoverable.                                                                   | Runner callback; must not become durable protocol state or be treated as a production trust boundary.                     |
-| `e3-ciphernode-builder`            | Construct concrete stores, adapters, actor extensions, and startup barriers.                         | Composition handles and validated configuration, not protocol state.                                                                           | Required components and startup readiness must succeed before returning a handle.                                                                                                                                                                                                                                                                                      | Concrete factories/extensions; must not accumulate protocol policy or durable business state.                             |
-| `e3-entrypoint` / SWARM supervisor | Load/decrypt node configuration and manage child processes.                                          | Process map, kill-on-drop child handles, and output-forwarding tasks.                                                                          | Partial startup is cleaned up; status distinguishes exited children; stop is SIGTERM-first and time-bounded; a dropped final handle cannot orphan its child.                                                                                                                                                                                                           | Command composition; must not silently restart failed protocol work or own node domain state.                             |
+| Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                   | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                          | Extension boundary / must not own                                                                                         |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `e3-events`                        | Admit, timestamp, persist, deduplicate, and fan out typed events.                                    | HLC factory, subscriber registry, sequencer, event stores, and snapshot bridge; depends on Actix and protocol payload types.                   | Event log append precedes live dispatch; startup index reads are paged; query responses and shutdown/replay/recovery-phase barriers are acknowledged. Storage or mailbox failures reach a caller where the path is awaited, but live append/response `do_send` edges remain.                                                                                            | Event/subscription APIs; must not own request-specific protocol policy.                                                   |
+| `e3-data`                          | Serve typed repository reads/writes and append-only event-log/index records.                         | Sled/in-memory stores, log handles, batch writes, and flush failure state.                                                                     | Acknowledged sync/batch writes flush before success; decode corruption and recorded write failures fail closed.                                                                                                                                                                                                                                                         | Repository/store factories; must not decide committees, proofs, or lifecycle transitions.                                 |
+| `e3-sync`                          | Reconstruct actor state and reconcile EVM/network history before live mode.                          | Startup plan, disk-backed local replay runs, and bounded reconciled-history vectors; depends on repositories, EventBus, EVM, and net adapters. | Schema is checked before state-writing actors; HLC includes post-snapshot history; replay is global-HLC ordered with acknowledged subscriber acceptance; Effects/history/SyncEnded phases are downstream-acknowledged; history gaps or bounded-net-sync failure abort startup.                                                                                          | Historical collectors/planners; must not submit live transactions.                                                        |
+| `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, and document interests.                                              | Stable network IDs scope every protocol surface; Identify gates peer admission; signed gossip is application-validated and type-allowlisted; envelopes, decodes, startup backlog, DHT storage, and sync fetches are bounded; deployment and document metadata must match their payloads. Errors fail readiness or stop the affected ingress loop.                       | `NetInterface` and pure translation services; must not own E3 transitions or infer committee authority from PeerId alone. |
+| `e3-evm`                           | Read chain history under the automatic confirmation policy and submit typed contract transactions.   | Per-chain gateways, provider handles, chain buffers, nonce mutexes, slash replay gate, and result-publication replay gates.                    | Malformed logs and reverted receipts fail. Public RPC logs wait one block; loopback RPCs read the head. Local result events rebuild idempotent publication intents before effects. A well-formed unsupported `E3Requested` is marked processed and skipped. Nonce allocation is serialized in-process; there is no separate transaction journal or full reorg rollback. | Provider/contract helpers; must not own off-chain proof policy.                                                           |
+| `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs.            | Legal progress is monotonic; peer events cannot create unknown contexts; local aggregation is not terminal; canonical EVM completion drives teardown; buffered history precedes the recipient-creating event. Active buffer size and child `do_send` remain residual risks.                                                                                             | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
+| `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, chain-derived committee state, and versioned aggregator-failover deadlines.                     | On-chain ordering is authoritative. The lowest eligible party is active. Absolute phase deadlines survive restart and promote standbys in order. Canonical progress clears phase-local skips. Terminal cleanup releases local participation and failover state.                                                                                                         | Sortition backend; must not construct cryptographic proofs.                                                               |
+| `e3-keyshare`                      | Coordinate request-local DKG, shares, and decryption work.                                           | Threshold keyshare actor state and repositories; depends on FHE/ZK services and the event bus.                                                 | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row. Resumable determined outputs redrive only after `EffectsEnabled`. Fatal collector timeouts commit `Failed` before `E3Failed`, freeze its payload, and redrive that failure after hydration.                                                       | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |
+| `e3-zk-prover`                     | Build and verify typed proof jobs/statements.                                                        | Backend job state, circuit registry, verification outcomes, and durable-seeded in-memory committee/preset caches.                              | Statement shapes, canonical committee dimensions, signer/slot binding, and proof multiplicity are checked before acceptance; DKG presets normalize to their threshold counterpart when deriving C3 row counts. Finalized slots plus C0 preset/threshold context load before replay so snapshot cursors cannot erase signer authority or artifact selection on restart.  | ZK backend and registry; must not add committee policy absent from the proof statement.                                   |
+| `e3-aggregator`                    | Aggregate canonical verified public-key/plaintext shares.                                            | Explicit per-E3 aggregation state machines and repositories.                                                                                   | One signer-bound share/proof occupies each canonical party slot and output multiplicity is exact; invalid or duplicate contributions are rejected.                                                                                                                                                                                                                      | Pure aggregation states and proof backend; must not own EVM transaction policy.                                           |
+| `e3-slashing`                      | Attribute proof failures, collect authenticated votes, and emit quorum outcomes.                     | Accusation/evidence/vote state; depends on committee data, verification, and events.                                                           | Honest threshold decides quorum and only structurally attributable failures become evidence.                                                                                                                                                                                                                                                                            | Voting/evidence domain modules; must not generate proofs or assign ambiguous blame.                                       |
+| `e3-program-server`                | Serve bounded development compute requests and deliver results to caller-supplied HTTP(S) callbacks. | Runner closure, callback client, and job semaphore.                                                                                            | Zero job capacity fails build; overload returns 429; callbacks reject unsafe URL forms and use bounded delivery timeouts. The test endpoint does not authenticate callers, does not allowlist callback targets, and must not be exposed as a production service. Detached tasks are not recoverable.                                                                    | Runner callback; must not become durable protocol state or be treated as a production trust boundary.                     |
+| `e3-ciphernode-builder`            | Construct concrete stores, adapters, actor extensions, and startup barriers.                         | Composition handles and validated configuration, not protocol state.                                                                           | Required components and startup readiness must succeed before returning a handle.                                                                                                                                                                                                                                                                                       | Concrete factories/extensions; must not accumulate protocol policy or durable business state.                             |
+| `e3-entrypoint` / SWARM supervisor | Load/decrypt node configuration and manage child processes.                                          | Process map, kill-on-drop child handles, and output-forwarding tasks.                                                                          | Partial startup is cleaned up; status distinguishes exited children; stop is SIGTERM-first and time-bounded; a dropped final handle cannot orphan its child.                                                                                                                                                                                                            | Command composition; must not silently restart failed protocol work or own node domain state.                             |
 
 Extension points should be narrow concrete boundaries with an active consumer: repository factories,
 network interfaces, ZK backends, sortition backends, clocks, and task pools. New one-method traits

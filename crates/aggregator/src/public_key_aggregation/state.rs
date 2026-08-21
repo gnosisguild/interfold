@@ -3,6 +3,27 @@
 //! Persisted public-key aggregation state schema.
 
 use super::*;
+use e3_events::{EventContext, PublicKeyAggregated, Sequenced};
+
+pub const PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION: u32 = 1;
+
+/// Restart-only data that is not part of the public-key protocol state machine.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PublicKeyAggregatorRecoveryState {
+    pub schema_version: u32,
+    pub pending_publication: Option<PublicKeyAggregated>,
+    pub last_ec: Option<EventContext<Sequenced>>,
+}
+
+impl Default for PublicKeyAggregatorRecoveryState {
+    fn default() -> Self {
+        Self {
+            schema_version: PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
+            pending_publication: None,
+            last_ec: None,
+        }
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

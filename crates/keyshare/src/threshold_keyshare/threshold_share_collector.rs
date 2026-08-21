@@ -50,14 +50,16 @@ impl ThresholdShareCollector {
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
-        let collector = Self {
-            collection: ThresholdShareCollection::new(e3_id.clone(), total, own_party_id),
-            e3_id,
-            parent,
-            timeout,
-            timeout_handle: None,
-        };
-        collector.start()
+        Self::create(|ctx| {
+            ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+            Self {
+                collection: ThresholdShareCollection::new(e3_id.clone(), total, own_party_id),
+                e3_id,
+                parent,
+                timeout,
+                timeout_handle: None,
+            }
+        })
     }
 
     fn complete(
@@ -82,7 +84,6 @@ impl Actor for ThresholdShareCollector {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         info!(
             e3_id = %self.e3_id,
             "ThresholdShareCollector started, scheduling timeout in {:?}",

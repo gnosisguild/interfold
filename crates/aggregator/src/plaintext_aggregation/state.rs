@@ -3,6 +3,33 @@
 //! Persisted threshold-plaintext state schema.
 
 use super::*;
+use e3_events::{EventContext, Sequenced};
+
+pub const THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION: u32 = 1;
+
+/// Restart-only inputs for re-creating interrupted plaintext aggregation effects.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThresholdPlaintextAggregatorRecoveryState {
+    pub schema_version: u32,
+    pub honest_c6_proofs: Vec<(u64, Vec<Proof>)>,
+    pub c7_proofs: Option<Vec<Proof>>,
+    pub decryption_aggregator_proofs: Option<Vec<Proof>>,
+    pub last_ec: Option<EventContext<Sequenced>>,
+    pub collection_deadline_unix_secs: Option<u64>,
+}
+
+impl Default for ThresholdPlaintextAggregatorRecoveryState {
+    fn default() -> Self {
+        Self {
+            schema_version: THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
+            honest_c6_proofs: Vec::new(),
+            c7_proofs: None,
+            decryption_aggregator_proofs: None,
+            last_ec: None,
+            collection_deadline_unix_secs: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Collecting {

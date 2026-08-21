@@ -4,8 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use anyhow::Result;
 use e3_data::{Repositories, Repository};
-use e3_events::{DkgFoldAttestationContextEstablished, E3Stage, E3id, StoreKeys};
+use e3_events::{
+    AggregateId, DkgFoldAttestationContextEstablished, E3Stage, E3id, RequestRouterCheckpoint,
+    StoreKeys,
+};
 use std::collections::HashMap;
 
 use crate::{E3ContextSnapshot, E3Meta, E3RouterSnapshot};
@@ -51,11 +55,16 @@ impl ContextRepositoryFactory for Repositories {
 
 pub trait RouterRepositoryFactory {
     fn router(&self) -> Repository<E3RouterSnapshot>;
+    fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint>;
 }
 
 impl RouterRepositoryFactory for Repositories {
     fn router(&self) -> Repository<E3RouterSnapshot> {
         Repository::new(self.store.scope(StoreKeys::router()))
+    }
+
+    fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {
+        Repository::new(self.store.scope(StoreKeys::request_router_checkpoint()))
     }
 }
 
@@ -67,4 +76,30 @@ impl E3LifecycleRepositoryFactory for Repositories {
     fn e3_lifecycle(&self) -> Repository<HashMap<E3id, E3Stage>> {
         Repository::new(self.store.scope(StoreKeys::e3_lifecycle()))
     }
+}
+
+/// Create a router checkpoint for a store that an older binary wrote.
+///
+/// The sync preflight rebuilds an initial checkpoint from EventStore before it starts the actors.
+pub async fn ensure_request_router_checkpoint(
+    repositories: &Repositories,
+    aggregate_ids: impl IntoIterator<Item = AggregateId>,
+) -> Result<()> {
+    let checkpoint_store = repositories.request_router_checkpoint();
+    if checkpoint_store.read().await?.is_some() {
+        return Ok(());
+    }
+
+    let replay_cursors = aggregate_ids
+        .into_iter()
+        .map(|aggregate_id| (aggregate_id, 0))
+        .collect::<HashMap<_, _>>();
+
+    checkpoint_store
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: Vec::new(),
+            completed: Default::default(),
+            replay_cursors,
+        })
+        .await
 }

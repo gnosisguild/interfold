@@ -281,6 +281,7 @@ sol! {
         error SubmissionWindowNotClosed();
         error ThresholdNotMet();
         error NodeAlreadySubmitted();
+        error CommitteeDeadlineReached();
         error InvalidTicketNumber();
         error NodeNotEligible();
         error PkCommitmentRequired();

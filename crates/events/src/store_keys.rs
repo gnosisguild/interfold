@@ -17,12 +17,24 @@ impl StoreKeys {
         format!("//threshold_keyshare/{e3_id}")
     }
 
+    pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_recovery/v1/{e3_id}")
+    }
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }
 
+    pub fn plaintext_recovery(e3_id: &E3id) -> String {
+        format!("//plaintext_recovery/v1/{e3_id}")
+    }
+
     pub fn publickey(e3_id: &E3id) -> String {
         format!("//publickey/{e3_id}")
+    }
+
+    pub fn publickey_recovery(e3_id: &E3id) -> String {
+        format!("//publickey_recovery/v1/{e3_id}")
     }
 
     pub fn fhe(e3_id: &E3id) -> String {
@@ -43,6 +55,10 @@ impl StoreKeys {
 
     pub fn router() -> String {
         String::from("//router")
+    }
+
+    pub fn request_router_checkpoint() -> String {
+        String::from("//router/recovery_checkpoint")
     }
 
     pub fn e3_lifecycle() -> String {
@@ -89,7 +105,11 @@ impl StoreKeys {
     }
 
     pub fn ciphernode_selector() -> String {
-        String::from("//ciphernode_selector")
+        String::from("//ciphernode_selector/v2")
+    }
+
+    pub fn aggregator_failover() -> String {
+        String::from("//aggregator_failover")
     }
 
     pub fn aggregate_seq(aggregate_id: AggregateId) -> String {

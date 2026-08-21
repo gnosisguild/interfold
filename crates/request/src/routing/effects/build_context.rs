@@ -16,11 +16,25 @@ impl E3RouterBuilder {
     }
 
     pub async fn build(self) -> Result<Addr<E3Router>> {
-        let snapshot: Option<E3RouterSnapshot> = self.store.read().await?;
+        let legacy_snapshot: Option<E3RouterSnapshot> = self.store.read().await?;
+        let recovery_store = self.store.repositories().request_router_checkpoint();
+        let recovery_checkpoint = recovery_store.read().await?;
+        let (snapshot, replay_cursors) = match recovery_checkpoint {
+            Some(checkpoint) => (
+                Some(E3RouterSnapshot {
+                    contexts: checkpoint.contexts,
+                    completed: checkpoint.completed,
+                }),
+                checkpoint.replay_cursors,
+            ),
+            None => (legacy_snapshot, HashMap::new()),
+        };
         let params = E3RouterParams {
             extensions: self.extensions.into(),
             bus: self.bus.clone(),
             store: self.store.clone(),
+            replay_cursors,
+            recovery_store,
         };
 
         let router = match snapshot {

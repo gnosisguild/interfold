@@ -21,7 +21,7 @@ echo ""
 
 # The ciphernode always generates leaf proofs, even when recursive aggregation
 # is skipped. Never let integration tests combine current Rust witnesses with
-# the older release circuit ABI.
+# a stale circuit ABI.
 rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 

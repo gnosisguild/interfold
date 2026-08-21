@@ -126,6 +126,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
         },
         test_state(initial_state),
     );
@@ -185,6 +186,7 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             params_preset: BfvPreset::InsecureThreshold512,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
         },
         test_state(state),
     );

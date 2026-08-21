@@ -6,8 +6,8 @@
 
 use super::*;
 use e3_events::{
-    E3Failed, E3RequestComplete, E3Stage, E3StageChanged, FailureReason, InterfoldEvent,
-    PlaintextAggregated, RewardCredited, Sequenced, Shutdown,
+    E3Failed, E3RequestComplete, E3Stage, E3StageChanged, EventContextAccessors, EventSource,
+    FailureReason, InterfoldEvent, PlaintextAggregated, RewardCredited, Sequenced, Shutdown,
 };
 
 fn e3id() -> E3id {
@@ -127,7 +127,7 @@ fn stage_changed_to_failed_ignored_when_completed() {
 }
 
 #[test]
-fn plaintext_aggregated_publishes_complete() {
+fn plaintext_aggregated_waits_for_chain_completion() {
     let id = e3id();
     let msg = from_data(PlaintextAggregated {
         e3_id: id.clone(),
@@ -138,7 +138,32 @@ fn plaintext_aggregated_publishes_complete() {
         RequestRouter::route(&msg, &HashSet::new()),
         RoutingDecision::Process {
             e3_id: id,
-            post_forward: PostForward::PublishComplete,
+            post_forward: PostForward::None,
+        }
+    );
+}
+
+#[test]
+fn peer_event_cannot_create_an_unknown_request_context() {
+    let id = e3id();
+    let msg = with_e3_id("peer-artifact", id.clone()).with_source(EventSource::Net);
+
+    assert_eq!(
+        RequestRouter::route_with_context(&msg, &HashSet::new(), false),
+        RoutingDecision::UnadmittedNetworkEvent(id)
+    );
+}
+
+#[test]
+fn peer_event_can_enter_an_admitted_request_context() {
+    let id = e3id();
+    let msg = with_e3_id("peer-artifact", id.clone()).with_source(EventSource::Net);
+
+    assert_eq!(
+        RequestRouter::route_with_context(&msg, &HashSet::new(), true),
+        RoutingDecision::Process {
+            e3_id: id,
+            post_forward: PostForward::None,
         }
     );
 }
@@ -156,6 +181,25 @@ fn stage_changed_to_complete_publishes_complete() {
         RoutingDecision::Process {
             e3_id: id,
             post_forward: PostForward::PublishComplete,
+        }
+    );
+}
+
+#[test]
+fn non_evm_stage_change_cannot_complete_a_request() {
+    let id = e3id();
+    let msg = from_data(E3StageChanged {
+        e3_id: id.clone(),
+        previous_stage: E3Stage::CiphertextReady,
+        new_stage: E3Stage::Complete,
+    })
+    .with_source(EventSource::Local);
+
+    assert_eq!(
+        RequestRouter::route(&msg, &HashSet::new()),
+        RoutingDecision::Process {
+            e3_id: id,
+            post_forward: PostForward::None,
         }
     );
 }

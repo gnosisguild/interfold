@@ -36,24 +36,23 @@ use e3_net::{
     NetRepositoryFactory, NetworkPolicy,
 };
 use e3_request::{
-    load_dkg_fold_attestation_contexts, E3LifecycleCoordinator, E3LifecycleRepositoryFactory,
-    E3Router,
+    ensure_request_router_checkpoint, load_dkg_fold_attestation_contexts, E3LifecycleCoordinator,
+    E3LifecycleRepositoryFactory, E3Router,
 };
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
-    CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
-    FinalizedCommitteeRetention, FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
-    Sortition, SortitionBackend, SortitionRepositoryFactory,
+    AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
+    EmitPersistedAggregatorState, FinalizedCommitteeRetention,
+    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
+    SortitionRepositoryFactory,
 };
-use e3_sync::{preflight_schema_version, sync};
+use e3_sync::{preflight_schema_version, reconcile_request_router_checkpoint, sync};
 use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tracing::{error, info, warn};
-
-const DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS: u64 = 1;
 
 #[derive(Clone, Debug)]
 enum EventSystemType {
@@ -560,15 +559,19 @@ impl CiphernodeBuilder {
         let event_system = self.create_event_system(local_bus, &eventstore_aggregate_config);
         let store = event_system.store()?;
         let eventstore = event_system.eventstore_reader()?;
+        let seq_eventstore = eventstore.seq();
         let repositories = Arc::new(store.repositories());
 
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(
+        preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
+            .await?;
+        ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
+        reconcile_request_router_checkpoint(
             &repositories,
-            &eventstore_aggregate_config,
-            &eventstore.seq(),
+            aggregate_config.aggregates(),
+            &seq_eventstore,
         )
         .await?;
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
@@ -633,7 +636,6 @@ impl CiphernodeBuilder {
         )?;
 
         // Run the sync routine
-        let seq_eventstore = eventstore.seq();
         tokio::try_join!(
             sync(
                 &bus,
@@ -704,15 +706,21 @@ impl CiphernodeBuilder {
         repositories: &e3_data::Repositories,
         addr: &str,
     ) -> Result<(Addr<Sortition>, Addr<CiphernodeSelector>)> {
-        let ciphernode_selector =
-            CiphernodeSelector::attach(bus, repositories.ciphernode_selector(), addr).await?;
-        let committees_repo = repositories.finalized_committees();
-        let mut committees = committees_repo.read().await?.unwrap_or_default();
         let lifecycle = repositories
             .e3_lifecycle()
             .read()
             .await?
             .unwrap_or_default();
+        let ciphernode_selector = CiphernodeSelector::attach(
+            bus,
+            repositories.ciphernode_selector(),
+            repositories.aggregator_failover(),
+            lifecycle.clone(),
+            addr,
+        )
+        .await?;
+        let committees_repo = repositories.finalized_committees();
+        let mut committees = committees_repo.read().await?.unwrap_or_default();
         let pruned = FinalizedCommitteeRetention::prune_terminal(&mut committees, &lifecycle);
         if pruned > 0 {
             committees_repo.write_sync(&committees).await?;
@@ -1107,9 +1115,7 @@ async fn setup_evm_system(
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
         // An entropy block read at the chain head can disappear before the ticket transaction.
-        let reorg_confirmations = chain
-            .reorg_confirmations
-            .unwrap_or(DEFAULT_SORTITION_ENTROPY_CONFIRMATIONS);
+        let ingestion_confirmations = chain.ingestion_confirmations()?;
         evm_config.insert(chain_id, chain.try_into()?);
 
         let rpc_url = chain.rpc_url()?;
@@ -1156,7 +1162,7 @@ async fn setup_evm_system(
                     &next,
                     registry_provider,
                     Some(registry_provider_factory),
-                    reorg_confirmations,
+                    ingestion_confirmations,
                 )
                 .recipient()
             });
@@ -1276,7 +1282,6 @@ mod tests {
                 faucet: None,
             },
             finalization_ms,
-            reorg_confirmations: None,
             chain_id: Some(1),
         }
     }

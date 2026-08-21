@@ -6,7 +6,7 @@
 
 use super::*;
 use e3_events::{
-    AggregateId, E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, TestEvent,
+    AggregateId, E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated, TestEvent,
 };
 use e3_utils::ArcBytes;
 
@@ -55,10 +55,12 @@ fn peer_connected_before_dial_does_not_publish() {
 
 fn net_event(ts: u128) -> InterfoldEvent {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        PlaintextAggregated {
+        KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
             e3_id: E3id::new(ts.to_string(), 1),
-            decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3])],
-            decryption_aggregator_proofs: vec![],
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
         }
         .into(),
         None,

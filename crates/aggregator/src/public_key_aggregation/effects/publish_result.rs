@@ -121,6 +121,11 @@ impl PublicKeyAggregator {
             dkg_aggregator_proof: published_dkg_proof,
             dkg_attestation_bundle,
         };
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.pending_publication = Some(event.clone());
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
         self.bus.publish(event, ec.clone())?;
 
         self.state.try_mutate(&ec, |_| {

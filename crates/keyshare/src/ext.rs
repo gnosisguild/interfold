@@ -5,16 +5,17 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRepositoryFactory,
-    ThresholdKeyshareState,
+    ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    ThresholdKeyshareRepositoryFactory, ThresholdKeyshareState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 use actix::Actor;
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, RepositoriesFactory};
-use e3_events::{prelude::*, BusHandle, EType, InterfoldEvent, InterfoldEventData};
+use e3_events::{prelude::*, BusHandle, EType, InterfoldEvent, InterfoldEventData, TypedEvent};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 
 use crate::KeyshareState;
@@ -86,6 +87,14 @@ impl E3Extension for ThresholdKeyshareExtension {
             meta.params.clone(),
             self.address.clone(),
         )));
+        let recovery = ctx
+            .repositories()
+            .threshold_keyshare_recovery(&e3_id)
+            .send(Some(ThresholdKeyshareRecoveryState {
+                ciphernode_selected: Some(TypedEvent::new(data.clone(), evt.get_ctx().clone())),
+                last_ec: Some(evt.get_ctx().clone()),
+                ..Default::default()
+            }));
 
         // New container with None
         ctx.set_event_recipient(
@@ -100,6 +109,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                         .dkg_counterpart()
                         .unwrap_or(meta.params_preset),
                     interfold_address,
+                    recovery,
                 })
                 .start()
                 .into(),
@@ -123,6 +133,23 @@ impl E3Extension for ThresholdKeyshareExtension {
         if !state.has() {
             return Ok(());
         };
+        let recovery = ctx
+            .repositories()
+            .threshold_keyshare_recovery(&snapshot.e3_id)
+            .load()
+            .await?;
+        ensure!(
+            recovery.has(),
+            "threshold-keyshare for E3 {} has no restart recovery record",
+            snapshot.e3_id
+        );
+        ensure!(
+            recovery.get().is_some_and(|value| {
+                value.schema_version == THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION
+            }),
+            "unsupported threshold-keyshare recovery schema for E3 {}",
+            snapshot.e3_id
+        );
 
         // Derive DKG preset from persisted E3Meta
         let Some(meta) = ctx.get_dependency(META_KEY) else {
@@ -150,6 +177,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             state,
             share_enc_preset,
             interfold_address,
+            recovery,
         })
         .start()
         .into();

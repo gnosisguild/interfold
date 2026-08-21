@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::backends::SortitionBackend;
+use crate::domain::failover::AggregatorFailoverState;
 use crate::domain::node_registry::NodeStateStore;
 use crate::CiphernodeSelectorState;
 use e3_data::{Repositories, Repository};
@@ -28,6 +29,16 @@ pub trait CiphernodeSelectorFactory {
 impl CiphernodeSelectorFactory for Repositories {
     fn ciphernode_selector(&self) -> Repository<CiphernodeSelectorState> {
         Repository::new(self.store.scope(StoreKeys::ciphernode_selector()))
+    }
+}
+
+pub trait AggregatorFailoverRepositoryFactory {
+    fn aggregator_failover(&self) -> Repository<AggregatorFailoverState>;
+}
+
+impl AggregatorFailoverRepositoryFactory for Repositories {
+    fn aggregator_failover(&self) -> Repository<AggregatorFailoverState> {
+        Repository::new(self.store.scope(StoreKeys::aggregator_failover()))
     }
 }
 

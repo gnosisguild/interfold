@@ -116,79 +116,6 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    /// Re-drive this node's own in-flight DKG/decryption work after a crash or restart.
-    ///
-    /// Invoked when `EffectsEnabled` is broadcast at the end of boot sync, *after* this
-    /// actor has been hydrated from its persisted state. The dangerous, value-bearing
-    /// concern with re-driving is double-emission. Re-emission is safe here because:
-    ///   * `KeyshareCreated` — `PublicKeyAggregation::add_keyshare` ignores a `party_id`
-    ///     that already submitted (idempotent), and
-    ///   * `DecryptionshareCreated` — threshold plaintext aggregation keys shares by
-    ///     `party_id` (re-insert overwrites with the identical deterministic share), and
-    ///   * `E3Failed` — the event bus deduplicates the identical payload by `EventId`.
-    ///
-    /// Only states where the local result is already determined are re-driven. Earlier
-    /// phases depend on peer gossip that cannot be reconstructed locally and are surfaced
-    /// (non-destructively) by `interfold node validate` instead of being force-re-driven.
-    pub(in crate::actors::threshold_keyshare) fn resume_in_flight_work(
-        &mut self,
-        ec: EventContext<Sequenced>,
-    ) -> Result<()> {
-        let Some(state) = self.state.get() else {
-            return Ok(());
-        };
-        match &state.state {
-            // We have produced our public-key share but may have crashed before (or while)
-            // publishing KeyshareCreated. Re-publishing is idempotent at the aggregator, but
-            // ReadyForDecryption is entered *before* C4 honest-set verification authorizes the
-            // publish, so only re-drive when a prior authorized publish was recorded. An
-            // un-published ReadyForDecryption is a loose end surfaced by `interfold node validate`.
-            KeyshareState::ReadyForDecryption(_) if state.keyshare_published => {
-                info!(
-                    e3_id = %state.e3_id,
-                    "Resuming in-flight work: re-publishing KeyshareCreated"
-                );
-                self.publish_keyshare_created(ec)?;
-            }
-            // The ciphertext to decrypt has arrived. Re-publish our keyshare (in case the
-            // crash happened before it propagated) and re-issue the decryption-share
-            // computation so a DecryptionshareCreated is (re)produced.
-            KeyshareState::Decrypting(_) => {
-                info!(
-                    e3_id = %state.e3_id,
-                    "Resuming in-flight work: re-publishing KeyshareCreated and re-issuing decryption-share request"
-                );
-                self.publish_keyshare_created(ec.clone())?;
-                self.issue_decryption_share_request(ec)?;
-            }
-            KeyshareState::Failed {
-                failed_at_stage,
-                reason,
-            } => {
-                info!(
-                    e3_id = %state.e3_id,
-                    "Resuming terminal keyshare failure"
-                );
-                self.bus.publish(
-                    E3Failed {
-                        e3_id: state.e3_id.clone(),
-                        failed_at_stage: failed_at_stage.clone(),
-                        reason: reason.clone(),
-                    },
-                    ec,
-                )?;
-            }
-            other => {
-                trace!(
-                    e3_id = %state.e3_id,
-                    state = %other.variant_name(),
-                    "No locally re-drivable work on resume; loose ends are surfaced by `interfold node validate`"
-                );
-            }
-        }
-        Ok(())
-    }
-
     /// CalculateDecryptionShareResponse — publish ShareDecryptionProofPending
     /// so ProofRequestActor generates and signs C6 proofs.
     pub fn handle_calculate_decryption_share_response(
@@ -230,25 +157,29 @@ impl ThresholdKeyshare {
         // Publish pending event before transitioning state so a publish
         // failure leaves us in Decrypting (retryable) rather than
         // GeneratingDecryptionProof (no retry path).
-        self.bus.publish(
-            ShareDecryptionProofPending {
-                e3_id: e3_id.clone(),
-                party_id: state.party_id,
-                node: state.address.clone(),
-                decryption_share: d_share_poly.clone(),
-                proof_request: ThresholdShareDecryptionProofRequest {
-                    ciphertext_bytes: decrypting.ciphertext_output,
-                    aggregated_pk_bytes,
-                    sk_poly_sum: decrypting.sk_poly_sum,
-                    es_poly_sum: decrypting.es_poly_sum,
-                    d_share_bytes: d_share_poly.clone(),
-                    decryption_domain,
-                    params_preset: threshold_preset,
-                    committee_size,
-                },
+        let event = ShareDecryptionProofPending {
+            e3_id: e3_id.clone(),
+            party_id: state.party_id,
+            node: state.address.clone(),
+            decryption_share: d_share_poly.clone(),
+            proof_request: ThresholdShareDecryptionProofRequest {
+                ciphertext_bytes: decrypting.ciphertext_output,
+                aggregated_pk_bytes,
+                sk_poly_sum: decrypting.sk_poly_sum,
+                es_poly_sum: decrypting.es_poly_sum,
+                d_share_bytes: d_share_poly.clone(),
+                decryption_domain,
+                params_preset: threshold_preset,
+                committee_size,
             },
-            ec.clone(),
-        )?;
+        };
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.share_decryption_proof_pending =
+                Some(TypedEvent::new(event.clone(), ec.clone()));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        self.bus.publish(event, ec.clone())?;
 
         // Transition to GeneratingDecryptionProof state
         self.state.try_mutate(&ec, |s| {

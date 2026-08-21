@@ -8,15 +8,7 @@ impl Actor for ThresholdPlaintextAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        // Bound the decryption-share collection phase so a missing honest member cannot stall the
-        // round indefinitely. On expiry the round is failed loudly (see the timeout handler).
-        let timeout = decryption_collection_timeout();
-        info!(
-            e3_id = %self.e3_id,
-            ?timeout,
-            "ThresholdPlaintextAggregator started; scheduling decryption-share collection timeout"
-        );
-        self.pending.timeout_handle = Some(ctx.notify_later(DecryptionCollectionTimeout, timeout));
+        self.arm_collection_timeout(ctx);
     }
 }
 
@@ -24,6 +16,14 @@ impl Handler<DecryptionCollectionTimeout> for ThresholdPlaintextAggregator {
     type Result = ();
     fn handle(&mut self, _: DecryptionCollectionTimeout, ctx: &mut Self::Context) -> Self::Result {
         self.pending.timeout_handle = None;
+
+        if !self.is_aggregator {
+            debug!(
+                e3_id = %self.e3_id,
+                "Ignoring a stale decryption-share timeout after aggregator demotion"
+            );
+            return;
+        }
 
         // Only fail while still collecting shares; once we have transitioned past `Collecting`
         // (VerifyingC6/Computing/…) the round is progressing and the timer is a no-op.
@@ -100,7 +100,35 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
             InterfoldEventData::AggregationProofSigned(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::AggregatorChanged(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::EffectsEnabled(_) => {
+                trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                    self.resume_in_flight_work(ec)
+                });
+            }
             _ => (),
+        }
+    }
+}
+
+impl Handler<TypedEvent<AggregatorChanged>> for ThresholdPlaintextAggregator {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<AggregatorChanged>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        if msg.e3_id != self.e3_id || msg.is_aggregator == self.is_aggregator {
+            return;
+        }
+        self.is_aggregator = msg.is_aggregator;
+        if self.is_aggregator {
+            self.arm_collection_timeout(ctx);
+        } else {
+            self.cancel_collection_timeout(ctx);
         }
     }
 }
@@ -318,6 +346,21 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
 impl Handler<Die> for ThresholdPlaintextAggregator {
     type Result = ();
     fn handle(&mut self, _: Die, ctx: &mut Self::Context) -> Self::Result {
+        self.cancel_collection_timeout(ctx);
         ctx.stop()
+    }
+}
+
+#[cfg(test)]
+#[derive(Message)]
+#[rtype(result = "bool")]
+pub(super) struct CollectionTimeoutArmed;
+
+#[cfg(test)]
+impl Handler<CollectionTimeoutArmed> for ThresholdPlaintextAggregator {
+    type Result = bool;
+
+    fn handle(&mut self, _: CollectionTimeoutArmed, _: &mut Self::Context) -> Self::Result {
+        self.pending.timeout_handle.is_some()
     }
 }

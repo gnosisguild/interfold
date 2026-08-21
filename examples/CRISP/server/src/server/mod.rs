@@ -9,6 +9,7 @@ mod database;
 mod indexer;
 mod models;
 mod program_server_request;
+mod rate_limit;
 mod repo;
 mod routes;
 pub mod token_holders;
@@ -56,6 +57,9 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let bind_addr = "0.0.0.0:4000";
     let db_clone = db.clone();
+    // Built once, outside the factory closure: the closure runs per worker, and a per-worker
+    // limiter would multiply every window by the worker count.
+    let rate_limiter = web::Data::new(rate_limit::RateLimiter::new());
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -68,6 +72,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .wrap(cors)
             .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
+            .app_data(rate_limiter.clone())
             .configure(routes::setup_routes)
     })
     .bind(bind_addr)?;

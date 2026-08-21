@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import NavMenu from '@/components/NavMenu'
 import { ConnectKitButton } from 'connectkit'
 import useToken from '@/hooks/generic/useMintToken'
+import { isTestTokenMintEnabled } from '@/utils/methods'
 
 const PAGES = [
   {
@@ -27,6 +28,7 @@ const PAGES = [
 
 const Navbar: React.FC = () => {
   const { mintTokens, isMinting } = useToken()
+  const showMint = isTestTokenMintEnabled()
 
   return (
     <div className='crisp-editorial' data-palette='interfold' data-mode='light' data-density='comfortable'>
@@ -45,9 +47,11 @@ const Navbar: React.FC = () => {
         </nav>
 
         <div className='topbar-right'>
-          <button disabled={isMinting} onClick={mintTokens} className='pill-mint max-md:hidden'>
-            + Mint test tokens
-          </button>
+          {showMint && (
+            <button disabled={isMinting} onClick={mintTokens} className='pill-mint max-md:hidden'>
+              + Mint test tokens
+            </button>
+          )}
           <ConnectKitButton />
           <NavMenu />
         </div>

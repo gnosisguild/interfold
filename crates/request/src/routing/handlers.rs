@@ -3,6 +3,24 @@
 //! Mailbox entry points and lifecycle hooks.
 
 use super::*;
+use e3_events::{EventContext, RequestRouterCheckpoint, Sequenced};
+
+impl E3Router {
+    fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
+        self.replay_cursors
+            .insert(context.aggregate_id(), context.seq());
+        let snapshot = self.snapshot()?;
+        self.recovery_store.write_with_context(
+            &RequestRouterCheckpoint {
+                contexts: snapshot.contexts,
+                completed: snapshot.completed,
+                replay_cursors: self.replay_cursors.clone(),
+            },
+            context,
+        )?;
+        Ok(())
+    }
+}
 
 impl Actor for E3Router {
     type Context = Context<Self>;
@@ -16,11 +34,14 @@ impl Handler<InterfoldEvent> for E3Router {
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-        trap(
-            EType::Event,
-            &self.bus.with_ec(msg.get_ctx()),
-            || {
-                match RequestRouter::route(&msg, &self.completed) {
+        trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
+            let event_context = msg.get_ctx().clone();
+            let result = match RequestRouter::route_with_context(
+                &msg,
+                &self.completed,
+                msg.get_e3_id()
+                    .is_some_and(|e3_id| self.contexts.contains_key(&e3_id)),
+            ) {
                 RoutingDecision::Broadcast => {
                     for context in self.contexts.values() {
                         context.forward_message_now(&msg)
@@ -37,11 +58,18 @@ impl Handler<InterfoldEvent> for E3Router {
                     msg.source(),
                     msg.block(),
                 )),
+                RoutingDecision::UnadmittedNetworkEvent(e3_id) => Err(anyhow!(
+                    "rejected {} for unknown E3 {} from the peer network (event={}, origin={})",
+                    msg.event_type(),
+                    e3_id,
+                    msg.id(),
+                    msg.origin_id(),
+                )),
                 RoutingDecision::Process {
                     e3_id,
                     post_forward,
                 } => {
-                    let repositories = self.repository().repositories();
+                    let repositories = self.store.repositories();
                     let context = self.contexts.entry(e3_id.clone()).or_insert_with(|| {
                         E3Context::from_params(E3ContextParams {
                             e3_id: e3_id.clone(),
@@ -55,6 +83,11 @@ impl Handler<InterfoldEvent> for E3Router {
                     }
 
                     context.forward_message(&msg, &mut self.buffer);
+                    if post_forward != PostForward::Teardown {
+                        context
+                            .repository
+                            .write_with_context(&context.snapshot()?, &event_context)?;
+                    }
 
                     let (_, ctx) = msg.into_components();
                     match post_forward {
@@ -74,11 +107,12 @@ impl Handler<InterfoldEvent> for E3Router {
                         PostForward::None => (),
                     }
 
-                    self.checkpoint();
                     Ok(())
                 }
-            }
-            },
-        );
+            };
+
+            let checkpoint_result = self.checkpoint_with_context(&event_context);
+            result.and(checkpoint_result)
+        });
     }
 }
