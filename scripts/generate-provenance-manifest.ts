@@ -119,19 +119,19 @@ function pinnedRevisions(): Record<string, string[]> {
  * The tag is mutable and does not identify a build on its own, so record the resolved digest
  * whenever Docker can supply it.
  *
- * With no override and no toolchain the tag is null, which leaves the manifest incomplete rather
- * than recording a guess. An override is reported as given: it is what
- * `risc0-build` would use, and a source tree whose `ARG RISC0_TOOLCHAIN` is missing or empty
- * cannot reach the builder either way, because `guest_builder_tag` panics before `DockerOptions`
- * is configured (`build.rs:67-80`).
+ * Without a toolchain there is no builder to name, override or not. `guest_builder_tag` panics on a
+ * missing `ARG RISC0_TOOLCHAIN` and asserts on an empty one (`build.rs:67-80`), and it runs only
+ * inside `if use_docker()` (`build.rs:90-95`). A tree that cannot supply one therefore either
+ * failed the Docker build before `risc0-build` read the variable, or built locally and pulled no
+ * image at all. Reporting the override there would name a builder nothing used; leaving the field
+ * unresolved says what is true and keeps the manifest incomplete.
  */
 function builderImage(guestToolchain: string | null) {
-  // Trim before the check, not after. `build.rs` asserts the ARG is non-empty once trimmed
-  // (`build.rs:71-77`), so a whitespace-only value has to leave the manifest incomplete here
-  // rather than record the tag `risczero/risc0-guest-builder:r0.` as though it named an image.
+  // Trim before the check, not after, matching the assert at `build.rs:71-77`. A whitespace-only
+  // value would otherwise name the image `risczero/risc0-guest-builder:r0.`.
   const toolchain = guestToolchain?.trim() || null
-  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || (toolchain ? `r0.${toolchain}` : null)
-  if (!suffix) return { tag: null, digest: null }
+  if (!toolchain) return { tag: null, digest: null }
+  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `r0.${toolchain}`
   const tag = `risczero/risc0-guest-builder:${suffix}`
   const digest = sh('docker', ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', tag])
   return { tag, digest }
