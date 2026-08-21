@@ -81,7 +81,7 @@ pub fn policy() -> InputPolicy {
 
 `PublishedInput` carries the input's `index`, its `ciphertext` bytes, the `commitment` the program
 stored when it stores one, whatever `metadata` it published, and `recomputed`, the commitment
-derived from the bytes. `matches_commitment()` compares the last two.
+derived from the bytes. `matches_commitment()` compares `commitment` against `recomputed`.
 
 `InputPolicy::default()` is the behaviour every E3 program had before policies existed. The leaf is
 the ciphertext's own SAFE commitment, and every input is computed over. A program whose contract
