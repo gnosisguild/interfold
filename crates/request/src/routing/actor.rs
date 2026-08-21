@@ -16,7 +16,6 @@ use crate::RoutingDecision;
 use actix::{Actor, Addr, Context, Handler};
 use anyhow::*;
 use async_trait::async_trait;
-use e3_data::Checkpoint;
 use e3_data::DataStore;
 use e3_data::FromSnapshotWithParams;
 use e3_data::RepositoriesFactory;
@@ -28,7 +27,7 @@ use e3_events::BusHandle;
 use e3_events::E3RequestComplete;
 use e3_events::EType;
 use e3_events::EventType;
-use e3_events::{E3id, InterfoldEvent};
+use e3_events::{AggregateId, E3id, InterfoldEvent, RequestRouterCheckpoint};
 use e3_utils::MAILBOX_LIMIT;
 use serde::Deserialize;
 use serde::Serialize;
@@ -94,12 +93,17 @@ pub struct E3Router {
     bus: BusHandle,
     /// A repository for storing snapshots
     store: Repository<E3RouterSnapshot>,
+    /// Per-aggregate cursor covered by the self-consistent router recovery checkpoint.
+    replay_cursors: HashMap<AggregateId, u64>,
+    recovery_store: Repository<RequestRouterCheckpoint>,
 }
 
 pub struct E3RouterParams {
     extensions: Arc<Vec<Box<dyn E3Extension>>>,
     bus: BusHandle,
     store: Repository<E3RouterSnapshot>,
+    replay_cursors: HashMap<AggregateId, u64>,
+    recovery_store: Repository<RequestRouterCheckpoint>,
 }
 
 impl E3Router {
@@ -123,6 +127,8 @@ impl E3Router {
             completed: HashSet::new(),
             contexts: HashMap::new(),
             buffer: EventBuffer::default(),
+            replay_cursors: params.replay_cursors,
+            recovery_store: params.recovery_store,
         }
     }
 }
@@ -132,7 +138,10 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-pub use effects::{load_dkg_fold_attestation_contexts, E3RouterBuilder, E3RouterSnapshot};
+pub use effects::{
+    load_dkg_fold_attestation_contexts, project_request_router_event, E3RouterBuilder,
+    E3RouterSnapshot,
+};
 
 #[cfg(test)]
 #[path = "tests.rs"]

@@ -78,6 +78,31 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             );
                             return;
                         }
+                        if data.party_id >= state.threshold_n || data.party_id == state.party_id {
+                            warn!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping DecryptionKeyShared with an invalid sender party"
+                            );
+                            return;
+                        }
+                        if state
+                            .honest_parties
+                            .as_ref()
+                            .is_some_and(|parties| !parties.contains(&data.party_id))
+                        {
+                            warn!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping DecryptionKeyShared from outside the honest committee"
+                            );
+                            return;
+                        }
+                        let recovered_event = TypedEvent::new(data.clone(), ec.clone());
+                        if let Err(err) = self.record_decryption_key_share(&recovered_event) {
+                            error!("Failed to persist DecryptionKeyShared recovery input: {err}");
+                            return;
+                        }
                         let result = match &state.state {
                             KeyshareState::AggregatingDecryptionKey(_) => {
                                 self.handle_early_decryption_key_share(data, ec)
@@ -151,7 +176,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own
                 // in-flight work that a crash may have interrupted (idempotent downstream).
-                if let Err(err) = self.resume_in_flight_work(ec) {
+                if let Err(err) = self.resume_in_flight_work(ec, ctx.address()) {
                     warn!("resume_in_flight_work failed: {err}");
                 }
             }

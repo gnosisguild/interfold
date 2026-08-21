@@ -89,7 +89,10 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
-            || self.handle_share_verification_complete(msg),
+            || {
+                self.record_share_verification(&msg)?;
+                self.handle_share_verification_complete(msg)
+            },
         )
     }
 }

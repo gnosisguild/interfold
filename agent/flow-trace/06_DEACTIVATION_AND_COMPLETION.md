@@ -200,9 +200,10 @@ publishPlaintextOutput() succeeds
 │
 └─ RUST-SIDE (cleanup via E3RequestComplete):
     │
-    ├─ E3Router detects PlaintextAggregated (or E3StageChanged(Complete)):
+    ├─ E3Router detects EVM-sourced E3StageChanged(Complete):
     │   └─ Publishes E3RequestComplete { e3_id }
     │       → Single cleanup signal for all per-E3 actors
+    │       → PlaintextAggregated alone cannot complete or tear down the request
     │
     ├─ Sortition: decrements activeJobs for each committee member
     │   → Node becomes available for future E3s
@@ -355,6 +356,8 @@ flowchart TD
 
     Replay --> Effects["EffectsEnabled"]
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
+    Replay --> PublicationGate["EVM writers retain local publication intents"]
+    Effects --> PublicationGate
 
     Effects --> Live["Live/historical chain events"]
     Live --> Ciphertext["CiphertextOutputPublished"]
@@ -371,6 +374,8 @@ flowchart TD
     Active -- yes --> Collect["Collect H honest shares<br/>verify C6, aggregate C7"]
     CCHydrate --> Collect
     Collect --> Plaintext["PlaintextAggregated"]
+    Plaintext --> PublicationGate
+    PublicationGate --> ChainComplete["on-chain publication and E3StageChanged(Complete)"]
 
     CanStart -- old failure --> Lost["Observed failure before fix:<br/>full committee restored, honest subset missing,<br/>active aggregator never started plaintext"]
 ```
@@ -423,6 +428,26 @@ finalized-committee repository and `CiphernodeSelectorState.e3_cache` before rep
 `CommitteeFinalized` / `CiphernodeSelected` events remain authoritative refreshes, while
 `E3RequestComplete` removes both caches.
 
+Threshold keyshare, public-key aggregation, and plaintext aggregation also store versioned recovery
+records with their protocol snapshots. These records retain collector inputs, pending proof jobs,
+verified proof bundles, terminal publication intents, causal event contexts, and the absolute
+plaintext-share collection deadline. After replay, `EffectsEnabled` recreates collectors and
+compute jobs with new process-local correlation IDs. It re-publishes determined outputs
+idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
+has an unsupported schema version.
+
+The registry writer rebuilds ticket, committee-finalization, and public-key submission gates from
+durable local events. It does not submit during replay. After `EffectsEnabled`, it retries temporary
+RPC or contract-ordering failures, treats already-landed transactions as success, and stops retrying
+a ticket after a permanent eligibility or deadline result. The Interfold writer applies the same
+pattern to plaintext publication.
+
+The request router uses a single checkpoint for its active contexts, completed set, and all
+aggregate cursors. Because snapshot batches for different aggregates can finish in a different
+order, startup compares that cursor vector with the aggregate snapshot vector. A mismatch rebuilds
+only the router admission projection from the EventStore prefix through the snapshot cut. It does
+not replay that prefix into hydrated protocol actors.
+
 ---
 
 ## Rust-Side: E3 Lifecycle Coordinator (durable stage tracking)
@@ -441,11 +466,9 @@ E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build(
 │
 ├─ Subscribes to lifecycle-bearing events:
 │     E3Requested              → Requested
-│     CommitteePublished       → CommitteeFinalized
 │     CommitteeFinalized       → CommitteeFinalized
-│     PublicKeyAggregated      → KeyPublished
+│     CommitteePublished       → KeyPublished
 │     CiphertextOutputPublished→ CiphertextReady
-│     PlaintextAggregated      → Complete
 │     PlaintextOutputPublished → Complete
 │     E3RequestComplete        → Complete
 │     E3Failed                 → Failed (terminal)

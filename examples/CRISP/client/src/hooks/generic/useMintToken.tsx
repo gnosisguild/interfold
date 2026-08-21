@@ -7,7 +7,7 @@
 import { iERC20Abi } from '@/utils/abi'
 import { useCallback, useState } from 'react'
 import { usePublicClient, useWalletClient } from 'wagmi'
-import { getChain } from '@/utils/methods'
+import { getChain, isTestTokenMintEnabled } from '@/utils/methods'
 import { useNotificationAlertContext } from '@/context/NotificationAlert'
 import { ROUND_TOKEN } from '@/utils/constants'
 
@@ -22,6 +22,16 @@ const useToken = () => {
   const publicClient = usePublicClient()
 
   const mintTokens = useCallback(async () => {
+    // The UI hides the mint on non-test networks; this guards any other caller. A mainnet round
+    // token has no faucet, so the call could only fail against the real contract.
+    if (!isTestTokenMintEnabled()) {
+      showToast({
+        type: 'danger',
+        message: 'Test-token minting is not available on this network',
+      })
+      return
+    }
+
     if (!walletClient || !publicClient) {
       showToast({
         type: 'danger',

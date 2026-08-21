@@ -4,11 +4,9 @@
 
 use super::*;
 
-/// Report whether a contract call error is a revert with the named custom error.
-fn reverts_with(error: &anyhow::Error, error_name: &str) -> bool {
-    decode_error_from_str(&format!("{error:?}"))
-        .as_deref()
-        .is_some_and(|message| message.contains(error_name))
+/// Report whether a contract call contains this exact parameterless custom error.
+fn reverts_with(error: &anyhow::Error, selector: [u8; 4]) -> bool {
+    contains_error_selector(&format!("{error:?}"), selector)
 }
 
 pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 'static>(
@@ -56,6 +54,20 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
     .await
 }
 
+/// Return true when retrying the same ticket can no longer change chain state.
+pub(in crate::actors::ciphernode_registry_sol) fn ticket_submission_error_is_terminal(
+    error: &anyhow::Error,
+) -> bool {
+    [
+        ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+        ICiphernodeRegistry::CommitteeDeadlineReached::SELECTOR,
+        ICiphernodeRegistry::InvalidTicketNumber::SELECTOR,
+        ICiphernodeRegistry::NodeNotEligible::SELECTOR,
+    ]
+    .into_iter()
+    .any(|selector| reverts_with(error, selector))
+}
+
 /// Report whether this node's ticket is already recorded on chain.
 ///
 /// `submitTicket` reverts with `NodeAlreadySubmitted` for a sender that is
@@ -78,20 +90,16 @@ async fn ticket_submission_settled<P: Provider + WalletProvider + Clone + 'stati
         Ok(_) => Ok(false),
         Err(err) => Ok(reverts_with(
             &anyhow::Error::from(err),
-            "NodeAlreadySubmitted",
+            ICiphernodeRegistry::NodeAlreadySubmitted::SELECTOR,
         )),
     }
 }
 
-/// Report whether another sender finalized the committee.
+/// Report whether committee finalization reached a terminal chain state.
 ///
-/// `finalizeCommittee` reverts with `CommitteeAlreadyFinalized` for every
-/// committee stage that is not `Requested`. The `Failed` stage gives the same
-/// revert, so the revert alone does not show that a committee formed. The
-/// check therefore reads the committee: `getActiveCommitteeNodes` returns an
-/// empty list for each stage other than `Finalized`. A failed formation stays
-/// an error.
-async fn committee_finalization_settled<P: Provider + WalletProvider + Clone + 'static>(
+/// Both `Finalized` and `Failed` reject another attempt with
+/// `CommitteeAlreadyFinalized`. Neither state permits useful retry work.
+async fn committee_finalization_terminal<P: Provider + WalletProvider + Clone + 'static>(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id_u256: U256,
@@ -101,12 +109,10 @@ async fn committee_finalization_settled<P: Provider + WalletProvider + Clone + '
         return Ok(false);
     };
 
-    if !reverts_with(&anyhow::Error::from(err), "CommitteeAlreadyFinalized") {
-        return Ok(false);
-    }
-
-    let committee = contract.getActiveCommitteeNodes(e3_id_u256).call().await?;
-    Ok(!committee.nodes.is_empty())
+    Ok(reverts_with(
+        &anyhow::Error::from(err),
+        ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+    ))
 }
 
 pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(
@@ -118,7 +124,7 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
 
     let settled_provider = provider.clone();
     let settled = || async move {
-        committee_finalization_settled(settled_provider, contract_address, e3_id_u256).await
+        committee_finalization_terminal(settled_provider, contract_address, e3_id_u256).await
     };
 
     send_tx_idempotent(
@@ -151,39 +157,6 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
         },
     )
     .await
-}
-
-pub(in crate::actors::ciphernode_registry_sol) async fn should_finalize_committee<
-    P: Provider + WalletProvider + Clone + 'static,
->(
-    provider: EthProvider<P>,
-    contract_address: Address,
-    e3_id: E3id,
-) -> Result<bool> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
-    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-    if contract.isOpen(e3_id_u256).call().await? {
-        return Ok(false);
-    }
-
-    match contract.finalizeCommittee(e3_id_u256).call().await {
-        Ok(_) => Ok(true),
-        Err(err) => {
-            let err = anyhow::Error::from(err);
-            let decoded = decode_error_from_str(&format!("{err:?}"));
-
-            if decoded.as_deref().is_some_and(|message| {
-                message.contains("CommitteeAlreadyFinalized")
-                    || message.contains("CommitteeNotRequested")
-                    || message.contains("SubmissionWindowNotClosed")
-                    || message.contains("ThresholdNotMet")
-            }) {
-                return Ok(false);
-            }
-
-            Err(err)
-        }
-    }
 }
 
 pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee<
@@ -359,5 +332,53 @@ pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
         Ok(None)
     } else {
         Ok(Some(validity))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reverts_with, ticket_submission_error_is_terminal};
+    use crate::contracts::ICiphernodeRegistry;
+    use alloy::sol_types::{Revert, SolError};
+
+    fn selector_error(selector: [u8; 4]) -> anyhow::Error {
+        anyhow::anyhow!(
+            "RPC request failed with revert data 0x{}",
+            hex::encode(selector)
+        )
+    }
+
+    #[test]
+    fn ticket_retry_stops_only_for_permanent_contract_outcomes() {
+        for selector in [
+            ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+            ICiphernodeRegistry::CommitteeDeadlineReached::SELECTOR,
+            ICiphernodeRegistry::InvalidTicketNumber::SELECTOR,
+            ICiphernodeRegistry::NodeNotEligible::SELECTOR,
+        ] {
+            assert!(ticket_submission_error_is_terminal(&selector_error(
+                selector
+            )));
+        }
+
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "RPC connection reset while decoding CommitteeDeadlineReached"
+        )));
+
+        let string_revert = Revert::from("CommitteeDeadlineReached").abi_encode();
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "revert data 0x{}",
+            hex::encode(string_revert)
+        )));
+    }
+
+    #[test]
+    fn committee_finalization_terminal_requires_the_exact_custom_error() {
+        let selector = ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR;
+        assert!(reverts_with(&selector_error(selector), selector));
+        assert!(!reverts_with(
+            &anyhow::anyhow!("CommitteeAlreadyFinalized"),
+            selector
+        ));
     }
 }

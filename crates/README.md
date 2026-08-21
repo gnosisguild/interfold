@@ -39,10 +39,12 @@ ERROR! event=InterfoldError(InterfoldError { err_type: Evm, message: "deserializ
 sequenceDiagram
     autonumber
     participant EVM as EVM
+    participant BUS as EventBus
     participant CS as CiphernodeSelector
     participant E3 as E3Router
     participant KS as Keyshare
     participant PKA as PublicKeyAggregator
+    participant RW as CiphernodeRegistrySolWriter
     participant S as Sortition
 
     EVM--)CS: E3Requested
@@ -56,8 +58,10 @@ sequenceDiagram
         PKA->>+S: has node?
         S--)-PKA: yes
     end
-    PKA--)EVM: PublicKeyAggregated
-    PKA--)PKA: Stop
+    PKA--)BUS: PublicKeyAggregated (publication intent and committee key distribution)
+    BUS--)RW: PublicKeyAggregated
+    RW->>EVM: publishCommittee
+    EVM--)BUS: CommitteePublished
 ```
 
 # Ciphertext output published
@@ -66,9 +70,11 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant EVM as EVM
+    participant BUS as EventBus
     participant E3 as E3Router
     participant KS as Keyshare
     participant PTA as PlaintextAggregator
+    participant IW as InterfoldSolWriter
     participant S as Sortition
 
     EVM--)E3: CiphertextOutputPublished
@@ -78,10 +84,12 @@ sequenceDiagram
         PTA->>+S: has node?
         S--)-PTA: yes
     end
-    PTA--)EVM: PlaintextAggregated
-    PTA--)+KS: PlaintextAggregated
-    PTA--)PTA: Stop
-    KS--)-KS: Stop
+    PTA--)BUS: PlaintextAggregated (local publication intent)
+    BUS--)IW: PlaintextAggregated
+    IW->>EVM: publishPlaintextOutput
+    EVM--)BUS: PlaintextOutputPublished
+    BUS--)E3: E3StageChanged(Complete)
+    E3--)BUS: E3RequestComplete
 ```
 
 # Debugging

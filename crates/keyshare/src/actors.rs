@@ -23,5 +23,6 @@ pub use encryption_key_collector::{
 };
 pub use threshold_keyshare::{
     AllThresholdSharesCollected, GenEsiSss, GenPkShareAndSkSss, ThresholdKeyshare,
-    ThresholdKeyshareParams,
+    ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };

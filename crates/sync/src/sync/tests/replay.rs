@@ -7,6 +7,56 @@
 use super::*;
 
 #[actix::test]
+async fn stale_router_checkpoint_is_rebuilt_to_the_snapshot_cursor() -> anyhow::Result<()> {
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(
+                std::collections::HashMap::from([(AggregateId::new(1), std::time::Duration::ZERO)]),
+            ));
+    let bus = system.handle()?.enable("test-router-checkpoint-rebuild");
+    let e3_id = E3id::new("0", 1);
+    let aggregate_id = AggregateId::new(1);
+    bus.publish_without_context(E3StageChanged {
+        e3_id: e3_id.clone(),
+        previous_stage: E3Stage::CommitteeFinalized,
+        new_stage: E3Stage::KeyPublished,
+    })?;
+    bus.flush_event_pipeline().await?;
+
+    let store = system.store()?;
+    let repositories = Repositories::from(&store);
+    repositories
+        .aggregate_seq(aggregate_id)
+        .write_sync(&1)
+        .await?;
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint {
+            replay_cursors: std::collections::HashMap::from([(aggregate_id, 0)]),
+            ..Default::default()
+        })
+        .await?;
+
+    reconcile_request_router_checkpoint(
+        &repositories,
+        [aggregate_id],
+        &system.eventstore_reader()?.seq(),
+    )
+    .await?;
+
+    let checkpoint = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .expect("the rebuilt checkpoint should exist");
+    assert_eq!(checkpoint.contexts, vec![e3_id]);
+    assert!(checkpoint.completed.is_empty());
+    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&1));
+    Ok(())
+}
+
+#[actix::test]
 async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-sync-replay");

@@ -15,6 +15,12 @@ use std::fmt::{self, Display};
 #[derive(Derivative, Message, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 #[rtype(result = "()")]
+/// Durable intent to publish the aggregated public key on-chain and distribute it to the committee.
+///
+/// This event is not a canonical key-publication fact. Committee members need its key and honest
+/// subset to produce decryption shares, so it is forwarded to peers. Only the originating node can
+/// submit it on-chain. The confirmed `CommitteePublished` chain event advances the request to the
+/// published-key stage.
 pub struct PublicKeyAggregated {
     #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
     pub pubkey: ArcBytes, // TODO: ArcBytes ?

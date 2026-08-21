@@ -158,6 +158,12 @@ impl ThresholdPlaintextAggregator {
             })
             .collect();
 
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.honest_c6_proofs = honest_c6.clone();
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+
         // Publish ComputeRequest before transitioning state so a publish
         // failure leaves us in VerifyingC6 (retryable) rather than
         // Computing (no retry path).

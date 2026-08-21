@@ -7,6 +7,7 @@
 use std::marker::PhantomData;
 
 use anyhow::Result;
+use e3_events::{EventContext, Sequenced};
 
 use crate::{DataStore, StoreConnector};
 
@@ -71,6 +72,10 @@ where
 
     pub fn write(&self, value: &T) {
         self.store.write(value)
+    }
+
+    pub fn write_with_context(&self, value: &T, context: &EventContext<Sequenced>) -> Result<()> {
+        self.store.write_with_context(value, context)
     }
 
     pub async fn write_sync(&self, value: &T) -> Result<()> {

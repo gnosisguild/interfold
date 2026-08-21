@@ -4099,6 +4099,7 @@ dependencies = [
  "e3-config",
  "e3-data",
  "e3-events",
+ "e3-request",
  "e3-test-helpers",
  "e3-utils",
  "tempfile",

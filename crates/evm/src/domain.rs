@@ -36,6 +36,8 @@ pub(crate) mod interfold_events;
 pub(crate) mod log_timestamp;
 #[path = "interfold_writing/workflow.rs"]
 pub(crate) mod plaintext_publication;
+#[path = "publication_writing/workflow.rs"]
+pub(crate) mod publication_replay;
 #[path = "chain_reader/reorg.rs"]
 pub(crate) mod reorg;
 #[path = "slashing_writing/workflow.rs"]

@@ -25,7 +25,9 @@ sequenceDiagram
     participant Operator
     participant BondingRegistry
     participant CiphernodeRegistry
+    participant Interfold
     participant EventBus
+    participant E3Router
     participant NodeStateManager
     participant Sortition
     participant CiphernodeSelector
@@ -92,10 +94,12 @@ sequenceDiagram
     Note over EventBus,CiphernodeSelector: Phase 5: Node Selection
 
     EventBus->>CiphernodeSelector: CommitteeFinalized
+    CiphernodeSelector->>CiphernodeSelector: Sort committee by ascending address
     CiphernodeSelector->>CiphernodeSelector: Check if node address in committee
     alt Node is in committee
         CiphernodeSelector->>EventBus: CiphernodeSelected(e3Id, node, chainId)
     end
+    CiphernodeSelector->>EventBus: AggregatorChanged(e3Id, isAggregator)
 
     Note over EventBus,Keyshare: Phase 6: Keyshare Generation
 
@@ -108,17 +112,19 @@ sequenceDiagram
 
     Note over EventBus,PublicKeyAggregator: Phase 7: Public Key Aggregation
 
-    EventBus->>PublicKeyAggregator: KeyshareCreated
+    EventBus->>PublicKeyAggregator: KeyshareCreated (buffer on every committee node)
+    EventBus->>PublicKeyAggregator: AggregatorChanged
     PublicKeyAggregator->>Sortition: GetNodesForE3(e3Id, chainId)
     Sortition-->>PublicKeyAggregator: committee[]
     PublicKeyAggregator->>PublicKeyAggregator: Verify node in committee
-    PublicKeyAggregator->>PublicKeyAggregator: Add keyshare to OrderedSet
+    PublicKeyAggregator->>PublicKeyAggregator: Active aggregator verifies and orders keyshares by partyId
 
-    alt Threshold reached (all keyshares collected)
+    alt Honest threshold reached on active aggregator
         PublicKeyAggregator->>PublicKeyAggregator: fhe.get_aggregate_public_key(keyshares)
         PublicKeyAggregator->>PublicKeyAggregator: Aggregate public key shares
-        PublicKeyAggregator->>EventBus: PublicKeyAggregated(e3Id, pubkey, nodes, chainId)
-        PublicKeyAggregator->>CiphernodeRegistry: publishPublicKey(e3Id, pubkey, nodes)
+        PublicKeyAggregator->>EventBus: PublicKeyAggregated (durable publication intent)
+        EventBus->>CiphernodeRegistry: PublicKeyAggregated
+        CiphernodeRegistry->>CiphernodeRegistry: publishCommittee(e3Id, commitment, proof)
     end
 
     Note over Operator,PlaintextAggregator: Phase 8: Encryption & Computation
@@ -134,17 +140,24 @@ sequenceDiagram
     Keyshare->>Keyshare: Generate decryption share
     Keyshare->>EventBus: DecryptionshareCreated(e3Id, node, decryptionShare, chainId)
 
-    EventBus->>PlaintextAggregator: DecryptionshareCreated
+    EventBus->>PlaintextAggregator: DecryptionshareCreated (buffer on every committee node)
+    EventBus->>PlaintextAggregator: AggregatorChanged
     PlaintextAggregator->>Sortition: GetNodesForE3(e3Id, chainId)
     Sortition-->>PlaintextAggregator: committee[]
     PlaintextAggregator->>PlaintextAggregator: Verify node in committee
-    PlaintextAggregator->>PlaintextAggregator: Add decryption share to OrderedSet
+    PlaintextAggregator->>PlaintextAggregator: Active aggregator orders shares by partyId
 
-    alt Threshold reached (all shares collected)
+    alt Honest threshold reached on active aggregator
         PlaintextAggregator->>PlaintextAggregator: fhe.get_aggregate_plaintext(shares, ciphertext)
         PlaintextAggregator->>PlaintextAggregator: Aggregate decryption shares
         PlaintextAggregator->>PlaintextAggregator: Decode plaintext
-        PlaintextAggregator->>EventBus: PlaintextAggregated(e3Id, plaintext, nodes, chainId)
+        PlaintextAggregator->>EventBus: PlaintextAggregated (local publication intent)
+        EventBus->>Interfold: publishPlaintextOutput(e3Id, plaintext, proof)
+        Interfold->>EventBus: PlaintextOutputPublished
+        Interfold->>EventBus: E3StageChanged(Complete)
+        EventBus->>E3Router: E3StageChanged(Complete)
+        E3Router->>EventBus: E3RequestComplete
+        EventBus->>PlaintextAggregator: E3RequestComplete
     end
 ```
 
@@ -255,11 +268,9 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 ### 5. Committee Query Pattern
 
-- **Old Approach**: Store committee in EVM contract, query from there
-- **New Approach**: Query `Sortition` actor via `GetNodesForE3`
-  - Benefits: Single source of truth, no EVM storage cost
-  - Used by: `PublicKeyAggregator`, `PlaintextAggregator`
-  - Validation: Ensures nodes are in finalized committee
+- Query the `Sortition` actor through `GetNodesForE3`.
+- The stored committee comes from the canonical on-chain finalization event.
+- `PublicKeyAggregator` and `PlaintextAggregator` use it to validate senders and party IDs.
 
 ### 6. Event Deduplication
 
@@ -295,19 +306,16 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 ### 9. Party IDs
 
 - **Purpose**: Identify position in threshold scheme
-- **Assignment**: Based on order in `CommitteeFinalized.committee` array
-- **Range**: `0..threshold_n`
+- **Assignment**: Index in the committee after ascending-address normalization
+- **Range**: `0..threshold_n` (inclusive of `0`, exclusive of `threshold_n`)
 - **Critical**: Order must be consistent across all nodes
 - **Used In**: Keyshare creation, decryption share verification
 
-### 10. OrderedSet
+### 10. Canonical Aggregation Order
 
-- **Purpose**: Maintain insertion order for aggregation
-- **Usage**:
-  - Keyshares collected by `PublicKeyAggregator`
-  - Decryption shares collected by `PlaintextAggregator`
-- **Critical**: Order affects aggregation result
-- **Implementation**: Preserves order in which shares arrive
+- Keyshares and decryption shares are deduplicated by party.
+- Cryptographic inputs use canonical ascending `party_id` order, not network arrival order.
+- This keeps every promoted aggregator aligned with the finalized committee and proof inputs.
 
 ## Event Reference
 
@@ -330,17 +338,19 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 ### Interfold Events
 
-| Event                       | Parameters                                                     | Purpose               |
-| --------------------------- | -------------------------------------------------------------- | --------------------- |
-| `E3Requested`               | e3Id, thresholdM, thresholdN, computationSeed, params, chainId | Computation request   |
-| `TicketGenerated`           | e3Id, node, ticketId, chainId                                  | Sortition ticket      |
-| `CommitteeFinalized`        | e3Id, committee[], chainId                                     | Committee selected    |
-| `CiphernodeSelected`        | e3Id, node, chainId                                            | Node is in committee  |
-| `KeyshareCreated`           | e3Id, node, pubkey, chainId                                    | Keyshare generated    |
-| `PublicKeyAggregated`       | e3Id, pubkey, nodes, chainId                                   | Public key ready      |
-| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                                      | Encrypted computation |
-| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId                  | Decryption share      |
-| `PlaintextAggregated`       | e3Id, plaintext, nodes, chainId                                | Decryption complete   |
+| Event                       | Parameters                                                     | Purpose                             |
+| --------------------------- | -------------------------------------------------------------- | ----------------------------------- |
+| `E3Requested`               | e3Id, thresholdM, thresholdN, computationSeed, params, chainId | Computation request                 |
+| `TicketGenerated`           | e3Id, node, ticketId, chainId                                  | Sortition ticket                    |
+| `CommitteeFinalized`        | e3Id, committee[], chainId                                     | Committee selected                  |
+| `CiphernodeSelected`        | e3Id, node, chainId                                            | Node is in committee                |
+| `KeyshareCreated`           | e3Id, node, pubkey, chainId                                    | Keyshare generated                  |
+| `PublicKeyAggregated`       | e3Id, pubkey, committee, proof                                 | Local public-key publication intent |
+| `CiphertextOutputPublished` | e3Id, ciphertext, chainId                                      | Encrypted computation               |
+| `DecryptionshareCreated`    | e3Id, node, partyId, decryptionShare, chainId                  | Decryption share                    |
+| `PlaintextAggregated`       | e3Id, outputs, proofs                                          | Local plaintext publication intent  |
+| `PlaintextOutputPublished`  | e3Id, plaintextOutput, proof                                   | Canonical on-chain result           |
+| `E3RequestComplete`         | e3Id                                                           | Request teardown after chain result |
 
 ## Testing Flow
 

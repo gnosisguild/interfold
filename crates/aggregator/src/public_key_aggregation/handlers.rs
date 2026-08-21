@@ -39,6 +39,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     self.dkg_fold_attestation_context = Some(data.context);
                 }
             }
+            InterfoldEventData::EffectsEnabled(_) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.resume_in_flight_work(ec)
+                });
+            }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 // Only process raw events from chain (party_id not yet resolved).

@@ -9,6 +9,7 @@
 use crate::contracts::IInterfold;
 use crate::domain::error_decoder::format_evm_error;
 use crate::domain::plaintext_publication::validate_plaintext_output;
+use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{encode_zk_proof, transaction_nonce_guard, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
@@ -24,7 +25,7 @@ use e3_events::{
     Proof, Shutdown,
 };
 use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::info;
 
 #[path = "effects.rs"]
@@ -39,9 +40,7 @@ pub struct InterfoldSolWriter<P> {
     bus: BusHandle,
     effects_enabled: bool,
     active_aggregators: HashMap<E3id, bool>,
-    /// Session-local concurrency guard. The contract preflight remains the
-    /// durable cross-restart idempotency boundary.
-    submitting: HashSet<E3id>,
+    publication: ReplaySubmissionGate<E3id, PlaintextAggregated>,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
@@ -56,7 +55,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             bus: bus.clone(),
             effects_enabled: false,
             active_aggregators: HashMap::new(),
-            submitting: HashSet::new(),
+            publication: ReplaySubmissionGate::new(),
         })
     }
 

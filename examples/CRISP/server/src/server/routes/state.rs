@@ -254,7 +254,13 @@ async fn get_all_round_results(
                 }
             }
             Err(e) => {
-                info!("Error retrieving state for round {}: {:?}", e3_id, e);
+                // Expected for a round whose committee key is not published yet — the `_e3:`
+                // record only exists after CommitteePublished. See the note in
+                // `get_current_round_for_requester`.
+                info!(
+                    "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
+                    e3_id, e
+                );
                 continue;
             }
         }

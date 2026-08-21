@@ -17,6 +17,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
     sol,
+    transports::RpcError,
 };
 use eyre::Result;
 use std::sync::Arc;
@@ -35,6 +36,30 @@ sol! {
 sol! {
     event InputPublished(uint256 indexed e3Id, address indexed slotAddress, bytes32 encryptedVoteCommitment, bytes encryptedVote, uint256 index, uint40 parentIndexPlusOne);
 }
+
+/// Why a `publishInput` dry run failed.
+///
+/// The two kinds blame different parties, and the relay maps them to different HTTP answers: a
+/// revert is the caller's input and final, a provider failure judged nothing and is retryable.
+#[derive(Debug)]
+pub enum SimulateError {
+    /// The node evaluated the call and the contract refused the input.
+    Reverted(String),
+    /// The node could not evaluate the call — transport, timeout, or RPC failure. Says nothing
+    /// about whether the input is valid.
+    Provider(String),
+}
+
+impl std::fmt::Display for SimulateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Reverted(message) => write!(f, "publishInput simulation reverted: {message}"),
+            Self::Provider(message) => write!(f, "publishInput simulation unavailable: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SimulateError {}
 
 /// Type alias for read-only provider (no wallet)
 pub type CRISPReadProvider = FillProvider<
@@ -102,6 +127,37 @@ impl CRISPContract<CRISPWriteProvider> {
             .await?;
 
         Ok(receipt)
+    }
+
+    /// Dry-run `publishInput` as an `eth_call` from the relay's own account.
+    ///
+    /// The relay signs and pays for whatever it is handed, so an input that would revert — a bad
+    /// proof, a stale parent, a closed window — must be refused before it costs a transaction.
+    /// The two failure kinds are kept apart because they blame different parties: a revert is the
+    /// caller's input, a provider failure is the relay's node, and a caller must not be told
+    /// their vote is invalid because an RPC timed out.
+    pub async fn simulate_publish_input(
+        &self,
+        e3_id: U256,
+        data: Bytes,
+    ) -> Result<(), SimulateError> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+
+        match contract.publishInput(e3_id, data).call().await {
+            Ok(_) => Ok(()),
+            Err(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) => {
+                // The node evaluated the call and answered with an error. Revert data — or a
+                // revert-shaped message where a node strips the data — means the contract refused
+                // the input. Anything else (rate limits, method errors) is the provider's problem.
+                let message = payload.to_string();
+                if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
+                    Err(SimulateError::Reverted(message))
+                } else {
+                    Err(SimulateError::Provider(message))
+                }
+            }
+            Err(e) => Err(SimulateError::Provider(e.to_string())),
+        }
     }
 
     // publish an input to the CRISPProgram contract

@@ -66,19 +66,13 @@ fn is_terminal(stage: &E3Stage) -> bool {
 fn implied(event: &InterfoldEventData) -> Option<(E3id, E3Stage)> {
     match event {
         InterfoldEventData::E3Requested(d) => Some((d.e3_id.clone(), E3Stage::Requested)),
-        InterfoldEventData::CommitteePublished(d) => {
-            Some((d.e3_id.clone(), E3Stage::CommitteeFinalized))
-        }
+        InterfoldEventData::CommitteePublished(d) => Some((d.e3_id.clone(), E3Stage::KeyPublished)),
         InterfoldEventData::CommitteeFinalized(d) => {
             Some((d.e3_id.clone(), E3Stage::CommitteeFinalized))
-        }
-        InterfoldEventData::PublicKeyAggregated(d) => {
-            Some((d.e3_id.clone(), E3Stage::KeyPublished))
         }
         InterfoldEventData::CiphertextOutputPublished(d) => {
             Some((d.e3_id.clone(), E3Stage::CiphertextReady))
         }
-        InterfoldEventData::PlaintextAggregated(d) => Some((d.e3_id.clone(), E3Stage::Complete)),
         InterfoldEventData::PlaintextOutputPublished(d) => {
             Some((d.e3_id.clone(), E3Stage::Complete))
         }

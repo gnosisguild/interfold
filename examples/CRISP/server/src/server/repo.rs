@@ -98,7 +98,16 @@ impl<S: DataStore> CurrentRoundRepository<S> {
                     }
                 }
                 Err(e) => {
-                    info!("Error retrieving state for round {}: {:?}", round_id, e);
+                    // Expected for a round between E3Requested and CommitteePublished: the CRISP
+                    // record and the round index are written at request time, but the `_e3:` record
+                    // only exists once the committee publishes its key, so a freshly requested
+                    // round is half-indexed for the duration of the DKG. Persistent repeats for
+                    // the same round mean the key never arrived — no registered ciphernodes, or a
+                    // CommitteePublished the indexer rejected (see its log for the reason).
+                    info!(
+                        "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
+                        round_id, e
+                    );
                     continue;
                 }
             }
@@ -249,7 +258,6 @@ impl<S: DataStore> CrispE3Repository<S> {
             input_slots: Vec::new(),
             input_parents: Vec::new(),
             input_usable: Vec::new(),
-            has_voted: vec![],
             start_time: 0u64,
             status: "Requested".to_string(),
             tally: vec![],
@@ -284,9 +292,14 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp.num_options.parse::<usize>()?)
     }
 
+    /// How many slots hold at least one published entry.
+    ///
+    /// The closest thing to a participation count the server can give. A mask is
+    /// indistinguishable from a vote by design, so per-slot activity — not "who voted" — is what
+    /// is countable, and a slot with ten entries still counts once.
     pub async fn get_vote_count(&self) -> Result<u64> {
         let e3_crisp = self.get_crisp().await?;
-        Ok(u64::try_from(e3_crisp.has_voted.len())?)
+        Ok(count_active_slots(&e3_crisp.input_slots))
     }
 
     /// The round's current status.
@@ -398,7 +411,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             chain_id: e3.chain_id,
             start_time: e3.input_window[0],
             end_time: e3.input_window[1],
-            vote_count: u64::try_from(e3_crisp.has_voted.len())?,
+            vote_count: count_active_slots(&e3_crisp.input_slots),
             start_block: e3.request_block,
             snapshot_block,
             interfold_address: e3.interfold_address,
@@ -528,38 +541,17 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
-    pub async fn has_voted(&self, address: String) -> Result<bool> {
+    /// Whether the slot holds any published entry, from the indexed `InputPublished` events.
+    ///
+    /// Deliberately not "has this address voted" — the server cannot know that. Anyone can mask
+    /// any eligible slot, and a mask is indistinguishable from a vote, so activity is the only
+    /// per-slot fact there is.
+    ///
+    /// Takes parsed slot bytes so address validation stays with the route, where a malformed
+    /// address is client error rather than a storage failure.
+    pub async fn slot_has_activity(&self, slot: [u8; 20]) -> Result<bool> {
         let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.has_voted.contains(&address))
-    }
-
-    pub async fn insert_voter_address(&mut self, address: String) -> Result<()> {
-        let key = self.crisp_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.has_voted.push(address.clone());
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not insert address on '{key}'"))?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn remove_voter_address(&mut self, address: &str) -> Result<()> {
-        let key = self.crisp_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.has_voted.retain(|item| item != address);
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not remove address {address}"))?;
-        Ok(())
+        Ok(e3_crisp.input_slots.iter().any(|(_, s)| *s == slot))
     }
 
     #[allow(dead_code)]
@@ -629,9 +621,48 @@ fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
     }
 }
 
+/// How many distinct slots appear in the indexed inputs.
+///
+/// Counts slots rather than entries: a slot's chain can hold a vote plus any number of masks and
+/// updates, and it still represents one participant at most.
+fn count_active_slots(input_slots: &[(u64, [u8; 20])]) -> u64 {
+    let mut slots: Vec<[u8; 20]> = input_slots.iter().map(|(_, slot)| *slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.len() as u64
+}
+
+/// Parse a `0x`-prefixed or bare hex address into the slot bytes the indexer stores.
+pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
+    let bytes = hex::decode(address.strip_prefix("0x").unwrap_or(address))
+        .map_err(|e| eyre::eyre!("'{address}' is not a hex address: {e}"))?;
+    <[u8; 20]>::try_from(bytes).map_err(|_| eyre::eyre!("'{address}' is not 20 bytes of address"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::snapshot_block;
+    use super::{count_active_slots, parse_slot_address, snapshot_block};
+
+    #[test]
+    fn counts_each_slot_once_no_matter_how_long_its_chain_is() {
+        let slot_a = [1u8; 20];
+        let slot_b = [2u8; 20];
+        let inputs = vec![(0, slot_a), (1, slot_b), (2, slot_a), (3, slot_a)];
+
+        assert_eq!(count_active_slots(&inputs), 2);
+        assert_eq!(count_active_slots(&[]), 0);
+    }
+
+    #[test]
+    fn parses_an_address_with_or_without_prefix() {
+        let expected = [0x11u8; 20];
+        let bare = "11".repeat(20);
+
+        assert_eq!(parse_slot_address(&bare).unwrap(), expected);
+        assert_eq!(parse_slot_address(&format!("0x{bare}")).unwrap(), expected);
+        assert!(parse_slot_address("0x1234").is_err());
+        assert!(parse_slot_address("not-hex").is_err());
+    }
 
     #[test]
     fn returns_the_stored_snapshot_block() {

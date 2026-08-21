@@ -478,16 +478,19 @@ Control verbosity with the `-v` flag:
 
 ### Key Events to Watch
 
-| Event                       | Meaning                              |
-| --------------------------- | ------------------------------------ |
-| `E3Requested`               | New computation request detected     |
-| `TicketGenerated`           | Your sortition ticket was calculated |
-| `CiphernodeSelected`        | You were selected for a committee    |
-| `KeyshareCreated`           | Your key share was generated         |
-| `PublicKeyAggregated`       | Committee public key is ready        |
-| `CiphertextOutputPublished` | Time to generate decryption share    |
-| `DecryptionshareCreated`    | Your decryption share was published  |
-| `PlaintextAggregated`       | Final result is available            |
+| Event                       | Meaning                               |
+| --------------------------- | ------------------------------------- |
+| `E3Requested`               | New computation request detected      |
+| `TicketGenerated`           | Your sortition ticket was calculated  |
+| `CiphernodeSelected`        | You were selected for a committee     |
+| `KeyshareCreated`           | Your key share was generated          |
+| `PublicKeyAggregated`       | Local public key is ready to publish  |
+| `CommitteePublished`        | Public key is confirmed on-chain      |
+| `CiphertextOutputPublished` | Time to generate decryption share     |
+| `DecryptionshareCreated`    | Your decryption share was published   |
+| `PlaintextAggregated`       | Local result is ready for publication |
+| `PlaintextOutputPublished`  | Result is confirmed on-chain          |
+| `E3RequestComplete`         | Confirmed request cleanup started     |
 
 ---
 

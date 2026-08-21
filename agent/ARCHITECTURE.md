@@ -176,7 +176,8 @@ error handling, read the clock, or mutate actor state.
 Protocol-specific invariants must be named and tested. Important examples include:
 
 - runtime `party_id` is derived from the finalized committee normalized by ascending address;
-- the active aggregator is the lowest non-expelled `party_id`;
+- the active aggregator is the lowest eligible `party_id` after on-chain exclusions and the current
+  phase's durable unresponsive-party set;
 - the DKG aggregation circuit receives exactly `H` canonical honest NodeFold proofs and exactly `N`
   ordered committee addresses;
 - C2a/C2b are singleton proofs, while C3a/C3b follow the configured recipient/row multiplicities;

@@ -282,22 +282,32 @@ export type JsonResponse = {
 export type NewRoundRequest = {
   cronApiKey: string
   tokenAddress: string
+  /** For an ONCHAIN round, doubles as the contract's `minVotingPower` floor in raw token units. */
   balanceThreshold: string
+  /**
+   * The census source, as a `CRISPProgram.CensusMode` discriminant: 0 (TOKEN, the default) or
+   * 2 (ONCHAIN). ONCHAIN reads eligibility from the token per input — with a `SelfRegistry` as
+   * the token, that is what lets voters register during the input window. Typed as the literals
+   * the server accepts — any other explicit value is refused with HTTP 400.
+   */
+  censusMode?: 0 | 2
 }
 
 /**
  * Type representing a request to broadcast an encrypted vote (`voting/broadcast`)
+ *
+ * Carries no address: the slot is already inside the encoded proof, and every byte the relay
+ * does not receive is a byte it cannot log against a masker's session.
  */
 export type BroadcastVoteRequest = {
   e3Id: bigint
   encodedProof: string
-  address: string
 }
 
 /**
  * The status of a vote broadcast returned by the CRISP server
  */
-export type VoteResponseStatus = 'success' | 'user_already_voted' | 'failed_broadcast'
+export type VoteResponseStatus = 'success' | 'failed_broadcast'
 
 /**
  * Type representing the response to a vote broadcast (`voting/broadcast`)
@@ -306,16 +316,20 @@ export type BroadcastVoteResponse = {
   status: VoteResponseStatus
   tx_hash: string | null
   message: string | null
-  is_vote_update?: boolean
 }
 
 /**
- * Type representing the vote status of an address in a round (`voting/status`)
+ * Type representing the slot activity of an address in a round (`voting/status`)
+ *
+ * @remarks
+ * `slot_active` says the slot holds at least one published entry — not that its owner voted.
+ * Masks are indistinguishable from votes by design, so activity is the only per-slot fact the
+ * server can answer. A client that wants "did I vote" must remember its own submissions.
  */
 export type VoteStatusResponse = {
   round_id: string
   address: string
-  has_voted: boolean
+  slot_active: boolean
   round_status: string | null
 }
 

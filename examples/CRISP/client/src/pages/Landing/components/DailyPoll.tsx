@@ -12,7 +12,8 @@ import { useVoteManagementContext } from '@/context/voteManagement'
 import LoadingAnimation from '@/components/LoadingAnimation'
 import CountdownTimer from '@/components/CountdownTime'
 import { useModal } from 'connectkit'
-import { useVoteCasting } from '@/hooks/voting/useVoteCasting'
+import { useVoteCasting, type MaskTarget } from '@/hooks/voting/useVoteCasting'
+import { useRegistration } from '@/hooks/voting/useRegistration'
 import VotingStepIndicator from '@/components/VotingStepIndicator'
 import { usePublicClient } from 'wagmi'
 import { EditorialShell, Cipher } from '@/design/Editorial'
@@ -52,11 +53,11 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     setPollOptions,
     roundState,
     hasVotedInCurrentRound,
-    voteStatusLoading,
     isLoading,
     getWebResultByRound,
     displayedRoundIsFallback,
   } = useVoteManagementContext()
+  const { canRegister, isRegistered, isRegistering, register } = useRegistration()
   const navigate = useNavigate()
   const client = usePublicClient()
   const [isEnded, setIsEnded] = useState(false)
@@ -110,6 +111,11 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
   // Once the poll is over, poll the backend until the FHE tally is published.
   // FHE decryption takes minutes, so poll slowly with exponential backoff and
   // skip ticks while the tab is hidden to avoid bombarding the server.
+  //
+  // The first check runs immediately: a page opened (or a round entered) after the tally is
+  // already published must flip to results at once, not after the first delay. Same for a tab
+  // coming back to the foreground — by then the backoff can have grown to minutes, which showed
+  // a stale "Tallying…" long after the result existed, so becoming visible also checks at once.
   useEffect(() => {
     if (!isEnded || !roundState || tallyReady) return
 
@@ -119,15 +125,20 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let delay = BASE_DELAY_MS
+    // Single-flight: `tick` is async, and while a request is pending `timer` is null, so a
+    // visibility change during that window would otherwise start a second concurrent polling
+    // chain — each one rescheduling itself, multiplying load and leaking timers past unmount.
+    let running = false
 
     const tick = async () => {
-      if (cancelled) return
+      if (cancelled || running) return
 
       if (typeof document !== 'undefined' && document.hidden) {
         timer = setTimeout(tick, BASE_DELAY_MS)
         return
       }
 
+      running = true
       try {
         const result = await getWebResultByRoundRef.current(roundState.id)
         if (cancelled) return
@@ -138,15 +149,37 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
         delay = Math.min(delay * 2, MAX_DELAY_MS)
       } catch {
         delay = Math.min(delay * 2, MAX_DELAY_MS)
+      } finally {
+        running = false
       }
 
       timer = setTimeout(tick, delay)
     }
 
-    timer = setTimeout(tick, BASE_DELAY_MS)
+    const tickNow = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      // A foreground check is a fresh look, not a continuation of the backoff that grew while
+      // nothing was watching.
+      delay = BASE_DELAY_MS
+      void tick()
+    }
+
+    const onVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) tickNow()
+    }
+
+    tickNow()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange)
+    }
+
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
     }
   }, [isEnded, roundState, tallyReady])
 
@@ -169,13 +202,13 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     }
   }
 
-  const castVote = async (isMasking: boolean) => {
+  const castVote = async (isMasking: boolean, maskTarget: MaskTarget = 'random') => {
     if (!user) {
       setOpen(true)
       return
     }
 
-    await castVoteWithProof(pollSelected, isMasking)
+    await castVoteWithProof(pollSelected, isMasking, maskTarget)
   }
 
   const busy = isCastingVote || isMasking
@@ -208,7 +241,7 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
                   {roundState.vote_count} {roundState.vote_count === 1 ? 'vote' : 'votes'}
                 </span>
                 {hasVotedInCurrentRound && <span className='tag tally'>You voted</span>}
-                {voteStatusLoading && <span className='tag closed'>Checking…</span>}
+                {canRegister && isRegistered === true && <span className='tag live'>Registered</span>}
               </div>
             )}
 
@@ -222,6 +255,19 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
             {busy && <VotingStepIndicator step={votingStep} message={stepMessage} lastActiveStep={lastActiveStep} />}
             {isLoading && !roundState && !busy && <LoadingAnimation isLoading />}
 
+            {/* Open registration — an ONCHAIN round backed by a SelfRegistry admits voters
+                during the input window, so the register action lives beside the vote. */}
+            {roundState && !isEnded && canRegister && user && isRegistered === false && (
+              <div className='col' style={{ gap: 8 }}>
+                <div className='cap muted'>This poll has open registration — register once, then vote.</div>
+                <div>
+                  <button className='btn lg' disabled={isRegistering || busy} onClick={() => register()}>
+                    {isRegistering ? 'Registering…' : 'Register to vote →'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Active poll — voting actions */}
             {roundState && !isEnded && (
               <div className='col' style={{ gap: 14 }}>
@@ -231,11 +277,21 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
                   </div>
                 )}
                 <div className='row' style={{ gap: 12, flexWrap: 'wrap' }}>
-                  <button className='btn lg' disabled={noPollSelected || loading || busy} onClick={() => castVote(false)}>
+                  <button
+                    className='btn lg'
+                    disabled={noPollSelected || loading || busy || (canRegister && isRegistered === false)}
+                    onClick={() => castVote(false)}
+                  >
                     {isCastingVote ? 'Processing…' : hasVotedInCurrentRound ? 'Update vote →' : 'Cast →'}
                   </button>
-                  <button className='btn ghost lg' disabled={loading || busy} onClick={() => castVote(true)}>
-                    {isMasking ? 'Masking…' : 'Mask vote'}
+                  <button className='btn ghost lg' disabled={loading || busy} onClick={() => castVote(true, 'random')}>
+                    {isMasking ? 'Masking…' : 'Mask a voter'}
+                  </button>
+                  {/* Self-masks are what make your own later activity ambiguous: an observer
+                      seeing your address write to your slot again cannot tell an update from a
+                      mask — but only if masking yourself is something voters actually do. */}
+                  <button className='btn ghost lg' disabled={loading || busy} onClick={() => castVote(true, 'self')}>
+                    {isMasking ? 'Masking…' : 'Mask my slot'}
                   </button>
                 </div>
               </div>

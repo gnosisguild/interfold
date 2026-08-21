@@ -6,9 +6,9 @@ After committee finalization, the selected ciphernodes perform Distributed Key G
 using threshold BFV (TrBFV) cryptography. This produces a collective public key without any single
 party knowing the full secret key. Later, the committee produces decryption shares; all committee
 members buffer them, and the active aggregator combines them. The runtime first normalizes the
-finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
-`party_id` that has not been excluded from the current E3. An exclusion can come from an on-chain
-expulsion or from a proof-fault quorum while the matching slash policy is disabled.
+finalized committee into ascending address order. The active aggregator is the lowest eligible
+`party_id`. A party can be ineligible because of an on-chain expulsion, a proof-fault exclusion, or
+a phase-local aggregator progress timeout.
 
 Delegated bonding does not alter cryptographic identity. Every ECDSA proof signature is still made
 by the hot operator key and verified against the operator address snapshotted into the committee.
@@ -593,7 +593,7 @@ phase.
   │   └─ Compares committee, keyshare, and exclusion identities as parsed EVM addresses;
   │      EIP-55 casing differences cannot bypass an exclusion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On exclusion-driven handoff, the next active aggregator flushes its existing buffer
+  │   └─ On exclusion- or timeout-driven handoff, the next active aggregator flushes its buffer
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │
@@ -665,10 +665,15 @@ phase.
 │         honest_committee_addresses,  // length H — canonical honest subset
 │         dkg_aggregator_proof
 │       }
+│         → forwarded to peers so every committee member can bind C6 proofs to the aggregated key
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Accepts publication intents only from locally produced events; peer copies only distribute
+  │  protocol state
+  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
+  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
+  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
+  ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
@@ -683,6 +688,7 @@ phase.
   │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
+     → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
@@ -976,9 +982,11 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ DecryptionshareCreatedBuffer gates events:
   │   ├─ Tracks parties excluded by on-chain expulsion or the disabled-policy fallback
   │   ├─ Buffers until AggregatorChanged(is_aggregator=true)
-  │   └─ Flushes verified shares to ThresholdPlaintextAggregator when this node is active
+  │   └─ Forwards the role change, then flushes verified shares when this node is active
   │
   ├─ ThresholdPlaintextAggregator receives flushed shares
+  │   ├─ Arms its 30-minute collection timeout only while this node is active
+  │   ├─ Starts a fresh collection window after promotion and cancels it after demotion
   │   ├─ Verifies sender is in committee
   │   ├─ Adds the share if verified
   │   └─ Ignores non-members or excluded parties
@@ -1060,14 +1068,18 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │       }
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Accepts publication intents only from locally produced events
+  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
+  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
+  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
+  ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
+     → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │
@@ -1297,6 +1309,20 @@ During restart, `ComputeEffectGate` observes replay before compute workers are e
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
 E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
 durable event order or audit state.
+
+`CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
+repository stores the pending phase, assigned party, absolute deadline, and locally unresponsive
+party IDs. An unchanged phase and assignment preserve the original deadline. A new assignment gets
+the full budget. `EffectsEnabled` re-arms the remaining duration or processes an overdue deadline
+immediately. Canonical phase progress cancels the old timer and clears the phase-local skip set.
+
+The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
+`PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
+coalesces the intent by E3, waits for `EffectsEnabled`, checks chain state before submitting, and
+keeps retryable failures for a later attempt. `E3RequestComplete` does not erase an unfinished
+publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
+not gossiped or returned by historical peer sync; only the producing node can create this EVM write
+intent.
 
 ### What the compute-provider crate guarantees, and what an E3 program decides
 

@@ -79,30 +79,20 @@ impl Committee {
         self.members.is_empty()
     }
 
-    pub fn is_active_aggregator(&self, my_addr: &str, expelled: &[u64]) -> bool {
-        (0..self.members.len() as u64)
-            .find(|party_id| !expelled.contains(party_id))
-            .and_then(|party_id| self.members.get(party_id as usize))
-            .map(|addr| addr.eq_ignore_ascii_case(my_addr))
-            .unwrap_or(false)
-    }
-
     /// The party_id of the active aggregator given a set of `skipped` party_ids
     /// (the union of on-chain-expelled members and any locally presumed-down
     /// members during failover). Returns the lowest party_id not in `skipped`,
     /// or `None` if every member is skipped.
     ///
-    /// Because the committee order is deterministic for all nodes and `skipped`
-    /// is derived from shared signals, every node computes the same aggregator,
-    /// so failover needs no leader-election protocol.
+    /// Because the committee order is deterministic for all nodes, the same
+    /// skip set produces the same aggregator without a leader-election round.
     pub fn active_aggregator_party_id(&self, skipped: &[u64]) -> Option<u64> {
         (0..self.members.len() as u64).find(|party_id| !skipped.contains(party_id))
     }
 
     /// Whether `my_addr` is the active aggregator once both on-chain-expelled and
-    /// locally-presumed-unresponsive members are skipped. This is the failover
-    /// generalisation of [`Self::is_active_aggregator`]: passing an empty
-    /// `unresponsive` slice reproduces the original behaviour exactly.
+    /// locally-presumed-unresponsive members are skipped. An empty
+    /// `unresponsive` slice selects from on-chain eligibility only.
     pub fn effective_aggregator(
         &self,
         my_addr: &str,
@@ -141,21 +131,6 @@ impl Committee {
 mod tests {
     use super::Committee;
 
-    #[test]
-    fn picks_lowest_non_expelled_party_in_sorted_committee_as_aggregator() {
-        // Committee order is canonical address-ascending before it is stored.
-        let committee = Committee::new(vec![
-            "0xbbb".to_string(),
-            "0xccc".to_string(),
-            "0xaaa".to_string(),
-        ]);
-
-        assert!(committee.is_active_aggregator("0xBbB", &[]));
-        assert!(committee.is_active_aggregator("0xccc", &[0]));
-        assert!(committee.is_active_aggregator("0xaaa", &[0, 1]));
-        assert!(!committee.is_active_aggregator("0xaaa", &[0, 1, 2]));
-    }
-
     fn committee() -> Committee {
         Committee::new(vec![
             "0xbbb".to_string(),
@@ -165,32 +140,17 @@ mod tests {
     }
 
     #[test]
-    fn effective_aggregator_promotes_next_standby_when_primary_unresponsive() {
+    fn effective_aggregator_promotes_next_standby_when_current_party_is_unresponsive() {
         let c = committee();
         assert!(c.effective_aggregator("0xbbb", &[], &[]));
         assert!(!c.effective_aggregator("0xccc", &[], &[]));
 
-        // Primary (party 0) presumed unresponsive: party 1 (0xccc) takes over.
+        // Party 0 is presumed unresponsive, so party 1 takes over.
         assert!(!c.effective_aggregator("0xbbb", &[], &[0]));
         assert!(c.effective_aggregator("0xccc", &[], &[0]));
 
         // Expelled and unresponsive combine: 0 expelled, 1 unresponsive -> party 2.
         assert!(c.effective_aggregator("0xaaa", &[0], &[1]));
-    }
-
-    #[test]
-    fn effective_aggregator_matches_legacy_when_no_unresponsive() {
-        let c = committee();
-        for (addr, expelled) in [
-            ("0xbbb", &[][..]),
-            ("0xccc", &[0][..]),
-            ("0xaaa", &[0, 1][..]),
-        ] {
-            assert_eq!(
-                c.effective_aggregator(addr, expelled, &[]),
-                c.is_active_aggregator(addr, expelled),
-            );
-        }
     }
 
     #[test]

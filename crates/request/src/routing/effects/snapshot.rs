@@ -2,27 +2,34 @@
 
 use super::*;
 use crate::{ContextRepositoryFactory, DkgFoldAttestationContextRepositoryFactory};
+use anyhow::Context as _;
 use e3_data::{Repositories, RepositoriesFactory};
 use e3_events::{DkgFoldAttestationContext, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION};
 use tracing::warn;
 
 #[derive(Serialize, Deserialize)]
 pub struct E3RouterSnapshot {
-    pub(in crate::actors::router) contexts: Vec<E3id>,
-    pub(in crate::actors::router) completed: HashSet<E3id>,
+    pub(crate) contexts: Vec<E3id>,
+    pub(crate) completed: HashSet<E3id>,
 }
 
 pub async fn load_dkg_fold_attestation_contexts(
     repositories: &Repositories,
 ) -> Result<HashMap<E3id, DkgFoldAttestationContext>> {
     let router = repositories.router();
-    let Some(snapshot) = router.read().await? else {
-        return Ok(HashMap::new());
+    let context_ids = match repositories.request_router_checkpoint().read().await? {
+        Some(checkpoint) => checkpoint.contexts,
+        None => {
+            let Some(snapshot) = router.read().await? else {
+                return Ok(HashMap::new());
+            };
+            snapshot.contexts
+        }
     };
 
     let context_repositories = router.repositories();
     let mut contexts = HashMap::new();
-    for e3_id in snapshot.contexts {
+    for e3_id in context_ids {
         let Some(event) = context_repositories
             .context(&e3_id)
             .repositories()
@@ -58,12 +65,6 @@ impl Snapshot for E3Router {
     }
 }
 
-impl Checkpoint for E3Router {
-    fn repository(&self) -> &Repository<E3RouterSnapshot> {
-        &self.store
-    }
-}
-
 #[async_trait]
 impl FromSnapshotWithParams for E3Router {
     type Params = E3RouterParams;
@@ -73,9 +74,15 @@ impl FromSnapshotWithParams for E3Router {
         let repositories = params.store.repositories();
 
         for e3_id in snapshot.contexts {
-            let Some(context_snapshot) = repositories.context(&e3_id).read().await? else {
-                continue;
-            };
+            let context_snapshot = repositories
+                .context(&e3_id)
+                .read()
+                .await?
+                .with_context(|| {
+                    format!(
+                        "request router snapshot references E3 {e3_id}, but its context snapshot is missing"
+                    )
+                })?;
 
             contexts.insert(
                 e3_id.clone(),
@@ -98,6 +105,8 @@ impl FromSnapshotWithParams for E3Router {
             buffer: EventBuffer::default(),
             bus: params.bus,
             store: params.store,
+            replay_cursors: params.replay_cursors,
+            recovery_store: params.recovery_store,
         })
     }
 }

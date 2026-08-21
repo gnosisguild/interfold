@@ -6,7 +6,7 @@
 
 import { PollOption, PollRequestResult, PollResult } from '@/model/poll.model'
 import { VoteStateLite } from '@/model/vote.model'
-import { Chain, sepolia, anvil } from 'viem/chains'
+import { Chain, sepolia, anvil, mainnet } from 'viem/chains'
 
 export const markWinner = (options: PollOption[]) => {
   const highestVoteCount = Math.max(...options.map((o) => o.votes))
@@ -26,7 +26,52 @@ export const getChain = (): Chain => {
   const chainId = Number.parseInt(String(import.meta.env.VITE_CHAIN_ID ?? ''), 10)
   if (chainId === anvil.id) return anvil
   if (chainId === sepolia.id) return sepolia
+  if (chainId === mainnet.id) return mainnet
   return import.meta.env.DEV ? anvil : sepolia
+}
+
+/**
+ * Whether votes are submitted straight from the voter's wallet instead of through the relay.
+ *
+ * Always true on mainnet, where the relay refuses to pay gas for callers — `publishInput` is
+ * permissionless, so the wallet can call it directly. `VITE_DIRECT_VOTE=true` forces the direct
+ * path on any network, for deployments that run without a relay.
+ *
+ * The trade is privacy, not correctness: a direct transaction publishes the submitter's address,
+ * so a voter is seen writing to their own slot and a masker is seen masking. The proof still
+ * hides *what* was submitted, but the relay's uniform sender is what hid *who* — prefer the relay
+ * wherever it runs.
+ */
+export const isDirectVoteEnabled = (): boolean => {
+  const chain = getChain()
+
+  return chain.id === mainnet.id || import.meta.env.VITE_DIRECT_VOTE === 'true'
+}
+
+/**
+ * The block-explorer URL for a transaction on the configured chain, or undefined where the chain
+ * has no explorer (anvil).
+ */
+export const txExplorerUrl = (txHash: string): string | undefined => {
+  const explorer = getChain().blockExplorers?.default?.url
+
+  return explorer ? `${explorer}/tx/${txHash}` : undefined
+}
+
+/**
+ * Whether the test-token mint is available.
+ *
+ * Derived from the chain, not only from configuration: minting is a dev/testnet convenience, and
+ * a mainnet build that forgot to flip a flag must not offer it — mainnet tokens are not mintable
+ * from a faucet button, and the dead button would only fail against the real token. Anvil carries
+ * no `testnet` marker in viem, so it is allowed by id. `VITE_ENABLE_TEST_TOKEN_MINT=false` turns
+ * the button off on test networks too, for deployments that want the faucet hidden.
+ */
+export const isTestTokenMintEnabled = (): boolean => {
+  const chain = getChain()
+  const isTestNetwork = chain.id === anvil.id || chain.testnet === true
+
+  return isTestNetwork && import.meta.env.VITE_ENABLE_TEST_TOKEN_MINT !== 'false'
 }
 
 export const formatDate = (isoDateString: string): string => {

@@ -46,21 +46,53 @@ impl ReplaySpool {
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
         cursors: std::collections::HashMap<AggregateId, u64>,
     ) -> Result<Self> {
-        let mut ordered_cursors: Vec<_> = cursors.into_iter().collect();
-        ordered_cursors.sort_by_key(|(aggregate_id, _)| *aggregate_id);
+        let ranges = cursors
+            .into_iter()
+            .map(|(aggregate_id, cursor)| (aggregate_id, first_replay_sequence(cursor), None))
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
+    /// Load complete EventStore prefixes through the supplied aggregate cursors.
+    pub(crate) async fn load_bounded(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        end_cursors: std::collections::HashMap<AggregateId, u64>,
+    ) -> Result<Self> {
+        let ranges = end_cursors
+            .into_iter()
+            .filter(|(_, end_cursor)| *end_cursor > 0)
+            .map(|(aggregate_id, end_cursor)| (aggregate_id, 1, Some(end_cursor)))
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
+    async fn load_ranges(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        mut ranges: Vec<(AggregateId, u64, Option<u64>)>,
+    ) -> Result<Self> {
+        ranges.sort_by_key(|(aggregate_id, _, _)| *aggregate_id);
 
         let mut runs = Vec::new();
         let mut total_events = 0usize;
         let mut max_timestamp: Option<u128> = None;
 
-        for (aggregate_id, snapshot_cursor) in ordered_cursors {
-            // Event-log sequence numbers are one-based while a fresh snapshot uses zero.
-            // Querying zero is supported by the legacy store API, but it still returns event
-            // sequence one; normalize here so integrity validation has one unambiguous cursor.
-            let mut cursor = first_replay_sequence(snapshot_cursor);
+        for (aggregate_id, first_cursor, end_cursor) in ranges {
+            let mut cursor = first_cursor;
             loop {
+                if end_cursor.is_some_and(|end| cursor > end) {
+                    break;
+                }
+
                 let mut page = query_page(eventstore, aggregate_id, cursor).await?;
                 if page.is_empty() {
+                    if let Some(end) = end_cursor {
+                        bail!(
+                            "EventStore ended at sequence {} for aggregate {}, before required sequence {}",
+                            cursor.saturating_sub(1),
+                            aggregate_id,
+                            end
+                        );
+                    }
                     break;
                 }
                 if page.len() > REPLAY_QUERY_PAGE_SIZE {
@@ -92,18 +124,39 @@ impl ReplaySpool {
                     expected_sequence = expected_sequence
                         .checked_add(1)
                         .context("EventStore replay sequence overflow")?;
-                    max_timestamp = Some(max_timestamp.map_or(event.ts(), |ts| ts.max(event.ts())));
                 }
 
-                cursor = expected_sequence;
+                let page_was_full = page.len() == REPLAY_QUERY_PAGE_SIZE;
+                if let Some(end) = end_cursor {
+                    page.retain(|event| event.seq() <= end);
+                }
+                for event in &page {
+                    max_timestamp = Some(max_timestamp.map_or(event.ts(), |ts| ts.max(event.ts())));
+                }
+                cursor = page
+                    .last()
+                    .map(|event| event.seq().saturating_add(1))
+                    .unwrap_or(expected_sequence);
                 total_events = total_events
                     .checked_add(page.len())
                     .context("EventStore replay event count overflow")?;
-                let page_was_full = page.len() == REPLAY_QUERY_PAGE_SIZE;
-                page.sort_by_key(event_order_key);
-                runs.push(write_run(page)?);
+                if !page.is_empty() {
+                    page.sort_by_key(event_order_key);
+                    runs.push(write_run(page)?);
+                }
 
+                if end_cursor.is_some_and(|end| cursor > end) {
+                    break;
+                }
                 if !page_was_full {
+                    if let Some(end) = end_cursor {
+                        bail!(
+                            "EventStore ended at sequence {} for aggregate {}, before required sequence {}",
+                            cursor.saturating_sub(1),
+                            aggregate_id,
+                            end
+                        );
+                    }
                     break;
                 }
             }
@@ -119,6 +172,18 @@ impl ReplaySpool {
 
     pub(crate) fn total_events(&self) -> usize {
         self.total_events
+    }
+
+    pub(crate) fn project(
+        self,
+        mut apply: impl FnMut(&InterfoldEvent) -> Result<()>,
+    ) -> Result<usize> {
+        let total_events = self.total_events;
+        let mut merger = RunMerger::new(&self.runs)?;
+        while let Some(event) = merger.next_event()? {
+            apply(&event)?;
+        }
+        Ok(total_events)
     }
 
     pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {
