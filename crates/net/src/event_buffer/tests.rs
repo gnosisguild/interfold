@@ -4,16 +4,73 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use super::*;
-use crate::events::{GossipData, NetEvent, OutgoingRequestSucceeded, ProtocolResponse};
+use crate::{
+    direct_responder::{ChannelType, DirectResponder},
+    events::{
+        GossipData, IncomingRequest, NetEvent, OutgoingRequestFailed, OutgoingRequestSucceeded,
+        PeerRejectionKind, ProtocolResponse,
+    },
+};
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{CorrelationId, EventPublisher, SyncEnded};
+use libp2p::{
+    gossipsub::TopicHash,
+    swarm::{ConnectionId, DialError},
+    PeerId,
+};
 use tokio::{
-    sync::broadcast,
+    sync::{broadcast, mpsc},
     time::{sleep, timeout},
 };
+
+fn sync_and_connection_control_events() -> Vec<NetEvent> {
+    let (command_tx, _command_rx) = mpsc::channel(1);
+    vec![
+        NetEvent::DialError {
+            error: Arc::new(DialError::NoAddresses),
+        },
+        NetEvent::ConnectionEstablished {
+            connection_id: ConnectionId::new_unchecked(1),
+        },
+        NetEvent::PeerRejected {
+            connection_id: ConnectionId::new_unchecked(2),
+            kind: PeerRejectionKind::Transient,
+            reason: "test rejection".to_owned(),
+        },
+        NetEvent::OutgoingConnectionError {
+            connection_id: ConnectionId::new_unchecked(3),
+            error: Arc::new(DialError::NoAddresses),
+        },
+        NetEvent::GossipSubscribed {
+            count: 1,
+            topic: TopicHash::from_raw("test-topic"),
+        },
+        NetEvent::IncomingRequest(IncomingRequest {
+            peer: PeerId::random(),
+            responder: DirectResponder::new(
+                1_u64,
+                ChannelType::Test("test-request".to_owned()),
+                &command_tx,
+            )
+            .with_request(vec![1, 2, 3]),
+        }),
+        NetEvent::OutgoingRequestSucceeded(OutgoingRequestSucceeded {
+            payload: ProtocolResponse::Ok(Vec::new()),
+            correlation_id: CorrelationId::new(),
+        }),
+        NetEvent::OutgoingRequestFailed(OutgoingRequestFailed {
+            correlation_id: CorrelationId::new(),
+            error: "test request failure".to_owned(),
+        }),
+        NetEvent::AllPeersDialed {
+            connected: 1,
+            total: 1,
+        },
+    ]
+}
 
 #[actix::test]
 async fn test_buffers_until_sync_ended() -> Result<()> {
@@ -130,18 +187,23 @@ async fn sync_control_flood_does_not_consume_the_application_buffer() -> Result<
 
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("net-control-flood");
-    let (input_tx, input_rx) = broadcast::channel(CONTROL_EVENTS.next_power_of_two());
+    let (input_tx, input_rx) = broadcast::channel(1_024);
     let (mut output_rx, handle) =
         NetEventBuffer::setup_with_limits(&bus, &input_rx, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
 
-    for _ in 0..CONTROL_EVENTS {
-        input_tx.send(NetEvent::OutgoingRequestSucceeded(
-            OutgoingRequestSucceeded {
-                payload: ProtocolResponse::Ok(Vec::new()),
-                correlation_id: CorrelationId::new(),
-            },
-        ))?;
-    }
+    let control_events = sync_and_connection_control_events();
+    assert!(control_events
+        .iter()
+        .all(|event| !event.requires_application_delivery()));
+
+    let producer = actix::spawn(async move {
+        for index in 0..CONTROL_EVENTS {
+            input_tx.send(control_events[index % control_events.len()].clone())?;
+            tokio::task::yield_now().await;
+        }
+        anyhow::Ok(input_tx)
+    });
+    let input_tx = producer.await??;
     input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![7])))?;
     bus.publish_without_context(SyncEnded::new())?;
 

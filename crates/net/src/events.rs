@@ -331,16 +331,25 @@ impl NetEvent {
     /// Historical-sync and connection-control events use the raw network receiver and must not
     /// also occupy the startup application buffer.
     pub(crate) fn requires_application_delivery(&self) -> bool {
-        matches!(
-            self,
+        // Keep this match exhaustive. Each new event must select one delivery path.
+        match self {
             Self::GossipData(_)
-                | Self::GossipPublishError { .. }
-                | Self::GossipPublished { .. }
-                | Self::DhtGetRecordSucceeded { .. }
-                | Self::DhtPutRecordSucceeded { .. }
-                | Self::DhtGetRecordError { .. }
-                | Self::DhtPutRecordError { .. }
-        )
+            | Self::GossipPublishError { .. }
+            | Self::GossipPublished { .. }
+            | Self::DhtGetRecordSucceeded { .. }
+            | Self::DhtPutRecordSucceeded { .. }
+            | Self::DhtGetRecordError { .. }
+            | Self::DhtPutRecordError { .. } => true,
+            Self::DialError { .. }
+            | Self::ConnectionEstablished { .. }
+            | Self::PeerRejected { .. }
+            | Self::OutgoingConnectionError { .. }
+            | Self::GossipSubscribed { .. }
+            | Self::IncomingRequest(_)
+            | Self::OutgoingRequestSucceeded(_)
+            | Self::OutgoingRequestFailed(_)
+            | Self::AllPeersDialed { .. } => false,
+        }
     }
 
     /// Conservative size used by the bounded startup buffer.
