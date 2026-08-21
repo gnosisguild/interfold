@@ -70,7 +70,10 @@ where
                             info!("{}: error, will retry: {}", op_name, display_error);
                             Err(RetryError::Retry(e))
                         } else {
-                            warn!("{}: permanent error, not retrying: {}", op_name, display_error);
+                            warn!(
+                                "{}: permanent error, not retrying: {}",
+                                op_name, display_error
+                            );
                             Err(RetryError::Failure(e))
                         }
                     }
