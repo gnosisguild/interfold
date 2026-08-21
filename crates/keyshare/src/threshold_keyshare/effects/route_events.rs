@@ -78,10 +78,18 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             );
                             return;
                         }
-                        if !state
+                        if data.party_id >= state.threshold_n || data.party_id == state.party_id {
+                            warn!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping DecryptionKeyShared with an invalid sender party"
+                            );
+                            return;
+                        }
+                        if state
                             .honest_parties
                             .as_ref()
-                            .is_some_and(|parties| parties.contains(&data.party_id))
+                            .is_some_and(|parties| !parties.contains(&data.party_id))
                         {
                             warn!(
                                 party_id = data.party_id,

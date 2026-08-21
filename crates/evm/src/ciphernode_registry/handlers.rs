@@ -334,7 +334,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitCommitteeFina
                     true
                 }
                 Ok(TxOutcome::AlreadySettled) => {
-                    info!(e3_id = %e3_id, "Committee finalized by another sender; nothing left to do");
+                    info!(e3_id = %e3_id, "Committee finalization already reached a terminal chain state");
                     true
                 }
                 Err(err) => {

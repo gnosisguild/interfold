@@ -86,18 +86,18 @@ impl ThresholdKeyshare {
 
         let (sk_poly_sum, es_poly_sum) = (output.sk_poly_sum, output.es_poly_sum);
 
-        // Extract C4 data from the actor (stored by proceed_with_decryption_key_calculation)
+        // Keep C4 inputs until the recovery record and phase transition succeed.
         let (sk_request, esm_requests) = self
             .pending
             .share_decryption_data
-            .take()
+            .clone()
             .ok_or_else(|| anyhow!("No pending share decryption data — CalculateDecryptionKey responded before proof requests were built"))?;
 
-        // Take early shares from the actor before transitioning
+        // Keep early shares until they are handed to the collector.
         let early_shares = self
             .pending
             .c4_verification_shares
-            .take()
+            .clone()
             .unwrap_or_default();
 
         // Accept the C4 proof intent before advancing the primary phase. A crash cannot then
@@ -168,6 +168,9 @@ impl ThresholdKeyshare {
                 collector.do_send(TypedEvent::new(share, ec.clone()));
             }
         }
+
+        self.pending.share_decryption_data = None;
+        self.pending.c4_verification_shares = None;
 
         Ok(())
     }

@@ -15,7 +15,9 @@ use crate::domain::ciphernode_registry_events::{
     decode_committee_request, derive_sortition_seed, extractor, extractor_with_sortition_seed,
     legacy_sortition_seed,
 };
-use crate::domain::error_decoder::{decode_error_from_str, format_evm_error};
+use crate::domain::error_decoder::{
+    contains_error_selector, decode_error_from_str, format_evm_error,
+};
 use crate::domain::log_timestamp::from_log_chain_id_to_ts;
 use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{
@@ -28,6 +30,7 @@ use alloy::{
     primitives::{Address, Bytes, B256, U256},
     providers::{Provider, WalletProvider},
     rpc::types::TransactionReceipt,
+    sol_types::SolError,
 };
 use anyhow::{Context as _, Result};
 use e3_events::{

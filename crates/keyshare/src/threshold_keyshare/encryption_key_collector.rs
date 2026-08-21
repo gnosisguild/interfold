@@ -73,14 +73,16 @@ impl EncryptionKeyCollector {
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
-        let collector = Self {
-            collection: EncryptionKeyCollection::new(e3_id.clone(), total),
-            e3_id,
-            parent,
-            timeout,
-            timeout_handle: None,
-        };
-        collector.start()
+        Self::create(|ctx| {
+            ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+            Self {
+                collection: EncryptionKeyCollection::new(e3_id.clone(), total),
+                e3_id,
+                parent,
+                timeout,
+                timeout_handle: None,
+            }
+        })
     }
 
     fn complete(
@@ -105,7 +107,6 @@ impl Actor for EncryptionKeyCollector {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         info!(
             e3_id = %self.e3_id,
             "EncryptionKeyCollector started, scheduling timeout in {:?}",
