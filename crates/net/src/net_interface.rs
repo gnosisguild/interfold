@@ -929,12 +929,21 @@ async fn process_swarm_event(
                 error,
             },
         )) => {
-            // Routine during peer churn (a connection closes while a request is in
-            // flight); the remote side retries against another peer.
-            debug!(
-                "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
-                peer, connection_id, request_id, error
-            );
+            // ConnectionClosed is routine during peer churn (the connection closes while
+            // a request is in flight; the remote side retries against another peer). The
+            // other variants point at local faults: a dropped ResponseChannel, a protocol
+            // mismatch, an I/O error, or a handler too slow to respond.
+            if matches!(error, request_response::InboundFailure::ConnectionClosed) {
+                debug!(
+                    "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
+                    peer, connection_id, request_id, error
+                );
+            } else {
+                warn!(
+                    "Inbound request failed: peer={}, connection={}, id={}, error={:?}",
+                    peer, connection_id, request_id, error
+                );
+            }
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
@@ -1226,9 +1235,18 @@ fn handle_dial(
     match swarm.dial(dial_opts) {
         Ok(v) => trace!("Dial returned {:?}", v),
         Err(error) => {
-            // The DialError event carries the failure to the dialer, which logs one
-            // warn-level summary and keeps retrying in the background.
-            debug!("Dialing error! {}", error);
+            // Expected outcomes of concurrent dials (already connected or dialing,
+            // aborted, over a connection limit) stay at debug; the dialer logs one
+            // warn-level summary for retryable peers. Anything else is a permanent
+            // local configuration error and must stay visible.
+            match &error {
+                DialError::DialPeerConditionFalse(_)
+                | DialError::Aborted
+                | DialError::Denied { .. } => {
+                    debug!("Dialing error! {}", error);
+                }
+                _ => warn!("Dialing error! {}", error),
+            }
             event_tx.send(NetEvent::DialError {
                 error: error.into(),
             })?;
