@@ -307,8 +307,15 @@ To use other values, open a shell in the container, export the variables there, 
 ./scripts/build.sh --push
 ```
 
-CI builds the container in the `build_e3_support_risc0` job of `.github/workflows/ci.yml`. The
-`build-e3-support-release` job in `.github/workflows/releases.yml` builds release images.
+The CI workflow builds the container for applicable pull requests without publishing it. A manual CI
+run on `main` publishes the nine-character commit tag and the `main` tag.
+
+Each release publishes the version tag, the nine-character commit tag, and the `latest` tag. The CLI
+uses its embedded commit tag. The CLI pulls the matching image when the image is not available
+locally.
+
+Set `E3_SUPPORT_IMAGE_REPOSITORY` to use an authorized mirror instead of the default GitHub
+Container Registry repository.
 
 ## Development
 

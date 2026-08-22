@@ -18,7 +18,10 @@ use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
-use crate::events::{NetCommand, NetEvent, PeerRejectionKind};
+use crate::{
+    events::{NetCommand, NetEvent, PeerRejectionKind},
+    NetEventSender,
+};
 use e3_utils::{to_retry, OnceTake, RetryError};
 
 const INITIAL_DIAL_ATTEMPTS: u32 = 3;
@@ -36,7 +39,7 @@ enum InitialDialError {
 /// Dial one address during the bounded startup phase.
 async fn dial_multiaddr(
     cmd_tx: &mpsc::Sender<NetCommand>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     multiaddr_str: &str,
 ) -> std::result::Result<(), InitialDialError> {
     let multiaddr: Multiaddr = multiaddr_str
@@ -76,7 +79,7 @@ async fn dial_multiaddr(
 
 async fn retry_multiaddr_in_background(
     cmd_tx: mpsc::Sender<NetCommand>,
-    event_tx: broadcast::Sender<NetEvent>,
+    event_tx: NetEventSender,
     multiaddr_str: String,
 ) {
     let Ok(multiaddr) = multiaddr_str.parse() else {
@@ -118,7 +121,7 @@ async fn retry_multiaddr_in_background(
 /// The number of peers that were successfully connected to.
 pub async fn dial_peers(
     cmd_tx: &mpsc::Sender<NetCommand>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     peers: &[String],
 ) -> Result<usize> {
     let futures: Vec<_> = peers
@@ -166,7 +169,7 @@ pub async fn dial_peers(
 /// Attempt a connection with retries to a multiaddr.
 async fn attempt_connection(
     cmd_tx: &mpsc::Sender<NetCommand>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     multiaddr: &Multiaddr,
 ) -> Result<(), RetryError> {
     let mut event_rx = event_tx.subscribe();

@@ -7,7 +7,7 @@
 use super::*;
 use crate::direct_requester::DirectRequesterTester;
 use crate::events::{NetCommand, NetEvent, PeerTarget};
-use std::sync::Arc;
+use crate::net_interface_handle::NetEventSubscriber;
 use tokio::sync::{broadcast, mpsc};
 
 #[test]
@@ -39,8 +39,8 @@ fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
 #[tokio::test]
 async fn test_fetch_all_batched_events() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
 
@@ -78,8 +78,8 @@ async fn test_fetch_all_batched_events() {
 #[tokio::test]
 async fn test_no_duplicate_events_across_batches() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
 
@@ -129,8 +129,8 @@ async fn test_no_duplicate_events_across_batches() {
 #[tokio::test]
 async fn test_cursor_correctly_excludes_last_event_on_batch_boundary() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
 
@@ -167,8 +167,8 @@ async fn test_cursor_correctly_excludes_last_event_on_batch_boundary() {
 #[tokio::test]
 async fn test_non_advancing_cursor_is_rejected() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
     let batch = EventBatch {
@@ -198,8 +198,8 @@ async fn test_non_advancing_cursor_is_rejected() {
 #[tokio::test]
 async fn test_single_batch_with_limit_exactly_matched_returns_done() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
 
@@ -227,8 +227,8 @@ async fn test_single_batch_with_limit_exactly_matched_returns_done() {
 #[tokio::test]
 async fn test_three_batches_with_cursor_continuity() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = Arc::new(net_events_rx);
+    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
 

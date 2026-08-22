@@ -32,8 +32,8 @@ use e3_keyshare::ext::ThresholdKeyshareExtension;
 use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
-    create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
-    NetRepositoryFactory, NetworkPolicy,
+    create_channel_bridge_with_application_event_capacity, setup_libp2p_keypair,
+    setup_net_interface, setup_net_with_limits, NetRepositoryFactory, NetworkPolicy,
 };
 use e3_request::{
     ensure_request_router_checkpoint, load_dkg_fold_attestation_contexts, E3LifecycleCoordinator,
@@ -966,10 +966,12 @@ impl CiphernodeBuilder {
                 keypair,
                 net_config.peers.clone(),
                 net_config.quic_port,
+                self.max_buffered_net_events,
             )?;
             Ok((peer_id, interface, NetInterfaceKind::Libp2p))
         } else {
-            let (interface, channel_bridge) = create_channel_bridge();
+            let (interface, channel_bridge) =
+                create_channel_bridge_with_application_event_capacity(self.max_buffered_net_events);
             let peer_id = PeerId::random();
             Ok((
                 peer_id,

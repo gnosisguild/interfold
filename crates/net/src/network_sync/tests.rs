@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     direct_responder::ChannelType,
     events::{IncomingRequest, NetCommand},
@@ -49,8 +50,8 @@ fn manager_with_recording_store(
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, rx) = mpsc::channel::<NetCommand>(100);
-    let (_evt_tx, evt_rx) = broadcast::channel::<NetEvent>(100);
-    let evt_rx = Arc::new(evt_rx);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = RecordingEventStore { queries: query_tx }
         .start()
         .recipient();
@@ -168,8 +169,8 @@ fn historical_sync_cursor_keeps_only_active_network_chains() {
 #[actix::test]
 async fn local_only_cursor_completes_without_a_peer_request() {
     let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(1);
-    let (_event_tx, event_rx) = broadcast::channel::<NetEvent>(1);
-    let event_rx = Arc::new(event_rx);
+    let (event_tx, _event_rx) = broadcast::channel::<NetEvent>(1);
+    let event_rx = NetEventSubscriber::from(&event_tx);
     let (response_tx, response_rx) =
         e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
     let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(0), 10)]));
@@ -201,8 +202,8 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
-    let (_evt_tx, evt_rx) = broadcast::channel::<NetEvent>(100);
-    let evt_rx = Arc::new(evt_rx);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = NoopEventStore.start().recipient();
 
     let mut mgr = NetSyncManager::new(

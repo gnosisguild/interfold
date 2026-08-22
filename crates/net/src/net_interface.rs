@@ -22,7 +22,7 @@ use crate::{
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
     keypair::Libp2pKeypair,
-    net_interface_handle::NetInterfaceHandle,
+    net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
     NetworkPolicy, NetworkStatus,
 };
@@ -46,7 +46,7 @@ use libp2p::{
         self, cbor, Event as RequestResponseEvent, Message as RequestResponseMessage,
         ProtocolSupport,
     },
-    swarm::{dial_opts::DialOpts, DialError, NetworkBehaviour, SwarmEvent},
+    swarm::{dial_opts::DialOpts, DialError, ListenError, NetworkBehaviour, SwarmEvent},
     Multiaddr, Swarm,
 };
 use rand::prelude::IteratorRandom;
@@ -57,11 +57,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{
-    select,
-    sync::{broadcast, mpsc},
-    time::MissedTickBehavior,
-};
+use tokio::{select, sync::mpsc, time::MissedTickBehavior};
 use tracing::{debug, error, info, trace, warn};
 
 const MAX_KADEMLIA_PAYLOAD_BYTES: usize = 26 * 1024 * 1024;
@@ -71,8 +67,9 @@ const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
 const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
-const EVENT_CHANNEL_SIZE: usize = 1000;
+pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
+const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
 
 type GossipBehaviour =
     gossipsub::Behaviour<gossipsub::IdentityTransform, gossipsub::WhitelistSubscriptionFilter>;
@@ -178,6 +175,26 @@ fn is_unspecified_addr(addr: &Multiaddr) -> bool {
     })
 }
 
+fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
+    let ListenError::Denied { cause } = error else {
+        return false;
+    };
+    let mut current: &(dyn std::error::Error + 'static) = cause;
+    loop {
+        if let Some(exceeded) = current.downcast_ref::<connection_limits::Exceeded>() {
+            // libp2p-connection-limits 0.6.0 keeps the limit kind private. Cargo.lock pins this
+            // dependency, and the regression test verifies its per-peer display text.
+            return exceeded
+                .to_string()
+                .contains(LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT);
+        }
+        let Some(source) = current.source() else {
+            return false;
+        };
+        current = source;
+    }
+}
+
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
     gossipsub: GossipBehaviour,
@@ -199,8 +216,8 @@ pub struct Libp2pNetInterface {
     udp_port: Option<u16>,
     /// The gossipsub topic that the peer should listen on
     topic: gossipsub::IdentTopic,
-    /// Broadcast channel to report NetEvents to listeners
-    event_tx: broadcast::Sender<NetEvent>,
+    /// Routes NetEvents to the raw and application channels.
+    event_tx: NetEventSender,
     /// Transmission channel to send NetCommands to the Libp2pNetInterface
     cmd_tx: mpsc::Sender<NetCommand>,
     /// Local receiver to process NetCommands from
@@ -218,7 +235,26 @@ impl Libp2pNetInterface {
         udp_port: Option<u16>,
         network: NetworkPolicy,
     ) -> Result<Self> {
-        let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
+        Self::new_with_application_event_capacity(
+            id,
+            peers,
+            udp_port,
+            network,
+            crate::DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        )
+    }
+
+    pub(crate) fn new_with_application_event_capacity(
+        id: Libp2pKeypair,
+        peers: Vec<String>,
+        udp_port: Option<u16>,
+        network: NetworkPolicy,
+        application_event_capacity: usize,
+    ) -> Result<Self> {
+        if application_event_capacity == 0 {
+            bail!("application event channel capacity must be greater than zero");
+        }
+        let event_tx = NetEventSender::new(EVENT_CHANNEL_SIZE, application_event_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_SIZE);
         let status = NetworkStatus::new(peers.len());
 
@@ -246,11 +282,7 @@ impl Libp2pNetInterface {
     }
 
     pub fn handle(&self) -> NetInterfaceHandle {
-        NetInterfaceHandle::new(
-            self.cmd_tx.clone(),
-            self.event_tx.subscribe(),
-            self.status.clone(),
-        )
+        NetInterfaceHandle::new(self.cmd_tx.clone(), &self.event_tx, self.status.clone())
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -479,7 +511,7 @@ fn create_behaviour(
 /// Process all swarm events
 async fn process_swarm_event(
     swarm: &mut Swarm<NodeBehaviour>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     cmd_tx: &mpsc::Sender<NetCommand>,
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
@@ -623,17 +655,16 @@ async fn process_swarm_event(
         }
 
         SwarmEvent::IncomingConnectionError { error, .. } => {
+            let is_redundant_connection = is_redundant_peer_connection_denial(&error);
             let error_str = format!("{:#}", anyhow::Error::from(error));
             // Downgrade benign handshake failures to debug:
             // - "Local peer ID": self-dial attempt
             // - "aborted by peer": simultaneous connection dedup (both sides dialed,
             //   libp2p keeps one connection and the other side aborts the handshake)
-            // - "connection limit exceeded": the connection_limits behaviour denied a dial
-            //   from a peer that already holds its allowed connections; the peer stays
-            //   connected and loses nothing
-            if error_str.contains("Local peer ID")
+            // - per-peer connection-limit denial: an existing peer opened a redundant connection
+            if is_redundant_connection
+                || error_str.contains("Local peer ID")
                 || error_str.contains("aborted by peer")
-                || error_str.contains("connection limit exceeded")
             {
                 debug!("{}", error_str);
             } else {
@@ -1104,7 +1135,7 @@ async fn process_swarm_event(
 /// Process all swarm commands except shutdown.
 async fn process_swarm_command(
     swarm: &mut Swarm<NodeBehaviour>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     correlator: &mut Correlator,
     peer_admission: &PeerAdmission,
     network: &NetworkPolicy,
@@ -1184,7 +1215,7 @@ async fn process_swarm_command(
 
 fn handle_gossip_publish(
     swarm: &mut Swarm<NodeBehaviour>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     network: &NetworkPolicy,
     data: GossipData,
     topic: String,
@@ -1228,7 +1259,7 @@ fn handle_gossip_publish(
 
 fn handle_dial(
     swarm: &mut Swarm<NodeBehaviour>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     dial_opts: DialOpts,
 ) -> Result<()> {
     trace!("DIAL: {:?}", dial_opts);
@@ -1312,7 +1343,7 @@ fn prune_dht_peer_quotas(
 
 fn handle_put_record(
     swarm: &mut Swarm<NodeBehaviour>,
-    event_tx: &broadcast::Sender<NetEvent>,
+    event_tx: &NetEventSender,
     correlator: &mut Correlator,
     correlation_id: CorrelationId,
     key: ContentHash,
@@ -1466,9 +1497,11 @@ fn handle_response(swarm: &mut Swarm<NodeBehaviour>, responder: DirectResponder)
 
 #[cfg(test)]
 mod tests {
+    use libp2p::connection_limits::{Behaviour, ConnectionLimits};
     use libp2p::kad::store::{MemoryStore, MemoryStoreConfig, RecordStore};
     use libp2p::kad::{Record, RecordKey};
-    use libp2p::PeerId;
+    use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
+    use libp2p::{Multiaddr, PeerId};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1514,6 +1547,49 @@ mod tests {
         );
         // Idempotent on addresses without a /p2p/ suffix
         assert_eq!(super::strip_peer_id(stripped.clone()), stripped);
+    }
+
+    #[test]
+    fn nested_per_peer_connection_limit_denial_is_expected() {
+        let mut behaviour =
+            Behaviour::new(ConnectionLimits::default().with_max_established_per_peer(Some(0)));
+        let address: Multiaddr = "/memory/1".parse().unwrap();
+        let limit_error = match behaviour.handle_established_inbound_connection(
+            ConnectionId::new_unchecked(1),
+            PeerId::random(),
+            &address,
+            &address,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a zero per-peer connection limit must reject the connection"),
+        };
+        let exceeded = limit_error
+            .downcast_ref::<libp2p::connection_limits::Exceeded>()
+            .expect("the connection-limits behaviour must return Exceeded");
+        assert_eq!(
+            exceeded.to_string(),
+            "connection limit exceeded: at most 0 established connections per peer are allowed"
+        );
+        let error = ListenError::Denied {
+            cause: ConnectionDenied::new(limit_error),
+        };
+
+        assert!(super::is_redundant_peer_connection_denial(&error));
+    }
+
+    #[test]
+    fn other_connection_limit_denial_is_not_redundant() {
+        let mut behaviour =
+            Behaviour::new(ConnectionLimits::default().with_max_pending_incoming(Some(0)));
+        let address: Multiaddr = "/memory/1".parse().unwrap();
+        let limit_error = behaviour
+            .handle_pending_inbound_connection(ConnectionId::new_unchecked(1), &address, &address)
+            .expect_err("a zero pending-incoming limit must reject the connection");
+        let error = ListenError::Denied {
+            cause: ConnectionDenied::new(limit_error),
+        };
+
+        assert!(!super::is_redundant_peer_connection_denial(&error));
     }
 
     #[test]
