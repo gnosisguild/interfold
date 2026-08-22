@@ -163,6 +163,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve the CLI revision tag
+        id: revision
+        run: echo "short_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build & push e3-support release image
         uses: docker/build-push-action@v5
         with:
@@ -171,6 +175,7 @@ jobs:
           push: true
           tags: |
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
+            ${{ env.SUPPORT_IMAGE_NAME }}:${{ steps.revision.outputs.short_sha }}
             ${{ env.SUPPORT_IMAGE_NAME }}:latest
           cache-from: |
             type=gha,scope=e3-support
@@ -229,7 +234,7 @@ jobs:
   build-binaries:
     name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, build-e3-support-release]
     strategy:
       matrix:
         include:
@@ -304,7 +309,7 @@ jobs:
   publish-rust-crates:
     name: Publish Rust Crates
     runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, build-e3-support-release]
     continue-on-error: true
     # Publish ALL versions to crates.io (including pre-releases)
     steps:
@@ -513,7 +518,8 @@ jobs:
       ]
     if:
       always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success' &&
-      (needs.validate-and-prepare.outputs.is_prerelease == 'true' || needs.build-dappnode-package-release.result == 'success')
+      needs.build-e3-support-release.result == 'success' && (needs.validate-and-prepare.outputs.is_prerelease == 'true' ||
+      needs.build-dappnode-package-release.result == 'success')
     steps:
       - name: Checkout
         uses: actions/checkout@v6

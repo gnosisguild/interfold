@@ -2,17 +2,19 @@
 
 GIT_SHA=$(interfold rev)
 CONTAINER_NAME="e3-support.1"
-IMAGE="ghcr.io/gnosisguild/e3-support:$GIT_SHA"
+IMAGE_REPOSITORY="${E3_SUPPORT_IMAGE_REPOSITORY:-ghcr.io/theinterfold/e3-support}"
+IMAGE="$IMAGE_REPOSITORY:$GIT_SHA"
 CACHE_PREFIX="e3-support"
 
-# Check if the image exists locally or remotely if not bail
-# Every time we push we build support so every build of interfold should have support built too.
-# This solves the problem where a person will be using the cli with a specific `interfold rev` but our latest 
-# support scripts have changed which will break the support behaviour for the user.
-# The user can then upgrade their cli once they are ready and then the support image will match their version
-if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && ! docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Support scripts not found for git sha \"$GIT_SHA\" Please recompile the support scripts for this version of the interfold cli within the source repository"
-    exit 1
+# Use the support image that matches the CLI revision.
+# This match prevents incompatible support script changes after a CLI update.
+# Pull the image only when the image is not available locally.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "Support image not found locally. Pulling $IMAGE..."
+    if ! docker pull "$IMAGE"; then
+        echo "Support image $IMAGE is unavailable. Verify the image tag and registry access."
+        exit 1
+    fi
 fi
 
 # Function to cleanup
