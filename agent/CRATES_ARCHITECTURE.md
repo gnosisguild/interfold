@@ -469,16 +469,15 @@ than other transient failures. The network producer sends all events to the raw 
 sends gossip payloads and publish or DHT results to a separate application channel. The startup
 buffer subscribes only to the application channel. Historical-sync and connection-control bursts
 cannot lag the application receiver or consume its actor mailbox. The application buffer is bounded
-by both event count and estimated bytes and fails readiness on
-overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and skipped without stopping
-the ingress loop. Historical direct sync requires advancing cursors and
-enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery
-retries in a startup attempt. Bootstrap dialing makes three bounded startup attempts and then
-retries unavailable peers every 60 seconds in the background. Kademlia peers are evicted after three
-consecutive dial failures and quarantined from discovery-based routing-table reinsertion for up to
-30 minutes. An admitted connection clears the cooldown early. A peer-ID mismatch quarantines the
-stale identity immediately. Peer health and quarantine state are process-local and are rebuilt after
-restart.
+by both event count and estimated bytes and fails readiness on overflow or broadcast lag; after
+`SyncEnded`, broadcast lag is warned and skipped without stopping the ingress loop. Historical
+direct sync requires advancing cursors and enforces one cumulative page, event, byte, and time
+budget across all aggregate fetches and recovery retries in a startup attempt. Bootstrap dialing
+makes three bounded startup attempts and then retries unavailable peers every 60 seconds in the
+background. Kademlia peers are evicted after three consecutive dial failures and quarantined from
+discovery-based routing-table reinsertion for up to 30 minutes. An admitted connection clears the
+cooldown early. A peer-ID mismatch quarantines the stale identity immediately. Peer health and
+quarantine state are process-local and are rebuilt after restart.
 
 `PlaintextAggregated` is excluded from gossip and historical peer sync. It remains a local durable
 publication intent, and canonical chain observations report completion. The request router rejects a
