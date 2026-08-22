@@ -127,6 +127,7 @@ mod tests {
             max_events: 8,
             max_bytes: 1_024,
             readiness: Some(readiness),
+            last_drop_warn: None,
         }
         .start();
 

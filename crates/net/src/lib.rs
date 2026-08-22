@@ -120,7 +120,7 @@ pub fn setup_net_with_limits(
     let _net_sync = NetSyncManager::setup(
         &bus,
         &interface.tx(),
-        &Arc::new(interface.rx()),
+        &interface.events(),
         eventstore.into(),
         topic,
         network.clone(),
@@ -130,11 +130,10 @@ pub fn setup_net_with_limits(
     // channel that the sync manager consumes.
     let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
         &bus,
-        &interface.application_rx(),
+        &interface.application_events(),
         max_buffered_events,
         max_buffered_bytes,
     );
-    let rx = Arc::new(rx);
     let tx = interface.tx();
     let network = network.clone();
 

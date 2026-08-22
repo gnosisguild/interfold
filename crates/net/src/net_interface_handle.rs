@@ -32,52 +32,89 @@ impl NetEventSender {
         Self { raw, application }
     }
 
-    /// Sends one event to its required channels.
+    /// Sends one event to its required channels and returns the number of receivers reached.
+    ///
+    /// A broadcast send only fails when no receiver is alive. Consumers subscribe lazily, so that
+    /// is not an error for the producer: the event has nobody to go to and is dropped, exactly as
+    /// it would be for a receiver that subscribes a moment later.
     pub fn send(&self, event: NetEvent) -> Result<usize, broadcast::error::SendError<NetEvent>> {
         if !event.requires_application_delivery() {
-            return self.raw.send(event);
+            return Ok(self.raw.send(event).unwrap_or(0));
         }
 
-        let raw_result = self.raw.send(event.clone());
-        let application_result = self.application.send(event);
-
-        match (raw_result, application_result) {
-            (Ok(receivers), _) | (Err(_), Ok(receivers)) => Ok(receivers),
-            (Err(error), Err(_)) => Err(error),
-        }
+        let raw = self.raw.send(event.clone()).unwrap_or(0);
+        let application = self.application.send(event).unwrap_or(0);
+        Ok(raw + application)
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<NetEvent> {
         self.raw.subscribe()
     }
 
-    pub(crate) fn application_subscribe(&self) -> broadcast::Receiver<NetEvent> {
-        self.application.subscribe()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.raw.len()
+    }
+
+    pub(crate) fn subscriber(&self) -> NetEventSubscriber {
+        NetEventSubscriber::from(&self.raw)
+    }
+
+    pub(crate) fn application_subscriber(&self) -> NetEventSubscriber {
+        NetEventSubscriber::from(&self.application)
+    }
+}
+
+/// Cheap, cloneable factory for live `NetEvent` receivers.
+///
+/// Holds a `WeakSender` rather than a template `Receiver` or a strong `Sender`, so a stored
+/// subscriber neither pins the channel queue (a never-polled receiver would keep every event
+/// queued and make `NetEventSender::len()` report permanent backpressure) nor keeps the channel
+/// open after the producer drops it: receivers still observe `RecvError::Closed` on shutdown.
+#[derive(Debug, Clone)]
+pub struct NetEventSubscriber {
+    tx: broadcast::WeakSender<NetEvent>,
+}
+
+impl NetEventSubscriber {
+    /// Returns a receiver that sees every event sent after this call. If the producer has
+    /// already gone away the receiver reports `RecvError::Closed` immediately.
+    pub fn subscribe(&self) -> broadcast::Receiver<NetEvent> {
+        match self.tx.upgrade() {
+            Some(tx) => tx.subscribe(),
+            None => {
+                let (tx, rx) = broadcast::channel(1);
+                drop(tx);
+                rx
+            }
+        }
+    }
+}
+
+impl From<&broadcast::Sender<NetEvent>> for NetEventSubscriber {
+    fn from(tx: &broadcast::Sender<NetEvent>) -> Self {
+        Self { tx: tx.downgrade() }
     }
 }
 
 #[derive(Debug)]
 pub struct NetInterfaceHandle {
     tx: mpsc::Sender<NetCommand>,
-    rx: broadcast::Receiver<NetEvent>,
-    application_rx: broadcast::Receiver<NetEvent>,
+    /// Weak subscribers: the handle neither pins the broadcast queue nor keeps the channels open
+    /// once the interface that owns the `NetEventSender` shuts down.
+    events: NetEventSubscriber,
+    application_events: NetEventSubscriber,
     status: NetworkStatus,
 }
 impl NetInterfaceHandle {
     pub(crate) fn new(
         tx: mpsc::Sender<NetCommand>,
-        rx: broadcast::Receiver<NetEvent>,
-        application_rx: broadcast::Receiver<NetEvent>,
+        event_tx: &NetEventSender,
         status: NetworkStatus,
     ) -> Self {
         Self {
             tx,
-            rx,
-            application_rx,
+            events: event_tx.subscriber(),
+            application_events: event_tx.application_subscriber(),
             status,
         }
     }
@@ -89,12 +126,18 @@ impl NetInterfaceHandle {
 
 pub trait NetInterface: Sized {
     fn tx(&self) -> mpsc::Sender<NetCommand>;
-    fn rx(&self) -> broadcast::Receiver<NetEvent>;
-    /// Returns a receiver that contains only application-delivery events.
-    fn application_rx(&self) -> broadcast::Receiver<NetEvent>;
+    /// Returns a subscriber for the raw event channel.
+    fn events(&self) -> NetEventSubscriber;
+    /// Returns a subscriber for the application-delivery event channel.
+    fn application_events(&self) -> NetEventSubscriber;
     fn status(&self) -> NetworkStatus;
-    fn handle(&self) -> NetInterfaceHandle {
-        NetInterfaceHandle::from(self)
+    /// Returns a live receiver on the raw event channel.
+    fn rx(&self) -> broadcast::Receiver<NetEvent> {
+        self.events().subscribe()
+    }
+    /// Returns a live receiver that contains only application-delivery events.
+    fn application_rx(&self) -> broadcast::Receiver<NetEvent> {
+        self.application_events().subscribe()
     }
 }
 
@@ -107,27 +150,17 @@ pub struct NetChannelBridge {
     event_tx: NetEventSender,
 }
 
-impl NetInterfaceHandle {
-    pub fn from(interface: &impl NetInterface) -> Self {
-        Self {
-            tx: interface.tx(),
-            rx: interface.rx(),
-            application_rx: interface.application_rx(),
-            status: interface.status(),
-        }
-    }
-}
 impl NetInterface for NetInterfaceHandle {
-    fn rx(&self) -> broadcast::Receiver<NetEvent> {
-        self.rx.resubscribe()
-    }
-
     fn tx(&self) -> mpsc::Sender<NetCommand> {
         self.tx.clone()
     }
 
-    fn application_rx(&self) -> broadcast::Receiver<NetEvent> {
-        self.application_rx.resubscribe()
+    fn events(&self) -> NetEventSubscriber {
+        self.events.clone()
+    }
+
+    fn application_events(&self) -> NetEventSubscriber {
+        self.application_events.clone()
     }
 
     fn status(&self) -> NetworkStatus {
@@ -169,12 +202,7 @@ pub fn create_channel_bridge_with_application_event_capacity(
         }
     });
 
-    let handle = NetInterfaceHandle {
-        tx: m_cmd_tx.clone(),
-        rx: event_tx.subscribe(),
-        application_rx: event_tx.application_subscribe(),
-        status: NetworkStatus::new(0),
-    };
+    let handle = NetInterfaceHandle::new(m_cmd_tx.clone(), &event_tx, NetworkStatus::new(0));
 
     let inverted = NetChannelBridge {
         tx: m_cmd_tx,
@@ -227,6 +255,58 @@ mod tests {
     use super::*;
 
     #[test]
+    fn subscriber_closes_when_the_producer_drops() {
+        let event_tx = NetEventSender::new(4, 4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        let handle = NetInterfaceHandle::new(cmd_tx, &event_tx, NetworkStatus::new(0));
+        let mut live_rx = handle.application_rx();
+
+        drop(event_tx);
+
+        assert!(matches!(
+            live_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Closed)
+        ));
+        assert!(matches!(
+            handle.rx().try_recv(),
+            Err(broadcast::error::TryRecvError::Closed)
+        ));
+    }
+
+    #[test]
+    fn send_without_subscribers_is_not_an_error() {
+        let event_tx = NetEventSender::new(1, 1);
+        assert_eq!(
+            event_tx
+                .send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))
+                .expect("no subscriber is not a producer error"),
+            0
+        );
+    }
+
+    #[test]
+    fn handle_does_not_pin_the_event_queue() {
+        let event_tx = NetEventSender::new(4, 4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        let handle = NetInterfaceHandle::new(cmd_tx, &event_tx, NetworkStatus::new(0));
+        let mut rx = handle.rx();
+
+        for i in 0..3u8 {
+            event_tx
+                .send(NetEvent::GossipData(GossipData::GossipBytes(vec![i])))
+                .expect("live subscriber must receive");
+        }
+        assert_eq!(event_tx.len(), 3);
+
+        while rx.try_recv().is_ok() {}
+        assert_eq!(
+            event_tx.len(),
+            0,
+            "queue must drain once the only live receiver has consumed it"
+        );
+    }
+
+    #[test]
     fn application_event_send_succeeds_with_either_channel_subscribed() {
         let raw_only = NetEventSender::new(1, 1);
         let mut raw_rx = raw_only.subscribe();
@@ -236,7 +316,7 @@ mod tests {
         assert!(matches!(raw_rx.try_recv(), Ok(NetEvent::GossipData(_))));
 
         let application_only = NetEventSender::new(1, 1);
-        let mut application_rx = application_only.application_subscribe();
+        let mut application_rx = application_only.application_subscriber().subscribe();
         application_only
             .send(NetEvent::GossipData(GossipData::GossipBytes(vec![2])))
             .expect("application delivery must succeed without a raw subscriber");
