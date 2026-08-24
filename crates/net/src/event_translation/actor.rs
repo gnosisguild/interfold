@@ -267,6 +267,15 @@ fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
     }
 }
 
+impl Handler<InterfoldEvent> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
+            self.handle_interfold_event(msg, ctx)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,14 +294,5 @@ mod tests {
             retry_policy(&GossipPublishFailure::permanent("invalid payload")),
             None
         );
-    }
-}
-
-impl Handler<InterfoldEvent> for NetEventTranslator {
-    type Result = ();
-    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            self.handle_interfold_event(msg, ctx)
-        })
     }
 }

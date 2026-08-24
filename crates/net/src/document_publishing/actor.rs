@@ -61,12 +61,27 @@ impl DocumentPublisher {
         rx: &NetEventSubscriber,
         topic: impl Into<String>,
     ) -> Self {
+        Self::new_with_interests(bus, tx, rx, topic, HashMap::new())
+    }
+
+    pub fn new_with_interests(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &NetEventSubscriber,
+        topic: impl Into<String>,
+        interests: HashMap<E3id, PartyId>,
+    ) -> Self {
+        let service = if interests.is_empty() {
+            DocumentPublishingService::new()
+        } else {
+            DocumentPublishingService::with_interests(interests)
+        };
         Self {
             bus: bus.clone(),
             tx: tx.clone(),
             rx: rx.clone(),
             topic: topic.into(),
-            service: DocumentPublishingService::new(),
+            service,
         }
     }
 
@@ -89,8 +104,18 @@ impl DocumentPublisher {
         rx: &NetEventSubscriber,
         topic: impl Into<String>,
     ) -> Addr<Self> {
+        Self::setup_with_interests(bus, tx, rx, topic, HashMap::new())
+    }
+
+    pub fn setup_with_interests(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &NetEventSubscriber,
+        topic: impl Into<String>,
+        interests: HashMap<E3id, PartyId>,
+    ) -> Addr<Self> {
         let mut events = rx.subscribe();
-        let addr = Self::new(bus, tx, rx, topic).start();
+        let addr = Self::new_with_interests(bus, tx, rx, topic, interests).start();
         EventConverter::setup(bus);
         // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());

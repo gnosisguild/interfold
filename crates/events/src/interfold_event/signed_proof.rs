@@ -88,6 +88,11 @@ impl ProofType {
             ProofType::C5PkAggregation => "E3_BAD_PK_AGGREGATION_PROOF",
         }
     }
+
+    /// Derive the Lane A policy key used by `SlashingManager._proposeSlash`.
+    pub fn attestation_slash_reason(&self) -> FixedBytes<32> {
+        keccak256(U256::from(*self as u8).to_be_bytes::<32>())
+    }
 }
 
 impl fmt::Display for ProofType {

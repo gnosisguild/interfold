@@ -148,10 +148,18 @@ impl Snapshot for E3Context {
     type Snapshot = E3ContextSnapshot;
 
     fn snapshot(&self) -> Result<Self::Snapshot> {
+        let mut dependencies = self.dependencies.keys();
+        dependencies.sort();
+        let mut recipients = self
+            .recipients
+            .iter()
+            .filter_map(|(key, recipient)| recipient.as_ref().map(|_| key.clone()))
+            .collect::<Vec<_>>();
+        recipients.sort();
         Ok(Self::Snapshot {
             e3_id: self.e3_id.clone(),
-            dependencies: self.dependencies.keys(),
-            recipients: self.recipients.keys().cloned().collect(),
+            dependencies,
+            recipients,
         })
     }
 }
@@ -226,7 +234,7 @@ mod tests {
     }
 
     #[actix::test]
-    async fn newly_attached_recipient_observes_buffered_events_before_current_event() {
+    async fn buffered_events_precede_the_current_event() {
         let e3_id = E3id::new("7", 1);
         let store = DataStore::from_in_mem(&InMemStore::new(false).start());
         let mut context = E3Context::from_params(E3ContextParams {
@@ -243,5 +251,22 @@ mod tests {
         context.forward_message(&event(&e3_id, "current", 2), &mut buffer);
 
         assert_eq!(recorder.send(Recorded).await.unwrap(), ["older", "current"]);
+    }
+
+    #[actix::test]
+    async fn snapshot_records_only_attached_recipients() {
+        let e3_id = E3id::new("7", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut context = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id,
+            extensions: Arc::new(Vec::new()),
+        });
+        let recorder = Recorder(Arc::new(Mutex::new(Vec::new()))).start();
+        context.set_event_recipient("keyshare", Some(recorder.recipient()));
+
+        let snapshot = context.snapshot().unwrap();
+
+        assert_eq!(snapshot.recipients, ["keyshare"]);
     }
 }

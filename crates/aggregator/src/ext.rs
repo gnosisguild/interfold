@@ -47,6 +47,36 @@ const PENDING_CIPHERTEXT_OUTPUT_KEY: TypedKey<CiphertextOutputPublished> =
     TypedKey::new("pending_ciphertext_output");
 const HONEST_PARTY_IDS_KEY: TypedKey<BTreeSet<u64>> = TypedKey::new("honest_party_ids");
 
+/// Restores the selector's active-aggregator decision before per-E3 actors hydrate.
+///
+/// The selector owns this derived role. Passing its recovered snapshot into the context avoids
+/// creating a new durable `AggregatorChanged` event on every process start.
+pub struct AggregatorRoleExtension {
+    initial_roles: HashMap<E3id, bool>,
+}
+
+impl AggregatorRoleExtension {
+    pub fn create(initial_roles: HashMap<E3id, bool>) -> Box<Self> {
+        Box::new(Self { initial_roles })
+    }
+}
+
+#[async_trait]
+impl E3Extension for AggregatorRoleExtension {
+    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
+        if let InterfoldEventData::AggregatorChanged(data) = evt.get_data() {
+            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, data.is_aggregator);
+        }
+    }
+
+    async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
+        if let Some(is_aggregator) = self.initial_roles.get(&ctx.e3_id).copied() {
+            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, is_aggregator);
+        }
+        Ok(())
+    }
+}
+
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
 }
@@ -593,8 +623,7 @@ fn create_decryptionshare_buffer(
 #[async_trait]
 impl E3Extension for ThresholdPlaintextAggregatorExtension {
     fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
-        if let InterfoldEventData::AggregatorChanged(data) = evt.get_data() {
-            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, data.is_aggregator);
+        if let InterfoldEventData::AggregatorChanged(_) = evt.get_data() {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
                 self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
             }
@@ -829,6 +858,29 @@ mod tests {
         let recovered = publickey_state_committee_addresses(&state)?.expect("addresses");
 
         assert_eq!(recovered, committee_addresses);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn hydration_uses_the_recovered_role() -> Result<()> {
+        let e3_id = E3id::new("42", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        let snapshot = E3ContextSnapshot {
+            e3_id: e3_id.clone(),
+            recipients: Vec::new(),
+            dependencies: Vec::new(),
+        };
+
+        AggregatorRoleExtension::create(HashMap::from([(e3_id, true)]))
+            .hydrate(&mut ctx, &snapshot)
+            .await?;
+
+        assert_eq!(ctx.get_dependency(ACTIVE_AGGREGATOR_KEY), Some(&true));
         Ok(())
     }
 

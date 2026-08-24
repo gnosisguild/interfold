@@ -26,41 +26,15 @@ impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {
                     committees.insert(msg.e3_id.clone(), Committee::new(msg.committee.clone()));
                     Ok(committees)
                 })?;
-
-            // Drain any expulsions that arrived before the committee was finalized (C18).
-            if let Some(buffered) = self.pending_expulsions.remove(&msg.e3_id) {
-                info!(
-                    e3_id = %msg.e3_id,
-                    count = buffered.len(),
-                    "Sortition: draining buffered pre-finalization expulsion(s)"
-                );
-                for (data, buffered_ec) in buffered {
-                    if let Err(e) = self.try_resolve_and_publish_expulsion(data, buffered_ec) {
-                        warn!(
-                            e3_id = %msg.e3_id,
-                            error = %e,
-                            "Sortition: failed to process buffered expulsion after finalization"
-                        );
-                    }
-                }
+            if self.effects_enabled {
+                self.redrive_membership_changes(&msg.e3_id);
             }
 
-            if let Some(buffered) = self.pending_exclusions.remove(&msg.e3_id) {
-                info!(
-                    e3_id = %msg.e3_id,
-                    count = buffered.len(),
-                    "Draining local exclusions received before committee finalization"
-                );
-                for (data, buffered_ec) in buffered {
-                    if let Err(error) = self.try_resolve_and_publish_exclusion(data, buffered_ec) {
-                        warn!(
-                            e3_id = %msg.e3_id,
-                            %error,
-                            "Failed to resolve a buffered local exclusion"
-                        );
-                    }
-                }
-            }
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.complete_sortition(&msg.e3_id);
+                Ok(recovery)
+            })?;
+            self.processed_requests.remove(&msg.e3_id);
 
             Ok(())
         })
@@ -77,23 +51,29 @@ impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
         if data.party_id.is_some() {
+            if let Err(error) = self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.acknowledge_exclusion(&data);
+                Ok(recovery)
+            }) {
+                self.bus.with_ec(&ec).err(EType::Sortition, error);
+            }
             return;
         }
 
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            if self.try_resolve_and_publish_exclusion(data.clone(), ec.clone())? {
-                return Ok(());
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.buffer_exclusion(data.clone(), ec.clone());
+                Ok(recovery)
+            })?;
+            if self.effects_enabled
+                && !self.try_resolve_and_publish_exclusion(data.clone(), ec.clone())?
+            {
+                warn!(
+                    node = %data.node,
+                    e3_id = %data.e3_id,
+                    "Local exclusion is waiting for committee finalization"
+                );
             }
-
-            warn!(
-                node = %data.node,
-                e3_id = %data.e3_id,
-                "Local exclusion arrived before committee finalization; buffering it"
-            );
-            self.pending_exclusions
-                .entry(data.e3_id.clone())
-                .or_default()
-                .push((data, ec));
             Ok(())
         })
     }
@@ -112,26 +92,29 @@ impl Handler<TypedEvent<CommitteeMemberExpelled>> for Sortition {
         // Only process raw events from chain (party_id not yet resolved).
         // Events we re-publish with party_id set will also arrive here; ignore them.
         if data.party_id.is_some() {
+            if let Err(error) = self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.acknowledge_expulsion(&data);
+                Ok(recovery)
+            }) {
+                self.bus.with_ec(&ec).err(EType::Sortition, error);
+            }
             return;
         }
 
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            if self.try_resolve_and_publish_expulsion(data.clone(), ec.clone())? {
-                return Ok(());
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.buffer_expulsion(data.clone(), ec.clone());
+                Ok(recovery)
+            })?;
+            if self.effects_enabled
+                && !self.try_resolve_and_publish_expulsion(data.clone(), ec.clone())?
+            {
+                warn!(
+                    node = %data.node,
+                    e3_id = %data.e3_id,
+                    "Committee expulsion is waiting for committee finalization"
+                );
             }
-
-            // Committee not finalized yet — buffer until CommitteeFinalized arrives (C18) instead
-            // of dropping the expulsion, which would otherwise leave a known-bad member in the
-            // committee until the round times out.
-            warn!(
-                node = %data.node,
-                e3_id = %data.e3_id,
-                "CommitteeMemberExpelled arrived before committee finalized; buffering until finalization"
-            );
-            self.pending_expulsions
-                .entry(data.e3_id.clone())
-                .or_default()
-                .push((data, ec));
             Ok(())
         })
     }

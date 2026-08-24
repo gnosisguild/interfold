@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Bounded external sort for post-snapshot EventStore replay.
+//! Bounded disk-backed merge for post-snapshot EventStore replay.
 
 use actix::Recipient;
 use anyhow::{bail, Context, Result};
@@ -77,6 +77,13 @@ impl ReplaySpool {
         let mut max_timestamp: Option<u128> = None;
 
         for (aggregate_id, first_cursor, end_cursor) in ranges {
+            // Keep one run per aggregate in durable sequence order. The merger can then choose
+            // between aggregate heads by HLC without ever exposing sequence N + 1 before N from
+            // the same aggregate. A late network event may carry an older remote HLC even though
+            // it received a later local sequence.
+            let mut aggregate_run =
+                NamedTempFile::new().context("failed to create EventStore replay spool file")?;
+            let mut aggregate_has_events = false;
             let mut cursor = first_cursor;
             loop {
                 if end_cursor.is_some_and(|end| cursor > end) {
@@ -141,8 +148,8 @@ impl ReplaySpool {
                     .checked_add(page.len())
                     .context("EventStore replay event count overflow")?;
                 if !page.is_empty() {
-                    page.sort_by_key(event_order_key);
-                    runs.push(write_run(page)?);
+                    append_run(&mut aggregate_run, page)?;
+                    aggregate_has_events = true;
                 }
 
                 if end_cursor.is_some_and(|end| cursor > end) {
@@ -159,6 +166,9 @@ impl ReplaySpool {
                     }
                     break;
                 }
+            }
+            if aggregate_has_events {
+                runs.push(aggregate_run);
             }
         }
 
@@ -239,8 +249,17 @@ fn event_order_key(event: &InterfoldEvent) -> (u128, AggregateId, u64) {
     (event.ts(), event.aggregate_id(), event.seq())
 }
 
+#[cfg(test)]
 fn write_run(events: Vec<InterfoldEvent>) -> Result<NamedTempFile> {
     let mut file = NamedTempFile::new().context("failed to create EventStore replay spool file")?;
+    append_run(&mut file, events)?;
+    Ok(file)
+}
+
+fn append_run(
+    file: &mut NamedTempFile,
+    events: impl IntoIterator<Item = InterfoldEvent>,
+) -> Result<()> {
     {
         let mut writer = BufWriter::new(file.as_file_mut());
         for event in events {
@@ -248,7 +267,7 @@ fn write_run(events: Vec<InterfoldEvent>) -> Result<NamedTempFile> {
         }
         writer.flush().context("failed to flush replay spool run")?;
     }
-    Ok(file)
+    Ok(())
 }
 
 fn compact_runs(mut runs: Vec<NamedTempFile>) -> Result<Vec<NamedTempFile>> {
@@ -417,10 +436,10 @@ mod tests {
     }
 
     #[test]
-    fn merge_orders_multiple_bounded_runs_deterministically() -> Result<()> {
-        let first = write_run(vec![event(1, 2, 30), event(1, 3, 50)])?;
+    fn merge_orders_aggregate_heads_deterministically() -> Result<()> {
+        let first = write_run(vec![event(1, 1, 20), event(1, 2, 30), event(1, 3, 50)])?;
         let second = write_run(vec![event(2, 1, 10), event(2, 2, 40)])?;
-        let third = write_run(vec![event(1, 1, 20), event(3, 1, 40)])?;
+        let third = write_run(vec![event(3, 1, 40)])?;
         let mut merger = RunMerger::new(&[first, second, third])?;
         let mut keys = Vec::new();
         while let Some(event) = merger.next_event()? {
@@ -465,7 +484,49 @@ mod tests {
         .await?;
 
         assert_eq!(spool.total_events(), count);
-        assert_eq!(spool.runs.len(), 2);
+        assert_eq!(spool.runs.len(), 1);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn replay_preserves_aggregate_sequence() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus().with_aggregate_config(
+            e3_events::AggregateConfig::new(std::collections::HashMap::from([(
+                AggregateId::new(1),
+                std::time::Duration::ZERO,
+            )])),
+        );
+        let bus = system.handle()?.enable("replay-spool-sequence");
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("first")
+                .id(1)
+                .aggregate_id(1)
+                .ts(200)
+                .build(),
+        )
+        .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("second")
+                .id(2)
+                .aggregate_id(1)
+                .ts(100)
+                .build(),
+        )
+        .await?;
+        bus.flush_event_pipeline().await?;
+
+        let spool = ReplaySpool::load_bounded(
+            &system.eventstore_reader()?.seq(),
+            std::collections::HashMap::from([(AggregateId::new(1), 2)]),
+        )
+        .await?;
+        let mut order = Vec::new();
+        spool.project(|event| {
+            order.push((event.seq(), event.ts()));
+            Ok(())
+        })?;
+
+        assert_eq!(order, [(1, 200), (2, 100)]);
         Ok(())
     }
 }

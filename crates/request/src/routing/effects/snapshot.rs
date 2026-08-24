@@ -107,6 +107,7 @@ impl FromSnapshotWithParams for E3Router {
             store: params.store,
             replay_cursors: params.replay_cursors,
             recovery_store: params.recovery_store,
+            recovered_selections: params.recovered_selections,
         })
     }
 }

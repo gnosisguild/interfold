@@ -143,6 +143,7 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
         bus: bus.clone(),
         backends: test_persistable(HashMap::<u64, SortitionBackend>::new()),
         node_state: test_persistable(HashMap::<u64, NodeStateStore>::new()),
+        recovery: test_persistable(e3_sortition::SortitionRecoveryState::default()),
         finalized_committees: test_persistable(HashMap::<E3id, Committee>::new()),
         ciphernode_selector: selector,
         address: "node-1".to_string(),

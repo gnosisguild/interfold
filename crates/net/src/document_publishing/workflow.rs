@@ -34,6 +34,13 @@ impl DocumentPublishingService {
         Self::default()
     }
 
+    pub fn with_interests(ids: HashMap<E3id, PartyId>) -> Self {
+        Self {
+            ids,
+            dht_keys: HashMap::new(),
+        }
+    }
+
     /// Register interest in an E3 (this node was selected as `party_id`).
     pub fn register_interest(&mut self, e3_id: E3id, party_id: PartyId) {
         self.ids.insert(e3_id, party_id);
@@ -142,6 +149,14 @@ mod tests {
     fn interested_when_registered_and_unfiltered() {
         let mut svc = DocumentPublishingService::new();
         svc.register_interest(E3id::new("1", 1), 2);
+        assert_eq!(svc.interested_party(&notification("1", vec![])), Some(2));
+    }
+
+    #[test]
+    fn network_starts_with_recovered_interests() {
+        let svc =
+            DocumentPublishingService::with_interests(HashMap::from([(E3id::new("1", 1), 2)]));
+
         assert_eq!(svc.interested_party(&notification("1", vec![])), Some(2));
     }
 

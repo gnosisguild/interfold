@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
+use e3_events::CiphernodeSelected;
 
 /// Builder for [`E3Router`].
 pub struct E3RouterBuilder {
     pub bus: BusHandle,
     pub extensions: Vec<Box<dyn E3Extension>>,
+    pub recovered_selections: Vec<CiphernodeSelected>,
+    pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
 }
 
@@ -15,9 +18,19 @@ impl E3RouterBuilder {
         self
     }
 
+    /// Restore local committee-selection effects without creating another durable protocol event.
+    pub fn with_recovered_selections(
+        mut self,
+        recovered_selections: Vec<CiphernodeSelected>,
+    ) -> Self {
+        self.recovered_selections = recovered_selections;
+        self
+    }
+
     pub async fn build(self) -> Result<Addr<E3Router>> {
+        let recovered_selections = self.recovered_selections;
         let legacy_snapshot: Option<E3RouterSnapshot> = self.store.read().await?;
-        let recovery_store = self.store.repositories().request_router_checkpoint();
+        let recovery_store = self.recovery_store;
         let recovery_checkpoint = recovery_store.read().await?;
         let (snapshot, replay_cursors) = match recovery_checkpoint {
             Some(checkpoint) => (
@@ -35,12 +48,21 @@ impl E3RouterBuilder {
             store: self.store.clone(),
             replay_cursors,
             recovery_store,
+            recovered_selections,
         };
 
         let router = match snapshot {
             Some(snapshot) => E3Router::from_snapshot(params, snapshot).await?,
             None => E3Router::from_params(params),
         };
+        for selection in &router.recovered_selections {
+            ensure!(
+                router.completed.contains(&selection.e3_id)
+                    || router.contexts.contains_key(&selection.e3_id),
+                "cannot restore local selection for E3 {}: request-router context is missing",
+                selection.e3_id
+            );
+        }
 
         let addr = router.start();
         self.bus.subscribe(EventType::All, addr.clone().recipient());

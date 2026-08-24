@@ -69,6 +69,18 @@ impl StoreKeys {
         String::from("//sortition")
     }
 
+    pub fn sortition_recovery() -> String {
+        String::from("//sortition/runtime_recovery/v1")
+    }
+
+    pub fn committee_finalizer_recovery() -> String {
+        String::from("//committee_finalizer/recovery/v1")
+    }
+
+    pub fn slashing_writer_recovery(chain_id: u64) -> String {
+        format!("//evm_writers/slashing/{chain_id}/recovery/v1")
+    }
+
     pub fn eth_private_key() -> String {
         String::from("//eth_private_key")
     }
