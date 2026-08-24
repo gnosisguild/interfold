@@ -7,7 +7,7 @@
 use crate::traits::{ErrorEvent, Event};
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
-use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
+use e3_utils::{colorize, Color, MAILBOX_LIMIT_LARGE};
 use futures_util::future::join_all;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -36,6 +36,23 @@ impl Default for EventBusConfig {
 /// This bounds memory while retaining a large replay window. Once full, IDs are
 /// evicted in first-observed order and a later occurrence is accepted again.
 const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
+
+/// Total fanout deliveries that failed or exceeded the accept deadline across all
+/// buses in this process. Each unit is one event one subscriber never received.
+///
+/// Tests read this through [`fanout_error_count`] and assert it stays at zero: a
+/// nonzero value means node histories are incomplete and downstream assertions
+/// compare against lost data.
+static FANOUT_ERROR_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Read [`FANOUT_ERROR_COUNT`].
+pub fn fanout_error_count() -> u64 {
+    FANOUT_ERROR_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn count_fanout_error() {
+    FANOUT_ERROR_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Actor handlers are expected to hand long-running work to child futures. A
 /// full mailbox that cannot accept one event within this window is unhealthy;
@@ -267,6 +284,7 @@ impl<E: Event> Handler<E> for EventBus<E> {
                 .into_actor(self)
                 .map(|result, _, _| {
                     if let Err(error) = result {
+                        count_fanout_error();
                         tracing::error!(%error, "EventBus fanout did not complete");
                     }
                 }),
@@ -545,8 +563,13 @@ impl<E: Event> HistoryCollector<E> {
 
 impl<E: Event> Actor for HistoryCollector<E> {
     type Context = Context<Self>;
-    fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        // The collector records every bus event for tests and dashboards. Its handler is cheap,
+        // but under heavy compute load the owning runtime can pause this actor long enough to
+        // fill a small mailbox; fanout then passes its accept deadline and silently loses
+        // events from the recorded history. Give it the same headroom as the other
+        // must-not-drop subscribers.
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT_LARGE);
     }
 }
 
