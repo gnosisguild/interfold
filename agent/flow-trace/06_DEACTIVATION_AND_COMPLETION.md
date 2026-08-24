@@ -236,7 +236,7 @@ interfold start → running node
 └─ graceful_shutdown():
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
-    ├─ Drains open snapshot batches, flushes the backing store, and closes it
+    ├─ Drains open snapshot batches in event order, flushes the backing store, and closes it
     ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
@@ -251,7 +251,8 @@ On restart:
 │      → The checkpoint is stored at the canonical root key, not below a router-local namespace
 │      → Each aggregate cursor keeps the highest sequence observed, even when contextual snapshot
 │        writes arrive out of HLC or sequence order
-│      → A mismatch is rebuilt from the bounded EventStore prefix through the snapshot cut
+│      → If the checkpoint trails the snapshot cut, only the missing EventStore suffix is applied
+│        to the existing admission state
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
@@ -494,11 +495,12 @@ The request router uses one checkpoint at `//router/recovery_checkpoint` for its
 completed set, and all aggregate cursors. Per-E3 context snapshots remain below their own router
 namespace; the checkpoint is not nested below a second `//router` prefix. Because snapshot batches
 for different aggregates can finish in a different order, startup compares that cursor vector with
-the aggregate snapshot vector. A mismatch rebuilds only the router admission projection from the
-EventStore prefix through the snapshot cut. It does not replay that prefix into hydrated protocol
-actors. Replay preserves durable sequence inside each aggregate and uses HLC order between aggregate
-heads. Because contextual snapshot writes can still arrive out of order, live and rebuild paths
-record the highest sequence observed for each aggregate and never replace a cursor with a lower one.
+the aggregate snapshot vector. If the checkpoint trails that vector, startup keeps its active and
+completed E3 state and projects only the missing EventStore suffix. It does not replay that suffix
+into hydrated protocol actors. A checkpoint that already covers the snapshot vector is not moved
+backward. Replay preserves durable sequence inside each aggregate and uses HLC order between
+aggregate heads. The final snapshot drain writes open cross-aggregate batches in their original
+event order, so an older batch cannot overwrite the newest checkpoint during shutdown.
 
 ---
 

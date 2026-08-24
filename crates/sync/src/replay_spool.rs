@@ -66,6 +66,31 @@ impl ReplaySpool {
         Self::load_ranges(eventstore, ranges).await
     }
 
+    /// Load the missing suffix between two per-aggregate cursor maps.
+    pub(crate) async fn load_between(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        start_cursors: std::collections::HashMap<AggregateId, u64>,
+        end_cursors: std::collections::HashMap<AggregateId, u64>,
+    ) -> Result<Self> {
+        let ranges = end_cursors
+            .into_iter()
+            .filter_map(|(aggregate_id, end_cursor)| {
+                let start_cursor = start_cursors
+                    .get(&aggregate_id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .max(1);
+                (start_cursor <= end_cursor).then_some((
+                    aggregate_id,
+                    start_cursor,
+                    Some(end_cursor),
+                ))
+            })
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
     async fn load_ranges(
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
         mut ranges: Vec<(AggregateId, u64, Option<u64>)>,

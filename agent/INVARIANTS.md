@@ -490,9 +490,11 @@ design citation alone does not establish current runtime behavior.
   current boot must publish fresh sync, readiness, effect, and shutdown phase events; otherwise a
   payload-derived event ID can suppress the event that startup is waiting for. The `NetReady`
   listener is armed before the network transport starts. — INDEX concern #44
-- The request-router recovery checkpoint has one canonical root key. Every live or rebuild update
-  retains the highest sequence observed for each aggregate; an out-of-order contextual write must
-  never move a covered-prefix cursor backward. — INDEX concern #43
+- The request-router recovery checkpoint has one canonical root key. Every live or recovery update
+  retains the highest sequence observed for each aggregate. Startup advances a trailing checkpoint
+  from its missing EventStore suffix, and the final snapshot drain preserves event order. An older
+  contextual write must never replace newer admission state or move a covered-prefix cursor
+  backward. — INDEX concern #43
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43

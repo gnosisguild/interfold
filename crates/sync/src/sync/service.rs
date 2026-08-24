@@ -21,11 +21,11 @@ use e3_events::{
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
     EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, RequestRouterCheckpoint, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys,
-    SyncEffect, SyncEnded, TicketGenerated, TypedEvent, Unsequenced,
+    InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
+    TicketGenerated, TypedEvent, Unsequenced,
 };
 #[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
+use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors, RequestRouterCheckpoint};
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
     collections::{HashMap, HashSet},
@@ -38,10 +38,10 @@ use tracing::info;
 #[cfg(test)]
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
-/// Rebuild the request-router checkpoint when its cursors differ from aggregate snapshots.
+/// Advance the request-router checkpoint when it trails aggregate snapshots.
 ///
-/// The rebuild projects EventStore history only into router admission state. It does not replay
-/// protocol actors, which already hydrate from their aggregate snapshots.
+/// The projection changes only router admission state. It does not replay protocol actors, which
+/// already hydrate from their aggregate snapshots.
 pub async fn reconcile_request_router_checkpoint(
     repositories: &Repositories,
     aggregate_ids: impl IntoIterator<Item = AggregateId>,
@@ -58,42 +58,55 @@ pub async fn reconcile_request_router_checkpoint(
     }
 
     let checkpoint_store = repositories.request_router_checkpoint();
-    let checkpoint = checkpoint_store
+    let mut checkpoint = checkpoint_store
         .read()
         .await?
         .context("request-router checkpoint is missing after storage preflight")?;
-    if checkpoint.replay_cursors == target_cursors {
+    let needs_advance = target_cursors.iter().any(|(aggregate_id, target)| {
+        checkpoint
+            .replay_cursors
+            .get(aggregate_id)
+            .copied()
+            .unwrap_or(0)
+            < *target
+    });
+    if !needs_advance {
         return Ok(());
     }
 
     info!(
         checkpoint_cursors = ?checkpoint.replay_cursors,
         target_cursors = ?target_cursors,
-        "Rebuilding the request-router checkpoint from EventStore"
+        "Advancing the request-router checkpoint from EventStore"
     );
-    let spool = ReplaySpool::load_bounded(eventstore, target_cursors.clone()).await?;
-    let mut rebuilt = RequestRouterCheckpoint {
-        replay_cursors: target_cursors
-            .keys()
-            .copied()
-            .map(|aggregate_id| (aggregate_id, 0))
-            .collect(),
-        ..Default::default()
-    };
+    let spool = ReplaySpool::load_between(
+        eventstore,
+        checkpoint.replay_cursors.clone(),
+        target_cursors.clone(),
+    )
+    .await?;
     let projected = spool.project(|event| {
-        e3_request::project_request_router_event(&mut rebuilt, event);
+        e3_request::project_request_router_event(&mut checkpoint, event);
         Ok(())
     })?;
-    ensure!(
-        rebuilt.replay_cursors == target_cursors,
-        "request-router rebuild produced cursors {:?}, but aggregate snapshots require {:?}",
-        rebuilt.replay_cursors,
-        target_cursors
-    );
-    checkpoint_store.write_sync(&rebuilt).await?;
+    for (aggregate_id, target) in &target_cursors {
+        let cursor = checkpoint
+            .replay_cursors
+            .get(aggregate_id)
+            .copied()
+            .unwrap_or(0);
+        ensure!(
+            cursor >= *target,
+            "request-router recovery stopped at sequence {} for aggregate {}, before required sequence {}",
+            cursor,
+            aggregate_id,
+            target
+        );
+    }
+    checkpoint_store.write_sync(&checkpoint).await?;
     info!(
         projected_events = projected,
-        "Request-router checkpoint rebuilt"
+        "Request-router checkpoint advanced"
     );
     Ok(())
 }

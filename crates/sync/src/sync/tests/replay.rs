@@ -7,15 +7,16 @@
 use super::*;
 
 #[actix::test]
-async fn router_rebuild_preserves_sequence() -> anyhow::Result<()> {
+async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()> {
     let system =
         EventSystem::new()
             .with_fresh_bus()
             .with_aggregate_config(e3_events::AggregateConfig::new(
                 std::collections::HashMap::from([(AggregateId::new(1), std::time::Duration::ZERO)]),
             ));
-    let bus = system.handle()?.enable("test-router-checkpoint-rebuild");
+    let bus = system.handle()?.enable("test-router-checkpoint-advance");
     let aggregate_id = AggregateId::new(1);
+    let active_e3 = E3id::new("7", 1);
     bus.naked_dispatch_async(
         InterfoldEvent::<Unsequenced>::test_event("stored first")
             .id(1)
@@ -43,7 +44,8 @@ async fn router_rebuild_preserves_sequence() -> anyhow::Result<()> {
     repositories
         .request_router_checkpoint()
         .write_sync(&RequestRouterCheckpoint {
-            replay_cursors: std::collections::HashMap::from([(aggregate_id, 0)]),
+            contexts: vec![active_e3.clone()],
+            replay_cursors: std::collections::HashMap::from([(aggregate_id, 1)]),
             ..Default::default()
         })
         .await?;
@@ -59,8 +61,9 @@ async fn router_rebuild_preserves_sequence() -> anyhow::Result<()> {
         .request_router_checkpoint()
         .read()
         .await?
-        .expect("the rebuilt checkpoint should exist");
+        .expect("the advanced checkpoint should exist");
     assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&2));
+    assert!(checkpoint.contexts.contains(&active_e3));
     Ok(())
 }
 
