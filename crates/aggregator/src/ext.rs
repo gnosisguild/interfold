@@ -144,6 +144,8 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 committee_size,
                 dkg_fold_attestation_context,
                 recovery,
+                initial_is_aggregator: load_is_active_aggregator(ctx),
+                effects_enabled: true,
             },
             sync_state,
         );
@@ -224,6 +226,8 @@ impl E3Extension for PublicKeyAggregatorExtension {
                     .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
                     .copied(),
                 recovery,
+                initial_is_aggregator: load_is_active_aggregator(ctx),
+                effects_enabled: false,
             },
             sync_state,
         );
@@ -349,6 +353,7 @@ impl ThresholdPlaintextAggregatorExtension {
                         },
                         proof_aggregation_enabled: self.proof_aggregation_enabled,
                         initial_is_aggregator,
+                        effects_enabled: true,
                         committee_addresses,
                         honest_committee_addresses,
                         recovery,
@@ -356,7 +361,6 @@ impl ThresholdPlaintextAggregatorExtension {
                     sync_state,
                 )
                 .start(),
-                initial_is_aggregator,
             )),
         );
 
@@ -582,11 +586,8 @@ fn load_is_active_aggregator(ctx: &E3Context) -> bool {
 
 fn create_decryptionshare_buffer(
     dest: Addr<ThresholdPlaintextAggregator>,
-    initial_is_aggregator: bool,
 ) -> Recipient<InterfoldEvent> {
-    DecryptionshareCreatedBuffer::new_with_aggregator_state(dest, initial_is_aggregator)
-        .start()
-        .into()
+    DecryptionshareCreatedBuffer::new(dest).start().into()
 }
 
 #[async_trait]
@@ -725,6 +726,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 })?,
                 proof_aggregation_enabled: self.proof_aggregation_enabled,
                 initial_is_aggregator,
+                effects_enabled: false,
                 committee_addresses,
                 honest_committee_addresses,
                 recovery,
@@ -734,10 +736,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         .start();
 
         // send to context
-        ctx.set_event_recipient(
-            "plaintext",
-            Some(create_decryptionshare_buffer(value, initial_is_aggregator)),
-        );
+        ctx.set_event_recipient("plaintext", Some(create_decryptionshare_buffer(value)));
 
         Ok(())
     }

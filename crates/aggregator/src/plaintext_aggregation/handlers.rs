@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Actix lifecycle, timeout ownership, and message routing.
+//! Actix lifecycle, role ownership, and message routing.
 
 use super::*;
 
@@ -8,68 +8,6 @@ impl Actor for ThresholdPlaintextAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        self.arm_collection_timeout(ctx);
-    }
-}
-
-impl Handler<DecryptionCollectionTimeout> for ThresholdPlaintextAggregator {
-    type Result = ();
-    fn handle(&mut self, _: DecryptionCollectionTimeout, ctx: &mut Self::Context) -> Self::Result {
-        self.pending.timeout_handle = None;
-
-        if !self.is_aggregator {
-            debug!(
-                e3_id = %self.e3_id,
-                "Ignoring a stale decryption-share timeout after aggregator demotion"
-            );
-            return;
-        }
-
-        // Only fail while still collecting shares; once we have transitioned past `Collecting`
-        // (VerifyingC6/Computing/…) the round is progressing and the timer is a no-op.
-        let Some(ThresholdPlaintextAggregatorState::Collecting(collecting)) = self.state.get()
-        else {
-            debug!(
-                e3_id = %self.e3_id,
-                "Decryption-share collection timeout fired but round already progressed past collection; ignoring"
-            );
-            return;
-        };
-
-        let collected = collecting.shares.len();
-        let required = self.aggregated_committee_n();
-        warn!(
-            e3_id = %self.e3_id,
-            collected,
-            required,
-            "Decryption-share collection timed out with {collected}/{required} honest shares; failing E3 round (DecryptionTimeout)"
-        );
-
-        let Some(ec) = self.pending.timeout_ec.clone() else {
-            warn!(
-                e3_id = %self.e3_id,
-                "No event context captured for decryption timeout; cannot emit E3Failed. Stopping aggregator."
-            );
-            ctx.stop();
-            return;
-        };
-
-        if let Err(e) = self.bus.publish(
-            E3Failed {
-                e3_id: self.e3_id.clone(),
-                failed_at_stage: E3Stage::CiphertextReady,
-                reason: FailureReason::DecryptionTimeout,
-            },
-            ec,
-        ) {
-            warn!(
-                e3_id = %self.e3_id,
-                error = %e,
-                "Failed to publish E3Failed on decryption-share collection timeout"
-            );
-        }
-
-        ctx.stop();
     }
 }
 
@@ -105,6 +43,8 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
             }
             InterfoldEventData::EffectsEnabled(_) => {
                 trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                    self.effects_enabled = true;
+                    self.publish_inputs_ready(ec.clone())?;
                     self.resume_in_flight_work(ec)
                 });
             }
@@ -119,16 +59,17 @@ impl Handler<TypedEvent<AggregatorChanged>> for ThresholdPlaintextAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<AggregatorChanged>,
-        ctx: &mut Self::Context,
+        _ctx: &mut Self::Context,
     ) -> Self::Result {
         if msg.e3_id != self.e3_id || msg.is_aggregator == self.is_aggregator {
             return;
         }
         self.is_aggregator = msg.is_aggregator;
-        if self.is_aggregator {
-            self.arm_collection_timeout(ctx);
-        } else {
-            self.cancel_collection_timeout(ctx);
+        if self.can_run_aggregation_effects() {
+            let ec = msg.get_ctx().clone();
+            trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                self.resume_in_flight_work(ec)
+            });
         }
     }
 }
@@ -203,17 +144,21 @@ impl Handler<E3CommitteeContainsResponse<TypedEvent<DecryptionshareCreated>>>
                     ec,
                 ) = msg.into_inner().into_components();
 
-                // Capture the latest context so a subsequent collection timeout can emit
-                // `E3Failed` with a sensible causal parent.
-                self.pending.timeout_ec = Some(ec.clone());
+                let was_ready = self.aggregation_inputs_ready();
                 self.add_share(party_id, decryption_share, signed_decryption_proofs, &ec)?;
+                let became_ready = !was_ready && self.aggregation_inputs_ready();
+                if became_ready {
+                    self.publish_inputs_ready(ec.clone())?;
+                }
 
                 // If we transitioned to VerifyingC6, dispatch C6 verification
                 // using the proofs persisted in state
-                if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
-                    self.state.get()
-                {
-                    self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                if became_ready && self.can_run_aggregation_effects() {
+                    if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
+                        self.state.get()
+                    {
+                        self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                    }
                 }
 
                 Ok(())
@@ -229,6 +174,9 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeResponse>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.can_run_aggregation_effects() {
+            return;
+        }
         trap(
             EType::PlaintextAggregation,
             &self.bus.with_ec(msg.get_ctx()),
@@ -245,6 +193,9 @@ impl Handler<TypedEvent<ComputeRequestError>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeRequestError>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if !self.can_run_aggregation_effects() {
+            return;
+        }
         trap(
             EType::PlaintextAggregation,
             &self.bus.with_ec(msg.get_ctx()),
@@ -270,12 +221,19 @@ impl Handler<TypedEvent<CommitteeMemberExpelled>> for ThresholdPlaintextAggregat
                     return Ok(());
                 };
 
+                let was_ready = self.aggregation_inputs_ready();
                 self.handle_member_expelled(party_id, &ec)?;
+                let became_ready = !was_ready && self.aggregation_inputs_ready();
+                if became_ready {
+                    self.publish_inputs_ready(ec.clone())?;
+                }
 
-                if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
-                    self.state.get()
-                {
-                    self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                if became_ready && self.can_run_aggregation_effects() {
+                    if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
+                        self.state.get()
+                    {
+                        self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                    }
                 }
 
                 Ok(())
@@ -301,11 +259,18 @@ impl Handler<TypedEvent<CommitteeMemberExcluded>> for ThresholdPlaintextAggregat
                     return Ok(());
                 };
 
+                let was_ready = self.aggregation_inputs_ready();
                 self.handle_member_expelled(party_id, &ec)?;
-                if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
-                    self.state.get()
-                {
-                    self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                let became_ready = !was_ready && self.aggregation_inputs_ready();
+                if became_ready {
+                    self.publish_inputs_ready(ec.clone())?;
+                }
+                if became_ready && self.can_run_aggregation_effects() {
+                    if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(ref state)) =
+                        self.state.get()
+                    {
+                        self.dispatch_c6_verification(state.c6_proofs.clone(), ec)?;
+                    }
                 }
                 Ok(())
             },
@@ -320,6 +285,9 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdPlaintextAggreg
         msg: TypedEvent<ShareVerificationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.can_run_aggregation_effects() {
+            return;
+        }
         trap(
             EType::PlaintextAggregation,
             &self.bus.with_ec(msg.get_ctx()),
@@ -335,6 +303,9 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
         msg: TypedEvent<AggregationProofSigned>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.can_run_aggregation_effects() {
+            return;
+        }
         trap(
             EType::PlaintextAggregation,
             &self.bus.with_ec(msg.get_ctx()),
@@ -346,21 +317,6 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
 impl Handler<Die> for ThresholdPlaintextAggregator {
     type Result = ();
     fn handle(&mut self, _: Die, ctx: &mut Self::Context) -> Self::Result {
-        self.cancel_collection_timeout(ctx);
         ctx.stop()
-    }
-}
-
-#[cfg(test)]
-#[derive(Message)]
-#[rtype(result = "bool")]
-pub(super) struct CollectionTimeoutArmed;
-
-#[cfg(test)]
-impl Handler<CollectionTimeoutArmed> for ThresholdPlaintextAggregator {
-    type Result = bool;
-
-    fn handle(&mut self, _: CollectionTimeoutArmed, _: &mut Self::Context) -> Self::Result {
-        self.pending.timeout_handle.is_some()
     }
 }

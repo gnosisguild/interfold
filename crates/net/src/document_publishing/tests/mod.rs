@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::net_interface_handle::NetEventSubscriber;
 use std::{collections::HashMap, num::NonZero, sync::Arc, time::Duration};
 
 use super::*;
@@ -34,7 +35,7 @@ fn setup_test() -> Result<(
     mpsc::Sender<NetCommand>,
     mpsc::Receiver<NetCommand>,
     broadcast::Sender<NetEvent>,
-    Arc<broadcast::Receiver<NetEvent>>,
+    NetEventSubscriber,
     Addr<HistoryCollector<InterfoldEvent>>,
     Addr<HistoryCollector<InterfoldEvent>>,
     Addr<DocumentPublisher>,
@@ -55,8 +56,8 @@ fn setup_test() -> Result<(
         .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let (net_cmd_tx, net_cmd_rx) = mpsc::channel(100);
-    let (net_evt_tx, net_evt_rx) = broadcast::channel(100);
-    let net_evt_rx = Arc::new(net_evt_rx);
+    let (net_evt_tx, _net_evt_rx) = broadcast::channel(100);
+    let net_evt_rx = NetEventSubscriber::from(&net_evt_tx);
     let history = HistoryCollector::<InterfoldEvent>::new().start();
     let error = HistoryCollector::<InterfoldEvent>::new().start();
     bus.subscribe(EventType::All, history.clone().recipient());

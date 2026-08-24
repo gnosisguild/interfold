@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::net_interface_handle::NetEventSubscriber;
 
 #[actix::test]
 async fn test_publishes_document() -> Result<()> {
@@ -84,7 +85,7 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("expired-document");
     let (net_cmd_tx, mut net_cmd_rx) = mpsc::channel(1);
-    let (_net_evt_tx, net_evt_rx) = broadcast::channel(1);
+    let (net_evt_tx, _net_evt_rx) = broadcast::channel(1);
     let event = PublishDocumentRequested {
         meta: DocumentMeta::new(
             E3id::new("expired", 1),
@@ -95,10 +96,15 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
         value: ArcBytes::from_bytes(b"stale"),
     };
 
-    let error =
-        handle_publish_document_requested(net_cmd_tx, Arc::new(net_evt_rx), event, "topic", bus)
-            .await
-            .unwrap_err();
+    let error = handle_publish_document_requested(
+        net_cmd_tx,
+        NetEventSubscriber::from(&net_evt_tx),
+        event,
+        "topic",
+        bus,
+    )
+    .await
+    .unwrap_err();
 
     assert!(format!("{error:#}").contains("expiry is not in the future"));
     assert!(matches!(

@@ -3,10 +3,11 @@
 //! Bounded historical-event fetching, validation, and recovery retries.
 
 use super::*;
+use crate::net_interface_handle::NetEventSubscriber;
 
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
-    net_events: &Arc<broadcast::Receiver<NetEvent>>,
+    net_events: &NetEventSubscriber,
     aggregate_id: AggregateId,
     since: u128,
     budget: &mut SyncFetchBudget,
@@ -71,7 +72,7 @@ pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
 
 pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     event: TypedEvent<HistoricalNetSyncStart>,
     address: impl Into<Recipient<TypedEvent<SyncRequestSucceeded>>>,
     wait_for_event: bool,

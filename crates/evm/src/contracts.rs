@@ -39,6 +39,12 @@ sol! {
             bytes32 ciphertextCommitment;
         }
 
+        struct E3Deadlines {
+            uint256 dkgDeadline;
+            uint256 computeDeadline;
+            uint256 decryptionDeadline;
+        }
+
         // ── Write functions ─────────────────────────────────────────────────
         function publishPlaintextOutput(
             uint256 e3Id,
@@ -48,8 +54,18 @@ sol! {
 
         function processE3Failure(uint256 e3Id) external;
 
+        function markE3Failed(uint256 e3Id) external returns (uint8 reason);
+
         // ── View functions ──────────────────────────────────────────────────
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
+
+        function getE3Stage(uint256 e3Id) external view returns (uint8 stage);
+
+        function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
+
+        function checkFailureCondition(
+            uint256 e3Id
+        ) external view returns (bool canFail, uint8 reason);
 
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
@@ -71,6 +87,10 @@ sol! {
         error InvalidOutput(bytes output);
         error E3NotFailed(uint256 e3Id);
         error NoPaymentToRefund(uint256 e3Id);
+        error FailureConditionNotMet(uint256 e3Id);
+        error E3AlreadyFailed(uint256 e3Id);
+        error E3AlreadyComplete(uint256 e3Id);
+        error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
     }
 }
 

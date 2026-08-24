@@ -4,12 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::handlers::CollectionTimeoutArmed;
 use super::*;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled,
-    HistoryCollector, Seed, TakeEvents, Unsequenced, ZkError,
+    CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents,
+    HistoryCollector, ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, DEFAULT_BFV_PRESET};
 use e3_sortition::{
@@ -40,6 +39,17 @@ fn dummy_proof(circuit: CircuitName) -> Proof {
         ArcBytes::from_bytes(&[1]),
         ArcBytes::from_bytes(&[2]),
     )
+}
+
+fn dummy_signed_c6_proof(e3_id: &E3id) -> SignedProofPayload {
+    SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C6ThresholdShareDecryption,
+            proof: dummy_proof(CircuitName::ThresholdShareDecryption),
+        },
+        signature: ArcBytes::from_bytes(&[0; 65]),
+    }
 }
 
 #[test]
@@ -178,6 +188,7 @@ async fn build_plaintext_aggregator_with_role(
             committee_size: CiphernodesCommitteeSize::Minimum,
             proof_aggregation_enabled,
             initial_is_aggregator,
+            effects_enabled: true,
             committee_addresses: vec![test_committee_address()],
             honest_committee_addresses: vec![test_committee_address()],
             recovery: test_persistable(ThresholdPlaintextAggregatorRecoveryState::default()),
@@ -186,46 +197,6 @@ async fn build_plaintext_aggregator_with_role(
     );
 
     Ok((aggregator, history, e3_id))
-}
-
-#[actix::test]
-async fn collection_timeout_follows_active_aggregator_role() -> Result<()> {
-    let (aggregator, _history, e3_id) =
-        build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
-    let addr = aggregator.start();
-
-    assert!(!addr.send(CollectionTimeoutArmed).await?);
-
-    addr.send(TypedEvent::new(
-        AggregatorChanged {
-            e3_id: e3_id.clone(),
-            is_aggregator: true,
-        },
-        test_ctx(AggregatorChanged {
-            e3_id: e3_id.clone(),
-            is_aggregator: true,
-        }),
-    ))
-    .await?;
-    assert!(addr.send(CollectionTimeoutArmed).await?);
-
-    addr.send(TypedEvent::new(
-        AggregatorChanged {
-            e3_id: e3_id.clone(),
-            is_aggregator: false,
-        },
-        test_ctx(AggregatorChanged {
-            e3_id,
-            is_aggregator: false,
-        }),
-    ))
-    .await?;
-    assert!(!addr.send(CollectionTimeoutArmed).await?);
-
-    addr.send(DecryptionCollectionTimeout).await?;
-    assert!(!addr.send(CollectionTimeoutArmed).await?);
-
-    Ok(())
 }
 
 async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<InterfoldEvent> {
@@ -252,6 +223,59 @@ async fn restart_redrives_threshold_decryption() -> Result<()> {
                         TrBFVRequest::CalculateThresholdDecryption(_)
                     )
                 )
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn inactive_standby_persists_decryption_shares_without_starting_proofs() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
+    let ec = test_ctx(EffectsEnabled::new());
+    aggregator.add_share(
+        0,
+        vec![ArcBytes::from_bytes(&[7])],
+        vec![dummy_signed_c6_proof(&e3_id)],
+        &ec,
+    )?;
+    aggregator.publish_inputs_ready(ec)?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(ThresholdPlaintextAggregatorState::VerifyingC6(_))
+    ));
+    let ready = next_event(&history).await?;
+    assert!(matches!(
+        ready.get_data(),
+        InterfoldEventData::AggregationInputsReady(data)
+            if data.e3_id == e3_id && data.phase == AggregationPhase::Plaintext
+    ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::ShareVerificationDispatched(_)
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn promoted_standby_resumes_persisted_plaintext_work() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator_with_role(verifying_c6_state(), true, false).await?;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+
+    aggregator.is_aggregator = true;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.e3_id == e3_id
+                && data.kind == VerificationKind::ThresholdDecryptionProofs
     ));
     Ok(())
 }

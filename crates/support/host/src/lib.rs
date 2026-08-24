@@ -282,6 +282,8 @@ async fn boundless_prove_inner(
             .with_offer(build_offer()?)
     };
 
+    let request = request.with_groth16_proof();
+
     let onchain =
         std::env::var("BOUNDLESS_ONCHAIN").unwrap_or_else(|_| "true".to_string()) == "true";
 

@@ -53,18 +53,9 @@ function envPath(name: string, fallback: string): string {
   return value ? resolve(process.cwd(), value) : fallback
 }
 
-const crispDeploymentsPath = envPath(
-  'CRISP_DEPLOYMENTS_PATH',
-  resolve(crispContractsDir, 'deployed_contracts.json'),
-)
-const protocolConfigPath = envPath(
-  'PROTOCOL_CONFIG_PATH',
-  resolve(protocolDir, 'mainnet-protocol.config.json'),
-)
-const protocolDeploymentPath = envPath(
-  'PROTOCOL_DEPLOYMENT_PATH',
-  resolve(protocolDir, 'mainnet-protocol.deployment.json'),
-)
+const crispDeploymentsPath = envPath('CRISP_DEPLOYMENTS_PATH', resolve(crispContractsDir, 'deployed_contracts.json'))
+const protocolConfigPath = envPath('PROTOCOL_CONFIG_PATH', resolve(protocolDir, 'mainnet-protocol.config.json'))
+const protocolDeploymentPath = envPath('PROTOCOL_DEPLOYMENT_PATH', resolve(protocolDir, 'mainnet-protocol.deployment.json'))
 const outputDir = envPath('CRISP_GOVERNANCE_OUTPUT_DIR', scriptDir)
 
 const interfoldInterface = new ethers.Interface([
@@ -103,12 +94,7 @@ async function main() {
   const protocolConfig = readJson<ProtocolConfig>(protocolConfigPath)
   const protocolDeployment = readJson<ProtocolDeployment>(protocolDeploymentPath)
   if (!protocolConfig.name.startsWith(`${chain}-`)) {
-    throw new Error(
-      `Network mismatch: run with --network ${protocolConfig.name.replace(
-        /-protocol$/,
-        '',
-      )}, not --network ${chain}`,
-    )
+    throw new Error(`Network mismatch: run with --network ${protocolConfig.name.replace(/-protocol$/, '')}, not --network ${chain}`)
   }
   const chainId = protocolConfig.chainId
 
@@ -119,9 +105,7 @@ async function main() {
   }
 
   if (protocolDeployment.chainId !== chainId) {
-    throw new Error(
-      `Chain mismatch: config=${protocolConfig.chainId}, deployment=${protocolDeployment.chainId}`,
-    )
+    throw new Error(`Chain mismatch: config=${protocolConfig.chainId}, deployment=${protocolDeployment.chainId}`)
   }
   if (!protocolConfig.governance) {
     throw new Error('Protocol config has no Aragon governance route')
@@ -129,22 +113,13 @@ async function main() {
 
   const interfold = requireAddress(protocolDeployment.interfold, 'Interfold')
   const crispProgram = requireAddress(chainDeployments.CRISPProgram?.address, 'CRISPProgram')
-  const ciphertextVerifier = requireAddress(
-    chainDeployments.Risc0BfvCiphertextVerifier?.address,
-    'Risc0BfvCiphertextVerifier',
-  )
+  const ciphertextVerifier = requireAddress(chainDeployments.Risc0BfvCiphertextVerifier?.address, 'Risc0BfvCiphertextVerifier')
   const adminPlugin = requireAddress(protocolConfig.governance.adminPlugin, 'Aragon Admin plugin')
   const proposerSafe = requireAddress(protocolConfig.governance.proposerSafe, 'Governance proposer Safe')
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
 
   const actions = [
-    safeTx(
-      interfold,
-      interfoldInterface.encodeFunctionData('setCiphertextVerifier', [
-        encryptionSchemeId,
-        ciphertextVerifier,
-      ]),
-    ),
+    safeTx(interfold, interfoldInterface.encodeFunctionData('setCiphertextVerifier', [encryptionSchemeId, ciphertextVerifier])),
     safeTx(interfold, interfoldInterface.encodeFunctionData('registerE3Program', [crispProgram])),
     safeTx(crispProgram, crispInterface.encodeFunctionData('bindInterfold', [interfold])),
   ]
