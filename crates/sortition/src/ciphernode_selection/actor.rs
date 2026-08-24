@@ -19,10 +19,11 @@ use e3_events::EventContext;
 use e3_events::Sequenced;
 use e3_events::TypedEvent;
 use e3_events::{
-    prelude::*, trap, AggregatorChanged, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    Committee, CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, E3Failed,
-    E3Requested, E3Stage, E3StageChanged, E3id, EType, EffectsEnabled, EventType, InterfoldEvent,
-    InterfoldEventData, PlaintextOutputPublished, Shutdown, TicketGenerated, TicketId,
+    prelude::*, trap, AggregationInputsReady, AggregatorChanged, BusHandle, CiphernodeSelected,
+    CiphertextOutputPublished, Committee, CommitteeFinalized, CommitteeMemberExcluded,
+    CommitteeMemberExpelled, E3Failed, E3Requested, E3Stage, E3StageChanged, E3id, EType,
+    EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData, PlaintextOutputPublished,
+    Shutdown, TicketGenerated, TicketId,
 };
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
@@ -87,6 +88,7 @@ pub struct CiphernodeSelector {
     state: Persistable<CiphernodeSelectorState>,
     failover: Persistable<AggregatorFailoverState>,
     observed_phases: HashMap<E3id, AggregatorPhase>,
+    ready_phases: HashMap<E3id, AggregatorPhase>,
     failover_timers: HashMap<E3id, SpawnHandle>,
     effects_enabled: bool,
     failover_policy: FailoverPolicy,
@@ -135,6 +137,7 @@ impl CiphernodeSelector {
             failover,
             address: address.to_owned(),
             observed_phases,
+            ready_phases: HashMap::new(),
             failover_timers: HashMap::new(),
             effects_enabled: false,
             failover_policy: FailoverPolicy::new(AGGREGATOR_PROGRESS_TIMEOUT),
@@ -152,9 +155,13 @@ impl CiphernodeSelector {
         let mut state = selector_store
             .load_or_default(CiphernodeSelectorState::default())
             .await?;
-        let failover = failover_store
+        let mut failover = failover_store
             .load_or_default(AggregatorFailoverState::default())
             .await?;
+        failover.try_mutate_without_context(|mut snapshot| {
+            snapshot.migrate_early_timer_schema();
+            Ok(snapshot)
+        })?;
         ensure!(
             failover
                 .get()
@@ -206,6 +213,7 @@ impl CiphernodeSelector {
         );
         bus.subscribe(EventType::E3StageChanged, addr.clone().recipient());
         bus.subscribe(EventType::E3Failed, addr.clone().recipient());
+        bus.subscribe(EventType::AggregationInputsReady, addr.clone().recipient());
         bus.subscribe(EventType::EffectsEnabled, addr.clone().recipient());
         bus.subscribe(EventType::Shutdown, addr.clone().recipient());
 
@@ -272,6 +280,7 @@ impl CiphernodeSelector {
         ec: &EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) -> Result<()> {
+        let previous_phase = self.observed_phases.get(&e3_id).copied();
         match phase {
             Some(phase) => {
                 self.observed_phases.insert(e3_id.clone(), phase);
@@ -279,6 +288,10 @@ impl CiphernodeSelector {
             None => {
                 self.observed_phases.remove(&e3_id);
             }
+        }
+        let phase_changed = previous_phase != phase;
+        if phase_changed {
+            self.ready_phases.remove(&e3_id);
         }
 
         if !self.effects_enabled {
@@ -293,12 +306,20 @@ impl CiphernodeSelector {
             return Ok(());
         }
 
-        let now = self.clock.now_unix_secs();
-        let policy = self.failover_policy;
-        self.failover.try_mutate(ec, |mut state| {
-            reconcile_phase(&mut state, &e3_id, phase, now, &policy);
-            Ok(state)
-        })?;
+        let ready = phase.is_some_and(|phase| self.ready_phases.get(&e3_id) == Some(&phase));
+        if phase_changed || phase.is_none() || ready {
+            let now = self.clock.now_unix_secs();
+            let policy = self.failover_policy;
+            self.failover.try_mutate(ec, |mut state| {
+                if phase_changed || phase.is_none() {
+                    reconcile_phase(&mut state, &e3_id, None, now, &policy);
+                }
+                if ready {
+                    reconcile_phase(&mut state, &e3_id, phase, now, &policy);
+                }
+                Ok(state)
+            })?;
+        }
 
         if self
             .state
@@ -313,11 +334,35 @@ impl CiphernodeSelector {
         Ok(())
     }
 
+    fn observe_aggregation_inputs_ready(
+        &mut self,
+        ready: AggregationInputsReady,
+        ec: &EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) -> Result<()> {
+        let e3_id = ready.e3_id;
+        let phase = ready.phase;
+        self.ready_phases.insert(e3_id.clone(), phase);
+        if !self.effects_enabled || self.observed_phases.get(&e3_id) != Some(&phase) {
+            return Ok(());
+        }
+
+        let now = self.clock.now_unix_secs();
+        let policy = self.failover_policy;
+        self.failover.try_mutate(ec, |mut state| {
+            reconcile_phase(&mut state, &e3_id, Some(phase), now, &policy);
+            Ok(state)
+        })?;
+        self.reconcile_failover_assignment(&e3_id, Some(ec), ctx)?;
+        self.update_aggregator_status(&e3_id, Some(ec), false)
+    }
+
     fn reconcile_after_replay(&mut self, ctx: &mut Context<Self>) -> Result<()> {
         self.effects_enabled = true;
         let now = self.clock.now_unix_secs();
         let policy = self.failover_policy;
         let mut e3_ids: HashSet<E3id> = self.observed_phases.keys().cloned().collect();
+        e3_ids.extend(self.ready_phases.keys().cloned());
         if let Some(state) = self.failover.get() {
             e3_ids.extend(state.rounds.keys().cloned());
             e3_ids.extend(state.unresponsive.keys().cloned());
@@ -325,13 +370,23 @@ impl CiphernodeSelector {
 
         self.failover.try_mutate_without_context(|mut state| {
             for e3_id in &e3_ids {
-                reconcile_phase(
-                    &mut state,
-                    e3_id,
-                    self.observed_phases.get(e3_id).copied(),
-                    now,
-                    &policy,
-                );
+                let observed = self.observed_phases.get(e3_id).copied();
+                let ready =
+                    observed.is_some_and(|phase| self.ready_phases.get(e3_id) == Some(&phase));
+                let persisted_matches = state
+                    .rounds
+                    .get(e3_id)
+                    .is_some_and(|round| Some(round.phase) == observed);
+
+                if observed.is_none() || (!persisted_matches && state.rounds.contains_key(e3_id)) {
+                    reconcile_phase(&mut state, e3_id, None, now, &policy);
+                }
+                if ready && !persisted_matches {
+                    reconcile_phase(&mut state, e3_id, observed, now, &policy);
+                }
+                if !state.rounds.contains_key(e3_id) {
+                    state.unresponsive.remove(e3_id);
+                }
             }
             Ok(state)
         })?;

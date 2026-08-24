@@ -365,7 +365,7 @@ flowchart TD
     Effects --> Live["Live/historical chain events"]
     Live --> Ciphertext["CiphertextOutputPublished"]
     Ciphertext --> CanStart{"full + honest committee<br/>and keyshare actor ready?"}
-    CanStart -- yes --> NewPlaintext["Create ThresholdPlaintextAggregator<br/>seed buffer with active aggregator role"]
+    CanStart -- yes --> NewPlaintext["Create ThresholdPlaintextAggregator<br/>restore active aggregator role"]
     CanStart -- no --> Pending["Store pending ciphertext<br/>retry on committee/public-key events"]
 
     KeyHydrate --> KeyshareActor["ThresholdKeyshare actor"]
@@ -373,8 +373,11 @@ flowchart TD
     KeyshareActor --> Shares["honest nodes publish DecryptionshareCreated"]
     Shares --> Buffer["DecryptionshareCreatedBuffer"]
     NewPlaintext --> Buffer
-    Buffer --> Active{"is active aggregator?"}
-    Active -- yes --> Collect["Collect H honest shares<br/>verify C6, aggregate C7"]
+    Buffer --> Persist["Every committee member persists<br/>valid honest shares"]
+    Persist --> Ready["AggregationInputsReady<br/>starts failover budget"]
+    Ready --> Active{"is active aggregator?"}
+    Active -- yes --> Collect["Resume persisted phase<br/>verify C6, aggregate C7"]
+    Active -- no --> Standby["Wait with durable inputs"]
     CCHydrate --> Collect
     Collect --> Plaintext["PlaintextAggregated"]
     Plaintext --> PublicationGate
@@ -388,7 +391,10 @@ settlement observations) remain in EventStore for auditing and operator projecti
 not deliver them to a completed per-E3 context because they report settlement; they do not resume
 protocol execution.
 
-`CiphernodeSelector` also emits every persisted `AggregatorChanged` entry before EventStore replay.
+`CiphernodeSelector` also emits each persisted local `CiphernodeSelected` membership and every
+persisted `AggregatorChanged` entry before EventStore replay. The selected event restores the
+canonical party ID used by the EVM deadline watchdog even when the original selection event is
+older than the replay window.
 If a prior snapshot failed to persist the selector's completion cleanup, the request router may log
 that emission as unexpected for an already-completed E3. The router converts it to an
 `InterfoldError`; it does not abort EventBus replay. Treat the warning as evidence of stale snapshot
@@ -433,9 +439,11 @@ finalized-committee repository and `CiphernodeSelectorState.e3_cache` before rep
 
 Threshold keyshare, public-key aggregation, and plaintext aggregation also store versioned recovery
 records with their protocol snapshots. These records retain collector inputs, pending proof jobs,
-verified proof bundles, terminal publication intents, causal event contexts, and the absolute
-plaintext-share collection deadline. After replay, `EffectsEnabled` recreates collectors and compute
-jobs with new process-local correlation IDs. It re-publishes determined outputs idempotently.
+verified proof bundles, terminal publication intents, and causal event contexts. Public-key and
+plaintext standbys persist the same validated inputs as the active aggregator. After replay,
+`EffectsEnabled` publishes readiness for resumable phases and recreates proof or compute jobs only
+on the active party, with new process-local correlation IDs. It re-publishes determined outputs
+idempotently.
 Startup fails closed if an active phase requires a recovery record that is missing or has an
 unsupported schema version.
 
@@ -449,7 +457,9 @@ The request router uses a single checkpoint for its active contexts, completed s
 aggregate cursors. Because snapshot batches for different aggregates can finish in a different
 order, startup compares that cursor vector with the aggregate snapshot vector. A mismatch rebuilds
 only the router admission projection from the EventStore prefix through the snapshot cut. It does
-not replay that prefix into hydrated protocol actors.
+not replay that prefix into hydrated protocol actors. Because the projection follows HLC order,
+events from one aggregate can appear out of sequence. The rebuild records the highest sequence it
+sees for each aggregate and never replaces that cursor with a lower sequence.
 
 ---
 

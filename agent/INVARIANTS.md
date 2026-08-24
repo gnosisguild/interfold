@@ -334,6 +334,9 @@ design citation alone does not establish current runtime behavior.
   zero-indexed. Circuit-side Shamir coordinates are `party_id + 1` and must be strictly increasing.
   The active aggregator is the lowest eligible runtime `party_id` after exclusions and the current
   phase's durable unresponsive-party set. — `ARCHITECTURE.md`; `flow-trace/04`
+- Every committee member persists validated aggregation inputs. Failover starts only after
+  `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
+  party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;

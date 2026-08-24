@@ -34,6 +34,9 @@ impl Handler<InterfoldEvent> for CiphernodeSelector {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::E3Failed(data) => self.notify_sync(ctx, TypedEvent::new(data, ec)),
+            InterfoldEventData::AggregationInputsReady(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
@@ -132,6 +135,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for CiphernodeSelector {
                     Ok(state)
                 })?;
                 self.observed_phases.remove(&msg.e3_id);
+                self.ready_phases.remove(&msg.e3_id);
                 self.failover.try_mutate(msg.get_ctx(), |mut state| {
                     state.rounds.remove(&msg.e3_id);
                     state.unresponsive.remove(&msg.e3_id);
@@ -213,7 +217,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
 
                 self.observe_phase(
                     msg.e3_id.clone(),
-                    Some(AggregatorPhase::AwaitingPublicKey),
+                    Some(AggregatorPhase::PublicKey),
                     true,
                     &ec,
                     _ctx,
@@ -302,7 +306,7 @@ impl Handler<TypedEvent<CiphertextOutputPublished>> for CiphernodeSelector {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
             self.observe_phase(
                 msg.e3_id.clone(),
-                Some(AggregatorPhase::AwaitingPlaintext),
+                Some(AggregatorPhase::Plaintext),
                 false,
                 msg.get_ctx(),
                 ctx,
@@ -354,6 +358,21 @@ impl Handler<TypedEvent<E3Failed>> for CiphernodeSelector {
     }
 }
 
+impl Handler<TypedEvent<AggregationInputsReady>> for CiphernodeSelector {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<AggregationInputsReady>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            let (msg, ec) = msg.into_components();
+            self.observe_aggregation_inputs_ready(msg, &ec, ctx)
+        })
+    }
+}
+
 impl Handler<EffectsEnabled> for CiphernodeSelector {
     type Result = ();
 
@@ -378,6 +397,32 @@ impl Handler<EmitPersistedAggregatorState> for CiphernodeSelector {
         let Some(state) = self.state.get() else {
             return;
         };
+
+        for (e3_id, committee) in &state.committees {
+            let Some(party_id) = committee.party_id_for(&self.address) else {
+                continue;
+            };
+            let Some(meta) = state.e3_cache.get(e3_id) else {
+                self.bus.err(
+                    EType::Sortition,
+                    anyhow::anyhow!("Missing E3 metadata for persisted committee {e3_id}"),
+                );
+                continue;
+            };
+            if let Err(err) = self.bus.publish_without_context(CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: meta.threshold_m,
+                threshold_n: meta.threshold_n,
+                seed: meta.seed,
+                error_size: meta.error_size.clone(),
+                params_preset: meta.params_preset,
+                params: meta.params.clone(),
+                party_id,
+                committee: committee.members().to_vec(),
+            }) {
+                self.bus.err(EType::Sortition, err);
+            }
+        }
 
         for (e3_id, is_aggregator) in state.is_aggregator {
             if let Err(err) = self.bus.publish_without_context(AggregatorChanged {

@@ -11,19 +11,14 @@
 //! publish the expected on-chain result before the durable deadline, every node
 //! can skip it and select the next party without a separate election protocol.
 
+pub use e3_events::AggregationPhase as AggregatorPhase;
 use e3_events::{Committee, E3Stage, E3id};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-pub const AGGREGATOR_FAILOVER_SCHEMA_VERSION: u16 = 1;
-
-/// The on-chain result that the active aggregator must publish.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AggregatorPhase {
-    AwaitingPublicKey,
-    AwaitingPlaintext,
-}
+pub const AGGREGATOR_FAILOVER_SCHEMA_VERSION: u16 = 2;
+const LEGACY_EARLY_TIMER_SCHEMA_VERSION: u16 = 1;
 
 /// A durable timer. Its phase and active party identify the pending work. The
 /// absolute deadline preserves the budget across restart.
@@ -59,6 +54,18 @@ impl Default for AggregatorFailoverState {
 impl AggregatorFailoverState {
     pub fn has_supported_schema(&self) -> bool {
         self.schema_version == AGGREGATOR_FAILOVER_SCHEMA_VERSION
+    }
+
+    /// Remove v1 timers that started at the canonical stage boundary, before
+    /// aggregation inputs were available. The serialized layout is unchanged.
+    pub fn migrate_early_timer_schema(&mut self) -> bool {
+        if self.schema_version != LEGACY_EARLY_TIMER_SCHEMA_VERSION {
+            return false;
+        }
+        self.rounds.clear();
+        self.unresponsive.clear();
+        self.schema_version = AGGREGATOR_FAILOVER_SCHEMA_VERSION;
+        true
     }
 }
 
@@ -101,8 +108,8 @@ pub struct ExpectedFailoverDeadline {
 /// Return the pending aggregator phase represented by a canonical E3 stage.
 pub fn phase_for_stage(stage: &E3Stage) -> Option<AggregatorPhase> {
     match stage {
-        E3Stage::CommitteeFinalized => Some(AggregatorPhase::AwaitingPublicKey),
-        E3Stage::CiphertextReady => Some(AggregatorPhase::AwaitingPlaintext),
+        E3Stage::CommitteeFinalized => Some(AggregatorPhase::PublicKey),
+        E3Stage::CiphertextReady => Some(AggregatorPhase::Plaintext),
         _ => None,
     }
 }
@@ -251,13 +258,37 @@ mod tests {
     }
 
     #[test]
+    fn v1_migration_clears_early_timers_and_skip_state() {
+        let id = e3_id();
+        let mut state = AggregatorFailoverState {
+            schema_version: 1,
+            rounds: HashMap::from([(
+                id.clone(),
+                AggregatorFailoverRound {
+                    phase: AggregatorPhase::PublicKey,
+                    active_party_id: Some(2),
+                    deadline_unix_secs: 500,
+                    exhausted: true,
+                },
+            )]),
+            unresponsive: HashMap::from([(id, vec![0, 1])]),
+        };
+
+        assert!(state.migrate_early_timer_schema());
+        assert!(state.has_supported_schema());
+        assert!(state.rounds.is_empty());
+        assert!(state.unresponsive.is_empty());
+        assert!(!state.migrate_early_timer_schema());
+    }
+
+    #[test]
     fn restart_in_same_phase_preserves_deadline_and_skips() {
         let id = e3_id();
         let mut state = AggregatorFailoverState::default();
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPublicKey),
+            Some(AggregatorPhase::PublicKey),
             100,
             &policy(),
         );
@@ -267,7 +298,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPublicKey),
+            Some(AggregatorPhase::PublicKey),
             140,
             &policy(),
         );
@@ -284,7 +315,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPublicKey),
+            Some(AggregatorPhase::PublicKey),
             100,
             &policy(),
         );
@@ -294,7 +325,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPlaintext),
+            Some(AggregatorPhase::Plaintext),
             150,
             &policy(),
         );
@@ -311,7 +342,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPublicKey),
+            Some(AggregatorPhase::PublicKey),
             100,
             &policy(),
         );
@@ -330,7 +361,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPlaintext),
+            Some(AggregatorPhase::Plaintext),
             100,
             &policy(),
         );
@@ -350,7 +381,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPlaintext),
+            Some(AggregatorPhase::Plaintext),
             100,
             &policy(),
         );
@@ -360,7 +391,7 @@ mod tests {
             &mut state,
             &id,
             ExpectedFailoverDeadline {
-                phase: AggregatorPhase::AwaitingPlaintext,
+                phase: AggregatorPhase::Plaintext,
                 unix_secs: 160,
             },
             160,
@@ -385,7 +416,7 @@ mod tests {
             &mut state,
             &id,
             ExpectedFailoverDeadline {
-                phase: AggregatorPhase::AwaitingPlaintext,
+                phase: AggregatorPhase::Plaintext,
                 unix_secs: 160,
             },
             220,
@@ -404,7 +435,7 @@ mod tests {
         reconcile_phase(
             &mut state,
             &id,
-            Some(AggregatorPhase::AwaitingPlaintext),
+            Some(AggregatorPhase::Plaintext),
             100,
             &policy(),
         );
@@ -415,7 +446,7 @@ mod tests {
             &mut state,
             &id,
             ExpectedFailoverDeadline {
-                phase: AggregatorPhase::AwaitingPlaintext,
+                phase: AggregatorPhase::Plaintext,
                 unix_secs: 160,
             },
             160,

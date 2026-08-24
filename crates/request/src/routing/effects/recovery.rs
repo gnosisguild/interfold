@@ -37,7 +37,35 @@ pub fn project_request_router_event(
         | RoutingDecision::UnadmittedNetworkEvent(_) => {}
     }
 
+    let sequence = event.seq();
     checkpoint
         .replay_cursors
-        .insert(event.aggregate_id(), event.seq());
+        .entry(event.aggregate_id())
+        .and_modify(|cursor| *cursor = (*cursor).max(sequence))
+        .or_insert(sequence);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_events::Unsequenced;
+
+    fn replay_event(sequence: u64) -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::test_event("router recovery")
+            .id(1)
+            .aggregate_id(7)
+            .seq(sequence)
+            .build()
+    }
+
+    #[test]
+    fn replay_cursor_keeps_highest_sequence_seen() {
+        let aggregate_id = e3_events::AggregateId::new(7);
+        let mut checkpoint = RequestRouterCheckpoint::default();
+
+        project_request_router_event(&mut checkpoint, &replay_event(64));
+        project_request_router_event(&mut checkpoint, &replay_event(59));
+
+        assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&64));
+    }
 }

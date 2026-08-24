@@ -8,8 +8,8 @@ use super::*;
 use alloy::primitives::Address;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, EffectsEnabled, HistoryCollector, ProofPayload,
-    ProofType, TakeEvents, Unsequenced, ZkError,
+    CircuitName, ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector,
+    ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
 use e3_test_helpers::get_common_setup;
 use std::collections::{BTreeSet, HashMap};
@@ -95,6 +95,8 @@ async fn build_public_key_aggregator_with_committee(
             committee_size,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: true,
+            effects_enabled: true,
         },
         test_state(initial_state),
     );
@@ -200,6 +202,86 @@ async fn restart_redrives_c1_verification() -> Result<()> {
 
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
 
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.e3_id == e3_id && data.kind == VerificationKind::PkGenerationProofs
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn inactive_standby_persists_keyshares_without_starting_proofs() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let nodes = (0..committee.n as u64)
+        .map(|party_id| (party_id, format!("0x{:040x}", party_id + 1)))
+        .collect::<HashMap<_, _>>();
+    let state = PublicKeyAggregatorState::init(
+        committee.n,
+        committee.threshold,
+        Seed([0; 32]),
+        nodes.clone(),
+    );
+    let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
+    aggregator.is_aggregator = false;
+    let ec = test_ctx(EffectsEnabled::new());
+    for (party_id, node) in nodes {
+        aggregator.add_keyshare(
+            ArcBytes::from_bytes(&[party_id as u8]),
+            node,
+            party_id,
+            None,
+            &ec,
+        )?;
+    }
+    aggregator.publish_inputs_ready(ec)?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+    ));
+    let ready = next_event(&history).await?;
+    assert!(matches!(
+        ready.get_data(),
+        InterfoldEventData::AggregationInputsReady(data)
+            if data.e3_id == e3_id && data.phase == AggregationPhase::PublicKey
+    ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::ShareVerificationDispatched(_)
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn promoted_standby_resumes_persisted_public_key_work() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let state = PublicKeyAggregatorState::VerifyingC1 {
+        submission_order: vec![(
+            0,
+            Address::ZERO.to_string(),
+            ArcBytes::from_bytes(&[1, 2, 3]),
+        )],
+        threshold_m: 0,
+        circuit_committee_n: 1,
+        circuit_committee_h: 1,
+        c1_proofs: vec![Some(c1_proof_with_pk_commitment(&e3_id, [7; 32]))],
+        no_proof_parties: Vec::new(),
+        canonical_party_nodes: HashMap::from([(0, Address::ZERO.to_string())]),
+    };
+    let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
+    aggregator.is_aggregator = false;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+
+    aggregator.is_aggregator = true;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
     let event = next_event(&history).await?;
     assert!(matches!(
         event.into_data(),

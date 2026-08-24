@@ -12,6 +12,7 @@
 
 use e3_events::{E3id, Proof};
 use e3_utils::utility_types::ArcBytes;
+use std::time::Duration;
 
 #[cfg(test)]
 use e3_events::CircuitName;
@@ -53,6 +54,21 @@ pub(crate) fn validate_plaintext_output(
         ));
     }
     Ok(())
+}
+
+/// Return a deterministic wait for one committee member's deadline attempt.
+/// A past deadline still keeps the party-id stagger after restart.
+pub(crate) fn failure_watch_delay(
+    now_unix_secs: u64,
+    deadline_unix_secs: u64,
+    party_id: u64,
+    party_stagger_secs: u64,
+) -> Duration {
+    let deadline_wait = deadline_unix_secs
+        .saturating_sub(now_unix_secs)
+        .saturating_add(1);
+    let stagger = party_id.saturating_mul(party_stagger_secs);
+    Duration::from_secs(deadline_wait.saturating_add(stagger))
 }
 
 #[cfg(test)]
@@ -104,5 +120,17 @@ mod tests {
     fn accepts_matching_single_proof() {
         let proofs = vec![proof()];
         assert!(validate_plaintext_output(&e3(), &bytes(1), &proofs).is_ok());
+    }
+
+    #[test]
+    fn deadline_attempts_are_staggered_by_party_id() {
+        assert_eq!(failure_watch_delay(100, 160, 0, 15).as_secs(), 61);
+        assert_eq!(failure_watch_delay(100, 160, 2, 15).as_secs(), 91);
+    }
+
+    #[test]
+    fn restart_after_deadline_preserves_the_party_stagger() {
+        assert_eq!(failure_watch_delay(200, 160, 0, 15).as_secs(), 1);
+        assert_eq!(failure_watch_delay(200, 160, 2, 15).as_secs(), 31);
     }
 }
