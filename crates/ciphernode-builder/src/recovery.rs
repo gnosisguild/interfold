@@ -95,15 +95,6 @@ pub(crate) async fn backfill_restart_state(
         .iter()
         .filter_map(|(chain_id, (_, _, was_missing))| was_missing.then_some(*chain_id))
         .collect::<HashSet<_>>();
-    let sortition_before_prune = sortition
-        .seeds
-        .keys()
-        .chain(sortition.pending_requests.keys())
-        .chain(sortition.pending_expulsions.keys())
-        .chain(sortition.pending_exclusions.keys())
-        .cloned()
-        .collect::<HashSet<_>>()
-        .len();
     let terminal_sortition_e3s = sortition
         .seeds
         .keys()
@@ -113,11 +104,12 @@ pub(crate) async fn backfill_restart_state(
         .filter(|e3_id| {
             matches!(
                 lifecycle.get(*e3_id),
-                Some(e3_events::E3Stage::Complete | e3_events::E3Stage::Failed)
+                Some(E3Stage::Complete | E3Stage::Failed)
             )
         })
         .cloned()
         .collect::<HashSet<_>>();
+    let mut sortition_pruned = !terminal_sortition_e3s.is_empty();
     for e3_id in terminal_sortition_e3s {
         sortition.remove(&e3_id);
     }
@@ -125,22 +117,10 @@ pub(crate) async fn backfill_restart_state(
         .keys()
         .chain(selector.committees.keys())
     {
+        sortition_pruned |=
+            sortition.seeds.contains_key(e3_id) || sortition.pending_requests.contains_key(e3_id);
         sortition.complete_sortition(e3_id);
     }
-    let sortition_after_prune = sortition
-        .seeds
-        .keys()
-        .chain(sortition.pending_requests.keys())
-        .chain(sortition.pending_expulsions.keys())
-        .chain(sortition.pending_exclusions.keys())
-        .cloned()
-        .collect::<HashSet<_>>()
-        .len();
-    let sortition_pruned = sortition_before_prune.saturating_sub(sortition_after_prune);
-    let finalizer_before_prune = finalizer
-        .pending_requests
-        .len()
-        .max(finalizer.tickets.len());
     let stale_finalizer_e3s: HashSet<E3id> = finalizer
         .pending_requests
         .keys()
@@ -150,20 +130,15 @@ pub(crate) async fn backfill_restart_state(
                 || finalized_committees.contains_key(*e3_id)
                 || matches!(
                     lifecycle.get(*e3_id),
-                    Some(e3_events::E3Stage::Complete | e3_events::E3Stage::Failed)
+                    Some(E3Stage::Complete | E3Stage::Failed)
                 )
         })
         .cloned()
         .collect();
+    let finalizer_pruned = !stale_finalizer_e3s.is_empty();
     for e3_id in stale_finalizer_e3s {
         finalizer.remove(&e3_id);
     }
-    let finalizer_pruned = finalizer_before_prune.saturating_sub(
-        finalizer
-            .pending_requests
-            .len()
-            .max(finalizer.tickets.len()),
-    );
     let active_e3s: HashSet<E3id> = selector
         .e3_cache
         .keys()
@@ -198,10 +173,10 @@ pub(crate) async fn backfill_restart_state(
         targets.extend(active_e3s);
     }
     if targets.is_empty() && slash_target_chains.is_empty() {
-        if sortition_was_missing || sortition_pruned > 0 {
+        if sortition_was_missing || sortition_pruned {
             sortition_store.write_sync(&sortition).await?;
         }
-        if finalizer_was_missing || finalizer_pruned > 0 {
+        if finalizer_was_missing || finalizer_pruned {
             finalizer_store.write_sync(&finalizer).await?;
         }
         for (store, state, was_missing) in slashing_recovery.values() {
