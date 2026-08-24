@@ -249,13 +249,6 @@ fn event_order_key(event: &InterfoldEvent) -> (u128, AggregateId, u64) {
     (event.ts(), event.aggregate_id(), event.seq())
 }
 
-#[cfg(test)]
-fn write_run(events: Vec<InterfoldEvent>) -> Result<NamedTempFile> {
-    let mut file = NamedTempFile::new().context("failed to create EventStore replay spool file")?;
-    append_run(&mut file, events)?;
-    Ok(file)
-}
-
 fn append_run(
     file: &mut NamedTempFile,
     events: impl IntoIterator<Item = InterfoldEvent>,
@@ -425,40 +418,7 @@ impl RunMerger {
 mod tests {
     use super::*;
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{E3id, EventPublisher, Sequenced, TestEvent};
-
-    fn event(aggregate: u64, sequence: u64, timestamp: u128) -> InterfoldEvent<Sequenced> {
-        InterfoldEvent::<Sequenced>::test_event("spooled")
-            .e3_id(E3id::new(sequence.to_string(), aggregate))
-            .seq(sequence)
-            .ts(timestamp)
-            .build()
-    }
-
-    #[test]
-    fn merge_orders_aggregate_heads_deterministically() -> Result<()> {
-        let first = write_run(vec![event(1, 1, 20), event(1, 2, 30), event(1, 3, 50)])?;
-        let second = write_run(vec![event(2, 1, 10), event(2, 2, 40)])?;
-        let third = write_run(vec![event(3, 1, 40)])?;
-        let mut merger = RunMerger::new(&[first, second, third])?;
-        let mut keys = Vec::new();
-        while let Some(event) = merger.next_event()? {
-            keys.push(event_order_key(&event));
-        }
-
-        assert_eq!(
-            keys,
-            vec![
-                (10, AggregateId::new(2), 1),
-                (20, AggregateId::new(1), 1),
-                (30, AggregateId::new(1), 2),
-                (40, AggregateId::new(2), 2),
-                (40, AggregateId::new(3), 1),
-                (50, AggregateId::new(1), 3),
-            ]
-        );
-        Ok(())
-    }
+    use e3_events::{EventPublisher, TestEvent};
 
     #[test]
     fn fresh_snapshot_cursor_starts_at_first_one_based_log_sequence() {
@@ -489,12 +449,12 @@ mod tests {
     }
 
     #[actix::test]
-    async fn replay_preserves_aggregate_sequence() -> Result<()> {
+    async fn replay_orders_heads_and_preserves_sequence() -> Result<()> {
         let system = EventSystem::new().with_fresh_bus().with_aggregate_config(
-            e3_events::AggregateConfig::new(std::collections::HashMap::from([(
-                AggregateId::new(1),
-                std::time::Duration::ZERO,
-            )])),
+            e3_events::AggregateConfig::new(std::collections::HashMap::from([
+                (AggregateId::new(1), std::time::Duration::ZERO),
+                (AggregateId::new(2), std::time::Duration::ZERO),
+            ])),
         );
         let bus = system.handle()?.enable("replay-spool-sequence");
         bus.naked_dispatch_async(
@@ -513,20 +473,44 @@ mod tests {
                 .build(),
         )
         .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("other first")
+                .id(3)
+                .aggregate_id(2)
+                .ts(150)
+                .build(),
+        )
+        .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("other second")
+                .id(4)
+                .aggregate_id(2)
+                .ts(200)
+                .build(),
+        )
+        .await?;
         bus.flush_event_pipeline().await?;
 
         let spool = ReplaySpool::load_bounded(
             &system.eventstore_reader()?.seq(),
-            std::collections::HashMap::from([(AggregateId::new(1), 2)]),
+            std::collections::HashMap::from([(AggregateId::new(1), 2), (AggregateId::new(2), 2)]),
         )
         .await?;
         let mut order = Vec::new();
         spool.project(|event| {
-            order.push((event.seq(), event.ts()));
+            order.push((event.aggregate_id(), event.seq(), event.ts()));
             Ok(())
         })?;
 
-        assert_eq!(order, [(1, 200), (2, 100)]);
+        assert_eq!(
+            order,
+            [
+                (AggregateId::new(2), 1, 150),
+                (AggregateId::new(1), 1, 200),
+                (AggregateId::new(1), 2, 100),
+                (AggregateId::new(2), 2, 200),
+            ]
+        );
         Ok(())
     }
 }

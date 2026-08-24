@@ -212,7 +212,7 @@ async fn restart_redrives_c1_verification() -> Result<()> {
 }
 
 #[actix::test]
-async fn inactive_standby_persists_keyshares_without_starting_proofs() -> Result<()> {
+async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
     let e3_id = E3id::new("42", 1);
     let committee = CiphernodesCommitteeSize::Minimum.values();
     let nodes = (0..committee.n as u64)
@@ -232,7 +232,7 @@ async fn inactive_standby_persists_keyshares_without_starting_proofs() -> Result
             ArcBytes::from_bytes(&[party_id as u8]),
             node,
             party_id,
-            None,
+            Some(c1_proof_with_pk_commitment(&e3_id, [7; 32])),
             &ec,
         )?;
     }
@@ -253,32 +253,6 @@ async fn inactive_standby_persists_keyshares_without_starting_proofs() -> Result
         event.get_data(),
         InterfoldEventData::ShareVerificationDispatched(_)
     )));
-    Ok(())
-}
-
-#[actix::test]
-async fn promoted_standby_resumes_persisted_public_key_work() -> Result<()> {
-    let e3_id = E3id::new("42", 1);
-    let state = PublicKeyAggregatorState::VerifyingC1 {
-        submission_order: vec![(
-            0,
-            Address::ZERO.to_string(),
-            ArcBytes::from_bytes(&[1, 2, 3]),
-        )],
-        threshold_m: 0,
-        circuit_committee_n: 1,
-        circuit_committee_h: 1,
-        c1_proofs: vec![Some(c1_proof_with_pk_commitment(&e3_id, [7; 32]))],
-        no_proof_parties: Vec::new(),
-        canonical_party_nodes: HashMap::from([(0, Address::ZERO.to_string())]),
-    };
-    let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
-    aggregator.is_aggregator = false;
-    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
-    assert!(history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .is_empty());
 
     aggregator.is_aggregator = true;
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;

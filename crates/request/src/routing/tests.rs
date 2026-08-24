@@ -155,26 +155,28 @@ async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<
 }
 
 #[actix::test]
-async fn recovery_selection_is_not_republished() -> Result<()> {
-    let e3_id = E3id::new("9", 31337);
+async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
+    let recovered_e3 = E3id::new("9", 31337);
+    let live_e3 = E3id::new("10", 31337);
+    let aggregate_id = AggregateId::from_chain_id(Some(31337));
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let repositories = store.repositories();
     repositories
         .router()
         .repositories()
-        .context(&e3_id)
+        .context(&recovered_e3)
         .write_sync(&E3ContextSnapshot {
-            e3_id: e3_id.clone(),
+            e3_id: recovered_e3.clone(),
             recipients: Vec::new(),
             dependencies: Vec::new(),
         })
         .await?;
-    repositories
-        .request_router_checkpoint()
+    let recovery_store = repositories.request_router_checkpoint();
+    recovery_store
         .write_sync(&RequestRouterCheckpoint {
-            contexts: vec![e3_id.clone()],
+            contexts: vec![recovered_e3.clone()],
             completed: HashSet::new(),
-            replay_cursors: HashMap::from([(AggregateId::from_chain_id(Some(31337)), 12)]),
+            replay_cursors: HashMap::from([(aggregate_id, 12)]),
         })
         .await?;
 
@@ -185,10 +187,10 @@ async fn recovery_selection_is_not_republished() -> Result<()> {
             selections: selections.clone(),
         })],
         recovered_selections: vec![CiphernodeSelected {
-            e3_id,
+            e3_id: recovered_e3.clone(),
             ..Default::default()
         }],
-        recovery_store: repositories.request_router_checkpoint(),
+        recovery_store: recovery_store.clone(),
         store: repositories.router(),
     }
     .build()
@@ -204,41 +206,15 @@ async fn recovery_selection_is_not_republished() -> Result<()> {
         )
         .await?;
     assert_eq!(selections.load(Ordering::SeqCst), 1);
-    Ok(())
-}
-
-#[actix::test]
-async fn live_router_uses_the_canonical_checkpoint() -> Result<()> {
-    let e3_id = E3id::new("10", 31337);
-    let aggregate_id = AggregateId::from_chain_id(Some(31337));
-    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-    let repositories = store.repositories();
-    let recovery_store = repositories.request_router_checkpoint();
-    recovery_store
-        .write_sync(&RequestRouterCheckpoint {
-            contexts: Vec::new(),
-            completed: HashSet::new(),
-            replay_cursors: HashMap::from([(aggregate_id, 0)]),
-        })
-        .await?;
-    let router = E3RouterBuilder {
-        bus: test_bus(),
-        extensions: Vec::new(),
-        recovered_selections: Vec::new(),
-        recovery_store: recovery_store.clone(),
-        store: repositories.router(),
-    }
-    .build()
-    .await?;
 
     router
         .send(
             InterfoldEvent::<Unsequenced>::test_event("request")
                 .data(E3Requested {
-                    e3_id: e3_id.clone(),
+                    e3_id: live_e3.clone(),
                     ..Default::default()
                 })
-                .seq(13)
+                .seq(14)
                 .build(),
         )
         .await?;
@@ -247,8 +223,12 @@ async fn live_router_uses_the_canonical_checkpoint() -> Result<()> {
         .read()
         .await?
         .expect("canonical checkpoint must exist");
-    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&13));
-    assert_eq!(checkpoint.contexts, vec![e3_id]);
+    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&14));
+    assert_eq!(
+        checkpoint.contexts.into_iter().collect::<HashSet<_>>(),
+        HashSet::from([recovered_e3, live_e3])
+    );
+    assert_eq!(selections.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

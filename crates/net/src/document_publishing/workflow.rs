@@ -146,18 +146,17 @@ mod tests {
     }
 
     #[test]
-    fn interested_when_registered_and_unfiltered() {
-        let mut svc = DocumentPublishingService::new();
-        svc.register_interest(E3id::new("1", 1), 2);
-        assert_eq!(svc.interested_party(&notification("1", vec![])), Some(2));
-    }
-
-    #[test]
-    fn network_starts_with_recovered_interests() {
-        let svc =
+    fn live_and_recovered_interests_match() {
+        let mut live = DocumentPublishingService::new();
+        live.register_interest(E3id::new("1", 1), 2);
+        let recovered =
             DocumentPublishingService::with_interests(HashMap::from([(E3id::new("1", 1), 2)]));
 
-        assert_eq!(svc.interested_party(&notification("1", vec![])), Some(2));
+        assert_eq!(live.interested_party(&notification("1", vec![])), Some(2));
+        assert_eq!(
+            recovered.interested_party(&notification("1", vec![])),
+            Some(2)
+        );
     }
 
     #[test]
