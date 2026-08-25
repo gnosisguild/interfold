@@ -143,6 +143,7 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
         bus: bus.clone(),
         backends: test_persistable(HashMap::<u64, SortitionBackend>::new()),
         node_state: test_persistable(HashMap::<u64, NodeStateStore>::new()),
+        recovery: test_persistable(e3_sortition::SortitionRecoveryState::default()),
         finalized_committees: test_persistable(HashMap::<E3id, Committee>::new()),
         ciphernode_selector: selector,
         address: "node-1".to_string(),
@@ -228,7 +229,7 @@ async fn restart_redrives_threshold_decryption() -> Result<()> {
 }
 
 #[actix::test]
-async fn inactive_standby_persists_decryption_shares_without_starting_proofs() -> Result<()> {
+async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
     let ec = test_ctx(EffectsEnabled::new());
@@ -255,18 +256,6 @@ async fn inactive_standby_persists_decryption_shares_without_starting_proofs() -
         event.get_data(),
         InterfoldEventData::ShareVerificationDispatched(_)
     )));
-    Ok(())
-}
-
-#[actix::test]
-async fn promoted_standby_resumes_persisted_plaintext_work() -> Result<()> {
-    let (mut aggregator, history, e3_id) =
-        build_plaintext_aggregator_with_role(verifying_c6_state(), true, false).await?;
-    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
-    assert!(history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .is_empty());
 
     aggregator.is_aggregator = true;
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;

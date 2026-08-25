@@ -486,6 +486,21 @@ design citation alone does not establish current runtime behavior.
   fail closed. — INDEX concern #15
 - Crash-torn log tails: truncate only an unindexed CRC/length-invalid physical suffix; indexed
   corruption is fatal. — INDEX concern #16
+- Process-infrastructure events belong to one boot and are never EventStore replay inputs. The
+  current boot must publish fresh sync, readiness, effect, and shutdown phase events; otherwise a
+  payload-derived event ID can suppress the event that startup is waiting for. The `NetReady`
+  listener is armed before the network transport starts. — INDEX concern #44
+- The request-router recovery checkpoint has one canonical root key. Every live or recovery update
+  retains the highest sequence observed for each aggregate. Startup advances a trailing checkpoint
+  from its missing EventStore suffix, and the final snapshot drain preserves event order. An older
+  contextual write must never replace newer admission state or move a covered-prefix cursor
+  backward. — INDEX concern #43
+- EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
+  choose between the next events of different aggregates. A late event can have an older remote HLC
+  and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
+- Snapshot-derived participation state is injected directly. Restart must not append synthetic
+  `CiphernodeSelected` or `AggregatorChanged` events. A derived local selection resumes only at the
+  fenced `SyncEffect` boundary. — INDEX concern #45
 - Every state field is classified **Durable / Derivable / Ephemeral**. Pending proof bundles,
   decrypted-share progress, accusation votes/timeouts, retry state, active-aggregator designation,
   deadlines, and undispatched external effects are durable unless a stronger authority can
@@ -507,7 +522,12 @@ design citation alone does not establish current runtime behavior.
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
   the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
-  order; `ComputeEffectGate` buffers/dedups until `EffectsEnabled`. — `CRATES_ARCHITECTURE.md`
+  order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. —
+  `CRATES_ARCHITECTURE.md`
+- Sortition delays, committee-finalization timers, and slash submissions persist their semantic
+  inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
+  may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46
 - Durable EVM settlement receipts (`RewardCredited`, `RewardClaimed`) are global facts — never
   routed into a completed per-E3 context. — INDEX concern #8
 - Replayed committee events must not replace a restored per-E3 actor with a fresh instance; the

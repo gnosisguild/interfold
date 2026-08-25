@@ -16,25 +16,32 @@ use actix::{Message, Recipient};
 use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AggregateConfig, AggregateId, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
-    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
+    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BusHandle,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
+    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
+    EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, RequestRouterCheckpoint, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
+    InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
+    TicketGenerated, TypedEvent, Unsequenced,
 };
 #[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
+use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors, RequestRouterCheckpoint};
 use e3_utils::actix::channel as actix_toolbox;
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    time::Duration,
+};
 use tokio::sync::mpsc::Receiver;
 use tracing::info;
 
 #[cfg(test)]
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
-/// Rebuild the request-router checkpoint when its cursors differ from aggregate snapshots.
+/// Advance the request-router checkpoint when it trails aggregate snapshots.
 ///
-/// The rebuild projects EventStore history only into router admission state. It does not replay
-/// protocol actors, which already hydrate from their aggregate snapshots.
+/// The projection changes only router admission state. It does not replay protocol actors, which
+/// already hydrate from their aggregate snapshots.
 pub async fn reconcile_request_router_checkpoint(
     repositories: &Repositories,
     aggregate_ids: impl IntoIterator<Item = AggregateId>,
@@ -51,44 +58,252 @@ pub async fn reconcile_request_router_checkpoint(
     }
 
     let checkpoint_store = repositories.request_router_checkpoint();
-    let checkpoint = checkpoint_store
+    let mut checkpoint = checkpoint_store
         .read()
         .await?
         .context("request-router checkpoint is missing after storage preflight")?;
-    if checkpoint.replay_cursors == target_cursors {
+    let needs_advance = target_cursors.iter().any(|(aggregate_id, target)| {
+        checkpoint
+            .replay_cursors
+            .get(aggregate_id)
+            .copied()
+            .unwrap_or(0)
+            < *target
+    });
+    if !needs_advance {
         return Ok(());
     }
 
     info!(
         checkpoint_cursors = ?checkpoint.replay_cursors,
         target_cursors = ?target_cursors,
-        "Rebuilding the request-router checkpoint from EventStore"
+        "Advancing the request-router checkpoint from EventStore"
     );
-    let spool = ReplaySpool::load_bounded(eventstore, target_cursors.clone()).await?;
-    let mut rebuilt = RequestRouterCheckpoint {
-        replay_cursors: target_cursors
-            .keys()
-            .copied()
-            .map(|aggregate_id| (aggregate_id, 0))
-            .collect(),
-        ..Default::default()
-    };
+    let spool = ReplaySpool::load_between(
+        eventstore,
+        checkpoint.replay_cursors.clone(),
+        target_cursors.clone(),
+    )
+    .await?;
     let projected = spool.project(|event| {
-        e3_request::project_request_router_event(&mut rebuilt, event);
+        e3_request::project_request_router_event(&mut checkpoint, event);
         Ok(())
     })?;
-    ensure!(
-        rebuilt.replay_cursors == target_cursors,
-        "request-router rebuild produced cursors {:?}, but aggregate snapshots require {:?}",
-        rebuilt.replay_cursors,
-        target_cursors
-    );
-    checkpoint_store.write_sync(&rebuilt).await?;
+    for (aggregate_id, target) in &target_cursors {
+        let cursor = checkpoint
+            .replay_cursors
+            .get(aggregate_id)
+            .copied()
+            .unwrap_or(0);
+        ensure!(
+            cursor >= *target,
+            "request-router recovery stopped at sequence {} for aggregate {}, before required sequence {}",
+            cursor,
+            aggregate_id,
+            target
+        );
+    }
+    checkpoint_store.write_sync(&checkpoint).await?;
     info!(
         projected_events = projected,
-        "Request-router checkpoint rebuilt"
+        "Request-router checkpoint advanced"
     );
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct RecoveredCommitteeRequest {
+    pub request: CommitteeRequested,
+    pub context: EventContext<Sequenced>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RestartStateBackfill {
+    pub sortition_seeds: HashMap<E3id, Seed>,
+    pub pending_sortition_requests: HashMap<E3id, TypedEvent<E3Requested>>,
+    pub pending_expulsions: HashMap<E3id, Vec<(CommitteeMemberExpelled, EventContext<Sequenced>)>>,
+    pub pending_exclusions: HashMap<E3id, Vec<(CommitteeMemberExcluded, EventContext<Sequenced>)>>,
+    pub committee_requests: HashMap<E3id, RecoveredCommitteeRequest>,
+    pub tickets: HashMap<E3id, TicketGenerated>,
+    pub slash_intents: Vec<AccusationQuorumReached>,
+}
+
+impl RestartStateBackfill {
+    fn complete_committee_formation(&mut self, e3_id: &E3id) {
+        self.sortition_seeds.remove(e3_id);
+        self.pending_sortition_requests.remove(e3_id);
+        self.committee_requests.remove(e3_id);
+        self.tickets.remove(e3_id);
+    }
+
+    fn remove(&mut self, e3_id: &E3id) {
+        self.complete_committee_formation(e3_id);
+        self.pending_expulsions.remove(e3_id);
+        self.pending_exclusions.remove(e3_id);
+    }
+
+    fn acknowledge_expulsion(&mut self, data: &CommitteeMemberExpelled) {
+        let Some(pending) = self.pending_expulsions.get_mut(&data.e3_id) else {
+            return;
+        };
+        pending.retain(|(existing, _)| {
+            existing.node != data.node
+                || existing.reason != data.reason
+                || existing.active_count_after != data.active_count_after
+        });
+        if pending.is_empty() {
+            self.pending_expulsions.remove(&data.e3_id);
+        }
+    }
+
+    fn acknowledge_exclusion(&mut self, data: &CommitteeMemberExcluded) {
+        let Some(pending) = self.pending_exclusions.get_mut(&data.e3_id) else {
+            return;
+        };
+        pending.retain(|(existing, _)| {
+            existing.node != data.node || existing.proof_type != data.proof_type
+        });
+        if pending.is_empty() {
+            self.pending_exclusions.remove(&data.e3_id);
+        }
+    }
+
+    fn acknowledge_slash_exclusion(&mut self, data: &CommitteeMemberExcluded) {
+        self.slash_intents.retain(|intent| {
+            intent.e3_id != data.e3_id
+                || intent.accused != data.node
+                || intent.proof_type != data.proof_type
+        });
+    }
+
+    fn acknowledge_slash_execution(&mut self, data: &SlashExecuted) {
+        self.slash_intents.retain(|intent| {
+            intent.e3_id != data.e3_id
+                || intent.accused != data.operator
+                || intent.proof_type.attestation_slash_reason().0 != data.reason
+        });
+    }
+}
+
+/// Recover restart-critical inputs from EventStore history.
+///
+/// Stores that predate the dedicated recovery repositories kept delayed sortition inputs,
+/// pre-finalization membership changes, committee-finalization requests, generated ticket
+/// retries, and pending slash submissions only in the event log. The ciphernode builder writes
+/// this projection into missing recovery repositories before actors start.
+pub async fn project_restart_state_backfill(
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    end_cursors: HashMap<AggregateId, u64>,
+    target_e3s: &HashSet<E3id>,
+    slash_target_chains: &HashSet<u64>,
+) -> Result<RestartStateBackfill> {
+    if (target_e3s.is_empty() && slash_target_chains.is_empty()) || end_cursors.is_empty() {
+        return Ok(RestartStateBackfill::default());
+    }
+
+    let spool = ReplaySpool::load_bounded(eventstore, end_cursors).await?;
+    let mut recovered = RestartStateBackfill::default();
+    spool.project(|event| {
+        match event.get_data() {
+            InterfoldEventData::AccusationQuorumReached(intent)
+                if slash_target_chains.contains(&intent.e3_id.chain_id())
+                    && intent.outcome == AccusationOutcome::AccusedFaulted =>
+            {
+                replace_slash_intent(&mut recovered.slash_intents, intent.clone());
+            }
+            InterfoldEventData::SlashExecuted(execution)
+                if slash_target_chains.contains(&execution.e3_id.chain_id()) =>
+            {
+                recovered.acknowledge_slash_execution(execution);
+            }
+            InterfoldEventData::E3Requested(request) if target_e3s.contains(&request.e3_id) => {
+                recovered.pending_sortition_requests.insert(
+                    request.e3_id.clone(),
+                    TypedEvent::new(request.clone(), event.get_ctx().clone()),
+                );
+            }
+            InterfoldEventData::CommitteeRequested(request)
+                if target_e3s.contains(&request.e3_id) =>
+            {
+                recovered
+                    .sortition_seeds
+                    .insert(request.e3_id.clone(), request.seed);
+                recovered.committee_requests.insert(
+                    request.e3_id.clone(),
+                    RecoveredCommitteeRequest {
+                        request: request.clone(),
+                        context: event.get_ctx().clone(),
+                    },
+                );
+            }
+            InterfoldEventData::TicketGenerated(ticket)
+                if target_e3s.contains(&ticket.e3_id) && ticket.party_index.is_some() =>
+            {
+                recovered
+                    .tickets
+                    .insert(ticket.e3_id.clone(), ticket.clone());
+            }
+            InterfoldEventData::CommitteeMemberExpelled(expulsion)
+                if target_e3s.contains(&expulsion.e3_id) =>
+            {
+                if expulsion.party_id.is_some() {
+                    recovered.acknowledge_expulsion(expulsion);
+                } else {
+                    let pending = recovered
+                        .pending_expulsions
+                        .entry(expulsion.e3_id.clone())
+                        .or_default();
+                    if !pending.iter().any(|(existing, _)| existing == expulsion) {
+                        pending.push((expulsion.clone(), event.get_ctx().clone()));
+                    }
+                }
+            }
+            InterfoldEventData::CommitteeMemberExcluded(exclusion) => {
+                if slash_target_chains.contains(&exclusion.e3_id.chain_id()) {
+                    recovered.acknowledge_slash_exclusion(exclusion);
+                }
+                if target_e3s.contains(&exclusion.e3_id) && exclusion.party_id.is_some() {
+                    recovered.acknowledge_exclusion(exclusion);
+                } else if target_e3s.contains(&exclusion.e3_id) {
+                    let pending = recovered
+                        .pending_exclusions
+                        .entry(exclusion.e3_id.clone())
+                        .or_default();
+                    if !pending.iter().any(|(existing, _)| existing == exclusion) {
+                        pending.push((exclusion.clone(), event.get_ctx().clone()));
+                    }
+                }
+            }
+            InterfoldEventData::CommitteeFinalized(event) => {
+                recovered.complete_committee_formation(&event.e3_id)
+            }
+            InterfoldEventData::E3Failed(event) => recovered.remove(&event.e3_id),
+            InterfoldEventData::E3RequestComplete(event) => recovered.remove(&event.e3_id),
+            InterfoldEventData::E3StageChanged(event)
+                if matches!(
+                    event.new_stage,
+                    e3_events::E3Stage::Complete | e3_events::E3Stage::Failed
+                ) =>
+            {
+                recovered.remove(&event.e3_id);
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(recovered)
+}
+
+fn replace_slash_intent(
+    intents: &mut Vec<AccusationQuorumReached>,
+    replacement: AccusationQuorumReached,
+) {
+    intents.retain(|intent| {
+        intent.e3_id != replacement.e3_id
+            || intent.accused != replacement.accused
+            || intent.proof_type != replacement.proof_type
+    });
+    intents.push(replacement);
 }
 
 pub async fn sync(
@@ -98,9 +313,33 @@ pub async fn sync(
     aggregate_config: &AggregateConfig,
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
 ) -> Result<()> {
-    // 0. start listening early for net ready
     let net_ready = bus.wait_for(EventType::NetReady);
+    sync_with_net_ready(
+        bus,
+        default_config,
+        repositories,
+        aggregate_config,
+        eventstore,
+        net_ready,
+    )
+    .await
+}
 
+/// Run startup sync with a network-readiness listener that is already armed.
+///
+/// Production creates this listener before it starts the network transport. This prevents an
+/// immediate no-peer `NetReady` event from passing before sync begins to wait for it.
+pub async fn sync_with_net_ready<F>(
+    bus: &BusHandle,
+    default_config: &EvmEventConfig,
+    repositories: &Repositories,
+    aggregate_config: &AggregateConfig,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    net_ready: F,
+) -> Result<()>
+where
+    F: Future<Output = Result<InterfoldEvent<Sequenced>>> + Send,
+{
     // 0b. Verify the on-disk schema version is compatible with this binary
     //     before touching any persisted state, so an incompatible upgrade or
     //     downgrade halts loudly instead of silently loading garbage (H19/H20).
@@ -127,8 +366,9 @@ pub async fn sync(
     let evm_config = snapshot.to_evm_config();
     let snapshot_net_config = snapshot.to_net_config();
 
-    // 3. Page post-snapshot EventStore history into sorted temporary runs. This preserves the
-    // global HLC replay order without retaining the complete backlog in memory.
+    // 3. Page post-snapshot EventStore history into temporary per-aggregate runs. Replay preserves
+    // each aggregate's durable sequence and uses HLC order to choose between aggregate heads,
+    // without retaining the complete backlog in memory.
     info!("Loading EventStore replay pages...");
     let request_router_checkpoint = repositories
         .request_router_checkpoint()
@@ -236,6 +476,11 @@ async fn publish_reconciled_history(
     bus.flush_event_pipeline().await?;
     info!("Effects enabled.");
 
+    // Effects subscribers are now attached. Resume derived local work before canonical history is
+    // released so per-E3 actors observe the same order as an uninterrupted process.
+    bus.publish_without_context(SyncEffect::new())?;
+    bus.flush_event_pipeline().await?;
+
     info!("Publishing historical events to actors...");
     for event in historical {
         bus.naked_dispatch_async(event).await?;
@@ -265,9 +510,9 @@ async fn replay_eventstore_events(
         bus.seed_clock(max_ts)?;
     }
 
-    // EventStoreRouter gathers one query response per aggregate. Those actor responses can arrive
-    // in any order, so replay must re-establish the global HLC order before stateful subscribers
-    // observe cross-aggregate dependencies.
+    // This test helper receives fixtures whose per-aggregate sequences are already monotonic. Sort
+    // those ready aggregate events by HLC before stateful subscribers observe cross-aggregate
+    // dependencies. Production uses ReplaySpool to enforce the sequence precondition.
     events.sort_by_key(|event| event.ts());
 
     for event in events {

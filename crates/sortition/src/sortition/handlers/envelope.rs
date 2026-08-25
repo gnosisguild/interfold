@@ -60,6 +60,7 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::E3RequestComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             _ => (),
         }
     }
