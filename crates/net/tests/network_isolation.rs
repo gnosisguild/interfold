@@ -13,7 +13,7 @@ use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
 use tokio::time::{sleep, timeout};
 
 #[tokio::test]
-async fn mainnet_rejects_a_sepolia_peer_before_network_admission() -> Result<()> {
+async fn rejects_another_network() -> Result<()> {
     assert_rejected(
         NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])])?,
         NetworkPolicy::new(NetworkProfile::sepolia(), [(11_155_111, [2; 20])])?,
@@ -22,7 +22,7 @@ async fn mainnet_rejects_a_sepolia_peer_before_network_admission() -> Result<()>
 }
 
 #[tokio::test]
-async fn mainnet_rejects_a_peer_with_a_different_deployment() -> Result<()> {
+async fn rejects_another_deployment() -> Result<()> {
     assert_rejected(
         NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])])?,
         NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [2; 20])])?,
@@ -31,19 +31,25 @@ async fn mainnet_rejects_a_peer_with_a_different_deployment() -> Result<()> {
 }
 
 async fn assert_rejected(listener: NetworkPolicy, dialer: NetworkPolicy) -> Result<()> {
-    let mainnet_key = Libp2pKeypair::generate();
-    let mainnet_peer = mainnet_key.peer_id();
-    let mut mainnet = Libp2pNetInterface::new(mainnet_key, vec![], None, listener)?;
-    let mainnet_handle = mainnet.handle();
-    tokio::spawn(async move { mainnet.start().await });
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+    let listener_key = Libp2pKeypair::generate();
+    let listener_peer = listener_key.peer_id();
+    let mut listener_node = Libp2pNetInterface::new(listener_key, vec![], None, listener)?;
+    let listener_handle = listener_node.handle();
+    tokio::spawn(async move { listener_node.start().await });
     let address = timeout(Duration::from_secs(5), async {
         loop {
-            if let Some(address) = mainnet_handle
+            if let Some(address) = listener_handle
                 .status()
                 .snapshot()
                 .listen_addresses
                 .into_iter()
-                .next()
+                .find(|address| address.starts_with("/ip4/127.0.0.1/"))
             {
                 break address;
             }
@@ -53,15 +59,12 @@ async fn assert_rejected(listener: NetworkPolicy, dialer: NetworkPolicy) -> Resu
     .await
     .expect("timed out waiting for the listener");
 
-    let address = format!(
-        "{}/p2p/{mainnet_peer}",
-        address.replace("/ip4/0.0.0.0/", "/ip4/127.0.0.1/")
-    );
-    let mut sepolia =
+    let address = format!("{address}/p2p/{listener_peer}");
+    let mut dialer_node =
         Libp2pNetInterface::new(Libp2pKeypair::generate(), vec![address], None, dialer)?;
-    let handle = sepolia.handle();
+    let handle = dialer_node.handle();
     let mut events = handle.rx();
-    tokio::spawn(async move { sepolia.start().await });
+    tokio::spawn(async move { dialer_node.start().await });
 
     timeout(Duration::from_secs(10), async {
         loop {

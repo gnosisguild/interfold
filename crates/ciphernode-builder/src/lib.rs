@@ -12,6 +12,7 @@ mod evm_system;
 pub mod global_eventstore_cache;
 pub mod global_store_cache;
 mod provider_caches;
+mod recovery;
 pub use ciphernode::*;
 pub use ciphernode_builder::*;
 pub use event_system::*;

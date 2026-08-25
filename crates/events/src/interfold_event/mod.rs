@@ -6,6 +6,7 @@
 
 mod accusation_quorum_reached;
 mod accusation_vote;
+mod aggregation_inputs_ready;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
@@ -86,6 +87,7 @@ mod typed_event;
 
 pub use accusation_quorum_reached::*;
 pub use accusation_vote::*;
+pub use aggregation_inputs_ready::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
@@ -351,6 +353,7 @@ pub enum InterfoldEventData {
     DkgFoldAttestationContextEstablished(DkgFoldAttestationContextEstablished),
     // Append new durable variants to preserve existing enum discriminants in persisted logs.
     CommitteeMemberExcluded(CommitteeMemberExcluded),
+    AggregationInputsReady(AggregationInputsReady),
 }
 
 impl InterfoldEventData {
@@ -643,6 +646,7 @@ impl InterfoldEventData {
             InterfoldEventData::SlashExecuted(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeMemberExpelled(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeMemberExcluded(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::AggregationInputsReady(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3Failed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3StageChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionShareProofSigned(ref data) => Some(data.e3_id.clone()),
@@ -786,7 +790,8 @@ impl_event_types!(
     EvmLogObserved,
     BondOwnerSet,
     DkgFoldAttestationContextEstablished,
-    CommitteeMemberExcluded
+    CommitteeMemberExcluded,
+    AggregationInputsReady
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

@@ -13,7 +13,12 @@ impl Handler<InterfoldEvent> for CommitteeFinalizer {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
-            InterfoldEventData::TicketGenerated(data) => self.notify_sync(ctx, data),
+            InterfoldEventData::TicketGenerated(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::CommitteeFinalized(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             InterfoldEventData::E3Failed(data) => self.notify_sync(ctx, TypedEvent::new(data, ec)),
             InterfoldEventData::E3RequestComplete(data) => {
@@ -36,30 +41,43 @@ impl Handler<TypedEvent<CommitteeRequested>> for CommitteeFinalizer {
         msg: TypedEvent<CommitteeRequested>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        let e3_id = msg.e3_id.to_string();
-        self.pending_requests.insert(
-            e3_id.clone(),
-            PendingCommitteeRequest {
-                e3_id: msg.e3_id.clone(),
-                committee_deadline: msg.committee_deadline,
-                ec: msg.get_ctx().clone(),
-            },
-        );
-        self.schedule_if_ready(&e3_id, ctx);
+        let e3_id = msg.e3_id.clone();
+        let request = RecoveredCommitteeRequest {
+            request: (*msg).clone(),
+            context: msg.get_ctx().clone(),
+        };
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.pending_requests.insert(e3_id, request);
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+            return;
+        }
+        self.schedule_if_ready(&msg.e3_id, ctx);
     }
 }
 
-impl Handler<TicketGenerated> for CommitteeFinalizer {
+impl Handler<TypedEvent<TicketGenerated>> for CommitteeFinalizer {
     type Result = ();
 
-    fn handle(&mut self, msg: TicketGenerated, ctx: &mut Self::Context) -> Self::Result {
-        let Some(party_index) = msg.party_index else {
+    fn handle(
+        &mut self,
+        msg: TypedEvent<TicketGenerated>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        if msg.party_index.is_none() {
             return;
-        };
+        }
 
-        let e3_id = msg.e3_id.to_string();
-        self.party_indexes.insert(e3_id.clone(), party_index);
-        self.schedule_if_ready(&e3_id, ctx);
+        let e3_id = msg.e3_id.clone();
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.tickets.insert(e3_id, (*msg).clone());
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+            return;
+        }
+        self.schedule_if_ready(&msg.e3_id, ctx);
     }
 }
 
@@ -68,7 +86,11 @@ impl Handler<EffectsEnabled> for CommitteeFinalizer {
 
     fn handle(&mut self, _msg: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
-        let e3_ids: Vec<String> = self.pending_requests.keys().cloned().collect();
+        let e3_ids: Vec<E3id> = self
+            .recovery
+            .get()
+            .map(|recovery| recovery.pending_requests.keys().cloned().collect())
+            .unwrap_or_default();
         for e3_id in e3_ids {
             self.schedule_if_ready(&e3_id, ctx);
         }
@@ -90,8 +112,7 @@ impl Handler<Shutdown> for CommitteeFinalizer {
 impl Handler<TypedEvent<E3Failed>> for CommitteeFinalizer {
     type Result = ();
     fn handle(&mut self, msg: TypedEvent<E3Failed>, ctx: &mut Self::Context) -> Self::Result {
-        let e3_id_str = msg.e3_id.to_string();
-        if let Some(handle) = self.pending_committees.remove(&e3_id_str) {
+        if let Some(handle) = self.pending_committees.remove(&msg.e3_id) {
             info!(
                 e3_id = %msg.e3_id,
                 reason = ?msg.reason,
@@ -99,8 +120,12 @@ impl Handler<TypedEvent<E3Failed>> for CommitteeFinalizer {
             );
             ctx.cancel_future(handle);
         }
-        self.pending_requests.remove(&e3_id_str);
-        self.party_indexes.remove(&e3_id_str);
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.remove(&msg.e3_id);
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+        }
     }
 }
 
@@ -109,8 +134,7 @@ impl Handler<TypedEvent<E3StageChanged>> for CommitteeFinalizer {
     fn handle(&mut self, msg: TypedEvent<E3StageChanged>, ctx: &mut Self::Context) -> Self::Result {
         match &msg.new_stage {
             E3Stage::Complete | E3Stage::Failed => {
-                let e3_id_str = msg.e3_id.to_string();
-                if let Some(handle) = self.pending_committees.remove(&e3_id_str) {
+                if let Some(handle) = self.pending_committees.remove(&msg.e3_id) {
                     info!(
                         e3_id = %msg.e3_id,
                         stage = ?msg.new_stage,
@@ -118,8 +142,12 @@ impl Handler<TypedEvent<E3StageChanged>> for CommitteeFinalizer {
                     );
                     ctx.cancel_future(handle);
                 }
-                self.pending_requests.remove(&e3_id_str);
-                self.party_indexes.remove(&e3_id_str);
+                if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+                    recovery.remove(&msg.e3_id);
+                    Ok(recovery)
+                }) {
+                    self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+                }
             }
             _ => {}
         }
@@ -134,11 +162,34 @@ impl Handler<TypedEvent<E3RequestComplete>> for CommitteeFinalizer {
         msg: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        let e3_id_str = msg.e3_id.to_string();
-        if let Some(handle) = self.pending_committees.remove(&e3_id_str) {
+        if let Some(handle) = self.pending_committees.remove(&msg.e3_id) {
             ctx.cancel_future(handle);
         }
-        self.pending_requests.remove(&e3_id_str);
-        self.party_indexes.remove(&e3_id_str);
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.remove(&msg.e3_id);
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+        }
+    }
+}
+
+impl Handler<TypedEvent<CommitteeFinalized>> for CommitteeFinalizer {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitteeFinalized>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        if let Some(handle) = self.pending_committees.remove(&msg.e3_id) {
+            ctx.cancel_future(handle);
+        }
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.remove(&msg.e3_id);
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+        }
     }
 }

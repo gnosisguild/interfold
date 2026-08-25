@@ -7,33 +7,45 @@
 use super::*;
 
 #[actix::test]
-async fn stale_router_checkpoint_is_rebuilt_to_the_snapshot_cursor() -> anyhow::Result<()> {
+async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()> {
     let system =
         EventSystem::new()
             .with_fresh_bus()
             .with_aggregate_config(e3_events::AggregateConfig::new(
                 std::collections::HashMap::from([(AggregateId::new(1), std::time::Duration::ZERO)]),
             ));
-    let bus = system.handle()?.enable("test-router-checkpoint-rebuild");
-    let e3_id = E3id::new("0", 1);
+    let bus = system.handle()?.enable("test-router-checkpoint-advance");
     let aggregate_id = AggregateId::new(1);
-    bus.publish_without_context(E3StageChanged {
-        e3_id: e3_id.clone(),
-        previous_stage: E3Stage::CommitteeFinalized,
-        new_stage: E3Stage::KeyPublished,
-    })?;
+    let active_e3 = E3id::new("7", 1);
+    bus.naked_dispatch_async(
+        InterfoldEvent::<Unsequenced>::test_event("stored first")
+            .id(1)
+            .aggregate_id(1)
+            .ts(200)
+            .build(),
+    )
+    .await?;
+    bus.naked_dispatch_async(
+        InterfoldEvent::<Unsequenced>::test_event("stored second")
+            .id(2)
+            .aggregate_id(1)
+            .ts(100)
+            .build(),
+    )
+    .await?;
     bus.flush_event_pipeline().await?;
 
     let store = system.store()?;
     let repositories = Repositories::from(&store);
     repositories
         .aggregate_seq(aggregate_id)
-        .write_sync(&1)
+        .write_sync(&2)
         .await?;
     repositories
         .request_router_checkpoint()
         .write_sync(&RequestRouterCheckpoint {
-            replay_cursors: std::collections::HashMap::from([(aggregate_id, 0)]),
+            contexts: vec![active_e3.clone()],
+            replay_cursors: std::collections::HashMap::from([(aggregate_id, 1)]),
             ..Default::default()
         })
         .await?;
@@ -49,10 +61,9 @@ async fn stale_router_checkpoint_is_rebuilt_to_the_snapshot_cursor() -> anyhow::
         .request_router_checkpoint()
         .read()
         .await?
-        .expect("the rebuilt checkpoint should exist");
-    assert_eq!(checkpoint.contexts, vec![e3_id]);
-    assert!(checkpoint.completed.is_empty());
-    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&1));
+        .expect("the advanced checkpoint should exist");
+    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&2));
+    assert!(checkpoint.contexts.contains(&active_e3));
     Ok(())
 }
 
@@ -79,9 +90,25 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
             .data(make_historical_evm_sync_start())
             .seq(4)
             .build(),
+        InterfoldEvent::<Unsequenced>::test_event("net-start")
+            .data(HistoricalNetSyncStart::new(BTreeMap::new()))
+            .seq(5)
+            .build(),
+        InterfoldEvent::<Unsequenced>::test_event("net-complete")
+            .data(HistoricalNetSyncEventsReceived::new(Vec::new()))
+            .seq(6)
+            .build(),
+        InterfoldEvent::<Unsequenced>::test_event("sync-effect")
+            .data(SyncEffect::new())
+            .seq(7)
+            .build(),
+        InterfoldEvent::<Unsequenced>::test_event("net-ready")
+            .data(NetReady::new())
+            .seq(8)
+            .build(),
         InterfoldEvent::<Unsequenced>::test_event("after")
             .id(2)
-            .seq(5)
+            .seq(9)
             .build(),
     ];
 
@@ -117,6 +144,181 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
         .collect();
 
     assert_eq!(msgs, vec!["before", "after"]);
+    Ok(())
+}
+
+#[actix::test]
+async fn empty_net_sync_completes_after_restart() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-empty-net-sync-restart");
+    let stale_completion = InterfoldEvent::<Unsequenced>::test_event("stale-net-complete")
+        .data(HistoricalNetSyncEventsReceived::new(Vec::new()))
+        .seq(1)
+        .build();
+    let stale_event_id = stale_completion.id();
+
+    let replayed = replay_eventstore_events(&bus, vec![stale_completion]).await?;
+    assert_eq!(replayed, 0);
+
+    let completion = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(HistoricalNetSyncEventsReceived::new(Vec::new()))?;
+    let received = tokio::time::timeout(std::time::Duration::from_secs(1), completion).await??;
+
+    assert!(matches!(
+        received.get_data(),
+        InterfoldEventData::HistoricalNetSyncEventsReceived(event) if event.events.is_empty()
+    ));
+    assert_eq!(received.id(), stale_event_id);
+    Ok(())
+}
+
+#[actix::test]
+async fn backfill_recovers_committee_inputs() -> anyhow::Result<()> {
+    let aggregate_id = AggregateId::from_chain_id(Some(1));
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(
+                std::collections::HashMap::from([(aggregate_id, std::time::Duration::ZERO)]),
+            ));
+    let bus = system.handle()?.enable("test-sortition-seed-recovery");
+    let e3_id = E3id::new("7", 1);
+    let seed = Seed([0x42; 32]);
+    bus.publish_without_context(E3Requested {
+        e3_id: e3_id.clone(),
+        request_block: 10,
+        threshold_m: 1,
+        threshold_n: 3,
+        ..Default::default()
+    })?;
+    bus.publish_without_context(CommitteeRequested {
+        e3_id: e3_id.clone(),
+        seed,
+        threshold: [1, 3],
+        request_block: 10,
+        committee_deadline: 20,
+        ticket_price: Default::default(),
+        chain_id: 1,
+    })?;
+    bus.publish_without_context(TicketGenerated {
+        e3_id: e3_id.clone(),
+        ticket_id: TicketId::Score(9),
+        node: "0x1111111111111111111111111111111111111111".to_string(),
+        party_index: Some(2),
+    })?;
+    bus.flush_event_pipeline().await?;
+
+    let recovered = project_restart_state_backfill(
+        &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::from([(aggregate_id, 3)]),
+        &std::collections::HashSet::from([e3_id.clone()]),
+        &std::collections::HashSet::new(),
+    )
+    .await?;
+
+    assert_eq!(recovered.sortition_seeds.get(&e3_id), Some(&seed));
+    assert_eq!(
+        recovered
+            .pending_sortition_requests
+            .get(&e3_id)
+            .map(|request| request.request_block),
+        Some(10)
+    );
+    assert_eq!(
+        recovered
+            .committee_requests
+            .get(&e3_id)
+            .map(|request| request.request.committee_deadline),
+        Some(20)
+    );
+    assert_eq!(
+        recovered
+            .tickets
+            .get(&e3_id)
+            .and_then(|ticket| ticket.party_index),
+        Some(2)
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
+    let aggregate_id = AggregateId::from_chain_id(Some(1));
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(
+                std::collections::HashMap::from([(aggregate_id, std::time::Duration::ZERO)]),
+            ));
+    let bus = system.handle()?.enable("test-slash-intent-recovery");
+    let e3_id = E3id::new("7", 1);
+    let accuser = "0x1111111111111111111111111111111111111111".parse()?;
+    let accused = "0x2222222222222222222222222222222222222222".parse()?;
+    let intent = AccusationQuorumReached {
+        e3_id: e3_id.clone(),
+        accuser,
+        accused,
+        proof_type: ProofType::C1PkGeneration,
+        votes_for: Vec::new(),
+        outcome: AccusationOutcome::AccusedFaulted,
+        evidence: Default::default(),
+    };
+    bus.publish_without_context(intent.clone())?;
+    bus.publish_without_context(E3StageChanged {
+        e3_id: e3_id.clone(),
+        previous_stage: E3Stage::KeyPublished,
+        new_stage: E3Stage::Failed,
+    })?;
+    bus.flush_event_pipeline().await?;
+
+    let slash_chains = std::collections::HashSet::from([1]);
+    let recovered = project_restart_state_backfill(
+        &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::from([(aggregate_id, 2)]),
+        &std::collections::HashSet::new(),
+        &slash_chains,
+    )
+    .await?;
+    assert_eq!(recovered.slash_intents, vec![intent.clone()]);
+
+    bus.publish_without_context(SlashExecuted {
+        e3_id: e3_id.clone(),
+        proposal_id: 1,
+        operator: accused,
+        reason: intent.proof_type.attestation_slash_reason().0,
+        ticket_amount: 0,
+        ciphernode_bond_amount: 0,
+    })?;
+    bus.flush_event_pipeline().await?;
+    let recovered = project_restart_state_backfill(
+        &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::from([(aggregate_id, 3)]),
+        &std::collections::HashSet::new(),
+        &slash_chains,
+    )
+    .await?;
+    assert!(recovered.slash_intents.is_empty());
+
+    let second_intent = AccusationQuorumReached {
+        proof_type: ProofType::C2aSkShareComputation,
+        ..intent
+    };
+    bus.publish_without_context(second_intent.clone())?;
+    bus.publish_without_context(CommitteeMemberExcluded {
+        e3_id,
+        node: accused,
+        proof_type: second_intent.proof_type,
+        party_id: None,
+    })?;
+    bus.flush_event_pipeline().await?;
+    let recovered = project_restart_state_backfill(
+        &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::from([(aggregate_id, 5)]),
+        &std::collections::HashSet::new(),
+        &slash_chains,
+    )
+    .await?;
+    assert!(recovered.slash_intents.is_empty());
     Ok(())
 }
 

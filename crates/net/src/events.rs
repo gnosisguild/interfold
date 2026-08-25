@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     direct_responder::DirectResponder,
     domain::wire::{decode, MAX_GOSSIP_BYTES},
@@ -326,6 +327,32 @@ pub enum PutOrStoreError {
 }
 
 impl NetEvent {
+    /// Whether post-sync application consumers need this event.
+    ///
+    /// Historical-sync and connection-control events use the raw network receiver and must not
+    /// also occupy the startup application buffer.
+    pub(crate) fn requires_application_delivery(&self) -> bool {
+        // Keep this match exhaustive. Each new event must select one delivery path.
+        match self {
+            Self::GossipData(_)
+            | Self::GossipPublishError { .. }
+            | Self::GossipPublished { .. }
+            | Self::DhtGetRecordSucceeded { .. }
+            | Self::DhtPutRecordSucceeded { .. }
+            | Self::DhtGetRecordError { .. }
+            | Self::DhtPutRecordError { .. } => true,
+            Self::DialError { .. }
+            | Self::ConnectionEstablished { .. }
+            | Self::PeerRejected { .. }
+            | Self::OutgoingConnectionError { .. }
+            | Self::GossipSubscribed { .. }
+            | Self::IncomingRequest(_)
+            | Self::OutgoingRequestSucceeded(_)
+            | Self::OutgoingRequestFailed(_)
+            | Self::AllPeersDialed { .. } => false,
+        }
+    }
+
     /// Conservative size used by the bounded startup buffer.
     ///
     /// The enum's inline storage is always counted. Heap-backed protocol payloads that can be
@@ -423,7 +450,7 @@ impl DocumentPublishedNotification {
 /// Generic helper for the command-response pattern with correlation IDs
 pub async fn call_and_await_response<F, R>(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     command: NetCommand,
     matcher: F,
     timeout: Duration,
@@ -431,8 +458,8 @@ pub async fn call_and_await_response<F, R>(
 where
     F: Fn(&NetEvent) -> Option<Result<R>>,
 {
-    // Resubscribe first to avoid missing events
-    let mut rx = net_events.resubscribe();
+    // Subscribe before sending the command so the response cannot be missed
+    let mut rx = net_events.subscribe();
 
     // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
@@ -482,14 +509,14 @@ where
 }
 
 pub async fn await_event<F, R>(
-    net_events: &Arc<broadcast::Receiver<NetEvent>>,
+    net_events: &NetEventSubscriber,
     matcher: F,
     timeout: Duration,
 ) -> Result<R>
 where
     F: Fn(&NetEvent) -> Option<R>,
 {
-    let mut rx = net_events.resubscribe();
+    let mut rx = net_events.subscribe();
 
     let result = tokio::time::timeout(timeout, async {
         loop {

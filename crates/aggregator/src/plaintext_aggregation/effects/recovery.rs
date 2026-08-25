@@ -9,6 +9,9 @@ impl ThresholdPlaintextAggregator {
         &mut self,
         effects_context: EventContext<Sequenced>,
     ) -> Result<()> {
+        if !self.can_run_aggregation_effects() {
+            return Ok(());
+        }
         let recovery = self.recovery.try_get()?;
         ensure!(
             recovery.schema_version == THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
@@ -18,7 +21,6 @@ impl ThresholdPlaintextAggregator {
         );
         let causal_context = recovery.last_ec.unwrap_or(effects_context);
         self.pending.last_ec = Some(causal_context.clone());
-        self.pending.timeout_ec = Some(causal_context.clone());
 
         let Some(state) = self.state.get() else {
             return Ok(());

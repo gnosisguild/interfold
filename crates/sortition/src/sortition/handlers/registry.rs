@@ -171,9 +171,21 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
             return;
         }
 
-        self.sortition_seeds.insert(e3_id.clone(), msg.seed);
-        if let Some(request) = self.pending_requests.remove(&e3_id) {
-            self.perform_sortition(request);
+        if let Err(error) = self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.seeds.insert(e3_id.clone(), msg.seed);
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(&ec).err(EType::Sortition, error);
+            return;
+        }
+        let pending = self
+            .recovery
+            .get()
+            .and_then(|recovery| recovery.pending_requests.get(&e3_id).cloned());
+        if self.effects_enabled {
+            if let Some(request) = pending {
+                self.perform_sortition(request);
+            }
         }
     }
 }

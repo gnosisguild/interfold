@@ -7,32 +7,6 @@
 use super::*;
 
 #[actix::test]
-async fn decryption_collection_timeout_fails_round_while_collecting() -> Result<()> {
-    let (mut aggregator, history, e3_id) =
-        build_plaintext_aggregator(collecting_state(), true).await?;
-    // A captured context is required so the timeout can emit E3Failed with a causal parent.
-    aggregator.pending.timeout_ec = Some(test_ctx(E3Failed {
-        e3_id: e3_id.clone(),
-        failed_at_stage: E3Stage::CiphertextReady,
-        reason: FailureReason::None,
-    }));
-    let addr = aggregator.start();
-
-    addr.send(DecryptionCollectionTimeout).await?;
-
-    let event = next_event(&history).await?;
-    assert!(
-        matches!(
-            event.into_data(),
-            InterfoldEventData::E3Failed(data)
-                if data.reason == FailureReason::DecryptionTimeout
-        ),
-        "expected E3Failed with DecryptionTimeout when collection window elapses"
-    );
-    Ok(())
-}
-
-#[actix::test]
 async fn threshold_decryption_compute_error_emits_e3_failed() -> Result<()> {
     let correlation_id = CorrelationId::new();
     let (mut aggregator, history, e3_id) =

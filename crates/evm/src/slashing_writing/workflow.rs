@@ -17,9 +17,12 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::primitives::{Address, B256, U256};
 use anyhow::{Context, Result};
-use e3_events::{AccusationOutcome, AccusationQuorumReached, CommitteeMemberExcluded};
+use e3_events::{
+    AccusationOutcome, AccusationQuorumReached, CommitteeMemberExcluded, ProofType, SlashExecuted,
+};
+use serde::{Deserialize, Serialize};
 
 /// Maximum number of voters eligible to attempt on-chain submission.
 /// Rank 0 submits immediately, rank 1 after one delay interval, etc.
@@ -32,7 +35,7 @@ pub(crate) const SUBMITTER_DELAY_SECS: u64 = 30;
 /// The exact semantic replay domain consumed by `SlashingManager._proposeSlash`.
 /// Vote ordering and signatures are deliberately excluded: Solidity permits one
 /// submission for `(chain, E3, operator, proof type)` regardless of evidence encoding.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct SlashIntentKey {
     chain_id: u64,
     e3_id: U256,
@@ -65,6 +68,24 @@ impl SlashIntentKey {
             operator: event.node,
             proof_type: event.proof_type as u8,
         })
+    }
+
+    pub(crate) fn from_execution(event: &SlashExecuted) -> Result<Option<Self>> {
+        let proof_type = (ProofType::C0PkBfv as u8..=ProofType::C7DecryptedSharesAggregation as u8)
+            .find(|proof_type| slash_reason_u8(*proof_type) == B256::from(event.reason));
+        let Some(proof_type) = proof_type else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            chain_id: event.e3_id.chain_id(),
+            e3_id: event
+                .e3_id
+                .clone()
+                .try_into()
+                .context("slash execution has a non-numeric E3 id")?,
+            operator: event.operator,
+            proof_type,
+        }))
     }
 }
 
@@ -162,8 +183,12 @@ pub(crate) fn is_slashable_outcome(outcome: &AccusationOutcome) -> bool {
 }
 
 /// Derive the policy key exactly as `SlashingManager._proposeSlash` does for Lane A evidence.
-pub(crate) fn slash_reason(proof_type: u8) -> B256 {
-    keccak256(U256::from(proof_type).to_be_bytes::<32>())
+pub(crate) fn slash_reason(proof_type: ProofType) -> B256 {
+    proof_type.attestation_slash_reason()
+}
+
+fn slash_reason_u8(proof_type: u8) -> B256 {
+    alloy::primitives::keccak256(U256::from(proof_type).to_be_bytes::<32>())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,10 +220,36 @@ pub(crate) fn submission_delay(rank: usize) -> Duration {
     Duration::from_secs(rank as u64 * SUBMITTER_DELAY_SECS)
 }
 
+/// Return true when retrying the same attestation cannot change the contract outcome.
+///
+/// `AccusationIssuedInFuture` is deliberately absent: a bounded clock skew can become valid after
+/// time advances. Transport, RPC, nonce, and unknown errors also remain retryable.
+pub(crate) fn slash_submission_error_is_terminal(decoded: &str) -> bool {
+    [
+        "ZeroAddress",
+        "ProofRequired",
+        "OperatorNotInCommittee",
+        "DuplicateEvidence",
+        "ChainIdMismatch",
+        "InvalidProof",
+        "InsufficientAttestations",
+        "DuplicateVoter",
+        "VoterNotInCommittee",
+        "InvalidVoteSignature",
+        "VoterIsAccused",
+        "EquivocationDetected",
+        "SignatureExpired",
+        "InvalidAccusationWindow",
+        "SlashSubmissionDeadlinePassed",
+    ]
+    .iter()
+    .any(|name| decoded.contains(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Bytes, B256};
+    use alloy::primitives::{keccak256, Bytes, B256};
     use e3_events::{AccusationQuorumReached, AccusationVote, E3id, ProofType};
     use e3_utils::ArcBytes;
 
@@ -282,7 +333,7 @@ mod tests {
     #[test]
     fn slash_reason_matches_uint256_packed_encoding() {
         assert_eq!(
-            slash_reason(1),
+            slash_reason(ProofType::C1PkGeneration),
             keccak256([
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 1,
@@ -379,5 +430,22 @@ mod tests {
         gate.finish(&key, true);
         let (_, completed) = gate.admit(event).unwrap();
         assert_eq!(completed, SlashSubmissionDecision::IgnoreDuplicate);
+    }
+
+    #[test]
+    fn permanent_reverts_stop_retries() {
+        assert!(slash_submission_error_is_terminal(
+            "execution reverted: InvalidVoteSignature()"
+        ));
+        assert!(slash_submission_error_is_terminal(
+            "execution reverted: SlashSubmissionDeadlinePassed()"
+        ));
+        assert!(!slash_submission_error_is_terminal(
+            "execution reverted: AccusationIssuedInFuture()"
+        ));
+        assert!(!slash_submission_error_is_terminal(
+            "execution reverted: SlashReasonDisabled()"
+        ));
+        assert!(!slash_submission_error_is_terminal("temporary RPC timeout"));
     }
 }

@@ -127,6 +127,8 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: true,
+            effects_enabled: true,
         },
         test_state(initial_state),
     );
@@ -187,6 +189,8 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: true,
+            effects_enabled: true,
         },
         test_state(state),
     );
