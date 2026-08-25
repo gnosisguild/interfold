@@ -495,5 +495,46 @@
       "address": "0x4EE6eCAD1c2Dae9f525404De8555724e3c35d07B",
       "blockNumber": 83
     }
+  },
+  "mainnet": {
+    "RiscZeroGroth16Verifier": {
+      "address": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+      "blockNumber": 25812195
+    },
+    "Risc0BfvCiphertextVerifier": {
+      "address": "0x40a18Fc27ac4a4d86fA70385c6814e453b6BFF2c",
+      "blockNumber": 25812196,
+      "constructorArgs": {
+        "verifier": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+        "imageId": "0x7ed0ddeb0cafa64228b51399dff5ea00696c2617f28636b05bd67e6c1506eac3"
+      }
+    },
+    "PoseidonT3": {
+      "address": "0x739C1A7e585B2d16daD97Be7Cf79511bD318B7fe",
+      "blockNumber": 25812198
+    },
+    "HonkVerifier": {
+      "address": "0x0FA7688B795f61956E7bB423820a0FdACAb9AC8C",
+      "blockNumber": 25812204
+    },
+    "OnchainHonkVerifier": {
+      "address": "0x02eA2e73238fBA4df9dC608a7339B960291238b0",
+      "blockNumber": 25812208
+    },
+    "CRISPProgram": {
+      "address": "0x847A22303639017bcDB7F7E49EEa4a4629c1169f",
+      "blockNumber": 25812209,
+      "constructorArgs": {
+        "initialOwner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
+        "verifierAddress": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+        "honkVerifierAddress": "0x0FA7688B795f61956E7bB423820a0FdACAb9AC8C",
+        "onchainHonkVerifierAddress": "0x02eA2e73238fBA4df9dC608a7339B960291238b0",
+        "imageId": "0x7ed0ddeb0cafa64228b51399dff5ea00696c2617f28636b05bd67e6c1506eac3"
+      }
+    },
+    "SelfRegistry": {
+      "address": "0x988104E6275359126bbDDDeE35159bd7d138A61C",
+      "blockNumber": 25812212
+    }
   }
 }

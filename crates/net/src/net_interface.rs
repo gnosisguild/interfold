@@ -282,12 +282,7 @@ impl Libp2pNetInterface {
     }
 
     pub fn handle(&self) -> NetInterfaceHandle {
-        NetInterfaceHandle::new(
-            self.cmd_tx.clone(),
-            self.event_tx.subscribe(),
-            self.event_tx.application_subscribe(),
-            self.status.clone(),
-        )
+        NetInterfaceHandle::new(self.cmd_tx.clone(), &self.event_tx, self.status.clone())
     }
 
     pub async fn start(&mut self) -> Result<()> {

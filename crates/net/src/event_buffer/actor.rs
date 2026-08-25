@@ -11,12 +11,14 @@ use e3_events::{
     InterfoldEventData,
 };
 use e3_utils::MAILBOX_LIMIT;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::domain::net_buffer::{BufferDecision, NetEventBufferState};
 use crate::events::NetEvent;
+use crate::net_interface_handle::NetEventSubscriber;
 
 pub const DEFAULT_MAX_BUFFERED_NET_EVENTS: usize = 1_024;
 pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
@@ -45,17 +47,19 @@ pub struct NetEventBuffer {
     max_events: usize,
     max_bytes: usize,
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    last_drop_warn: Option<Instant>,
 }
 
 impl NetEventBuffer {
     pub(crate) fn setup_with_limits(
         bus: &BusHandle,
-        input_rx: &broadcast::Receiver<NetEvent>,
+        input: &NetEventSubscriber,
         max_events: usize,
         max_bytes: usize,
-    ) -> (broadcast::Receiver<NetEvent>, NetEventBufferHandle) {
-        let input_rx = input_rx.resubscribe();
-        let (output_tx, output_rx) = broadcast::channel(max_events);
+    ) -> (NetEventSubscriber, NetEventBufferHandle) {
+        let input_rx = input.subscribe();
+        let (output_tx, _) = broadcast::channel(max_events);
+        let output = NetEventSubscriber::from(&output_tx);
         let (readiness_tx, readiness) = oneshot::channel();
 
         let actor = Self {
@@ -66,6 +70,7 @@ impl NetEventBuffer {
             max_events,
             max_bytes,
             readiness: Some(readiness_tx),
+            last_drop_warn: None,
         };
 
         let addr = actor.start();
@@ -73,7 +78,7 @@ impl NetEventBuffer {
         // Subscribe to InterfoldEvent on the bus
         bus.subscribe(EventType::SyncEnded, addr.clone().recipient());
 
-        (output_rx, NetEventBufferHandle { readiness })
+        (output, NetEventBufferHandle { readiness })
     }
 
     fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
@@ -93,9 +98,20 @@ impl NetEventBuffer {
     }
 
     fn forward_event(&mut self, event: NetEvent) -> Result<()> {
-        self.output_tx
-            .send(event)
-            .map_err(|e| anyhow!("Failed to forward event: {}", e))?;
+        // A broadcast send only fails when no receiver is alive. Consumers subscribe on
+        // `EffectsEnabled`, which the sync service publishes before `SyncEnded`; if that ordering
+        // ever slips the event is dropped, exactly as a late subscriber would have missed it.
+        // Warn at most once per ten seconds so a full buffer flush cannot flood the log.
+        if self.output_tx.send(event).is_err() {
+            let now = Instant::now();
+            let should_warn = self
+                .last_drop_warn
+                .is_none_or(|last| now.duration_since(last) > Duration::from_secs(10));
+            if should_warn {
+                warn!("Dropping buffered network event: no live subscribers on the output channel");
+                self.last_drop_warn = Some(now);
+            }
+        }
         Ok(())
     }
 

@@ -15,6 +15,8 @@ pub struct ThresholdPlaintextAggregatorRecoveryState {
     pub c7_proofs: Option<Vec<Proof>>,
     pub decryption_aggregator_proofs: Option<Vec<Proof>>,
     pub last_ec: Option<EventContext<Sequenced>>,
+    /// Retained so v0.12 snapshots remain decodable. Canonical chain deadlines
+    /// now own timeout failure, so the actor does not use this value.
     pub collection_deadline_unix_secs: Option<u64>,
 }
 

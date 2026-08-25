@@ -290,7 +290,15 @@ boundless:
 ./scripts/build.sh --push
 ```
 
-The container is also built by the GitHub workflow at `.github/workflows/support-docker.yml`.
+The CI workflow builds the container for applicable pull requests without publishing it. A manual CI
+run on `main` publishes the nine-character commit tag and the `main` tag.
+
+Each release publishes the version tag, the nine-character commit tag, and the `latest` tag. The CLI
+uses its embedded commit tag. The CLI pulls the matching image when the image is not available
+locally.
+
+Set `E3_SUPPORT_IMAGE_REPOSITORY` to use an authorized mirror instead of the default GitHub
+Container Registry repository.
 
 ## Development
 

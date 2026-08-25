@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-PKG=ghcr.io/gnosisguild/e3-support
+PKG="${E3_SUPPORT_IMAGE_REPOSITORY:-ghcr.io/theinterfold/e3-support}"
 GIT_SHA=$(git rev-parse --short=9 HEAD)
 
 # Separate --push from other arguments
@@ -15,10 +15,10 @@ for arg in "$@"; do
 done
 
 # Build with any additional arguments
-docker build -t $PKG:$GIT_SHA "${BUILD_ARGS[@]}" .
+docker build -t "$PKG:$GIT_SHA" "${BUILD_ARGS[@]}" .
 
 # Push if --push was specified
 if [ "$PUSH" = true ]; then
-  docker push $PKG:$GIT_SHA
+  docker push "$PKG:$GIT_SHA"
   echo "Image pushed to: $PKG:$GIT_SHA"
 fi

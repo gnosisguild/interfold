@@ -12,6 +12,7 @@
 //! in the [`E3Context`] so it receives routed events.
 
 use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
+use actix::Actor;
 use anyhow::Result;
 use async_trait::async_trait;
 use e3_events::{BusHandle, CommitmentLink, Event, InterfoldEvent, InterfoldEventData};
@@ -71,7 +72,10 @@ impl CommitmentConsistencyCheckerExtension {
                     return;
                 }
             };
-        let addr = CommitmentConsistencyChecker::setup(&self.bus, e3_id, links, committee_h);
+        // The request router owns delivery and lifetime for this per-E3 actor. Subscribing it to
+        // the global bus as well would deliver every event twice and keep the actor alive after
+        // the E3 context is removed.
+        let addr = CommitmentConsistencyChecker::new(&self.bus, e3_id, links, committee_h).start();
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
     }
