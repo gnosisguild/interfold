@@ -37,6 +37,11 @@ export {
 export { CrispSDK } from './sdk'
 
 export type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   OnChainRoundData,
   RoundDetails,
   TokenDetails,

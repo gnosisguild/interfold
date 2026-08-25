@@ -6,6 +6,11 @@
 
 import {
   broadcastVote,
+  chainRpcUrl,
+  getBlockAtTimestamp,
+  getChainHead,
+  getIndexedLogs,
+  readContracts,
   getAllRoundResults,
   getCurrentRound,
   getEligibleAddresses,
@@ -17,10 +22,15 @@ import {
   getVoteStatus,
   requestNewRound,
 } from './api'
-import { getOnChainRoundData, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
+import { getOnChainRoundData, getOnchainVotingPower, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
 import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   BroadcastVoteRequest,
   BroadcastVoteResponse,
   CurrentRoundResponse,
@@ -50,11 +60,24 @@ export class CrispSDK {
   private serverUrl: string
 
   /**
-   * Create a new instance.
-   * @param serverUrl
+   * Endpoint used for direct chain reads.
+   *
+   * Defaults to the server's own read-only JSON-RPC route, so an instance configured with just a
+   * server URL reads the chain through that server rather than through viem's default public RPC
+   * — a third-party endpoint neither the caller nor this SDK controls. Pass an explicit URL to
+   * override, or `null` to keep the old default-public behaviour deliberately.
    */
-  constructor(serverUrl: string) {
+  private rpcUrl: string | undefined
+
+  /**
+   * Create a new instance.
+   * @param serverUrl - The base URL of the CRISP server
+   * @param rpcUrl - Endpoint for direct chain reads. Defaults to the server's `/chain/rpc` route;
+   *                 pass `null` to fall back to viem's default public RPC.
+   */
+  constructor(serverUrl: string, rpcUrl?: string | null) {
     this.serverUrl = serverUrl
+    this.rpcUrl = rpcUrl === null ? undefined : (rpcUrl ?? chainRpcUrl(serverUrl))
   }
 
   /**
@@ -200,7 +223,23 @@ export class CrispSDK {
   async getOnChainRoundData(programAddress: string, e3Id: bigint, chainId?: number): Promise<OnChainRoundData> {
     const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
 
-    return getOnChainRoundData(programAddress, e3Id, chain)
+    return getOnChainRoundData(programAddress, e3Id, chain, this.rpcUrl)
+  }
+
+  /**
+   * Get the voting power a slot may spend in a `CensusMode.ONCHAIN` round, read from the CRISP
+   * program through this instance's configured endpoint.
+   *
+   * @param programAddress - The CRISP program address
+   * @param e3Id - The e3Id of the round
+   * @param slot - The slot address the ballot is written to
+   * @param chainId - The chain the program is deployed on; looked up on the server when omitted
+   * @returns The spendable voting power in ballot units
+   */
+  async getOnchainVotingPower(programAddress: string, e3Id: bigint, slot: string, chainId?: number): Promise<bigint> {
+    const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
+
+    return getOnchainVotingPower(programAddress, e3Id, slot, chain, this.rpcUrl)
   }
 
   /**
@@ -229,6 +268,50 @@ export class CrispSDK {
    */
   async getEligibleAddresses(e3Id: bigint): Promise<TokenHolder[]> {
     return getEligibleAddresses(this.serverUrl, e3Id)
+  }
+
+  /**
+   * Get the chain head (block number, timestamp, chain id) as seen by the server.
+   * @returns The current head
+   */
+  async getChainHead(): Promise<ChainHead> {
+    return getChainHead(this.serverUrl)
+  }
+
+  /**
+   * Read allowlisted contracts through the server, batched, without a provider key of your own.
+   * @param calls - The calls to perform, in order
+   * @returns One result per call, in the same order
+   */
+  async readContracts(calls: ContractRead[]): Promise<ContractReadResult[]> {
+    return readContracts(this.serverUrl, calls)
+  }
+
+  /**
+   * Query logs for an allowlisted contract over an arbitrary block range. The server windows the
+   * range for you, so no chunking is needed on this side.
+   * @param query - The log query
+   * @returns The matching logs, ordered by block and log index
+   */
+  async getLogs(query: LogQuery): Promise<IndexedLog[]> {
+    return getIndexedLogs(this.serverUrl, query)
+  }
+
+  /**
+   * Resolve a unix timestamp to the last block at or before it.
+   * @param timestamp - The unix timestamp
+   * @returns The block number and its timestamp
+   */
+  async getBlockAtTimestamp(timestamp: bigint): Promise<{ blockNumber: bigint; timestamp: bigint }> {
+    return getBlockAtTimestamp(this.serverUrl, timestamp)
+  }
+
+  /**
+   * The server's read-only JSON-RPC URL, for pointing a standard Ethereum client at.
+   * @returns The JSON-RPC URL
+   */
+  chainRpcUrl(): string {
+    return chainRpcUrl(this.serverUrl)
   }
 
   /**

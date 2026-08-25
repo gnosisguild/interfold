@@ -8,6 +8,7 @@ use e3_sdk::indexer::SharedStore;
 
 use super::{
     database::SledDB,
+    log_repo::LogRepository,
     repo::{CrispE3Repository, CurrentRoundRepository},
 };
 
@@ -26,5 +27,9 @@ impl AppData {
 
     pub fn current_round(&self) -> CurrentRoundRepository<SledDB> {
         CurrentRoundRepository::new(self.db.clone())
+    }
+
+    pub fn logs(&self) -> LogRepository<SledDB> {
+        LogRepository::new(self.db.clone())
     }
 }

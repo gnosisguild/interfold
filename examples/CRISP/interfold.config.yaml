@@ -5,7 +5,32 @@ chains:
     enabled: true
     rpc_url: ws://localhost:8545
     contracts:
+      e3_  - name: "mainnet"
+    enabled: false
+    rpc_url: "wss://ethereum-rpc.publicnode.com"
+    chain_id: 1
+    contracts:
+      # CRISPProgram is not yet deployed on mainnet (packages/crisp-contracts/deployed_contracts.json
+      # has no mainnet entry). Fill in after `pnpm deploy:contracts --network mainnet`.
       e3_program:
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
+      interfold:
+        address: "0x28cF63B459e6218C69EA97ea7D90541cf648c715"
+        deploy_block: 25786382
+      ciphernode_registry:
+        address: "0xC927A5B2d8F68697bC28C0670df05178c93df2d7"
+        deploy_block: 25786378
+      bonding_registry:
+        address: "0x0ec90465095C21830BEcED07e032809A2Bd2915F"
+        deploy_block: 25473398
+      slashing_manager:
+        address: "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9"
+        deploy_block: 25786375
+      fee_token:
+        address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
+        deploy_block: 20663730
+program:
         address: "0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7"
         deploy_block: 78
       interfold:

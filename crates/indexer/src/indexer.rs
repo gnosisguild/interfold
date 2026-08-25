@@ -27,6 +27,7 @@ use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset
 use eyre::eyre;
 use eyre::Result;
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use std::{future::Future, time::Duration};
 use thiserror::Error;
@@ -166,6 +167,20 @@ impl<S: DataStore, R: ProviderType> Drop for InterfoldIndexer<S, R> {
     }
 }
 
+/// Store key holding the last block whose logs have been fully applied.
+///
+/// Persisted so a restart resumes where it left off. Its ABSENCE is meaningful: it is what
+/// distinguishes a fresh database (start at the head, preserving the historical behaviour of
+/// this indexer) from a resumable one.
+pub const INDEXER_CURSOR_KEY: &str = "_indexer:cursor";
+
+/// Sentinel for "no backfill start configured" — see [`InterfoldIndexer::configure_backfill`].
+const BACKFILL_UNSET: u64 = u64::MAX;
+
+/// Default `eth_getLogs` window. Hosted providers cap the range, and 2k blocks sits under every
+/// cap we have met.
+const DEFAULT_BACKFILL_CHUNK: u64 = 2_000;
+
 pub struct IndexerContext<S: DataStore, R: ProviderType> {
     store: SharedStore<S>,
     event_listener: EventListener,
@@ -174,6 +189,9 @@ pub struct IndexerContext<S: DataStore, R: ProviderType> {
     contract_address: String,
     chain_id: u64,
     callbacks: CallbackQueue,
+    /// Block to backfill from when there is no cursor, or [`BACKFILL_UNSET`] to begin at the head.
+    backfill_start: AtomicU64,
+    backfill_chunk: AtomicU64,
 }
 
 impl<S: DataStore, R: ProviderType> IndexerContext<S, R> {
@@ -298,6 +316,8 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 contract_address,
                 chain_id,
                 callbacks: CallbackQueue::new(),
+                backfill_start: AtomicU64::new(BACKFILL_UNSET),
+                backfill_chunk: AtomicU64::new(DEFAULT_BACKFILL_CHUNK),
             }),
         };
         instance.setup_listeners().await?;
@@ -329,6 +349,37 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                     // if not it must have been destroyed
                     if let Some(ctx) = ctx_weak.upgrade() {
                         handler(e, ctx).await
+                    } else {
+                        warn!("Context was dropped!");
+                        Ok(())
+                    }
+                }
+            })
+            .await;
+    }
+
+    /// Register a handler that receives every log this indexer sees, undecoded.
+    ///
+    /// For consumers that need to retain events this crate has no ABI for — an index serving a
+    /// client's own queries, rather than a reaction to a known event.
+    pub async fn add_raw_log_handler<F, Fut>(&self, handler: F)
+    where
+        F: Fn(alloy::rpc::types::Log, Arc<IndexerContext<S, R>>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        let handler = Arc::new(handler);
+        let ctx = self.ctx.clone();
+        let ctx_weak = Arc::downgrade(&ctx);
+
+        self.ctx
+            .event_listener
+            .add_raw_handler(move |log: alloy::rpc::types::Log| {
+                let handler = Arc::clone(&handler);
+                let ctx_weak = ctx_weak.clone();
+
+                async move {
+                    if let Some(ctx) = ctx_weak.upgrade() {
+                        handler(log, ctx).await
                     } else {
                         warn!("Context was dropped!");
                         Ok(())
@@ -472,14 +523,31 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
     async fn register_blocktime_callback_handler(&mut self) -> Result<()> {
         let callbacks = self.ctx.callbacks.clone();
+        let store = self.ctx.store();
         self.ctx
             .block_listener
             .add_block_handler(move |block| {
                 let timestamp = block.timestamp();
                 let blockheight = block.number();
                 let callbacks = callbacks.clone();
+                let mut store = store.clone();
                 async move {
                     info!("ON BLOCK: {}:{}", blockheight, timestamp);
+
+                    // Advance the cursor as the chain moves, not only during backfill. Without
+                    // this it freezes at the block catch-up ended on: the live subscription keeps
+                    // applying logs, but anything asking "how far has this been applied?" is told
+                    // a number that never grows — so a reader can never trust the index for
+                    // recent blocks, and a restart re-scans everything since boot.
+                    //
+                    // Claims `blockheight - 1`, not `blockheight`: this fires on the header, and
+                    // that block's own logs may still be arriving on the other subscription.
+                    if let Some(applied) = blockheight.checked_sub(1) {
+                        if let Err(e) = store.insert(INDEXER_CURSOR_KEY, &applied).await {
+                            warn!("Could not advance the indexer cursor: {e}");
+                        }
+                    }
+
                     callbacks.execute_until_including(timestamp).await?;
                     Ok(())
                 }
@@ -498,9 +566,90 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         Ok(())
     }
 
+    /// Configure historical catch-up.
+    ///
+    /// `start_block` is used only when the store holds no cursor — i.e. on a fresh database.
+    /// Passing `None` there keeps this indexer's original behaviour of starting at the chain
+    /// head, which matters because the handlers are not pure: replaying `E3Requested` from
+    /// genesis would re-run their on-chain side effects for every historical round. Once a
+    /// cursor exists it always wins, so a restart replays exactly the gap and nothing else.
+    pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {
+        self.ctx
+            .backfill_start
+            .store(start_block.unwrap_or(BACKFILL_UNSET), Ordering::Relaxed);
+        if let Some(chunk) = chunk.filter(|c| *c > 0) {
+            self.ctx.backfill_chunk.store(chunk, Ordering::Relaxed);
+        }
+    }
+
+    /// Replay every log between the stored cursor and the current head.
+    ///
+    /// Runs before the subscription on every (re)connect: `subscribe_logs` starts at the head and
+    /// has no memory, so without this each restart or dropped socket leaves a permanent hole in
+    /// the store. The cursor is persisted per window, so an interrupted catch-up resumes from the
+    /// last window that fully applied rather than starting over or skipping ahead.
+    async fn catch_up_to_head(&self) -> Result<()> {
+        let head = self.ctx.event_listener.head_block().await?;
+        let mut store = self.ctx.store();
+
+        let cursor: Option<u64> = store
+            .get(INDEXER_CURSOR_KEY)
+            .await
+            .map_err(|e| eyre!("reading the indexer cursor failed: {e}"))?;
+
+        let start = match cursor {
+            Some(cursor) => cursor.saturating_add(1),
+            None => match self.ctx.backfill_start.load(Ordering::Relaxed) {
+                BACKFILL_UNSET => head,
+                configured => configured,
+            },
+        };
+
+        if start > head {
+            return Ok(());
+        }
+
+        let chunk = self.ctx.backfill_chunk.load(Ordering::Relaxed).max(1);
+        info!("Backfilling logs from block {start} to {head}...");
+
+        let mut window_start = start;
+        let mut total = 0u64;
+        while window_start <= head {
+            let window_end = window_start.saturating_add(chunk - 1).min(head);
+
+            total += self
+                .ctx
+                .event_listener
+                .catch_up(window_start, window_end, chunk)
+                .await?;
+
+            // Only after the window's handlers have all succeeded: the cursor is a claim that
+            // everything up to here has been applied, and advancing it past a failed handler
+            // would turn a retryable error into a silent gap.
+            store
+                .insert(INDEXER_CURSOR_KEY, &window_end)
+                .await
+                .map_err(|e| eyre!("persisting the indexer cursor failed: {e}"))?;
+
+            window_start = window_end.saturating_add(1);
+        }
+
+        info!("Backfill complete: {total} log(s) applied up to block {head}");
+        Ok(())
+    }
+
     pub async fn listen(&self) -> Result<()> {
         info!("Starting InterfoldIndexer listening...");
         loop {
+            // Before subscribing, not after: a log emitted between the catch-up and the
+            // subscription would be missed by both, so the overlap is deliberate. Handlers are
+            // expected to tolerate seeing an event twice.
+            if let Err(e) = self.catch_up_to_head().await {
+                error!("Backfill failed: {e}. Retrying in 5s...");
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+
             let res = tokio::select! {
                 res = self.ctx.event_listener.listen() => {
                     match &res {

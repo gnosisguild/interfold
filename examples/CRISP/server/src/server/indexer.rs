@@ -32,7 +32,9 @@ use e3_sdk::{
 };
 use evm_helpers::{CRISPContractFactory, InputPublished};
 use eyre::Context;
-use log::{info, warn};
+use crate::server::log_repo::{LogRepository, StoredLog};
+use e3_sdk::indexer::INDEXER_CURSOR_KEY;
+use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
 use std::time::Duration;
@@ -701,6 +703,12 @@ pub async fn register_committee_published(
     Ok(indexer)
 }
 
+/// The current head block number, read over HTTP.
+pub async fn get_head_block_rpc() -> eyre::Result<u64> {
+    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
+    Ok(provider.get_block_number().await?)
+}
+
 pub async fn get_current_timestamp_rpc() -> eyre::Result<u64> {
     let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
     let block = provider
@@ -748,6 +756,50 @@ pub async fn register_input_published(
     Ok(indexer)
 }
 
+/// Persist every log from a watched contract, so `/chain/logs` can answer from the store.
+///
+/// Untyped on purpose — see `log_repo`. Errors are logged rather than propagated: failing to
+/// retain a log for the read API must not abort a catch-up that the E3 handlers depend on.
+pub async fn register_log_index(
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+    log_contracts: &[String],
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
+    // Lowercased once so the per-log membership test is a plain comparison.
+    let wanted: Vec<String> = log_contracts.iter().map(|a| a.to_lowercase()).collect();
+
+    indexer
+        .add_raw_log_handler(move |log, ctx| {
+            let mut repo = LogRepository::new(ctx.store());
+            let wanted = wanted.clone();
+            async move {
+                // Watched for the typed handlers is not the same as wanted in the log index: a
+                // busy token emits thousands of transfers nobody queries, and retaining them costs
+                // storage and write amplification for nothing.
+                if !wanted.contains(&log.address().to_string().to_lowercase()) {
+                    return Ok(());
+                }
+
+                let stored = StoredLog {
+                    removed: log.removed,
+                    address: log.address().to_string(),
+                    topics: log.topics().iter().map(|t| t.to_string()).collect(),
+                    data: log.data().data.to_string(),
+                    block_number: log.block_number.unwrap_or_default(),
+                    transaction_hash: log.transaction_hash.map(|h| h.to_string()),
+                    log_index: log.log_index.unwrap_or_default(),
+                };
+
+                if let Err(e) = repo.append(stored).await {
+                    error!("Could not index log: {e}");
+                }
+
+                Ok(())
+            }
+        })
+        .await;
+    Ok(indexer)
+}
+
 pub async fn start_indexer(
     url: &str,
     contract_address: &str,
@@ -755,15 +807,26 @@ pub async fn start_indexer(
     crisp_address: &str,
     store: SharedStore<impl DataStore>,
     private_key: &str,
+    index_start_block: Option<u64>,
+    index_chunk_size: Option<u64>,
+    index_contracts: &[String],
+    index_log_contracts: &[String],
 ) -> Result<()> {
     info!("CRISP: Creating indexer...");
-    let crisp_indexer = InterfoldIndexer::new_with_write_contract(
-        url,
-        &[contract_address, registry_address, crisp_address],
-        store,
-        private_key,
-    )
-    .await?;
+
+    // The E3 stack, plus whatever the deployment asked to be readable through `/chain/*`. Watching
+    // the extra addresses is what lets their logs be served from the store instead of forwarded
+    // upstream on every request; the typed handlers below dispatch on event signature, so a
+    // contract that emits nothing they recognise simply flows past them into the log index.
+    let mut watched: Vec<&str> = vec![contract_address, registry_address, crisp_address];
+    for address in index_contracts {
+        if !watched.iter().any(|w| w.eq_ignore_ascii_case(address)) {
+            watched.push(address);
+        }
+    }
+
+    let crisp_indexer =
+        InterfoldIndexer::new_with_write_contract(url, &watched, store, private_key).await?;
     info!("CRISP: Indexer registering handlers...");
 
     let crisp_indexer = register_e3_requested(crisp_indexer).await?;
@@ -771,7 +834,61 @@ pub async fn start_indexer(
     let crisp_indexer = register_plaintext_output_published(crisp_indexer).await?;
     let crisp_indexer = register_committee_published(crisp_indexer).await?;
     let crisp_indexer = register_input_published(crisp_indexer).await?;
+    let crisp_indexer = register_log_index(crisp_indexer, index_log_contracts).await?;
     info!("CRISP: Indexer finished registering handlers!");
+
+    // Close the gap left by every restart and dropped socket before subscribing. Without a
+    // configured start block this is a no-op on a fresh database, so existing deployments keep
+    // their current behaviour until INDEX_START_BLOCK is set.
+    crisp_indexer.configure_backfill(index_start_block, index_chunk_size);
+
+    // Record where the log index starts for each watched contract, before any log arrives, so a
+    // contract that has emitted nothing yet does not look uncovered forever.
+    //
+    // The claimed block must be where indexing ACTUALLY begins, never where it was merely
+    // requested. `unwrap_or(0)` claimed coverage from genesis while the indexer was starting at
+    // the chain head, so a historical query looked covered and was answered `[]` from an empty
+    // index — wrong, and authoritative-looking. Two cases have to be distinguished:
+    //
+    //   - A resumed database already carries coverage from its first run, and the cursor may sit
+    //     far above a since-lowered INDEX_START_BLOCK. Re-claiming the lower bound would assert
+    //     history that will never be fetched, so existing coverage is left untouched.
+    //   - A fresh database starts at INDEX_START_BLOCK when set, and otherwise at the head, which
+    //     has to be read to be known.
+    {
+        let store = crisp_indexer.get_store();
+        let resumed: Option<u64> = store.get(INDEXER_CURSOR_KEY).await.unwrap_or(None);
+
+        if !index_log_contracts.is_empty() {
+            let coverage_from = match (resumed, index_start_block) {
+                // Resumed: whatever this database has indexed already is described by the coverage
+                // record from its first run. If that record is missing — an older database, or one
+                // that predates log indexing — the only block we can honestly claim from is the
+                // one after the cursor, because everything from there on WILL be indexed and
+                // nothing before it is guaranteed to be. `ensure_coverage_from` leaves an existing
+                // record alone, so this only fills a gap.
+                (Some(cursor), _) => Some(cursor.saturating_add(1)),
+                (None, Some(configured)) => Some(configured),
+                (None, None) => match get_head_block_rpc().await {
+                    Ok(head) => Some(head),
+                    Err(e) => {
+                        error!("Could not read the head to record log coverage: {e}");
+                        None
+                    }
+                },
+            };
+
+            if let Some(coverage_from) = coverage_from {
+                let mut repo = LogRepository::new(store);
+                for address in index_log_contracts {
+                    if let Err(e) = repo.ensure_coverage_from(address, coverage_from).await {
+                        error!("Could not record log coverage for {address}: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");
     Ok(())
