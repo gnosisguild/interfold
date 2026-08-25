@@ -47,5 +47,7 @@ pub use fix_historical_order::*;
 pub use interfold_sol_reader::InterfoldSolReader;
 pub use interfold_sol_writer::InterfoldSolWriter;
 pub use slashing_manager_sol_reader::SlashingManagerSolReader;
-pub use slashing_manager_sol_writer::SlashingManagerSolWriter;
+pub use slashing_manager_sol_writer::{
+    SlashingManagerSolWriter, SlashingWriterRecoveryState, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+};
 pub use sync_start_extractor::*;

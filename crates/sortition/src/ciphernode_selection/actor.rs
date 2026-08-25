@@ -59,9 +59,19 @@ pub struct CiphernodeSelectorState {
     pub is_aggregator: HashMap<E3id, bool>,
 }
 
+impl CiphernodeSelectorState {
+    fn remove_terminal(&mut self, terminal: &HashSet<E3id>) {
+        self.e3_cache.retain(|e3_id, _| !terminal.contains(e3_id));
+        self.committees.retain(|e3_id, _| !terminal.contains(e3_id));
+        self.expelled.retain(|e3_id, _| !terminal.contains(e3_id));
+        self.is_aggregator
+            .retain(|e3_id, _| !terminal.contains(e3_id));
+    }
+}
+
 #[derive(Message, Debug, Clone, Copy)]
-#[rtype(result = "()")]
-pub struct EmitPersistedAggregatorState;
+#[rtype(result = "Result<CiphernodeSelectorState>")]
+pub struct GetCiphernodeSelectorState;
 
 const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
@@ -169,24 +179,85 @@ impl CiphernodeSelector {
             "Unsupported aggregator failover snapshot schema"
         );
 
+        // A crash can persist the terminal lifecycle stage before the selector processes the
+        // matching completion event. Do not restore roles or timers for work that is already
+        // terminal.
+        let terminal: HashSet<E3id> = lifecycle
+            .iter()
+            .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
+            .map(|(e3_id, _)| e3_id.clone())
+            .collect();
+        let selector_has_terminal = state.get().is_some_and(|snapshot| {
+            snapshot
+                .e3_cache
+                .keys()
+                .any(|e3_id| terminal.contains(e3_id))
+                || snapshot
+                    .committees
+                    .keys()
+                    .any(|e3_id| terminal.contains(e3_id))
+                || snapshot
+                    .expelled
+                    .keys()
+                    .any(|e3_id| terminal.contains(e3_id))
+                || snapshot
+                    .is_aggregator
+                    .keys()
+                    .any(|e3_id| terminal.contains(e3_id))
+        });
+        if selector_has_terminal {
+            state.try_mutate_without_context(|mut snapshot| {
+                snapshot.remove_terminal(&terminal);
+                Ok(snapshot)
+            })?;
+        }
+        let failover_has_terminal = failover.get().is_some_and(|snapshot| {
+            snapshot.rounds.keys().any(|e3_id| terminal.contains(e3_id))
+                || snapshot
+                    .unresponsive
+                    .keys()
+                    .any(|e3_id| terminal.contains(e3_id))
+        });
+        if failover_has_terminal {
+            failover.try_mutate_without_context(|mut snapshot| {
+                snapshot.rounds.retain(|e3_id, _| !terminal.contains(e3_id));
+                snapshot
+                    .unresponsive
+                    .retain(|e3_id, _| !terminal.contains(e3_id));
+                Ok(snapshot)
+            })?;
+        }
+
         // A crash can occur after failover state is saved but before the role
         // cache is saved. Recompute the cache before any hydrated actor sees it.
         let failover_snapshot = failover.try_get()?;
-        state.try_mutate_without_context(|mut snapshot| {
-            for (e3_id, committee) in &snapshot.committees {
-                let expelled = snapshot.expelled.get(e3_id).cloned().unwrap_or_default();
+        let selector_snapshot = state.try_get()?;
+        let expected_roles = selector_snapshot
+            .committees
+            .iter()
+            .map(|(e3_id, committee)| {
+                let expelled = selector_snapshot
+                    .expelled
+                    .get(e3_id)
+                    .cloned()
+                    .unwrap_or_default();
                 let unresponsive = failover_snapshot
                     .unresponsive
                     .get(e3_id)
                     .cloned()
                     .unwrap_or_default();
-                snapshot.is_aggregator.insert(
+                (
                     e3_id.clone(),
                     committee.effective_aggregator(address, &expelled, &unresponsive),
-                );
-            }
-            Ok(snapshot)
-        })?;
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        if selector_snapshot.is_aggregator != expected_roles {
+            state.try_mutate_without_context(|mut snapshot| {
+                snapshot.is_aggregator = expected_roles;
+                Ok(snapshot)
+            })?;
+        }
 
         let addr = CiphernodeSelector::new_with_clock(
             bus,
@@ -398,7 +469,7 @@ impl CiphernodeSelector {
                 .is_some_and(|state| state.committees.contains_key(&e3_id))
             {
                 self.reconcile_failover_assignment(&e3_id, None, ctx)
-                    .and_then(|()| self.update_aggregator_status(&e3_id, None, true))
+                    .and_then(|()| self.update_aggregator_status(&e3_id, None, false))
             } else {
                 self.arm_failover_timer(&e3_id, ctx);
                 Ok(())
@@ -552,5 +623,34 @@ impl CiphernodeSelector {
         if let Err(err) = result {
             self.bus.err(EType::Sortition, err);
         }
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_selector_entries_are_pruned() {
+        let terminal = E3id::new("1", 1);
+        let active = E3id::new("2", 1);
+        let mut state = CiphernodeSelectorState {
+            committees: HashMap::from([
+                (terminal.clone(), Committee::new(Vec::new())),
+                (active.clone(), Committee::new(Vec::new())),
+            ]),
+            expelled: HashMap::from([(terminal.clone(), vec![0]), (active.clone(), vec![1])]),
+            is_aggregator: HashMap::from([(terminal.clone(), true), (active.clone(), false)]),
+            ..Default::default()
+        };
+
+        state.remove_terminal(&HashSet::from([terminal.clone()]));
+
+        assert!(!state.committees.contains_key(&terminal));
+        assert!(!state.expelled.contains_key(&terminal));
+        assert!(!state.is_aggregator.contains_key(&terminal));
+        assert!(state.committees.contains_key(&active));
+        assert!(state.expelled.contains_key(&active));
+        assert!(state.is_aggregator.contains_key(&active));
     }
 }

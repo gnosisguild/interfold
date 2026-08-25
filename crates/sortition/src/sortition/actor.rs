@@ -14,19 +14,20 @@ use crate::messages::{
 use crate::CiphernodeSelector;
 use crate::FinalizedCommitteeRetention;
 use actix::prelude::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::hlc::HlcTimestamp;
 use e3_events::{
     prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
     CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteePublished, CommitteeRequested,
     ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
-    EventContext, EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished,
-    Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
+    EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChanged,
+    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tracing::{info, instrument, warn};
 
 /// Sortition actor that manages the sortition algorithm and the node state.
@@ -43,16 +44,101 @@ pub struct Sortition {
     ciphernode_selector: Addr<CiphernodeSelector>,
     /// Address for the current node
     address: String,
-    /// Ephemeral buffer of raw `CommitteeMemberExpelled` events that arrived before the matching
-    /// committee was finalized (e.g. out-of-order live delivery or a reorg). Drained when the
-    /// `CommitteeFinalized` event for the same E3 is processed so early expulsions are not lost.
-    pending_expulsions: HashMap<E3id, Vec<(CommitteeMemberExpelled, EventContext<Sequenced>)>>,
-    /// Raw local exclusions that arrived before the matching finalized committee.
-    pending_exclusions: HashMap<E3id, Vec<(CommitteeMemberExcluded, EventContext<Sequenced>)>>,
-    /// Committee seeds rebuilt from registry replay before effects are enabled.
-    sortition_seeds: HashMap<E3id, Seed>,
-    /// Live E3 requests that arrived before their delayed committee seed.
-    pending_requests: HashMap<E3id, TypedEvent<E3Requested>>,
+    /// Restart-critical delayed inputs and pre-finalization membership changes.
+    recovery: Persistable<SortitionRecoveryState>,
+    /// Requests already dispatched during this process.
+    processed_requests: HashSet<E3id>,
+    effects_enabled: bool,
+}
+
+pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SortitionRecoveryState {
+    pub schema_version: u32,
+    pub seeds: HashMap<E3id, Seed>,
+    pub pending_requests: HashMap<E3id, TypedEvent<E3Requested>>,
+    pub pending_expulsions: HashMap<E3id, Vec<(CommitteeMemberExpelled, EventContext<Sequenced>)>>,
+    pub pending_exclusions: HashMap<E3id, Vec<(CommitteeMemberExcluded, EventContext<Sequenced>)>>,
+}
+
+impl Default for SortitionRecoveryState {
+    fn default() -> Self {
+        Self {
+            schema_version: SORTITION_RECOVERY_SCHEMA_VERSION,
+            seeds: HashMap::new(),
+            pending_requests: HashMap::new(),
+            pending_expulsions: HashMap::new(),
+            pending_exclusions: HashMap::new(),
+        }
+    }
+}
+
+impl SortitionRecoveryState {
+    pub fn complete_sortition(&mut self, e3_id: &E3id) {
+        self.seeds.remove(e3_id);
+        self.pending_requests.remove(e3_id);
+    }
+
+    pub fn remove(&mut self, e3_id: &E3id) {
+        self.complete_sortition(e3_id);
+        self.pending_expulsions.remove(e3_id);
+        self.pending_exclusions.remove(e3_id);
+    }
+
+    pub fn buffer_expulsion(
+        &mut self,
+        data: CommitteeMemberExpelled,
+        context: EventContext<Sequenced>,
+    ) {
+        let pending = self
+            .pending_expulsions
+            .entry(data.e3_id.clone())
+            .or_default();
+        if !pending.iter().any(|(existing, _)| existing == &data) {
+            pending.push((data, context));
+        }
+    }
+
+    pub fn acknowledge_expulsion(&mut self, data: &CommitteeMemberExpelled) {
+        let Some(pending) = self.pending_expulsions.get_mut(&data.e3_id) else {
+            return;
+        };
+        pending.retain(|(existing, _)| {
+            existing.node != data.node
+                || existing.reason != data.reason
+                || existing.active_count_after != data.active_count_after
+        });
+        if pending.is_empty() {
+            self.pending_expulsions.remove(&data.e3_id);
+        }
+    }
+
+    pub fn buffer_exclusion(
+        &mut self,
+        data: CommitteeMemberExcluded,
+        context: EventContext<Sequenced>,
+    ) {
+        let pending = self
+            .pending_exclusions
+            .entry(data.e3_id.clone())
+            .or_default();
+        if !pending.iter().any(|(existing, _)| existing == &data) {
+            pending.push((data, context));
+        }
+    }
+
+    pub fn acknowledge_exclusion(&mut self, data: &CommitteeMemberExcluded) {
+        let Some(pending) = self.pending_exclusions.get_mut(&data.e3_id) else {
+            return;
+        };
+        pending.retain(|(existing, _)| {
+            existing.node != data.node || existing.proof_type != data.proof_type
+        });
+        if pending.is_empty() {
+            self.pending_exclusions.remove(&data.e3_id);
+        }
+    }
 }
 
 /// Parameters for constructing a `Sortition` actor.
@@ -66,10 +152,24 @@ pub struct SortitionParams {
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
+    /// Persisted delayed and pre-finalization inputs.
+    pub recovery: Persistable<SortitionRecoveryState>,
     /// Address for the CiphernodeSelector
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     /// Address for the current node
     pub address: String,
+}
+
+/// Startup dependencies for the global sortition actor.
+pub struct SortitionAttachParams<'a> {
+    pub bus: &'a BusHandle,
+    pub backends_store: Repository<HashMap<u64, SortitionBackend>>,
+    pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
+    pub recovery_store: Repository<SortitionRecoveryState>,
+    pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
+    pub default_backend: SortitionBackend,
+    pub ciphernode_selector: Addr<CiphernodeSelector>,
+    pub address: &'a str,
 }
 
 impl Sortition {
@@ -81,25 +181,33 @@ impl Sortition {
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
             address: params.address,
-            pending_expulsions: HashMap::new(),
-            pending_exclusions: HashMap::new(),
-            sortition_seeds: HashMap::new(),
-            pending_requests: HashMap::new(),
+            recovery: params.recovery,
+            processed_requests: HashSet::new(),
+            effects_enabled: false,
         }
     }
 
     #[instrument(name = "sortition_attach", skip_all)]
-    pub async fn attach(
-        bus: &BusHandle,
-        backends_store: Repository<HashMap<u64, SortitionBackend>>,
-        node_state_store: Repository<HashMap<u64, NodeStateStore>>,
-        committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
-        default_backend: SortitionBackend,
-        ciphernode_selector: Addr<CiphernodeSelector>,
-        address: &str,
-    ) -> Result<Addr<Self>> {
+    pub async fn attach(params: SortitionAttachParams<'_>) -> Result<Addr<Self>> {
+        let SortitionAttachParams {
+            bus,
+            backends_store,
+            node_state_store,
+            recovery_store,
+            committees_store,
+            default_backend,
+            ciphernode_selector,
+            address,
+        } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
         let node_state = node_state_store.load_or_default(HashMap::new()).await?;
+        let recovery = recovery_store
+            .load_or_default(SortitionRecoveryState::default())
+            .await?;
+        ensure!(
+            recovery.try_get()?.schema_version == SORTITION_RECOVERY_SCHEMA_VERSION,
+            "unsupported sortition recovery schema"
+        );
         let finalized_committees = committees_store.load_or_default(HashMap::new()).await?;
 
         backends.try_mutate_without_context(|mut list| {
@@ -111,6 +219,7 @@ impl Sortition {
             bus: bus.clone(),
             backends,
             node_state,
+            recovery,
             finalized_committees,
             ciphernode_selector,
             address: address.to_owned(),
@@ -134,6 +243,7 @@ impl Sortition {
                 EventType::E3Failed,
                 EventType::E3StageChanged,
                 EventType::E3RequestComplete,
+                EventType::EffectsEnabled,
             ],
             addr.clone().into(),
         );
@@ -166,6 +276,33 @@ impl Sortition {
             .get(&chain_id)
             .ok_or_else(|| anyhow!("No backend for chain_id {}", chain_id))?;
         Ok(backend.nodes())
+    }
+
+    fn redrive_membership_changes(&self, e3_id: &E3id) {
+        let Some(recovery) = self.recovery.get() else {
+            return;
+        };
+
+        for (data, context) in recovery
+            .pending_expulsions
+            .get(e3_id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            if let Err(error) = self.try_resolve_and_publish_expulsion(data, context) {
+                warn!(%e3_id, %error, "Failed to redrive a pending committee expulsion");
+            }
+        }
+        for (data, context) in recovery
+            .pending_exclusions
+            .get(e3_id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            if let Err(error) = self.try_resolve_and_publish_exclusion(data, context) {
+                warn!(%e3_id, %error, "Failed to redrive a pending committee exclusion");
+            }
+        }
     }
 
     pub fn get_node_index(

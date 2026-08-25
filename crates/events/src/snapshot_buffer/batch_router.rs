@@ -30,6 +30,11 @@ pub(super) struct SnapshotKey {
     seq: Seq,
 }
 
+struct PendingBatch {
+    order: u128,
+    addr: Addr<Batch>,
+}
+
 impl SnapshotKey {
     pub(super) fn new(aggregate_id: AggregateId, seq: Seq) -> Self {
         Self { aggregate_id, seq }
@@ -60,7 +65,8 @@ impl FlushSeq {
 
 pub struct BatchRouter {
     config: AggregateConfig,
-    batches: HashMap<SnapshotKey, Addr<Batch>>,
+    batches: HashMap<SnapshotKey, PendingBatch>,
+    next_batch_order: u128,
     block_height_seen: HashMap<AggregateId, u64>,
     timelock_queue: Recipient<StartTimelock>,
     db: Recipient<InsertBatch>,
@@ -98,6 +104,7 @@ impl BatchRouter {
     ) -> Self {
         Self {
             batches: HashMap::new(),
+            next_batch_order: 0,
             config: config.clone(),
             timelock_queue: timelock_queue.into(),
             block_height_seen: HashMap::new(),
@@ -147,7 +154,7 @@ impl Handler<Insert> for BatchRouter {
                     seq = key.seq(),
                     "Forwarding insert to snapshot batch"
                 );
-                batch.do_send(msg);
+                batch.addr.do_send(msg);
             }
             // This must mean that this insert is late
             None => {
@@ -226,8 +233,10 @@ impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
                 ),
             ],
         );
-
-        self.batches.insert(key, batch);
+        let order = self.next_batch_order;
+        self.next_batch_order = self.next_batch_order.saturating_add(1);
+        self.batches
+            .insert(key, PendingBatch { order, addr: batch });
     }
 }
 
@@ -246,6 +255,7 @@ impl Handler<FlushSeq> for BatchRouter {
 
         let flush = async move {
             batch
+                .addr
                 .send(FlushPendingSnapshots)
                 .await
                 .map_err(anyhow::Error::from)??;
@@ -268,13 +278,16 @@ impl Handler<FlushPendingSnapshots> for BatchRouter {
     type Result = ResponseFuture<Result<()>>;
 
     fn handle(&mut self, _: FlushPendingSnapshots, _: &mut Self::Context) -> Self::Result {
-        let batches: Vec<_> = self.batches.drain().map(|(_, batch)| batch).collect();
+        let mut batches: Vec<_> = self.batches.drain().map(|(_, batch)| batch).collect();
+        // The latest event for each aggregate remains open until another event schedules it.
+        // Preserve cross-aggregate event order so the newest snapshot is the final write.
+        batches.sort_by_key(|batch| batch.order);
         let db = self.db.clone();
         let previous_failure = self.write_failure.take();
         Box::pin(async move {
             let mut failures = previous_failure.into_iter().collect::<Vec<_>>();
             for batch in batches {
-                match batch.send(FlushPendingSnapshots).await {
+                match batch.addr.send(FlushPendingSnapshots).await {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => failures.push(format!("{error:#}")),
                     Err(error) => failures.push(format!(

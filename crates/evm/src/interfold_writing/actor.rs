@@ -54,23 +54,61 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         provider: EthProvider<P>,
         contract_address: Address,
     ) -> Result<Self> {
+        Self::new_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    pub fn new_with_recovery(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        active_aggregators: HashMap<E3id, bool>,
+        committee_party_ids: HashMap<E3id, u64>,
+    ) -> Result<Self> {
         Ok(Self {
             provider,
             contract_address,
             bus: bus.clone(),
             effects_enabled: false,
-            active_aggregators: HashMap::new(),
+            active_aggregators,
             publication: ReplaySubmissionGate::new(),
-            committee_party_ids: HashMap::new(),
+            committee_party_ids,
             failure_stages: HashMap::new(),
             failure_timers: HashMap::new(),
         })
     }
 
     pub fn attach(bus: &BusHandle, provider: EthProvider<P>, contract_address: Address) {
-        let addr = InterfoldSolWriter::new(bus, provider, contract_address)
-            .expect("failed to create InterfoldSolWriter")
-            .start();
+        Self::attach_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            HashMap::new(),
+            HashMap::new(),
+        );
+    }
+
+    pub fn attach_with_recovery(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        active_aggregators: HashMap<E3id, bool>,
+        committee_party_ids: HashMap<E3id, u64>,
+    ) {
+        let addr = InterfoldSolWriter::new_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            active_aggregators,
+            committee_party_ids,
+        )
+        .expect("failed to create InterfoldSolWriter")
+        .start();
         bus.subscribe_all(
             &[
                 EventType::EffectsEnabled,

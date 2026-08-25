@@ -5,7 +5,25 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{PostForward, RequestRouter, RoutingDecision};
-use e3_events::{EventContextAccessors, EventContextSeq, InterfoldEvent, RequestRouterCheckpoint};
+use e3_events::{
+    AggregateId, EventContextAccessors, EventContextSeq, InterfoldEvent, RequestRouterCheckpoint,
+};
+use std::collections::HashMap;
+
+/// Record the highest durable sequence observed for one aggregate.
+///
+/// Replay preserves per-aggregate sequence, but contextual writes can still be delivered late.
+/// A cursor is a covered prefix and must therefore never move backwards.
+pub(in super::super) fn advance_request_router_cursor(
+    cursors: &mut HashMap<AggregateId, u64>,
+    aggregate_id: AggregateId,
+    sequence: u64,
+) {
+    cursors
+        .entry(aggregate_id)
+        .and_modify(|cursor| *cursor = (*cursor).max(sequence))
+        .or_insert(sequence);
+}
 
 /// Apply one durable event to the request-router recovery projection.
 ///
@@ -38,34 +56,25 @@ pub fn project_request_router_event(
     }
 
     let sequence = event.seq();
-    checkpoint
-        .replay_cursors
-        .entry(event.aggregate_id())
-        .and_modify(|cursor| *cursor = (*cursor).max(sequence))
-        .or_insert(sequence);
+    advance_request_router_cursor(
+        &mut checkpoint.replay_cursors,
+        event.aggregate_id(),
+        sequence,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::Unsequenced;
-
-    fn replay_event(sequence: u64) -> InterfoldEvent {
-        InterfoldEvent::<Unsequenced>::test_event("router recovery")
-            .id(1)
-            .aggregate_id(7)
-            .seq(sequence)
-            .build()
-    }
 
     #[test]
-    fn replay_cursor_keeps_highest_sequence_seen() {
+    fn cursor_never_moves_backward() {
         let aggregate_id = e3_events::AggregateId::new(7);
-        let mut checkpoint = RequestRouterCheckpoint::default();
+        let mut cursors = HashMap::new();
 
-        project_request_router_event(&mut checkpoint, &replay_event(64));
-        project_request_router_event(&mut checkpoint, &replay_event(59));
+        advance_request_router_cursor(&mut cursors, aggregate_id, 2);
+        advance_request_router_cursor(&mut cursors, aggregate_id, 1);
 
-        assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&64));
+        assert_eq!(cursors.get(&aggregate_id), Some(&2));
     }
 }

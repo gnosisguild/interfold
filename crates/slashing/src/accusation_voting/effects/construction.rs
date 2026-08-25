@@ -119,6 +119,34 @@ impl AccusationManager {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_quorum(
+        bus: &BusHandle,
+        e3_id: E3id,
+        signer: PrivateKeySigner,
+        slashing_manager: Address,
+        committee: Vec<Address>,
+        circuit_threshold_t: usize,
+        vote_quorum_h: usize,
+        vote_validity_secs: u64,
+        accusation_deadline_skew_secs: u64,
+        params_preset: e3_fhe_params::BfvPreset,
+    ) -> Self {
+        Self::new_with_clock_and_quorum(
+            bus,
+            e3_id,
+            signer,
+            slashing_manager,
+            committee,
+            circuit_threshold_t,
+            vote_quorum_h,
+            vote_validity_secs,
+            accusation_deadline_skew_secs,
+            params_preset,
+            Arc::new(SystemClock),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn setup(
         bus: &BusHandle,
         e3_id: E3id,
@@ -158,7 +186,7 @@ impl AccusationManager {
         accusation_deadline_skew_secs: u64,
         params_preset: e3_fhe_params::BfvPreset,
     ) -> Addr<Self> {
-        let addr = Self::new_with_clock_and_quorum(
+        let addr = Self::new_with_quorum(
             bus,
             e3_id,
             signer,
@@ -169,7 +197,6 @@ impl AccusationManager {
             vote_validity_secs,
             accusation_deadline_skew_secs,
             params_preset,
-            Arc::new(SystemClock),
         )
         .start();
         bus.subscribe(EventType::ProofVerificationFailed, addr.clone().into());

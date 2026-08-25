@@ -46,9 +46,9 @@ impl Handler<InterfoldEvent> for CiphernodeSelector {
 
 /// Handles `E3Requested` events received directly from the EventBus.
 ///
-/// This handler populates `e3_cache` during sync replay, when `Sortition` gates its
-/// `E3Requested` subscription behind `EffectsEnabled` and therefore does NOT forward
-/// `WithSortitionTicket` messages to us. Without this handler the cache would be empty
+/// This handler populates `e3_cache` during sync replay. `Sortition` records the request but does
+/// not perform selection or forward `WithSortitionTicket` until `EffectsEnabled`. Without this
+/// handler the cache would be empty
 /// when `CommitteeFinalized` arrives during replay, causing a missing-meta error.
 ///
 /// During live operation both this handler AND the `WithSortitionTicket` handler fire for
@@ -177,10 +177,12 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                     );
                 };
 
+                let committee = Committee::new(msg.committee.clone());
+                let local_party_id = committee.party_id_for(&self.address);
                 self.state.try_mutate(&ec, |mut selector_state| {
                     selector_state
                         .committees
-                        .insert(msg.e3_id.clone(), Committee::new(msg.committee.clone()));
+                        .insert(msg.e3_id.clone(), committee);
                     selector_state
                         .expelled
                         .entry(msg.e3_id.clone())
@@ -189,8 +191,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                 })?;
 
                 // Check if this node is in the finalized committee
-                if let Some(party_id) = msg.committee.iter().position(|addr| addr == &self.address)
-                {
+                if let Some(party_id) = local_party_id {
                     info!(
                         node = self.address,
                         party_id = party_id,
@@ -199,7 +200,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
 
                     bus.publish(
                         CiphernodeSelected {
-                            party_id: party_id as u64,
+                            party_id,
                             e3_id: msg.e3_id.clone(),
                             threshold_m: e3_meta.threshold_m,
                             threshold_n: e3_meta.threshold_n,
@@ -386,52 +387,11 @@ impl Handler<EffectsEnabled> for CiphernodeSelector {
     }
 }
 
-impl Handler<EmitPersistedAggregatorState> for CiphernodeSelector {
-    type Result = ();
+impl Handler<GetCiphernodeSelectorState> for CiphernodeSelector {
+    type Result = Result<CiphernodeSelectorState>;
 
-    fn handle(
-        &mut self,
-        _: EmitPersistedAggregatorState,
-        _ctx: &mut Self::Context,
-    ) -> Self::Result {
-        let Some(state) = self.state.get() else {
-            return;
-        };
-
-        for (e3_id, committee) in &state.committees {
-            let Some(party_id) = committee.party_id_for(&self.address) else {
-                continue;
-            };
-            let Some(meta) = state.e3_cache.get(e3_id) else {
-                self.bus.err(
-                    EType::Sortition,
-                    anyhow::anyhow!("Missing E3 metadata for persisted committee {e3_id}"),
-                );
-                continue;
-            };
-            if let Err(err) = self.bus.publish_without_context(CiphernodeSelected {
-                e3_id: e3_id.clone(),
-                threshold_m: meta.threshold_m,
-                threshold_n: meta.threshold_n,
-                seed: meta.seed,
-                error_size: meta.error_size.clone(),
-                params_preset: meta.params_preset,
-                params: meta.params.clone(),
-                party_id,
-                committee: committee.members().to_vec(),
-            }) {
-                self.bus.err(EType::Sortition, err);
-            }
-        }
-
-        for (e3_id, is_aggregator) in state.is_aggregator {
-            if let Err(err) = self.bus.publish_without_context(AggregatorChanged {
-                e3_id,
-                is_aggregator,
-            }) {
-                self.bus.err(EType::Sortition, err);
-            }
-        }
+    fn handle(&mut self, _: GetCiphernodeSelectorState, _: &mut Self::Context) -> Self::Result {
+        self.state.try_get()
     }
 }
 

@@ -123,13 +123,9 @@ mod tests {
     }
 
     #[test]
-    fn deadline_attempts_are_staggered_by_party_id() {
+    fn failure_watch_stagger_survives_restart() {
         assert_eq!(failure_watch_delay(100, 160, 0, 15).as_secs(), 61);
         assert_eq!(failure_watch_delay(100, 160, 2, 15).as_secs(), 91);
-    }
-
-    #[test]
-    fn restart_after_deadline_preserves_the_party_stagger() {
         assert_eq!(failure_watch_delay(200, 160, 0, 15).as_secs(), 1);
         assert_eq!(failure_watch_delay(200, 160, 2, 15).as_secs(), 31);
     }
