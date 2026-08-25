@@ -420,6 +420,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increaseTo(deadline + 1n);
       await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
       expect(await ctx.registry.unreleasedCommitteeCount()).to.equal(0);
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        ethers.ZeroAddress,
+      );
 
       const requestId = await ctx.randomnessProvider.requestIdByE3Id(firstE3Id);
       await ctx.randomnessProvider.fulfill(requestId, 123n);
@@ -448,8 +451,27 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .withArgs(firstE3Id, 1);
     });
 
+    it("keeps timely randomness available for replay after failure", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.makeReadyRequest();
+
+      const acceptedSeed = await ctx.registry.sortitionSeed(firstE3Id);
+      expect(acceptedSeed[0]).to.equal(true);
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.markE3Failed(firstE3Id);
+
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal(
+        acceptedSeed,
+      );
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        await ctx.randomnessProvider.getAddress(),
+      );
+    });
+
     it("does not expose an unresolved seed after the E3 times out", async function () {
       const ctx = await loadFixture(setup);
+      await ctx.randomnessProvider.setAutoFulfill(false);
       await ctx.makeReadyRequest();
 
       const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
@@ -460,6 +482,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         false,
         0n,
       ]);
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        ethers.ZeroAddress,
+      );
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {

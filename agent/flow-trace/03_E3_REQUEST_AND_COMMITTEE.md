@@ -335,7 +335,7 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │                                                         │
     │  │    7. Resolve the request-time provider response:      │
     │  │       require(fulfilledBlock > requestBlockNumber)     │
-    │  │       require(fulfilledBlock <= block.number)          │
+    │  │       require(fulfilledBlock <= currentChainBlock)     │
     │  │       require(fulfilledAt <= block.timestamp)          │
     │  │       require(fulfilledAt <= randomnessDeadline)       │
     │  │       seed = keccak256(                                │
@@ -609,15 +609,23 @@ Registry or reverting.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
-context. The Registry rejects results recorded in the request block, results dated in the future,
-and results recorded after the response deadline. It derives
-`keccak256(randomWord, chainId, registry, e3Id, requestId)`, and the first ticket stores the same
-seed and response-time submission deadline.
+context. The Registry rejects results recorded in the chain-native request block, results dated in
+the future, and results recorded after the response deadline. Ethereum uses `block.number`. Arbitrum
+uses `ArbSys.arbBlockNumber()` because Solidity `block.number` reports an L1 block number there. It
+derives `keccak256(randomWord, chainId, registry, e3Id, requestId)`, and the first ticket stores the
+same seed and response-time submission deadline. A timely accepted result remains readable after
+terminal cleanup. A fresh node can therefore derive the same historical `CommitteeRequested` event
+even when it starts after the E3 has failed or completed.
 
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
 paths classify it as `CommitteeFormationTimeout`, release committee obligations, and allow a full
-requester refund. A late callback stays recorded in the provider but cannot restart the E3.
+requester refund. The timeout also clears the active provider. New E3 requests then revert until
+governance pauses requests, investigates the failure, and restores a provider. A late callback stays
+recorded in the request-bound provider but cannot restart the E3.
+
+The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
+also exposes the event so operators can alert on the halt without treating it as an E3 data event.
 
 The Rust Registry reader retains the old `CommitteeRequested` block-hash decoder only for historical
 log replay. New requests use `CommitteeRandomnessRequested` and the configured provider event.

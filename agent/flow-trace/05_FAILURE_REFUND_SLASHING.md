@@ -124,6 +124,8 @@ Requester calls: Interfold.cancelE3(e3Id)
 ├─ _e3FailureReasons[e3Id] = CommitteeFormationTimeout
 ├─ Registry.releaseCommittee(e3Id)
 │  → release candidate and request obligations
+│  → clear the active randomness provider
+│  → reject new E3 requests until governance restores a provider
 │  → a late provider callback cannot restart sortition
 └─ Emit E3StageChanged and E3Failed
 

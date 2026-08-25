@@ -12,12 +12,20 @@ import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
 import {
+  assertVrfSubscription,
+  assertVrfUpgradePlanMatchesDeployment,
+} from "../../scripts/protocol/randomness";
+import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
   safeTx,
 } from "../../scripts/protocol/safe";
 import { buildSafeTransactions } from "../../scripts/protocol/transactions";
-import type { ProtocolConfigFile } from "../../scripts/protocol/types";
+import type {
+  ProtocolConfigFile,
+  ProtocolDeployment,
+  VrfSortitionUpgradePlan,
+} from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
@@ -139,6 +147,106 @@ describe("Protocol deployment", function () {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a stale VRF upgrade plan", function () {
+    const config = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const deployment = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolDeployment;
+    const plan = {
+      name: config.name,
+      operator: ethersLib.ZeroAddress,
+      protocolOwner: config.protocolOwner,
+      registryProxy: deployment.ciphernodeRegistry,
+      registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+      registryImplementation: ethersLib.ZeroAddress,
+      sortitionLibrary: ethersLib.ZeroAddress,
+      interfoldProxy: deployment.interfold,
+      interfoldProxyAdmin: deployment.interfoldProxyAdmin,
+      interfoldImplementation: ethersLib.ZeroAddress,
+      lifecycleLibrary: ethersLib.ZeroAddress,
+      pricingLibrary: ethersLib.ZeroAddress,
+      randomnessProvider: ethersLib.ZeroAddress,
+      randomnessProviderOwnershipAcceptanceRequired: false,
+      safeTransactions: "upgrade.json",
+    } satisfies VrfSortitionUpgradePlan;
+
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(config, deployment, plan, 1n),
+    ).not.to.throw();
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(
+        config,
+        deployment,
+        { ...plan, registryProxy: ethersLib.ZeroAddress },
+        1n,
+      ),
+    ).to.throw("registry proxy");
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(config, deployment, plan, 42161n),
+    ).to.throw("connected chain");
+  });
+
+  it("rejects unsupported VRF parameters", async function () {
+    const [owner] = await ethers.getSigners();
+    if (!owner) throw new Error("owner signer missing");
+    const coordinator = await ethers.deployContract(
+      "ChainlinkVrfCoordinatorV2_5Mock",
+      [0, 0, ethers.parseEther("1")],
+    );
+    await coordinator.waitForDeployment();
+    await coordinator.createSubscription();
+    const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
+    if (!subscriptionId) throw new Error("subscription missing");
+    await coordinator.fundSubscription(subscriptionId, 1n);
+
+    const config = {
+      protocolOwner: await owner.getAddress(),
+      randomness: {
+        coordinator: await coordinator.getAddress(),
+        subscriptionId: subscriptionId.toString(),
+        keyHash: `0x${"11".repeat(32)}`,
+        requestConfirmations: 1,
+        callbackGasLimit: 2_500_000,
+        nativePayment: false,
+        requestTimeout: "3600",
+      },
+    } as ProtocolConfigFile;
+
+    await assertVrfSubscription(ethers, config);
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, requestConfirmations: 0 },
+      }),
+    ).to.be.rejectedWith("below the coordinator minimum");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, callbackGasLimit: 2_500_001 },
+      }),
+    ).to.be.rejectedWith("exceeds the coordinator maximum");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, keyHash: ethersLib.ZeroHash },
+      }),
+    ).to.be.rejectedWith("keyHash is not registered");
   });
 
   it("normalizes the optional escrow votes adapter", function () {

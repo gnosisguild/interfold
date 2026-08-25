@@ -10,9 +10,16 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
+import { IArbSys } from "../interfaces/external/IArbSys.sol";
 
 /// @notice Resolves entropy and updates candidate rankings for registry sortition.
 library RegistrySortitionLib {
+    uint256 private constant ARBITRUM_ONE_CHAIN_ID = 42161;
+    uint256 private constant ARBITRUM_NOVA_CHAIN_ID = 42170;
+    uint256 private constant ARBITRUM_SEPOLIA_CHAIN_ID = 421614;
+
+    IArbSys private constant ARBSYS = IArbSys(address(100));
+
     // keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant RANDOMNESS_STORAGE_SLOT =
         0x57a1af54ea0bbeb06d6edf6fa5ea97cbfa420879daa9f127d968d8e1bc60f000;
@@ -174,9 +181,10 @@ library RegistrySortitionLib {
     }
 
     /// @notice Resolves one request-bound VRF result and its ticket deadline.
+    /// @dev A timely result remains readable after terminal cleanup so historical replay derives
+    ///      the same committee request. A late result still fails response validation.
     function sortitionState(
         uint256 e3Id,
-        bool obligationsReleased,
         bool seedResolved,
         uint256 storedSeed,
         uint256 storedDeadline
@@ -188,18 +196,10 @@ library RegistrySortitionLib {
         if (seedResolved) {
             return (true, storedSeed, storedDeadline);
         }
-        if (obligationsReleased) return (false, 0, storedDeadline);
         RandomnessRequest storage request = _randomnessStorage().requests[e3Id];
         if (request.requestId == 0 || address(request.provider) == address(0)) {
             return (false, 0, request.randomnessDeadline);
         }
-        IInterfold controller = ICiphernodeRegistry(address(this)).interfold();
-        IInterfold.E3Stage e3Stage = controller.getE3Stage(e3Id);
-        if (
-            e3Stage == IInterfold.E3Stage.Complete ||
-            e3Stage == IInterfold.E3Stage.Failed
-        ) return (false, 0, request.randomnessDeadline);
-
         return _providerState(request, e3Id);
     }
 
@@ -252,7 +252,7 @@ library RegistrySortitionLib {
         RandomnessRequest storage request = state.requests[e3Id];
         request.provider = provider;
         request.submissionWindow = submissionWindow;
-        request.requestedBlock = block.number;
+        request.requestedBlock = currentBlockNumber(block.chainid);
         request.requestedAt = block.timestamp;
         randomnessDeadline = block.timestamp + timeout;
         request.randomnessDeadline = randomnessDeadline;
@@ -267,6 +267,41 @@ library RegistrySortitionLib {
             address(provider),
             randomnessDeadline
         );
+    }
+
+    /// @notice Marks a requested committee as failed and stops future requests if its response expired.
+    /// @dev A timely response must never be discarded and replaced with a new draw.
+    function failRequestedCommittee(
+        ICiphernodeRegistry.Committee storage committee,
+        uint256 e3Id
+    ) external {
+        if (committee.stage != ICiphernodeRegistry.CommitteeStage.Requested)
+            return;
+        _tripRandomnessCircuitBreaker(e3Id);
+        committee.stage = ICiphernodeRegistry.CommitteeStage.Failed;
+    }
+
+    function _tripRandomnessCircuitBreaker(uint256 e3Id) private {
+        RandomnessStorage storage state = _randomnessStorage();
+        RandomnessRequest storage request = state.requests[e3Id];
+        if (
+            address(state.provider) == address(0) ||
+            address(state.provider) != address(request.provider) ||
+            request.requestId == 0 ||
+            block.timestamp <= request.randomnessDeadline
+        ) return;
+
+        (bool ready, , ) = _providerState(request, e3Id);
+        if (ready) return;
+
+        address failedProvider = address(state.provider);
+        state.provider = IRandomnessProvider(address(0));
+        emit ICiphernodeRegistry.RandomnessCircuitBreakerTripped(
+            e3Id,
+            request.requestId,
+            failedProvider
+        );
+        emit ICiphernodeRegistry.RandomnessProviderSet(address(0));
     }
 
     /// @notice Sets the provider used by future requests.
@@ -354,6 +389,25 @@ library RegistrySortitionLib {
         );
     }
 
+    /// @notice Returns the block counter used by the chain's VRF coordinator.
+    /// @dev Arbitrum's Solidity `block.number` is an L1 number. Chainlink confirmations use the
+    ///      L2 counter exposed by ArbSys, so request and fulfillment markers must use it too.
+    function currentBlockNumber(
+        uint256 chainId
+    ) internal view returns (uint256) {
+        if (_usesArbitrumBlockNumbers(chainId)) {
+            return ARBSYS.arbBlockNumber();
+        }
+        return block.number;
+    }
+
+    /// @notice Test and diagnostics wrapper for {currentBlockNumber}.
+    function currentBlockNumberForChain(
+        uint256 chainId
+    ) external view returns (uint256) {
+        return currentBlockNumber(chainId);
+    }
+
     function _randomnessStorage()
         private
         pure
@@ -391,15 +445,25 @@ library RegistrySortitionLib {
         uint256 fulfilledAt,
         uint256 fulfilledBlock
     ) private view returns (bool) {
+        uint256 currentBlock = currentBlockNumber(block.chainid);
         return
             fulfilled &&
             fulfilledAt != 0 &&
             fulfilledAt >= request.requestedAt &&
             fulfilledAt <= block.timestamp &&
             fulfilledBlock > request.requestedBlock &&
-            fulfilledBlock <= block.number &&
+            fulfilledBlock <= currentBlock &&
             fulfilledAt <= request.randomnessDeadline &&
             fulfilledAt <= type(uint256).max - request.submissionWindow;
+    }
+
+    function _usesArbitrumBlockNumbers(
+        uint256 chainId
+    ) private pure returns (bool) {
+        return
+            chainId == ARBITRUM_ONE_CHAIN_ID ||
+            chainId == ARBITRUM_NOVA_CHAIN_ID ||
+            chainId == ARBITRUM_SEPOLIA_CHAIN_ID;
     }
 
     function _requireRequestsPaused() private view {

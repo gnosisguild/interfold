@@ -51,6 +51,8 @@ describe("CiphernodeRegistryOwnable", function () {
         sys.mocks.decryptionVerifier,
         signer,
       );
+    const randomnessProvider = sys.mocks.randomnessProvider;
+    if (!randomnessProvider) throw new Error("randomness provider missing");
     return {
       owner: sys.owner,
       notTheOwner: sys.notTheOwner,
@@ -67,7 +69,7 @@ describe("CiphernodeRegistryOwnable", function () {
       mockE3Program: sys.mocks.e3Program,
       mockDecryptionVerifier: sys.mocks.decryptionVerifier,
       mockPkVerifier: sys.mocks.pkVerifier,
-      randomnessProvider: sys.mocks.randomnessProvider,
+      randomnessProvider,
       request,
     };
   }
@@ -375,6 +377,7 @@ describe("CiphernodeRegistryOwnable", function () {
         false,
         0n,
       ]);
+      expect(await registry.isOpen(firstE3Id)).to.equal(false);
       await networkHelpers.time.increase(300);
       const requestId = await randomnessProvider.requestIdByE3Id(firstE3Id);
       const randomWord = 987654321n;
@@ -407,6 +410,7 @@ describe("CiphernodeRegistryOwnable", function () {
         true,
         expectedSeed,
       ]);
+      expect(await registry.isOpen(firstE3Id)).to.equal(true);
       const expectedScore = BigInt(
         ethers.keccak256(
           ethers.solidityPacked(
@@ -423,6 +427,8 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(registry.connect(operator1).submitTicket(firstE3Id, 1))
         .to.emit(registry, "TicketSubmitted")
         .withArgs(firstE3Id, await operator1.getAddress(), 1, expectedScore);
+      await networkHelpers.time.increase(1);
+      expect(await registry.isOpen(firstE3Id)).to.equal(false);
     });
 
     it("classifies an unfulfilled randomness request as a formation timeout", async function () {
@@ -451,11 +457,56 @@ describe("CiphernodeRegistryOwnable", function () {
         0n,
       ]);
       await networkHelpers.time.increaseTo(deadline + 1n);
-      await expect(registry.finalizeCommittee(firstE3Id))
+      const failedProvider = await randomnessProvider.getAddress();
+      const finalization = registry.finalizeCommittee(firstE3Id);
+      await expect(finalization)
         .to.emit(interfold, "E3Failed")
         .withArgs(firstE3Id, 1, 1);
+      await expect(finalization)
+        .to.emit(registry, "RandomnessCircuitBreakerTripped")
+        .withArgs(firstE3Id, requestId, failedProvider);
       expect(await interfold.getFailureReason(firstE3Id)).to.equal(1);
       expect(await registry.unreleasedCommitteeCount()).to.equal(0);
+      expect(await registry.randomnessProvider()).to.equal(ethers.ZeroAddress);
+
+      await expect(
+        makeRequest(
+          interfold,
+          usdcToken,
+          mockE3Program,
+          mockDecryptionVerifier,
+        ),
+      ).to.be.revertedWithCustomError(registry, "ZeroAddress");
+    });
+
+    it("keeps the first mock response", async function () {
+      const {
+        interfold,
+        randomnessProvider,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      const requestId = await randomnessProvider.requestIdByE3Id(firstE3Id);
+
+      await expect(randomnessProvider.fulfill(requestId, 123n))
+        .to.be.revertedWithCustomError(
+          randomnessProvider,
+          "RandomnessAlreadyFulfilled",
+        )
+        .withArgs(requestId);
+      await expect(randomnessProvider.fulfill(requestId + 1n, 123n))
+        .to.be.revertedWithCustomError(
+          randomnessProvider,
+          "UnknownRandomnessRequest",
+        )
+        .withArgs(requestId + 1n);
     });
 
     it("returns true if the request is successful", async function () {
@@ -1380,5 +1431,24 @@ describe("CiphernodeRegistryOwnable", function () {
       // Three operators registered in setup
       expect(await registry.treeSize()).to.equal(3);
     });
+  });
+});
+
+describe("RegistrySortitionLib block counter", function () {
+  it("uses the Arbitrum L2 block number", async function () {
+    const library = await ethers.deployContract("RegistrySortitionLib");
+    await library.waitForDeployment();
+    const l2BlockNumber = 123456n;
+    const result = ethers.zeroPadValue(ethers.toBeHex(l2BlockNumber), 32);
+    await ethers.provider.send("hardhat_setCode", [
+      "0x0000000000000000000000000000000000000064",
+      `0x7f${result.slice(2)}60005260206000f3`,
+    ]);
+
+    for (const chainId of [42161, 42170, 421614]) {
+      expect(await library.currentBlockNumberForChain(chainId)).to.equal(
+        l2BlockNumber,
+      );
+    }
   });
 });

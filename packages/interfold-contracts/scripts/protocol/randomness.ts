@@ -5,15 +5,19 @@ import { safeTx } from "./safe";
 import type {
   ProtocolConfigFile,
   ProtocolContracts,
+  ProtocolDeployment,
   ProtocolInterfaces,
   RandomnessConfig,
   SafeTransaction,
+  VrfSortitionUpgradePlan,
 } from "./types";
 import { deployedAddress } from "./values";
 
 export const vrfCoordinatorInterface = new ethersLib.Interface([
   "function addConsumer(uint256 subId,address consumer)",
   "function getSubscription(uint256 subId) view returns (uint96 balance,uint96 nativeBalance,uint64 reqCount,address owner,address[] consumers)",
+  "function s_config() view returns (uint16 minimumRequestConfirmations,uint32 maxGasLimit,bool reentrancyLock,uint32 stalenessSeconds,uint32 gasAfterPaymentCalculation,uint32 fulfillmentFlatFeeNativePPM,uint32 fulfillmentFlatFeeLinkDiscountPPM,uint8 nativePremiumPercentage,uint8 linkPremiumPercentage)",
+  "function s_provingKeys(bytes32 keyHash) view returns (bool exists,uint64 maxGas)",
 ]);
 
 export const vrfProviderInterface = new ethersLib.Interface([
@@ -35,6 +39,7 @@ export function requireRandomnessConfig(
 export async function assertVrfSubscription(
   ethers: any,
   config: ProtocolConfigFile,
+  expectedConsumer?: string,
 ): Promise<void> {
   const randomness = requireRandomnessConfig(config);
   const coordinator = new ethersLib.Contract(
@@ -42,6 +47,28 @@ export async function assertVrfSubscription(
     vrfCoordinatorInterface,
     ethers.provider,
   );
+  const coordinatorConfig = await coordinator.s_config();
+  if (
+    BigInt(randomness.requestConfirmations) <
+    BigInt(coordinatorConfig.minimumRequestConfirmations)
+  ) {
+    throw new Error(
+      `randomness.requestConfirmations is below the coordinator minimum of ${coordinatorConfig.minimumRequestConfirmations}`,
+    );
+  }
+  if (
+    BigInt(randomness.callbackGasLimit) > BigInt(coordinatorConfig.maxGasLimit)
+  ) {
+    throw new Error(
+      `randomness.callbackGasLimit exceeds the coordinator maximum of ${coordinatorConfig.maxGasLimit}`,
+    );
+  }
+  const provingKey = await coordinator.s_provingKeys(randomness.keyHash);
+  if (!provingKey.exists) {
+    throw new Error(
+      `randomness.keyHash is not registered with coordinator ${randomness.coordinator}`,
+    );
+  }
   const subscription = await coordinator.getSubscription(
     BigInt(randomness.subscriptionId),
   );
@@ -63,6 +90,68 @@ export async function assertVrfSubscription(
       } balance`,
     );
   }
+  if (
+    expectedConsumer &&
+    !subscription.consumers.some(
+      (consumer: string) =>
+        consumer.toLowerCase() === expectedConsumer.toLowerCase(),
+    )
+  ) {
+    throw new Error(
+      `VRF subscription does not include consumer ${expectedConsumer}`,
+    );
+  }
+}
+
+function assertPlanValue(
+  label: string,
+  actual: string | number,
+  expected: string | number,
+): void {
+  if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+    throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  }
+}
+
+export function assertVrfUpgradePlanMatchesDeployment(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+  plan: VrfSortitionUpgradePlan,
+  connectedChainId: bigint,
+): void {
+  assertPlanValue(
+    "connected chain",
+    connectedChainId.toString(),
+    config.chainId,
+  );
+  assertPlanValue("deployment chain", deployment.chainId, config.chainId);
+  assertPlanValue("plan name", plan.name, config.name);
+  assertPlanValue(
+    "plan protocol owner",
+    plan.protocolOwner,
+    config.protocolOwner,
+  );
+  assertPlanValue(
+    "deployment protocol owner",
+    deployment.protocolOwner,
+    config.protocolOwner,
+  );
+  assertPlanValue(
+    "registry proxy",
+    plan.registryProxy,
+    deployment.ciphernodeRegistry,
+  );
+  assertPlanValue(
+    "registry ProxyAdmin",
+    plan.registryProxyAdmin,
+    deployment.ciphernodeRegistryProxyAdmin,
+  );
+  assertPlanValue("Interfold proxy", plan.interfoldProxy, deployment.interfold);
+  assertPlanValue(
+    "Interfold ProxyAdmin",
+    plan.interfoldProxyAdmin,
+    deployment.interfoldProxyAdmin,
+  );
 }
 
 export async function deployRandomnessProvider(

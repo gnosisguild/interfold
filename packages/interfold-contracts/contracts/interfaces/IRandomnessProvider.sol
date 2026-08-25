@@ -11,7 +11,7 @@ interface IRandomnessProvider {
     /// @notice Emitted after the provider accepts one E3 request.
     event RandomnessRequested(uint256 indexed requestId, uint256 indexed e3Id);
 
-    /// @notice Emitted after the provider records one usable response.
+    /// @notice Emitted after the provider records one coordinator response.
     event RandomnessFulfilled(
         uint256 indexed requestId,
         uint256 indexed e3Id,
@@ -34,7 +34,8 @@ interface IRandomnessProvider {
     /// @return fulfilled Whether the provider recorded a valid response.
     /// @return randomWord Random word returned by the provider.
     /// @return fulfilledAt Timestamp when the provider recorded the response.
-    /// @return fulfilledBlock Block when the provider recorded the response.
+    /// @return fulfilledBlock Chain-native block when the provider recorded the response.
+    ///         Arbitrum providers return the L2 block number from ArbSys.
     function getRandomness(
         uint256 requestId
     )

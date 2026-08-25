@@ -157,9 +157,12 @@ enum InterfoldEventType {
 
 ```typescript
 enum RegistryEventType {
-  // Retained for historical block-hash sortition logs.
+  // On-chain legacy event retained only for pre-VRF registry logs. The
+  // ciphernode runtime creates its separate durable CommitteeRequested event
+  // after the Registry accepts a VRF response.
   COMMITTEE_REQUESTED = 'CommitteeRequested',
   COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
+  RANDOMNESS_CIRCUIT_BREAKER_TRIPPED = 'RandomnessCircuitBreakerTripped',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
   COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',

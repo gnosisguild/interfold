@@ -12,6 +12,7 @@ import {
     VRFV2PlusClient
 } from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
+import { RegistrySortitionLib } from "../lib/RegistrySortitionLib.sol";
 
 /// @title ChainlinkVrfRandomnessProvider
 /// @notice Adapts one Chainlink VRF v2.5 subscription to one ciphernode registry.
@@ -147,7 +148,9 @@ contract ChainlinkVrfRandomnessProvider is
 
         result.randomWord = randomWords[0];
         result.fulfilledAt = block.timestamp;
-        result.fulfilledBlock = block.number;
+        result.fulfilledBlock = RegistrySortitionLib.currentBlockNumber(
+            block.chainid
+        );
         result.fulfilled = true;
         emit RandomnessFulfilled(
             requestId,

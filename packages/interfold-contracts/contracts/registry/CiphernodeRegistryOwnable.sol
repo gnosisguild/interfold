@@ -707,7 +707,6 @@ contract CiphernodeRegistryOwnable is
         return
             RegistrySortitionLib.sortitionState(
                 e3Id,
-                committees[e3Id].obligationsReleased,
                 sortitionSeedResolved[e3Id],
                 committees[e3Id].seed,
                 committees[e3Id].committeeDeadline
@@ -744,16 +743,13 @@ contract CiphernodeRegistryOwnable is
                     IInterfold.FailureReason.InsufficientCommitteeMembers
                 );
             }
-            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
             emit CommitteeFormationFailed(
                 e3Id,
                 c.topNodes.length,
                 c.threshold[1]
             );
             _interfoldFor(e3Id).onE3Failed(e3Id, reason);
-            c.obligationsReleased = true;
-            _releaseCommitteeObligations(e3Id, c);
-            unreleasedCommitteeCount--;
+            releaseCommittee(e3Id);
             return false;
         }
 
@@ -777,7 +773,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
-    function releaseCommittee(uint256 e3Id) external {
+    function releaseCommittee(uint256 e3Id) public {
         Committee storage c = committees[e3Id];
         require(
             c.stage == ICiphernodeRegistry.CommitteeStage.Requested ||
@@ -795,9 +791,7 @@ contract CiphernodeRegistryOwnable is
         ) revert E3NotTerminal(e3Id);
 
         c.obligationsReleased = true;
-        if (c.stage == ICiphernodeRegistry.CommitteeStage.Requested) {
-            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
-        }
+        RegistrySortitionLib.failRequestedCommittee(c, e3Id);
         _releaseCommitteeObligations(e3Id, c);
         unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
@@ -1035,11 +1029,12 @@ contract CiphernodeRegistryOwnable is
     /// @param e3Id ID of the E3 computation
     /// @return Whether the submission window is open
     function isOpen(uint256 e3Id) external view returns (bool) {
-        Committee storage c = committees[e3Id];
-        if (c.stage != ICiphernodeRegistry.CommitteeStage.Requested)
-            return false;
         (bool ready, , uint256 deadline) = _sortitionState(e3Id);
-        return ready && block.timestamp <= deadline;
+        return
+            committees[e3Id].stage ==
+            ICiphernodeRegistry.CommitteeStage.Requested &&
+            ready &&
+            block.timestamp <= deadline;
     }
 
     /// @inheritdoc ICiphernodeRegistry

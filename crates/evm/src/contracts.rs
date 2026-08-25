@@ -262,6 +262,12 @@ sol! {
 
         event RandomnessProviderSet(address indexed randomnessProvider);
 
+        event RandomnessCircuitBreakerTripped(
+            uint256 indexed e3Id,
+            uint256 indexed requestId,
+            address indexed randomnessProvider
+        );
+
         event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
 
         event SortitionCommitteeFinalized(

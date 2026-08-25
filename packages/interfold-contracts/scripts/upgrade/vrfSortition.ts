@@ -25,31 +25,11 @@ import {
 import type {
   ProtocolConfigFile,
   ProtocolDeployment,
-  SafeProposal,
   SafeTransaction,
+  VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
 import { deployUpgradeImplementation } from "./safeProxyUpgrade";
-
-export interface VrfSortitionUpgradePlan {
-  name: string;
-  operator: string;
-  protocolOwner: string;
-  registryProxy: string;
-  registryProxyAdmin: string;
-  registryImplementation: string;
-  sortitionLibrary: string;
-  interfoldProxy: string;
-  interfoldProxyAdmin: string;
-  interfoldImplementation: string;
-  lifecycleLibrary: string;
-  pricingLibrary: string;
-  randomnessProvider: string;
-  randomnessProviderOwnershipAcceptanceRequired: boolean;
-  safeTransactions: string;
-  governanceSafeBuilder?: string;
-  safeProposal?: SafeProposal;
-}
 
 function planPath(config: ProtocolConfigFile): string {
   return path.join(protocolDir, `${config.name}.vrf-sortition.upgrade.json`);

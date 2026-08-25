@@ -180,6 +180,26 @@ export interface ProtocolDeployment {
   safeProposal?: SafeProposal;
 }
 
+export interface VrfSortitionUpgradePlan {
+  name: string;
+  operator: string;
+  protocolOwner: string;
+  registryProxy: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
+  sortitionLibrary: string;
+  interfoldProxy: string;
+  interfoldProxyAdmin: string;
+  interfoldImplementation: string;
+  lifecycleLibrary: string;
+  pricingLibrary: string;
+  randomnessProvider: string;
+  randomnessProviderOwnershipAcceptanceRequired: boolean;
+  safeTransactions: string;
+  governanceSafeBuilder?: string;
+  safeProposal?: SafeProposal;
+}
+
 export interface SafeTransaction {
   to: string;
   value: string;

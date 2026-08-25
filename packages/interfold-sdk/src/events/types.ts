@@ -22,6 +22,7 @@ export enum InterfoldEventType {
 export enum RegistryEventType {
   COMMITTEE_REQUESTED = 'CommitteeRequested',
   COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
+  RANDOMNESS_CIRCUIT_BREAKER_TRIPPED = 'RandomnessCircuitBreakerTripped',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
   COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
@@ -98,6 +99,12 @@ export interface CommitteeRandomnessRequestedData {
   randomnessDeadline: bigint
 }
 
+export interface RandomnessCircuitBreakerTrippedData {
+  e3Id: bigint
+  requestId: bigint
+  randomnessProvider: string
+}
+
 export interface CommitteePublishedData {
   e3Id: bigint
   nodes: string[]
@@ -128,6 +135,7 @@ export interface InterfoldEventData {
 export interface RegistryEventData {
   [RegistryEventType.COMMITTEE_REQUESTED]: CommitteeRequestedData
   [RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED]: CommitteeRandomnessRequestedData
+  [RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED]: RandomnessCircuitBreakerTrippedData
   [RegistryEventType.COMMITTEE_PUBLISHED]: CommitteePublishedData
   [RegistryEventType.COMMITTEE_FINALIZED]: CommitteeFinalizedData
   [RegistryEventType.INTERFOLD_SET]: { interfold: string }

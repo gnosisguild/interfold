@@ -253,6 +253,13 @@ interface ICiphernodeRegistry {
     /// @notice Emitted when the randomness provider changes.
     event RandomnessProviderSet(address indexed randomnessProvider);
 
+    /// @notice Emitted when an expired response disables future randomness requests.
+    event RandomnessCircuitBreakerTripped(
+        uint256 indexed e3Id,
+        uint256 indexed requestId,
+        address indexed randomnessProvider
+    );
+
     /// @notice Emitted when the maximum randomness wait changes.
     event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
 

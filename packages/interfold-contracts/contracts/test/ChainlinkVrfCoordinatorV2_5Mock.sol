@@ -15,5 +15,15 @@ contract ChainlinkVrfCoordinatorV2_5Mock is VRFCoordinatorV2_5Mock {
         uint96 baseFee,
         uint96 gasPrice,
         int256 weiPerUnitLink
-    ) VRFCoordinatorV2_5Mock(baseFee, gasPrice, weiPerUnitLink) {}
+    ) VRFCoordinatorV2_5Mock(baseFee, gasPrice, weiPerUnitLink) {
+        s_config.minimumRequestConfirmations = 1;
+        s_config.maxGasLimit = 2_500_000;
+    }
+
+    /// @notice Mirrors the production coordinator's public gas-lane lookup.
+    function s_provingKeys(
+        bytes32 keyHash
+    ) external pure returns (bool exists, uint64 maxGas) {
+        return (keyHash != bytes32(0), type(uint64).max);
+    }
 }

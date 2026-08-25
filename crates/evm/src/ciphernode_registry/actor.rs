@@ -196,6 +196,8 @@ fn is_control_plane_event(topic: Option<&B256>) -> bool {
         Some(value)
             if *value == ICiphernodeRegistry::CommitteeRandomnessRequested::SIGNATURE_HASH
                 || *value == ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH
+                || *value
+                    == ICiphernodeRegistry::RandomnessCircuitBreakerTripped::SIGNATURE_HASH
                 || *value == ICiphernodeRegistry::RandomnessRequestTimeoutSet::SIGNATURE_HASH
     )
 }
@@ -209,6 +211,7 @@ mod control_plane_event_tests {
         for topic in [
             ICiphernodeRegistry::CommitteeRandomnessRequested::SIGNATURE_HASH,
             ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH,
+            ICiphernodeRegistry::RandomnessCircuitBreakerTripped::SIGNATURE_HASH,
             ICiphernodeRegistry::RandomnessRequestTimeoutSet::SIGNATURE_HASH,
         ] {
             assert!(is_control_plane_event(Some(&topic)));

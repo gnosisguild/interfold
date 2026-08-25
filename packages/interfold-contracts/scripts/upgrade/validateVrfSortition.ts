@@ -11,22 +11,14 @@ import {
 } from "../protocol/files";
 import {
   assertVrfSubscription,
+  assertVrfUpgradePlanMatchesDeployment,
   requireRandomnessConfig,
-  vrfCoordinatorInterface,
 } from "../protocol/randomness";
-import type { ProtocolDeployment } from "../protocol/types";
+import type {
+  ProtocolDeployment,
+  VrfSortitionUpgradePlan,
+} from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
-
-interface VrfSortitionUpgradePlan {
-  registryProxy: string;
-  registryImplementation: string;
-  sortitionLibrary: string;
-  interfoldProxy: string;
-  interfoldImplementation: string;
-  lifecycleLibrary: string;
-  pricingLibrary: string;
-  randomnessProvider: string;
-}
 
 const IMPLEMENTATION_SLOT =
   "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
@@ -54,6 +46,13 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   const deployment = readJson<ProtocolDeployment>(deploymentFile);
   const plan = readJson<VrfSortitionUpgradePlan>(
     path.join(protocolDir, `${config.name}.vrf-sortition.upgrade.json`),
+  );
+  const network = await ethers.provider.getNetwork();
+  assertVrfUpgradePlanMatchesDeployment(
+    config,
+    deployment,
+    plan,
+    network.chainId,
   );
 
   for (const [label, target] of [
@@ -143,22 +142,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     0,
   );
 
-  await assertVrfSubscription(ethers, config);
-  const coordinator = new ethersLib.Contract(
-    randomness.coordinator,
-    vrfCoordinatorInterface,
-    ethers.provider,
-  );
-  const subscription = await coordinator.getSubscription(
-    BigInt(randomness.subscriptionId),
-  );
-  const isConsumer = subscription.consumers.some(
-    (consumer: string) =>
-      consumer.toLowerCase() === plan.randomnessProvider.toLowerCase(),
-  );
-  if (!isConsumer) {
-    throw new Error("Randomness provider is not a VRF subscription consumer");
-  }
+  await assertVrfSubscription(ethers, config, plan.randomnessProvider);
   console.log("  ok VRF subscription consumer");
 
   writeJson(deploymentFile, {

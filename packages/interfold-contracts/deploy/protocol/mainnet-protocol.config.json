@@ -21,9 +21,9 @@
     "coordinator": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
     "subscriptionId": "0",
     "keyHash": "0x8077df514608a09f83e4e8d300645594e5d7234665448ba83f51a50f842bd3d9",
-    "requestConfirmations": 3,
+    "requestConfirmations": 64,
     "callbackGasLimit": 150000,
-    "nativePayment": false,
+    "nativePayment": true,
     "requestTimeout": "3600"
   },
   "ticketToken": {

@@ -48,6 +48,7 @@ export type {
   CiphernodeRemovedData,
   CommitteeRequestedData,
   CommitteeRandomnessRequestedData,
+  RandomnessCircuitBreakerTrippedData,
   CommitteePublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,

@@ -847,6 +847,9 @@ contract Interfold is
         );
 
         _markE3FailedWithReason(e3Id, current, reason);
+        if (current == E3Stage.Requested) {
+            _registryFor(e3Id).releaseCommittee(e3Id);
+        }
     }
 
     /// @inheritdoc IInterfold

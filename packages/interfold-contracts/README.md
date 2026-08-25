@@ -101,7 +101,10 @@ hash, confirmation count, callback gas limit, payment mode, and response timeout
 in the `randomness` configuration. The subscription owner must equal
 `protocolOwner`, and the selected LINK or native balance must be nonzero. The
 governance batch accepts provider ownership, adds the provider as a subscription
-consumer, and connects it to the Registry.
+consumer, and connects it to the Registry. The mainnet configuration uses the
+subscription's native ETH balance and waits 64 blocks before fulfillment. This
+deeper confirmation window makes a request-block rewrite more expensive while
+remaining within the one-hour response timeout.
 
 For the live proxy upgrade, pause requests and confirm that Interfold has no
 active E3s and the Registry has no unreleased committees. Then run:
@@ -122,6 +125,13 @@ matching release before the DAO enables requests. The Registry permits a future
 provider or timeout change only while requests are paused and all committee
 obligations are released. Restart every node after a provider rotation so that
 it watches the new address.
+
+If a request reaches its randomness deadline without a usable response, the
+Registry clears the active provider. This blocks every new E3 request and stops
+a withholding provider from creating repeated randomness draws. The Registry
+emits `RandomnessCircuitBreakerTripped` for monitoring. Governance must pause
+requests, investigate the subscription or provider, and call
+`setRandomnessProvider` before requests can resume.
 
 Set `protocolOwner` to the contract that owns and configures the protocol. Set
 the optional `safe` field to the same address only when the protocol owner is a

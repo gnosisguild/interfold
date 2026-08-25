@@ -23,11 +23,13 @@ describe('RegistryEventType', () => {
     expect(registryEventNames).toContain(RegistryEventType.COMMITTEE_FINALIZED)
   })
 
-  it('exposes the asynchronous committee randomness request', () => {
+  it('exposes the asynchronous randomness lifecycle events', () => {
     const registryEventNames = CiphernodeRegistryOwnable__factory.abi.filter((item) => item.type === 'event').map((item) => item.name)
 
     expect(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED).toBe('CommitteeRandomnessRequested')
     expect(registryEventNames).toContain(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED)
+    expect(RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED).toBe('RandomnessCircuitBreakerTripped')
+    expect(registryEventNames).toContain(RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED)
   })
 
   it('handles asynchronous event callback failures', async () => {

@@ -436,6 +436,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         None,
     ),
     EvmEventDefinition::new(
+        "RandomnessCircuitBreakerTripped",
+        "RandomnessCircuitBreakerTripped(uint256,uint256,address)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "RandomnessRequestTimeoutSet",
         "RandomnessRequestTimeoutSet(uint256)",
         None,

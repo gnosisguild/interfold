@@ -3,11 +3,7 @@ import { ethers as ethersLib } from "ethers";
 
 import { connect } from "./cli";
 import { deploymentPath, readJson } from "./files";
-import {
-  assertVrfSubscription,
-  requireRandomnessConfig,
-  vrfCoordinatorInterface,
-} from "./randomness";
+import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import type { ProtocolDeployment } from "./types";
 import { loadConfig, requireContract } from "./values";
 
@@ -359,25 +355,7 @@ export async function actionValidate(): Promise<void> {
     assertEqual(label, actual, expected);
   }
 
-  await assertVrfSubscription(ethers, config);
-  const coordinator = new ethersLib.Contract(
-    randomnessConfig.coordinator,
-    vrfCoordinatorInterface,
-    ethers.provider,
-  );
-  const subscription = await coordinator.getSubscription(
-    BigInt(randomnessConfig.subscriptionId),
-  );
-  if (
-    !subscription.consumers.some(
-      (consumer: string) =>
-        consumer.toLowerCase() === deployment.randomnessProvider.toLowerCase(),
-    )
-  ) {
-    throw new Error(
-      `VRF subscription does not include ${deployment.randomnessProvider}`,
-    );
-  }
+  await assertVrfSubscription(ethers, config, deployment.randomnessProvider);
   console.log("  ok randomnessProvider subscription consumer");
 
   await assertStruct("interfold.timeout", interfold.getTimeoutConfig(), {

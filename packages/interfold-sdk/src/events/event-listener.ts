@@ -50,6 +50,7 @@ export class EventListener implements SDKEventEmitter {
   private static readonly REGISTRY_ONLY_EVENTS: ReadonlySet<string> = new Set([
     RegistryEventType.COMMITTEE_REQUESTED,
     RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED,
+    RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED,
     RegistryEventType.COMMITTEE_PUBLISHED,
     RegistryEventType.COMMITTEE_FINALIZED,
     RegistryEventType.INTERFOLD_SET,
