@@ -75,8 +75,8 @@ For a committee of **N** nodes with **L** CRT moduli:
 | C6      | 1                   | N                      |
 | C7      | 1 (aggregator only) | 1                      |
 
-C3 is by far the most proof-intensive circuit. With N=3 and L=4 (secure params), each node generates
-8 C3a proofs alone. This is why proof generation runs on a multithread pool.
+C3 is by far the most proof-intensive circuit. With N=3 and L=3 (secure params), each node generates
+6 C3a proofs alone. This is why proof generation runs on a multithread pool.
 
 ---
 
@@ -696,7 +696,7 @@ preset:
 | Parameter                | Insecure (N=512) | Secure (N=8192) |
 | ------------------------ | ---------------- | --------------- |
 | Polynomial degree (N)    | 512              | 8192            |
-| Threshold CRT moduli (L) | 2                | 4               |
+| Threshold CRT moduli (L) | 2                | 3               |
 | DKG CRT moduli           | 1                | 2               |
 | Plaintext modulus (t)    | Small            | Large           |
 | Security                 | None             | Full (λ=80)     |

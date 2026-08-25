@@ -119,18 +119,17 @@ echo "E3_PROGRAM_ADDRESS=<deployed_address>" >> .env
 
 ---
 
-## 4. Switch to Secure BFV Parameters
+## 4. Keep the Insecure BFV Preset on Sepolia
 
-On testnet, you should use the production BFV parameters. Update your SDK initialisation:
+Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD_512` in your SDK initialisation, and
+request E3s with `paramSet: 0`:
 
 ```typescript
 const sdk = new InterfoldSDK({
   // ... other config
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
-
-The SDK will automatically use the secure parameters when requesting E3s:
 
 ```typescript
 const hash = await sdk.requestE3({
@@ -138,13 +137,18 @@ const hash = await sdk.requestE3({
   inputWindow: [startTime, endTime],
   e3Program: YOUR_PROGRAM_ADDRESS,
   computeProviderParams: '0x...',
-  paramSet: 0, // Insecure,
+  paramSet: 0, // ParamSet.Insecure512
 })
 ```
 
-Secure parameters use polynomials of larger degrees (N=8192 vs N=512) which makes proof generation
-slower but provides real cryptographic security. Expect proof generation to take longer than in
-local dev.
+The SDK preset and the `paramSet` in the request must agree, and both must match what the ciphernode
+network runs. Sepolia is a functional testnet: it exercises the full E3 lifecycle, but it gives no
+cryptographic security, so do not put real secrets in it.
+
+`SECURE_THRESHOLD_8192` (`paramSet: 1`) is the production preset. It uses a larger polynomial ring
+(N=8192 instead of N=512), so proof generation is much slower, and it needs `secure-8192` circuit
+artifacts that do not ship in `@interfold/sdk` — see
+[Proving: embedded circuits or your own](../sdk#proving-embedded-circuits-or-your-own).
 
 ---
 
@@ -197,12 +201,12 @@ sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (e) =>
 
 ## Troubleshooting
 
-| Issue                       | Possible cause                              | Fix                                                                        |
-| --------------------------- | ------------------------------------------- | -------------------------------------------------------------------------- |
-| E3 request reverts          | Insufficient fee token approval             | Call `sdk.approveFeeToken()` first                                         |
-| Committee never forms       | Not enough active ciphernodes on Sepolia    | Check the registry for active operators                                    |
-| Proof generation fails      | Missing circuit artifacts for secure preset | Ensure `secure-8192` artifacts are built                                   |
-| Decryption produces garbage | BFV preset mismatch                         | Verify both SDK and E3 request use `SECURE_THRESHOLD_8192` / `paramSet: 1` |
+| Issue                       | Possible cause                           | Fix                                                                          |
+| --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
+| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
+| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure-512`; compile your own for other presets |
+| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
 
 ---
 
