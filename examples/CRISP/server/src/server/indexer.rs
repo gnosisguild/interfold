@@ -711,12 +711,6 @@ pub async fn register_committee_published(
     Ok(indexer)
 }
 
-/// The current head block number, read over HTTP.
-pub async fn get_head_block_rpc() -> eyre::Result<u64> {
-    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
-    Ok(provider.get_block_number().await?)
-}
-
 pub async fn get_current_timestamp_rpc() -> eyre::Result<u64> {
     let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
     let block = provider
@@ -870,46 +864,58 @@ pub async fn start_indexer(
     let crisp_indexer = register_log_index(crisp_indexer, index_log_contracts).await?;
     info!("CRISP: Indexer finished registering handlers!");
 
-    // Close the gap left by every restart and dropped socket before subscribing. Without a
-    // configured start block this is a no-op on a fresh database, so existing deployments keep
-    // their current behaviour until INDEX_START_BLOCK is set.
-    crisp_indexer.configure_backfill(index_start_block, index_chunk_size);
-
-    // Record where the log index starts for each watched contract, before any log arrives, so a
-    // contract that has emitted nothing yet does not look uncovered forever.
+    // Resolve where indexing will ACTUALLY begin, ONCE, and drive both the backfill configuration
+    // and the coverage claim from that single value.
     //
-    // The claimed block must be where indexing ACTUALLY begins, never where it was merely
-    // requested. `unwrap_or(0)` claimed coverage from genesis while the indexer was starting at
-    // the chain head, so a historical query looked covered and was answered `[]` from an empty
-    // index — wrong, and authoritative-looking. Two cases have to be distinguished:
+    // Reading it twice was a silent hole. Coverage used to come from `get_head_block_rpc` over the
+    // HTTP URL, while the catch-up read its own head over the WebSocket URL later in startup —
+    // possibly a different node, certainly a later moment. The HTTP read is the lower of the two,
+    // which is the unsafe direction: coverage claimed blocks that indexing then skipped over, and
+    // `ensure_coverage_from` never overwrites, so the wrong bound persisted for the life of the
+    // database.
+    //
+    // Three cases:
     //
     //   - A resumed database already carries coverage from its first run, and the cursor may sit
     //     far above a since-lowered INDEX_START_BLOCK. Re-claiming the lower bound would assert
     //     history that will never be fetched, so existing coverage is left untouched.
-    //   - A fresh database starts at INDEX_START_BLOCK when set, and otherwise at the head, which
-    //     has to be read to be known.
-    {
-        let store = crisp_indexer.get_store();
-        let resumed: Option<u64> = store.get(INDEXER_CURSOR_KEY).await.unwrap_or(None);
+    //   - INDEX_START_BLOCK set: that is the start, and the catch-up uses the same number.
+    //   - Fresh database, nothing configured: read the head here and PIN the backfill to it, so
+    //     the catch-up cannot resolve a different (later) start than the one claimed below.
+    let store = crisp_indexer.get_store();
+    let resumed: Option<u64> = store.get(INDEXER_CURSOR_KEY).await.unwrap_or(None);
 
+    let start_block = match (resumed, index_start_block) {
+        // `ensure_coverage_from` leaves an existing record alone, so this only fills a gap left by
+        // an older database that predates log indexing.
+        (Some(cursor), _) => Some(cursor.saturating_add(1)),
+        (None, Some(configured)) => Some(configured),
+        (None, None) => match crisp_indexer.head_block().await {
+            Ok(head) => Some(head),
+            Err(e) => {
+                error!("Could not read the head to pin the index start: {e}");
+                None
+            }
+        },
+    };
+
+    // Close the gap left by every restart and dropped socket before subscribing. On a resumed
+    // database the stored cursor wins regardless of what is passed here; on a fresh one this pins
+    // the start to the very block coverage is about to claim.
+    crisp_indexer.configure_backfill(
+        if resumed.is_some() {
+            index_start_block
+        } else {
+            start_block
+        },
+        index_chunk_size,
+    );
+
+    // Record where the log index starts for each watched contract, before any log arrives, so a
+    // contract that has emitted nothing yet does not look uncovered forever.
+    {
         if !index_log_contracts.is_empty() {
-            let coverage_from = match (resumed, index_start_block) {
-                // Resumed: whatever this database has indexed already is described by the coverage
-                // record from its first run. If that record is missing — an older database, or one
-                // that predates log indexing — the only block we can honestly claim from is the
-                // one after the cursor, because everything from there on WILL be indexed and
-                // nothing before it is guaranteed to be. `ensure_coverage_from` leaves an existing
-                // record alone, so this only fills a gap.
-                (Some(cursor), _) => Some(cursor.saturating_add(1)),
-                (None, Some(configured)) => Some(configured),
-                (None, None) => match get_head_block_rpc().await {
-                    Ok(head) => Some(head),
-                    Err(e) => {
-                        error!("Could not read the head to record log coverage: {e}");
-                        None
-                    }
-                },
-            };
+            let coverage_from = start_block;
 
             if let Some(coverage_from) = coverage_from {
                 // The set that was log-indexed on the previous run. An address present now but

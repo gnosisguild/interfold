@@ -639,23 +639,38 @@ assert, because the read APIs built on it present its range as authoritative:
   aborts the subscription.
 - **It only advances monotonically**, via `fetch_max`. Block handlers are spawned rather than
   awaited, so headers can be applied out of order and a blind write could move the cursor
-  backwards. Note what this does NOT give you: `fetch_max` orders the in-memory claim, not the
-  `store.insert` calls that follow it, and it is not evidence that every lower block was applied.
-- **It advances to `blockheight - 1`**, because the header and the logs arrive on two independent
-  subscriptions with no ordering guarantee between them. This is a one-block hedge, not
-  synchronisation.
+  backwards. Note what this does NOT give you on its own: `fetch_max` orders the in-memory claim,
+  not the `store.insert` calls that follow it.
+- **It is capped by what the listener reports it has finished.** A header says the CHAIN reached a
+  block, never that its logs were applied — those arrive on a separate subscription. The listener
+  publishes a `LiveProgress` (the block whose raw handlers are running, and a health flag cleared
+  on failure) and the block handler claims no higher than `applied_ceiling`. The `blockheight - 1`
+  hedge is kept, but it is only a hedge: without the ceiling, a raw handler that was merely SLOW
+  let headers march the cursor past a log still being written, and the restart then skipped it.
 - **A backfill window advances it only after every handler in that window succeeded**, sequentially
   and in block order. `catch_up` propagates handler errors for exactly this reason, so a consumer's
   raw handler must return `Err` on a failed write rather than logging and continuing.
 
-The catch-up re-reads the head after each pass and loops until it converges, because a backfill
-from a deployment block can run for hours and every block mined during it would otherwise fall
-between the replay and the subscription that starts afterward. **A narrow handoff window remains
-open**: the loop converges on a head read, returns, and only then does `listen` establish the
-subscription, so a block mined in between is in neither. Closing it properly means subscribing
-first, buffering live logs through the replay, and draining afterward — a real design change, not
-a tightening of this loop. Until then, that window is covered only by the next reconnect's
-catch-up, and the cursor overstates coverage for exactly that range.
+The catch-up runs **twice per connection**, and both passes are load-bearing:
+
+1. **Before subscribing.** Re-reads the head after each window and loops until it converges, so a
+   backfill from a deployment block that runs for hours still ends level with the chain. Kept off
+   the socket because holding a subscription open through a multi-hour replay is its own problem.
+2. **After subscribing**, gated on `LiveProgress::wait_subscribed`. Pass 1 can only ever converge
+   on a head read taken while nothing was subscribed, and the subscription comes up a moment
+   later — so blocks mined in between were in NEITHER path, and the header stream then advanced
+   the cursor straight past them. Silent, permanent, once per reconnect, and reported as covered.
+   Replaying from inside the subscription's lifetime is what makes the overlap real: that range
+   now arrives via the subscription, via this replay, or both.
+
+`caught_up` is set by pass 2, never pass 1, so the cursor cannot advance while the handoff range is
+still outstanding.
+
+The cost is duplicate delivery, which is the design's standing assumption rather than a new
+hazard — handlers must tolerate seeing an event twice, and the CRISP log store's `append` is
+idempotent on `(block_number, log_index)` for exactly this reason. Note the asymmetry that makes
+this affordable: duplicates are absorbed by an idempotent write, whereas a gap is unrecoverable
+once the cursor passes it.
 
 A backfill that keeps failing does not wedge the process: after several attempts the indexer
 subscribes anyway with the cursor left where it was, so live indexing resumes and the unreplayed

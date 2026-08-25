@@ -20,7 +20,7 @@ use e3_evm_helpers::{
         InterfoldContract, InterfoldContractFactory, InterfoldRead, ProviderType, ReadOnly,
         ReadWrite,
     },
-    event_listener::EventListener,
+    event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
     events::{CiphertextOutputPublished, CommitteePublished, PlaintextOutputPublished},
 };
 use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
@@ -214,6 +214,13 @@ pub struct IndexerContext<S: DataStore, R: ProviderType> {
     /// The cursor is a claim that everything below it has been applied; it must not advance while
     /// there is a known unreplayed gap beneath it, or the gap is sealed permanently.
     caught_up: Arc<AtomicBool>,
+    /// How far the live subscription has actually applied. See [`LiveProgress`].
+    ///
+    /// The header stream and the log stream are independent, so a header alone says nothing about
+    /// whether that block's logs have been written. This is what turns "the chain reached N" into
+    /// "everything up to N has been applied", and without it a slow or failed raw handler let the
+    /// cursor claim a block whose logs were still in flight.
+    live_progress: Arc<LiveProgress>,
 }
 
 impl<S: DataStore, R: ProviderType> IndexerContext<S, R> {
@@ -330,11 +337,11 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         let contract_address = contract.address().to_string();
         let block_listener = BlockListener::new(event_listener.provider());
 
-        // `caught_up` doubles as the listener's health flag: a raw handler that fails to persist a
-        // log clears it, which stops the header-driven cursor from claiming that block before the
-        // aborted subscription surfaces to `listen`.
-        let caught_up = Arc::new(AtomicBool::new(false));
-        event_listener.set_health_flag(caught_up.clone());
+        // The listener reports what it has actually applied; the block handler below reads it
+        // before claiming anything, so a raw handler that is slow or failing holds the cursor back
+        // rather than being raced by the header stream.
+        let live_progress = Arc::new(LiveProgress::default());
+        event_listener.set_progress(live_progress.clone());
 
         let mut instance = Self {
             ctx: Arc::new(IndexerContext {
@@ -349,7 +356,8 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 backfill_chunk: AtomicU64::new(DEFAULT_BACKFILL_CHUNK),
                 backfill_enabled: Arc::new(AtomicBool::new(false)),
                 cursor_high: Arc::new(AtomicU64::new(0)),
-                caught_up,
+                caught_up: Arc::new(AtomicBool::new(false)),
+                live_progress,
             }),
         };
         instance.setup_listeners().await?;
@@ -556,11 +564,12 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     async fn register_blocktime_callback_handler(&mut self) -> Result<()> {
         let callbacks = self.ctx.callbacks.clone();
         let store = self.ctx.store();
-        // Only the three flags, never `self.ctx`: the context owns this block listener, so a
+        // Only the shared flags, never `self.ctx`: the context owns this block listener, so a
         // handler that captured the context would form a cycle and the indexer would never drop.
         let backfill_enabled = self.ctx.backfill_enabled.clone();
         let caught_up = self.ctx.caught_up.clone();
         let cursor_high = self.ctx.cursor_high.clone();
+        let live_progress = self.ctx.live_progress.clone();
         self.ctx
             .block_listener
             .add_block_handler(move |block| {
@@ -571,6 +580,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 let backfill_enabled = backfill_enabled.clone();
                 let caught_up = caught_up.clone();
                 let cursor_high = cursor_high.clone();
+                let live_progress = live_progress.clone();
                 async move {
                     info!("ON BLOCK: {}:{}", blockheight, timestamp);
 
@@ -587,9 +597,17 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                     let tracking = backfill_enabled.load(Ordering::Relaxed)
                         && caught_up.load(Ordering::Relaxed);
 
-                    // Claims `blockheight - 1`, not `blockheight`: this fires on the header, and
-                    // that block's own logs may still be arriving on the other subscription.
-                    if let (true, Some(applied)) = (tracking, blockheight.checked_sub(1)) {
+                    // A header says the CHAIN reached this block, not that its logs have been
+                    // applied — those arrive on a separate subscription. `blockheight - 1` is only
+                    // a one-block hedge against that, and it is not enough on its own: a raw
+                    // handler that is slow (or has failed) leaves earlier logs unwritten while
+                    // headers keep arriving, and the cursor would claim them anyway. So the claim
+                    // is capped by what the listener reports it has actually finished.
+                    let ceiling = blockheight
+                        .checked_sub(1)
+                        .and_then(|hedged| live_progress.applied_ceiling(hedged));
+
+                    if let (true, Some(applied)) = (tracking, ceiling) {
                         // Handlers are spawned, so headers can be processed out of order. Only a
                         // strictly higher claim is persisted — a lower one would move the cursor
                         // backwards and make the next restart replay applied blocks.
@@ -617,6 +635,16 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         self.register_blocktime_callback_handler().await?;
         info!("Listeners have been setup!");
         Ok(())
+    }
+
+    /// The current chain head, read through the SAME provider the catch-up uses.
+    ///
+    /// Exposed so a caller can pin `configure_backfill` to a head it has already observed. Reading
+    /// the head from a second endpoint and assuming the two agree is a silent hole: the other read
+    /// is at a different moment, possibly against a different node, and any caller recording where
+    /// indexing begins would record a block the catch-up then starts above.
+    pub async fn head_block(&self) -> Result<u64> {
+        self.ctx.event_listener.head_block().await
     }
 
     /// Configure historical catch-up. Call before [`Self::listen`].
@@ -661,11 +689,17 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         let mut window_start = match cursor {
             Some(cursor) => cursor.saturating_add(1),
             None => match self.ctx.backfill_start.load(Ordering::Relaxed) {
-                // Nothing to replay: the subscription starts at the head anyway, so asking for
-                // `[head, head]` would be a pointless `eth_getLogs` and would deliver the head
-                // block's logs twice.
+                // No history was asked for, so there is nothing to replay yet — but the cursor is
+                // persisted anyway, at `head - 1`. That is what gives the overlap pass a lower
+                // bound to work from: without it the pass would take this same branch again and
+                // the blocks mined before the subscription came up would be replayed by nobody.
                 BACKFILL_UNSET => {
-                    self.ctx.cursor_high.fetch_max(head, Ordering::Relaxed);
+                    let applied = head.saturating_sub(1);
+                    store
+                        .insert(INDEXER_CURSOR_KEY, &applied)
+                        .await
+                        .map_err(|e| eyre!("persisting the indexer cursor failed: {e}"))?;
+                    self.ctx.cursor_high.fetch_max(applied, Ordering::Relaxed);
                     return Ok(());
                 }
                 configured => configured,
@@ -682,9 +716,11 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         loop {
             if window_start > head {
                 let latest = self.ctx.event_listener.head_block().await?;
-                // Converged: the chain has not moved past what has been applied. Anything mined
-                // from here is caught by the subscription, whose deliberate overlap with this
-                // last window is what closes the remaining gap.
+                // Converged: the chain has not moved past what has been applied. This is NOT yet
+                // the end of the story — the subscription is not up at this point, so blocks
+                // mined between here and its arrival are still uncovered. `listen` runs this
+                // function a second time once the subscription is live, and that pass is what
+                // makes the overlap real.
                 if latest <= head {
                     break;
                 }
@@ -735,18 +771,25 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
         let mut backfill_failures = 0u32;
 
+        let backfill_enabled = self.ctx.backfill_enabled.clone();
+
         loop {
             self.ctx.caught_up.store(false, Ordering::Relaxed);
+            // Reset synchronously, before the futures below are built: left set from the previous
+            // iteration, the overlap pass would fire against a subscription that no longer exists.
+            self.ctx.live_progress.mark_unsubscribed();
+            self.ctx.live_progress.healthy.store(true, Ordering::SeqCst);
+            self.ctx
+                .live_progress
+                .processing_block
+                .store(NOT_PROCESSING, Ordering::SeqCst);
 
-            // Before subscribing, not after: a log emitted between the catch-up and the
-            // subscription would be missed by both, so the overlap is deliberate. Handlers are
-            // expected to tolerate seeing an event twice.
-            if self.ctx.backfill_enabled.load(Ordering::Acquire) {
+            // The bulk of the replay runs before subscribing, so a long backfill is not held open
+            // by a live socket. It cannot close the gap by itself, though: it converges on a head
+            // read taken while nothing is subscribed. The overlap pass below finishes the job.
+            if backfill_enabled.load(Ordering::Acquire) {
                 match self.catch_up_to_head().await {
-                    Ok(()) => {
-                        backfill_failures = 0;
-                        self.ctx.caught_up.store(true, Ordering::Relaxed);
-                    }
+                    Ok(()) => backfill_failures = 0,
                     Err(e) => {
                         backfill_failures += 1;
                         if backfill_failures < MAX_BACKFILL_ATTEMPTS {
@@ -766,6 +809,42 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 }
             }
 
+            // Replay once more, this time from inside the subscription's lifetime.
+            //
+            // The pass above ends on a head read taken while nothing was subscribed, and the
+            // subscription only comes up a moment later. Blocks mined in between were in NEITHER —
+            // and the cursor then advanced past them from the header stream, so nothing ever went
+            // back for them. Silent, permanent, and reported as covered.
+            //
+            // Waiting for `mark_subscribed` before replaying makes the overlap the code has always
+            // claimed real: this range is now delivered by the subscription, by this replay, or by
+            // both. Duplicates are the intended cost — the store's `append` is idempotent on
+            // (block, log_index) precisely for this.
+            //
+            // `caught_up` is set only when this succeeds, so the cursor cannot advance while the
+            // handoff range is still outstanding.
+            let overlap = async {
+                if !backfill_enabled.load(Ordering::Acquire) {
+                    return std::future::pending::<Result<()>>().await;
+                }
+
+                self.ctx.live_progress.wait_subscribed().await;
+
+                match self.catch_up_to_head().await {
+                    Ok(()) => {
+                        info!("Handoff replay complete; the index is live and contiguous.");
+                        self.ctx.caught_up.store(true, Ordering::Relaxed);
+                    }
+                    Err(e) => error!(
+                        "Handoff replay failed: {e}. The cursor stays put, so the handoff range \
+                         is not claimed as indexed."
+                    ),
+                }
+
+                // Never resolves, so this branch cannot win the select and cancel the listeners.
+                std::future::pending::<Result<()>>().await
+            };
+
             let res = tokio::select! {
                 res = self.ctx.event_listener.listen() => {
                     match &res {
@@ -781,6 +860,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                     };
                     res
                 }
+                res = overlap => res,
             };
 
             let secs = res.map(|_| 1).unwrap_or(5);

@@ -14,12 +14,101 @@ use alloy::{
 use eyre::Result;
 use futures::stream::StreamExt;
 use futures_util::future::FutureExt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 type EventHandler =
     Box<dyn Fn(&Log) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
+
+/// Sentinel for [`LiveProgress::processing_block`] meaning "no log is being applied right now".
+pub const NOT_PROCESSING: u64 = u64::MAX;
+
+/// What the live subscription is doing, for an owner that persists an applied-block cursor.
+///
+/// Such an owner learns how far the chain has moved from BLOCK HEADERS, which arrive on a separate
+/// subscription that knows nothing about whether this listener has finished applying the logs of
+/// those blocks. Two things can go wrong, and this type is what makes both observable:
+///
+/// - A raw handler FAILS. The store no longer reflects the chain, but the header stream keeps
+///   advancing; without a synchronous signal the owner would claim the failed block as applied
+///   before the aborted subscription surfaced to it.
+/// - A raw handler is merely SLOW. Nothing has failed, but while a log in block `N` is still being
+///   written, headers for `N+1` and `N+2` can arrive and move a persisted cursor past `N`. On a
+///   restart the catch-up resumes above the cursor and that log is never replayed — a permanent
+///   hole produced by latency alone.
+#[derive(Debug)]
+pub struct LiveProgress {
+    /// Cleared the instant a raw handler fails.
+    pub healthy: AtomicBool,
+    /// Block whose raw handlers are running, or [`NOT_PROCESSING`] when idle.
+    ///
+    /// Raw handlers are awaited sequentially in the subscription loop, so at most one block is
+    /// ever in flight. An owner must not claim this block or anything above it as applied.
+    pub processing_block: AtomicU64,
+    /// Whether the log subscription is currently established on the node.
+    subscribed: AtomicBool,
+    subscribed_notify: Notify,
+}
+
+impl Default for LiveProgress {
+    fn default() -> Self {
+        Self {
+            healthy: AtomicBool::new(true),
+            processing_block: AtomicU64::new(NOT_PROCESSING),
+            subscribed: AtomicBool::new(false),
+            subscribed_notify: Notify::new(),
+        }
+    }
+}
+
+impl LiveProgress {
+    /// Announce that the log subscription is live on the node.
+    pub fn mark_subscribed(&self) {
+        self.subscribed.store(true, Ordering::SeqCst);
+        self.subscribed_notify.notify_waiters();
+    }
+
+    /// Announce that there is no live subscription — call before (re)connecting.
+    pub fn mark_unsubscribed(&self) {
+        self.subscribed.store(false, Ordering::SeqCst);
+    }
+
+    /// Resolve once the log subscription is established.
+    ///
+    /// This is what makes the replay's overlap with the subscription real rather than assumed. A
+    /// catch-up that finishes BEFORE the subscription exists leaves the blocks mined in between in
+    /// neither path, and the cursor then advances past them — a permanent hole, reported as
+    /// covered. An owner should wait on this and replay once more.
+    pub async fn wait_subscribed(&self) {
+        loop {
+            // Registered before the flag is read, so a `mark_subscribed` racing this cannot be
+            // missed between the check and the await.
+            let notified = self.subscribed_notify.notified();
+            if self.subscribed.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// The highest block an owner may claim as applied, given a chain head of `head`.
+    ///
+    /// `None` while a raw handler has failed: nothing is safe to claim until the listener has
+    /// reconnected and replayed.
+    pub fn applied_ceiling(&self, head: u64) -> Option<u64> {
+        if !self.healthy.load(Ordering::SeqCst) {
+            return None;
+        }
+
+        let in_flight = self.processing_block.load(Ordering::SeqCst);
+        match in_flight {
+            NOT_PROCESSING => Some(head),
+            // Strictly below the block being written: that block is not applied yet.
+            block => Some(head.min(block.saturating_sub(1))),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct EventListener {
@@ -28,14 +117,8 @@ pub struct EventListener {
     handlers: Arc<RwLock<HashMap<B256, Vec<EventHandler>>>>,
     /// Handlers that receive every log, whatever its topic.
     raw_handlers: Arc<RwLock<Vec<EventHandler>>>,
-    /// Cleared the instant a raw handler fails on the live path.
-    ///
-    /// A raw handler is what PERSISTS a log, so its failure means the store no longer reflects the
-    /// chain. Returning the error is not enough on its own: the owner advances a persisted cursor
-    /// from block headers on a separate task, and between the failure and the owner observing the
-    /// aborted subscription it could claim the failed block as applied — sealing the hole under a
-    /// cursor that asserts the opposite. This flag lets the owner stop that synchronously.
-    healthy: Option<Arc<AtomicBool>>,
+    /// Shared with an owner that persists an applied-block cursor. See [`LiveProgress`].
+    progress: Option<Arc<LiveProgress>>,
 }
 
 impl EventListener {
@@ -45,16 +128,16 @@ impl EventListener {
             filter,
             handlers: Arc::new(RwLock::new(HashMap::new())),
             raw_handlers: Arc::new(RwLock::new(Vec::new())),
-            healthy: None,
+            progress: None,
         }
     }
 
-    /// Share a flag that this listener clears when a raw handler fails on the live path.
+    /// Share a [`LiveProgress`] so an owner can tell how far this listener has actually applied.
     ///
-    /// Owners that persist an applied-block cursor must supply one and must stop advancing the
-    /// cursor while it is false; owners with no such cursor can ignore this entirely.
-    pub fn set_health_flag(&mut self, healthy: Arc<AtomicBool>) {
-        self.healthy = Some(healthy);
+    /// Required for any owner that persists an applied-block cursor; owners with no such cursor
+    /// can ignore this entirely and nothing changes for them.
+    pub fn set_progress(&mut self, progress: Arc<LiveProgress>) {
+        self.progress = Some(progress);
     }
 
     /// Register a handler that receives EVERY log this listener sees, undecoded.
@@ -111,6 +194,14 @@ impl EventListener {
             .subscribe_logs(&self.filter)
             .await?
             .into_stream();
+
+        // Only now is the subscription actually registered on the node. An owner waiting on this
+        // can replay the blocks mined between its last head read and this moment, which is the one
+        // range neither the replay nor the subscription would otherwise cover.
+        if let Some(progress) = &self.progress {
+            progress.mark_subscribed();
+        }
+
         while let Some(log) = stream.next().await {
             // Raw handlers run first and are awaited, not spawned: they are what persists the log,
             // and a typed handler that reacts to it should not be able to observe a state the
@@ -119,7 +210,15 @@ impl EventListener {
             // The guard is released before each await, exactly as the typed path below does. Held
             // across the handler it would deadlock anything that registers a handler from inside
             // one, and would serialise every handler's IO into this subscription loop.
+            // Published BEFORE the handlers run and cleared only once they have all finished, so
+            // an owner advancing a cursor from block headers cannot claim this block while it is
+            // still being written. Latency alone used to be enough to lose a log permanently.
+            if let (Some(progress), Some(block)) = (&self.progress, log.block_number) {
+                progress.processing_block.store(block, Ordering::SeqCst);
+            }
+
             let raw_count = self.raw_handlers.read().await.len();
+            let mut failure = None;
             for i in 0..raw_count {
                 let fut = {
                     let guard = self.raw_handlers.read().await;
@@ -135,11 +234,24 @@ impl EventListener {
                 // The health flag is cleared FIRST, so a cursor driven by block headers on another
                 // task stops immediately rather than when this error surfaces to the caller.
                 if let Err(e) = fut.await {
-                    if let Some(healthy) = &self.healthy {
-                        healthy.store(false, Ordering::SeqCst);
+                    if let Some(progress) = &self.progress {
+                        progress.healthy.store(false, Ordering::SeqCst);
                     }
-                    return Err(e.wrap_err("a raw log handler failed; aborting the subscription"));
+                    failure = Some(e);
+                    break;
                 }
+            }
+
+            if let Some(e) = failure {
+                // Left as-is on purpose: the in-flight marker stays pinned to the block that
+                // failed, so nothing can claim it while the listener is down.
+                return Err(e.wrap_err("a raw log handler failed; aborting the subscription"));
+            }
+
+            if let Some(progress) = &self.progress {
+                progress
+                    .processing_block
+                    .store(NOT_PROCESSING, Ordering::SeqCst);
             }
 
             if let Some(topic0) = log.topic0() {
@@ -280,5 +392,106 @@ impl EventListener {
             .address(address)
             .from_block(BlockNumberOrTag::Latest);
         Ok(EventListener::new(provider, filter))
+    }
+}
+
+#[cfg(test)]
+mod live_progress_tests {
+    use super::*;
+
+    #[test]
+    fn an_idle_listener_lets_the_owner_claim_the_whole_head() {
+        let progress = LiveProgress::default();
+
+        assert_eq!(progress.applied_ceiling(100), Some(100));
+    }
+
+    #[test]
+    fn a_block_being_written_is_not_claimable_and_neither_is_anything_above_it() {
+        let progress = LiveProgress::default();
+        progress.processing_block.store(80, Ordering::SeqCst);
+
+        // 80 is still in flight, so the highest honest claim is 79 — even though the chain has
+        // reached 100 and the header stream would happily assert that.
+        assert_eq!(progress.applied_ceiling(100), Some(79));
+    }
+
+    #[test]
+    fn the_ceiling_never_exceeds_the_head_the_owner_asked_about() {
+        let progress = LiveProgress::default();
+        progress.processing_block.store(500, Ordering::SeqCst);
+
+        assert_eq!(progress.applied_ceiling(100), Some(100));
+    }
+
+    #[test]
+    fn block_zero_in_flight_leaves_nothing_claimable() {
+        let progress = LiveProgress::default();
+        progress.processing_block.store(0, Ordering::SeqCst);
+
+        // Saturating, not wrapping: block 0 being written must not become a claim of u64::MAX.
+        assert_eq!(progress.applied_ceiling(100), Some(0));
+    }
+
+    #[test]
+    fn an_unhealthy_listener_lets_the_owner_claim_nothing() {
+        let progress = LiveProgress::default();
+        progress.healthy.store(false, Ordering::SeqCst);
+
+        assert_eq!(progress.applied_ceiling(100), None);
+    }
+
+    #[tokio::test]
+    async fn waiting_on_an_already_subscribed_listener_returns_immediately() {
+        let progress = LiveProgress::default();
+        progress.mark_subscribed();
+
+        // Would hang if the flag were only observable through a notification.
+        progress.wait_subscribed().await;
+    }
+
+    #[tokio::test]
+    async fn a_waiter_is_released_when_the_subscription_comes_up() {
+        let progress = Arc::new(LiveProgress::default());
+        let waiter = progress.clone();
+
+        let handle = tokio::spawn(async move { waiter.wait_subscribed().await });
+
+        // Yield first so the waiter is parked on the notification rather than racing the flag.
+        tokio::task::yield_now().await;
+        progress.mark_subscribed();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("wait_subscribed should be released by mark_subscribed")
+            .expect("the waiting task should not panic");
+    }
+
+    #[tokio::test]
+    async fn unsubscribing_makes_the_next_wait_block_again() {
+        let progress = Arc::new(LiveProgress::default());
+        progress.mark_subscribed();
+        progress.wait_subscribed().await;
+
+        // A reconnect: the previous iteration's flag must not let the overlap pass fire against a
+        // subscription that no longer exists.
+        progress.mark_unsubscribed();
+
+        let waiter = progress.clone();
+        let handle = tokio::spawn(async move { waiter.wait_subscribed().await });
+
+        // Give the task real time to finish if it were going to, then assert that it did not: the
+        // point is that the previous iteration's flag no longer releases it.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !handle.is_finished(),
+            "wait_subscribed should still block after mark_unsubscribed"
+        );
+
+        progress.mark_subscribed();
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("resubscribing should release the waiter")
+            .expect("the waiting task should not panic");
     }
 }
