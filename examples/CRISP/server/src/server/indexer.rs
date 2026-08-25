@@ -803,6 +803,8 @@ pub async fn register_log_index(
                     block_number,
                     transaction_hash: log.transaction_hash.map(|h| h.to_string()),
                     log_index,
+                    block_hash: log.block_hash.map(|h| h.to_string()),
+                    transaction_index: log.transaction_index,
                 };
 
                 // Propagated, not logged and dropped. The cursor is a claim that everything below
@@ -883,7 +885,16 @@ pub async fn start_indexer(
     //   - Fresh database, nothing configured: read the head here and PIN the backfill to it, so
     //     the catch-up cannot resolve a different (later) start than the one claimed below.
     let store = crisp_indexer.get_store();
-    let resumed: Option<u64> = store.get(INDEXER_CURSOR_KEY).await.unwrap_or(None);
+
+    // A read ERROR is not an absent record. `unwrap_or(None)` conflated them, so one transient
+    // store failure made a resumed database look fresh — pinning the coverage claim to the current
+    // head and discarding the record describing everything indexed so far. Propagated instead:
+    // startup is exactly the moment a broken store should be loud, and every later decision here
+    // is derived from this value.
+    let resumed: Option<u64> = store
+        .get(INDEXER_CURSOR_KEY)
+        .await
+        .map_err(|e| eyre::eyre!("reading the indexer cursor failed: {e}"))?;
 
     let start_block = match (resumed, index_start_block) {
         // `ensure_coverage_from` leaves an existing record alone, so this only fills a gap left by
@@ -921,17 +932,33 @@ pub async fn start_indexer(
                 // The set that was log-indexed on the previous run. An address present now but
                 // absent then was not indexed during the gap, so whatever coverage its earlier
                 // run left behind overstates what is in the store.
-                let previous: Vec<String> = store
-                    .get(LOG_INDEX_CONFIG_KEY)
-                    .await
-                    .unwrap_or(None)
-                    .unwrap_or_default();
+                //
+                // An Err here must NOT read as "no previous set". That would mark every address
+                // newly added and narrow its coverage to the current head — permanently discarding
+                // the record for history that is still sitting in the store, so `/chain/logs`
+                // would stop serving a range it can answer perfectly well. On a read failure the
+                // rebase is skipped entirely: leaving a claim alone is recoverable, narrowing one
+                // wrongly is not.
+                let previous: Option<Vec<String>> = match store.get(LOG_INDEX_CONFIG_KEY).await {
+                    Ok(previous) => Some(previous.unwrap_or_default()),
+                    Err(e) => {
+                        error!(
+                            "Could not read the previous log-index configuration: {e}. Leaving \
+                             every coverage record as it stands this run."
+                        );
+                        None
+                    }
+                };
 
                 let mut repo = LogRepository::new(store.clone());
                 for address in index_log_contracts {
-                    let was_indexed = previous
-                        .iter()
-                        .any(|entry| entry.eq_ignore_ascii_case(address));
+                    // Unknown previous set ⇒ treated as already indexed, which only ever widens
+                    // what is claimed by filling a missing record, never narrows an existing one.
+                    let was_indexed = previous.as_ref().is_none_or(|previous| {
+                        previous
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(address))
+                    });
 
                     let recorded = if was_indexed {
                         repo.ensure_coverage_from(address, coverage_from).await
@@ -947,10 +974,16 @@ pub async fn start_indexer(
                     }
                 }
 
-                let mut store = store;
-                let current: Vec<String> = index_log_contracts.to_vec();
-                if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
-                    error!("Could not record the log-index configuration: {e}");
+                // Only when the comparison above actually happened. Recording the current set
+                // after a failed read would tell the NEXT run that every address was already
+                // indexed, so an address genuinely added during this run would never have its
+                // stale coverage narrowed — the read failure would outlive itself.
+                if previous.is_some() {
+                    let mut store = store;
+                    let current: Vec<String> = index_log_contracts.to_vec();
+                    if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
+                        error!("Could not record the log-index configuration: {e}");
+                    }
                 }
             }
         }

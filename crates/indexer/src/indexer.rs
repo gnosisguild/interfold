@@ -830,15 +830,27 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
                 self.ctx.live_progress.wait_subscribed().await;
 
-                match self.catch_up_to_head().await {
-                    Ok(()) => {
-                        info!("Handoff replay complete; the index is live and contiguous.");
-                        self.ctx.caught_up.store(true, Ordering::Relaxed);
+                // Retried until it succeeds, rather than attempted once. Giving up here left
+                // `caught_up` false for the life of the connection, and a healthy subscription can
+                // run for days without reconnecting — so the cursor would freeze that whole time,
+                // a restart would replay everything since the last good window, and any reader
+                // asking how far the index has been applied would be told a number hours stale.
+                // Nothing here is worth failing permanently over: the range is still on chain.
+                loop {
+                    match self.catch_up_to_head().await {
+                        Ok(()) => {
+                            info!("Handoff replay complete; the index is live and contiguous.");
+                            self.ctx.caught_up.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        Err(e) => {
+                            error!(
+                                "Handoff replay failed: {e}. The cursor stays put, so the handoff \
+                                 range is not claimed as indexed. Retrying in 5s..."
+                            );
+                            sleep(Duration::from_secs(5)).await;
+                        }
                     }
-                    Err(e) => error!(
-                        "Handoff replay failed: {e}. The cursor stays put, so the handoff range \
-                         is not claimed as indexed."
-                    ),
                 }
 
                 // Never resolves, so this branch cannot win the select and cancel the listeners.

@@ -38,6 +38,15 @@ pub struct StoredLog {
     pub block_number: u64,
     pub transaction_hash: Option<String>,
     pub log_index: u64,
+    /// Both `#[serde(default)]` so entries written before these were stored still deserialise.
+    ///
+    /// They are part of the mined-log shape `eth_getLogs` returns, and the point of the index is
+    /// that a client cannot tell an indexed answer from a forwarded one. An entry missing either
+    /// is served upstream instead — see `logs_from_index`.
+    #[serde(default)]
+    pub block_hash: Option<String>,
+    #[serde(default)]
+    pub transaction_index: Option<u64>,
 }
 
 /// The range of blocks indexed for one address.

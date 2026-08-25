@@ -33,7 +33,9 @@ use actix_web::{web, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, Bytes, B256};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+use alloy::rpc::client::RpcClient;
+use alloy::transports::http::Http;
 use alloy::rpc::types::{Filter, TransactionRequest};
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -77,6 +79,30 @@ static HTTP: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new
         .build()
         .expect("building the upstream HTTP client cannot fail with a timeout as its only option")
 });
+
+/// One alloy provider for the process, built on the same timeout-bounded client as [`HTTP`].
+///
+/// Every typed route used to call `ProviderBuilder::new().connect(...)` per request, which threw
+/// away the connection pool each time and — more importantly — inherited no request timeout, so a
+/// provider that accepted a connection and then stalled pinned a worker until restart. The
+/// JSON-RPC forward path was fixed first; these are the rest of them.
+static PROVIDER: tokio::sync::OnceCell<DynProvider> = tokio::sync::OnceCell::const_new();
+
+async fn upstream() -> eyre::Result<&'static DynProvider> {
+    PROVIDER
+        .get_or_try_init(|| async {
+            let url: reqwest::Url = CONFIG
+                .http_rpc_url
+                .parse()
+                .map_err(|e| eyre::eyre!("HTTP_RPC_URL is not a valid URL: {e}"))?;
+
+            let transport = Http::with_client(HTTP.clone(), url);
+            Ok(ProviderBuilder::new()
+                .connect_client(RpcClient::new(transport, false))
+                .erased())
+        })
+        .await
+}
 
 /// Whether a range is small enough to serve, given the window size.
 fn windows_for(from: u64, to: u64) -> u64 {
@@ -617,22 +643,33 @@ async fn logs_from_index(
 
     let found = repo.query(address, from, to, &topics).await.ok()?;
 
-    Some(
-        found
-            .into_iter()
-            .map(|log| {
-                serde_json::json!({
-                    "address": log.address,
-                    "topics": log.topics,
-                    "data": log.data,
-                    "blockNumber": format!("0x{:x}", log.block_number),
-                    "transactionHash": log.transaction_hash,
-                    "logIndex": format!("0x{:x}", log.log_index),
-                    "removed": false,
-                })
-            })
-            .collect(),
-    )
+    // Every field of the mined-log shape, or nothing. `blockHash` and `transactionIndex` were not
+    // stored until recently, so an entry written by an older build cannot be rendered completely —
+    // and a JSON-RPC client is entitled to reject a mined log that omits them. Falling through to
+    // the provider is the honest answer for those; once the range is re-indexed it is served here
+    // again. Emitting the fields as `null` would be the shape of a PENDING log, which is worse
+    // than being slow.
+    let mut entries = Vec::with_capacity(found.len());
+    for log in found {
+        let (Some(block_hash), Some(transaction_index)) = (log.block_hash, log.transaction_index)
+        else {
+            return None;
+        };
+
+        entries.push(serde_json::json!({
+            "address": log.address,
+            "topics": log.topics,
+            "data": log.data,
+            "blockNumber": format!("0x{:x}", log.block_number),
+            "blockHash": block_hash,
+            "transactionHash": log.transaction_hash,
+            "transactionIndex": format!("0x{transaction_index:x}"),
+            "logIndex": format!("0x{:x}", log.log_index),
+            "removed": false,
+        }));
+    }
+
+    Some(entries)
 }
 
 /// Run an `eth_getLogs` request as a series of bounded windows and concatenate the results.
@@ -649,8 +686,7 @@ async fn forward_windowed_logs(
         return forward_logs_verbatim(client, &filter).await;
     }
 
-    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
-    let head = provider.get_block_number().await?;
+    let head = upstream().await?.get_block_number().await?;
 
     // Hex block tags, `earliest`/`latest`, or absent — all normalised to numbers so the window
     // arithmetic below has something to count with. A tag that parses as none of these is an
@@ -838,10 +874,10 @@ async fn head() -> impl Responder {
     }
     read_cache::record_head(false).await;
 
-    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
+    let provider = match upstream().await {
         Ok(p) => p,
         Err(e) => {
-            error!("chain/head: provider connect failed: {e}");
+            error!("chain/head: provider unavailable: {e}");
             return HttpResponse::ServiceUnavailable().json(JsonResponse {
                 response: "Upstream RPC unavailable".to_string(),
             });
@@ -911,10 +947,10 @@ async fn read(request: web::Json<ReadRequest>) -> impl Responder {
         });
     }
 
-    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
+    let provider = match upstream().await {
         Ok(p) => p,
         Err(e) => {
-            error!("chain/read: provider connect failed: {e}");
+            error!("chain/read: provider unavailable: {e}");
             return HttpResponse::ServiceUnavailable().json(JsonResponse {
                 response: "Upstream RPC unavailable".to_string(),
             });
@@ -1080,10 +1116,10 @@ async fn logs(request: web::Json<LogsRequest>, store: web::Data<AppData>) -> imp
     // Reached only when the index could not answer, so the counter reflects real fallthrough.
     read_cache::record_logs(false).await;
 
-    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
+    let provider = match upstream().await {
         Ok(p) => p,
         Err(e) => {
-            error!("chain/logs: provider connect failed: {e}");
+            error!("chain/logs: provider unavailable: {e}");
             return HttpResponse::ServiceUnavailable().json(JsonResponse {
                 response: "Upstream RPC unavailable".to_string(),
             });
@@ -1117,8 +1153,18 @@ async fn logs(request: web::Json<LogsRequest>, store: web::Data<AppData>) -> imp
         });
     }
 
+    // Refused, not truncated. A log has at most four topics, so a fifth is a malformed filter —
+    // and `.take(4)` answered it by quietly dropping the extras and returning logs that do not
+    // match what was asked for, as a normal 200. The index path passes the whole vector to
+    // `repo.query`, so the two paths also disagreed on the same request.
+    if request.topics.len() > 4 {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: "At most 4 topic positions may be filtered".to_string(),
+        });
+    }
+
     let mut base = Filter::new().address(address);
-    for (position, topic) in request.topics.iter().enumerate().take(4) {
+    for (position, topic) in request.topics.iter().enumerate() {
         let Some(topic) = topic else { continue };
         let Ok(hash) = B256::from_str(topic.trim()) else {
             return HttpResponse::BadRequest().json(JsonResponse {
@@ -1186,10 +1232,10 @@ pub struct BlockAtTimestampResponse {
 /// client-side implementation is a binary search that costs `O(log n)` `eth_getBlockByNumber`
 /// calls per lookup. Doing it here spends those on one connection instead of the browser's.
 async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl Responder {
-    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
+    let provider = match upstream().await {
         Ok(p) => p,
         Err(e) => {
-            error!("chain/block-at-timestamp: provider connect failed: {e}");
+            error!("chain/block-at-timestamp: provider unavailable: {e}");
             return HttpResponse::ServiceUnavailable().json(JsonResponse {
                 response: "Upstream RPC unavailable".to_string(),
             });
@@ -1257,9 +1303,15 @@ async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl
         }
     }
 
-    // No block at or before the target: the timestamp predates the chain. Genesis is a real
-    // answer here, and it is reached by exhausting the search rather than by abandoning it.
-    let (block_number, timestamp) = best.unwrap_or((0, 0));
+    // `best` is empty only when even genesis is later than the target — the timestamp predates the
+    // chain, so no block satisfies the request. Answering `block_number: 0, timestamp: 0` invented
+    // a timestamp genesis does not have, and a caller comparing it against a voting window read an
+    // epoch date. There is no honest number here, so say so.
+    let Some((block_number, timestamp)) = best else {
+        return HttpResponse::NotFound().json(JsonResponse {
+            response: "No block exists at or before that timestamp".to_string(),
+        });
+    };
 
     HttpResponse::Ok().json(BlockAtTimestampResponse {
         block_number,

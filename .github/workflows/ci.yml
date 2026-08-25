@@ -181,9 +181,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -237,9 +250,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -290,9 +316,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -532,9 +571,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
@@ -679,9 +731,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: Build interfold CLI
         run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
@@ -773,9 +838,22 @@ jobs:
       - name: Install solc
         if: matrix.test-suite == 'cargo test'
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
@@ -862,9 +940,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: Install yq
         run: |
@@ -1093,9 +1184,22 @@ jobs:
 
       - name: Install solc
         run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
+          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
+          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
+          # entire CI runs. Nine jobs each took an independent chance on that one third-party
+          # service, and a single failure cancels every other job in the run. A pinned binary has
+          # no such dependency and is reproducible besides.
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          SOLC_VERSION=0.8.28
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            -o /tmp/solc
+          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
+          solc --version
 
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'

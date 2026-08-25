@@ -104,8 +104,12 @@ impl LiveProgress {
         let in_flight = self.processing_block.load(Ordering::SeqCst);
         match in_flight {
             NOT_PROCESSING => Some(head),
+            // Block 0 is being written and there is nothing beneath it. `saturating_sub` would
+            // answer `Some(0)` — claiming the very block still in flight, which is the one thing
+            // this function exists to prevent.
+            0 => None,
             // Strictly below the block being written: that block is not applied yet.
-            block => Some(head.min(block.saturating_sub(1))),
+            block => Some(head.min(block - 1)),
         }
     }
 }
@@ -429,8 +433,9 @@ mod live_progress_tests {
         let progress = LiveProgress::default();
         progress.processing_block.store(0, Ordering::SeqCst);
 
-        // Saturating, not wrapping: block 0 being written must not become a claim of u64::MAX.
-        assert_eq!(progress.applied_ceiling(100), Some(0));
+        // Nothing exists below block 0, so there is no honest claim to make — and it must not
+        // wrap to u64::MAX either. The name of this test is the invariant.
+        assert_eq!(progress.applied_ceiling(100), None);
     }
 
     #[test]
