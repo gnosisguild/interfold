@@ -18,7 +18,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use risc0_build::{embed_methods_with_options, DockerOptionsBuilder, GuestOptionsBuilder};
 use risc0_build_ethereum::generate_solidity_files;
@@ -27,16 +31,67 @@ use risc0_build_ethereum::generate_solidity_files;
 const SOLIDITY_IMAGE_ID_PATH: &str = "../contracts/ImageID.sol";
 const SOLIDITY_ELF_PATH: &str = "../tests/Elf.sol";
 
+/// Reports whether the reproducible Docker guest build is selected.
+///
+/// The variable is read for its value, not its presence, so `RISC0_USE_DOCKER=0` selects the
+/// local build.
+fn use_docker() -> bool {
+    matches!(
+        env::var("RISC0_USE_DOCKER").unwrap_or_default().as_str(),
+        "1" | "true" | "TRUE" | "yes" | "YES"
+    )
+}
+
+/// The guest builder image tag, derived from `ARG RISC0_TOOLCHAIN` in `crates/support/Dockerfile`.
+///
+/// risc0-build does not read that Dockerfile — it generates its own and, left alone, uses its
+/// compiled-in default tag. For risc0-build 3.0.3 that default is `r0.1.88.0`, which carries rustc
+/// 1.88, while the guest's dependency tree pins fhe.rs at an MSRV of 1.91.1. The guest then fails
+/// to compile inside the container with an MSRV error, and the Dockerfile that says 1.91.1 has no
+/// bearing on it.
+///
+/// Reading the tag from `ARG RISC0_TOOLCHAIN` is what ties the two together: the toolchain the
+/// Dockerfile declares becomes the toolchain the ELF is actually built with, rather than the two
+/// being independent values that happen to agree.
+fn guest_builder_tag(support_dir: &Path) -> String {
+    let dockerfile = support_dir.join("Dockerfile");
+    println!("cargo:rerun-if-changed={}", dockerfile.display());
+
+    let source = fs::read_to_string(&dockerfile).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {} to resolve the guest toolchain: {e}",
+            dockerfile.display()
+        )
+    });
+
+    let toolchain = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ARG RISC0_TOOLCHAIN="))
+        .unwrap_or_else(|| panic!("no ARG RISC0_TOOLCHAIN in {}", dockerfile.display()))
+        .trim();
+
+    assert!(
+        !toolchain.is_empty(),
+        "ARG RISC0_TOOLCHAIN in {} is empty",
+        dockerfile.display()
+    );
+
+    format!("r0.{toolchain}")
+}
+
 fn main() {
     // Builds can be made deterministic, and thereby reproducible, by using Docker to build the
-    // guest. Check the RISC0_USE_DOCKER variable and use Docker to build the guest if set.
+    // guest. Set RISC0_USE_DOCKER to 1 (or true) to select the reproducible Docker build. Any
+    // other value, and an unset variable, select the local build.
     println!("cargo:rerun-if-env-changed=RISC0_USE_DOCKER");
     println!("cargo:rerun-if-changed=build.rs");
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let mut builder = GuestOptionsBuilder::default();
-    if env::var("RISC0_USE_DOCKER").is_ok() {
+    if use_docker() {
+        let support_dir = manifest_dir.join("../");
         let docker_options = DockerOptionsBuilder::default()
-            .root_dir(manifest_dir.join("../"))
+            .root_dir(support_dir.clone())
+            .docker_container_tag(guest_builder_tag(&support_dir))
             .build()
             .unwrap();
         builder.use_docker(docker_options);

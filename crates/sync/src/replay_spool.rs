@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Bounded external sort for post-snapshot EventStore replay.
+//! Bounded disk-backed merge for post-snapshot EventStore replay.
 
 use actix::Recipient;
 use anyhow::{bail, Context, Result};
@@ -46,21 +46,85 @@ impl ReplaySpool {
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
         cursors: std::collections::HashMap<AggregateId, u64>,
     ) -> Result<Self> {
-        let mut ordered_cursors: Vec<_> = cursors.into_iter().collect();
-        ordered_cursors.sort_by_key(|(aggregate_id, _)| *aggregate_id);
+        let ranges = cursors
+            .into_iter()
+            .map(|(aggregate_id, cursor)| (aggregate_id, first_replay_sequence(cursor), None))
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
+    /// Load complete EventStore prefixes through the supplied aggregate cursors.
+    pub(crate) async fn load_bounded(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        end_cursors: std::collections::HashMap<AggregateId, u64>,
+    ) -> Result<Self> {
+        let ranges = end_cursors
+            .into_iter()
+            .filter(|(_, end_cursor)| *end_cursor > 0)
+            .map(|(aggregate_id, end_cursor)| (aggregate_id, 1, Some(end_cursor)))
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
+    /// Load the missing suffix between two per-aggregate cursor maps.
+    pub(crate) async fn load_between(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        start_cursors: std::collections::HashMap<AggregateId, u64>,
+        end_cursors: std::collections::HashMap<AggregateId, u64>,
+    ) -> Result<Self> {
+        let ranges = end_cursors
+            .into_iter()
+            .filter_map(|(aggregate_id, end_cursor)| {
+                let start_cursor = start_cursors
+                    .get(&aggregate_id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .max(1);
+                (start_cursor <= end_cursor).then_some((
+                    aggregate_id,
+                    start_cursor,
+                    Some(end_cursor),
+                ))
+            })
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
+    async fn load_ranges(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        mut ranges: Vec<(AggregateId, u64, Option<u64>)>,
+    ) -> Result<Self> {
+        ranges.sort_by_key(|(aggregate_id, _, _)| *aggregate_id);
 
         let mut runs = Vec::new();
         let mut total_events = 0usize;
         let mut max_timestamp: Option<u128> = None;
 
-        for (aggregate_id, snapshot_cursor) in ordered_cursors {
-            // Event-log sequence numbers are one-based while a fresh snapshot uses zero.
-            // Querying zero is supported by the legacy store API, but it still returns event
-            // sequence one; normalize here so integrity validation has one unambiguous cursor.
-            let mut cursor = first_replay_sequence(snapshot_cursor);
+        for (aggregate_id, first_cursor, end_cursor) in ranges {
+            // Keep one run per aggregate in durable sequence order. The merger can then choose
+            // between aggregate heads by HLC without ever exposing sequence N + 1 before N from
+            // the same aggregate. A late network event may carry an older remote HLC even though
+            // it received a later local sequence.
+            let mut aggregate_run =
+                NamedTempFile::new().context("failed to create EventStore replay spool file")?;
+            let mut aggregate_has_events = false;
+            let mut cursor = first_cursor;
             loop {
+                if end_cursor.is_some_and(|end| cursor > end) {
+                    break;
+                }
+
                 let mut page = query_page(eventstore, aggregate_id, cursor).await?;
                 if page.is_empty() {
+                    if let Some(end) = end_cursor {
+                        bail!(
+                            "EventStore ended at sequence {} for aggregate {}, before required sequence {}",
+                            cursor.saturating_sub(1),
+                            aggregate_id,
+                            end
+                        );
+                    }
                     break;
                 }
                 if page.len() > REPLAY_QUERY_PAGE_SIZE {
@@ -92,20 +156,44 @@ impl ReplaySpool {
                     expected_sequence = expected_sequence
                         .checked_add(1)
                         .context("EventStore replay sequence overflow")?;
-                    max_timestamp = Some(max_timestamp.map_or(event.ts(), |ts| ts.max(event.ts())));
                 }
 
-                cursor = expected_sequence;
+                let page_was_full = page.len() == REPLAY_QUERY_PAGE_SIZE;
+                if let Some(end) = end_cursor {
+                    page.retain(|event| event.seq() <= end);
+                }
+                for event in &page {
+                    max_timestamp = Some(max_timestamp.map_or(event.ts(), |ts| ts.max(event.ts())));
+                }
+                cursor = page
+                    .last()
+                    .map(|event| event.seq().saturating_add(1))
+                    .unwrap_or(expected_sequence);
                 total_events = total_events
                     .checked_add(page.len())
                     .context("EventStore replay event count overflow")?;
-                let page_was_full = page.len() == REPLAY_QUERY_PAGE_SIZE;
-                page.sort_by_key(event_order_key);
-                runs.push(write_run(page)?);
+                if !page.is_empty() {
+                    append_run(&mut aggregate_run, page)?;
+                    aggregate_has_events = true;
+                }
 
-                if !page_was_full {
+                if end_cursor.is_some_and(|end| cursor > end) {
                     break;
                 }
+                if !page_was_full {
+                    if let Some(end) = end_cursor {
+                        bail!(
+                            "EventStore ended at sequence {} for aggregate {}, before required sequence {}",
+                            cursor.saturating_sub(1),
+                            aggregate_id,
+                            end
+                        );
+                    }
+                    break;
+                }
+            }
+            if aggregate_has_events {
+                runs.push(aggregate_run);
             }
         }
 
@@ -119,6 +207,18 @@ impl ReplaySpool {
 
     pub(crate) fn total_events(&self) -> usize {
         self.total_events
+    }
+
+    pub(crate) fn project(
+        self,
+        mut apply: impl FnMut(&InterfoldEvent) -> Result<()>,
+    ) -> Result<usize> {
+        let total_events = self.total_events;
+        let mut merger = RunMerger::new(&self.runs)?;
+        while let Some(event) = merger.next_event()? {
+            apply(&event)?;
+        }
+        Ok(total_events)
     }
 
     pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {
@@ -174,8 +274,10 @@ fn event_order_key(event: &InterfoldEvent) -> (u128, AggregateId, u64) {
     (event.ts(), event.aggregate_id(), event.seq())
 }
 
-fn write_run(events: Vec<InterfoldEvent>) -> Result<NamedTempFile> {
-    let mut file = NamedTempFile::new().context("failed to create EventStore replay spool file")?;
+fn append_run(
+    file: &mut NamedTempFile,
+    events: impl IntoIterator<Item = InterfoldEvent>,
+) -> Result<()> {
     {
         let mut writer = BufWriter::new(file.as_file_mut());
         for event in events {
@@ -183,7 +285,7 @@ fn write_run(events: Vec<InterfoldEvent>) -> Result<NamedTempFile> {
         }
         writer.flush().context("failed to flush replay spool run")?;
     }
-    Ok(file)
+    Ok(())
 }
 
 fn compact_runs(mut runs: Vec<NamedTempFile>) -> Result<Vec<NamedTempFile>> {
@@ -341,40 +443,7 @@ impl RunMerger {
 mod tests {
     use super::*;
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{E3id, EventPublisher, Sequenced, TestEvent};
-
-    fn event(aggregate: u64, sequence: u64, timestamp: u128) -> InterfoldEvent<Sequenced> {
-        InterfoldEvent::<Sequenced>::test_event("spooled")
-            .e3_id(E3id::new(sequence.to_string(), aggregate))
-            .seq(sequence)
-            .ts(timestamp)
-            .build()
-    }
-
-    #[test]
-    fn merge_orders_multiple_bounded_runs_deterministically() -> Result<()> {
-        let first = write_run(vec![event(1, 2, 30), event(1, 3, 50)])?;
-        let second = write_run(vec![event(2, 1, 10), event(2, 2, 40)])?;
-        let third = write_run(vec![event(1, 1, 20), event(3, 1, 40)])?;
-        let mut merger = RunMerger::new(&[first, second, third])?;
-        let mut keys = Vec::new();
-        while let Some(event) = merger.next_event()? {
-            keys.push(event_order_key(&event));
-        }
-
-        assert_eq!(
-            keys,
-            vec![
-                (10, AggregateId::new(2), 1),
-                (20, AggregateId::new(1), 1),
-                (30, AggregateId::new(1), 2),
-                (40, AggregateId::new(2), 2),
-                (40, AggregateId::new(3), 1),
-                (50, AggregateId::new(1), 3),
-            ]
-        );
-        Ok(())
-    }
+    use e3_events::{EventPublisher, TestEvent};
 
     #[test]
     fn fresh_snapshot_cursor_starts_at_first_one_based_log_sequence() {
@@ -400,7 +469,73 @@ mod tests {
         .await?;
 
         assert_eq!(spool.total_events(), count);
-        assert_eq!(spool.runs.len(), 2);
+        assert_eq!(spool.runs.len(), 1);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn replay_orders_heads_and_preserves_sequence() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus().with_aggregate_config(
+            e3_events::AggregateConfig::new(std::collections::HashMap::from([
+                (AggregateId::new(1), std::time::Duration::ZERO),
+                (AggregateId::new(2), std::time::Duration::ZERO),
+            ])),
+        );
+        let bus = system.handle()?.enable("replay-spool-sequence");
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("first")
+                .id(1)
+                .aggregate_id(1)
+                .ts(200)
+                .build(),
+        )
+        .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("second")
+                .id(2)
+                .aggregate_id(1)
+                .ts(100)
+                .build(),
+        )
+        .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("other first")
+                .id(3)
+                .aggregate_id(2)
+                .ts(150)
+                .build(),
+        )
+        .await?;
+        bus.naked_dispatch_async(
+            InterfoldEvent::<e3_events::Unsequenced>::test_event("other second")
+                .id(4)
+                .aggregate_id(2)
+                .ts(200)
+                .build(),
+        )
+        .await?;
+        bus.flush_event_pipeline().await?;
+
+        let spool = ReplaySpool::load_bounded(
+            &system.eventstore_reader()?.seq(),
+            std::collections::HashMap::from([(AggregateId::new(1), 2), (AggregateId::new(2), 2)]),
+        )
+        .await?;
+        let mut order = Vec::new();
+        spool.project(|event| {
+            order.push((event.aggregate_id(), event.seq(), event.ts()));
+            Ok(())
+        })?;
+
+        assert_eq!(
+            order,
+            [
+                (AggregateId::new(2), 1, 150),
+                (AggregateId::new(1), 1, 200),
+                (AggregateId::new(1), 2, 100),
+                (AggregateId::new(2), 2, 200),
+            ]
+        );
         Ok(())
     }
 }

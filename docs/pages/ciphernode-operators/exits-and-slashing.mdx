@@ -109,10 +109,10 @@ interfold ciphernode deregister --operator 0xOPERATOR
 
 Assets enter a queue with a delay period (7 days on Sepolia):
 
-| Asset           | Behavior                              |
-| --------------- | ------------------------------------- |
-| Tickets         | Burned immediately, USDC enters queue |
-| Ciphernode bond | FOLD enters exit queue                |
+| Asset           | Behavior                                           |
+| --------------- | -------------------------------------------------- |
+| Tickets         | Burned immediately, ticket collateral enters queue |
+| Ciphernode bond | FOLD enters exit queue                             |
 
 Check your exit status:
 
@@ -131,8 +131,8 @@ interfold --config /path/to/owner.yaml ciphernode bond \
   --operator 0xOPERATOR claim
 ```
 
-The USDC and FOLD are paid to the bond owner, while the exit queue and any slashing remain keyed to
-the operator.
+The ticket collateral and FOLD are paid to the bond owner, while the exit queue and any slashing
+remain keyed to the operator.
 
 ### Re-register
 

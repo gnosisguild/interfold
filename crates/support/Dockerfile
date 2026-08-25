@@ -1,6 +1,6 @@
 ARG RUST_VERSION=1.91.1
 ARG RISC0_VERSION=3.0.3
-ARG RISC0_TOOLCHAIN=1.88.0
+ARG RISC0_TOOLCHAIN=1.91.1
 ARG SKIP_SOLIDITY=0
 FROM rust:${RUST_VERSION}-slim-bookworm AS base-dev
 
@@ -35,6 +35,19 @@ ENV SHELL=/bin/bash
 
 ENV PATH="/home/${USERNAME}/.risc0/bin:${PATH}"
 RUN curl -L https://risczero.com/install | bash
+
+# Re-declared inside the stage. An ARG before the first FROM is only in scope for FROM lines, so
+# these expanded to nothing here and `rzup install` silently took its own default — the opposite of
+# what pinning them is for. A bare ARG picks up the default declared at the top of the file.
+ARG RISC0_VERSION
+ARG RISC0_TOOLCHAIN
+
+# Empty is the failure this guards against, and it is silent: `rzup install rust` with no version
+# installs whatever rzup considers current, and the image still builds.
+RUN set -eu; \
+    : "${RISC0_TOOLCHAIN:?RISC0_TOOLCHAIN is empty; declare the ARG inside this stage}"; \
+    : "${RISC0_VERSION:?RISC0_VERSION is empty; declare the ARG inside this stage}"
+
 RUN rzup install rust ${RISC0_TOOLCHAIN}
 RUN rzup install r0vm ${RISC0_VERSION}
 RUN rzup install cargo-risczero ${RISC0_VERSION}

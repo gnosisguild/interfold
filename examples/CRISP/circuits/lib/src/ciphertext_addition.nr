@@ -42,6 +42,40 @@
 use interfold_lib::math::commitments::compute_challenge;
 use interfold_lib::math::polynomial::Polynomial;
 
+/// The ciphertext an input adds to, which is either the one already in the slot or nothing.
+///
+/// Every CRISP input proves the same relation, `slot = addend + ballot`. A mask keeps what the slot
+/// holds, so its addend is that ciphertext. A real vote replaces the slot, and a first input has
+/// nothing to replace, so both add to the zero ciphertext instead.
+///
+/// Selecting here rather than branching keeps the addition constraints live on every path. The
+/// alternative — proving the addition only for masks — leaves the published ciphertext of a real
+/// vote unconstrained by this gadget, and makes the two paths different shapes of proof.
+///
+/// # Arguments
+/// * `polynomials` - The ciphertext limbs already in the slot
+/// * `keep` - Whether this input adds to them
+///
+/// # Returns
+/// The limbs when `keep` is true, all zeros otherwise.
+pub fn select_addend<let N: u32, let L: u32>(
+    polynomials: [Polynomial<N>; L],
+    keep: bool,
+) -> [Polynomial<N>; L] {
+    let factor: Field = if keep {
+        1
+    } else {
+        0
+    };
+
+    let mut selected = polynomials;
+    for i in 0..L {
+        selected[i] = polynomials[i].mul_scalar(factor);
+    }
+
+    selected
+}
+
 /// Parameters for ciphertext addition verification.
 ///
 /// # Arguments

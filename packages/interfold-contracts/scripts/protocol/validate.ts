@@ -257,6 +257,42 @@ export async function actionValidate(): Promise<void> {
     console.log("  -- bondedVotes not deployed yet (--action activate-voting)");
   }
 
+  // Verifier read-backs. Each is configured by a Safe transaction, so a dropped or reverted write
+  // would otherwise leave the reference at address(0) with the deploy script still exiting zero.
+  const bfvSchemeId = ethers.id("fhe.rs:BFV");
+  // A read-back alone proves only that the address was stored. Interfold returns whatever was
+  // configured, so an EOA or an undeployed address passes while being unusable when a receipt is
+  // actually verified.
+  for (const [label, address] of [
+    ["verifiers.ciphertextVerifier", config.verifiers?.ciphertextVerifier],
+    ["verifiers.decryptionVerifier", config.verifiers?.decryptionVerifier],
+    ["verifiers.pkVerifier", config.verifiers?.pkVerifier],
+  ] as const) {
+    if (address) await requireContract(ethers.provider, address, label);
+  }
+
+  if (config.verifiers?.ciphertextVerifier) {
+    checks.push([
+      "interfold.getCiphertextVerifier(fhe.rs:BFV)",
+      interfold.getCiphertextVerifier(bfvSchemeId),
+      config.verifiers.ciphertextVerifier,
+    ]);
+  }
+  if (config.verifiers?.decryptionVerifier) {
+    checks.push([
+      "interfold.getDecryptionVerifier(fhe.rs:BFV)",
+      interfold.getDecryptionVerifier(bfvSchemeId),
+      config.verifiers.decryptionVerifier,
+    ]);
+  }
+  if (config.verifiers?.pkVerifier) {
+    checks.push([
+      "interfold.getPkVerifier(fhe.rs:BFV)",
+      interfold.getPkVerifier(bfvSchemeId),
+      config.verifiers.pkVerifier,
+    ]);
+  }
+
   for (const [label, actualPromise, expected] of checks) {
     const actual = await actualPromise;
     assertEqual(label, actual, expected);

@@ -12,7 +12,8 @@ mod repo;
 pub use actors::{
     AllEncryptionKeysCollected, AllThresholdSharesCollected, EncryptionKeyCollector,
     ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss, ThresholdKeyshare,
-    ThresholdKeyshareParams,
+    ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 pub use domain::{
     AggregatingDecryptionKey, CollectingEncryptionKeysData, Decrypting, GeneratingDecryptionProof,

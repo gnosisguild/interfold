@@ -125,6 +125,19 @@ pub struct ComputeRequest {
     #[serde(deserialize_with = "deserialize_hex_tuple")]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     pub callback_url: Option<String>,
+
+    // What the E3 program published alongside each ciphertext. A program whose contract folds more
+    // than the ciphertext into its input-tree leaf needs these to rebuild the same leaf; without
+    // them the guest derives a different root and the proof cannot be published. Optional, because
+    // a program using the default policy publishes none of it — but silently dropping them when
+    // they *are* sent is the failure this exists to prevent, so the handler rejects a partial set
+    // rather than computing a root the contract will reject.
+    #[serde(default)]
+    pub input_commitments: Vec<String>,
+    #[serde(default)]
+    pub input_slots: Vec<String>,
+    #[serde(default)]
+    pub input_parents: Vec<u64>,
 }
 
 /// Webhook payload for CRISP and `E3ProgramServer`.

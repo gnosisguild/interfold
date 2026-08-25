@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     direct_responder::DirectResponder,
     domain::wire::{decode, MAX_GOSSIP_BYTES},
@@ -33,6 +34,48 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{error, trace, warn};
 
 use libp2p::PeerId;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerRejectionKind {
+    Transient,
+    Permanent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GossipPublishFailure {
+    NoPeersSubscribed,
+    Transient(String),
+    Permanent(String),
+}
+
+impl GossipPublishFailure {
+    pub fn from_libp2p(error: PublishError) -> Self {
+        match error {
+            PublishError::NoPeersSubscribedToTopic => Self::NoPeersSubscribed,
+            PublishError::AllQueuesFull(count) => {
+                Self::Transient(PublishError::AllQueuesFull(count).to_string())
+            }
+            error => Self::Permanent(error.to_string()),
+        }
+    }
+
+    pub fn transient(reason: impl Into<String>) -> Self {
+        Self::Transient(reason.into())
+    }
+
+    pub fn permanent(reason: impl Into<String>) -> Self {
+        Self::Permanent(reason.into())
+    }
+}
+
+impl std::fmt::Display for GossipPublishFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPeersSubscribed => formatter.write_str("no peers are subscribed to the topic"),
+            Self::Transient(reason) | Self::Permanent(reason) => formatter.write_str(reason),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum PeerTarget {
@@ -211,7 +254,7 @@ pub enum NetEvent {
     /// There was an Error publishing bytes over the network
     GossipPublishError {
         correlation_id: CorrelationId,
-        error: Arc<PublishError>,
+        error: Arc<GossipPublishFailure>,
     },
     /// Data was successfully published over the network as far as we know.
     GossipPublished {
@@ -225,6 +268,12 @@ pub enum NetEvent {
     /// A connection was established to a peer
     ConnectionEstablished {
         connection_id: ConnectionId,
+    },
+    /// A transport connection failed the Interfold Identify admission policy.
+    PeerRejected {
+        connection_id: ConnectionId,
+        kind: PeerRejectionKind,
+        reason: String,
     },
     /// There was an error creating a connection
     OutgoingConnectionError {
@@ -278,6 +327,32 @@ pub enum PutOrStoreError {
 }
 
 impl NetEvent {
+    /// Whether post-sync application consumers need this event.
+    ///
+    /// Historical-sync and connection-control events use the raw network receiver and must not
+    /// also occupy the startup application buffer.
+    pub(crate) fn requires_application_delivery(&self) -> bool {
+        // Keep this match exhaustive. Each new event must select one delivery path.
+        match self {
+            Self::GossipData(_)
+            | Self::GossipPublishError { .. }
+            | Self::GossipPublished { .. }
+            | Self::DhtGetRecordSucceeded { .. }
+            | Self::DhtPutRecordSucceeded { .. }
+            | Self::DhtGetRecordError { .. }
+            | Self::DhtPutRecordError { .. } => true,
+            Self::DialError { .. }
+            | Self::ConnectionEstablished { .. }
+            | Self::PeerRejected { .. }
+            | Self::OutgoingConnectionError { .. }
+            | Self::GossipSubscribed { .. }
+            | Self::IncomingRequest(_)
+            | Self::OutgoingRequestSucceeded(_)
+            | Self::OutgoingRequestFailed(_)
+            | Self::AllPeersDialed { .. } => false,
+        }
+    }
+
     /// Conservative size used by the bounded startup buffer.
     ///
     /// The enum's inline storage is always counted. Heap-backed protocol payloads that can be
@@ -311,8 +386,9 @@ impl NetEvent {
             Self::IncomingRequest(request) => request.responder.request_len(),
             Self::OutgoingRequestSucceeded(response) => serialized_size(&response.payload),
             Self::OutgoingRequestFailed(response) => response.error.len(),
-            Self::GossipPublishError { .. }
-            | Self::DialError { .. }
+            Self::GossipPublishError { error, .. } => error.to_string().len(),
+            Self::PeerRejected { reason, .. } => reason.len(),
+            Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
@@ -374,7 +450,7 @@ impl DocumentPublishedNotification {
 /// Generic helper for the command-response pattern with correlation IDs
 pub async fn call_and_await_response<F, R>(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     command: NetCommand,
     matcher: F,
     timeout: Duration,
@@ -382,8 +458,8 @@ pub async fn call_and_await_response<F, R>(
 where
     F: Fn(&NetEvent) -> Option<Result<R>>,
 {
-    // Resubscribe first to avoid missing events
-    let mut rx = net_events.resubscribe();
+    // Subscribe before sending the command so the response cannot be missed
+    let mut rx = net_events.subscribe();
 
     // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
@@ -433,14 +509,14 @@ where
 }
 
 pub async fn await_event<F, R>(
-    net_events: &Arc<broadcast::Receiver<NetEvent>>,
+    net_events: &NetEventSubscriber,
     matcher: F,
     timeout: Duration,
 ) -> Result<R>
 where
     F: Fn(&NetEvent) -> Option<R>,
 {
-    let mut rx = net_events.resubscribe();
+    let mut rx = net_events.subscribe();
 
     let result = tokio::time::timeout(timeout, async {
         loop {

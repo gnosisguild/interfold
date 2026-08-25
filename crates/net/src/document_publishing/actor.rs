@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::{datetime_to_instant_from_now, DocumentPublishingService},
     events::{
@@ -25,8 +26,8 @@ use e3_utils::{
     MAILBOX_LIMIT,
 };
 use futures::TryFutureExt;
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::{broadcast, mpsc};
+use std::{collections::HashMap, time::Duration};
+use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::event_converter::EventConverter;
@@ -44,9 +45,8 @@ pub struct DocumentPublisher {
     bus: BusHandle,
     /// NetCommand sender to forward commands to the Libp2pNetInterface
     tx: mpsc::Sender<NetCommand>,
-    /// NetEvent receiver to resubscribe for events from the Libp2pNetInterface. This is in an Arc
-    /// so that we do not do excessive resubscribes without actually listening for events.
-    rx: Arc<broadcast::Receiver<NetEvent>>,
+    /// Subscriber used to open a fresh NetEvent receiver per publish operation.
+    rx: NetEventSubscriber,
     /// The gossipsub broadcast topic
     topic: String,
     /// Pure decision/state service.
@@ -58,15 +58,30 @@ impl DocumentPublisher {
     pub fn new(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
-        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        rx: &NetEventSubscriber,
         topic: impl Into<String>,
     ) -> Self {
+        Self::new_with_interests(bus, tx, rx, topic, HashMap::new())
+    }
+
+    pub fn new_with_interests(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &NetEventSubscriber,
+        topic: impl Into<String>,
+        interests: HashMap<E3id, PartyId>,
+    ) -> Self {
+        let service = if interests.is_empty() {
+            DocumentPublishingService::new()
+        } else {
+            DocumentPublishingService::with_interests(interests)
+        };
         Self {
             bus: bus.clone(),
             tx: tx.clone(),
             rx: rx.clone(),
             topic: topic.into(),
-            service: DocumentPublishingService::new(),
+            service,
         }
     }
 
@@ -86,11 +101,21 @@ impl DocumentPublisher {
     pub fn setup(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
-        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        rx: &NetEventSubscriber,
         topic: impl Into<String>,
     ) -> Addr<Self> {
-        let mut events = rx.resubscribe();
-        let addr = Self::new(bus, tx, rx, topic).start();
+        Self::setup_with_interests(bus, tx, rx, topic, HashMap::new())
+    }
+
+    pub fn setup_with_interests(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        rx: &NetEventSubscriber,
+        topic: impl Into<String>,
+        interests: HashMap<E3id, PartyId>,
+    ) -> Addr<Self> {
+        let mut events = rx.subscribe();
+        let addr = Self::new_with_interests(bus, tx, rx, topic, interests).start();
         EventConverter::setup(bus);
         // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());

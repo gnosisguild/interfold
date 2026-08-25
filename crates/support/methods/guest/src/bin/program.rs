@@ -7,7 +7,7 @@
 use anyhow::{Error, Result};
 use bincode::deserialize;
 use e3_support_types::{ComputeGuestInput, ComputeJournal};
-use e3_user_program::fhe_processor;
+use e3_user_program::{fhe_processor, policy};
 use risc0_zkvm::guest::env;
 use std::io::Read;
 
@@ -20,7 +20,9 @@ fn main() {
     env::stdin().read_to_end(&mut input_slice).unwrap();
     let input: ComputeGuestInput = deserialize(&decode_input(&input_slice).unwrap()).unwrap();
 
-    let result = input.input.process(fhe_processor);
+    // The policy comes from the user program, not from a default here: it decides the input-tree
+    // leaf and which inputs count, and both have to agree with what the E3 program's contract did.
+    let result = input.input.process(fhe_processor, policy()).unwrap();
     let journal = ComputeJournal::new(input.domain, result).unwrap();
 
     env::commit(&journal);

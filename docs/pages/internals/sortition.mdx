@@ -29,9 +29,10 @@ seed = uint256(keccak256(abi.encode(blockhash(entropyBlock), e3Id)));
 
 The paid request is final before this hash exists, so a requester cannot inspect the committee seed
 and revert an unfavorable request in the same transaction. Rust reads the entropy block through the
-execution RPC. By default, it waits for one block to build on top of the entropy block; operators
-can configure a different confirmation count for their chain. The first ticket submission derives
-and stores the same seed on-chain. No separate randomness transaction is required.
+execution RPC. By default, it waits for one block to build on top of the entropy block; operators do
+not configure this depth. Public RPC endpoints use one confirmation automatically, while loopback
+development RPC endpoints read the chain head. The first ticket submission derives and stores the
+same seed on-chain. No separate randomness transaction is required.
 
 The E3 computation seed in `E3Requested` remains separate. It is still used by the cryptographic
 workflow, but it does not rank tickets. A block producer can influence block-hash entropy, so this
@@ -116,8 +117,9 @@ Where `safety_factor` depends on the `m/n` ratio:
 | ≥ 0.6                       | 2             | Moderate risk                                                            |
 | < 0.6 (loose threshold)     | 1             | Plenty of slack; minimal buffer required                                 |
 
-The extra nodes act as **standing backups**. If a selected node fails to respond during DKG, it can
-be expelled and the next node in score order steps in without restarting the committee.
+The extra nodes act as **standing backups** during committee formation. After finalization, the
+runtime uses the address-sorted committee order for party IDs and aggregator failover; ticket-score
+order does not assign the aggregator.
 
 ---
 
@@ -169,14 +171,19 @@ events that did not pass through the EVM decoder.
 
 ## Aggregator Assignment
 
-The **active aggregator** is the node with `party_id = 0` — the selected committee member with the
-lowest address. It is responsible for:
+The **initial active aggregator** is the node with `party_id = 0` — the selected committee member
+with the lowest address. The active role can later move through the same canonical order. The active
+aggregator is responsible for:
 
 - Collecting and verifying ZK proofs from all other committee members
+- Aggregating public-key shares and publishing the committee proof
 - Aggregating decryption shares
-- Submitting the final ciphertext output and proof on-chain
+- Publishing the plaintext output and proof on-chain
 
-If the aggregator is expelled, the next non-expelled node by `party_id` takes over.
+If the expected public-key or plaintext result is absent for 10 minutes, or if the active party is
+excluded, the next eligible node by `party_id` takes over. The timeout deadline and phase-local
+unresponsive set survive restart. Canonical phase progress clears the set, and the final eligible
+party remains active after all standby budgets expire.
 
 ---
 

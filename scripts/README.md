@@ -436,3 +436,25 @@ Generated verifiers are automatically:
 - Verifier contracts are large (~24KB) due to pairing cryptography
 - Library linking (e.g., `ZKTranscriptLib`) is handled automatically during deployment
 - Generated files are excluded from linting (`.solhintignore`)
+
+## Guest provenance
+
+Two commands cover the RISC Zero compute guest. The full reviewer-facing procedure is
+`docs/pages/verifying-the-compute-provider.mdx`.
+
+### `generate-provenance-manifest.ts`
+
+Emits the release record: source commit, lockfile digests, pinned revisions, RISC Zero version,
+builder image tag and digest, guest ELF SHA-256, image ID, and — with an RPC — the deployed verifier
+address, its runtime code digest, the underlying RISC Zero verifier, and the on-chain `imageId()`.
+
+```bash
+pnpm provenance:manifest
+pnpm provenance:manifest --rpc <url> --verifier <address> --out manifest.json
+```
+
+It prints `"complete": false` and lists unresolved fields when anything is missing. A release
+manifest must be complete.
+
+Note: the SHA-256 of the ELF is **not** the image ID. SHA-256 checks binary integrity; the image ID
+is computed from the loaded memory image. Both are recorded, for different purposes.

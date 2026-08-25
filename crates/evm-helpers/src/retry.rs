@@ -6,7 +6,7 @@
 
 use e3_utils::{retry_with_backoff, RetryError};
 use std::future::Future;
-use tracing::info;
+use tracing::{info, warn};
 
 const RETRY_MAX_ATTEMPTS: u32 = 3;
 const RETRY_INITIAL_DELAY_MS: u64 = 2000;
@@ -70,7 +70,10 @@ where
                             info!("{}: error, will retry: {}", op_name, display_error);
                             Err(RetryError::Retry(e))
                         } else {
-                            info!("{}: error: {}", op_name, display_error);
+                            warn!(
+                                "{}: permanent error, not retrying: {}",
+                                op_name, display_error
+                            );
                             Err(RetryError::Failure(e))
                         }
                     }

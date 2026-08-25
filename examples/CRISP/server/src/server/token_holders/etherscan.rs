@@ -1575,13 +1575,19 @@ mod bond_owner_discovery_tests {
             "0xf09dc4a8a4e1c9233bcb1d32c04ad4c9d516f140c23aa44f9e0d680f70799e08"
         );
         assert_eq!(
-            format!("{:?}", keccak256(b"BondedCheckpointed(address,uint48,uint256)")),
+            format!(
+                "{:?}",
+                keccak256(b"BondedCheckpointed(address,uint48,uint256)")
+            ),
             "0xb6241efac9a4f02e4f1ba6a30a3a5fc5ba4b23a47f181eca3055466c775eb32c"
         );
         // The one that was wrong in this file: it matched nothing, so delegation logs always came
         // back empty and a pure delegatee never became a candidate.
         assert_eq!(
-            format!("{:?}", keccak256(b"DelegateVotesChanged(address,uint256,uint256)")),
+            format!(
+                "{:?}",
+                keccak256(b"DelegateVotesChanged(address,uint256,uint256)")
+            ),
             "0xdec2bacdd2f05b59de34da9b523dff8be42e5e38e818c82fdb0bae774387a724"
         );
     }
@@ -1591,7 +1597,10 @@ mod bond_owner_discovery_tests {
         let expected: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let topic = "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
-        assert_eq!(EtherscanClient::address_from_topic(topic).unwrap(), expected);
+        assert_eq!(
+            EtherscanClient::address_from_topic(topic).unwrap(),
+            expected
+        );
     }
 
     #[test]

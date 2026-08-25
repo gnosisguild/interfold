@@ -11,6 +11,11 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 `scripts/invariant-baselines.env`). The rest are review-enforced — the `invariant-reviewer` agent
 (`/invariant-review`) checks a diff against this file.
 
+An entry is a requirement or review claim, not proof that the implementation satisfies it. Verify
+the cited contract, test, schema, and runtime path. If a higher-authority source contradicts this
+file, preserve the higher-authority behavior and correct this file in the same change. A target
+design citation alone does not establish current runtime behavior.
+
 ## Meta-invariants
 
 - **Sources of authority, descending:** (1) deployed contract behavior and protocol/circuit
@@ -325,9 +330,13 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### DKG / threshold structure
 
 - SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
-- `party_id` derives from the finalized committee normalized by ascending address; 1-indexed,
-  strictly increasing. Active aggregator = lowest non-expelled `party_id`. — `ARCHITECTURE.md`;
-  `flow-trace/04`
+- Runtime `party_id` derives from the finalized committee normalized by ascending address and is
+  zero-indexed. Circuit-side Shamir coordinates are `party_id + 1` and must be strictly increasing.
+  The active aggregator is the lowest eligible runtime `party_id` after exclusions and the current
+  phase's durable unresponsive-party set. — `ARCHITECTURE.md`; `flow-trace/04`
+- Every committee member persists validated aggregation inputs. Failover starts only after
+  `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
+  party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
@@ -356,6 +365,85 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
   output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
   create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
+- **The compute path carries no external audit.** The 2026-08-17 Zenith audit covered six Solidity
+  files and no Rust. `crates/compute-provider`, the RISC Zero guest, `crates/zk-helpers`, and
+  `Risc0BfvCiphertextVerifier.sol` were outside both the audit and its mitigation review, so a
+  `Resolved` `Z-` row is this repository's remediation rather than a re-reviewed one. Treat changes
+  in these areas as unaudited by default. — `flow-trace/00`;
+  `packages/interfold-contracts/audits/README.md`
+- **A Secure Process derives its input root; it never receives it.** `ComputeInput` holds only
+  `fhe_inputs`, and `ComputeInput::process` derives the leaves from the ciphertexts it processed.
+  The protocol verifier takes the input root from the proof envelope and does not constrain it, so
+  the E3 program's comparison against its own on-chain root is the only check — and that comparison
+  is worthless if the guest can be handed leaves that disagree with the ciphertexts it consumed.
+  Publication is unpermissioned and one-shot, with no dispute path, so any party could otherwise
+  publish a tally over ciphertexts that were never submitted. `MerkleTreeBuilder::with_leaf_hashes`
+  is `#[cfg(test)]` to keep it out of that path. — `flow-trace/04`
+- **Every E3 program must compare the proof's input root against its own root.**
+  `Risc0BfvCiphertextVerifier` takes no `inputRoot` argument and constrains none. A program that
+  skips the comparison accepts a result computed over any input set. — `flow-trace/04`
+- **A Secure Process derives its leaves; it never receives them, and never drops one.**
+  `MerkleTreeBuilder::compute_leaf_hashes` builds every leaf from the ciphertexts it was given and
+  pushes one per published input, whatever the E3 program's policy decides about computing over it.
+  Both rules are applied by `e3-compute-provider` rather than delegated: a received root can
+  disagree with the data it claims to describe, and a missing leaf changes the root and makes the
+  result unpublishable. — `flow-trace/04`
+- **The leaf layout and input selection are the E3 program's, not the crate's.** They are supplied
+  as an `InputPolicy`, because a leaf must match whatever that program builds on chain and no two
+  programs need agree, and because "what does a second input for the same participant mean?" has no
+  universal answer. `InputPolicy::default` is the historical behaviour — leaf is the ciphertext's
+  own commitment, every input counts — which matches the starter template. Every E3 program exports
+  `policy()` beside `fhe_processor`. — `flow-trace/04`
+- **CRISP binds bytes, commitment, slot and parent into its leaf, and selects the end of each slot's
+  chain.** `CRISPProgram.inputLeaf` is
+  `sha256(sha256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and
+  `e3_user_program::policy` rebuilds it byte for byte; a divergence makes every root mismatch and
+  nothing else would catch it, so both sides pin the same vector (`program/tests/input_leaf.rs`,
+  `tests/input-leaf.test.ts`) and `onchain_root_agreement.rs` asserts Rust reproduces a root a real
+  contract produced. The tree is append-only because the mask path checks no signature, so anyone
+  can write to any census member's slot and update-in-place would let a third party erase a counted
+  vote. — `flow-trace/04`
+- **A slot's head must be openable by anyone, so selection follows a parent chain rather than a
+  mutable pointer.** `chain_head_per_slot` takes an entry only when its bytes reproduce its
+  commitment _and_ the entry it names is that slot's current head. `CRISPProgram` cannot check the
+  first — the commitment is a Poseidon sponge over CRT limbs and the circuit never sees the
+  serialization — so with one mutable head per slot, anyone could publish a valid proof beside
+  unusable bytes and leave a head only they can open. A slot nobody can mask is a slot where every
+  later input is provably its owner voting again, which is a coercion receipt. Because an unusable
+  entry is never the head, it is never a valid parent, and the next honest input names the same
+  parent it did.
+
+  The rule takes the **first** usable entry to extend a parent, so a later sibling is dropped and an
+  input can be front-run into not counting. Keep it that way: a stale parent cannot be told apart
+  from a sibling built a moment earlier, because only the circuit knows whether an entry replaces
+  the slot or adds to it. Preferring the later sibling would let a mask on a superseded ciphertext
+  restore it over a vote — a silent tally corruption, against a dropped re-vote the voter can see
+  and retry. — `flow-trace/04`
+
+- **CRISP's three ballot operations prove one relation and publish one shape.** Voting, updating,
+  and masking all prove `published = addend + ballot`, with the addend selected by the private
+  `is_mask_vote` and derived as `keep_previous = is_mask_vote & !is_first_vote`. The circuit returns
+  `sum_ct_commitment` on every path, the SDK has one code path, and `CrispSDK.prepareBallot` makes
+  the same server request either way. Branching any of these apart — a different published
+  ciphertext, a different commitment for the digest, a different request — makes the three
+  distinguishable on chain, which is what masks exist to prevent. Deriving the selector rather than
+  witnessing it is what stops a voter counting their old ballot twice and a masker erasing a vote. —
+  `flow-trace/04`
+- **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
+  witness generator reverses the message over the full degree, so the payload sits at
+  `k1[D - MAX_MSG_NON_ZERO_COEFFS ..]` with the options back to front;
+  `crisp_lib::utils::ballot_layout` derives that offset and both checkers use it. Coefficients
+  inside an option segment must be binary, everything outside the ballot region must be zero, and a
+  mask's plaintext must be zero everywhere. Indexing as if the polynomial were the message width
+  makes both checks read only padding: every vote passes any balance bound, and a mask — which needs
+  no signature and may be written to any eligible slot — can carry an arbitrary payload into someone
+  else's ballot. Tests must build `k1` at the compiled degree, not at `MAX_MSG_NON_ZERO_COEFFS`. —
+  `flow-trace/04`
+- **The SAFE ciphertext commitment requires exactly two components.** It covers `c[0]` and `c[1]`
+  only, matching the Noir circuit, so `bfv_ciphertext_to_greco` rejects any other component count. A
+  padded ciphertext would otherwise share a commitment with its two-component prefix while threshold
+  decryption rejects it, failing the round as a `DecryptionTimeout` billed to the ciphernodes. —
+  `flow-trace/04`
 - **Client PK commitment binding (C-01):** serialized PK event bytes are an untrusted transport
   hint; indexers store the decoded key only when its recomputed commitment equals the on-chain
   (C5-proven) value. Proof-backed committee publication never accepts key bytes. Public-key
@@ -398,6 +486,21 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   fail closed. — INDEX concern #15
 - Crash-torn log tails: truncate only an unindexed CRC/length-invalid physical suffix; indexed
   corruption is fatal. — INDEX concern #16
+- Process-infrastructure events belong to one boot and are never EventStore replay inputs. The
+  current boot must publish fresh sync, readiness, effect, and shutdown phase events; otherwise a
+  payload-derived event ID can suppress the event that startup is waiting for. The `NetReady`
+  listener is armed before the network transport starts. — INDEX concern #44
+- The request-router recovery checkpoint has one canonical root key. Every live or recovery update
+  retains the highest sequence observed for each aggregate. Startup advances a trailing checkpoint
+  from its missing EventStore suffix, and the final snapshot drain preserves event order. An older
+  contextual write must never replace newer admission state or move a covered-prefix cursor
+  backward. — INDEX concern #43
+- EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
+  choose between the next events of different aggregates. A late event can have an older remote HLC
+  and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
+- Snapshot-derived participation state is injected directly. Restart must not append synthetic
+  `CiphernodeSelected` or `AggregatorChanged` events. A derived local selection resumes only at the
+  fenced `SyncEffect` boundary. — INDEX concern #45
 - Every state field is classified **Durable / Derivable / Ephemeral**. Pending proof bundles,
   decrypted-share progress, accusation votes/timeouts, retry state, active-aggregator designation,
   deadlines, and undispatched external effects are durable unless a stronger authority can
@@ -419,7 +522,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
   the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
-  order; `ComputeEffectGate` buffers/dedups until `EffectsEnabled`. — `CRATES_ARCHITECTURE.md`
+  order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. —
+  `CRATES_ARCHITECTURE.md`
+- Sortition delays, committee-finalization timers, and slash submissions persist their semantic
+  inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
+  may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46
 - Durable EVM settlement receipts (`RewardCredited`, `RewardClaimed`) are global facts — never
   routed into a completed per-E3 context. — INDEX concern #8
 - Replayed committee events must not replace a restored per-E3 actor with a fresh instance; the
@@ -438,7 +546,20 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 
 - Committee four-file sync (above) — `scripts/check-committee.sh`, pre-push + CI.
 - **Never hand-edit generated files:** parity matrices, `utils.ts` H/T values, verifier contracts
-  (`generate-verifiers.ts` output), `.active-preset.json`.
+  (`generate-verifiers.ts` output), `.active-preset.json`, `crates/support/contracts/ImageID.sol`,
+  `crates/support/tests/Elf.sol`.
+- **Generated verifiers must match the built VKs** — `pnpm check:verifiers`, pre-push + CI
+  (`build_circuits`). A drift means the deployed verifier accepts a different circuit from the tree.
+- **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
+  guest ELF path, so it is generated per checkout and `.gitignore`d.
+- **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
+  source commit, lockfile digests, pinned revisions, RISC Zero version, builder image tag **and
+  digest** (the builder tag is mutable and `RISC0_DOCKER_CONTAINER_TAG` overrides it), guest ELF
+  SHA-256, image ID, and the deployed verifier to one record. The generator reports
+  `complete: false` with the unresolved fields rather than emitting a partial record that reads as
+  verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
+  is computed from the loaded memory image. Procedure:
+  `docs/pages/verifying-the-compute-provider.mdx`.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
@@ -475,12 +596,12 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ## Known open issues (check before assuming current behavior is correct)
 
 The authoritative list is the "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md`.
-Still open as of 2026-07:
+Known residual gaps:
 
 - `gracePeriod` is dead code in timeout checks (concern #3).
 - CLI `activate` actually calls `register` and reverts for registered operators (#4).
-- EventBus fan-out still uses unacknowledged `do_send`; replay materializes the full range in memory
-  (#11).
+- Live EventBus subscriber fan-out still includes unacknowledged `do_send` edges (#11). EventStore
+  replay is paged through bounded temporary runs and uses an acknowledged fan-out barrier.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - Residual runtime risks: `e3-evm` in-process nonce serialization without a durable tx outbox or
   full reorg rollback; accusation votes/timers lack complete durable reconstruction;

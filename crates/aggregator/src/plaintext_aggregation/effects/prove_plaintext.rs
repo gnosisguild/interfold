@@ -68,6 +68,11 @@ impl ThresholdPlaintextAggregator {
         }
 
         info!("C7 proof signed — awaiting DecryptionAggregation...");
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.c7_proofs = Some(proofs.clone());
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
         self.pending.c7_proofs_pending = Some(proofs);
         self.pending.last_ec = Some(ec.clone());
         self.maybe_start_decryption_aggregation(&ec)?;
@@ -92,6 +97,12 @@ impl ThresholdPlaintextAggregator {
                 // decryption verifiers accept them; production verifiers reject them because
                 // they are not DecryptionAggregator proofs.
                 self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
+                let proofs = self.pending.decryption_aggregator_proofs.clone();
+                self.recovery.try_mutate(ec, |mut recovery| {
+                    recovery.decryption_aggregator_proofs = proofs;
+                    recovery.last_ec = Some(ec.clone());
+                    Ok(recovery)
+                })?;
             }
             return Ok(());
         }
@@ -258,6 +269,12 @@ impl ThresholdPlaintextAggregator {
                         }
                     }
                     self.pending.decryption_aggregator_proofs = Some(resp.proofs);
+                    let proofs = self.pending.decryption_aggregator_proofs.clone();
+                    self.recovery.try_mutate(&ec, |mut recovery| {
+                        recovery.decryption_aggregator_proofs = proofs;
+                        recovery.last_ec = Some(ec.clone());
+                        Ok(recovery)
+                    })?;
                     self.try_publish_complete()?;
                 }
             }

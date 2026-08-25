@@ -6,6 +6,13 @@ set -euo pipefail
 INTERFOLD_CIRCUITS="../../circuits"
 CRISP_CIRCUITS="circuits"
 
+# The generated verifiers are NOT preset-specific. They are written from the fold circuit's
+# verification key, and the fold circuit takes the inner key as an input and checks its hash against
+# either preset's constant, so its own structure carries no BFV degree. Compiling both presets
+# produces byte-identical verifiers; one directory is correct.
+VERIFIER_DIR="packages/crisp-contracts/contracts/verifiers"
+mkdir -p "$VERIFIER_DIR"
+
 # Two ballot stacks share the same user_data_encryption dependencies and differ only in how a
 # round establishes eligibility:
 #
@@ -160,7 +167,7 @@ for stack in "${STACKS[@]}"; do
     fi
 
     echo "Copying ${verifier_file} to contracts folder..."
-    if ! cp "$CRISP_CIRCUITS/bin/${fold_dir}/target/${verifier_file}" "packages/crisp-contracts/contracts/${verifier_file}"; then
+    if ! cp "$CRISP_CIRCUITS/bin/${fold_dir}/target/${verifier_file}" "${VERIFIER_DIR}/${verifier_file}"; then
         echo "Error: Failed to copy ${verifier_file} to contracts folder"
         exit 1
     fi
@@ -176,14 +183,14 @@ for stack in "${STACKS[@]}"; do
     TEMP_FILE=$(mktemp)
     {
         echo "$LICENSE_HEADER"
-        tail -n +3 "packages/crisp-contracts/contracts/${verifier_file}"
+        tail -n +3 "${VERIFIER_DIR}/${verifier_file}"
     } >"$TEMP_FILE"
-    mv "$TEMP_FILE" "packages/crisp-contracts/contracts/${verifier_file}"
+    mv "$TEMP_FILE" "${VERIFIER_DIR}/${verifier_file}"
 
-    patch_verifier "packages/crisp-contracts/contracts/${verifier_file}"
+    patch_verifier "${VERIFIER_DIR}/${verifier_file}"
 
     echo "Formatting ${verifier_file} with Prettier..."
-    if pnpm exec prettier --write "packages/crisp-contracts/contracts/${verifier_file}" 2>/dev/null; then
+    if pnpm exec prettier --write "${VERIFIER_DIR}/${verifier_file}" 2>/dev/null; then
         echo "Prettier formatting complete"
     else
         echo "Warning: Prettier formatting skipped (run pnpm install from repo root if needed)"

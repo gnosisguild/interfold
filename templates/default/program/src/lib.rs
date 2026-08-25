@@ -4,10 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_compute_provider::FHEInputs;
+use e3_compute_provider::{FHEInputs, InputPolicy};
 use e3_fhe_params::decode_bfv_params_arc;
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
+
+/// The input policy this E3 program requires.
+///
+/// Every E3 program exports one beside its processor. The default is the historical behaviour: the
+/// leaf is the ciphertext's own commitment, and every input is computed over — which matches a
+/// `MyProgram.publishInput` that inserts the commitment directly.
+///
+/// A program whose contract builds a different leaf, or that needs to drop inputs it cannot verify,
+/// supplies its own instead. See `examples/CRISP/program` for one that does.
+pub fn policy() -> InputPolicy {
+    InputPolicy::default()
+}
 
 /// Implementation of the CiphertextProcessor function
 pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
@@ -29,10 +41,10 @@ mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use e3_fhe_params::{BfvParamSet, build_bfv_params_arc, encode_bfv_params};
     use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
-    use fhe_traits::FheEncoder;
+    use fhe_traits::{FheDecoder, FheEncoder};
     use fhe_traits::FheEncrypter;
     use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
-    use rand::{rngs::OsRng, thread_rng};
+    use rand::thread_rng;
 
     #[test]
     fn test() -> Result<()> {
@@ -46,7 +58,7 @@ mod tests {
             params_set.error1_variance,
         );
 
-        let secret_key = SecretKey::random(&params, &mut OsRng);
+        let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);
 
         // 3
@@ -73,7 +85,8 @@ mod tests {
         // Decrypt result
         let decrypted = secret_key.try_decrypt(&Ciphertext::from_bytes(&result, &params)?)?;
 
-        assert_eq!(decrypted.value[0], 5);
+        let tally = Vec::<u64>::try_decode(&decrypted, Encoding::poly())?;
+        assert_eq!(tally[0], 5);
         Ok(())
     }
 }

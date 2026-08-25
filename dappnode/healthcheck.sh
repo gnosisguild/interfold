@@ -1,5 +1,5 @@
 #!/bin/sh
-# Best available local health signal for the v0.2.3 image. That release has no
+# Best available local health signal for the Interfold ciphernode image. It has no
 # readiness HTTP/control endpoint, so require the expected PID 1, its exact
 # start/config arguments, protected local credential/config files, and the QUIC
 # listener. This is stronger than PID-only liveness but is not a chain-sync or

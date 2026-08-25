@@ -11,7 +11,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
-        match msg.into_data() {
+        let (msg, event_context) = msg.into_components();
+        match msg {
             InterfoldEventData::AccusationQuorumReached(data) => {
                 // Every node evaluates the policy after quorum. Only the first three voters send
                 // a transaction when Lane A is enabled, but all nodes need the same disabled-policy
@@ -19,6 +20,15 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 if self.provider.chain_id() == data.e3_id.chain_id()
                     && is_slashable_outcome(&data.outcome)
                 {
+                    if let Some(recovery) = self.recovery.as_mut() {
+                        if let Err(error) = recovery.try_mutate(&event_context, |mut recovery| {
+                            recovery.record(data.clone())?;
+                            Ok(recovery)
+                        }) {
+                            self.bus.with_ec(&event_context).err(EType::Evm, error);
+                            return;
+                        }
+                    }
                     match self.submissions.admit(data.clone()) {
                         Ok((key, SlashSubmissionDecision::Submit)) => {
                             ctx.notify(SubmitSlashIntent { key, event: data });
@@ -36,7 +46,40 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
             InterfoldEventData::CommitteeMemberExcluded(data) => {
                 if data.e3_id.chain_id() == self.provider.chain_id() {
                     match SlashIntentKey::from_exclusion(&data) {
-                        Ok(key) => self.submissions.mark_completed(key),
+                        Ok(key) => {
+                            if let Some(recovery) = self.recovery.as_mut() {
+                                if let Err(error) =
+                                    recovery.try_mutate(&event_context, |mut recovery| {
+                                        recovery.acknowledge(&key);
+                                        Ok(recovery)
+                                    })
+                                {
+                                    self.bus.with_ec(&event_context).err(EType::Evm, error);
+                                }
+                            }
+                            self.submissions.mark_completed(key);
+                        }
+                        Err(error) => self.bus.err(EType::Evm, error),
+                    }
+                }
+            }
+            InterfoldEventData::SlashExecuted(data) => {
+                if data.e3_id.chain_id() == self.provider.chain_id() {
+                    match SlashIntentKey::from_execution(&data) {
+                        Ok(Some(key)) => {
+                            if let Some(recovery) = self.recovery.as_mut() {
+                                if let Err(error) =
+                                    recovery.try_mutate(&event_context, |mut recovery| {
+                                        recovery.acknowledge(&key);
+                                        Ok(recovery)
+                                    })
+                                {
+                                    self.bus.with_ec(&event_context).err(EType::Evm, error);
+                                }
+                            }
+                            self.submissions.mark_completed(key);
+                        }
+                        Ok(None) => {}
                         Err(error) => self.bus.err(EType::Evm, error),
                     }
                 }
@@ -84,11 +127,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
             let address = ctx.address();
             async move {
                 let SubmitSlashIntent { key, event: msg } = msg;
+                let retry_event = msg.clone();
                 let rank = submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr);
 
                 let policy =
-                    read_slash_policy(provider.clone(), contract_address, msg.proof_type as u8)
-                        .await;
+                    read_slash_policy(provider.clone(), contract_address, msg.proof_type).await;
 
                 match policy {
                     Ok(policy)
@@ -99,7 +142,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                             e3_id = %msg.e3_id,
                             accused = %msg.accused,
                             proof_type = %msg.proof_type,
-                            reason = %slash_reason(msg.proof_type as u8),
+                            reason = %slash_reason(msg.proof_type),
                             "Slash policy is disabled; excluding the faulted member from local E3 work"
                         );
                         if let Err(error) = bus.publish_without_context(CommitteeMemberExcluded {
@@ -113,6 +156,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                                 .send(SlashSubmissionFinished {
                                     key,
                                     terminal: false,
+                                    acknowledge_recovery: false,
+                                    retry_event: Some(retry_event),
                                 })
                                 .await;
                             return;
@@ -121,6 +166,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                             .send(SlashSubmissionFinished {
                                 key,
                                 terminal: true,
+                                acknowledge_recovery: false,
+                                retry_event: None,
                             })
                             .await;
                         return;
@@ -140,6 +187,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                             .send(SlashSubmissionFinished {
                                 key,
                                 terminal: true,
+                                acknowledge_recovery: true,
+                                retry_event: None,
                             })
                             .await;
                         return;
@@ -158,6 +207,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                         .send(SlashSubmissionFinished {
                             key,
                             terminal: true,
+                            acknowledge_recovery: true,
+                            retry_event: None,
                         })
                         .await;
                     return;
@@ -175,6 +226,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                         .send(SlashSubmissionFinished {
                             key,
                             terminal: true,
+                            acknowledge_recovery: true,
+                            retry_event: None,
                         })
                         .await;
                     return;
@@ -215,11 +268,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                                 anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
                             );
                         }
-                        benign
+                        slash_submission_error_is_terminal(&decoded)
                     }
                 };
                 if let Err(error) = address
-                    .send(SlashSubmissionFinished { key, terminal })
+                    .send(SlashSubmissionFinished {
+                        key,
+                        terminal,
+                        acknowledge_recovery: terminal,
+                        retry_event: (!terminal).then_some(retry_event),
+                    })
                     .await
                 {
                     warn!(%error, "Slashing writer stopped before recording submission outcome");
@@ -234,8 +292,33 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SlashSubmissionFini
 {
     type Result = ();
 
-    fn handle(&mut self, msg: SlashSubmissionFinished, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SlashSubmissionFinished, ctx: &mut Self::Context) -> Self::Result {
+        if msg.acknowledge_recovery {
+            if let Some(recovery) = self.recovery.as_mut() {
+                if let Err(error) = recovery.try_mutate_without_context(|mut recovery| {
+                    recovery.acknowledge(&msg.key);
+                    Ok(recovery)
+                }) {
+                    self.bus.err(EType::Evm, error);
+                }
+            }
+        }
         self.submissions.finish(&msg.key, msg.terminal);
+        let Some(event) = msg.retry_event else {
+            return;
+        };
+
+        ctx.run_later(SLASH_SUBMISSION_RETRY_DELAY, move |actor, ctx| match actor
+            .submissions
+            .admit(event.clone())
+        {
+            Ok((key, SlashSubmissionDecision::Submit)) => {
+                ctx.notify(SubmitSlashIntent { key, event });
+            }
+            Ok((_, SlashSubmissionDecision::Defer)) => {}
+            Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {}
+            Err(error) => actor.bus.err(EType::Evm, error),
+        });
     }
 }
 

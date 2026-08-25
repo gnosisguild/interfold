@@ -6,6 +6,11 @@
 
 import {
   broadcastVote,
+  chainRpcUrl,
+  getBlockAtTimestamp,
+  getChainHead,
+  getIndexedLogs,
+  readContracts,
   getAllRoundResults,
   getCurrentRound,
   getEligibleAddresses,
@@ -17,10 +22,15 @@ import {
   getVoteStatus,
   requestNewRound,
 } from './api'
-import { getOnChainRoundData, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
+import { getOnChainRoundData, getOnchainVotingPower, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
 import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   BroadcastVoteRequest,
   BroadcastVoteResponse,
   CurrentRoundResponse,
@@ -32,11 +42,20 @@ import type {
   PreparedBallot,
   ProofData,
   RoundDetails,
+  SlotHead,
   TokenDetails,
   TokenHolder,
   VoteStatusResponse,
   WebResultResponse,
 } from './types'
+
+/**
+ * Pass as the SDK's `rpcUrl` to read the chain through the CRISP server's own `/chain/rpc` route.
+ *
+ * A sentinel rather than a boolean flag so the parameter keeps one meaning — "where chain reads
+ * go" — whether that is a URL you supply or the server you are already talking to.
+ */
+export const SERVER_RPC = 'server' as const
 
 /**
  * A class representing the CRISP SDK.
@@ -49,11 +68,27 @@ export class CrispSDK {
   private serverUrl: string
 
   /**
-   * Create a new instance.
-   * @param serverUrl
+   * Endpoint used for direct chain reads, or `undefined` to use viem's default public RPC.
    */
-  constructor(serverUrl: string) {
+  private rpcUrl: string | undefined
+
+  /**
+   * Create a new instance.
+   *
+   * @param serverUrl - The base URL of the CRISP server
+   * @param rpcUrl - Endpoint for direct chain reads. Omit (or pass `null`) to keep viem's default
+   *                 public RPC. Pass {@link SERVER_RPC} to read through the CRISP server's own
+   *                 `/chain/rpc` route instead of a third-party endpoint. Any other string is used
+   *                 as the endpoint URL directly.
+   *
+   * Routing through the server is opt-in rather than the default because it is a change of
+   * transport, not a tuning knob: a caller who merely upgrades this package would have every chain
+   * read redirected to a route their deployed server may not have — or may not be configured to
+   * serve the contracts being read — turning a version bump into an outage.
+   */
+  constructor(serverUrl: string, rpcUrl?: string | null) {
     this.serverUrl = serverUrl
+    this.rpcUrl = rpcUrl === SERVER_RPC ? chainRpcUrl(serverUrl) : (rpcUrl ?? undefined)
   }
 
   /**
@@ -72,12 +107,12 @@ export class CrispSDK {
    * @returns A promise that resolves to the prepared ballot.
    */
   async prepareBallot(request: PrepareBallotRequest): Promise<PreparedBallot> {
-    const previousCiphertext = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
+    const head = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
 
-    return prepareBallot({
-      ...request,
-      previousCiphertext,
-    })
+    // Branched rather than spread conditionally. The two halves of a slot head only mean anything
+    // together and the type models them as a pair, which a conditional spread widens back into two
+    // independent optional fields — the exact shape the pair exists to rule out.
+    return head ? prepareBallot({ ...request, previousCiphertext: head.ciphertext, previousIndex: head.index }) : prepareBallot(request)
   }
 
   /**
@@ -133,7 +168,7 @@ export class CrispSDK {
 
   /**
    * Broadcast an encrypted vote through the CRISP server, which relays it on-chain.
-   * @param request - The vote request (round id, hex encoded proof and voter address)
+   * @param request - The vote request (round id and hex encoded proof)
    * @returns The broadcast result, including the transaction hash on success
    */
   async broadcastVote(request: BroadcastVoteRequest): Promise<BroadcastVoteResponse> {
@@ -199,7 +234,23 @@ export class CrispSDK {
   async getOnChainRoundData(programAddress: string, e3Id: bigint, chainId?: number): Promise<OnChainRoundData> {
     const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
 
-    return getOnChainRoundData(programAddress, e3Id, chain)
+    return getOnChainRoundData(programAddress, e3Id, chain, this.rpcUrl)
+  }
+
+  /**
+   * Get the voting power a slot may spend in a `CensusMode.ONCHAIN` round, read from the CRISP
+   * program through this instance's configured endpoint.
+   *
+   * @param programAddress - The CRISP program address
+   * @param e3Id - The e3Id of the round
+   * @param slot - The slot address the ballot is written to
+   * @param chainId - The chain the program is deployed on; looked up on the server when omitted
+   * @returns The spendable voting power in ballot units
+   */
+  async getOnchainVotingPower(programAddress: string, e3Id: bigint, slot: string, chainId?: number): Promise<bigint> {
+    const chain = chainId ?? Number((await getRoundDetails(this.serverUrl, e3Id)).chainId)
+
+    return getOnchainVotingPower(programAddress, e3Id, slot, chain, this.rpcUrl)
   }
 
   /**
@@ -231,12 +282,56 @@ export class CrispSDK {
   }
 
   /**
+   * Get the chain head (block number, timestamp, chain id) as seen by the server.
+   * @returns The current head
+   */
+  async getChainHead(): Promise<ChainHead> {
+    return getChainHead(this.serverUrl)
+  }
+
+  /**
+   * Read allowlisted contracts through the server, batched, without a provider key of your own.
+   * @param calls - The calls to perform, in order
+   * @returns One result per call, in the same order
+   */
+  async readContracts(calls: ContractRead[]): Promise<ContractReadResult[]> {
+    return readContracts(this.serverUrl, calls)
+  }
+
+  /**
+   * Query logs for an allowlisted contract over an arbitrary block range. The server windows the
+   * range for you, so no chunking is needed on this side.
+   * @param query - The log query
+   * @returns The matching logs, ordered by block and log index
+   */
+  async getLogs(query: LogQuery): Promise<IndexedLog[]> {
+    return getIndexedLogs(this.serverUrl, query)
+  }
+
+  /**
+   * Resolve a unix timestamp to the last block at or before it.
+   * @param timestamp - The unix timestamp
+   * @returns The block number and its timestamp
+   */
+  async getBlockAtTimestamp(timestamp: bigint): Promise<{ blockNumber: bigint; timestamp: bigint }> {
+    return getBlockAtTimestamp(this.serverUrl, timestamp)
+  }
+
+  /**
+   * The server's read-only JSON-RPC URL, for pointing a standard Ethereum client at.
+   * @returns The JSON-RPC URL
+   */
+  chainRpcUrl(): string {
+    return chainRpcUrl(this.serverUrl)
+  }
+
+  /**
    * Get the previous ciphertext input for a slot address in a given round.
    * @param e3Id - The e3Id of the round
    * @param address - The address of the slot
-   * @returns The previous ciphertext, or undefined if the slot is empty
+   * @returns The slot head and its tree index, or undefined if the slot holds nothing usable
    */
-  async getPreviousCiphertext(e3Id: bigint, address: string): Promise<Uint8Array | undefined> {
+  async getPreviousCiphertext(e3Id: bigint, address: string): Promise<SlotHead | undefined> {
     return getPreviousCiphertext(this.serverUrl, e3Id, address)
   }
 }

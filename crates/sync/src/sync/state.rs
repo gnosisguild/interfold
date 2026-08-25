@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::SyncRepositoryFactory;
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use e3_data::Repositories;
 use e3_events::{AggregateId, EvmEventConfig, EvmEventConfigChain};
 use std::collections::{BTreeMap, HashMap};
@@ -98,6 +98,27 @@ impl SnapshotMeta {
             })
     }
 
+    /// Refuse replay when aggregate snapshots cover events that the router did not checkpoint.
+    pub fn ensure_request_router_covers(
+        &self,
+        request_router_cursors: &HashMap<AggregateId, u64>,
+    ) -> Result<()> {
+        for state in &self.aggregate_state {
+            let router_cursor = request_router_cursors
+                .get(&state.aggregate_id)
+                .copied()
+                .unwrap_or(0);
+            ensure!(
+                router_cursor >= state.seq,
+                "request-router checkpoint for aggregate {} stops at sequence {}, before snapshot sequence {}; refusing unsafe replay",
+                state.aggregate_id,
+                router_cursor,
+                state.seq
+            );
+        }
+        Ok(())
+    }
+
     pub fn aggregates(&self) -> Vec<AggregateId> {
         self.aggregate_state
             .iter()
@@ -128,6 +149,18 @@ mod tests {
         assert_eq!(map[&AggregateId::new(2)], 20);
         assert_eq!(map[&AggregateId::new(0)], 5);
         assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn stale_request_router_checkpoint_fails_replay_preflight() {
+        let router_cursors = HashMap::from([(AggregateId::new(1), 4), (AggregateId::new(2), 25)]);
+
+        let error = meta()
+            .ensure_request_router_covers(&router_cursors)
+            .expect_err("aggregate 1 must not replay past stale router state");
+
+        assert!(error.to_string().contains("aggregate 1"));
+        assert!(error.to_string().contains("sequence 4"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 title: 'Running a Ciphernode'
-description: 'Three ways to run a ciphernode: DappNode, Interfold CLI, or Docker'
+description: 'Three ways to run a ciphernode: DAppNode, Interfold CLI, or Docker'
 ---
 
 # Running a Ciphernode
@@ -8,36 +8,48 @@ description: 'Three ways to run a ciphernode: DappNode, Interfold CLI, or Docker
 This guide covers three methods to run a ciphernode, from easiest to most flexible. Choose the
 method that best fits your infrastructure.
 
-## Method 1: DappNode (Easiest)
+## Method 1: DAppNode (Easiest)
 
-DappNode provides a user-friendly interface for running a ciphernode with minimal configuration.
+DAppNode provides a user-friendly interface for running a ciphernode with minimal configuration.
 
 ### Installation
 
-1. Open your DappNode UI (`http://my.dappnode`)
+1. Open your DAppNode UI (`http://my.dappnode`)
 2. Search for **"Interfold Ciphernode"** (the current package name for the Interfold ciphernode) and
    install the package
 3. The setup wizard will prompt you for:
-   - `RPC_URL` - WebSocket RPC endpoint (e.g., `wss://ethereum-sepolia-rpc.publicnode.com`)
-   - `NETWORK` - Network name (e.g., `sepolia`, `mainnet`)
+   - `RPC_URL` - WebSocket RPC endpoint
+   - `NETWORK` and `CHAIN_ID`
    - Contract addresses and deploy blocks
-   - Optional: encryption password, network key, private key
+   - Ciphernode credentials JSON file
+   - Optional bootstrap peers
 
 4. Confirm and complete the installation
 5. Check **Packages → interfold-ciphernode → Logs** to verify the node started
 
 ### Configuration via Environment Variables
 
-| Variable              | Description                                  | Required |
-| --------------------- | -------------------------------------------- | -------- |
-| `RPC_URL`             | WebSocket RPC endpoint                       | Yes      |
-| `NETWORK`             | Network name (sepolia, mainnet, etc.)        | No       |
-| `NODE_ADDRESS`        | Your Ethereum address                        | No       |
-| `QUIC_PORT`           | UDP port for P2P networking (default: 37173) | No       |
-| `ENCRYPTION_PASSWORD` | Password to encrypt local data               | No       |
-| `NETWORK_PRIVATE_KEY` | libp2p network key (ed25519)                 | No       |
-| `PRIVATE_KEY`         | Ethereum private key for node transactions   | No       |
-| `PEERS`               | Comma-separated peer multiaddresses          | No       |
+| Variable                           | Description                                  | Required |
+| ---------------------------------- | -------------------------------------------- | -------- |
+| `RPC_URL`                          | WebSocket RPC endpoint                       | Yes      |
+| `NETWORK`                          | Network name (mainnet, sepolia, etc.)        | Yes      |
+| `CHAIN_ID`                         | EIP-155 chain ID                             | Yes      |
+| `NODE_ADDRESS`                     | Your Ethereum address                        | Yes      |
+| `INTERFOLD_CONTRACT`               | Interfold coordinator contract               | Yes      |
+| `CIPHERNODE_REGISTRY_CONTRACT`     | Ciphernode registry contract                 | Yes      |
+| `BONDING_REGISTRY_CONTRACT`        | Bonding registry contract                    | Yes      |
+| `SLASHING_MANAGER_CONTRACT`        | Slashing manager contract                    | Yes      |
+| `FEE_TOKEN_CONTRACT`               | Fee token contract                           | Yes      |
+| `INTERFOLD_DEPLOY_BLOCK`           | Interfold contract deploy block              | Yes      |
+| `CIPHERNODE_REGISTRY_DEPLOY_BLOCK` | Ciphernode registry deploy block             | Yes      |
+| `BONDING_REGISTRY_DEPLOY_BLOCK`    | Bonding registry deploy block                | Yes      |
+| `SLASHING_MANAGER_DEPLOY_BLOCK`    | Slashing manager deploy block                | Yes      |
+| `FEE_TOKEN_DEPLOY_BLOCK`           | Fee token deploy block                       | Yes      |
+| `QUIC_PORT`                        | UDP port for P2P networking (default: 37173) | No       |
+| `PEERS`                            | Comma-separated peer multiaddresses          | No       |
+
+Upload the credentials JSON file through the DAppNode setup wizard. The package copies it to
+`/run/secrets/secrets.json` before startup.
 
 ---
 
@@ -85,36 +97,56 @@ Edit `~/.config/interfold/interfold.config.yaml`:
 
 ```yaml
 node:
+  network: mainnet
   address: '0xYourAddress'
   quic_port: 9091
-  peers:
-    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
 chains:
+  - name: mainnet
+    rpc_url: 'wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'
+    chain_id: 1
+    contracts:
+      interfold:
+        address: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
+        deploy_block: 25786382
+      ciphernode_registry:
+        address: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7'
+        deploy_block: 25786378
+      bonding_registry:
+        address: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
+        deploy_block: 25473398
+      slashing_manager:
+        address: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'
+        deploy_block: 25786375
+      fee_token:
+        address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
+        deploy_block: 20663730
+
   - name: sepolia
+    enabled: false
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-        deploy_block: 11459000
+        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
+        deploy_block: 11534993
       ciphernode_registry:
-        address: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
-        deploy_block: 11458978
+        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
+        deploy_block: 11534965
       bonding_registry:
-        address: '0x77384A924C18FfE00A9325815723121534105Abd'
-        deploy_block: 11458979
+        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
+        deploy_block: 11534966
       slashing_manager:
-        address: '0x4CE0107239719003ad07F65e0ae18a09aD2dcfDE'
-        deploy_block: 11458977
+        address: '0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f'
+        deploy_block: 11534963
       fee_token:
-        address: '0xD4B8e32C718B87f81d8e58fB3a3f061D92CcBb27'
-        deploy_block: 11458975
+        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
+        deploy_block: 11534960
       faucet:
-        address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-        deploy_block: 11458989
+        address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
+        deploy_block: 11534982
 ```
 
 ### Check Your Addresses Are Current
@@ -128,10 +160,10 @@ interfold config check
 ```
 
 ```
-Deployment manifest: release v0.6.0
+Deployment manifest: release v0.10.0
 sepolia:
-  STALE interfold: config has 0x64Cd2d88…, published is 0xd49990bc…
-  warn  ciphernode_registry: deploy_block 11124526, published is 11458978
+  STALE interfold: config has 0x64Cd2d88…, published is 0x38A8A686…
+  warn  ciphernode_registry: deploy_block 11124526, published is 11534965
 ```
 
 The command exits non-zero when any address is wrong, so it can gate a restart in a supervisor or a
@@ -192,7 +224,7 @@ Pull and run an explicit versioned release tag for an operator node. Do not use 
 tag:
 
 ```bash
-export CIPHERNODE_IMAGE='ghcr.io/gnosisguild/ciphernode:<release-version>'
+export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:<release-version>'
 docker pull "$CIPHERNODE_IMAGE"
 ```
 
@@ -202,10 +234,9 @@ Create a `config.yaml` file:
 
 ```yaml
 node:
+  network: sepolia
   address: '0xYourAddress'
   quic_port: 9091
-  peers:
-    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
@@ -215,23 +246,23 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-        deploy_block: 11459000
+        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
+        deploy_block: 11534993
       ciphernode_registry:
-        address: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
-        deploy_block: 11458978
+        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
+        deploy_block: 11534965
       bonding_registry:
-        address: '0x77384A924C18FfE00A9325815723121534105Abd'
-        deploy_block: 11458979
+        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
+        deploy_block: 11534966
       slashing_manager:
-        address: '0x4CE0107239719003ad07F65e0ae18a09aD2dcfDE'
-        deploy_block: 11458977
+        address: '0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f'
+        deploy_block: 11534963
       fee_token:
-        address: '0xD4B8e32C718B87f81d8e58fB3a3f061D92CcBb27'
-        deploy_block: 11458975
+        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
+        deploy_block: 11534960
       faucet:
-        address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-        deploy_block: 11458989
+        address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
+        deploy_block: 11534982
 ```
 
 ### Create the Credentials Secret
@@ -250,13 +281,13 @@ ${EDITOR:-vi} secrets.json
 ```json
 {
   "password": "<strong-key-encryption-password>",
-  "private_key": "<operator-wallet-private-key>",
-  "network_private_key": "<unique-libp2p-network-private-key>"
+  "private_key": "<operator-wallet-private-key>"
 }
 ```
 
-All three values are required. Back up the encrypted node data, this password, and the network key
-through your secret-management system. Keep the wallet key in the project-approved signing system.
+Both values are required. The wallet command derives the libp2p identity from the operator wallet
+key. Back up the encrypted node data and this password through your secret-management system. Keep
+the wallet key in the project-approved signing system.
 
 ### Run the Container
 
@@ -326,15 +357,17 @@ docker logs -f ciphernode
 
 ### Node Configuration
 
-| Field          | Description                         | Default                    |
-| -------------- | ----------------------------------- | -------------------------- |
-| `address`      | Your Ethereum address               | Required                   |
-| `quic_port`    | UDP port for QUIC/libp2p networking | `9091`                     |
-| `peers`        | Bootstrap peer multiaddresses       | `[]`                       |
-| `autopassword` | Auto-generate password if missing   | `false`                    |
-| `autowallet`   | Auto-load wallet from environment   | `false`                    |
-| `data_dir`     | Override data directory             | `~/.local/share/interfold` |
-| `config_dir`   | Override config directory           | `~/.config/interfold`      |
+| Field          | Description                                    | Default                    |
+| -------------- | ---------------------------------------------- | -------------------------- |
+| `network`      | P2P profile: `mainnet`, `sepolia`, or `local`  | Inferred from chain ID     |
+| `network_id`   | Stable 32-byte hex ID for a custom P2P network | Required for custom names  |
+| `address`      | Your Ethereum address                          | Required                   |
+| `quic_port`    | UDP port for QUIC/libp2p networking            | `9091`                     |
+| `peers`        | Explicit bootstrap overrides                   | Profile DNS bootstrap      |
+| `autopassword` | Auto-generate password if missing              | `false`                    |
+| `autowallet`   | Auto-load wallet from environment              | `false`                    |
+| `data_dir`     | Override data directory                        | `~/.local/share/interfold` |
+| `config_dir`   | Override config directory                      | `~/.config/interfold`      |
 
 ### Chain Configuration
 
@@ -354,27 +387,27 @@ the check.
 
 Each chain requires these contract addresses:
 
-| Contract              | Description                             | Required for ciphernode |
-| --------------------- | --------------------------------------- | ----------------------- |
-| `interfold`           | Main Interfold coordinator contract     | Yes                     |
-| `ciphernode_registry` | Tracks registered operators             | Yes                     |
-| `bonding_registry`    | Manages bonds and tickets               | Yes                     |
-| `slashing_manager`    | Manages slashing penalties              | Yes                     |
-| `e3_program`          | E3 Program contract address             | No                      |
-| `fee_token`           | Stablecoin address for fees and tickets | No                      |
-| `faucet`              | Testnet faucet for FOLD + fee tokens    | No                      |
+| Contract              | Description                          | Required for ciphernode |
+| --------------------- | ------------------------------------ | ----------------------- |
+| `interfold`           | Main Interfold coordinator contract  | Yes                     |
+| `ciphernode_registry` | Tracks registered operators          | Yes                     |
+| `bonding_registry`    | Manages bonds and tickets            | Yes                     |
+| `slashing_manager`    | Manages slashing penalties           | Yes                     |
+| `e3_program`          | E3 Program contract address          | No                      |
+| `fee_token`           | Fee token address for E3 requests    | No                      |
+| `faucet`              | Testnet faucet for FOLD + fee tokens | No                      |
 
 Each contract can be specified as a simple address string or with a deploy block for faster syncing:
 
 ```yaml
 contracts:
   interfold:
-    address: '0x782ed907c3141e4b49BB9CBb34E83a820e12B2D7'
-    deploy_block: 11459000
-  ciphernode_registry: '0xCD571e311c11a6259ad95b7F95C1f2AF2b60ae6A'
+    address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
+    deploy_block: 11534993
+  ciphernode_registry: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
   faucet:
-    address: '0x2797A03F78a4237D6ba97170589BBD1Dca382207'
-    deploy_block: 11458989
+    address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
+    deploy_block: 11534982
 ```
 
 ---
@@ -394,19 +427,25 @@ Open the following ports:
 
 ### Bootstrap Peers
 
-Connect to the Interfold bootstrap network:
+Set the network profile and omit `peers` to use its DNS bootstrap address:
 
 ```yaml
-peers:
-  - '/dnsaddr/bootstrap.interfold.network'
+node:
+  network: mainnet
 ```
+
+Mainnet uses `/dnsaddr/bootstrap.interfold.network`. Sepolia uses
+`/dnsaddr/bootstrap-sepolia.interfold.network`. The profile scopes every libp2p protocol, so a node
+cannot join the other network even if DNS or an explicit peer address is wrong.
 
 Or specify individual peers:
 
 ```yaml
-peers:
-  - '/dns4/node1.example.com/udp/9091/quic-v1'
-  - '/ip4/192.168.1.100/udp/9091/quic-v1'
+node:
+  network: mainnet
+  peers:
+    - '/dns4/node1.example.com/udp/9091/quic-v1'
+    - '/ip4/192.168.1.100/udp/9091/quic-v1'
 ```
 
 ---
@@ -439,16 +478,19 @@ Control verbosity with the `-v` flag:
 
 ### Key Events to Watch
 
-| Event                       | Meaning                              |
-| --------------------------- | ------------------------------------ |
-| `E3Requested`               | New computation request detected     |
-| `TicketGenerated`           | Your sortition ticket was calculated |
-| `CiphernodeSelected`        | You were selected for a committee    |
-| `KeyshareCreated`           | Your key share was generated         |
-| `PublicKeyAggregated`       | Committee public key is ready        |
-| `CiphertextOutputPublished` | Time to generate decryption share    |
-| `DecryptionshareCreated`    | Your decryption share was published  |
-| `PlaintextAggregated`       | Final result is available            |
+| Event                       | Meaning                               |
+| --------------------------- | ------------------------------------- |
+| `E3Requested`               | New computation request detected      |
+| `TicketGenerated`           | Your sortition ticket was calculated  |
+| `CiphernodeSelected`        | You were selected for a committee     |
+| `KeyshareCreated`           | Your key share was generated          |
+| `PublicKeyAggregated`       | Local public key is ready to publish  |
+| `CommitteePublished`        | Public key is confirmed on-chain      |
+| `CiphertextOutputPublished` | Time to generate decryption share     |
+| `DecryptionshareCreated`    | Your decryption share was published   |
+| `PlaintextAggregated`       | Local result is ready for publication |
+| `PlaintextOutputPublished`  | Result is confirmed on-chain          |
+| `E3RequestComplete`         | Confirmed request cleanup started     |
 
 ---
 

@@ -4,17 +4,17 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::sync::Arc;
-
 use crate::actors::DecryptionshareCreatedBuffer;
 use crate::actors::KeyshareCreatedFilterBuffer;
 use crate::domain::committee::{
     committee_addresses_from_nodes, committee_addresses_in_party_order,
 };
 use crate::{
-    PublicKeyAggregator, PublicKeyAggregatorParams, PublicKeyAggregatorState,
-    PublicKeyRepositoryFactory, ThresholdPlaintextAggregator, ThresholdPlaintextAggregatorParams,
-    ThresholdPlaintextAggregatorState, TrBfvPlaintextRepositoryFactory,
+    PublicKeyAggregator, PublicKeyAggregatorParams, PublicKeyAggregatorRecoveryState,
+    PublicKeyAggregatorState, PublicKeyRepositoryFactory, ThresholdPlaintextAggregator,
+    ThresholdPlaintextAggregatorParams, ThresholdPlaintextAggregatorState,
+    TrBfvPlaintextRepositoryFactory, PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
+    THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
 };
 use actix::{Actor, Addr, Recipient};
 use alloy::primitives::Address;
@@ -22,12 +22,10 @@ use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_data::{AutoPersist, Persistable, RepositoriesFactory};
 use e3_events::{
-    prelude::*, CiphernodeSelected, CiphertextOutputPublished, DkgFoldAttestationContext, E3id,
+    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id, EventContext, Sequenced,
 };
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
-use e3_fhe::Fhe;
-use e3_fhe_params::BfvPreset;
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::{
     E3Context, E3ContextSnapshot, E3Extension, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
@@ -48,6 +46,36 @@ const ACTIVE_AGGREGATOR_KEY: TypedKey<bool> = TypedKey::new("active_aggregator")
 const PENDING_CIPHERTEXT_OUTPUT_KEY: TypedKey<CiphertextOutputPublished> =
     TypedKey::new("pending_ciphertext_output");
 const HONEST_PARTY_IDS_KEY: TypedKey<BTreeSet<u64>> = TypedKey::new("honest_party_ids");
+
+/// Restores the selector's active-aggregator decision before per-E3 actors hydrate.
+///
+/// The selector owns this derived role. Passing its recovered snapshot into the context avoids
+/// creating a new durable `AggregatorChanged` event on every process start.
+pub struct AggregatorRoleExtension {
+    initial_roles: HashMap<E3id, bool>,
+}
+
+impl AggregatorRoleExtension {
+    pub fn create(initial_roles: HashMap<E3id, bool>) -> Box<Self> {
+        Box::new(Self { initial_roles })
+    }
+}
+
+#[async_trait]
+impl E3Extension for AggregatorRoleExtension {
+    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
+        if let InterfoldEventData::AggregatorChanged(data) = evt.get_data() {
+            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, data.is_aggregator);
+        }
+    }
+
+    async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
+        if let Some(is_aggregator) = self.initial_roles.get(&ctx.e3_id).copied() {
+            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, is_aggregator);
+        }
+        Ok(())
+    }
+}
 
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
@@ -119,6 +147,10 @@ impl E3Extension for PublicKeyAggregatorExtension {
             seed,
             canonical_party_nodes,
         )));
+        let recovery = ctx
+            .repositories()
+            .publickey_recovery(&e3_id)
+            .send(Some(PublicKeyAggregatorRecoveryState::default()));
 
         let committee_size = match CiphernodesCommitteeSize::from_threshold(
             threshold_m,
@@ -134,13 +166,18 @@ impl E3Extension for PublicKeyAggregatorExtension {
             }
         };
         let value = create_publickey_aggregator(
-            fhe,
-            self.bus.clone(),
-            e3_id,
+            PublicKeyAggregatorParams {
+                fhe,
+                bus: self.bus.clone(),
+                e3_id,
+                params_preset,
+                committee_size,
+                dkg_fold_attestation_context,
+                recovery,
+                initial_is_aggregator: load_is_active_aggregator(ctx),
+                effects_enabled: true,
+            },
             sync_state,
-            params_preset,
-            committee_size,
-            dkg_fold_attestation_context,
         );
 
         ctx.set_event_recipient("publickey", Some(value));
@@ -161,6 +198,25 @@ impl E3Extension for PublicKeyAggregatorExtension {
         };
         let recovered_state = sync_state.try_get()?;
         remember_committee_dependencies_from_publickey_state(ctx, &recovered_state)?;
+        let recovery_repo = ctx.repositories().publickey_recovery(&ctx.e3_id);
+        let recovery = recovery_repo.load().await?;
+        let recovery = if recovery.has() {
+            recovery
+        } else {
+            ensure!(
+                !matches!(recovered_state, PublicKeyAggregatorState::Complete { .. }),
+                "public-key aggregation for E3 {} completed without a recovery publication record",
+                ctx.e3_id
+            );
+            recovery_repo.send(Some(PublicKeyAggregatorRecoveryState::default()))
+        };
+        ensure!(
+            recovery.get().is_some_and(
+                |state| state.schema_version == PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION
+            ),
+            "unsupported public-key recovery schema for E3 {}",
+            ctx.e3_id
+        );
 
         // Get deps
         let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
@@ -190,14 +246,20 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 },
             )?;
         let value = create_publickey_aggregator(
-            fhe.clone(),
-            self.bus.clone(),
-            ctx.e3_id.clone(),
+            PublicKeyAggregatorParams {
+                fhe: fhe.clone(),
+                bus: self.bus.clone(),
+                e3_id: ctx.e3_id.clone(),
+                params_preset: meta.params_preset,
+                committee_size,
+                dkg_fold_attestation_context: ctx
+                    .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
+                    .copied(),
+                recovery,
+                initial_is_aggregator: load_is_active_aggregator(ctx),
+                effects_enabled: false,
+            },
             sync_state,
-            meta.params_preset,
-            committee_size,
-            ctx.get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
-                .copied(),
         );
 
         // send to context
@@ -208,30 +270,12 @@ impl E3Extension for PublicKeyAggregatorExtension {
 }
 
 fn create_publickey_aggregator(
-    fhe: Arc<Fhe>,
-    bus: BusHandle,
-    e3_id: E3id,
+    params: PublicKeyAggregatorParams,
     sync_state: Persistable<PublicKeyAggregatorState>,
-    params_preset: BfvPreset,
-    committee_size: CiphernodesCommitteeSize,
-    dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
 ) -> Recipient<InterfoldEvent> {
-    KeyshareCreatedFilterBuffer::new(
-        PublicKeyAggregator::new(
-            PublicKeyAggregatorParams {
-                fhe,
-                bus,
-                e3_id,
-                params_preset,
-                committee_size,
-                dkg_fold_attestation_context,
-            },
-            sync_state,
-        )
-        .start(),
-    )
-    .start()
-    .into()
+    KeyshareCreatedFilterBuffer::new(PublicKeyAggregator::new(params, sync_state).start())
+        .start()
+        .into()
 }
 
 pub struct ThresholdPlaintextAggregatorExtension {
@@ -253,7 +297,12 @@ impl ThresholdPlaintextAggregatorExtension {
         })
     }
 
-    fn try_start_plaintext(&self, ctx: &mut E3Context, data: &CiphertextOutputPublished) -> bool {
+    fn try_start_plaintext(
+        &self,
+        ctx: &mut E3Context,
+        data: &CiphertextOutputPublished,
+        ec: &EventContext<Sequenced>,
+    ) -> bool {
         if ctx.get_event_recipient("threshold_keyshare").is_none() {
             tracing::warn!(
                 e3_id = %data.e3_id,
@@ -305,6 +354,10 @@ impl ThresholdPlaintextAggregatorExtension {
             data.ciphertext_output.clone(),
             meta.params.clone(),
         )));
+        let recovery = ctx
+            .repositories()
+            .trbfv_plaintext_recovery(&e3_id)
+            .send(Some(crate::new_threshold_plaintext_recovery(ec.clone())));
 
         ctx.set_event_recipient(
             "plaintext",
@@ -329,13 +382,15 @@ impl ThresholdPlaintextAggregatorExtension {
                             }
                         },
                         proof_aggregation_enabled: self.proof_aggregation_enabled,
+                        initial_is_aggregator,
+                        effects_enabled: true,
                         committee_addresses,
                         honest_committee_addresses,
+                        recovery,
                     },
                     sync_state,
                 )
                 .start(),
-                initial_is_aggregator,
             )),
         );
 
@@ -561,27 +616,23 @@ fn load_is_active_aggregator(ctx: &E3Context) -> bool {
 
 fn create_decryptionshare_buffer(
     dest: Addr<ThresholdPlaintextAggregator>,
-    initial_is_aggregator: bool,
 ) -> Recipient<InterfoldEvent> {
-    DecryptionshareCreatedBuffer::new_with_aggregator_state(dest, initial_is_aggregator)
-        .start()
-        .into()
+    DecryptionshareCreatedBuffer::new(dest).start().into()
 }
 
 #[async_trait]
 impl E3Extension for ThresholdPlaintextAggregatorExtension {
     fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
-        if let InterfoldEventData::AggregatorChanged(data) = evt.get_data() {
-            ctx.set_dependency(ACTIVE_AGGREGATOR_KEY, data.is_aggregator);
+        if let InterfoldEventData::AggregatorChanged(_) = evt.get_data() {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
             }
             return;
         }
 
         if matches!(evt.get_data(), InterfoldEventData::CiphernodeSelected(_)) {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
             }
             return;
         }
@@ -609,7 +660,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                     if let Some(ciphertext) =
                         ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned()
                     {
-                        self.try_start_plaintext(ctx, &ciphertext);
+                        self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
                     }
                 }
                 Err(e) => {
@@ -624,7 +675,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 self.bus.err(EType::PlaintextAggregation, e);
             }
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
             }
             return;
         }
@@ -634,7 +685,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             return;
         };
         ctx.set_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY, data.clone());
-        self.try_start_plaintext(ctx, data);
+        self.try_start_plaintext(ctx, data, evt.get_ctx());
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
@@ -654,6 +705,23 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         if !sync_state.has() {
             return Ok(());
         };
+        let recovery = ctx
+            .repositories()
+            .trbfv_plaintext_recovery(&snapshot.e3_id)
+            .load()
+            .await?;
+        ensure!(
+            recovery.has(),
+            "plaintext aggregation for E3 {} has no restart recovery record",
+            ctx.e3_id
+        );
+        ensure!(
+            recovery.get().is_some_and(|state| {
+                state.schema_version == THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION
+            }),
+            "unsupported plaintext recovery schema for E3 {}",
+            ctx.e3_id
+        );
 
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             self.bus.err(
@@ -686,18 +754,18 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                     )
                 })?,
                 proof_aggregation_enabled: self.proof_aggregation_enabled,
+                initial_is_aggregator,
+                effects_enabled: false,
                 committee_addresses,
                 honest_committee_addresses,
+                recovery,
             },
             sync_state,
         )
         .start();
 
         // send to context
-        ctx.set_event_recipient(
-            "plaintext",
-            Some(create_decryptionshare_buffer(value, initial_is_aggregator)),
-        );
+        ctx.set_event_recipient("plaintext", Some(create_decryptionshare_buffer(value)));
 
         Ok(())
     }
@@ -709,10 +777,15 @@ mod tests {
     use alloy::primitives::address;
     use e3_data::{DataStore, InMemStore};
     use e3_events::{OrderedSet, Seed};
+    use e3_fhe::Fhe;
+    use e3_fhe_params::BfvPreset;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
     use e3_test_helpers::get_common_setup;
     use e3_utils::ArcBytes;
-    use std::collections::{BTreeSet, HashMap};
+    use std::{
+        collections::{BTreeSet, HashMap},
+        sync::Arc,
+    };
 
     fn generating_c5_state() -> PublicKeyAggregatorState {
         let party_nodes = HashMap::from([
@@ -789,6 +862,29 @@ mod tests {
     }
 
     #[actix::test]
+    async fn hydration_uses_the_recovered_role() -> Result<()> {
+        let e3_id = E3id::new("42", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        let snapshot = E3ContextSnapshot {
+            e3_id: e3_id.clone(),
+            recipients: Vec::new(),
+            dependencies: Vec::new(),
+        };
+
+        AggregatorRoleExtension::create(HashMap::from([(e3_id, true)]))
+            .hydrate(&mut ctx, &snapshot)
+            .await?;
+
+        assert_eq!(ctx.get_dependency(ACTIVE_AGGREGATOR_KEY), Some(&true));
+        Ok(())
+    }
+
+    #[actix::test]
     async fn publickey_hydration_restores_committee_dependencies_first() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
             get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
@@ -828,6 +924,22 @@ mod tests {
         ctx.repositories()
             .publickey(&e3_id)
             .write_sync(&state)
+            .await?;
+        ctx.repositories()
+            .publickey_recovery(&e3_id)
+            .write_sync(&PublicKeyAggregatorRecoveryState {
+                pending_publication: Some(e3_events::PublicKeyAggregated {
+                    pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+                    e3_id: e3_id.clone(),
+                    nodes: OrderedSet::new(),
+                    committee_addresses: committee_addresses.clone(),
+                    honest_committee_addresses: honest_committee_addresses.clone(),
+                    pk_commitment: [0; 32],
+                    dkg_aggregator_proof: None,
+                    dkg_attestation_bundle: None,
+                }),
+                ..Default::default()
+            })
             .await?;
         let snapshot = E3ContextSnapshot {
             e3_id,

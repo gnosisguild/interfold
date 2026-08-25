@@ -1,19 +1,30 @@
 {
   "name": "@crisp-e3/sdk",
-  "version": "0.17.0",
+  "version": "0.18.0-insecure.0",
   "type": "module",
   "author": {
     "name": "gnosisguild",
     "url": "https://github.com/gnosisguild"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/presets/*.map"
   ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./insecure-512": {
+      "types": "./dist/presets/insecure-512.d.ts",
+      "import": "./dist/presets/insecure-512.js",
+      "default": "./dist/presets/insecure-512.js"
+    },
+    "./secure-8192": {
+      "types": "./dist/presets/secure-8192.d.ts",
+      "import": "./dist/presets/secure-8192.js",
+      "default": "./dist/presets/secure-8192.js"
     },
     "./workers/generateCircuitInputs.worker": "./dist/workers/generateCircuitInputs.worker.js"
   },
@@ -31,8 +42,14 @@
     "compile:fold": "cd ../../circuits/bin/fold && nargo compile",
     "compile:fold_onchain": "cd ../../circuits/bin/fold_onchain && nargo compile",
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
-    "build": "pnpm build:wasm && pnpm compile:circuits && tsup",
-    "test": "vitest --run"
+    "build": "pnpm build:wasm && pnpm compile:circuits && pnpm stage:preset insecure-512 && tsup",
+    "test": "pnpm stage:preset insecure-512 && vitest --run",
+    "stage:preset": "node ../../scripts/stage-preset-artifacts.mjs",
+    "build:presets": "node ../../scripts/build-presets.mjs",
+    "check:presets": "node ../../scripts/check-presets.mjs",
+    "prepublishOnly": "pnpm check:presets",
+    "build:testing": "pnpm build:wasm && CRISP_PRESET=insecure-512 tsup",
+    "build:prod": "pnpm build:wasm && CRISP_PRESET=secure-8192 tsup"
   },
   "publishConfig": {
     "access": "public"

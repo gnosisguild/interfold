@@ -133,9 +133,22 @@ function appendVerifierTxs(
       ),
     );
   }
+  // The compute-receipt verifier. Each E3 snapshots this at request time, so a later change never
+  // affects an E3 in flight; leaving it unset means no protocol-level ciphertext verification.
+  //
+  // Three sources, in precedence order. A verifier deployed by this run wins, because it is the one
+  // the rest of the deployment just wired up. Otherwise the config decides, and it is read from both
+  // shapes `ProtocolConfig` declares: `verifiers.ciphertextVerifier` groups it with the other
+  // verifier addresses, and the top-level field predates that grouping. Preferring one config shape
+  // and ignoring the other would silently resolve to `undefined` for any config written against the
+  // other, and an unset verifier is indistinguishable from one deliberately omitted — it just means
+  // no ciphertext verification, with nothing to say it was a mistake.
   const ciphertext =
     c.ciphertextVerifier ??
-    optionalAddress(config.ciphertextVerifier, "ciphertextVerifier");
+    optionalAddress(
+      config.verifiers?.ciphertextVerifier ?? config.ciphertextVerifier,
+      "ciphertextVerifier",
+    );
   if (ciphertext) {
     txs.push(
       safeTx(

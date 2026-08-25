@@ -124,6 +124,12 @@ optional-Noir CI stays green.
 
 ## Solidity verifiers (example: CRISP)
 
+The `@interfold/sdk` `generateProof()` helper embeds user-data-encryption circuits built with
+`--preset insecure-512 --committee minimum`. It is a convenience for that path only. For on-chain
+Honk verification, compile your own UDE, app, and fold circuits for the preset and committee your
+deployment uses — see
+[Proving: embedded circuits or your own](./sdk#proving-embedded-circuits-or-your-own).
+
 Projects such as CRISP compile circuits with **bb** and emit a verifier contract. Example
 entrypoint:
 

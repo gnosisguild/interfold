@@ -12,13 +12,13 @@ export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } fr
 export { splitDigest } from './circuitInputs'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
-import crispCircuit from '../../../circuits/bin/crisp/target/crisp.json'
+// Only the aggregation circuits are imported here. Their ABI is proof and verification-key shaped
+// rather than polynomial shaped, so one artifact serves every preset and inlining them costs ~0.3MB.
+// The BFV-shaped circuits arrive through `setCircuits()` — see ./circuits.
 import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
-import crispOnchainCircuit from '../../../circuits/bin/crisp_onchain/target/crisp_onchain.json'
 import foldOnchainCircuit from '../../../circuits/bin/fold_onchain/target/crisp_onchain_fold.json'
-import userDataEncryptionCt0Circuit from '../../../../../circuits/bin/threshold/target/user_data_encryption_ct0.json'
-import userDataEncryptionCt1Circuit from '../../../../../circuits/bin/threshold/target/user_data_encryption_ct1.json'
 import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/target/user_data_encryption.json'
+import { requireCircuits } from './circuits'
 import { bytesToHex, encodeAbiParameters, parseAbiParameters, numberToHex, getAddress } from 'viem/utils'
 import { Hex } from 'viem'
 
@@ -108,10 +108,11 @@ export const executeCircuit = async (circuit: CompiledCircuit, inputs: any): Pro
 export const generateProof = async (circuitInputs: any, censusMode: CensusVariant = 'merkle') => {
   const api = await getBBApi()
 
-  const ballotCircuit = censusMode === 'onchain' ? crispOnchainCircuit : crispCircuit
+  const circuits = requireCircuits()
+  const ballotCircuit = censusMode === 'onchain' ? circuits.crispOnchain : circuits.crisp
   const foldCircuitForMode = censusMode === 'onchain' ? foldOnchainCircuit : foldCircuit
 
-  const { witness: userDataEncryptionCt0Witness } = await executeCircuit(userDataEncryptionCt0Circuit as CompiledCircuit, {
+  const { witness: userDataEncryptionCt0Witness } = await executeCircuit(circuits.userDataEncryptionCt0 as CompiledCircuit, {
     pk0is: circuitInputs.pk0is,
     ct0is: circuitInputs.ct0is,
     u: circuitInputs.u,
@@ -122,7 +123,7 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     r1is: circuitInputs.r1is,
     r2is: circuitInputs.r2is,
   })
-  const { witness: userDataEncryptionCt1Witness } = await executeCircuit(userDataEncryptionCt1Circuit as CompiledCircuit, {
+  const { witness: userDataEncryptionCt1Witness } = await executeCircuit(circuits.userDataEncryptionCt1 as CompiledCircuit, {
     pk1is: circuitInputs.pk1is,
     ct1is: circuitInputs.ct1is,
     u: circuitInputs.u,
@@ -166,8 +167,8 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     num_options: circuitInputs.num_options,
   })
 
-  const userDataEncryptionCt0Backend = new UltraHonkBackend((userDataEncryptionCt0Circuit as CompiledCircuit).bytecode, api)
-  const userDataEncryptionCt1Backend = new UltraHonkBackend((userDataEncryptionCt1Circuit as CompiledCircuit).bytecode, api)
+  const userDataEncryptionCt0Backend = new UltraHonkBackend((circuits.userDataEncryptionCt0 as CompiledCircuit).bytecode, api)
+  const userDataEncryptionCt1Backend = new UltraHonkBackend((circuits.userDataEncryptionCt1 as CompiledCircuit).bytecode, api)
   const userDataEncryptionBackend = new UltraHonkBackend((userDataEncryptionCircuit as CompiledCircuit).bytecode, api)
   const crispBackend = new UltraHonkBackend((ballotCircuit as CompiledCircuit).bytecode, api)
   const foldBackend = new UltraHonkBackend((foldCircuitForMode as CompiledCircuit).bytecode, api)
@@ -326,7 +327,11 @@ export const prepareBallot = async (inputs: PrepareBallotInputs): Promise<Prepar
 export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<ProofData> => {
   const circuitInputs = await attachSignatureImpl(prepared, digest, signature)
 
-  return { ...(await generateProof(circuitInputs, prepared.censusMode)), encryptedVote: prepared.encryptedVote }
+  return {
+    ...(await generateProof(circuitInputs, prepared.censusMode)),
+    encryptedVote: prepared.encryptedVote,
+    parentIndexPlusOne: prepared.parentIndexPlusOne,
+  }
 }
 
 /**
@@ -364,7 +369,7 @@ export const verifyProof = async (proof: ProofData, censusMode: CensusVariant = 
  * @param proof The proof data.
  * @returns The encoded proof data as a hex string.
  */
-export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote }: ProofData): Hex => {
+export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote, parentIndexPlusOne }: ProofData): Hex => {
   // Indices follow the fold circuit public inputs:
   //   0 prev_ct_commitment, 1 digest_hi, 2 digest_lo, 3 slot_address,
   //   4 merkle_root | voting_power, 5 is_first_vote, 6 num_options,
@@ -372,10 +377,11 @@ export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote }: Proo
   const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
   const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
 
-  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes'), [
+  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes, uint40'), [
     bytesToHex(proof),
     slotAddress,
     encryptedVoteCommitment,
     bytesToHex(encryptedVote),
+    parentIndexPlusOne,
   ])
 }

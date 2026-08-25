@@ -107,6 +107,7 @@ impl Cli {
                     },
                     Commands::Ciphernode {
                         command: CiphernodeCommands::Setup {
+                            network,
                             rpc_url,
                             password,
                             password_stdin,
@@ -116,6 +117,7 @@ impl Cli {
                     } => {
                         ciphernode::setup::execute(
                             out,
+                            network,
                             rpc_url,
                             password,
                             password_stdin,
@@ -128,6 +130,7 @@ impl Cli {
                         log!(out,"No configuration found. Setting up interfold configuration...");
                         ciphernode::setup::execute(
                             out,
+                            "sepolia".to_string(),
                             None,
                             None,
                             false,

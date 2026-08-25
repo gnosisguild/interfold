@@ -2,51 +2,78 @@
 # e3_program (CRISPProgram): updated by `USE_MOCKS=true pnpm deploy:contracts` in packages/crisp-contracts.
 chains:
   - name: localhost
+    enabled: true
     rpc_url: ws://localhost:8545
     contracts:
       e3_program:
-        address: "0xc351628EB244ec633d5f21fBD6621e1a683B1181"
-        deploy_block: 39
+        address: "0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7"
+        deploy_block: 78
       interfold:
-        address: "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
-        deploy_block: 15
+        address: "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690"
+        deploy_block: 32
       ciphernode_registry:
-        address: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
-        deploy_block: 7
-      bonding_registry:
         address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
-        deploy_block: 8
+        deploy_block: 9
+      bonding_registry:
+        address: "0x9A676e781A523b5d0C0e43731313A708CB607508"
+        deploy_block: 10
       slashing_manager:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 6
+        address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+        deploy_block: 7
       fee_token:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
         deploy_block: 4
+  - name: "mainnet"
+    enabled: false
+    rpc_url: "wss://ethereum-rpc.publicnode.com"
+    chain_id: 1
+    contracts:
+      # CRISPProgram is not yet deployed on mainnet (packages/crisp-contracts/deployed_contracts.json
+      # has no mainnet entry). Fill in after `pnpm deploy:contracts --network mainnet`.
+      e3_program:
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
+      interfold:
+        address: "0x28cF63B459e6218C69EA97ea7D90541cf648c715"
+        deploy_block: 25786382
+      ciphernode_registry:
+        address: "0xC927A5B2d8F68697bC28C0670df05178c93df2d7"
+        deploy_block: 25786378
+      bonding_registry:
+        address: "0x0ec90465095C21830BEcED07e032809A2Bd2915F"
+        deploy_block: 25473398
+      slashing_manager:
+        address: "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9"
+        deploy_block: 25786375
+      fee_token:
+        address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
+        deploy_block: 20663730
   - name: "sepolia"
+    enabled: false
     rpc_url: "wss://ethereum-sepolia-rpc.publicnode.com"
     chain_id: 11155111
     contracts:
       e3_program:
-        address: "0x0376Bc3738A81A9B83B23648cC89Cc68A38253fd"
-        deploy_block: 11472595
+        address: "0x8D9c914446451fdE7FC0fdBcF20573E878c3DE5a"
+        deploy_block: 11508527
       interfold:
-        address: "0xDB3a68cC7B4F689c5226FEAa7593B3E1eAa0F6F7"
-        deploy_block: 11472528
+        address: "0x38A8A686A420023568E995b57B4FBEA371555Ba7"
+        deploy_block: 11508431
       ciphernode_registry:
-        address: "0x14D5640e74f79B957FD6b59d7347a9e8A48D16ba"
-        deploy_block: 11472506
+        address: "0xa639b9a7AB05B787fFE258735Cf9541152a0E610"
+        deploy_block: 11508403
       bonding_registry:
-        address: "0xF9b12c20e9D87101a7f6B74958DCED9A1E3b6122"
-        deploy_block: 11472507
+        address: "0x4b8560271CD78e071f0074f6Db7D344298187F8b"
+        deploy_block: 11508404
       slashing_manager:
-        address: "0x92a39556F16fF3cFff8ac19DB5770091feed632f"
-        deploy_block: 11472505
+        address: "0xe9643cdEFfa4a560DBAbB72330aaF923bc46a138"
+        deploy_block: 11508400
       fee_token:
-        address: "0x0028487557c5a01B9179b31BE894feBd755131A6"
-        deploy_block: 11472503
+        address: "0x1D4b4750A5A2CB04F22979cb3FC05e9Fc51141eA"
+        deploy_block: 11508395
       faucet:
-        address: "0x024d01Ea167655D348861B2A467356cc8a63c6ab"
-        deploy_block: 11472517
+        address: "0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA"
+        deploy_block: 11508419
 program:
   dev: true
   # risc0:

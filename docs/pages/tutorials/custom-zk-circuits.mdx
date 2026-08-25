@@ -26,21 +26,34 @@ input validation circuits.
 
 ## What the Circuits Prove
 
-CRISP's circuit system handles two distinct cases:
+CRISP's circuit system proves one relation for every submission, and four things hold on every path:
 
-**Actual vote:**
+1. **Voter eligibility** — the slot's address is in a Merkle tree of eligible participants
+2. **Valid encryption** — the ballot ciphertext is a well-formed BFV encryption
+3. **Correct ciphertext addition** — the published ciphertext is `addend + ballot`, computed
+   correctly
+4. **A well-formed plaintext** — every coefficient of the ballot is constrained, not only the ones
+   the vote rules read
 
-1. **Voter eligibility** — the voter's address is in a Merkle tree of eligible participants
-2. **Valid encryption** — the ciphertext is a well-formed BFV encryption
-3. **Correct signature** — the submission was signed by the voter (ECDSA recovery)
-4. **Within balance** — the vote amount does not exceed the voter's token balance
+What changes between the two cases is the addend and the authorisation:
+
+**Actual vote** — the addend is the zero ciphertext, so the ballot replaces what the slot holds.
+Additionally proves:
+
+1. **Correct signature** — the submission was signed by the voter (ECDSA recovery)
+2. **Within balance** — the vote amount does not exceed the voter's token balance
 
 **Mask vote** (for
-[receipt-freeness](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)):
+[receipt-freeness](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)) —
+the addend is the ciphertext already in the slot, so the vote there is unchanged. Additionally
+proves:
 
-1. **Encryption of zero** — the ciphertext encrypts a zero-value vote
-2. **Correct ciphertext addition** — the sum of the previous slot ciphertext and the zero ciphertext
-   is computed correctly (`sum = prev + 0`)
+1. **Encryption of zero** — the plaintext is zero in every coefficient, so a mask can neither change
+   the tally nor carry a payload
+
+No signature is checked on the mask path, which is what lets a third party mask a slot at all. The
+flag that chooses between the two is private, so the two cases are not distinguishable once
+published.
 
 ---
 
@@ -95,14 +108,26 @@ fn main(
 ) -> pub (Field, Field, Field)  // (final_ct_commitment, ct_commitment, k1_commitment)
 ```
 
-The circuit supports two modes controlled by `is_mask_vote`:
+The circuit proves one relation for every operation — voting, changing a vote, and masking:
+
+```
+published ciphertext = addend + ballot ciphertext
+```
+
+`is_mask_vote` chooses the addend and is **private**:
 
 - **Actual vote**: Verifies the signature matches the slot address, checks that the vote amount
-  doesn't exceed the voter's balance, and validates Merkle membership
-- **Mask vote**: Verifies a zero-value vote. Anyone can submit mask votes to any slot, which
-  provides
+  doesn't exceed the voter's balance, and validates Merkle membership. The addend is the zero
+  ciphertext, so a vote replaces what the slot holds rather than adding to it
+- **Mask vote**: Verifies a zero-value ballot, in every plaintext coefficient. The addend is the
+  ciphertext already in the slot, so the vote there is unchanged. Anyone can submit mask votes to
+  any slot, which provides
   [receipt-freeness](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/) —
   voters cannot prove which ciphertext is theirs
+
+Because both branches return the same commitment and publish the same shape of ciphertext, an
+observer cannot tell them apart. Doing so would mean distinguishing a fresh BFV ciphertext from a
+sum, which the encryption scheme hides.
 
 ### Library Modules
 
@@ -112,10 +137,11 @@ leaf (voter address) exists at a specific index without revealing other leaves.
 **`ecdsa.nr`** — secp256k1 ECDSA signature verification and Ethereum address derivation. Recovers
 the signer address from the signature and verifies it matches the expected voter.
 
-**`ciphertext_addition.nr`** — Used in mask vote mode to prove that `sum = prev + new` for BFV
-ciphertexts (where `new` is an encryption of zero). Uses the Schwartz-Zippel lemma with a
-Fiat-Shamir challenge point to verify the polynomial identity at a single random point, avoiding the
-cost of checking every coefficient.
+**`ciphertext_addition.nr`** — Proves that `sum = addend + new` for BFV ciphertexts. Asserted on
+every path, not only for masks: the addend is the slot's ciphertext for a mask and the zero
+ciphertext otherwise, so the same relation covers a vote, a re-vote, and a mask. Uses the
+Schwartz-Zippel lemma with a Fiat-Shamir challenge point to verify the polynomial identity at a
+single random point, avoiding the cost of checking every coefficient.
 
 **`utils.nr`** — Vote validation helpers. Checks that vote coefficients are binary (0 or 1) and that
 the total doesn't exceed the voter's balance.
@@ -167,7 +193,8 @@ the API instance and SRS (Structured Reference String) to avoid re-initialisatio
 ## On-chain Verification
 
 The final proof is verified on-chain in `CRISPProgram.publishInput()` using an auto-generated Honk
-verifier contract (`CRISPVerifier.sol`). This verifier is generated by Barretenberg and contains the
+verifier contract (`contracts/verifiers/<preset>/CRISPVerifier.sol`, one per BFV preset because it
+encodes the circuit's verification key). This verifier is generated by Barretenberg and contains the
 verification key baked in.
 
 ```solidity
@@ -180,7 +207,7 @@ The public inputs include:
 - `prev_ct_commitment` — commitment to the previous ciphertext in the slot
 - `merkle_root` — the eligibility Merkle root
 - `slot_address` — which vote slot is being written to
-- `is_first_vote` — whether this is the first vote in the slot
+- `is_first_vote` — whether this input extends an earlier entry in the slot, or nothing
 - `num_options` — number of voting options
 
 ---
@@ -197,10 +224,14 @@ import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 
 await init()
 const generator = ZKInputsGenerator.withDefaults()
+// `previousCiphertext` is the end of the slot's chain of usable entries, or `undefined` when the
+// slot holds nothing. `keepPrevious` is set only for a mask over an occupied slot: it is what makes
+// the ballot add to that ciphertext rather than replace it.
 const { encryptedVote, inputs } = generator.generateInputs(
   previousCiphertext,
   publicKey,
   voteCoefficients,
+  keepPrevious,
 )
 ```
 

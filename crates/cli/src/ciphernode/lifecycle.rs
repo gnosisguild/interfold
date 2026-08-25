@@ -137,7 +137,9 @@ pub(crate) async fn deactivate(
 
     if let Some(amount) = ticket_amount {
         let ticket_contract = ctx.ticket_token_address().await?;
-        let decimals = ctx.erc20(ticket_contract).decimals().call().await?;
+        let ticket_metadata = ctx.erc20(ticket_contract);
+        let decimals = ticket_metadata.decimals().call().await?;
+        let symbol = ticket_metadata.symbol().call().await?;
         let parsed = parse_amount(&amount, decimals)?;
         let receipt = ctx
             .bonding()
@@ -147,13 +149,26 @@ pub(crate) async fn deactivate(
             .get_receipt()
             .await?;
         require_successful_receipt("remove ticket balance", &receipt)?;
-        log!(
-            out,
-            "Removed {} tickets from {:#x} (tx: {:#x})",
-            amount,
-            operator,
-            receipt.transaction_hash
-        );
+        // The withdrawal already succeeded, so a failed read must not fail the command.
+        match ctx.bonding().availableTickets(operator).call().await {
+            Ok(tickets) => log!(
+                out,
+                "Removed {} {} from {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
+                amount,
+                symbol,
+                operator,
+                tickets,
+                receipt.transaction_hash
+            ),
+            Err(err) => log!(
+                out,
+                "Removed {} {} from {:#x} (tx: {:#x}). Could not read the ticket balance: {err}",
+                amount,
+                symbol,
+                operator,
+                receipt.transaction_hash
+            ),
+        }
     }
 
     if let Some(amount) = ciphernode_bond_amount {

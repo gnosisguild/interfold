@@ -15,10 +15,11 @@ import Inspector from './Inspector'
 import Loader from './Loader'
 import Operator from './Operator'
 import { useAllE3s, useCrispPolls, useE3Details, useRecentBallots } from './lib/useE3s'
+import { useNetworkStats } from './lib/network'
 import { adaptHistoryEntries, adaptInspectorDetail, adaptInspectorE3List, adaptPoll } from './lib/adapt'
 import { formatE3Id } from './lib/pollMeta'
 import { LINKS, explorerAddress } from './lib/links'
-import { CONTRACTS } from './lib/chain'
+import { CONTRACTS, NETWORK_NAME } from './lib/chain'
 import { isE3Active, solidityStageToUiIdx, type E3FullDetails, type E3Summary } from './lib/e3'
 
 function Header({ density, view, onNav }: { density: string; view: string; onNav: (id: string) => void }) {
@@ -127,7 +128,7 @@ function SiteFooter() {
       <div className='site-foot__rule'>
         <span>© 2026 Interfold · Built in the open</span>
         <a className='mono' href={explorerAddress(CONTRACTS.Interfold)} target='_blank' rel='noreferrer'>
-          Interfold on Sepolia ↗
+          Interfold on {NETWORK_NAME} ↗
         </a>
       </div>
     </footer>
@@ -181,11 +182,12 @@ export default function App() {
   // Demo autoplay step, persisted so pausing/resuming continues where it left off.
   const liveStepRef = useRef(0)
 
-  // ─── On-chain data (Sepolia) ──────────────────────────────────────────────
+  // ─── On-chain data (selected network) ──────────────────────────────────────────────
   // CRISP tab: only CRISP-program polls. Inspector tab: every E3 on the network.
   const crispPolls = useCrispPolls()
   const allE3s = useAllE3s()
   const recentBallots = useRecentBallots()
+  const networkStats = useNetworkStats()
 
   // Inspector keeps its own selection — track which id is currently selected.
   const [inspectorIdStr, setInspectorIdStr] = useState<string | null>(null)
@@ -300,6 +302,14 @@ export default function App() {
   return (
     <div className={`page page--${DENSITY}`}>
       <Header density={DENSITY} view={view} onNav={navigate} />
+      <Pulse
+        data={{
+          activeNow: activePolls.length,
+          ballots24h: recentBallots,
+          pollsAllTime: polls.length,
+        }}
+        network={networkStats}
+      />
       {view === 'operator' ? (
         <main className='main'>
           <Operator />
@@ -308,15 +318,15 @@ export default function App() {
         <main className='main'>
           {allE3s.status === 'error' ? (
             <div className='inspector'>
-              <StatusNote>Couldn't load E3s from Sepolia. Retrying automatically…</StatusNote>
+              <StatusNote>Couldn't load E3s from {NETWORK_NAME}. Retrying automatically…</StatusNote>
             </div>
           ) : !inspectorReady ? (
             <div className='inspector'>
-              <Loader label='Loading E3s' sub='Reading from Sepolia…' />
+              <Loader label='Loading E3s' />
             </div>
           ) : !hasE3s ? (
             <div className='inspector'>
-              <StatusNote>No E3s on the network yet. They will appear here once one is requested on-chain.</StatusNote>
+              <StatusNote>No active E3s yet. New requests will appear here onchain.</StatusNote>
             </div>
           ) : (
             <Inspector
@@ -334,9 +344,9 @@ export default function App() {
           <Intro />
 
           {crispPolls.status === 'error' ? (
-            <StatusNote>Couldn't load CRISP polls from Sepolia. Retrying automatically…</StatusNote>
+            <StatusNote>Couldn't load CRISP polls from {NETWORK_NAME}. Retrying automatically…</StatusNote>
           ) : !crispReady ? (
-            <Loader label='Loading CRISP polls' sub='Reading from Sepolia…' />
+            <Loader label='Loading CRISP polls' />
           ) : activePolls.length > 0 ? (
             <>
               {activePolls.map((s) => {
@@ -383,13 +393,6 @@ export default function App() {
         </main>
       )}
 
-      <Pulse
-        data={{
-          activeNow: activePolls.length,
-          ballots24h: recentBallots,
-          pollsAllTime: polls.length,
-        }}
-      />
       <SiteFooter />
     </div>
   )

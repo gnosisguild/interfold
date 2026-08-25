@@ -15,8 +15,11 @@ use crate::domain::ciphernode_registry_events::{
     decode_committee_request, derive_sortition_seed, extractor, extractor_with_sortition_seed,
     legacy_sortition_seed,
 };
-use crate::domain::error_decoder::{decode_error_from_str, format_evm_error};
+use crate::domain::error_decoder::{
+    contains_error_selector, decode_error_from_str, format_evm_error,
+};
 use crate::domain::log_timestamp::from_log_chain_id_to_ts;
+use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{
     encode_zk_proof, send_tx_idempotent, send_tx_with_retry, transaction_nonce_guard, EthProvider,
     ProviderFactory, TxOutcome,
@@ -27,6 +30,7 @@ use alloy::{
     primitives::{Address, Bytes, B256, U256},
     providers::{Provider, WalletProvider},
     rpc::types::TransactionReceipt,
+    sol_types::SolError,
 };
 use anyhow::{Context as _, Result};
 use e3_events::{
@@ -287,10 +291,11 @@ pub struct CiphernodeRegistrySolWriter<P> {
     bus: BusHandle,
     effects_enabled: bool,
     active_aggregators: HashMap<E3id, bool>,
+    completed_requests: HashSet<E3id>,
     request_registries: HashMap<E3id, Address>,
-    /// Session-local concurrency guard. On-chain preflight is the durable
-    /// cross-restart idempotency boundary.
-    submitting: HashSet<E3id>,
+    publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
+    ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
+    committee_finalizations: ReplaySubmissionGate<E3id, CommitteeFinalizeRequested>,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
@@ -300,14 +305,39 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
     ) -> Result<Self> {
+        Self::new_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            request_registries,
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    pub fn new_with_recovery(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
+        active_aggregators: HashMap<E3id, bool>,
+        recovered_tickets: HashMap<E3id, TicketGenerated>,
+    ) -> Result<Self> {
+        let mut ticket_submissions = ReplaySubmissionGate::new();
+        for (e3_id, ticket) in recovered_tickets {
+            ticket_submissions.record(e3_id, ticket);
+        }
         Ok(Self {
             provider,
             contract_address,
             bus: bus.clone(),
             effects_enabled: false,
-            active_aggregators: HashMap::new(),
+            active_aggregators,
+            completed_requests: HashSet::new(),
             request_registries,
-            submitting: HashSet::new(),
+            publication: ReplaySubmissionGate::new(),
+            ticket_submissions,
+            committee_finalizations: ReplaySubmissionGate::new(),
         })
     }
 
@@ -317,10 +347,34 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
     ) {
-        let addr =
-            CiphernodeRegistrySolWriter::new(bus, provider, contract_address, request_registries)
-                .expect("failed to create CiphernodeRegistrySolWriter")
-                .start();
+        Self::attach_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            request_registries,
+            HashMap::new(),
+            HashMap::new(),
+        );
+    }
+
+    pub fn attach_with_recovery(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
+        active_aggregators: HashMap<E3id, bool>,
+        recovered_tickets: HashMap<E3id, TicketGenerated>,
+    ) {
+        let addr = CiphernodeRegistrySolWriter::new_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            request_registries,
+            active_aggregators,
+            recovered_tickets,
+        )
+        .expect("failed to create CiphernodeRegistrySolWriter")
+        .start();
 
         bus.subscribe_all(
             &[
@@ -355,5 +409,25 @@ impl CiphernodeRegistrySol {
         P: Provider + WalletProvider + Clone + 'static,
     {
         CiphernodeRegistrySolWriter::attach(bus, provider, contract_address, request_registries);
+    }
+
+    pub fn attach_writer_with_recovery<P>(
+        bus: &BusHandle,
+        provider: EthProvider<P>,
+        contract_address: Address,
+        request_registries: HashMap<E3id, Address>,
+        active_aggregators: HashMap<E3id, bool>,
+        recovered_tickets: HashMap<E3id, TicketGenerated>,
+    ) where
+        P: Provider + WalletProvider + Clone + 'static,
+    {
+        CiphernodeRegistrySolWriter::attach_with_recovery(
+            bus,
+            provider,
+            contract_address,
+            request_registries,
+            active_aggregators,
+            recovered_tickets,
+        );
     }
 }

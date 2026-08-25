@@ -13,8 +13,9 @@ use actix::{Actor, Handler};
 use async_trait::async_trait;
 use e3_data::{InMemStore, RepositoriesFactory};
 use e3_events::{
-    hlc_factory::HlcFactory, BusHandle, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, EventBus, Sequencer, StoreEventRequested,
+    hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, DkgFoldAttestationContext,
+    DkgFoldAttestationContextEstablished, E3Requested, EventBus, InterfoldEventData,
+    RequestRouterCheckpoint, Sequencer, StoreEventRequested, SyncEffect, Unsequenced,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
@@ -48,6 +49,23 @@ impl E3Extension for RecoveryExtension {
     }
 }
 
+struct SelectionRecoveryExtension {
+    selections: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl E3Extension for SelectionRecoveryExtension {
+    fn on_event(&self, _: &mut E3Context, event: &InterfoldEvent) {
+        if matches!(event.get_data(), InterfoldEventData::CiphernodeSelected(_)) {
+            self.selections.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn hydrate(&self, _: &mut E3Context, _: &E3ContextSnapshot) -> Result<()> {
+        Ok(())
+    }
+}
+
 fn test_bus() -> BusHandle {
     let event_bus = EventBus::<InterfoldEvent>::default().start();
     let store = StoreSink.start();
@@ -73,12 +91,16 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         .await?;
 
     let hydrations = Arc::new(AtomicUsize::new(0));
+    let recovery_store = repositories.request_router_checkpoint();
     let params = E3RouterParams {
         extensions: Arc::new(vec![Box::new(RecoveryExtension {
             hydrations: hydrations.clone(),
         })]),
         bus: test_bus(),
         store: router_store,
+        replay_cursors: HashMap::new(),
+        recovery_store,
+        recovered_selections: Vec::new(),
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -100,10 +122,121 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
 }
 
 #[actix::test]
+async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<()> {
+    let missing = E3id::new("8", 31337);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    let router_store = repositories.router();
+    let recovery_store = repositories.request_router_checkpoint();
+    let params = E3RouterParams {
+        extensions: Arc::new(vec![E3MetaExtension::create()]),
+        bus: test_bus(),
+        store: router_store,
+        replay_cursors: HashMap::new(),
+        recovery_store,
+        recovered_selections: Vec::new(),
+    };
+
+    let error = match E3Router::from_snapshot(
+        params,
+        E3RouterSnapshot {
+            contexts: vec![missing.clone()],
+            completed: HashSet::new(),
+        },
+    )
+    .await
+    {
+        std::result::Result::Ok(_) => panic!("missing active context must fail startup"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains(&format!("E3 {missing}")));
+    Ok(())
+}
+
+#[actix::test]
+async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
+    let recovered_e3 = E3id::new("9", 31337);
+    let live_e3 = E3id::new("10", 31337);
+    let aggregate_id = AggregateId::from_chain_id(Some(31337));
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    repositories
+        .router()
+        .repositories()
+        .context(&recovered_e3)
+        .write_sync(&E3ContextSnapshot {
+            e3_id: recovered_e3.clone(),
+            recipients: Vec::new(),
+            dependencies: Vec::new(),
+        })
+        .await?;
+    let recovery_store = repositories.request_router_checkpoint();
+    recovery_store
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![recovered_e3.clone()],
+            completed: HashSet::new(),
+            replay_cursors: HashMap::from([(aggregate_id, 12)]),
+        })
+        .await?;
+
+    let selections = Arc::new(AtomicUsize::new(0));
+    let router = E3RouterBuilder {
+        bus: test_bus(),
+        extensions: vec![Box::new(SelectionRecoveryExtension {
+            selections: selections.clone(),
+        })],
+        recovered_selections: vec![CiphernodeSelected {
+            e3_id: recovered_e3.clone(),
+            ..Default::default()
+        }],
+        recovery_store: recovery_store.clone(),
+        store: repositories.router(),
+    }
+    .build()
+    .await?;
+
+    assert_eq!(selections.load(Ordering::SeqCst), 0);
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("sync-effect")
+                .data(SyncEffect::new())
+                .seq(13)
+                .build(),
+        )
+        .await?;
+    assert_eq!(selections.load(Ordering::SeqCst), 1);
+
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("request")
+                .data(E3Requested {
+                    e3_id: live_e3.clone(),
+                    ..Default::default()
+                })
+                .seq(14)
+                .build(),
+        )
+        .await?;
+
+    let checkpoint = recovery_store
+        .read()
+        .await?
+        .expect("canonical checkpoint must exist");
+    assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&14));
+    assert_eq!(
+        checkpoint.contexts.into_iter().collect::<HashSet<_>>(),
+        HashSet::from([recovered_e3, live_e3])
+    );
+    assert_eq!(selections.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[actix::test]
 async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<()> {
     let old_e3 = E3id::new("41", 1);
     let new_e3 = E3id::new("42", 1);
-    let legacy_e3 = E3id::new("40", 1);
+    let missing_context_e3 = E3id::new("40", 1);
     let old_context = DkgFoldAttestationContext {
         registry: "0x1111111111111111111111111111111111111111".parse()?,
         verifying_contract: "0x1212121212121212121212121212121212121212".parse()?,
@@ -138,22 +271,34 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
         .await?;
     router_store
         .write_sync(&E3RouterSnapshot {
-            contexts: vec![legacy_e3.clone(), old_e3.clone(), new_e3.clone()],
+            contexts: vec![missing_context_e3.clone()],
             completed: HashSet::new(),
+        })
+        .await?;
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![old_e3.clone(), new_e3.clone()],
+            completed: HashSet::new(),
+            replay_cursors: HashMap::new(),
         })
         .await?;
 
     let restored = load_dkg_fold_attestation_contexts(&repositories).await?;
     assert_eq!(restored.get(&old_e3), Some(&old_context));
     assert_eq!(restored.get(&new_e3), Some(&new_context));
-    assert!(!restored.contains_key(&legacy_e3));
+    assert!(!restored.contains_key(&missing_context_e3));
 
     let extensions: Arc<Vec<Box<dyn E3Extension>>> = Arc::new(vec![E3MetaExtension::create()]);
+    let recovery_store = repositories.request_router_checkpoint();
     let recovered = E3Router::from_snapshot(
         E3RouterParams {
             extensions,
             bus: test_bus(),
             store: router_store,
+            replay_cursors: HashMap::new(),
+            recovery_store,
+            recovered_selections: Vec::new(),
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

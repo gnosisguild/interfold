@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+export { setCircuits, getRegisteredCircuits, registeredPreset, requireCircuits, type CircuitBundle, type CircuitPreset } from './circuits'
 export * from './token'
 export * from './state'
 export * from './api'
@@ -33,9 +34,14 @@ export {
   validateVote,
   destroyBBApi,
 } from './vote'
-export { CrispSDK } from './sdk'
+export { CrispSDK, SERVER_RPC } from './sdk'
 
 export type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   OnChainRoundData,
   RoundDetails,
   TokenDetails,
@@ -45,6 +51,7 @@ export type {
   PrepareBallotRequest,
   PreparedBallot,
   ProofData,
+  SlotHead,
   TallyResult,
   CurrentRoundResponse,
   E3StateLiteResponse,

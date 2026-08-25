@@ -139,6 +139,12 @@ impl ThresholdKeyshare {
             return Ok(());
         };
 
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.keyshare_publish_authorized = true;
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+
         if signed_pk_generation_proof.is_none() {
             warn!(
                 "Deferring KeyshareCreated for party {} E3 {} — C1 proof not stored yet (PkGenerationProofSigned race)",

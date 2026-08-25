@@ -10,7 +10,7 @@ use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result a
 use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use e3_bfv_client::compute_ct_commitment;
-use e3_compute_provider::FHEInputs;
+use e3_compute_provider::{FHEInputs, PublishedData};
 use e3_fhe_params::decode_bfv_params_arc;
 use serde::Serialize;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -64,6 +64,15 @@ impl ComputeDomain {
     }
 }
 
+/// The width of one slot address in published metadata: a Solidity `address`.
+const SLOT_BYTES: usize = 20;
+
+/// The width of one parent index in published metadata: a Solidity `uint40`.
+const PARENT_BYTES: usize = 5;
+
+/// The largest parent index that fits in [`PARENT_BYTES`].
+const MAX_PARENT: u64 = (1 << (8 * PARENT_BYTES as u64)) - 1;
+
 fn fixed<const N: usize>(value: &[u8], name: &str) -> Result<[u8; N], String> {
     value
         .try_into()
@@ -72,6 +81,9 @@ fn fixed<const N: usize>(value: &[u8], name: &str) -> Result<[u8; N], String> {
 
 pub struct ComputeJob {
     pub inputs: FHEInputs,
+    /// What the E3 program published alongside each ciphertext, in the same order. Empty when the
+    /// program publishes nothing beyond the ciphertexts.
+    pub published: Vec<PublishedData>,
     pub domain: ComputeDomain,
 }
 
@@ -215,6 +227,102 @@ pub struct AppConfig {
     jobs: Arc<Semaphore>,
 }
 
+/// Whether callbacks to addresses only reachable from inside the deployment are permitted.
+///
+/// Off by default. Local development legitimately posts to a host on the same machine, so there has
+/// to be a way in, but it must be a deliberate one rather than the default.
+fn allow_private_callbacks() -> bool {
+    matches!(
+        std::env::var("ALLOW_PRIVATE_CALLBACKS")
+            .unwrap_or_default()
+            .as_str(),
+        "1" | "true" | "TRUE" | "yes" | "YES"
+    )
+}
+
+/// Rejects a callback host that is not reachable from the public internet.
+///
+/// This endpoint takes a URL from the network and then makes a request to it, which is a
+/// server-side request forgery primitive: without this, a caller can aim the callback at a cloud
+/// metadata service (169.254.169.254), at loopback, or at anything inside the private network the
+/// server sits in, and read the effect through the response or the side effects.
+///
+/// Literal addresses are checked exhaustively. A hostname is checked by name only — a name that
+/// resolves to a private address still passes, and DNS rebinding remains possible. Closing that
+/// needs resolution at connect time and a pinned socket; this guard is the cheap part, not the
+/// whole answer.
+fn ensure_public_callback_host(url: &reqwest::Url) -> Result<()> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    if allow_private_callbacks() {
+        return Ok(());
+    }
+
+    // Loopback is deliberately NOT treated as internal.
+    //
+    // The escalation that makes SSRF worth guarding is reaching hosts the caller cannot reach
+    // itself: cloud metadata at 169.254.169.254, RFC1918 services on the deployment's LAN, names
+    // under .internal. Loopback is the machine this server already runs on, and anyone who can post
+    // to this endpoint can address that host directly, so bouncing a request off its own loopback
+    // adds little reach. It is not zero risk — a localhost-only admin port is still a target — but
+    // it is a different class from pivoting into a private network.
+    //
+    // It is also how every local and CI deployment works: the callback is a webhook on the same
+    // host, and `with_localhost_rewrite` is unset by default. Rejecting it broke the CRISP
+    // end-to-end run for no security gain that a caller could not already obtain.
+    fn v4_is_internal(ip: Ipv4Addr) -> bool {
+        if ip.is_loopback() {
+            return false;
+        }
+        ip.is_private()
+            || ip.is_link_local()
+            || ip.is_broadcast()
+            || ip.is_documentation()
+            || ip.is_unspecified()
+            || ip.octets()[0] == 0
+            // 100.64.0.0/10, carrier-grade NAT.
+            || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
+    }
+
+    fn v6_is_internal(ip: Ipv6Addr) -> bool {
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            return v4_is_internal(mapped);
+        }
+        if ip.is_loopback() {
+            return false;
+        }
+        ip.is_unspecified()
+            // fc00::/7 unique-local, fe80::/10 link-local.
+            || (ip.segments()[0] & 0xfe00) == 0xfc00
+            || (ip.segments()[0] & 0xffc0) == 0xfe80
+    }
+
+    let internal = match url.host_str() {
+        Some(host) => {
+            // `host_str` keeps the brackets on an IPv6 literal, which `IpAddr` will not parse.
+            let bare = host.trim_start_matches('[').trim_end_matches(']');
+            match bare.parse::<IpAddr>() {
+                Ok(IpAddr::V4(ip)) => v4_is_internal(ip),
+                Ok(IpAddr::V6(ip)) => v6_is_internal(ip),
+                Err(_) => {
+                    // `localhost` resolves to loopback, and is allowed for the same reason.
+                    let lowered = bare.to_ascii_lowercase();
+                    lowered.ends_with(".local") || lowered.ends_with(".internal")
+                }
+            }
+        }
+        None => true,
+    };
+
+    anyhow::ensure!(
+        !internal,
+        "callback URL must not point at a private, loopback or link-local address; \
+         set ALLOW_PRIVATE_CALLBACKS=1 to permit it for local development"
+    );
+
+    Ok(())
+}
+
 fn parse_http_url(value: &str, label: &str) -> Result<reqwest::Url> {
     let url = reqwest::Url::parse(value).with_context(|| format!("invalid {label}"))?;
     anyhow::ensure!(
@@ -234,17 +342,27 @@ fn validated_callback_url(
     localhost_rewrite: Option<&str>,
 ) -> Result<reqwest::Url> {
     let mut callback = parse_http_url(callback_url, "callback URL")?;
+    let mut rewritten = false;
     if matches!(callback.host_str(), Some("localhost" | "127.0.0.1")) {
         if let Some(rewrite) = localhost_rewrite {
             callback
                 .set_host(Some(rewrite))
                 .map_err(|_| anyhow::anyhow!("invalid localhost rewrite host"))?;
+            rewritten = true;
         }
     }
     anyhow::ensure!(
         callback.fragment().is_none(),
         "callback URL must not contain a fragment"
     );
+
+    // The rewrite target is operator configuration rather than caller input, and it exists so a
+    // local deployment can post to its own host. Exempting it keeps that path working without
+    // opening the general case: a caller who did not name an exact local host is still checked.
+    if !rewritten {
+        ensure_public_callback_host(&callback)?;
+    }
+
     Ok(callback)
 }
 
@@ -367,6 +485,78 @@ async fn handle_compute(
         .clone()
         .ok_or_else(|| actix_web::error::ErrorBadRequest("callback_url is required"))?;
 
+    let published = req
+        .input_commitments
+        .iter()
+        .enumerate()
+        .map(|(index, hex_commitment)| {
+            let raw = hex::decode(hex_commitment.trim_start_matches("0x"))
+                .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad commitment: {e}")))?;
+            let commitment = <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
+                actix_web::error::ErrorBadRequest("each commitment must be 32 bytes")
+            })?;
+
+            // The metadata is opaque here — what a policy reads out of it is the E3 program's
+            // business. It is assembled in the order the program packs it, which for CRISP is
+            // `abi.encodePacked(address, uint40)`.
+            //
+            // Both widths are checked rather than coerced. This endpoint takes JSON from the
+            // network, and the packing is fixed-width: a slot of the wrong length shifts every
+            // byte after it, and a parent above `uint40` would be truncated into a different,
+            // valid-looking index. Either produces metadata the E3 program never published, and
+            // the only symptom is an input root the guest derives and the contract rejects.
+            let mut metadata = Vec::new();
+            if let Some(hex_slot) = req.input_slots.get(index) {
+                let slot = hex::decode(hex_slot.trim_start_matches("0x"))
+                    .map_err(|e| actix_web::error::ErrorBadRequest(format!("bad slot: {e}")))?;
+                if slot.len() != SLOT_BYTES {
+                    return Err(actix_web::error::ErrorBadRequest(format!(
+                        "each slot must be {SLOT_BYTES} bytes, got {}",
+                        slot.len()
+                    )));
+                }
+                metadata.extend_from_slice(&slot);
+
+                let parent = req.input_parents.get(index).copied().unwrap_or_default();
+                if parent > MAX_PARENT {
+                    return Err(actix_web::error::ErrorBadRequest(format!(
+                        "each parent must fit in {PARENT_BYTES} bytes (at most {MAX_PARENT}), got {parent}"
+                    )));
+                }
+                metadata.extend_from_slice(&parent.to_be_bytes()[8 - PARENT_BYTES..]);
+            }
+
+            Ok(PublishedData {
+                commitment: Some(commitment),
+                metadata,
+            })
+        })
+        .collect::<ActixResult<Vec<PublishedData>>>()?;
+
+    // One-sided metadata is a caller bug that would otherwise fall through to the default policy
+    // and silently produce a root the E3 program rejects.
+    if req.input_commitments.is_empty() != req.input_slots.is_empty() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_commitments and input_slots must be supplied together",
+        ));
+    }
+    if req.input_slots.len() != req.input_parents.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_slots and input_parents must have the same length",
+        ));
+    }
+
+    if !published.is_empty() && published.len() != req.ciphertext_inputs.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_commitments must have one entry per ciphertext input",
+        ));
+    }
+    if !req.input_slots.is_empty() && req.input_slots.len() != req.ciphertext_inputs.len() {
+        return Err(actix_web::error::ErrorBadRequest(
+            "input_slots must have one entry per ciphertext input",
+        ));
+    }
+
     let fhe_inputs = FHEInputs {
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
@@ -381,6 +571,7 @@ async fn handle_compute(
     .map_err(actix_web::error::ErrorBadRequest)?;
     let job = ComputeJob {
         inputs: fhe_inputs,
+        published,
         domain,
     };
 
@@ -446,10 +637,24 @@ mod server_tests {
     #[test]
     fn callback_validation_accepts_http_origins_and_rejects_unsafe_urls() {
         assert!(validated_callback_url("https://callback.example:8443/results/1", None).is_ok());
-        assert!(validated_callback_url("https://metadata.internal:8443/latest", None).is_ok());
         assert!(validated_callback_url("file:///etc/passwd", None).is_err());
         assert!(validated_callback_url("https://user:pass@example.com/result", None).is_err());
         assert!(validated_callback_url("https://example.com/result#fragment", None).is_err());
+
+        // This endpoint dials whatever it is given, so a caller must not be able to aim it inside
+        // the deployment. `metadata.internal` was previously accepted; it is the canonical target.
+        assert!(validated_callback_url("https://metadata.internal:8443/latest", None).is_err());
+        assert!(validated_callback_url("http://169.254.169.254/latest/meta-data", None).is_err());
+        assert!(validated_callback_url("http://10.0.0.5/hook", None).is_err());
+        assert!(validated_callback_url("http://192.168.1.10/hook", None).is_err());
+        assert!(validated_callback_url("http://[fd00::1]/hook", None).is_err());
+        assert!(validated_callback_url("http://100.64.0.1/hook", None).is_err());
+
+        // Loopback is allowed: it reaches only the host this server already runs on, and it is how
+        // every local and CI deployment delivers its webhook.
+        assert!(validated_callback_url("http://127.0.0.1/hook", None).is_ok());
+        assert!(validated_callback_url("http://[::1]/hook", None).is_ok());
+        assert!(validated_callback_url("http://localhost:4000/hook", None).is_ok());
     }
 
     #[test]

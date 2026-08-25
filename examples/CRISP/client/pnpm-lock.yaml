@@ -18,8 +18,8 @@ importers:
   .:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.17.0
-        version: 0.17.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        specifier: 0.18.0-insecure.0
+        version: 0.18.0-insecure.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -733,11 +733,11 @@ packages:
   '@coinbase/wallet-sdk@4.3.6':
     resolution: {integrity: sha512-4q8BNG1ViL4mSAAvPAtpwlOs1gpC+67eQtgIwNvT3xyeyFFd+guwkc8bcX5rTmQhXpqnhzC4f0obACbP9CqMSA==}
 
-  '@crisp-e3/sdk@0.17.0':
-    resolution: {integrity: sha512-hNjEsx3CRvaN5Gu9EJa0/vaGLxSDy2a4bfJJrQ5a+FR0TwzQu7W+GA7JMjLRDDdcTAUDJ0G/bak5kzxa+0ZYQg==}
+  '@crisp-e3/sdk@0.18.0-insecure.0':
+    resolution: {integrity: sha512-1qwFF8sR1VDDoSH178gr+DzluMThGhdCNpx9SsMJLC+gpPlU8A7qKThNv1P7hxaMB12q15so6KJumhL7euf7Gg==}
 
-  '@crisp-e3/zk-inputs@0.17.0':
-    resolution: {integrity: sha512-wd61MnDStHokxZHCNMIdqdC7vuiNkWwUzs2T4+Ag87vnTWVltHL3dUHqdx0eFxFQU2YXlKo16+CfbsfxZYv9HQ==}
+  '@crisp-e3/zk-inputs@0.18.0-insecure.0':
+    resolution: {integrity: sha512-vgIb8cixmxeLTYEfvmKlzGzMDQg1/Y1xc9wIcSrlDBZRxEdHz3bpnBV59GPVCG4Fx5obXHKDvILhyIdT2n8Nqw==}
 
   '@ecies/ciphers@0.2.6':
     resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -5635,10 +5635,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/sdk@0.17.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
+  '@crisp-e3/sdk@0.18.0-insecure.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
     dependencies:
       '@aztec/bb.js': 5.1.0
-      '@crisp-e3/zk-inputs': 0.17.0
+      '@crisp-e3/zk-inputs': 0.18.0-insecure.0
       '@noir-lang/noir_js': 1.0.0-beta.26
       '@zk-kit/lean-imt': 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       poseidon-lite: 0.3.0
@@ -5649,7 +5649,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/zk-inputs@0.17.0': {}
+  '@crisp-e3/zk-inputs@0.18.0-insecure.0': {}
 
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:

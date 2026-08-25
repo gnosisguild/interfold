@@ -162,7 +162,8 @@ describe("Protocol deployment", function () {
       process.env.ESCROW_VOTES_ADAPTER = adapter;
       expect(loadConfig(configFile).escrowVotesAdapter).to.equal(adapter);
     } finally {
-      if (previousAdapter === undefined) delete process.env.ESCROW_VOTES_ADAPTER;
+      if (previousAdapter === undefined)
+        delete process.env.ESCROW_VOTES_ADAPTER;
       else process.env.ESCROW_VOTES_ADAPTER = previousAdapter;
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -213,8 +214,7 @@ describe("Protocol deployment", function () {
     try {
       config.protocolOwner = "0x0000000000000000000000000000000000000001";
       config.deployMockCiphertextVerifier = true;
-      config.ciphertextVerifier =
-        "0x0000000000000000000000000000000000000002";
+      config.ciphertextVerifier = "0x0000000000000000000000000000000000000002";
       fs.writeFileSync(configFile, JSON.stringify(config));
       expect(() => loadConfig(configFile)).to.throw(
         "ciphertextVerifier must be omitted when deployMockCiphertextVerifier is true",
@@ -312,9 +312,7 @@ describe("Protocol deployment", function () {
     expect(result.contracts.dkgFoldAttestationVerifier).to.equal(
       await dkgFoldAttestationVerifier.getAddress(),
     );
-    expect(result.contracts.ciphertextVerifier).to.match(
-      /^0x[0-9a-fA-F]{40}$/,
-    );
+    expect(result.contracts.ciphertextVerifier).to.match(/^0x[0-9a-fA-F]{40}$/);
     for (const verifier of [
       result.contracts.decryptionVerifier,
       result.contracts.pkVerifier,

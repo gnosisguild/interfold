@@ -7,7 +7,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { STAGES } from './data'
-import { CONTRACTS } from './lib/chain'
+import { CONTRACTS, NETWORK_NAME } from './lib/chain'
 import { explorerAddress, explorerTx } from './lib/links'
 import type { InspectorDetail } from './lib/adapt'
 import Loader from './Loader'
@@ -185,7 +185,7 @@ function EventLog({ events }: { events: any[] }) {
         </tbody>
       </table>
       <div className='evlog__foot'>
-        <span>Events stream live from the Interfold contract on Sepolia.</span>
+        <span>Events stream live from the Interfold contract on {NETWORK_NAME}.</span>
         <a className='link-inline' href={explorerAddress(CONTRACTS.Interfold) + '#events'} target='_blank' rel='noreferrer'>
           Open in block explorer →
         </a>
@@ -228,7 +228,7 @@ export default function Inspector({
             {`Failed to load on-chain data: ${error.message}.`}
           </div>
         ) : (
-          <Loader label='Loading E3 detail' sub='Reading from Sepolia…' />
+          <Loader label='Loading E3 detail' />
         )}
       </div>
     )
@@ -263,7 +263,7 @@ export default function Inspector({
             color: error ? '#8a1f1f' : '#3a3f4a',
           }}
         >
-          {error ? `Failed to load on-chain data: ${error.message}.` : 'Refreshing from Sepolia…'}
+          {error ? `Failed to load on-chain data: ${error.message}.` : `Refreshing from ${NETWORK_NAME}…`}
         </div>
       )}
       <section className='insp-head'>

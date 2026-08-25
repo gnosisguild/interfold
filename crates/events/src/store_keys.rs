@@ -17,12 +17,24 @@ impl StoreKeys {
         format!("//threshold_keyshare/{e3_id}")
     }
 
+    pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_recovery/v1/{e3_id}")
+    }
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }
 
+    pub fn plaintext_recovery(e3_id: &E3id) -> String {
+        format!("//plaintext_recovery/v1/{e3_id}")
+    }
+
     pub fn publickey(e3_id: &E3id) -> String {
         format!("//publickey/{e3_id}")
+    }
+
+    pub fn publickey_recovery(e3_id: &E3id) -> String {
+        format!("//publickey_recovery/v1/{e3_id}")
     }
 
     pub fn fhe(e3_id: &E3id) -> String {
@@ -45,12 +57,28 @@ impl StoreKeys {
         String::from("//router")
     }
 
+    pub fn request_router_checkpoint() -> String {
+        String::from("//router/recovery_checkpoint")
+    }
+
     pub fn e3_lifecycle() -> String {
         String::from("//e3_lifecycle")
     }
 
     pub fn sortition() -> String {
         String::from("//sortition")
+    }
+
+    pub fn sortition_recovery() -> String {
+        String::from("//sortition/runtime_recovery/v1")
+    }
+
+    pub fn committee_finalizer_recovery() -> String {
+        String::from("//committee_finalizer/recovery/v1")
+    }
+
+    pub fn slashing_writer_recovery(chain_id: u64) -> String {
+        format!("//evm_writers/slashing/{chain_id}/recovery/v1")
     }
 
     pub fn eth_private_key() -> String {
@@ -89,7 +117,11 @@ impl StoreKeys {
     }
 
     pub fn ciphernode_selector() -> String {
-        String::from("//ciphernode_selector")
+        String::from("//ciphernode_selector/v2")
+    }
+
+    pub fn aggregator_failover() -> String {
+        String::from("//aggregator_failover")
     }
 
     pub fn aggregate_seq(aggregate_id: AggregateId) -> String {

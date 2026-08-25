@@ -20,11 +20,7 @@
         "Finalized",
         "Failed"
       ],
-      "ICiphernodeRegistry.MemberStatus": [
-        "None",
-        "Active",
-        "Expelled"
-      ]
+      "ICiphernodeRegistry.MemberStatus": ["None", "Active", "Expelled"]
     },
     "namespaces": {
       "erc7201:openzeppelin.storage.Initializable": {

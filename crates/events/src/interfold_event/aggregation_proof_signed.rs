@@ -8,7 +8,8 @@
 //!
 //! `AggregationProofSigned` is published by [`ProofRequestActor`] after
 //! generating and ECDSA-signing the C7 proofs. [`ThresholdPlaintextAggregator`]
-//! consumes this to transition to Complete and publish `PlaintextAggregated`.
+//! consumes this to complete its local aggregation state and publish the
+//! `PlaintextAggregated` publication intent.
 
 use crate::{E3id, SignedProofPayload};
 use serde::{Deserialize, Serialize};

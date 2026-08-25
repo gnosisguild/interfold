@@ -17,9 +17,8 @@ use crate::server::{
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, B256};
 use e3_sdk::evm_helpers::contracts::{
-    InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
+    E3Stage, InterfoldContract, InterfoldContractFactory, InterfoldRead, InterfoldWrite, ReadWrite,
 };
-use evm_helpers::CRISPContractFactory;
 use log::{error, info};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -44,13 +43,18 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
 }
 
-/// Endpoint to get the ciphertext input at a certain slot. Used for masking operations
+/// Endpoint to get the ciphertext a slot currently holds. Used for every ballot, not only masks.
+///
+/// Answers with the end of the slot's chain of usable entries, and the tree index of that entry.
+/// Not simply the newest entry published: an entry whose bytes do not reproduce its commitment is
+/// never selected by the Secure Process and is never a valid parent, so building on it would have
+/// the client's input dropped from the tally.
 ///
 /// # Arguments
-/// * `data` - The round id and the slot index
+/// * `data` - The round id and the slot address
 ///
 /// # Returns
-/// * A JSON response with the result of the operation. If sucessfull it includes the ciphertext input at the given slot
+/// * A JSON response with the ciphertext and its index, or 404 when the slot holds nothing usable.
 async fn handle_get_previous_ciphertext(
     data: web::Json<PreviousCiphertextRequest>,
     store: web::Data<AppData>,
@@ -63,17 +67,6 @@ async fn handle_get_previous_ciphertext(
     };
     let e3_key = e3_id.to_string();
 
-    let contract =
-        match CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
-            .await
-        {
-            Ok(contract) => contract,
-            Err(e) => {
-                error!("Failed to create CRISP contract: {:?}", e);
-                return HttpResponse::InternalServerError().body("Failed to create CRISP contract");
-            }
-        };
-
     let address = match Address::from_str(incoming.address.as_str()) {
         Ok(addr) => addr,
         Err(e) => {
@@ -82,18 +75,12 @@ async fn handle_get_previous_ciphertext(
         }
     };
 
-    let slot_index = match contract.get_slot_index_from_address(e3_id, address).await {
-        Ok(Some(index)) => index,
-        Ok(None) => return HttpResponse::NotFound().body("Ciphertext not found"),
-        Err(e) => {
-            error!("Error getting slot index from address: {:?}", e);
-            return HttpResponse::InternalServerError()
-                .body("Failed to get slot index from address");
+    // No BFV work and no parameters here. Whether an entry's bytes reproduce its commitment is
+    // decided once, when the indexer stores it, so resolving the chain is a walk over flags.
+    match store.e3(e3_key).get_slot_head(address.into()).await {
+        Ok(Some((ciphertext, index))) => {
+            HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext, index })
         }
-    };
-
-    match store.e3(e3_key).get_ciphertext_input(slot_index).await {
-        Ok(Some(ciphertext)) => HttpResponse::Ok().json(PreviousCiphertextResponse { ciphertext }),
         Ok(None) => HttpResponse::NotFound().body("Ciphertext not found"),
         Err(e) => {
             error!("Error getting previous ciphertext: {:?}", e);
@@ -170,13 +157,15 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
                     }
                 };
 
+            let e3_id_u256 = match e3_id_to_u256(&e3_id) {
+                Ok(e3_id) => e3_id,
+                Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+            };
+
             // Try the direct call
             let tx_result = contract
                 .publish_ciphertext_output(
-                    match e3_id_to_u256(&e3_id) {
-                        Ok(e3_id) => e3_id,
-                        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-                    },
+                    e3_id_u256,
                     Bytes::from(ciphertext.clone()),
                     B256::from_slice(&ciphertext_commitment),
                     Bytes::from(proof.clone()),
@@ -186,6 +175,24 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
             let pending_tx = match tx_result {
                 Ok(tx) => tx,
                 Err(e) => {
+                    // A revert can mean the output already landed on chain — a retry of this
+                    // webhook, or our own earlier transaction confirming first. Publication is
+                    // this handler's goal, so an E3 already past KeyPublished is a success.
+                    match contract.get_e3_stage(e3_id_u256).await {
+                        Ok(stage)
+                            if stage == E3Stage::CiphertextReady || stage == E3Stage::Complete =>
+                        {
+                            info!(
+                                "Ciphertext output already published for E3 ID: {} (stage: {:?})",
+                                e3_id, stage
+                            );
+                            return HttpResponse::Ok().json(format!(
+                                "Ciphertext output already published for E3 ID: {}",
+                                e3_id
+                            ));
+                        }
+                        _ => {}
+                    }
                     error!("Failed to send transaction: {:?}", e);
                     return HttpResponse::InternalServerError()
                         .json(format!("Failed to send transaction: {}", e));
@@ -267,7 +274,13 @@ async fn get_all_round_results(
                 }
             }
             Err(e) => {
-                info!("Error retrieving state for round {}: {:?}", e3_id, e);
+                // Expected for a round whose committee key is not published yet — the `_e3:`
+                // record only exists after CommitteePublished. See the note in
+                // `get_current_round_for_requester`.
+                info!(
+                    "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
+                    e3_id, e
+                );
                 continue;
             }
         }

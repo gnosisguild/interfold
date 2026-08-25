@@ -12,6 +12,7 @@ import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
+import { SNARK_SCALAR_FIELD } from "@zk-kit/lazy-imt.sol/Constants.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
@@ -63,6 +64,30 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     uint256 merkleRoot;
     bytes32 paramsHash;
     mapping(address slot => uint40 index) voteSlots;
+    /// @notice The proven ciphertext commitment of every input, keyed by slot and tree index.
+    /// @dev Keyed by both so a parent lookup for the wrong slot returns zero and is refused: it
+    /// costs no more storage than a single-key map and removes a separate same-slot check.
+    ///
+    /// A history rather than one commitment per slot. An input names the entry it extends, and
+    /// this contract cannot tell whether the bytes published with an entry deserialize to the
+    /// ciphertext its commitment describes — only the Secure Process can, once the input window
+    /// closes. Keeping only the newest commitment would therefore let anyone leave a slot whose
+    /// head nobody but they can open, and a slot that cannot be masked is a slot whose every later
+    /// input is provably its owner voting again. With the history, an entry like that is simply
+    /// never extended: the next input names the same parent, and masking continues.
+    mapping(address slot => mapping(uint40 index => bytes32 commitment)) inputCommitment;
+    /// @notice Leaves already appended to this round's input tree.
+    /// @dev A replay guard, not a uniqueness requirement on ballots. The proof constrains the
+    /// commitment, not who submits it, so anyone who observes a published input can resubmit the
+    /// identical calldata: the proof still verifies and {_processVote} appends again. The tally
+    /// does not change — the replay names the same parent as the original, which is no longer the
+    /// head, so the Secure Process drops it — but the tree is fixed-depth, so enough replays reach
+    /// capacity and every later input reverts, denying the round.
+    ///
+    /// Keyed by the leaf rather than the proof because the leaf is exactly what an append adds.
+    /// Two genuinely distinct inputs differ in bytes, commitment, slot or parent, so they differ
+    /// here; only a byte-identical resubmission collides.
+    mapping(uint256 leaf => bool) appendedLeaf;
     LazyIMTData votes;
     uint256 numOptions;
     CreditMode creditMode;
@@ -157,6 +182,13 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// to zero — able to publish, but unable to carry any weight, which is disenfranchisement that
   /// nothing on-chain would report.
   error MinVotingPowerBelowScale();
+  /// @notice An input names a parent this slot never wrote to.
+  /// @dev Includes an index belonging to another slot, which the per-slot commitment map reads as
+  /// absent. Name no parent instead when there is nothing to extend.
+  error UnknownParentInput(uint40 parentIndex);
+
+  /// @notice Thrown when an input identical to one already published is submitted again.
+  error InputAlreadyPublished(uint256 leaf);
   error SlotIsEmpty();
   error MerkleRootNotSet();
   error InvalidNumOptions();
@@ -167,7 +199,20 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
 
   // Events
   event InterfoldBound(address indexed interfold);
-  event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
+
+  /// @notice A ciphertext input was accepted for a round.
+  /// @dev Carries the slot and the commitment as well as the bytes. Both are already public — the
+  /// slot is a plaintext `publishInput` argument and `getSlotIndex` exposes it — so emitting them
+  /// leaks nothing and saves every consumer from parsing transaction calldata. The Secure Process
+  /// needs the commitment to check that the published bytes are the ciphertext that was proven.
+  event InputPublished(
+    uint256 indexed e3Id,
+    address indexed slotAddress,
+    bytes32 encryptedVoteCommitment,
+    bytes encryptedVote,
+    uint256 index,
+    uint40 parentIndexPlusOne
+  );
 
   /// @notice Initialize the contract without an Interfold controller.
   /// @dev The owner binds the controller after Interfold registers this program.
@@ -231,12 +276,19 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   }
 
   /// @notice Set the Image ID for the guest program
+  /// @dev This value is application state, not protocol state. Interfold snapshots the protocol
+  /// ciphertext verifier for each E3 at request time, and that verifier's own `imageId` is
+  /// immutable, so changing this value cannot replace a computation the protocol already accepted.
+  /// It can still break an E3 that is in flight: `verify` would then check the receipt against a
+  /// guest that did not produce it, the round would fail as a compute timeout, and
+  /// `FailurePayerLib` bills that to the requester. Change it only between rounds.
   /// @param _imageId The new image ID.
   function setImageId(bytes32 _imageId) external onlyOwner {
     imageId = _imageId;
   }
 
   /// @notice Set the RISC Zero verifier.
+  /// @dev Carries the same in-flight risk as `setImageId`. Change it only between rounds.
   /// @param _risc0Verifier The new RISC Zero verifier address
   function setRisc0Verifier(IRiscZeroVerifier _risc0Verifier) external onlyOwner {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
@@ -459,21 +511,26 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
 
     if (data.length == 0) revert EmptyInputData();
 
-    (bytes memory noirProof, address slotAddress, bytes32 encryptedVoteCommitment, bytes memory encryptedVote) = abi.decode(
-      data,
-      (bytes, address, bytes32, bytes)
-    );
+    (
+      bytes memory noirProof,
+      address slotAddress,
+      bytes32 encryptedVoteCommitment,
+      bytes memory encryptedVote,
+      uint40 parentIndexPlusOne
+    ) = abi.decode(data, (bytes, address, bytes32, bytes, uint40));
 
     // The two census families differ here and nowhere else. A Merkle round proves membership
     // inside the circuit against a posted root. An ONCHAIN round reads the power from the token
     // and gives it to the circuit, so the eligibility check has to happen here instead.
     (bytes32 eligibility, IHonkVerifier verifier) = _eligibility(e3Id, slotAddress);
 
-    (uint40 voteIndex, bytes32 previousEncryptedVoteCommitment) = _processVote(e3Id, slotAddress, encryptedVoteCommitment);
+    bytes32 parentCommitment = _parentCommitment(e3Id, slotAddress, parentIndexPlusOne);
+
+    uint40 voteIndex = _processVote(e3Id, slotAddress, encryptedVoteCommitment, encryptedVote, parentIndexPlusOne);
 
     // Set the public inputs for the proof. Order must match Noir circuit.
     bytes32[] memory noirPublicInputs = new bytes32[](9);
-    noirPublicInputs[0] = previousEncryptedVoteCommitment;
+    noirPublicInputs[0] = parentCommitment;
     // A Keccak digest does not fit in one field element, so it enters the circuit as its two
     // 16-byte halves. The circuit rebuilds the 32 bytes with `digest_from_halves`.
     {
@@ -483,7 +540,7 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     }
     noirPublicInputs[3] = bytes32(uint256(uint160(slotAddress)));
     noirPublicInputs[4] = eligibility;
-    noirPublicInputs[5] = bytes32(uint256(previousEncryptedVoteCommitment == bytes32(0) ? 1 : 0));
+    noirPublicInputs[5] = bytes32(uint256(parentIndexPlusOne == 0 ? 1 : 0));
     noirPublicInputs[6] = bytes32(e3Data[e3Id].numOptions);
     noirPublicInputs[7] = encryptedVoteCommitment;
     noirPublicInputs[8] = e3.committeePublicKey;
@@ -493,7 +550,31 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       revert InvalidNoirProof();
     }
 
-    emit InputPublished(e3Id, encryptedVote, voteIndex);
+    emit InputPublished(e3Id, slotAddress, encryptedVoteCommitment, encryptedVote, voteIndex, parentIndexPlusOne);
+  }
+
+  /// @notice The commitment of the entry an input names as its parent.
+  /// @dev Zero when the input names none, which is what the circuit reads as `is_first_vote`.
+  ///
+  /// Naming no parent is allowed even when the slot already holds entries, and it has to be: a
+  /// slot whose every entry is unusable has nothing to extend, and refusing that here would leave
+  /// it permanently unwritable. Nothing is gained by refusing it either — the Secure Process
+  /// accepts an entry only when its parent is the one currently selected for the slot, so an input
+  /// that skips a usable parent is dropped from the tally wherever this contract lets it through.
+  /// @param e3Id The round.
+  /// @param slotAddress The slot the input is written to.
+  /// @param parentIndexPlusOne The tree index of the parent entry plus one, or zero for none.
+  /// @return The parent's commitment, or zero.
+  function _parentCommitment(uint256 e3Id, address slotAddress, uint40 parentIndexPlusOne) internal view returns (bytes32) {
+    if (parentIndexPlusOne == 0) return bytes32(0);
+
+    bytes32 commitment = e3Data[e3Id].inputCommitment[slotAddress][parentIndexPlusOne - 1];
+    // Zero for an index this slot never wrote to, including one belonging to another slot. The
+    // circuit would read it as `is_first_vote` while this contract reads it as an update, so the
+    // two would disagree about the same input.
+    if (commitment == bytes32(0)) revert UnknownParentInput(parentIndexPlusOne - 1);
+
+    return commitment;
   }
 
   /// @notice Resolve the eligibility public input and the verifier for a round.
@@ -528,7 +609,6 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     // coordinator does when it builds a Merkle census (`balance / 10**(decimals - 1)`), so both
     // census families encode ballots in the same units and a tally decodes the same way.
     uint256 power = rawPower / round.votingPowerDivisor;
-
 
     // Eligibility comes from the power at the snapshot. The weight the circuit enforces comes from
     // the credit mode, so a CONSTANT round gives every eligible slot the same credits.
@@ -611,13 +691,30 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     return votes;
   }
 
-  /// @notice Get the slot index for a given E3 ID and slot address
+  /// @notice The index of the last input published to a slot.
+  /// @dev The last one *published*, which is not always the one that holds the slot. This contract
+  /// cannot tell whether an input's bytes deserialize to the ciphertext its commitment describes,
+  /// so the entry at this index may be one the Secure Process will never select. A client naming a
+  /// parent must resolve the chain — from the published bytes, or from the CRISP server's
+  /// `state/previous-ciphertext` — rather than reading it from here.
   /// @param e3Id The E3 program ID
   /// @param slotAddress The slot address
-  /// @return The slot index, or -1 if the slot is empty
+  /// @return The index of the last published input, or -1 if the slot is empty
   function getSlotIndex(uint256 e3Id, address slotAddress) external view returns (int40) {
     uint40 storedIndexPlusOne = e3Data[e3Id].voteSlots[slotAddress];
     return int40(storedIndexPlusOne) - 1;
+  }
+
+  /// @notice The commitment this contract recorded for one entry of a slot.
+  /// @dev Zero for an index this slot never wrote to. A client names a parent by index and must
+  /// prove against exactly the commitment stored for it, so this is how it checks what that will
+  /// be before proving.
+  /// @param e3Id The round.
+  /// @param slotAddress The slot address.
+  /// @param index The tree index of the entry.
+  /// @return The stored commitment, or zero when there is no such entry for this slot.
+  function inputCommitmentOf(uint256 e3Id, address slotAddress, uint40 index) external view returns (bytes32) {
+    return e3Data[e3Id].inputCommitment[slotAddress][index];
   }
 
   /// @inheritdoc IE3Program
@@ -649,29 +746,56 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     return true;
   }
 
-  /// @notice Process a vote: insert or update in the merkle tree depending
-  /// on whether it's the first vote or an override.
+  /// @notice Record one input: append its leaf and remember its commitment for later parents.
   function _processVote(
     uint256 e3Id,
     address slotAddress,
-    bytes32 encryptedVoteCommitment
-  ) internal returns (uint40 voteIndex, bytes32 previousEncryptedVoteCommitment) {
-    uint40 storedIndexPlusOne = e3Data[e3Id].voteSlots[slotAddress];
+    bytes32 encryptedVoteCommitment,
+    bytes memory encryptedVote,
+    uint40 parentIndexPlusOne
+  ) internal returns (uint40 voteIndex) {
+    RoundData storage round = e3Data[e3Id];
 
-    // we treat the index 0 as not voted yet
-    // any valid index will be index + 1
-    if (storedIndexPlusOne == 0) {
-      // FIRST VOTE
-      previousEncryptedVoteCommitment = bytes32(0);
-      voteIndex = e3Data[e3Id].votes.numberOfLeaves;
-      e3Data[e3Id].voteSlots[slotAddress] = voteIndex + 1;
-      e3Data[e3Id].votes._insert(uint256(encryptedVoteCommitment));
-    } else {
-      // RE-VOTE
-      voteIndex = storedIndexPlusOne - 1;
-      previousEncryptedVoteCommitment = bytes32(e3Data[e3Id].votes.elements[voteIndex]);
-      e3Data[e3Id].votes._update(uint256(encryptedVoteCommitment), voteIndex);
-    }
+    // Append-only. Updating a slot's leaf in place would let anyone who can write to a slot — and
+    // the mask path needs no signature — replace the bytes of a vote that was already counted,
+    // erasing it. Appending leaves the earlier entry in the tree, so the Secure Process can fall
+    // back to it when a later entry is unusable, and nothing is lost.
+    uint256 leaf = inputLeaf(encryptedVote, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
+
+    // Refuse a byte-identical resubmission. Without this the tree is a free growth surface for
+    // anyone replaying a published input, and the round dies at tree capacity rather than at the
+    // input deadline.
+    if (round.appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
+    round.appendedLeaf[leaf] = true;
+
+    voteIndex = round.votes.numberOfLeaves;
+    round.votes._insert(leaf);
+
+    round.voteSlots[slotAddress] = voteIndex + 1;
+    round.inputCommitment[slotAddress][voteIndex] = encryptedVoteCommitment;
+  }
+
+  /// @notice Builds the input tree leaf for one published input.
+  /// @dev Binds four things the Secure Process must be able to trust:
+  ///
+  /// - the **bytes**, because the Noir proof constrains the commitment and never sees the
+  ///   serialized ciphertext, so the two can disagree and only the guest can tell;
+  /// - the **commitment**, so a submitter cannot pair any commitment with any ciphertext;
+  /// - the **slot**, because the tree is append-only and the guest tallies one entry per slot.
+  ///   Without the slot in the leaf a prover could re-group entries and change which one wins;
+  /// - the **parent**, because that is what the guest walks the slot's chain by. An unbound parent
+  ///   would let a prover re-point entries and select a different one.
+  ///
+  /// SHA-256 rather than Keccak: the zkVM accelerates SHA-256 inline, while its Keccak accelerator
+  /// emits a proof assumption the host must prove separately and compose. The extra on-chain cost
+  /// is about 67k gas on a transaction that already carries the ciphertext.
+  function inputLeaf(
+    bytes memory encryptedVote,
+    bytes32 commitment,
+    address slotAddress,
+    uint40 parentIndexPlusOne
+  ) public pure returns (uint256) {
+    return uint256(sha256(abi.encodePacked(sha256(encryptedVote), commitment, slotAddress, parentIndexPlusOne))) % SNARK_SCALAR_FIELD;
   }
 
   /// @notice Decode bytes to uint64 array

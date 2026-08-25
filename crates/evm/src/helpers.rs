@@ -47,7 +47,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex, OnceLock},
 };
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
-use tracing::info;
+use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
 /// ABI-encodes a ZK proof for EVM verifiers (C5 pk, C7 decryption, etc.).
@@ -274,18 +274,11 @@ pub async fn load_signer_from_repository(
     private_key.parse().map_err(Into::into)
 }
 
-pub async fn get_current_timestamp() -> Result<u64> {
-    let config = e3_config::load_config("_default", None, None)?;
-    let chain = config
-        .chains()
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No chains configured"))?;
-
-    let rpc_url = chain.rpc_url()?;
-    let provider = ProviderConfig::new(rpc_url, chain.rpc_auth.clone())
-        .create_readonly_provider()
-        .await?;
-
+/// Read the latest block timestamp from an already resolved chain provider.
+pub async fn get_current_timestamp_from_provider<P>(provider: EthProvider<P>) -> Result<u64>
+where
+    P: Provider + Clone,
+{
     let block = provider
         .provider()
         .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
@@ -338,7 +331,10 @@ where
                             info!("{}: error, will retry: {}", op_name, display_error);
                             Err(RetryError::Retry(e))
                         } else {
-                            info!("{}: error: {}", op_name, display_error);
+                            warn!(
+                                "{}: permanent error, not retrying: {}",
+                                op_name, display_error
+                            );
                             Err(RetryError::Failure(e))
                         }
                     }
@@ -351,18 +347,17 @@ where
     .await
 }
 
-/// Result of a transaction that a concurrent sender can make unnecessary.
+/// Result of a transaction whose chain effect can become unnecessary.
 #[derive(Debug)]
 pub enum TxOutcome {
     /// The transaction was mined and its receipt reports success.
     Mined(Box<TransactionReceipt>),
-    /// The transaction failed, but the wanted on-chain state is already there.
+    /// The transaction failed, but the operation has no remaining chain work.
     AlreadySettled,
 }
 
 impl TxOutcome {
-    /// The receipt of a mined transaction, or `None` when another sender
-    /// produced the wanted state.
+    /// The receipt of a mined transaction, or `None` when no chain work remains.
     pub fn receipt(&self) -> Option<&TransactionReceipt> {
         match self {
             TxOutcome::Mined(receipt) => Some(receipt),
@@ -371,15 +366,15 @@ impl TxOutcome {
     }
 }
 
-/// Send a transaction whose effect another sender can produce first.
+/// Send a transaction whose effect can become unnecessary before it is mined.
 ///
 /// Preflights before the transaction cannot close the window between the
 /// preflight and the block that includes the transaction. A transaction that
 /// loses that race is mined with a failed receipt, and the receipt carries no
 /// revert reason, so [`send_tx_with_retry`] classifies it as a hard failure.
 ///
-/// `settled` runs after such a failure. It must report whether the wanted
-/// on-chain state is there now. If it is, the failure is benign and the
+/// `settled` runs after such a failure. It must report whether the operation
+/// has any useful chain work left. If it does not, the failure is benign and the
 /// operation returns [`TxOutcome::AlreadySettled`]. In all other cases the
 /// original transaction error propagates.
 pub async fn send_tx_idempotent<F, Fut, S, SFut>(
@@ -402,7 +397,7 @@ where
     match settled().await {
         Ok(true) => {
             info!(
-                "{}: another sender produced the wanted state; treating the failure as benign: {}",
+                "{}: no chain work remains; treating the failure as benign: {}",
                 operation_name,
                 decode_error_from_str(&format!("{error:#}"))
                     .unwrap_or_else(|| format!("{error:#}"))

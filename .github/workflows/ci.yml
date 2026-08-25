@@ -24,9 +24,10 @@ env:
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
   RUST_BACKTRACE: 1
 
+# packages: write is granted per-job to the two image builds that can push
+# (workflow_dispatch from main); everything else only needs to read the repo.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   detect_changes:
@@ -52,15 +53,24 @@ jobs:
       build_interfold_cli: ${{ steps.jobs.outputs.build_interfold_cli }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          # Required for the '!' exclusions below. The default 'some' quantifier
+          # IGNORES negated patterns — worse, a bare '!**/*.md' rule under 'some'
+          # matches every non-markdown file, turning every filter always-true.
+          predicate-quantifier: 'some-with-excludes'
           filters: |
+            # Documentation never changes what a build or test produces, so every
+            # filter excludes it. A README edit under crates/ used to run the full
+            # rust + contracts + CRISP + docker matrix (~30 minutes).
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - '!**/*.md'
+              - '!**/*.mdx'
             contracts:
               - 'packages/interfold-contracts/**'
               # The manifest is generated from deployed_contracts.json and
@@ -68,24 +78,38 @@ jobs:
               # path a hand-edited manifest never runs the drift check and
               # reaches the release assets stale.
               - 'deployments/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
+              - '!**/*.md'
+              - '!**/*.mdx'
             crisp:
               - 'examples/CRISP/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             templates:
               - 'templates/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             sdk:
               - 'packages/interfold-sdk/**'
               - 'packages/interfold-react/**'
               - 'packages/interfold-config/**'
               - 'crates/wasm/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             integration_tests:
               - 'tests/integration/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             docker:
               - 'crates/Dockerfile'
               - 'crates/support/Dockerfile'
               - 'crates/support/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             ci:
               - '.github/**'
       - name: Compute job filters
@@ -108,19 +132,30 @@ jobs:
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
-          echo "crisp=$(any $FORCE $CRISP $CONTRACTS $CIRCUITS $RUST $CI)" >> $GITHUB_OUTPUT
-          echo "templates=$(any $FORCE $TEMPLATES $CI)" >> $GITHUB_OUTPUT
+          # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
+          # Cross-cutting ciphernode coverage comes from template_integration,
+          # which drives the same full E3 lifecycle with the same interfold
+          # binary and circuit preset, minus the CRISP-specific app layers.
+          echo "crisp=$(any $FORCE $CRISP $CI)" >> $GITHUB_OUTPUT
+          # template_integration is the repo's cross-cutting end-to-end test: it
+          # runs a full E3 round against real ciphernodes, so it must run on any
+          # change to the stack it drives, not just template changes.
+          echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "zk=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "contracts=$(any $FORCE $CONTRACTS $CI)" >> $GITHUB_OUTPUT
           echo "docker_support=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
-          echo "docker_ciphernode=$(any $FORCE $RUST $DOCKER $CI $CONTRACTS)" >> $GITHUB_OUTPUT
+          # The rust jobs already compile the workspace, so the image build only
+          # needs to run when the Dockerfiles or their build context change.
+          echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
           echo "net=$(any $FORCE $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI)" >> $GITHUB_OUTPUT
-          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $SDK $CI)" >> $GITHUB_OUTPUT
+          # Both feed template_integration, so each must cover every path that
+          # triggers it — a skipped dependency silently skips the e2e job.
+          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $CI)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI)" >> $GITHUB_OUTPUT
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -142,13 +177,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -198,13 +230,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -254,10 +283,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -281,11 +307,16 @@ jobs:
       - name: Run ZK Prover Integration Tests (with network downloads)
         run: 'cargo test -p e3-zk-prover --features integration-tests --test integration_tests -- --nocapture'
 
+  # Guards the RISC Zero guest artifact. The on-chain imageId is immutable, so a guest change
+  # that leaves ImageID.sol untouched ships a verifier that no longer matches this tree.
   build_e3_support_risc0:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.docker_support == 'true'
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Generate tags
@@ -303,6 +334,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -326,6 +358,9 @@ jobs:
     if: needs.detect_changes.outputs.docker_ciphernode == 'true'
     timeout-minutes: 60
     runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -487,10 +522,7 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
@@ -564,7 +596,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
       - name: 'Download build artifacts'
@@ -634,10 +666,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Build interfold CLI
         run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
@@ -658,19 +687,51 @@ jobs:
   crisp_unit:
     needs: [detect_changes, build_crisp_sdk]
     if: needs.detect_changes.outputs.crisp == 'true'
-    timeout-minutes: 30
+    # Per leg, because they are not remotely the same size. Anything that generates a ballot proves
+    # five Noir circuits, which a two-vCPU runner takes minutes to do; everything else is seconds.
+    timeout-minutes: ${{ matrix.timeout }}
     runs-on: 'ubuntu-latest'
     strategy:
       matrix:
         include:
           - test-suite: test:circuits
             command: pnpm test:circuits
+            timeout: 15
           - test-suite: test:sdk
             command: pnpm test:sdk
-          - test-suite: test:contracts
-            command: pnpm test:contracts
+            timeout: 45
+            needs-sdk: true
+          # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
+          # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
+          # with every ballot a new test needs. Split, the critical path is the largest single leg
+          # rather than the sum, and the checks that prove nothing report in seconds instead of
+          # queueing behind twenty minutes of proving.
+          #
+          # Balanced by ballots, which is what the time is: input-tree 7, ballots 5, unit 0.
+          # `pnpm test:contracts` still runs all of it in one go for local use, and
+          # `crisp_contract_leg_coverage` fails if a test file ever belongs to no leg.
+          #
+          # Every contract leg needs both capabilities: `hardhat.config.ts` imports
+          # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
+          # and each leg contains at least one test that imports `@crisp-e3/sdk`.
+          - test-suite: test:contracts:input-tree
+            command: pnpm test:contracts:input-tree
+            timeout: 45
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:ballots
+            command: pnpm test:contracts:ballots
+            timeout: 45
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:unit
+            command: pnpm test:contracts:unit
+            timeout: 15
+            needs-evm: true
+            needs-sdk: true
           - test-suite: cargo test
             command: cargo test
+            timeout: 20
       fail-fast: false
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -692,14 +753,11 @@ jobs:
 
       - name: Install Foundry
         if: matrix.test-suite == 'cargo test'
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
         if: matrix.test-suite == 'cargo test'
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
@@ -724,13 +782,16 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
+      # Gated on a declared capability rather than on the leg's name. Matching the name made the
+      # label load-bearing: splitting `test:contracts` into three renamed legs silently skipped this
+      # step, and the suite failed on a missing `@interfold/contracts/dist` two steps later.
       - name: Compile Interfold contracts
-        if: matrix.test-suite == 'test:contracts'
+        if: matrix.needs-evm
         working-directory: .
         run: pnpm evm:build
 
       - name: Download Crisp SDK artifacts
-        if: matrix.test-suite == 'test:sdk' || matrix.test-suite == 'test:contracts'
+        if: matrix.needs-sdk
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: crisp-sdk-artifacts
@@ -769,7 +830,7 @@ jobs:
           sudo chmod -R 777 $GITHUB_WORKSPACE/examples/CRISP/.cache-synpress
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -782,10 +843,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install yq
         run: |
@@ -941,6 +999,36 @@ jobs:
       - name: Build circuits
         run: pnpm build:circuits
 
+      # The generated verifier contracts must match the freshly built verification keys. A drift
+      # means the deployed verifier accepts a different circuit from the one in this tree.
+      #
+      # `--no-compile` is load-bearing, not an optimisation. Without it the checker deletes every
+      # nargo target directory first — its guard against comparing stale artifacts — and recompiles
+      # only what it needs, which is the `.json` and the evm `.vk`. That silently discards the
+      # `.vk_recursive` files `build:circuits` had just written, and the upload below then ships an
+      # artifact `zk_prover_e2e` cannot use. Nothing here fails; the damage surfaces two jobs later.
+      # The step above has just built these circuits, so there is nothing stale to guard against.
+      - name: Check generated verifiers are in sync
+        run: pnpm check:verifiers --no-compile
+
+      # Asserted before the upload, so a step that consumes or clears a build output fails in the
+      # job that did it rather than in the job that needed it. Same list `zk_prover_e2e` checks.
+      - name: Verify recursive aggregation artifacts survived
+        run: |
+          for artifact in \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json \
+            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json \
+            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive
+          do
+            test -f "$artifact" || {
+              echo "Missing before upload: $artifact"
+              echo "A step between 'Build circuits' and here removed it."
+              exit 1
+            }
+            echo "  ok $artifact"
+          done
+
       - name: Upload compiled circuit artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -983,10 +1071,7 @@ jobs:
           key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
@@ -1052,6 +1137,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
+      - name: Test support image resolution
+        run: bash crates/support-scripts/tests/container.sh
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
         with:
@@ -1246,7 +1333,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Download interfold binary
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

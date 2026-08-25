@@ -129,6 +129,14 @@ export type ProofData = {
   publicInputs: string[]
   proof: Uint8Array
   encryptedVote: Uint8Array
+  /**
+   * The tree index of the entry this input extends, plus one; zero when it extends nothing.
+   *
+   * `CRISPProgram` reads the parent's commitment from this and hands it to the circuit as
+   * `prev_ct_commitment`, and the Secure Process walks each slot's chain by it. Offset by one so
+   * that zero means "no parent", which is what index 0 would otherwise be ambiguous with.
+   */
+  parentIndexPlusOne: number
 }
 
 /**
@@ -140,15 +148,35 @@ export type ProofData = {
  */
 export type CensusVariant = 'merkle' | 'onchain'
 
+/**
+ * The two halves of a slot head, which only mean anything together.
+ *
+ * Modelled as a pair rather than two optional fields: a ciphertext without its index would be
+ * proven against one entry and published against another, and the mismatch only surfaces as a
+ * rejected proof.
+ */
+type SlotHeadInputs =
+  | {
+      /**
+       * The ciphertext currently in the slot: the end of its chain of usable entries, not simply
+       * the newest one published. An entry whose bytes do not reproduce its commitment is never
+       * selected by the Secure Process and is never a valid parent, so building on it would have
+       * this input dropped from the tally.
+       */
+      previousCiphertext: Uint8Array
+      /** The tree index of `previousCiphertext`, which this input names as its parent. */
+      previousIndex: number
+    }
+  | { previousCiphertext?: undefined; previousIndex?: undefined }
+
 type PrepareBallotInputsBase = {
-  previousCiphertext?: Uint8Array
   publicKey: Uint8Array
   slotAddress: string
   isMaskVote: boolean
   /// Read for a mask, where there is no vote to take a length from.
   numOptions: number
   vote: Vote
-}
+} & SlotHeadInputs
 
 /**
  * Everything needed to encrypt a ballot, before the voter has signed anything.
@@ -165,8 +193,21 @@ export type PrepareBallotInputs =
  */
 export type PreparedBallot = {
   circuitInputs: any
+  /**
+   * The ciphertext to publish, which is the ballot itself for a vote or a re-vote, and the slot's
+   * ciphertext plus the zero ballot for a mask over an occupied slot.
+   */
   encryptedVote: Uint8Array
+  /**
+   * The commitment to `encryptedVote`: what the circuit returns, what the E3 program stores, and
+   * what `CRISPProgram.ballotDigest` takes as its `ciphertextCommitment` argument.
+   *
+   * Since the digest is itself a circuit input, a caller has to know this value before proving,
+   * which is why the wasm exports it rather than leaving it to be read off the finished proof.
+   */
   ctCommitment: `0x${string}`
+  /** The value {@link ProofData.parentIndexPlusOne} carries through to `encodeSolidityProof`. */
+  parentIndexPlusOne: number
   censusMode: CensusVariant
 }
 
@@ -181,9 +222,22 @@ type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K>
 /**
  * A {@link PrepareBallotInputs} plus the round it belongs to.
  *
- * The SDK resolves `previousCiphertext` from the server, so callers do not pass it.
+ * The SDK resolves the slot head from the server, so callers pass neither part of it.
  */
-export type PrepareBallotRequest = { e3Id: bigint } & DistributiveOmit<PrepareBallotInputs, 'previousCiphertext'>
+export type PrepareBallotRequest = { e3Id: bigint } & DistributiveOmit<PrepareBallotInputs, 'previousCiphertext' | 'previousIndex'>
+
+/**
+ * The end of a slot's chain of usable entries: what a new input extends.
+ *
+ * Not simply the newest entry published to the slot. An entry whose bytes do not reproduce its
+ * commitment is never selected by the Secure Process and is never a valid parent, so the server
+ * resolves the chain and answers with the entry that actually holds the slot.
+ */
+export type SlotHead = {
+  ciphertext: Uint8Array
+  /** The tree index of that entry. */
+  index: number
+}
 
 /**
  * Type representing the current round returned by the CRISP server (`rounds/current`)
@@ -228,22 +282,32 @@ export type JsonResponse = {
 export type NewRoundRequest = {
   cronApiKey: string
   tokenAddress: string
+  /** For an ONCHAIN round, doubles as the contract's `minVotingPower` floor in raw token units. */
   balanceThreshold: string
+  /**
+   * The census source, as a `CRISPProgram.CensusMode` discriminant: 0 (TOKEN, the default) or
+   * 2 (ONCHAIN). ONCHAIN reads eligibility from the token per input — with a `SelfRegistry` as
+   * the token, that is what lets voters register during the input window. Typed as the literals
+   * the server accepts — any other explicit value is refused with HTTP 400.
+   */
+  censusMode?: 0 | 2
 }
 
 /**
  * Type representing a request to broadcast an encrypted vote (`voting/broadcast`)
+ *
+ * Carries no address: the slot is already inside the encoded proof, and every byte the relay
+ * does not receive is a byte it cannot log against a masker's session.
  */
 export type BroadcastVoteRequest = {
   e3Id: bigint
   encodedProof: string
-  address: string
 }
 
 /**
  * The status of a vote broadcast returned by the CRISP server
  */
-export type VoteResponseStatus = 'success' | 'user_already_voted' | 'failed_broadcast'
+export type VoteResponseStatus = 'success' | 'failed_broadcast'
 
 /**
  * Type representing the response to a vote broadcast (`voting/broadcast`)
@@ -252,16 +316,20 @@ export type BroadcastVoteResponse = {
   status: VoteResponseStatus
   tx_hash: string | null
   message: string | null
-  is_vote_update?: boolean
 }
 
 /**
- * Type representing the vote status of an address in a round (`voting/status`)
+ * Type representing the slot activity of an address in a round (`voting/status`)
+ *
+ * @remarks
+ * `slot_active` says the slot holds at least one published entry — not that its owner voted.
+ * Masks are indistinguishable from votes by design, so activity is the only per-slot fact the
+ * server can answer. A client that wants "did I vote" must remember its own submissions.
  */
 export type VoteStatusResponse = {
   round_id: string
   address: string
-  has_voted: boolean
+  slot_active: boolean
   round_status: string | null
 }
 
@@ -294,4 +362,61 @@ export type TokenHolder = {
 export enum CreditMode {
   CONSTANT = 0,
   CUSTOM = 1,
+}
+
+/**
+ * The chain head as reported by the CRISP server (`chain/head`).
+ */
+export type ChainHead = {
+  blockNumber: bigint
+  timestamp: bigint
+  chainId: number
+}
+
+/**
+ * One `eth_call` in a `chain/read` batch. The caller owns the ABI encoding; the server forwards
+ * the calldata untouched, so a client can read any view function of an allowlisted contract
+ * without the server needing to know its ABI.
+ */
+export type ContractRead = {
+  address: string
+  data: `0x${string}`
+  /** Historical block to read at. Omit for latest. */
+  blockNumber?: bigint
+}
+
+/**
+ * The outcome of one call in a `chain/read` batch.
+ *
+ * A revert is reported per call rather than failing the batch, because probing a function a
+ * contract may not implement is a normal thing to do (the IVotes and proxy probes both rely on
+ * it) and one expected revert must not discard its siblings' results.
+ */
+export type ContractReadResult = {
+  result?: `0x${string}`
+  error?: string
+}
+
+/**
+ * A log as returned by `chain/logs`.
+ */
+export type IndexedLog = {
+  address: string
+  topics: `0x${string}`[]
+  data: `0x${string}`
+  blockNumber?: bigint
+  transactionHash?: string
+  logIndex?: number
+}
+
+/**
+ * A `chain/logs` query. The range is unbounded from the caller's side: the server splits it into
+ * windows the upstream provider will accept.
+ */
+export type LogQuery = {
+  address: string
+  /** Positional topic filters; `null`/`undefined` in a position matches anything. */
+  topics?: (string | null | undefined)[]
+  fromBlock?: bigint
+  toBlock?: bigint
 }

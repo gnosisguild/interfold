@@ -10,7 +10,7 @@ import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
 import { getRoundStateLite } from './api'
 import { getPublicClient } from './chain'
 
-import type { CreditMode, OnChainRoundData, RoundDetails, TokenDetails } from './types'
+import type { CreditMode, OnChainRoundData, RoundDetails, SlotHead, TokenDetails } from './types'
 
 /**
  * Get the details of a specific round in a camelCase convenience format
@@ -67,10 +67,17 @@ export const getRoundTokenDetails = async (serverUrl: string, e3Id: bigint): Pro
  * @param programAddress - The address of the CRISPProgram contract
  * @param e3Id - The e3Id of the round
  * @param chainId - The chain ID of the network the program is deployed on
+ * @param rpcUrl - Endpoint to read through. Omitted, viem's default public RPC for the chain is
+ *                 used — a third-party service this SDK cannot observe or rate-limit.
  * @returns The on chain round data
  */
-export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, chainId: number): Promise<OnChainRoundData> => {
-  const publicClient = getPublicClient(chainId)
+export const getOnChainRoundData = async (
+  programAddress: string,
+  e3Id: bigint,
+  chainId: number,
+  rpcUrl?: string,
+): Promise<OnChainRoundData> => {
+  const publicClient = getPublicClient(chainId, rpcUrl)
 
   const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await publicClient.readContract({
     address: programAddress as `0x${string}`,
@@ -104,6 +111,7 @@ export const getOnChainRoundData = async (programAddress: string, e3Id: bigint, 
  * @param e3Id - The e3Id of the round
  * @param slot - The slot address the ballot is written to
  * @param chainId - The chain the program is deployed on
+ * @param rpcUrl - Endpoint to read through; see {@link getOnChainRoundData}.
  * @returns The spendable voting power in ballot units, or 0 for a round that is not ONCHAIN
  */
 export const getOnchainVotingPower = async (
@@ -111,8 +119,9 @@ export const getOnchainVotingPower = async (
   e3Id: bigint,
   slot: string,
   chainId: number,
+  rpcUrl?: string,
 ): Promise<bigint> => {
-  const publicClient = getPublicClient(chainId)
+  const publicClient = getPublicClient(chainId, rpcUrl)
 
   return publicClient.readContract({
     address: programAddress as `0x${string}`,
@@ -129,9 +138,10 @@ export const getOnchainVotingPower = async (
  * @param serverUrl - The base URL of the CRISP server
  * @param e3Id - The e3Id of the round
  * @param address - The address of the slot
- * @returns The previous ciphertext for the slot, or undefined if the slot is empty
+ * @returns The end of the slot's chain of usable entries and its tree index, or undefined when the
+ *          slot holds nothing usable. The index is what a new input names as its parent.
  */
-export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, address: string): Promise<Uint8Array | undefined> => {
+export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, address: string): Promise<SlotHead | undefined> => {
   const response = await fetch(`${serverUrl}/${CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT}`, {
     method: 'POST',
     headers: {
@@ -150,5 +160,5 @@ export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, add
 
   const data = await response.json()
 
-  return new Uint8Array(data.ciphertext)
+  return { ciphertext: new Uint8Array(data.ciphertext), index: Number(data.index) }
 }

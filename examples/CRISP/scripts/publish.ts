@@ -18,11 +18,30 @@ interface PackageJson {
   version: string
 }
 
+/**
+ * Release channels, split by BFV preset.
+ *
+ * The SDK inlines the compiled circuit and the contracts package ships the verifier generated from
+ * that same circuit's verification key, so a channel that mixes presets produces a round which
+ * rejects every ballot — and it fails at on-chain verification, not anywhere a test would catch it.
+ * Each channel therefore carries exactly one preset, and the preset decides the build.
+ *
+ * Testing versions carry a prerelease identifier so npm keeps them out of ordinary ranges: a
+ * consumer on `^0.18.0` can never drift onto a testing build through an update.
+ */
+const CHANNELS = {
+  testing: { tag: 'testing', preset: 'insecure-512', prerelease: true },
+  prod: { tag: 'latest', preset: 'secure-8192', prerelease: false },
+} as const
+
+type Channel = keyof typeof CHANNELS
+
 interface PublishOptions {
   skipGit?: boolean
   dryRun?: boolean
-  tag?: string // npm dist-tag (e.g., 'latest', 'beta', 'next')
+  tag?: string // npm dist-tag override; defaults to the channel's tag
   noVerify?: boolean
+  channel?: Channel
 }
 
 class CRISPPublisher {
@@ -31,10 +50,13 @@ class CRISPPublisher {
   private crispDir: string
   private options: PublishOptions
 
+  private channel: Channel
+
   constructor(newVersion: string, options: PublishOptions = {}) {
     this.newVersion = newVersion
     this.crispDir = resolve(__dirname, '..')
     this.options = options
+    this.channel = options.channel ?? 'testing'
   }
 
   /**
@@ -159,14 +181,18 @@ class CRISPPublisher {
         const packageJsonPath = join(pkgPath, 'package.json')
         const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
 
-        if (packageJson.scripts && packageJson.scripts.build) {
-          execSync('pnpm build', {
+        // The SDK bundles the preset-bound circuits, so it builds per channel. Everything else is
+        // preset-free and builds once.
+        const buildScript = pkg.path === 'packages/crisp-sdk' ? `build:${this.channel}` : 'build'
+        if (packageJson.scripts && packageJson.scripts[buildScript]) {
+          execSync(`pnpm ${buildScript}`, {
             cwd: pkgPath,
             stdio: 'inherit',
+            env: { ...process.env, CRISP_PRESET: CHANNELS[this.channel].preset },
           })
           console.log(`   ✓ ${pkg.name} built successfully`)
         } else {
-          console.log(`   ⚠️  ${pkg.name} has no build script, skipping`)
+          console.log(`   ⚠️  ${pkg.name} has no ${buildScript} script, skipping`)
         }
       } catch (error) {
         console.error(`   ❌ Failed to build ${pkg.name}`)
@@ -181,14 +207,17 @@ class CRISPPublisher {
   private async publishPackages(): Promise<void> {
     console.log('\n📤 Publishing packages to npm...')
 
+    // Dependency order. `@crisp-e3/sdk` depends on `@crisp-e3/zk-inputs`, and pnpm rewrites that
+    // workspace dependency to a concrete version at pack time, so the version it names has to be on
+    // the registry already — updateClientLockFile() installs from the registry right after this.
     const packagesToPublish = [
+      { path: 'packages/crisp-zk-inputs', name: '@crisp-e3/zk-inputs' },
       { path: 'packages/crisp-sdk', name: '@crisp-e3/sdk' },
       { path: 'packages/crisp-contracts', name: '@crisp-e3/contracts' },
-      { path: 'packages/crisp-zk-inputs', name: '@crisp-e3/zk-inputs' },
     ]
 
-    const tag = this.options.tag || (this.newVersion.includes('-') ? 'next' : 'latest')
-    console.log(`   Using npm tag: ${tag}`)
+    const tag = this.options.tag || CHANNELS[this.channel].tag
+    console.log(`   Channel: ${this.channel} (${CHANNELS[this.channel].preset}), npm tag: ${tag}`)
 
     for (const pkg of packagesToPublish) {
       try {
@@ -199,6 +228,9 @@ class CRISPPublisher {
         execSync(`pnpm publish --access public --tag ${tag} --no-git-checks`, {
           cwd: pkgPath,
           stdio: 'inherit',
+          // `prepublishOnly` runs check-presets.mjs, which refuses to publish a channel whose
+          // artifacts carry the wrong preset. npm gives it no way to see --tag, so it reads this.
+          env: { ...process.env, CRISP_CHANNEL: tag },
         })
 
         console.log(`   ✓ ${pkg.name}@${this.newVersion} published successfully`)
@@ -375,6 +407,20 @@ class CRISPPublisher {
     if (!semverRegex.test(version)) {
       throw new Error(`Invalid version format: ${version}. Expected format: x.y.z[-prerelease][+build]`)
     }
+
+    // The prerelease identifier is what keeps the channels apart. npm excludes prereleases from
+    // ordinary ranges, so a consumer on `^0.18.0` cannot drift onto a testing build through an
+    // update — but only if testing versions actually carry one, and prod versions do not.
+    const isPrerelease = version.includes('-')
+    const expected = CHANNELS[this.channel].prerelease
+
+    if (isPrerelease !== expected) {
+      throw new Error(
+        expected
+          ? `Channel "testing" needs a prerelease version so it stays out of ordinary semver ranges; got ${version}. Try ${version}-insecure.0`
+          : `Channel "prod" needs a plain release version; got the prerelease ${version}. Publish prereleases with --channel testing.`,
+      )
+    }
   }
 
   /**
@@ -473,6 +519,13 @@ async function main() {
       options.dryRun = true
     } else if (arg === '--tag') {
       options.tag = args[++i]
+    } else if (arg === '--channel') {
+      const value = args[++i]
+      if (value !== 'testing' && value !== 'prod') {
+        console.error(`❌ Error: --channel must be "testing" or "prod"; got "${value}"`)
+        process.exit(1)
+      }
+      options.channel = value
     } else if (arg === '--no-verify') {
       options.noVerify = true
     } else if (!arg.startsWith('-')) {
@@ -482,6 +535,14 @@ async function main() {
 
   if (!version) {
     console.error('❌ Error: Version is required')
+    showHelp()
+    process.exit(1)
+  }
+
+  // No default. The channel decides which preset is compiled into what gets published, and picking
+  // one silently is how a round ends up with an SDK and a verifier that disagree.
+  if (!options.channel) {
+    console.error('❌ Error: --channel is required (testing | prod)')
     showHelp()
     process.exit(1)
   }
@@ -501,34 +562,44 @@ Arguments:
   version             The new version (e.g., 1.0.0, 1.0.0-beta.1)
 
 Options:
-  --tag <name>        npm dist-tag (default: 'latest' for releases, 'next' for pre-releases)
+  --channel <name>    Release channel: 'testing' (insecure-512) or 'prod' (secure-8192). Required.
+  --tag <name>        npm dist-tag override (default: the channel's tag)
   --skip-git          Skip all git operations (no commit)
   --dry-run           Show what would be done without making changes
   --help, -h          Show this help message
 
+Channels:
+  testing   npm tag 'testing', insecure-512 circuits, prerelease versions only
+  prod      npm tag 'latest',  secure-8192 circuits, plain release versions only
+
+  Each channel carries exactly one preset. The SDK inlines the compiled circuit and the contracts
+  package ships the verifier generated from that circuit's verification key, so mixing them
+  produces a round that rejects every ballot, and it fails on chain rather than in any test.
+
+  Testing versions must carry a prerelease identifier. npm keeps prereleases out of ordinary
+  ranges, so a consumer on '^0.18.0' cannot drift onto a testing build through an update.
+
 Examples:
-  # Publish stable release
-  tsx scripts/publish.ts 1.0.0
+  # Publish to the testing channel (testnets, demos)
+  tsx scripts/publish.ts --channel testing 0.18.0-insecure.0
 
-  # Publish beta release
-  tsx scripts/publish.ts 1.0.0-beta.1
-
-  # Publish with custom tag
-  tsx scripts/publish.ts --tag canary 1.0.0-canary.1
+  # Publish to production
+  tsx scripts/publish.ts --channel prod 0.18.0
 
   # Test without publishing
-  tsx scripts/publish.ts --dry-run 1.0.0
+  tsx scripts/publish.ts --channel testing --dry-run 0.18.0-insecure.0
 
   # Publish without committing
-  tsx scripts/publish.ts --skip-git 1.0.0
+  tsx scripts/publish.ts --channel testing --skip-git 0.18.0-insecure.0
 
 The script will:
   1. Check for uncommitted changes
   2. Update versions in @crisp-e3/sdk, @crisp-e3/contracts, @crisp-e3/zk-inputs
+  2b. Build the SDK against the channel's preset
   3. Update @crisp-e3/sdk dependency in client/package.json
   4. Update pnpm-lock.yaml
   5. Build packages
-  6. Publish to npm
+  6. Publish to npm in dependency order (zk-inputs, then sdk, then contracts)
   7. Update the standalone client/pnpm-lock.yaml
   8. Commit changes (no tags)
 

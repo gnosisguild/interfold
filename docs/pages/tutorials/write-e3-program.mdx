@@ -206,27 +206,45 @@ function verify(
   bytes32 ciphertextOutputHash,
   bytes32 ciphertextCommitment,
   bytes memory proof
-) external returns (bool) {
-  if (msg.sender != address(interfold)) revert CallerNotAuthorized();
+) external view override returns (bool) {
+  E3 memory e3 = interfold.getE3(e3Id);
+  bytes32 paramsHash = getParamsHash(e3Id);
+  bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root());
 
-  // Reconstruct the exact RISC Zero journal from known values
-  bytes memory journal = new bytes(528);
-  _encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
-  _encodeLengthPrefixAndHash(journal, 132, ciphertextCommitment);
-  _encodeLengthPrefixAndHash(journal, 264, e3Data[e3Id].paramsHash);
-  _encodeLengthPrefixAndHash(journal, 396, bytes32(e3Data[e3Id].votes._root(TREE_DEPTH)));
+  // The Secure Process derives this root from the ciphertexts it processed, and the proof envelope
+  // carries that derived value. Compare it against the root this program accumulated on chain: the
+  // protocol verifier does not, so this is the only check that the result covers your inputs.
+  Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+  if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot)
+    revert InvalidComputeContext();
 
-  // Verify the RISC Zero proof
-  risc0Verifier.verify(proof, imageId, sha256(journal));
+  // Rebuild the exact RISC Zero journal from on-chain state.
+  bytes memory journal = Risc0ComputeProof.journal(
+    bytes32(block.chainid),
+    bytes32(uint256(uint160(address(interfold)))),
+    bytes32(e3Id),
+    e3.encryptionSchemeId,
+    e3.committeePublicKey,
+    ciphertextOutputHash,
+    ciphertextCommitment,
+    paramsHash,
+    inputRoot
+  );
 
+  risc0Verifier.verify(computeProof.seal, imageId, sha256(journal));
   return true;
 }
 ```
 
-The guest returns these four values as 32-byte Rust vectors. RISC Zero serializes each vector into
-132 bytes, so the contract must reconstruct the same 528 bytes before it checks the proof. The
-journal binds the proof to the output hash, SAFE commitment, inputs, and parameters. A front-runner
-cannot replace the commitment while reusing a valid proof.
+The guest commits nine values as 32-byte Rust vectors. RISC Zero serializes each vector into 132
+bytes, so the journal is 1,188 bytes. `Risc0ComputeProof.journal` builds that layout, and
+`Risc0ComputeProof.FIELD_COUNT` holds the field count, so a program never hardcodes the length.
+
+Eight of the nine fields come from on-chain state, which is why a front-runner cannot replace the
+commitment while reusing a valid proof. The ninth, `inputRoot`, arrives inside the proof envelope.
+The protocol verifier does not constrain it, so **every E3 program must compare it against its own
+input root**, as the check above does. A program that skips that comparison accepts a result
+computed over an input set it never saw.
 
 ---
 

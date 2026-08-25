@@ -7,7 +7,7 @@
 use actix::prelude::*;
 use alloy::primitives::Address;
 
-use e3_events::{prelude::*, AggregatorChanged, Die, InterfoldEvent, InterfoldEventData};
+use e3_events::{prelude::*, Die, InterfoldEvent, InterfoldEventData};
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::HashSet;
 use tracing::info;
@@ -22,7 +22,6 @@ pub struct KeyshareCreatedFilterBuffer {
     committee: Option<Vec<String>>,
     buffer: Vec<InterfoldEvent>,
     expelled_nodes: HashSet<Address>,
-    is_aggregator: bool,
 }
 
 fn committee_member_matches(committee: &[String], party_id: u64, node: &str) -> bool {
@@ -49,7 +48,6 @@ impl KeyshareCreatedFilterBuffer {
             committee: None,
             buffer: Vec::new(),
             expelled_nodes: HashSet::new(),
-            is_aggregator: false,
         }
     }
 
@@ -58,10 +56,6 @@ impl KeyshareCreatedFilterBuffer {
     }
 
     fn process_buffered_events(&mut self) {
-        if !self.is_aggregator {
-            return;
-        }
-
         if let Some(ref committee) = self.committee {
             for event in self.buffer.drain(..) {
                 match event.get_data() {
@@ -108,8 +102,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
         match msg.get_data() {
             InterfoldEventData::KeyshareCreated(data) => match &self.committee {
                 Some(committee)
-                    if self.is_aggregator
-                        && committee_member_matches(committee, data.party_id, &data.node)
+                    if committee_member_matches(committee, data.party_id, &data.node)
                         && !data
                             .node
                             .parse::<Address>()
@@ -118,15 +111,6 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     Self::forward(&self.dest, msg);
                 }
                 None => {
-                    self.buffer.push(msg);
-                }
-                Some(committee)
-                    if committee_member_matches(committee, data.party_id, &data.node)
-                        && !data
-                            .node
-                            .parse::<Address>()
-                            .is_ok_and(|node| self.expelled_nodes.contains(&node)) =>
-                {
                     self.buffer.push(msg);
                 }
                 _ => {}
@@ -161,11 +145,7 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     );
                 }
 
-                if self.is_aggregator {
-                    Self::forward(&self.dest, msg);
-                } else {
-                    self.buffer.push(msg);
-                }
+                Self::forward(&self.dest, msg);
             }
             InterfoldEventData::CommitteeMemberExcluded(data) => {
                 if data.party_id.is_some() {
@@ -184,23 +164,17 @@ impl Handler<InterfoldEvent> for KeyshareCreatedFilterBuffer {
                     )
                 });
 
-                if self.is_aggregator {
-                    Self::forward(&self.dest, msg);
-                } else {
-                    self.buffer.push(msg);
-                }
+                Self::forward(&self.dest, msg);
             }
-            InterfoldEventData::AggregatorChanged(AggregatorChanged { is_aggregator, .. }) => {
-                self.is_aggregator = *is_aggregator;
-                self.process_buffered_events();
+            InterfoldEventData::AggregatorChanged(_) => {
+                Self::forward(&self.dest, msg);
             }
             InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_) => {
+                self.buffer.clear();
                 Self::forward(&self.dest, msg);
             }
             _ => {
-                if self.is_aggregator {
-                    Self::forward(&self.dest, msg);
-                }
+                Self::forward(&self.dest, msg);
             }
         }
     }

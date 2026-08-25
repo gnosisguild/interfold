@@ -4,10 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::compute_input::{ComputeError, FHEInputs, PublishedData};
+use crate::policy::{InputPolicy, PublishedInput};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, BigInteger};
 use e3_bfv_client::client::compute_ct_commitment;
-use e3_fhe_params::decode_bfv_params;
+use fhe::bfv::BfvParameters;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
@@ -31,25 +33,79 @@ impl MerkleTreeBuilder {
         }
     }
 
+    /// Sets the leaves directly, for tests that need a known tree.
+    ///
+    /// Never use this to build a tree the journal publishes. A Secure Process must derive its
+    /// leaves from the ciphertexts it consumed, with [`Self::compute_leaf_hashes`]. Leaves that
+    /// arrive as a separate value can disagree with those ciphertexts.
+    #[cfg(test)]
     pub fn with_leaf_hashes(mut self, leaf_hashes: Vec<String>) -> Self {
         self.leaf_hashes = leaf_hashes;
         self
     }
 
-    pub fn compute_leaf_hashes(&mut self, data: &[(Vec<u8>, u64)], params_bytes: &[u8]) {
-        let params = decode_bfv_params(params_bytes).expect("Failed to decode BFV params");
+    /// Derives one leaf per published input and returns the ciphertexts the policy selected.
+    ///
+    /// Two guarantees hold whatever the policy does, because they are applied here rather than
+    /// delegated:
+    ///
+    /// - **every input contributes a leaf**, so the root covers the whole published set and a
+    ///   policy cannot make the result unpublishable by omitting one;
+    /// - **leaves are derived from the ciphertexts given**, never accepted alongside them.
+    pub fn compute_leaf_hashes(
+        &mut self,
+        inputs: &FHEInputs,
+        published: &[PublishedData],
+        params: &BfvParameters,
+        policy: InputPolicy,
+    ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
         let degree = params.degree();
         let plaintext_modulus = params.plaintext();
         let moduli = params.moduli().to_vec();
+        let empty = PublishedData::default();
 
-        for item in data {
-            let commitment =
-                compute_ct_commitment(item.0.clone(), degree, plaintext_modulus, moduli.clone())
-                    .expect("Failed to compute ciphertext commitment");
+        let entries: Vec<PublishedInput> = inputs
+            .ciphertexts
+            .iter()
+            .enumerate()
+            .map(|(index, (ciphertext, _))| {
+                let entry = published.get(index).unwrap_or(&empty);
+                PublishedInput {
+                    index,
+                    ciphertext,
+                    commitment: entry.commitment.as_ref(),
+                    metadata: &entry.metadata,
+                    // Recomputed here rather than by the policy: it is the one value that ties the
+                    // published bytes back to what the E3 program proved, and it needs the BFV
+                    // parameters. A ciphertext that does not deserialize yields `None`, which is an
+                    // unusable input rather than a failure — the bytes are untrusted.
+                    recomputed: compute_ct_commitment(
+                        ciphertext.clone(),
+                        degree,
+                        plaintext_modulus,
+                        moduli.clone(),
+                    )
+                    .ok(),
+                }
+            })
+            .collect();
 
-            let commitment_hex = hex::encode(commitment);
-            self.leaf_hashes.push(commitment_hex);
+        for entry in &entries {
+            self.leaf_hashes.push((policy.leaf)(entry)?);
         }
+
+        let mut selected = (policy.select)(&entries);
+        selected.sort_unstable();
+        selected.dedup();
+
+        selected
+            .into_iter()
+            .map(|index| {
+                inputs.ciphertexts.get(index).cloned().ok_or_else(|| {
+                    ComputeError::MerkleTree(format!("selected index {index} is out of range"))
+                })
+            })
+            .collect()
     }
 
     fn poseidon_hash(nodes: Vec<String>) -> String {
@@ -69,7 +125,7 @@ impl MerkleTreeBuilder {
         hex::encode(result_hash.to_bytes_be())
     }
 
-    pub fn build_tree(&self) -> IMT {
+    pub fn build_tree(&self) -> Result<IMT, ComputeError> {
         let mut tree = IMT::new(
             Self::poseidon_hash,
             self.depth,
@@ -77,13 +133,14 @@ impl MerkleTreeBuilder {
             self.arity,
             vec![],
         )
-        .unwrap();
+        .map_err(|e| ComputeError::MerkleTree(e.to_string()))?;
 
         for leaf in &self.leaf_hashes {
-            tree.insert(leaf.clone()).unwrap();
+            tree.insert(leaf.clone())
+                .map_err(|e| ComputeError::MerkleTree(e.to_string()))?;
         }
 
-        tree
+        Ok(tree)
     }
 }
 
@@ -110,6 +167,7 @@ mod tests {
         let root = MerkleTreeBuilder::new(1)
             .with_leaf_hashes(vec!["0".to_string()])
             .build_tree()
+            .unwrap()
             .root()
             .unwrap();
 

@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 
 /// Decision returned for each event encountered during EventStore replay.
 ///
-/// Infrastructure events (`SyncEnded`, `EffectsEnabled`, `HistoricalEvmSyncStart`,
-/// `HistoricalNetSyncStart`) are re-published by the sync process itself, so replaying them
-/// would poison the EventBus deduplication window. They must be skipped during replay.
+/// Process-lifecycle events are valid only for the process that created them. Replaying them can
+/// either advance a new startup from an old signal or poison EventBus deduplication before the new
+/// startup publishes the same payload. They must be skipped during replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayDecision {
     /// Forward the event to listeners.
@@ -47,14 +47,19 @@ impl SyncPlanner {
             event.get_data(),
             InterfoldEventData::SyncEnded(_)
                 | InterfoldEventData::EffectsEnabled(_)
+                | InterfoldEventData::OutgoingSyncRequested(_)
                 | InterfoldEventData::HistoricalEvmSyncStart(_)
                 | InterfoldEventData::HistoricalNetSyncStart(_)
+                | InterfoldEventData::HistoricalNetSyncEventsReceived(_)
+                | InterfoldEventData::SyncEffect(_)
+                | InterfoldEventData::NetReady(_)
                 | InterfoldEventData::Shutdown(_)
         )
     }
 
-    /// Build the net sync cursor: the aggregates that still need libp2p syncing mapped to the
-    /// original snapshot HLC timestamps.
+    /// Build the net sync cursor: chain-bound aggregates that still need libp2p syncing, mapped to
+    /// the original snapshot HLC timestamps. Aggregate 0 contains local process events and must not
+    /// be requested from peers.
     ///
     /// We use [`Self::find_net_hlc`] to determine WHICH aggregates need syncing (filtering closed
     /// E3s), but replace the timestamps with the original ones from the snapshot. Re-read EVM
@@ -66,6 +71,7 @@ impl SyncPlanner {
     ) -> BTreeMap<AggregateId, u128> {
         Self::find_net_hlc(historical_evm_events)
             .into_keys()
+            .filter(|id| id.to_chain_id().is_some())
             .map(|id| {
                 let ts = snapshot_net_config.get(&id).copied().unwrap_or(0);
                 (id, ts)
@@ -107,7 +113,9 @@ mod tests {
     use super::*;
     use e3_events::{
         E3Failed, E3RequestComplete, E3Stage, E3id, EffectsEnabled, EvmEventConfig, FailureReason,
-        HistoricalEvmSyncStart, InterfoldEvent, Shutdown, SyncEnded, Unsequenced,
+        HistoricalEvmSyncStart, HistoricalNetSyncEventsReceived, HistoricalNetSyncStart,
+        InterfoldEvent, NetReady, OutgoingSyncRequested, Shutdown, SyncEffect, SyncEnded,
+        Unsequenced,
     };
 
     fn make_historical_evm_sync_start() -> HistoricalEvmSyncStart {
@@ -131,18 +139,43 @@ mod tests {
             .data(make_historical_evm_sync_start())
             .seq(3)
             .build();
+        let outgoing_sync = InterfoldEvent::<Unsequenced>::test_event("outgoing-sync")
+            .data(OutgoingSyncRequested { since: Vec::new() })
+            .seq(4)
+            .build();
+        let net_sync_start = InterfoldEvent::<Unsequenced>::test_event("net-start")
+            .data(HistoricalNetSyncStart::new(BTreeMap::new()))
+            .seq(5)
+            .build();
+        let net_sync_complete = InterfoldEvent::<Unsequenced>::test_event("net-complete")
+            .data(HistoricalNetSyncEventsReceived::new(Vec::new()))
+            .seq(6)
+            .build();
+        let sync_effect = InterfoldEvent::<Unsequenced>::test_event("sync-effect")
+            .data(SyncEffect::new())
+            .seq(7)
+            .build();
+        let net_ready = InterfoldEvent::<Unsequenced>::test_event("net-ready")
+            .data(NetReady::new())
+            .seq(8)
+            .build();
         let shutdown = InterfoldEvent::<Unsequenced>::test_event("shutdown")
             .data(Shutdown)
-            .seq(4)
+            .seq(9)
             .build();
         let test_event = InterfoldEvent::<Unsequenced>::test_event("hello")
             .id(42)
-            .seq(5)
+            .seq(10)
             .build();
 
         assert!(SyncPlanner::is_infrastructure_event(&sync_ended));
         assert!(SyncPlanner::is_infrastructure_event(&effects_enabled));
+        assert!(SyncPlanner::is_infrastructure_event(&outgoing_sync));
         assert!(SyncPlanner::is_infrastructure_event(&evm_sync_start));
+        assert!(SyncPlanner::is_infrastructure_event(&net_sync_start));
+        assert!(SyncPlanner::is_infrastructure_event(&net_sync_complete));
+        assert!(SyncPlanner::is_infrastructure_event(&sync_effect));
+        assert!(SyncPlanner::is_infrastructure_event(&net_ready));
         assert!(SyncPlanner::is_infrastructure_event(&shutdown));
         assert!(!SyncPlanner::is_infrastructure_event(&test_event));
     }
@@ -257,13 +290,13 @@ mod tests {
         let mut snapshot_net_config = BTreeMap::new();
         // original snapshot timestamp for aggregate 3 differs from the re-read HLC (5000).
         snapshot_net_config.insert(AggregateId::new(3), 42);
-        // aggregate 0 missing from snapshot -> defaults to 0.
+        // Aggregate 0 contains local events and is not eligible for peer sync.
 
         let cursor = SyncPlanner::net_sync_cursor(&events, &snapshot_net_config);
 
         assert_eq!(cursor[&AggregateId::new(3)], 42);
-        assert_eq!(cursor[&AggregateId::new(0)], 0);
-        assert_eq!(cursor.len(), 2);
+        assert!(!cursor.contains_key(&AggregateId::new(0)));
+        assert_eq!(cursor.len(), 1);
     }
 
     #[test]

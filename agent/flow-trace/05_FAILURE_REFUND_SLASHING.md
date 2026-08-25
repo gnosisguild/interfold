@@ -22,6 +22,13 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
 through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
 
+For the aggregator-owned DKG and decryption stages, each selected ciphernode reconstructs a
+canonical deadline watch from `CiphernodeSelected` and `E3StageChanged` during replay. After
+`EffectsEnabled`, it reads the deadline from `Interfold`, staggers its attempt by canonical party
+ID, confirms that the stage and failure condition still match, and calls `markE3Failed`. A canonical
+stage change cancels the old watch. If a node restarts after the deadline, the party-ID stagger is
+applied from restart time so all committee wallets do not submit at once.
+
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
 
@@ -329,17 +336,23 @@ path is a compatibility re-export)
 EIP-712 digests, admission, vote/quorum decisions, and re-verification state. The actor owns timers
 and executes the workflow's returned `VoteAction`s.
 
-The AccusationManager is a per-E3 ephemeral actor created when `SortitionCommitteeFinalized` (the
-`ICiphernodeRegistry` event) fires. It bridges proof verification failures to on-chain slashing
-through an off-chain committee quorum protocol.
+The AccusationManager is a per-E3 actor created when `SortitionCommitteeFinalized` (the
+`ICiphernodeRegistry` event) fires. On restart, its extension recreates the actor from the persisted
+active committee before replay. It bridges proof verification failures to on-chain slashing through
+an off-chain committee quorum protocol.
 
 ```text
 LIFECYCLE:
-  Created by AccusationManagerExtension on SortitionCommitteeFinalized
+  Created by AccusationManagerExtension on SortitionCommitteeFinalized or context hydration
   → Stores committee list, threshold_m, this node's address + signer
-  → In-memory only (ephemeral — no persistence)
+  → Actor identity and committee inputs recover from durable committee state
+  → In-flight accusations, votes, and timers remain process-local
   → Destroyed by E3RequestComplete (Die signal)
 ```
+
+A restart does not reconstruct a partially collected vote tally. The actor can accept new valid
+messages after hydration, but peers must resend any vote that existed only in the old process.
+Signed accusation deadlines bound how long that recovery remains useful.
 
 #### Step 1: Local Proof Failure Detection
 
@@ -512,10 +525,12 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → Equivocation remains local evidence until the on-chain format can
 │       prove each distinct signed payload
 │
-├─ 1. EFFECT AND REPLAY GATE:
-│     Before EffectsEnabled (startup replay), retain the intent without sending a transaction
+├─ 1. DURABLE OUTBOX AND EFFECT GATE:
+│     Store the intent in the versioned per-chain recovery outbox before policy or RPC work
 │     Coalesce by the contract replay tuple (chainId, e3Id, accused, proofType)
-│     After EffectsEnabled, release each retained intent once and track it in flight
+│     Before EffectsEnabled, retain the intent without sending a transaction
+│     After EffectsEnabled, release each retained intent and track it in flight
+│     Startup backfills a missing outbox from the EventStore
 │
 ├─ 2. READ THE PROOF-TYPE POLICY ON EVERY COMMITTEE NODE:
 │     reason = keccak256(abi.encodePacked(uint256(proofType)))
@@ -524,11 +539,12 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     ├─ Policy disabled:
 │     │   ├─ Do not submit a transaction that can only revert
 │     │   ├─ Publish durable CommitteeMemberExcluded { party_id: None }
+│     │   ├─ Clear the outbox only after that exclusion is observed
 │     │   └─ Stop waiting for the confirmed faulty member in this E3 only
 │     │       → No on-chain slash, ban, reward hold, or future-selection change is implied
 │     │
 │     ├─ Policy enabled but not configured for proof attestations:
-│     │   └─ Report the configuration error; do not invent an exclusion
+│     │   └─ Report a terminal configuration error; do not invent an exclusion
 │     │
 │     └─ Policy read fails:
 │         └─ Do not invent an exclusion; ranked voters retain the transaction path
@@ -560,9 +576,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → On-chain verification happens (see Lane A below)
 │
 └─ 6. Handle result:
-     ├─ Success: log transaction hash
+     ├─ Confirmed receipt: log transaction hash and clear the outbox intent
+     ├─ Matching SlashExecuted or CommitteeMemberExcluded: clear the outbox intent
      ├─ DuplicateEvidence / stale committee attribution: terminal and logged as warning
-     └─ Other RPC or contract failures: reported and made eligible for a later retry event
+     └─ Temporary RPC, nonce, transport, or unknown failure: keep the outbox intent and retry
+        after 30 seconds
 ```
 
 ### Lane A: Attestation-Based Slashing (Permissionless, Atomic)
@@ -1301,13 +1319,13 @@ When a proof-fault quorum is reached while its on-chain policy is disabled, the 
 separate `CommitteeMemberExcluded` event. Sortition resolves its stable `party_id` from the same
 immutable `CommitteeFinalized` roster and republishes the enriched event. The keyshare collectors,
 public-key aggregator, plaintext aggregator, and active-aggregator selector then treat that party as
-unavailable for this E3. The final DKG proof still receives all N canonical committee addresses
-from `CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
+unavailable for this E3. The final DKG proof still receives all N canonical committee addresses from
+`CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
 
 This fallback is availability-only. The excluded operator remains an active on-chain committee
 member, can remain eligible for future E3s, and can receive any reward that the contracts still
-assign to it. Enable the matching slash policy when the deployment requires economic punishment,
-an on-chain reward hold, or registry expulsion.
+assign to it. Enable the matching slash policy when the deployment requires economic punishment, an
+on-chain reward hold, or registry expulsion.
 
 ---
 

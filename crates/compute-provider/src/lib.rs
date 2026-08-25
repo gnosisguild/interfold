@@ -8,7 +8,9 @@ mod ciphertext_output;
 mod compute_input;
 mod compute_manager;
 mod merkle_tree_builder;
+pub mod policy;
 
 pub use ciphertext_output::*;
 pub use compute_input::*;
 pub use compute_manager::*;
+pub use policy::{InputPolicy, PublishedInput};

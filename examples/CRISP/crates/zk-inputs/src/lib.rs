@@ -26,8 +26,6 @@ use fhe::bfv::{Encoding, Plaintext};
 use fhe_traits::FheDecoder;
 use fhe_traits::FheDecrypter;
 use fhe_traits::{DeserializeParametrized, FheEncoder, Serialize};
-use num_bigint::BigInt;
-use num_traits::Zero;
 use rand::rng;
 use std::sync::Arc;
 mod ciphertext_addition;
@@ -67,91 +65,66 @@ impl ZKInputsGenerator {
         Self::from_set(default_param_set())
     }
 
-    /// Generates CRISP ZK inputs for a vote encryption and addition operation.
-    /// Note that this accepts the previous ciphertext in GRECO ABI encoded format.
+    /// Computes the SAFE commitment of serialized ciphertext bytes.
     ///
-    /// # Arguments
-    /// * `prev_ciphertext` - Previous ciphertext bytes to add to (in GRECO ABI Encoded format)
-    /// * `public_key` - Public key bytes for encryption
-    /// * `vote` - Vote value as a vector of coefficients
-    ///
-    /// # Returns
-    /// Tuple containing the sum ciphertext bytes and JSON string with CRISP ZK inputs
-    pub fn generate_inputs_for_update(
-        &self,
-        prev_ciphertext: &[u8],
-        public_key: &[u8],
-        vote: Vec<u64>,
-    ) -> Result<(Vec<u8>, String)> {
-        // Deserialize the provided public key.
-        let pk = PublicKey::from_bytes(public_key, &self.bfv_params)
-            .with_context(|| "Failed to deserialize public key")?;
-
-        // Encode the plaintext into a polynomial.
-        let pt = Plaintext::try_encode(&vote, Encoding::poly(), &self.bfv_params)
-            .with_context(|| "Failed to encode plaintext")?;
-
-        let user_data_encryption_computation_output = UserDataEncryptionCircuit::compute(
-            DEFAULT_BFV_PRESET,
-            &UserDataEncryptionCircuitData {
-                public_key: pk,
-                plaintext: pt,
-            },
-        )?;
-
-        let ct = Ciphertext::from_bytes(
-            &user_data_encryption_computation_output.inputs.ciphertext,
-            &self.bfv_params,
+    /// The commitment a CRISP round stores for an input is computed inside the circuit, from the
+    /// ciphertext the circuit built. For a first vote that is the ballot; for an update it is the
+    /// sum of the new ciphertext and the previous one. Either way it is the commitment of the
+    /// bytes that get published, so a caller can derive it here — which it must, because
+    /// `CRISPProgram.publishInput` builds the ballot digest over that commitment and the digest is
+    /// itself a circuit input. Without this the update path is unusable: the digest would depend
+    /// on a value that only exists after proving.
+    pub fn compute_ciphertext_commitment(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let commitment = e3_bfv_client::client::compute_ct_commitment(
+            ciphertext.to_vec(),
+            self.bfv_params.degree(),
+            self.bfv_params.plaintext(),
+            self.bfv_params.moduli().to_vec(),
         )
-        .with_context(|| "Failed to deserialize ciphertext")?;
-
-        // Ciphertext Addition Section.
-        // Deserialize the previous ciphertext.
-        let prev_ct = Ciphertext::from_bytes(prev_ciphertext, &self.bfv_params)
-            .with_context(|| "Failed to deserialize previous ciphertext")?;
-
-        // Compute the ciphertext addition.
-        let sum_ct = &ct + &prev_ct;
-
-        // Compute the inputs of the ciphertext addition.
-        let ciphertext_addition_inputs =
-            CiphertextAdditionWitness::compute(&self.bfv_params, &prev_ct, &ct, &sum_ct)
-                .with_context(|| "Failed to compute ciphertext addition inputs")?;
-
-        let ciphertext_addition_witness_json = ciphertext_addition_inputs.to_json()?;
-        let user_data_encryption_witness_json =
-            user_data_encryption_computation_output.inputs.to_json()?;
-        let inputs_json = utils::merge_json_objects(
-            ciphertext_addition_witness_json,
-            user_data_encryption_witness_json,
-        )?;
-
-        // For updates, return the sum ciphertext (ct + prev_ct)
-        let ciphertext_bytes = sum_ct.to_bytes();
-
-        Ok((ciphertext_bytes, inputs_json))
+        .map_err(|e| eyre::eyre!("Failed to compute ciphertext commitment: {e}"))?;
+        Ok(commitment.to_vec())
     }
 
-    /// Generates CRISP ZK inputs for a vote encryption and addition operation.
+    /// Generates the CRISP ZK inputs for one ballot.
+    ///
+    /// One function for all three operations. A first vote, a re-vote, and a mask differ only in
+    /// what the caller passes here; the encryption, the witness, the published ciphertext, and the
+    /// proof all have the same shape, so nothing about a submission says which one it was.
+    ///
+    /// What the circuit proves is always `published = addend + ballot`, where the ballot is a fresh
+    /// BFV encryption of `vote` and the addend is the ciphertext already in the slot when
+    /// `keep_previous` is set, and the zero ciphertext otherwise:
+    ///
+    /// | Operation             | `previous_ciphertext` | `keep_previous` | Published        |
+    /// | --------------------- | --------------------- | --------------- | ---------------- |
+    /// | First vote            | `None`                | `false`         | ballot           |
+    /// | Re-vote               | slot ciphertext       | `false`         | ballot           |
+    /// | Mask, empty slot      | `None`                | `false`         | zero ballot      |
+    /// | Mask, occupied slot   | slot ciphertext       | `true`          | slot + zero      |
+    ///
+    /// A re-vote replaces the slot, so a voter cannot count their old ballot twice; the circuit
+    /// derives the same choice from its private mask flag and would reject any other. The previous
+    /// ciphertext is still required for a re-vote, because the circuit checks it against the
+    /// commitment `CRISPProgram` stored for the slot.
     ///
     /// # Arguments
-    /// * `prev_ciphertext` - Previous ciphertext bytes to add to
+    /// * `previous_ciphertext` - The ciphertext currently in the slot, or `None` when it is empty
     /// * `public_key` - Public key bytes for encryption
     /// * `vote` - Vote value as a vector of coefficients
+    /// * `keep_previous` - Whether the ballot adds to the slot rather than replacing it
     ///
     /// # Returns
-    /// Tuple containing the vote ciphertext bytes and JSON string with CRISP ZK inputs
+    /// Tuple containing the ciphertext bytes to publish and a JSON string with CRISP ZK inputs
     pub fn generate_inputs(
         &self,
-        prev_ciphertext: &[u8],
+        previous_ciphertext: Option<&[u8]>,
         public_key: &[u8],
         vote: Vec<u64>,
+        keep_previous: bool,
     ) -> Result<(Vec<u8>, String)> {
-        // Deserialize the provided public key.
         let pk = PublicKey::from_bytes(public_key, &self.bfv_params)
             .with_context(|| "Failed to deserialize public key")?;
 
-        // Encode the plaintext into a polynomial.
         let pt = Plaintext::try_encode(&vote, Encoding::poly(), &self.bfv_params)
             .with_context(|| "Failed to encode plaintext")?;
 
@@ -169,22 +142,29 @@ impl ZKInputsGenerator {
         )
         .with_context(|| "Failed to deserialize ciphertext")?;
 
-        // Ciphertext Addition Section.
-        // Deserialize the previous ciphertext.
-        let prev_ct = Ciphertext::from_bytes(prev_ciphertext, &self.bfv_params)
-            .with_context(|| "Failed to deserialize previous ciphertext")?;
+        let previous_ct = previous_ciphertext
+            .map(|bytes| {
+                Ciphertext::from_bytes(bytes, &self.bfv_params)
+                    .with_context(|| "Failed to deserialize previous ciphertext")
+            })
+            .transpose()?;
 
-        // Compute the ciphertext addition.
-        let sum_ct = &ct + &prev_ct;
+        // An empty slot holds nothing to keep, whatever the caller asked for.
+        let keep = keep_previous && previous_ct.is_some();
 
-        // Compute the inputs of the ciphertext addition.
-        let mut ciphertext_addition_inputs =
-            CiphertextAdditionWitness::compute(&self.bfv_params, &prev_ct, &ct, &sum_ct)
-                .with_context(|| "Failed to compute ciphertext addition inputs")?;
+        let published_ct = match (keep, previous_ct.as_ref()) {
+            (true, Some(previous)) => &ct + previous,
+            _ => ct.clone(),
+        };
 
-        // IMPORTANT: First-in-slot votes have no previous ciphertext; set prev_ct_commitment to 0
-        // so the on-chain verifier accepts the proof.
-        ciphertext_addition_inputs.prev_ct_commitment = BigInt::zero();
+        let ciphertext_addition_inputs = CiphertextAdditionWitness::compute(
+            &self.bfv_params,
+            previous_ct.as_ref(),
+            &ct,
+            &published_ct,
+            keep,
+        )
+        .with_context(|| "Failed to compute ciphertext addition inputs")?;
 
         let ciphertext_addition_witness_json = ciphertext_addition_inputs.to_json()?;
         let user_data_encryption_witness_json =
@@ -194,9 +174,7 @@ impl ZKInputsGenerator {
             user_data_encryption_witness_json,
         )?;
 
-        let ciphertext_bytes = ct.to_bytes();
-
-        Ok((ciphertext_bytes, inputs_json))
+        Ok((published_ct.to_bytes(), inputs_json))
     }
 
     /// Encrypts a vote using the provided public key.
@@ -275,10 +253,37 @@ mod tests {
     use super::*;
     use e3_fhe_params::constants::insecure_512;
     use e3_fhe_params::{BfvParamSet, BfvPreset};
+    use num_bigint::BigUint;
 
     /// Helper function to create a vote vector with alternating 0s and 1s (deterministic)
     fn create_vote_vector() -> Vec<u64> {
         (0..insecure_512::DEGREE).map(|i| (i % 2) as u64).collect()
+    }
+
+    /// A ballot of all zeros, which is what a mask encrypts.
+    fn zero_vote() -> Vec<u64> {
+        vec![0u64; insecure_512::DEGREE]
+    }
+
+    /// Reads one commitment out of the witness JSON, as the decimal string the circuit takes.
+    fn commitment_field(json: &str, name: &str) -> String {
+        let parsed: serde_json::Value = serde_json::from_str(json).expect("Invalid JSON output");
+
+        parsed
+            .get(name)
+            .unwrap_or_else(|| panic!("witness has no {name}"))
+            .as_str()
+            .expect("commitment is a decimal string")
+            .to_string()
+    }
+
+    /// The same commitment computed from serialized bytes, for comparison with the witness.
+    fn commitment_of(generator: &ZKInputsGenerator, ciphertext: &[u8]) -> String {
+        let bytes = generator
+            .compute_ciphertext_commitment(ciphertext)
+            .expect("failed to compute ciphertext commitment");
+
+        BigUint::from_bytes_be(&bytes).to_string()
     }
 
     #[test]
@@ -289,7 +294,8 @@ mod tests {
         let prev_ciphertext = generator
             .encrypt_vote(&public_key, vote.clone())
             .expect("failed to generate previous ciphertext");
-        let result = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
 
         assert!(result.is_ok());
         let (ciphertext_bytes, json_output) = result.unwrap();
@@ -310,7 +316,8 @@ mod tests {
         let prev_ciphertext = generator
             .encrypt_vote(&public_key, vote.clone())
             .expect("failed to generate previous ciphertext");
-        let result = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
 
         assert!(result.is_ok());
         let (ciphertext_bytes, json_output) = result.unwrap();
@@ -330,7 +337,8 @@ mod tests {
         let prev_ciphertext = generator
             .encrypt_vote(&public_key, vote.clone())
             .expect("failed to generate previous ciphertext");
-        let result = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
 
         assert!(result.is_ok());
         let (ciphertext_bytes, json_output) = result.unwrap();
@@ -368,7 +376,7 @@ mod tests {
             .expect("failed to encrypt vote");
         assert!(!ciphertext.is_empty());
 
-        let result = generator.generate_inputs(&ciphertext, &public_key, vote.clone());
+        let result = generator.generate_inputs(Some(&ciphertext), &public_key, vote.clone(), false);
         assert!(result.is_ok());
         let (ciphertext_bytes, json_output) = result.unwrap();
         assert!(!ciphertext_bytes.is_empty());
@@ -384,11 +392,11 @@ mod tests {
         let vote = create_vote_vector();
 
         // Test invalid byte inputs.
-        let result = generator.generate_inputs(&[1, 2, 3], &[4, 5, 6], vote.clone());
+        let result = generator.generate_inputs(Some(&[1, 2, 3]), &[4, 5, 6], vote.clone(), false);
         assert!(result.is_err());
 
         // Test empty slices.
-        let result = generator.generate_inputs(&[], &[], vote.clone());
+        let result = generator.generate_inputs(Some(&[]), &[], vote.clone(), false);
         assert!(result.is_err());
 
         // Test invalid public key for encryption.
@@ -407,12 +415,14 @@ mod tests {
             .expect("failed to encrypt vote");
 
         // Test vote = 0.
-        let result_0 = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result_0 =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
         assert!(result_0.is_ok());
         let (_, _) = result_0.unwrap();
 
         // Test vote = 1.
-        let result_1 = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result_1 =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
         assert!(result_1.is_ok());
         let (_, _) = result_1.unwrap();
     }
@@ -425,7 +435,8 @@ mod tests {
         let prev_ciphertext = generator
             .encrypt_vote(&public_key, vote.clone())
             .expect("failed to encrypt vote");
-        let result = generator.generate_inputs(&prev_ciphertext, &public_key, vote.clone());
+        let result =
+            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
 
         assert!(result.is_ok());
         let (ciphertext_bytes, json_output) = result.unwrap();
@@ -570,5 +581,193 @@ mod tests {
         // Test empty inputs
         let result = generator.decrypt_vote(&[], &[]);
         assert!(result.is_err(), "Should fail with empty inputs");
+    }
+
+    // -----------------------------------------------------------------------
+    // The three operations
+    // -----------------------------------------------------------------------
+    //
+    // A first vote, a re-vote, and a mask all go through `generate_inputs`. These check that each
+    // publishes the ciphertext the circuit commits to, because the E3 program stores that
+    // commitment and the Secure Process drops any input whose bytes disagree with it.
+
+    #[test]
+    fn test_first_vote_publishes_the_ballot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        let (published, json) = generator
+            .generate_inputs(None, &public_key, create_vote_vector(), false)
+            .expect("failed to generate first-vote inputs");
+
+        // Nothing was added, so the published ciphertext is the ballot itself.
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_field(&json, "ct_commitment")
+        );
+        // The contract passes zero for an empty slot, and a public input that disagrees would make
+        // the proof unverifiable.
+        assert_eq!(commitment_field(&json, "prev_ct_commitment"), "0");
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_of(&generator, &published)
+        );
+    }
+
+    #[test]
+    fn test_revote_replaces_the_ballot_in_the_slot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        let first = create_vote_vector();
+        let (slot, _) = generator
+            .generate_inputs(None, &public_key, first.clone(), false)
+            .expect("failed to generate first-vote inputs");
+
+        let second: Vec<u64> = first.iter().map(|c| 1 - c).collect();
+        let (published, json) = generator
+            .generate_inputs(Some(&slot), &public_key, second.clone(), false)
+            .expect("failed to generate re-vote inputs");
+
+        // A re-vote replaces rather than adds, or the two ballots would both count.
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_field(&json, "ct_commitment")
+        );
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_of(&generator, &published)
+        );
+        // The circuit checks this against the commitment the contract stored for the slot, so a
+        // re-vote still has to know what the slot holds.
+        assert_eq!(
+            commitment_field(&json, "prev_ct_commitment"),
+            commitment_of(&generator, &slot)
+        );
+        assert_eq!(
+            generator
+                .decrypt_vote(&secret_key, &published)
+                .expect("failed to decrypt re-vote"),
+            second
+        );
+    }
+
+    #[test]
+    fn test_mask_over_occupied_slot_preserves_the_ballot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        let ballot = create_vote_vector();
+        let (slot, _) = generator
+            .generate_inputs(None, &public_key, ballot.clone(), false)
+            .expect("failed to generate first-vote inputs");
+
+        let (published, json) = generator
+            .generate_inputs(Some(&slot), &public_key, zero_vote(), true)
+            .expect("failed to generate mask inputs");
+
+        // A mask adds to the slot, so what it publishes is not the ballot it encrypted.
+        assert_ne!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_field(&json, "ct_commitment")
+        );
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_of(&generator, &published)
+        );
+        assert_eq!(
+            commitment_field(&json, "prev_ct_commitment"),
+            commitment_of(&generator, &slot)
+        );
+        // Adding a zero ballot leaves the vote in the slot untouched, which is the whole point.
+        assert_eq!(
+            generator
+                .decrypt_vote(&secret_key, &published)
+                .expect("failed to decrypt masked slot"),
+            ballot
+        );
+    }
+
+    #[test]
+    fn test_mask_over_empty_slot_publishes_the_zero_ballot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        // `keep_previous` is set, but an empty slot holds nothing to keep.
+        let (published, json) = generator
+            .generate_inputs(None, &public_key, zero_vote(), true)
+            .expect("failed to generate mask inputs");
+
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_field(&json, "ct_commitment")
+        );
+        assert_eq!(commitment_field(&json, "prev_ct_commitment"), "0");
+        assert_eq!(
+            commitment_field(&json, "sum_ct_commitment"),
+            commitment_of(&generator, &published)
+        );
+        assert_eq!(
+            generator
+                .decrypt_vote(&secret_key, &published)
+                .expect("failed to decrypt mask"),
+            zero_vote()
+        );
+    }
+
+    #[test]
+    fn test_repeated_masks_preserve_the_ballot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        let ballot = create_vote_vector();
+        let (mut slot, _) = generator
+            .generate_inputs(None, &public_key, ballot.clone(), false)
+            .expect("failed to generate first-vote inputs");
+
+        for _ in 0..3 {
+            let (published, _) = generator
+                .generate_inputs(Some(&slot), &public_key, zero_vote(), true)
+                .expect("failed to generate mask inputs");
+            slot = published;
+        }
+
+        assert_eq!(
+            generator
+                .decrypt_vote(&secret_key, &slot)
+                .expect("failed to decrypt masked slot"),
+            ballot
+        );
+    }
+
+    #[test]
+    fn test_revote_after_masks_replaces_the_slot() {
+        let generator = ZKInputsGenerator::with_defaults();
+        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
+
+        let first = create_vote_vector();
+        let (slot, _) = generator
+            .generate_inputs(None, &public_key, first.clone(), false)
+            .expect("failed to generate first-vote inputs");
+        let (masked, _) = generator
+            .generate_inputs(Some(&slot), &public_key, zero_vote(), true)
+            .expect("failed to generate mask inputs");
+
+        let second: Vec<u64> = first.iter().map(|c| 1 - c).collect();
+        let (published, json) = generator
+            .generate_inputs(Some(&masked), &public_key, second.clone(), false)
+            .expect("failed to generate re-vote inputs");
+
+        // The masks are discarded with the ballot they covered, and they carried nothing.
+        assert_eq!(
+            generator
+                .decrypt_vote(&secret_key, &published)
+                .expect("failed to decrypt re-vote"),
+            second
+        );
+        assert_eq!(
+            commitment_field(&json, "prev_ct_commitment"),
+            commitment_of(&generator, &masked)
+        );
     }
 }

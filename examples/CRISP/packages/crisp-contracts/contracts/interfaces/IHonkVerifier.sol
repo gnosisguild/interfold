@@ -7,8 +7,10 @@ pragma solidity >=0.8.27;
 
 /// @notice The subset of a generated Honk verifier that `CRISPProgram` calls.
 /// @dev Declared as an interface so the census paths can hold verifiers generated from different
-/// circuits. `CRISPVerifier.sol` and `CRISPOnchainVerifier.sol` both declare a contract named
-/// `HonkVerifier`, so importing both concrete types would collide.
+/// circuits. Every generated verifier declares a contract named `HonkVerifier`, and there is one
+/// per census mode per BFV preset under `contracts/verifiers/<preset>/`, so importing the concrete
+/// types would collide. Deployment resolves the right one by fully qualified name; see
+/// `scripts/verifiers.ts`.
 interface IHonkVerifier {
   /// @notice Verify a folded ballot proof against its public inputs.
   /// @dev Reverts rather than returning false when the public inputs do not match the proof.

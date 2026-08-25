@@ -7,6 +7,7 @@
 import { network } from 'hardhat'
 import { zeroHash } from 'viem'
 import { CRISPProgram, HonkVerifier, MockInterfold, MockRISC0Verifier, PoseidonT3 } from '../types'
+import { verifierNames } from '../scripts/verifiers'
 
 // Non-zero address used in the tests.
 export const nonZeroAddress = '0xc6e7DF5E7b4f2A278906862b61205850344D4e7d'
@@ -57,15 +58,16 @@ export async function deployMockRISC0Verifier() {
  * @returns The address of the deployed HonkVerifier contract.
  */
 export async function deployHonkVerifier() {
-  const zkTranscriptLib = await deployContract('contracts/CRISPVerifier.sol:ZKTranscriptLib')
-  const relationsLib = await deployContract('contracts/CRISPVerifier.sol:RelationsLib')
+  // Fully qualified: every generated verifier declares a `HonkVerifier`, and there is one per
+  // census mode per preset, so the bare name is ambiguous. See scripts/verifiers.ts.
+  const names = verifierNames('merkle')
+  const zkTranscriptLib = await deployContract(names.zkTranscriptLib)
+  const relationsLib = await deployContract(names.relationsLib)
 
-  // Fully qualified: `CRISPOnchainVerifier.sol` declares a `HonkVerifier` too, so the bare name
-  // is ambiguous.
-  const HonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPVerifier.sol:HonkVerifier', {
+  const HonkVerifierFactory = await ethers.getContractFactory(names.honkVerifier, {
     libraries: {
-      'project/contracts/CRISPVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
-      'project/contracts/CRISPVerifier.sol:RelationsLib': await relationsLib.getAddress(),
+      [names.libraryKeys.zkTranscriptLib]: await zkTranscriptLib.getAddress(),
+      [names.libraryKeys.relationsLib]: await relationsLib.getAddress(),
     },
   })
 
@@ -81,13 +83,14 @@ export async function deployHonkVerifier() {
  * @returns The deployed verifier.
  */
 export async function deployOnchainHonkVerifier() {
-  const zkTranscriptLib = await deployContract('contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib')
-  const relationsLib = await deployContract('contracts/CRISPOnchainVerifier.sol:RelationsLib')
+  const names = verifierNames('onchain')
+  const zkTranscriptLib = await deployContract(names.zkTranscriptLib)
+  const relationsLib = await deployContract(names.relationsLib)
 
-  const HonkVerifierFactory = await ethers.getContractFactory('contracts/CRISPOnchainVerifier.sol:HonkVerifier', {
+  const HonkVerifierFactory = await ethers.getContractFactory(names.honkVerifier, {
     libraries: {
-      'project/contracts/CRISPOnchainVerifier.sol:ZKTranscriptLib': await zkTranscriptLib.getAddress(),
-      'project/contracts/CRISPOnchainVerifier.sol:RelationsLib': await relationsLib.getAddress(),
+      [names.libraryKeys.zkTranscriptLib]: await zkTranscriptLib.getAddress(),
+      [names.libraryKeys.relationsLib]: await relationsLib.getAddress(),
     },
   })
 

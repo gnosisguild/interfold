@@ -76,6 +76,24 @@ The server exposes several RESTful API endpoints:
 - `POST /state/lite`: Get a lite version of the state for a specific round
 - `POST /voting/broadcast`: Broadcast an encrypted vote
 
+## Upgrading across an input-format change
+
+`InputPublished` and the durable round record both carry per-input fields, and both have changed. A
+deployment that adds one cannot be rolled forward over a round that is already taking inputs:
+
+- the event's topic hash changes with its signature, so the indexer no longer matches the logs an
+  already-deployed `CRISPProgram` emits;
+- the new per-input vectors default to empty when an existing round is loaded, and the Secure
+  Process needs one entry per ciphertext.
+
+`CrispE3Repository::get_input_snapshot` refuses such a round rather than computing over it, with an
+error naming the field and the count. The refusal is the guard, not the fix.
+
+**Procedure.** Deploy a new `CRISPProgram`, point `E3_PROGRAM_ADDRESS` at it, and let existing
+rounds finish against the old deployment before retiring its indexer. Rounds do not migrate: an
+in-flight one has inputs whose leaves were built under the old layout, so its root can only be
+reproduced by the code that built it.
+
 ## Architecture
 
 The project is structured into several modules:

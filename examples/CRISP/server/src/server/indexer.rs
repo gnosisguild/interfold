@@ -4,13 +4,15 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::server::log_repo::{LogRepository, StoredLog};
+use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
     get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
 };
 use crate::server::{
     models::{CensusMode, CreditMode, CurrentRound, CustomParams, TokenHolder},
-    program_server_request::run_compute,
-    repo::{CrispE3Repository, CurrentRoundRepository},
+    program_server_request::{run_compute, RoundInputs},
+    repo::{CrispE3Repository, CurrentRoundRepository, InputSnapshot},
     token_holders::{build_tree, compute_token_holder_hashes},
     CONFIG,
 };
@@ -18,6 +20,8 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol_types::{sol_data, SolType};
 use alloy_primitives::{Address, U256};
 use crisp_utils::decode_tally;
+use e3_fhe_params::decode_bfv_params_arc;
+use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use e3_sdk::{
     evm_helpers::{
         contracts::{InterfoldRead, ReadWrite},
@@ -30,9 +34,11 @@ use e3_sdk::{
 };
 use evm_helpers::{CRISPContractFactory, InputPublished};
 use eyre::Context;
-use log::{info, warn};
+use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
+use std::time::Duration;
+use tokio::time::sleep;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -406,6 +412,75 @@ pub async fn register_e3_requested(
     Ok(indexer)
 }
 
+/// What the indexer holds for a round, measured against what `CRISPProgram` accepted.
+enum IndexedInputs {
+    /// The indexer holds every input, and this is the snapshot it holds them in.
+    Complete(InputSnapshot),
+    /// It does not, and never did within the wait.
+    Short { indexed: usize, published: usize },
+}
+
+/// The round's inputs, once the indexer holds every one `CRISPProgram` accepted.
+///
+/// Polls rather than reading once: the deadline callback and the last `InputPublished` handler race,
+/// and the gap is the few seconds it takes one log to be delivered and stored.
+///
+/// Both counts are re-read on every attempt. Re-reading only the chain would compare a moving number
+/// against a fixed one, so the loop could never converge — it would wait out every attempt and then
+/// report the same shortfall it started with, in exactly the race it exists to absorb.
+///
+/// Returns the snapshot the two counts agree on, or the last pair when they never do, so the caller
+/// reports the shortfall rather than looping forever.
+async fn wait_for_indexed_inputs<S: DataStore>(
+    e3_id: &str,
+    repo: &CrispE3Repository<S>,
+) -> eyre::Result<IndexedInputs> {
+    const ATTEMPTS: u32 = 10;
+    const INTERVAL: Duration = Duration::from_secs(3);
+
+    let e3_id_u256 = e3_id_to_u256(e3_id).map_err(|e| eyre::eyre!("{e}"))?;
+    let contract =
+        CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address).await?;
+
+    for attempt in 0..=ATTEMPTS {
+        let published = contract.get_published_input_count(e3_id_u256).await? as usize;
+        let snapshot = repo.get_input_snapshot().await?;
+        let indexed = snapshot.ciphertexts.len();
+
+        if indexed >= published {
+            return Ok(IndexedInputs::Complete(snapshot));
+        }
+
+        if attempt == ATTEMPTS {
+            return Ok(IndexedInputs::Short { indexed, published });
+        }
+
+        info!(
+            "[e3_id={}] waiting for the indexer: {} of {} input(s) stored",
+            e3_id, indexed, published
+        );
+        sleep(INTERVAL).await;
+    }
+
+    unreachable!("the loop returns on its final attempt")
+}
+
+/// When the deadline handler runs again after a round it could not compute.
+///
+/// Each offset is a separate `do_later` registration made when the round starts, rather than the
+/// handler re-arming itself: `do_later` drops a callback once it has run, and a handler that failed
+/// has no way back into the schedule. The offsets are wider than the indexer wait inside the
+/// handler, so two passes do not overlap.
+const DEADLINE_RETRY_OFFSETS: [u64; 3] = [60, 180, 420];
+
+/// Store key holding the `INDEX_LOG_CONTRACTS` set as of the previous run.
+///
+/// Coverage records outlive the configuration that created them, and the store has no delete. This
+/// is what lets a restart tell "this address has been indexed continuously" from "this address is
+/// back after a spell of not being indexed", so the second case can narrow its claim instead of
+/// asserting history that was never fetched.
+const LOG_INDEX_CONFIG_KEY: &str = "_logs:_config";
+
 async fn handle_e3_input_deadline_expiration(
     e3_id: String,
     store: SharedStore<impl DataStore>,
@@ -413,10 +488,47 @@ async fn handle_e3_input_deadline_expiration(
     let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
     let e3: e3_sdk::indexer::models::E3 = repo.get_e3().await?;
 
+    // A cheap skip for a retry pass over a round that already moved on, so it does not sit through
+    // the indexer wait below. Not the safety barrier — `try_claim_computing` is, further down.
+    let status = repo.get_status().await?;
+    if status == "Computing" || status == "Finished" {
+        return Ok(());
+    }
+
     repo.update_status("Expired").await?;
 
     let voter_count = repo.get_vote_count().await?;
-    let votes = repo.get_ciphertext_inputs().await?;
+
+    // The contract is the authority on how many inputs there are, and this callback can run before
+    // the last of them is indexed: `publishInput` still accepts one while
+    // `block.timestamp == inputWindow[1]`. Computation is one-shot, so starting short would tally a
+    // subset and derive a root the contract rejects — a failure with no other symptom.
+    //
+    // The snapshot comes back from the same call, read once. Assembling the request from separate
+    // reads lets an `InputPublished` event land between them, which pairs a ciphertext with another
+    // input's commitment and derives a root `CRISPProgram` rejects.
+    let snapshot = match wait_for_indexed_inputs(&e3_id, &repo).await? {
+        IndexedInputs::Complete(snapshot) => snapshot,
+        IndexedInputs::Short { indexed, published } => {
+            // Left "Expired" and unfinished on purpose, so a later pass can still compute it. The
+            // retries registered at `DEADLINE_RETRY_OFFSETS` are what come back to it; marking the
+            // round "Finished" here would tally nothing and close it for good.
+            return Err(eyre::eyre!(
+                "[e3_id={}] the indexer holds {} input(s) but CRISPProgram accepted {}; \
+                 refusing to compute over a subset. A retry pass runs at +{}s from the input \
+                 deadline; if every pass reports this, the indexer is behind and needs attention.",
+                e3_id,
+                indexed,
+                published,
+                DEADLINE_RETRY_OFFSETS
+                    .iter()
+                    .map(|offset| offset.to_string())
+                    .collect::<Vec<_>>()
+                    .join("s, +")
+            ));
+        }
+    };
+    let votes = snapshot.ciphertexts.clone();
 
     if voter_count > 0 && votes.is_empty() {
         warn!(
@@ -436,7 +548,20 @@ async fn handle_e3_input_deadline_expiration(
             votes.len(),
             voter_count
         );
-        repo.update_status("Computing").await?;
+        // The barrier. Two passes can be inside the indexer wait at once, and `run_compute` is
+        // one-shot, so the transition to "Computing" has to be the thing that decides which one
+        // proceeds — in a single store operation, not a read followed by a write.
+        //
+        // Claimed here rather than before the wait: a pass that gives up on a short index leaves
+        // the round "Expired" so a later pass can still take it, and claiming earlier would pin it
+        // to "Computing" and strand it.
+        if !repo.try_claim_computing().await? {
+            info!(
+                "[e3_id={}] another pass is already computing this round; nothing to do",
+                e3_id
+            );
+            return Ok(());
+        }
 
         let (id, status) = run_compute(
             &e3_id,
@@ -445,7 +570,12 @@ async fn handle_e3_input_deadline_expiration(
             e3.encryption_scheme_id,
             e3.committee_public_key_hash,
             e3.e3_params,
-            votes,
+            RoundInputs {
+                ciphertexts: snapshot.ciphertexts,
+                commitments: snapshot.commitments,
+                slots: snapshot.slots,
+                parents: snapshot.parents,
+            },
             format!(
                 "{}/state/add-result",
                 CONFIG.interfold_server_url_for_clients()
@@ -559,9 +689,20 @@ pub async fn register_committee_published(
                 let expiration = repo.get_input_deadline().await?;
 
                 info!("[e3_id={}] Registering hook for {}", e3_id, expiration);
-                ctx.do_later(expiration, move |_, ctx| {
-                    handle_e3_input_deadline_expiration(e3_id.clone(), ctx.store())
-                });
+                // Registered once per offset, up front. A pass that finds the indexer behind
+                // returns without computing, and `do_later` has already dropped that callback, so
+                // the round would otherwise stay "Expired" for good. Every pass after the first
+                // returns immediately once the round is computing or finished.
+                for at in std::iter::once(expiration).chain(
+                    DEADLINE_RETRY_OFFSETS
+                        .iter()
+                        .map(|offset| expiration + offset),
+                ) {
+                    let e3_id = e3_id.clone();
+                    ctx.do_later(at, move |_, ctx| {
+                        handle_e3_input_deadline_expiration(e3_id.clone(), ctx.store())
+                    });
+                }
 
                 Ok(())
             }
@@ -596,8 +737,85 @@ pub async fn register_input_published(
                     hex::encode(&event.encryptedVote[..8.min(event.encryptedVote.len())])
                 );
 
-                repo.insert_ciphertext_input(event.encryptedVote.to_vec(), event.index.to::<u64>())
-                    .await?;
+                // Read here so the usability of these bytes is decided once, on the write path,
+                // instead of on every `state/previous-ciphertext` call.
+                let e3 = repo.get_e3().await?;
+                let params = decode_bfv_params_arc(&e3.e3_params)?;
+
+                repo.insert_ciphertext_input(
+                    event.encryptedVote.to_vec(),
+                    event.index.to::<u64>(),
+                    event.encryptedVoteCommitment.into(),
+                    event.slotAddress.into(),
+                    event.parentIndexPlusOne.to::<u64>(),
+                    &params,
+                )
+                .await?;
+                Ok(())
+            }
+        })
+        .await;
+    Ok(indexer)
+}
+
+/// Persist every log from a watched contract, so `/chain/logs` can answer from the store.
+///
+/// Untyped on purpose — see `log_repo`. A failed write IS propagated: the catch-up uses a handler
+/// error to hold the cursor back, and an index that quietly missed a log while the cursor moved
+/// past it answers later queries short while looking authoritative.
+pub async fn register_log_index(
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+    log_contracts: &[String],
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
+    // Lowercased once so the per-log membership test is a plain comparison.
+    let wanted: Vec<String> = log_contracts.iter().map(|a| a.to_lowercase()).collect();
+
+    indexer
+        .add_raw_log_handler(move |log, ctx| {
+            let mut repo = LogRepository::new(ctx.store());
+            let wanted = wanted.clone();
+            async move {
+                // Watched for the typed handlers is not the same as wanted in the log index: a
+                // busy token emits thousands of transfers nobody queries, and retaining them costs
+                // storage and write amplification for nothing.
+                if !wanted.contains(&log.address().to_string().to_lowercase()) {
+                    return Ok(());
+                }
+
+                // A log with no block number or index cannot be placed. `unwrap_or_default()`
+                // filed it at block 0, log 0 — a position that both collides with any other
+                // unplaceable log and sits below every coverage record, so it would be silently
+                // dropped from every query anyway. Skipping it is the same outcome, said out loud.
+                let (Some(block_number), Some(log_index)) = (log.block_number, log.log_index)
+                else {
+                    warn!(
+                        "Skipping a log with no block position from {}",
+                        log.address()
+                    );
+                    return Ok(());
+                };
+
+                let stored = StoredLog {
+                    removed: log.removed,
+                    address: log.address().to_string(),
+                    topics: log.topics().iter().map(|t| t.to_string()).collect(),
+                    data: log.data().data.to_string(),
+                    block_number,
+                    transaction_hash: log.transaction_hash.map(|h| h.to_string()),
+                    log_index,
+                    block_hash: log.block_hash.map(|h| h.to_string()),
+                    transaction_index: log.transaction_index,
+                };
+
+                // Propagated, not logged and dropped. The cursor is a claim that everything below
+                // it has been applied, and `catch_up` relies on a handler error to stop the
+                // cursor advancing past a failed window — swallowing this disarmed exactly that
+                // safety net, and one transient store failure became a permanent hole underneath
+                // an index that still reported the range as covered.
+                repo.append(stored)
+                    .await
+                    .map_err(|e| eyre::eyre!("indexing a log failed: {e}"))?;
+
                 Ok(())
             }
         })
@@ -612,15 +830,32 @@ pub async fn start_indexer(
     crisp_address: &str,
     store: SharedStore<impl DataStore>,
     private_key: &str,
+    index_start_block: Option<u64>,
+    index_chunk_size: Option<u64>,
+    index_contracts: &[String],
+    index_log_contracts: &[String],
 ) -> Result<()> {
     info!("CRISP: Creating indexer...");
-    let crisp_indexer = InterfoldIndexer::new_with_write_contract(
-        url,
-        &[contract_address, registry_address, crisp_address],
-        store,
-        private_key,
-    )
-    .await?;
+
+    // The E3 stack, plus whatever the deployment asked to be readable through `/chain/*`. Watching
+    // the extra addresses is what lets their logs be served from the store instead of forwarded
+    // upstream on every request; the typed handlers below dispatch on event signature, so a
+    // contract that emits nothing they recognise simply flows past them into the log index.
+    //
+    // `INDEX_LOG_CONTRACTS` is documented as a subset of `INDEX_CONTRACTS`, but nothing enforces
+    // that, and an entry listed only there would never reach the subscription or the backfill
+    // filter — while coverage was still recorded for it below. Every query for that address then
+    // passed the coverage test and was answered from an empty index: an authoritative empty log
+    // list. Watching the union costs nothing and removes the way to configure that.
+    let mut watched: Vec<&str> = vec![contract_address, registry_address, crisp_address];
+    for address in index_contracts.iter().chain(index_log_contracts.iter()) {
+        if !watched.iter().any(|w| w.eq_ignore_ascii_case(address)) {
+            watched.push(address);
+        }
+    }
+
+    let crisp_indexer =
+        InterfoldIndexer::new_with_write_contract(url, &watched, store, private_key).await?;
     info!("CRISP: Indexer registering handlers...");
 
     let crisp_indexer = register_e3_requested(crisp_indexer).await?;
@@ -628,7 +863,132 @@ pub async fn start_indexer(
     let crisp_indexer = register_plaintext_output_published(crisp_indexer).await?;
     let crisp_indexer = register_committee_published(crisp_indexer).await?;
     let crisp_indexer = register_input_published(crisp_indexer).await?;
+    let crisp_indexer = register_log_index(crisp_indexer, index_log_contracts).await?;
     info!("CRISP: Indexer finished registering handlers!");
+
+    // Resolve where indexing will ACTUALLY begin, ONCE, and drive both the backfill configuration
+    // and the coverage claim from that single value.
+    //
+    // Reading it twice was a silent hole. Coverage used to come from `get_head_block_rpc` over the
+    // HTTP URL, while the catch-up read its own head over the WebSocket URL later in startup —
+    // possibly a different node, certainly a later moment. The HTTP read is the lower of the two,
+    // which is the unsafe direction: coverage claimed blocks that indexing then skipped over, and
+    // `ensure_coverage_from` never overwrites, so the wrong bound persisted for the life of the
+    // database.
+    //
+    // Three cases:
+    //
+    //   - A resumed database already carries coverage from its first run, and the cursor may sit
+    //     far above a since-lowered INDEX_START_BLOCK. Re-claiming the lower bound would assert
+    //     history that will never be fetched, so existing coverage is left untouched.
+    //   - INDEX_START_BLOCK set: that is the start, and the catch-up uses the same number.
+    //   - Fresh database, nothing configured: read the head here and PIN the backfill to it, so
+    //     the catch-up cannot resolve a different (later) start than the one claimed below.
+    let store = crisp_indexer.get_store();
+
+    // A read ERROR is not an absent record. `unwrap_or(None)` conflated them, so one transient
+    // store failure made a resumed database look fresh — pinning the coverage claim to the current
+    // head and discarding the record describing everything indexed so far. Propagated instead:
+    // startup is exactly the moment a broken store should be loud, and every later decision here
+    // is derived from this value.
+    let resumed: Option<u64> = store
+        .get(INDEXER_CURSOR_KEY)
+        .await
+        .map_err(|e| eyre::eyre!("reading the indexer cursor failed: {e}"))?;
+
+    let start_block = match (resumed, index_start_block) {
+        // `ensure_coverage_from` leaves an existing record alone, so this only fills a gap left by
+        // an older database that predates log indexing.
+        (Some(cursor), _) => Some(cursor.saturating_add(1)),
+        (None, Some(configured)) => Some(configured),
+        (None, None) => match crisp_indexer.head_block().await {
+            Ok(head) => Some(head),
+            Err(e) => {
+                error!("Could not read the head to pin the index start: {e}");
+                None
+            }
+        },
+    };
+
+    // Close the gap left by every restart and dropped socket before subscribing. On a resumed
+    // database the stored cursor wins regardless of what is passed here; on a fresh one this pins
+    // the start to the very block coverage is about to claim.
+    crisp_indexer.configure_backfill(
+        if resumed.is_some() {
+            index_start_block
+        } else {
+            start_block
+        },
+        index_chunk_size,
+    );
+
+    // Record where the log index starts for each watched contract, before any log arrives, so a
+    // contract that has emitted nothing yet does not look uncovered forever.
+    {
+        if !index_log_contracts.is_empty() {
+            let coverage_from = start_block;
+
+            if let Some(coverage_from) = coverage_from {
+                // The set that was log-indexed on the previous run. An address present now but
+                // absent then was not indexed during the gap, so whatever coverage its earlier
+                // run left behind overstates what is in the store.
+                //
+                // An Err here must NOT read as "no previous set". That would mark every address
+                // newly added and narrow its coverage to the current head — permanently discarding
+                // the record for history that is still sitting in the store, so `/chain/logs`
+                // would stop serving a range it can answer perfectly well. On a read failure the
+                // rebase is skipped entirely: leaving a claim alone is recoverable, narrowing one
+                // wrongly is not.
+                let previous: Option<Vec<String>> = match store.get(LOG_INDEX_CONFIG_KEY).await {
+                    Ok(previous) => Some(previous.unwrap_or_default()),
+                    Err(e) => {
+                        error!(
+                            "Could not read the previous log-index configuration: {e}. Leaving \
+                             every coverage record as it stands this run."
+                        );
+                        None
+                    }
+                };
+
+                let mut repo = LogRepository::new(store.clone());
+                for address in index_log_contracts {
+                    // Unknown previous set ⇒ treated as already indexed, which only ever widens
+                    // what is claimed by filling a missing record, never narrows an existing one.
+                    let was_indexed = previous.as_ref().is_none_or(|previous| {
+                        previous
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(address))
+                    });
+
+                    let recorded = if was_indexed {
+                        repo.ensure_coverage_from(address, coverage_from).await
+                    } else {
+                        // Newly added (or re-added after a removal): claim only from here on.
+                        repo.rebase_coverage(address, coverage_from)
+                            .await
+                            .and(repo.ensure_coverage_from(address, coverage_from).await)
+                    };
+
+                    if let Err(e) = recorded {
+                        error!("Could not record log coverage for {address}: {e}");
+                    }
+                }
+
+                // Only when the comparison above actually happened. Recording the current set
+                // after a failed read would tell the NEXT run that every address was already
+                // indexed, so an address genuinely added during this run would never have its
+                // stale coverage narrowed — the read failure would outlive itself.
+                if previous.is_some() {
+                    let mut store = store;
+                    let current: Vec<String> = index_log_contracts.to_vec();
+                    if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
+                        error!("Could not record the log-index configuration: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");
     Ok(())

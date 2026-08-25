@@ -45,6 +45,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
                 msg,
                 ctx.address(),
                 !self.readiness_all_peers_dialed(),
+                self.network.clone(),
             ),
         )
     }
@@ -101,6 +102,14 @@ impl Handler<IncomingRequest> for NetSyncManager {
             };
             if fetch_request.limit() == 0 {
                 responder.bad_request("limit must be greater than 0")?;
+                return Ok(());
+            }
+            let Some(chain_id) = fetch_request.aggregate_id().to_chain_id() else {
+                responder.bad_request("aggregate ID does not contain a chain ID")?;
+                return Ok(());
+            };
+            if !self.network.allows_chain(chain_id) {
+                responder.bad_request("aggregate chain is not part of this network")?;
                 return Ok(());
             }
             if let Some(reason) = self.request_capacity_error(&peer) {
@@ -180,6 +189,18 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
             };
 
             let fetch_request: FetchEventsSince = pending.responder.try_request_into()?;
+            for event in &events {
+                if EventTranslationService::is_forwardable_event(event) {
+                    if let Err(error) = self.network.validate_event(event) {
+                        pending.responder.respond(ProtocolResponse::Error(
+                            "historical sync returned an event outside this network policy"
+                                .to_string(),
+                        ))?;
+                        return Err(error
+                            .context("event store returned an invalid event for historical sync"));
+                    }
+                }
+            }
             match build_sync_batch(events, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
                 SyncBatchOutcome::Batch(batch) => pending.responder.ok(batch)?,

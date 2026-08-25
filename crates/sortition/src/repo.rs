@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::backends::SortitionBackend;
+use crate::domain::failover::AggregatorFailoverState;
 use crate::domain::node_registry::NodeStateStore;
-use crate::CiphernodeSelectorState;
+use crate::{CiphernodeSelectorState, SortitionRecoveryState};
 use e3_data::{Repositories, Repository};
 use e3_events::{Committee, E3id, StoreKeys};
 use std::collections::HashMap;
@@ -21,6 +22,16 @@ impl SortitionRepositoryFactory for Repositories {
     }
 }
 
+pub trait SortitionRecoveryRepositoryFactory {
+    fn sortition_recovery(&self) -> Repository<SortitionRecoveryState>;
+}
+
+impl SortitionRecoveryRepositoryFactory for Repositories {
+    fn sortition_recovery(&self) -> Repository<SortitionRecoveryState> {
+        Repository::new(self.store.scope(StoreKeys::sortition_recovery()))
+    }
+}
+
 pub trait CiphernodeSelectorFactory {
     fn ciphernode_selector(&self) -> Repository<CiphernodeSelectorState>;
 }
@@ -28,6 +39,16 @@ pub trait CiphernodeSelectorFactory {
 impl CiphernodeSelectorFactory for Repositories {
     fn ciphernode_selector(&self) -> Repository<CiphernodeSelectorState> {
         Repository::new(self.store.scope(StoreKeys::ciphernode_selector()))
+    }
+}
+
+pub trait AggregatorFailoverRepositoryFactory {
+    fn aggregator_failover(&self) -> Repository<AggregatorFailoverState>;
+}
+
+impl AggregatorFailoverRepositoryFactory for Repositories {
+    fn aggregator_failover(&self) -> Repository<AggregatorFailoverState> {
+        Repository::new(self.store.scope(StoreKeys::aggregator_failover()))
     }
 }
 

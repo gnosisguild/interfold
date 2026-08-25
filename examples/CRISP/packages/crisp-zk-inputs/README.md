@@ -7,17 +7,25 @@ witness data needed for Noir-based vote-validity proofs without duplicating the 
 ## What it generates
 
 The WASM module wraps a `ZKInputsGenerator` class that performs BFV encryption and produces the
-witness data needed for CRISP's Noir circuits. Two main proof types are supported:
+witness data needed for CRISP's Noir circuits.
 
-- **Vote proof** (`generateInputs`) — encrypts a vote under the committee's threshold BFV public key
-  and produces a witness proving the vote is correctly encrypted and that the voter is eligible
-  (e.g. holds the required token balance, verified via a Merkle membership proof).
+`generateInputs` is the only entry point, and it covers all three operations: a first vote, a
+re-vote, and a masker contribution under the
+[vote masking](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/) scheme
+that provides receipt-freeness.
 
-- **Vote update / mask proof** (`generateInputsForUpdate`) — same structure, but used for revotes or
-  masker contributions under the
-  [vote masking](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/) scheme
-  that provides receipt-freeness. Unlike the first-vote path, this preserves the real
-  `prev_ct_commitment` (rather than zeroing it) to chain updates together.
+```typescript
+generateInputs(previousCiphertext, publicKey, vote, keepPrevious)
+```
+
+- `previousCiphertext` is the ciphertext currently in the slot, or `undefined` when it is empty.
+- `keepPrevious` is set only for a mask over an occupied slot. It makes the ballot add to that
+  ciphertext; everything else replaces it.
+
+One function rather than one per operation, deliberately: the encryption, the witness, and the
+published ciphertext have the same shape in every case, so nothing about a submission says which
+operation it was. Splitting the paths would make the three tellable apart, which is the attack
+masking exists to prevent.
 
 The generator also exposes `encryptVote` / `decryptVote` for standalone BFV operations and
 `generateKeys` for key generation.
@@ -38,17 +46,23 @@ The `init` subpackage handles both environments transparently.
 
 ```ts
 // Bad — the raw default loader doesn't work in Node.js contexts
-import init, { generateVoteInputs } from '@crisp-e3/zk-inputs'
+import init, { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 ```
 
 ### ✅ Use the universal subpackage loader
 
 ```ts
 import init from '@crisp-e3/zk-inputs/init'
-import { generateVoteInputs } from '@crisp-e3/zk-inputs'
+import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
 
 await init()
-const inputs = generateVoteInputs(/* ... */)
+const generator = ZKInputsGenerator.withDefaults()
+const { encryptedVote, inputs } = generator.generateInputs(
+  previousCiphertext,
+  publicKey,
+  vote,
+  keepPrevious,
+)
 ```
 
 Call `init()` once before using any other imports from `@crisp-e3/zk-inputs`. In browser

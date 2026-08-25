@@ -12,7 +12,14 @@ import { publicKeyToAddress, sign, signMessage } from 'viem/accounts'
 import { Hex, concat, keccak256, numberToHex, recoverPublicKey } from 'viem'
 import { CRISP_SERVER_URL, ECDSA_PRIVATE_KEY, SLOT_ADDRESS } from './constants'
 import { CrispSDK } from '../src/sdk'
+import { setCircuits } from '../src/circuits'
+import { loadCircuits } from '../src/presets/insecure-512'
 import { generateTestLeaves } from './helpers'
+
+// Proving needs a preset installed; the BFV-shaped circuits are no longer part of the main entry.
+beforeAll(async () => {
+  setCircuits(await loadCircuits())
+})
 
 describe('Vote', () => {
   let vote: Vote
@@ -28,11 +35,13 @@ describe('Vote', () => {
 
   const zeroVote = getZeroVote(2)
 
+  // The server answers with the end of the slot's chain of usable entries and its tree index; the
+  // SDK names that index as the parent of the input it is about to build.
   const mockGetPreviousCiphertextResponse = () =>
     ({
       ok: true,
       status: 200,
-      json: async () => ({ ciphertext: previousCiphertext }),
+      json: async () => ({ ciphertext: previousCiphertext, index: 0 }),
     }) as Response
 
   const mockPreviousCiphertextNotFoundResponse = () => ({ ok: false, status: 404 }) as Response
@@ -244,6 +253,42 @@ describe('Vote', () => {
 
       expect(isValid).toBe(true)
     })
+
+    // The third operation, and the one that had no coverage. A re-vote reaches the circuit with a
+    // slot that already holds a ballot, so it exercises the `prev_ct_commitment` check that a
+    // first vote skips, and it must replace rather than add — or a voter would have both ballots
+    // counted.
+    it('Should replace a ballot already in the slot', { timeout: 300000 }, async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockGetPreviousCiphertextResponse())
+
+      const updated: Vote = [0, 4, 0]
+      const prepared = await sdk.prepareBallot({
+        censusMode: 'merkle',
+        vote: updated,
+        publicKey,
+        merkleLeaves: leaves,
+        balance,
+        slotAddress: address,
+        isMaskVote: false,
+        numOptions: updated.length,
+        e3Id,
+      })
+
+      const digest = keccak256(concat([prepared.ctCommitment, numberToHex(e3Id, { size: 32 })]))
+      const ballotSignature = await sign({ hash: digest, privateKey: ECDSA_PRIVATE_KEY, to: 'hex' })
+
+      const proof = await sdk.finishBallot(prepared, digest, ballotSignature)
+
+      // What the contract stores, and what the digest was built over.
+      expect(BigInt(proof.publicInputs[7])).toBe(BigInt(prepared.ctCommitment))
+      // The slot held a ballot, so the contract passes its commitment and the circuit checks it.
+      expect(BigInt(proof.publicInputs[0])).not.toBe(0n)
+      expect(proof.publicInputs[5]).toBe(`0x${'0'.repeat(64)}`)
+
+      // Replaced, not added: the slot decrypts to the new ballot alone.
+      expect(decryptVote(proof.encryptedVote, secretKey, updated.length)).toEqual(updated.map(BigInt))
+      expect(await verifyProof(proof)).toBe(true)
+    })
   })
 
   describe('onchain census', () => {
@@ -339,13 +384,48 @@ describe('Vote', () => {
       expect(proof.proof).toBeDefined()
       expect(proof.publicInputs).toBeDefined()
 
-      const decryptedVote = decryptVote(previousCiphertext, secretKey, 2)
+      // A mask over an occupied slot publishes the sum, not the zero ballot it encrypted, so the
+      // commitment the caller signs over is the sum's. `CRISPProgram.publishInput` rebuilds the
+      // digest from the same value, and a caller signing over the ballot alone would produce a
+      // proof the contract rejects.
+      expect(BigInt(proof.publicInputs[7])).toBe(BigInt(prepared.ctCommitment))
+      expect(BigInt(proof.publicInputs[0])).not.toBe(0n)
 
-      expect(decryptedVote).toEqual(zeroVote.map(BigInt))
+      // Adding a zero ballot leaves what the slot decrypts to untouched.
+      expect(decryptVote(proof.encryptedVote, secretKey, 2)).toEqual(zeroVote.map(BigInt))
+      expect(decryptVote(previousCiphertext, secretKey, 2)).toEqual(zeroVote.map(BigInt))
 
       const isValid = await verifyProof(proof)
 
       expect(isValid).toBe(true)
+    })
+
+    // A mask must not be able to carry a payload. The zero check used to read only coefficients
+    // that the SDK layout never writes to, so any plaintext passed it — and anyone can write a mask
+    // to any eligible slot without a signature, which made it a way to corrupt a slot the submitter
+    // cannot vote in.
+    it('Should refuse a mask that carries a ballot', { timeout: 300000 }, async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockGetPreviousCiphertextResponse())
+
+      // Encrypted as a real ballot, then submitted on the mask branch, which is the only branch a
+      // third party can reach. The plaintext is whatever the attacker chose.
+      const prepared = await sdk.prepareBallot({
+        censusMode: 'merkle',
+        vote: [7, 0],
+        balance,
+        slotAddress: SLOT_ADDRESS,
+        publicKey,
+        merkleLeaves: leaves,
+        isMaskVote: false,
+        numOptions: 2,
+        e3Id: 0n,
+      })
+
+      prepared.circuitInputs.is_mask_vote = true
+
+      const digest = keccak256(concat([prepared.ctCommitment, numberToHex(0, { size: 32 })]))
+
+      await expect(sdk.finishBallot(prepared, digest)).rejects.toThrow()
     })
   })
 })

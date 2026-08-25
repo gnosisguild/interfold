@@ -58,7 +58,6 @@ pub struct JsonResponse {
 #[serde(rename_all = "snake_case")]
 pub enum VoteResponseStatus {
     Success,
-    UserAlreadyVoted,
     FailedBroadcast,
 }
 
@@ -67,8 +66,6 @@ pub struct VoteResponse {
     pub status: VoteResponseStatus,
     pub tx_hash: Option<String>,
     pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_vote_update: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -77,11 +74,17 @@ pub struct VoteStatusRequest {
     pub address: String,
 }
 
+/// Whether a slot holds any published entry, not whether its owner voted.
+///
+/// The server cannot answer "has this address voted": a mask is indistinguishable from a vote by
+/// design, and both write an entry to the slot. Any per-address answer the server could give is
+/// slot activity, so the field says exactly that. A client that wants "did *I* vote" must remember
+/// its own submissions.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VoteStatusResponse {
     pub round_id: String,
     pub address: String,
-    pub has_voted: bool,
+    pub slot_active: bool,
     pub round_status: Option<String>,
 }
 
@@ -108,10 +111,15 @@ pub struct CTRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+/// A relay request: the round and the encoded input, nothing else.
+///
+/// Deliberately no address field. The slot is already inside the encoded proof, and the relay has
+/// no use for a caller-supplied copy — every byte the relay does not receive is a byte it cannot
+/// log, so a masker's session leaves nothing linking it to the slot it masked beyond the proof
+/// itself. Old clients that still send one are tolerated: serde ignores unknown fields.
 pub struct VoteRequest {
     pub round_id: String,
     pub encoded_proof: String,
-    pub address: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -133,6 +141,8 @@ pub struct PreviousCiphertextRequest {
 #[derive(Serialize)]
 pub struct PreviousCiphertextResponse {
     pub ciphertext: Vec<u8>,
+    /// The tree index of that entry, which a client names as the parent of the input it builds.
+    pub index: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -162,6 +172,13 @@ pub struct RoundRequest {
     pub cron_api_key: String,
     pub token_address: String,
     pub balance_threshold: String,
+    /// The census source for the round, as a `CRISPProgram.CensusMode` discriminant. Optional and
+    /// defaulted to the token census this route always requested, so existing cron configurations
+    /// keep their behavior. Pass 2 (ONCHAIN) with a registry or votes-token address to request a
+    /// round whose eligibility is read from the token per input — for `SelfRegistry`, that is what
+    /// lets voters register during the input window.
+    #[serde(default)]
+    pub census_mode: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -218,7 +235,6 @@ pub struct E3 {
 
     // Status-related
     pub status: String,
-    pub has_voted: Vec<String>,
     pub vote_count: u64,
     pub tally: Vec<String>,
 
@@ -248,7 +264,6 @@ pub struct E3 {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct E3Crisp {
     pub emojis: [String; 2],
-    pub has_voted: Vec<String>,
     pub start_time: u64,
     pub end_time: u64,
     pub status: String,
@@ -258,6 +273,38 @@ pub struct E3Crisp {
     pub token_address: String,
     pub balance_threshold: String,
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
+    /// The commitment the contract stored for each input, keyed by the same on-chain index.
+    ///
+    /// The Secure Process needs it to check that the published bytes are the ciphertext that was
+    /// actually proven. Defaulted so rounds recorded before the event carried it still load.
+    #[serde(default)]
+    pub input_commitments: Vec<(u64, [u8; 32])>,
+    /// The slot each input was published to, keyed by the same on-chain index. The tree is
+    /// append-only, so the Secure Process groups entries by slot.
+    #[serde(default)]
+    pub input_slots: Vec<(u64, [u8; 20])>,
+    /// Whether each input's published bytes reproduce the commitment stored with it, keyed by the
+    /// same on-chain index.
+    ///
+    /// Recomputing this costs a BFV commitment — about 5ms per entry — and the answer never changes,
+    /// because the tree is append-only and an entry's bytes are fixed once published. Deciding it
+    /// once here keeps it off the read path, where `state/previous-ciphertext` is called by every
+    /// voter before every ballot.
+    ///
+    /// A hint, not an authority. The Secure Process recomputes it from the ciphertexts it consumed
+    /// and never reads this, so a wrong value here can only send a client to the wrong parent — the
+    /// same outcome as a stale read, and the guest drops such an input either way.
+    #[serde(default)]
+    pub input_usable: Vec<(u64, bool)>,
+    /// The entry each input names as the one it extends, plus one, keyed by the same on-chain
+    /// index. Zero means it extends nothing.
+    ///
+    /// The Secure Process walks each slot's chain by this, taking an entry only when the one it
+    /// names is the slot's current head. That is what keeps a slot writable after someone publishes
+    /// bytes nobody can open: such an entry is never the head, so it is never a valid parent, and
+    /// the next honest input names the same parent it did.
+    #[serde(default)]
+    pub input_parents: Vec<(u64, u64)>,
     pub requester: String,
     pub num_options: String,
     pub credit_mode: CreditMode,
@@ -353,7 +400,9 @@ mod persisted_round_tests {
     use super::{CensusMode, CreditMode, E3Crisp};
 
     /// A round written before `census_mode` existed. Kept verbatim rather than generated, so a
-    /// change to the struct cannot quietly change what "legacy" means.
+    /// change to the struct cannot quietly change what "legacy" means. It still carries
+    /// `has_voted`, which the struct no longer has — stored rounds do too, and decoding must
+    /// ignore it rather than refuse the round.
     const LEGACY_ROUND: &str = r#"{
         "emojis": ["a", "b"],
         "has_voted": [],
@@ -389,7 +438,11 @@ mod persisted_round_tests {
 
     #[test]
     fn every_census_mode_round_trips_through_storage() {
-        for mode in [CensusMode::Token, CensusMode::ByRequester, CensusMode::Onchain] {
+        for mode in [
+            CensusMode::Token,
+            CensusMode::ByRequester,
+            CensusMode::Onchain,
+        ] {
             let mut round: E3Crisp = serde_json::from_str(LEGACY_ROUND).unwrap();
             round.census_mode = mode;
 

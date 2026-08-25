@@ -37,6 +37,19 @@ pub enum ZkHelpersUtilsError {
 
     #[error("Commitment too long: {0}")]
     CommitmentTooLong(usize),
+
+    /// A ciphertext carrying more than `c[0]` and `c[1]`.
+    ///
+    /// Deliberately not phrased as advice to relinearize. A fresh BFV encryption has exactly two
+    /// components, and this conversion only ever runs on published bytes, so more than two means
+    /// the bytes were padded — the commitment covers `c[0]` and `c[1]`, so a padded ciphertext
+    /// commits to the same value as its own two-component prefix. Rejecting it is the point, not a
+    /// step on the way to accepting it.
+    #[error(
+        "Expected 2 ciphertext components, got {0}; the commitment covers c[0] and c[1] only, so \
+         additional components would share a commitment with the two-component prefix"
+    )]
+    UnexpectedCiphertextComponents(usize),
 }
 
 pub type Result<T> = std::result::Result<T, ZkHelpersUtilsError>;

@@ -14,11 +14,7 @@
   },
   "metadata": {
     "enums": {
-      "IInterfold.CommitteeSize": [
-        "Minimum",
-        "Micro",
-        "Small"
-      ],
+      "IInterfold.CommitteeSize": ["Minimum", "Micro", "Small"],
       "IInterfold.E3Stage": [
         "None",
         "Requested",

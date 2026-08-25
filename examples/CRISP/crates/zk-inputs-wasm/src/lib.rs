@@ -46,20 +46,34 @@ impl ZKInputsGenerator {
         Ok(ZKInputsGenerator { generator })
     }
 
-    /// Generate CRISP ZK inputs from JavaScript.
+    /// Generate the CRISP ZK inputs for one ballot from JavaScript.
+    ///
+    /// One entry point for a first vote, a re-vote, and a mask. Pass the ciphertext currently in
+    /// the slot, or `undefined` when the slot is empty, and set `keepPrevious` only for a mask over
+    /// an occupied slot. Everything else is identical between the three, which is what keeps them
+    /// indistinguishable once published.
+    ///
+    /// # Arguments
+    /// - `previous_ciphertext`: The ciphertext in the slot, or `undefined` when it is empty
+    /// - `public_key`: Public key bytes for encryption
+    /// - `vote`: Vote value as a vector of coefficients
+    /// - `keep_previous`: Whether the ballot adds to the slot rather than replacing it
     #[wasm_bindgen(js_name = "generateInputs")]
     pub fn generate_inputs(
         &self,
-        prev_ciphertext: &[u8],
+        previous_ciphertext: Option<Vec<u8>>,
         public_key: &[u8],
         vote: Vec<i64>,
+        keep_previous: bool,
     ) -> Result<JsValue, JsValue> {
         let vote_vec: Vec<u64> = vote.into_iter().map(|v| v as u64).collect();
 
-        match self
-            .generator
-            .generate_inputs(prev_ciphertext, public_key, vote_vec)
-        {
+        match self.generator.generate_inputs(
+            previous_ciphertext.as_deref(),
+            public_key,
+            vote_vec,
+            keep_previous,
+        ) {
             Ok((ciphertext_bytes, inputs_json)) => {
                 // Parse the JSON string and return as an object with both encryptedVote and inputs.
                 let result = js_sys::Object::new();
@@ -81,39 +95,16 @@ impl ZKInputsGenerator {
         }
     }
 
-    /// Generate CRISP ZK inputs for a vote update (either from voter or as a masker) from JavaScript.
-    #[wasm_bindgen(js_name = "generateInputsForUpdate")]
-    pub fn generate_inputs_for_update(
-        &self,
-        prev_ciphertext: &[u8],
-        public_key: &[u8],
-        vote: Vec<i64>,
-    ) -> Result<JsValue, JsValue> {
-        let vote_vec: Vec<u64> = vote.into_iter().map(|v| v as u64).collect();
-
-        match self
-            .generator
-            .generate_inputs_for_update(prev_ciphertext, public_key, vote_vec)
-        {
-            Ok((ciphertext_bytes, inputs_json)) => {
-                // Parse the JSON string and return as an object with both encryptedVote and inputs.
-                let result = js_sys::Object::new();
-
-                // Set encryptedVote as Uint8Array
-                let ciphertext_array = js_sys::Uint8Array::from(&ciphertext_bytes[..]);
-                js_sys::Reflect::set(&result, &"encryptedVote".into(), &ciphertext_array.into())?;
-
-                // Parse and set inputs JSON
-                match js_sys::JSON::parse(&inputs_json) {
-                    Ok(js_value) => {
-                        js_sys::Reflect::set(&result, &"inputs".into(), &js_value)?;
-                        Ok(result.into())
-                    }
-                    Err(_) => Err(JsValue::from_str("Failed to parse inputs JSON")),
-                }
-            }
-            Err(e) => Err(JsValue::from_str(&e.to_string())),
-        }
+    /// Computes the SAFE commitment of serialized ciphertext bytes.
+    ///
+    /// The witness already carries this value for the ciphertext a ballot publishes. Kept for
+    /// callers that hold bytes they did not generate, such as a slot ciphertext read back from the
+    /// server.
+    #[wasm_bindgen(js_name = "computeCtCommitment")]
+    pub fn compute_ct_commitment(&self, ciphertext: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        self.generator
+            .compute_ciphertext_commitment(&ciphertext)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
     /// Generate a public/secret key pair from JavaScript.
@@ -264,7 +255,7 @@ mod tests {
 
         let vote = create_vote_vector();
         let old_ciphertext = generator.encrypt_vote(&public_key, vote.clone()).unwrap();
-        let result = generator.generate_inputs(&old_ciphertext, &public_key, vote);
+        let result = generator.generate_inputs(Some(old_ciphertext), &public_key, vote, false);
 
         assert!(result.is_ok());
 
@@ -304,7 +295,7 @@ mod tests {
         let public_key: Vec<u8> = public_key_array.to_vec();
         let vote = create_vote_vector();
         let old_ciphertext = generator.encrypt_vote(&public_key, vote.clone()).unwrap();
-        let result = generator.generate_inputs(&old_ciphertext, &public_key, vote);
+        let result = generator.generate_inputs(Some(old_ciphertext), &public_key, vote, false);
 
         assert!(result.is_ok());
 

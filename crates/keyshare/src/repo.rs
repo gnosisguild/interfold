@@ -7,14 +7,28 @@
 use e3_data::{Repositories, Repository};
 use e3_events::{E3id, StoreKeys};
 
-use crate::ThresholdKeyshareState;
+use crate::{ThresholdKeyshareRecoveryState, ThresholdKeyshareState};
 
 pub trait ThresholdKeyshareRepositoryFactory {
     fn threshold_keyshare(&self, e3_id: &E3id) -> Repository<ThresholdKeyshareState>;
+    fn threshold_keyshare_recovery(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<ThresholdKeyshareRecoveryState>;
 }
 
 impl ThresholdKeyshareRepositoryFactory for Repositories {
     fn threshold_keyshare(&self, e3_id: &E3id) -> Repository<ThresholdKeyshareState> {
         Repository::new(self.store.scope(StoreKeys::threshold_keyshare(e3_id)))
+    }
+
+    fn threshold_keyshare_recovery(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<ThresholdKeyshareRecoveryState> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::threshold_keyshare_recovery(e3_id)),
+        )
     }
 }

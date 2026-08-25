@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::net_interface_handle::NetEventSubscriber;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
@@ -16,12 +17,11 @@ use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
-    sync::Arc,
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -33,13 +33,14 @@ use crate::{
             fetch_all_batched_events_with_budget, FetchEventsSince, SyncFetchBudget,
         },
         sync_coordinator::sync_scan_limit,
-        wire::{decode, MAX_DIRECT_MESSAGE_BYTES},
+        wire::{decode_sync, encode_sync, SyncMessageKind},
         EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
     },
     events::{
         await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget,
         ProtocolResponse,
     },
+    NetworkPolicy,
 };
 
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
@@ -76,7 +77,8 @@ impl TryInto<Vec<u8>> for SyncResponseValue {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<Vec<u8>, Self::Error> {
-        bincode::serialize(&self).context("failed to serialize sync response")
+        encode_sync(SyncMessageKind::SyncResponse, &self)
+            .context("failed to serialize sync response")
     }
 }
 
@@ -84,7 +86,8 @@ impl TryFrom<Vec<u8>> for SyncResponseValue {
     type Error = anyhow::Error;
 
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        decode(&value, MAX_DIRECT_MESSAGE_BYTES).context("failed to deserialize sync response")
+        decode_sync(&value, SyncMessageKind::SyncResponse)
+            .context("failed to deserialize sync response")
     }
 }
 
@@ -104,13 +107,15 @@ pub struct NetSyncManager {
     /// NetCommand sender to forward commands to the Libp2pNetInterface
     tx: mpsc::Sender<NetCommand>,
     /// NetEvents receiver to receive events
-    rx: Arc<broadcast::Receiver<NetEvent>>,
+    rx: NetEventSubscriber,
     eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
     requests: HashMap<CorrelationId, PendingSyncRequest>,
     /// Pure readiness state machine.
     readiness: NetReadiness,
     /// Gossipsub topic used to re-broadcast our own forwardable artifacts after a restart.
     topic: String,
+    /// Network and deployment identity applied to historical-sync ingress and egress.
+    network: NetworkPolicy,
     /// Snapshot-cursor map captured from `HistoricalNetSyncStart`. Bounds the post-restart
     /// re-broadcast query to the in-flight (un-snapshotted) window.
     rebroadcast_since: Option<HashMap<AggregateId, u128>>,
@@ -127,18 +132,20 @@ impl NetSyncManager {
     pub fn new(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
-        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        rx: &NetEventSubscriber,
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
+        network: NetworkPolicy,
     ) -> Self {
         Self {
             bus: bus.clone(),
             tx: tx.clone(),
-            rx: Arc::clone(rx),
+            rx: rx.clone(),
             eventstore,
             requests: HashMap::new(),
             readiness: NetReadiness::new(),
             topic: topic.to_string(),
+            network,
             rebroadcast_since: None,
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
@@ -156,7 +163,7 @@ use effects::historical_sync::handle_sync_request_event;
 use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]
-use effects::historical_sync::validate_historical_events;
+use effects::historical_sync::{eligible_sync_cursor, validate_historical_events};
 
 #[cfg(test)]
 #[path = "tests.rs"]
