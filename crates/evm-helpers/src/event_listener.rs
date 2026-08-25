@@ -14,6 +14,7 @@ use alloy::{
 use eyre::Result;
 use futures::stream::StreamExt;
 use futures_util::future::FutureExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -27,6 +28,14 @@ pub struct EventListener {
     handlers: Arc<RwLock<HashMap<B256, Vec<EventHandler>>>>,
     /// Handlers that receive every log, whatever its topic.
     raw_handlers: Arc<RwLock<Vec<EventHandler>>>,
+    /// Cleared the instant a raw handler fails on the live path.
+    ///
+    /// A raw handler is what PERSISTS a log, so its failure means the store no longer reflects the
+    /// chain. Returning the error is not enough on its own: the owner advances a persisted cursor
+    /// from block headers on a separate task, and between the failure and the owner observing the
+    /// aborted subscription it could claim the failed block as applied — sealing the hole under a
+    /// cursor that asserts the opposite. This flag lets the owner stop that synchronously.
+    healthy: Option<Arc<AtomicBool>>,
 }
 
 impl EventListener {
@@ -36,7 +45,16 @@ impl EventListener {
             filter,
             handlers: Arc::new(RwLock::new(HashMap::new())),
             raw_handlers: Arc::new(RwLock::new(Vec::new())),
+            healthy: None,
         }
+    }
+
+    /// Share a flag that this listener clears when a raw handler fails on the live path.
+    ///
+    /// Owners that persist an applied-block cursor must supply one and must stop advancing the
+    /// cursor while it is false; owners with no such cursor can ignore this entirely.
+    pub fn set_health_flag(&mut self, healthy: Arc<AtomicBool>) {
+        self.healthy = Some(healthy);
     }
 
     /// Register a handler that receives EVERY log this listener sees, undecoded.
@@ -108,8 +126,19 @@ impl EventListener {
                     let Some(handler) = guard.get(i) else { break };
                     handler(&log)
                 };
+                // Propagated, not logged and dropped. `catch_up` aborts on a raw-handler error so
+                // the caller's cursor cannot advance past unapplied work; the live path swallowing
+                // the same error left a permanent hole beneath a cursor that claimed the block was
+                // applied, and the read API then served that range from the index — short, and
+                // indistinguishable from a complete answer.
+                //
+                // The health flag is cleared FIRST, so a cursor driven by block headers on another
+                // task stops immediately rather than when this error surfaces to the caller.
                 if let Err(e) = fut.await {
-                    eprintln!("Error in raw log handler: {e:?}");
+                    if let Some(healthy) = &self.healthy {
+                        healthy.store(false, Ordering::SeqCst);
+                    }
+                    return Err(e.wrap_err("a raw log handler failed; aborting the subscription"));
                 }
             }
 

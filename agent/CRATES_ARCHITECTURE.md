@@ -626,26 +626,40 @@ property, not a convenience — the event handlers are not pure (`E3Requested` s
 `setMerkleRoot` on chain and re-initialises the stored round), so replay must never be acquired by
 merely upgrading the crate.
 
-`INDEXER_CURSOR_KEY` (`_indexer:cursor`) holds the last block whose logs have been fully applied.
-Four rules keep it from claiming more than is true:
+`INDEXER_CURSOR_KEY` (`_indexer:cursor`) is a **best-effort watermark over RAW log application**,
+not a proof that every event below it was processed. Be precise about what it does and does not
+assert, because the read APIs built on it present its range as authoritative:
 
-- **It only advances once the catch-up has completed** for the current connection. A cursor that
-  moved while a gap beneath it was still unreplayed would seal that gap permanently.
-- **It only advances monotonically.** Block handlers are spawned rather than awaited, so headers
-  can be applied out of order; the claim goes through `fetch_max` so a late header cannot move it
-  backwards and make a restart replay blocks already applied.
+- **It speaks for raw handlers only.** Typed handlers are spawned concurrently on the live path
+  and their errors are logged and dropped, so the cursor says nothing about them. Anything that
+  needs a typed handler to have run must check its own state, never the cursor.
+- **It only advances once the catch-up has completed** for the current connection, and only while
+  the listener is healthy. A cursor that moved while a gap beneath it was still unreplayed would
+  seal that gap permanently, so a raw-handler failure clears the health flag synchronously and
+  aborts the subscription.
+- **It only advances monotonically**, via `fetch_max`. Block handlers are spawned rather than
+  awaited, so headers can be applied out of order and a blind write could move the cursor
+  backwards. Note what this does NOT give you: `fetch_max` orders the in-memory claim, not the
+  `store.insert` calls that follow it, and it is not evidence that every lower block was applied.
 - **It advances to `blockheight - 1`**, because the header and the logs arrive on two independent
-  subscriptions with no ordering guarantee between them.
-- **A window advances it only after every handler in that window succeeded.** `catch_up`
-  propagates handler errors for exactly this reason, so a consumer's raw handler must return
-  `Err` on a failed write rather than logging and continuing.
+  subscriptions with no ordering guarantee between them. This is a one-block hedge, not
+  synchronisation.
+- **A backfill window advances it only after every handler in that window succeeded**, sequentially
+  and in block order. `catch_up` propagates handler errors for exactly this reason, so a consumer's
+  raw handler must return `Err` on a failed write rather than logging and continuing.
 
 The catch-up re-reads the head after each pass and loops until it converges, because a backfill
 from a deployment block can run for hours and every block mined during it would otherwise fall
-between the replay and the subscription that starts afterwards. A backfill that keeps failing does
-not wedge the process: after several attempts the indexer subscribes anyway with the cursor left
-where it was, so live indexing resumes and the unreplayed range is retried later rather than being
-claimed as applied.
+between the replay and the subscription that starts afterward. **A narrow handoff window remains
+open**: the loop converges on a head read, returns, and only then does `listen` establish the
+subscription, so a block mined in between is in neither. Closing it properly means subscribing
+first, buffering live logs through the replay, and draining afterward — a real design change, not
+a tightening of this loop. Until then, that window is covered only by the next reconnect's
+catch-up, and the cursor overstates coverage for exactly that range.
+
+A backfill that keeps failing does not wedge the process: after several attempts the indexer
+subscribes anyway with the cursor left where it was, so live indexing resumes and the unreplayed
+range is retried later rather than being claimed as applied.
 
 Handlers registered on the block listener must capture only what they need — never the
 `Arc<IndexerContext>` itself. The context owns the block listener, so a handler holding the

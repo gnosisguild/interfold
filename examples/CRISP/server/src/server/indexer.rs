@@ -845,8 +845,14 @@ pub async fn start_indexer(
     // the extra addresses is what lets their logs be served from the store instead of forwarded
     // upstream on every request; the typed handlers below dispatch on event signature, so a
     // contract that emits nothing they recognise simply flows past them into the log index.
+    //
+    // `INDEX_LOG_CONTRACTS` is documented as a subset of `INDEX_CONTRACTS`, but nothing enforces
+    // that, and an entry listed only there would never reach the subscription or the backfill
+    // filter — while coverage was still recorded for it below. Every query for that address then
+    // passed the coverage test and was answered from an empty index: an authoritative empty log
+    // list. Watching the union costs nothing and removes the way to configure that.
     let mut watched: Vec<&str> = vec![contract_address, registry_address, crisp_address];
-    for address in index_contracts {
+    for address in index_contracts.iter().chain(index_log_contracts.iter()) {
         if !watched.iter().any(|w| w.eq_ignore_ascii_case(address)) {
             watched.push(address);
         }

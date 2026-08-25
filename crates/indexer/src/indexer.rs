@@ -322,13 +322,20 @@ impl<S: DataStore> InterfoldIndexer<S, ReadWrite> {
 
 impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     pub async fn new(
-        event_listener: EventListener,
+        mut event_listener: EventListener,
         contract: InterfoldContract<R>,
         store: S,
     ) -> Result<Self> {
         let chain_id = contract.provider.get_chain_id().await?;
         let contract_address = contract.address().to_string();
         let block_listener = BlockListener::new(event_listener.provider());
+
+        // `caught_up` doubles as the listener's health flag: a raw handler that fails to persist a
+        // log clears it, which stops the header-driven cursor from claiming that block before the
+        // aborted subscription surfaces to `listen`.
+        let caught_up = Arc::new(AtomicBool::new(false));
+        event_listener.set_health_flag(caught_up.clone());
+
         let mut instance = Self {
             ctx: Arc::new(IndexerContext {
                 store: SharedStore::new(Arc::new(RwLock::new(store))),
@@ -342,7 +349,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 backfill_chunk: AtomicU64::new(DEFAULT_BACKFILL_CHUNK),
                 backfill_enabled: Arc::new(AtomicBool::new(false)),
                 cursor_high: Arc::new(AtomicU64::new(0)),
-                caught_up: Arc::new(AtomicBool::new(false)),
+                caught_up,
             }),
         };
         instance.setup_listeners().await?;

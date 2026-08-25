@@ -572,7 +572,15 @@ async fn logs_from_index(
             // `pending` includes blocks that are not final, which an index built from applied
             // blocks cannot speak for.
             Some("pending") => None,
-            Some(tag) => u64::from_str_radix(tag.trim_start_matches("0x"), 16).ok(),
+            // The `0x` prefix is REQUIRED, matching what the upstream path accepts. Stripping an
+            // absent prefix and parsing as hex anyway silently rewrote the range: `"1000"`
+            // (decimal, a common client bug) became block 4096, and if the shifted range happened
+            // to sit inside the covered span, the index answered for blocks the caller never
+            // asked about — as an ordinary result array, with nothing to detect it by.
+            Some(tag) if tag.starts_with("0x") => {
+                u64::from_str_radix(tag.trim_start_matches("0x"), 16).ok()
+            }
+            Some(_) => None,
         }
     };
 
