@@ -104,31 +104,32 @@ Specific triggers:
 
 ### Requester Cancellation
 
-Only the address that created an E3 can call `cancelE3(e3Id)`. The call is valid in `Requested`,
-`CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. It records the current stage before it
-sets the terminal `Failed` stage and emits `RequesterCancelled` through the standard failure events.
+Only the address that created an E3 can call `cancelE3(e3Id)`. Cancellation is a recovery path for
+an asynchronous randomness request that did not produce a usable result by its frozen deadline. It
+is valid only while the E3 remains in `Requested`, the Registry reports no seed, and the randomness
+deadline has passed.
 
-Cancellation and settlement are separate. This lets the E3 stop even if a registry lookup or token
-transfer temporarily fails. Any account can later retry `processE3Failure(e3Id)`.
+The contract does not allow cancellation while a timely VRF result can still arrive. This prevents a
+requester from seeing a pending fulfillment and canceling only when the random word is unfavorable.
+The provider never re-requests or deletes randomness for an E3.
 
 ```text
 Requester calls: Interfold.cancelE3(e3Id)
 │
 ├─ require(msg.sender == request-time requester)
-├─ require(stage is active and not terminal)
+├─ require(stage == Requested)
+├─ require(Registry.sortitionSeed(e3Id) is unavailable)
+├─ require(block.timestamp > randomnessDeadline)
 ├─ _e3Stages[e3Id] = Failed
-├─ _e3FailureReasons[e3Id] = RequesterCancelled
+├─ _e3FailureReasons[e3Id] = CommitteeFormationTimeout
+├─ Registry.releaseCommittee(e3Id)
+│  → release candidate and request obligations
+│  → a late provider callback cannot restart sortition
 └─ Emit E3StageChanged and E3Failed
 
-Settlement derives the pre-failure stage from the monotonic deadline markers
-that each lifecycle transition stored before cancellation:
-  Requested          → no completed node milestone
-  CommitteeFinalized → committee-formation allocation completed
-  KeyPublished       → committee formation and DKG completed
-  CiphertextReady    → committee formation and DKG completed
-
-The requester receives the remaining work allocation. The request-time protocol share is retained.
-No decryption allocation is paid unless the E3 completes normally.
+Settlement remains separate from cancellation. Any account can call `processE3Failure(e3Id)` after
+the state change. `CommitteeFormationTimeout` is supplier-paid, so the requester receives the full
+fee escrow. No node or protocol allocation is paid from that fee because no committee work began.
 ```
 
 ---

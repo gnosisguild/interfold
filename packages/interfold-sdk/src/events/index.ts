@@ -23,6 +23,7 @@ export type {
   CiphernodeAddedData,
   CiphernodeRemovedData,
   CommitteeRequestedData,
+  CommitteeRandomnessRequestedData,
   CommitteePublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,

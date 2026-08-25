@@ -30,10 +30,10 @@ use e3_events::{
     EventType, EvmEventConfig, InterfoldEvent,
 };
 use e3_evm::{
-    fetch_accusation_vote_validity, BondingRegistrySolReader, CiphernodeRegistrySol,
-    CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
-    SlashingWriterRepositoryFactory,
+    fetch_accusation_vote_validity, fetch_randomness_providers, BondingRegistrySolReader,
+    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
+    InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
+    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -1274,6 +1274,30 @@ async fn setup_evm_system(
                 )
                 .recipient()
             });
+
+            let randomness_addresses = fetch_randomness_providers(
+                provider.provider(),
+                contract_address,
+                contract.deploy_block().unwrap_or(0),
+            )
+            .await?;
+            if randomness_addresses.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "ciphernode registry {} has no randomness provider configured",
+                    contract_address
+                ));
+            }
+            for randomness_address in randomness_addresses {
+                let randomness_read_provider = provider.clone();
+                system.with_contract(randomness_address, move |next| {
+                    RandomnessProviderSolReader::setup(
+                        &next,
+                        randomness_read_provider,
+                        contract_address,
+                    )
+                    .recipient()
+                });
+            }
 
             // TODO: Should we not let this pass and just use '?'?
             // Above if we include interfold in the config and we don't have a wallet it will fail

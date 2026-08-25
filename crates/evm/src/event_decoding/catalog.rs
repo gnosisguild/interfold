@@ -384,6 +384,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "CommitteeRandomnessRequested",
+        "CommitteeRandomnessRequested(uint256,uint256,address,uint256)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "CommitteePublished",
         "CommitteePublished(uint256,address[],bytes,bytes32,bytes)",
         Some(1),
@@ -423,6 +428,16 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "OwnershipTransferred",
         "OwnershipTransferred(address,address)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "RandomnessProviderSet",
+        "RandomnessProviderSet(address)",
+        None,
+    ),
+    EvmEventDefinition::new(
+        "RandomnessRequestTimeoutSet",
+        "RandomnessRequestTimeoutSet(uint256)",
         None,
     ),
     EvmEventDefinition::new(

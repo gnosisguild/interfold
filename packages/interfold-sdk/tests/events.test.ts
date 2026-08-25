@@ -23,6 +23,13 @@ describe('RegistryEventType', () => {
     expect(registryEventNames).toContain(RegistryEventType.COMMITTEE_FINALIZED)
   })
 
+  it('exposes the asynchronous committee randomness request', () => {
+    const registryEventNames = CiphernodeRegistryOwnable__factory.abi.filter((item) => item.type === 'event').map((item) => item.name)
+
+    expect(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED).toBe('CommitteeRandomnessRequested')
+    expect(registryEventNames).toContain(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED)
+  })
+
   it('handles asynchronous event callback failures', async () => {
     const error = new Error('invalid committee key')
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)

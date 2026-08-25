@@ -318,7 +318,7 @@ contract Interfold is
             InterfoldLifecycle.requestLifecycleDuration(
                 requestParams.inputWindow[1],
                 block.timestamp,
-                dependencies.registry.sortitionSubmissionWindow(),
+                address(dependencies.registry),
                 _timeoutConfig
             );
         dependencies.refundManager.snapshotE3Policy(
@@ -855,6 +855,7 @@ contract Interfold is
             _e3Stages,
             _e3FailureReasons,
             _e3Requesters,
+            address(_registryFor(e3Id)),
             e3Id,
             msg.sender
         );
@@ -1054,7 +1055,7 @@ contract Interfold is
         InterfoldLifecycle.validateRequest(
             requestParams.inputWindow,
             block.timestamp,
-            ciphernodeRegistry.sortitionSubmissionWindow(),
+            address(ciphernodeRegistry),
             _timeoutConfig,
             maxDuration
         );

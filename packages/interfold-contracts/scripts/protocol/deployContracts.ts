@@ -10,6 +10,7 @@ import {
 import { ADDRESS_ONE } from "./constants";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
+import { deployRandomnessProvider } from "./randomness";
 import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
 import { deployedAddress, pricingConfig, timeoutConfig } from "./values";
 
@@ -80,6 +81,13 @@ export async function deployProtocolContracts(
       config.protocolOwner,
       BigInt(config.registry.sortitionSubmissionWindow),
     ]),
+  );
+
+  const randomness = await deployRandomnessProvider(
+    ethers,
+    operator,
+    config,
+    registryProxy.proxy,
   );
 
   const pricingLibFactory = await ethers.getContractFactory("InterfoldPricing");
@@ -218,6 +226,7 @@ export async function deployProtocolContracts(
       slashingEvidenceLib,
       poseidonT3,
       registrySortitionLib,
+      ...randomness,
       ciphernodeRegistry: registryProxy.proxy,
       ciphernodeRegistryImplementation,
       ciphernodeRegistryProxyAdmin: registryProxy.proxyAdmin,

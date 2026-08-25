@@ -157,9 +157,11 @@ enum InterfoldEventType {
 
 ```typescript
 enum RegistryEventType {
+  // Retained for historical block-hash sortition logs.
   COMMITTEE_REQUESTED = 'CommitteeRequested',
+  COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
-  COMMITTEE_FINALIZED = 'CommitteeFinalized',
+  COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',

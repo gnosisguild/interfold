@@ -11,6 +11,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
+import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
 
 contract MockCiphernodeRegistry is ICiphernodeRegistry {
     uint256 public override numCiphernodes;
@@ -18,6 +19,8 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     IInterfold public interfold;
     IBondingRegistry public bondingRegistry;
     address public slashingManager;
+    address public randomnessProvider;
+    uint256 public randomnessRequestTimeout = 1 hours;
 
     /// @notice Configurable committee members per E3 for testing
     mapping(uint256 e3Id => address[] nodes) private _committeeNodes;
@@ -189,6 +192,35 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
 
     function setSlashingManager(address value) external {
         slashingManager = value;
+    }
+
+    function setRandomnessProvider(IRandomnessProvider value) external {
+        randomnessProvider = address(value);
+    }
+
+    function setRandomnessRequestTimeout(uint256 timeout) external {
+        randomnessRequestTimeout = timeout;
+    }
+
+    function sortitionSeed(
+        uint256
+    ) external pure returns (bool ready, uint256 seed) {
+        return (false, 0);
+    }
+
+    function getSortitionRequest(
+        uint256
+    )
+        external
+        pure
+        returns (
+            uint32[2] memory threshold,
+            uint256 requestBlock,
+            uint256 committeeDeadline,
+            uint256 ticketPrice
+        )
+    {
+        return (threshold, 0, 0, 0);
     }
 
     // solhint-disable-next-line no-empty-blocks
@@ -407,11 +439,50 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
     // solhint-disable-next-line no-empty-blocks
     function setInterfold(IInterfold) external pure {}
 
+    function interfold() external pure returns (IInterfold) {
+        return IInterfold(address(0));
+    }
+
     // solhint-disable-next-line no-empty-blocks
     function setBondingRegistry(IBondingRegistry) external pure {}
 
     function sortitionSubmissionWindow() external pure returns (uint256) {
         return 0;
+    }
+
+    function randomnessProvider() external pure returns (address) {
+        return address(0);
+    }
+
+    function randomnessRequestTimeout() external pure returns (uint256) {
+        return 1 hours;
+    }
+
+    // solhint-disable-next-line no-empty-blocks
+    function setRandomnessProvider(IRandomnessProvider) external pure {}
+
+    // solhint-disable-next-line no-empty-blocks
+    function setRandomnessRequestTimeout(uint256) external pure {}
+
+    function sortitionSeed(
+        uint256
+    ) external pure returns (bool ready, uint256 seed) {
+        return (false, 0);
+    }
+
+    function getSortitionRequest(
+        uint256
+    )
+        external
+        pure
+        returns (
+            uint32[2] memory threshold,
+            uint256 requestBlock,
+            uint256 committeeDeadline,
+            uint256 ticketPrice
+        )
+    {
+        return (threshold, 0, 0, 0);
     }
 
     function exitDelayFloor() external pure returns (uint256) {

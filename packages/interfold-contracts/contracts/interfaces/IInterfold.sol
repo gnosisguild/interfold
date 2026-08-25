@@ -70,7 +70,8 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
-        /// @dev Requester-initiated cancellation of an active E3.
+        /// @dev Reserved for historical ABI compatibility. VRF-era requests can only
+        ///      be cancelled after a randomness timeout and use CommitteeFormationTimeout.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
@@ -457,7 +458,7 @@ interface IInterfold {
     /// @notice Caller is not the requester that created the E3.
     error NotRequester(uint256 e3Id, address caller);
 
-    /// @notice The E3 is not in an active stage that the requester can cancel.
+    /// @notice The E3 cannot be cancelled before its randomness timeout or after a seed exists.
     error E3NotCancellable(uint256 e3Id, E3Stage stage);
 
     /// @notice Thrown when a committee publishes its key after the DKG deadline.
@@ -809,9 +810,10 @@ interface IInterfold {
     /// @return reason The failure reason
     function markE3Failed(uint256 e3Id) external returns (FailureReason reason);
 
-    /// @notice Cancel an active E3 and preserve payment for completed work.
-    /// @dev Only the original requester can cancel. Refund settlement remains
-    ///      permissionless through {processE3Failure}.
+    /// @notice Cancel a request after its randomness request expires without a usable result.
+    /// @dev Only the original requester can cancel. The failure is classified as a committee
+    ///      formation timeout, and refund settlement remains permissionless through
+    ///      {processE3Failure}.
     /// @param e3Id The E3 ID.
     function cancelE3(uint256 e3Id) external;
 

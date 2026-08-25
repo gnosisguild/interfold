@@ -17,9 +17,9 @@ None → Requested → CommitteeFinalized → KeyPublished → CiphertextReady �
 
 Each transition has a deadline. Missing a deadline allows anyone to call `markE3Failed()`.
 
-`BondingRegistry.exitDelay` exceeds the current submission window and every unexpired frozen
-committee deadline. Therefore, queued ticket collateral cannot become claimable while an older
-request accepts snapshot-weighted ticket submissions.
+`BondingRegistry.exitDelay` exceeds the current randomness timeout plus the submission window and
+every unexpired frozen committee deadline. Therefore, queued ticket collateral cannot become
+claimable while an older request can still accept snapshot-weighted ticket submissions.
 
 A ticket that enters the current top-N opens a collateral obligation immediately. A better ticket
 releases the displaced candidate. Finalization retains the winners' obligations until the E3 ends.
@@ -71,7 +71,7 @@ Requester calls: Interfold.request({
 │   ├─ Snapshot the complete timeout configuration
 │   ├─ Reserve the later of:
 │   │    inputWindow[1], or
-│   │    request time + sortitionWindow + dkgWindow
+│   │    request time + randomnessTimeout + sortitionWindow + dkgWindow
 │   ├─ Add computeWindow and decryptionWindow to that reservation
 │   ├─ total worst-case lifecycle duration <= maxDuration
 │   └─ e3Programs[e3Program] == true (program whitelisted)
@@ -149,15 +149,15 @@ Requester calls: Interfold.request({
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: unresolved,                           │
-│   │   │  │         entropyBlock: chainBlockNumber + 1,         │
-│   │   │  │           → ArbSys L2 block on Arbitrum             │
-│   │   │  │           → execution block on other chains         │
 │   │   │  │         requestBlock: block.timestamp, // H-26      │
 │   │   │  │         committeeDeadline:                          │
-│   │   │  │           block.timestamp + sortitionWindow,        │
+│   │   │  │           block.timestamp + randomnessTimeout,      │
 │   │   │  │         threshold: threshold                        │
 │   │   │  │       }                                             │
-│   │   │  │       → raise the latest deadline watermark         │
+│   │   │  │       → Freeze the configured randomness provider   │
+│   │   │  │       → Request one random word for this E3          │
+│   │   │  │       → Freeze the response and submission windows  │
+│   │   │  │       → Raise the deadline watermark by both windows│
 │   │   │  │    5. sortitionTicketPrices[e3Id] =                 │
 │   │   │  │         bondingRegistry.ticketPrice()               │
 │   │   │  │       → Freeze ticket capacity for this E3          │
@@ -166,10 +166,9 @@ Requester calls: Interfold.request({
 │   │   │  │       → Only nodes in tree at request time eligible │
 │   │   │  │    7. Emit DkgFoldAttestationContextEstablished(    │
 │   │   │  │              e3Id, registry, foldVerifier)          │
-│   │   │  │       Emit CommitteeRequested(e3Id, entropyBlock,   │
-│   │   │  │              threshold, requestBlock,               │
-│   │   │  │              committeeDeadline,                     │
-│   │   │  │              ticketPrice)                           │
+│   │   │  │       Emit CommitteeRandomnessRequested(            │
+│   │   │  │              e3Id, requestId, provider,             │
+│   │   │  │              randomnessDeadline)                    │
 │   │   │  │       BondingRegistry records this request-time      │
 │   │   │  │       registry as the E3's obligation owner          │
 │   │   │  │  }                                                  │
@@ -187,12 +186,18 @@ Requester calls: Interfold.request({
 
 ## Step 2: Sortition — Committee Selection (Rust-Side)
 
-When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and
-`CommitteeRequested` events from the chain:
+When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and the
+configured provider's `RandomnessFulfilled` event from the chain:
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
 It gives this data to the proof actors and registry writers before event replay starts. Events after
 the latest snapshot then replay in order and add any newer E3 contexts.
+
+Each ciphernode reads the Registry's provider-set history and current randomness provider. It
+watches every returned provider address so that a restart can replay requests that used an older
+provider. Governance can rotate the provider only while requests are paused and every committee is
+released. Running nodes must restart before requests resume so that they also watch the newly
+configured provider.
 
 ### 2a. Request Event Processing
 
@@ -201,12 +206,16 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 │
 └─ Stores the E3's request-time registry and verifier for signing, validation, and publication
 │
-├─ Decodes CommitteeRequested and waits for the automatic ingestion confirmation depth
-│  → Public RPCs wait one block; loopback development RPCs read the head
-│  → Arbitrum RPC block numbers and the committed ArbSys block number both identify L2 blocks
-├─ Reads the matching chain block through the execution RPC and derives
-│  keccak256(blockHash, e3Id) without sending a transaction
-└─ Publishes CommitteeRequested with the resolved committee seed
+├─ Records CommitteeRandomnessRequested as processed; sortition does not start yet
+│
+RandomnessProviderSolReader decodes RandomnessFulfilled
+│
+├─ Calls Registry.sortitionSeed(e3Id)
+│  → Registry accepts only the request-time provider and request ID
+│  → A response after randomnessDeadline is not usable
+│  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
+├─ Reads the frozen threshold, request timepoint, ticket price, and submission deadline
+└─ Publishes the existing durable CommitteeRequested event for the sortition actors
 
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
@@ -324,16 +333,17 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │       require(ticketNumber >= 1)                        │
     │  │       require(ticketNumber <= availableTickets)          │
     │  │                                                         │
-    │  │    7. If this is the first ticket, resolve and store:  │
+    │  │    7. Resolve the request-time provider response:      │
+    │  │       require(fulfilledBlock > requestBlockNumber)     │
+    │  │       require(fulfilledBlock <= block.number)          │
+    │  │       require(fulfilledAt <= block.timestamp)          │
+    │  │       require(fulfilledAt <= randomnessDeadline)       │
     │  │       seed = keccak256(                                │
-    │  │         chainBlockHash(sortitionEntropyBlocks[e3Id]), │
-    │  │         e3Id                                          │
+    │  │         randomWord, chainId, registry, e3Id, requestId │
     │  │       )                                                │
-    │  │       → Arbitrum reads the L2 hash from EIP-2935      │
-    │  │       → Other chains prefer BLOCKHASH and then        │
-    │  │         fall back to EIP-2935                         │
-    │  │       → The entropy block is after the paid request    │
-    │  │       → No separate seed transaction is required       │
+    │  │       → Store the seed and response-time deadline on   │
+    │  │         the first ticket                               │
+    │  │       → Every node receives the full submission window │
     │  │                                                         │
     │  │    8. score = uint256(keccak256(                        │
     │  │         msg.sender, ticketNumber, e3Id, seed            │
@@ -504,16 +514,16 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 ```
 Time ──────────────────────────────────────────────────────────►
 
-│ request()      │ sortitionWindow │ dkgWindow     │
-│                │                 │               │
-│ E3Requested    │ CommitteeDeadline│ DKG Deadline  │
-│ CommitteeReq.  │                 │               │
-│                │ Ciphernodes     │ Must complete  │
-│                │ submit tickets  │ DKG by here    │
-│                │                 │               │
-│                │ finalizeComm.() │               │
-│                │ CommFinalized   │               │
-│                │ ───►DKG starts  │               │
+│ request()       │ VRF wait        │ sortitionWindow │ dkgWindow     │
+│                 │                 │                 │               │
+│ E3Requested     │ randomness      │ Committee       │ DKG Deadline  │
+│ VRF requested   │ deadline        │ Deadline        │               │
+│                 │                 │ Ciphernodes     │ Must complete │
+│                 │ VRF response    │ submit tickets  │ DKG by here   │
+│                 │ ───────────────►│                 │               │
+│                 │                 │ finalizeComm.() │               │
+│                 │                 │ CommFinalized   │               │
+│                 │                 │ ───►DKG starts  │               │
 
 If a stage deadline is missed → anyone can call `markE3Failed()`.
 A ready committee must finalize at or before its absolute DKG deadline.
@@ -525,10 +535,10 @@ A ready committee must finalize at or before its absolute DKG deadline.
 
 1. **Deterministic sortition**: Both Rust and Solidity compute
    `keccak256(address, ticket, e3Id, seed)`. The on-chain contract verifies what the off-chain node
-   computed. The seed comes from the committed next-chain-block hash. Arbitrum uses its L2 block
-   number and L2 block hash. The requester cannot inspect the seed and revert the request in the
-   same transaction. The first ticket stores the seed, so no separate randomness transaction is
-   needed.
+   computed. The Registry derives `seed` from a request-bound Chainlink VRF response and includes
+   the chain ID, Registry address, E3 ID, and provider request ID in the domain. The requester
+   commits payment before the asynchronous random word exists. The first ticket stores the derived
+   seed and response-time deadline.
 
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
@@ -591,24 +601,26 @@ A ready committee must finalize at or before its absolute DKG deadline.
 
 ### Z-05 — request seed grinding
 
-The E3 computation seed is still created during Interfold.request, but it no longer ranks committee
-tickets. The registry commits the next block as the entropy block. Rust waits until that block is
-sealed and reads the committee seed. The first ticket stores the same seed before it calculates the
-score. A requester can revert the request or learn the committee seed, but it cannot do both in one
-transaction.
+The E3 computation seed is still created during `Interfold.request`, but it does not rank committee
+tickets. The Registry requests one random word from a configured `IRandomnessProvider` after the
+paid request is stored. The production provider uses a Chainlink VRF v2.5 subscription. It never
+re-requests randomness for an E3, and its callback records valid responses without calling the
+Registry or reverting.
 
-The basic EVM source uses a block hash, so the seed must be resolved while that hash remains in the
-chain's history. Public Arbitrum chains commit the next L2 block number through `ArbSys`. The
-contract reads that L2 block hash directly from EIP-2935 and never mixes it with the L1-oriented
-`BLOCKHASH` opcode. Rust reads the same L2 block from the Arbitrum execution RPC. Other chains use
-the EVM's recent-block lookup and then try the EIP-2935 history contract. Chains without EIP-2935
-retain the 256-block limit. The one-day submission cap fits inside Arbitrum's approximately 27-hour
-L2 hash history. This removes requester-side conditional-revert grinding. It does not claim the
-stronger proposer-resistance of a verifiable randomness service.
+Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
+waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
+context. The Registry rejects results recorded in the request block, results dated in the future,
+and results recorded after the response deadline. It derives
+`keccak256(randomWord, chainId, registry, e3Id, requestId)`, and the first ticket stores the same
+seed and response-time submission deadline.
 
-The registry event keeps its existing ABI. The Rust reader recognizes older events, where the same
-field contains the request-time seed, and replays them with the previous seed encoding. New events
-must commit the block immediately after the request event.
+If no usable response arrives, no party can re-request or replace the random word. After the frozen
+response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
+paths classify it as `CommitteeFormationTimeout`, release committee obligations, and allow a full
+requester refund. A late callback stays recorded in the provider but cannot restart the E3.
+
+The Rust Registry reader retains the old `CommitteeRequested` block-hash decoder only for historical
+log replay. New requests use `CommitteeRandomnessRequested` and the configured provider event.
 
 ### H-04 — snapshot-based eligibility
 
@@ -628,8 +640,9 @@ submission. Current registry membership and activity remain additional liveness 
 
 An upgrade with committees still in the `Requested` stage must backfill
 `sortitionTicketPrices[e3Id]` with each E3's request-time price before ticket submission resumes. A
-zero value makes every submission revert with `InvalidTicketNumber()`. Terminal E3s and committees
-requested after the upgrade need no backfill.
+zero value makes every submission revert with `InvalidTicketNumber()`. The VRF upgrade requires
+requests to be paused and all old committees to be released, so no live request needs entropy or
+ticket-price migration.
 
 ### M-33 — `markE3Failed` grace period
 

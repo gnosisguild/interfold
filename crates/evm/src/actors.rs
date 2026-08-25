@@ -26,6 +26,8 @@ mod fix_historical_order;
 mod interfold_sol_reader;
 #[path = "interfold_writing/actor.rs"]
 mod interfold_sol_writer;
+#[path = "randomness_provider/actor.rs"]
+mod randomness_provider_sol;
 #[path = "slashing/reader.rs"]
 mod slashing_manager_sol_reader;
 #[path = "slashing_writing/actor.rs"]
@@ -35,8 +37,9 @@ mod sync_start_extractor;
 
 pub use bonding_registry_sol::BondingRegistrySolReader;
 pub use ciphernode_registry_sol::{
-    fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, CiphernodeRegistrySol,
-    CiphernodeRegistrySolReader, CiphernodeRegistrySolWriter,
+    fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, fetch_randomness_provider,
+    fetch_randomness_providers, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
+    CiphernodeRegistrySolWriter,
 };
 pub use evm_chain_gateway::*;
 pub use evm_hub::*;
@@ -46,6 +49,7 @@ pub use evm_router::*;
 pub use fix_historical_order::*;
 pub use interfold_sol_reader::InterfoldSolReader;
 pub use interfold_sol_writer::InterfoldSolWriter;
+pub use randomness_provider_sol::RandomnessProviderSolReader;
 pub use slashing_manager_sol_reader::SlashingManagerSolReader;
 pub use slashing_manager_sol_writer::{
     SlashingManagerSolWriter, SlashingWriterRecoveryState, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,

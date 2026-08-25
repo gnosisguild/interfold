@@ -171,6 +171,7 @@ export interface InterfoldSystemMocks {
   ciphertextVerifier: MockCiphertextVerifier;
   pkVerifier: MockPkVerifier;
   mockComputeProvider: MockComputeProvider;
+  randomnessProvider?: any;
   /** Only populated when `deployCircuitVerifier: true`. */
   circuitVerifier?: MockCircuitVerifier;
 }
@@ -463,6 +464,16 @@ export async function deployInterfoldSystem(
   await registryForWiring.setBondingRegistry(
     await bondingRegistry.getAddress(),
   );
+  let randomnessProvider: any;
+  if (!mockCiphernodeRegistry) {
+    randomnessProvider = await ethers.deployContract("MockRandomnessProvider", [
+      ciphernodeRegistryAddress,
+    ]);
+    await randomnessProvider.waitForDeployment();
+    await ciphernodeRegistry.setRandomnessProvider(
+      await randomnessProvider.getAddress(),
+    );
+  }
   await slashingManager.setBondingRegistry(await bondingRegistry.getAddress());
   await bondingRegistry.setSlashingManager(await slashingManager.getAddress());
   await bondingRegistry.setRewardDistributor(interfoldAddress);
@@ -619,6 +630,7 @@ export async function deployInterfoldSystem(
       ciphertextVerifier,
       pkVerifier,
       mockComputeProvider,
+      randomnessProvider,
       circuitVerifier,
     },
     owner,

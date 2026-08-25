@@ -101,9 +101,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       mocks: {
         e3Program,
         decryptionVerifier,
+        randomnessProvider,
         circuitVerifier: _circuitVerifier,
       },
     } = sys;
+    if (!randomnessProvider) throw new Error("randomness provider missing");
 
     const interfoldAddress = await interfold.getAddress();
     firstE3Id = await interfold.nexte3Id();
@@ -252,6 +254,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       foldToken,
       e3Program,
       decryptionVerifier,
+      randomnessProvider,
       owner,
       requester,
       treasury,
@@ -376,9 +379,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
     });
 
-    it("allows only the requester to cancel an active E3", async function () {
-      const { interfold, makeReadyRequest, owner, requester } =
-        await loadFixture(setup);
+    it("allows only the requester to cancel after the randomness timeout", async function () {
+      const {
+        interfold,
+        makeReadyRequest,
+        owner,
+        requester,
+        randomnessProvider,
+        registry,
+      } = await loadFixture(setup);
+      await randomnessProvider.setAutoFulfill(false);
       await makeReadyRequest();
 
       await expect(interfold.connect(owner).cancelE3(firstE3Id))
@@ -386,77 +396,70 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .withArgs(firstE3Id, await owner.getAddress());
 
       await expect(interfold.connect(requester).cancelE3(firstE3Id))
+        .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
+        .withArgs(firstE3Id, 1);
+
+      const deadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.emit(interfold, "E3Failed")
-        .withArgs(firstE3Id, 1, 9);
-      expect(await interfold.getFailureReason(firstE3Id)).to.equal(9);
+        .withArgs(firstE3Id, 1, 1);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(1);
 
       await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
         .withArgs(firstE3Id, 6);
     });
 
-    it("pays only completed milestones when the requester cancels", async function () {
-      const scenarios = [
-        { stage: 1, requesterBps: 9500n, nodeBps: 0n },
-        { stage: 2, requesterBps: 8500n, nodeBps: 1000n },
-        { stage: 3, requesterBps: 4500n, nodeBps: 5000n },
-        { stage: 4, requesterBps: 4500n, nodeBps: 5000n },
-      ] as const;
+    it("fully refunds a request whose randomness expired", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.randomnessProvider.setAutoFulfill(false);
+      await ctx.makeReadyRequest();
 
-      for (const scenario of scenarios) {
-        const ctx = await loadFixture(setup);
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
+      expect(await ctx.registry.unreleasedCommitteeCount()).to.equal(0);
 
-        if (scenario.stage === 1) {
-          await ctx.makeReadyRequest();
-        } else if (scenario.stage === 2) {
-          await ctx.finalizeReadyCommittee();
-        } else {
-          await ctx.makeReadyRequest();
-          await ctx.finalizeAndPublishCommittee();
-          if (scenario.stage === 4) {
-            const e3 = await ctx.interfold.getE3(firstE3Id);
-            await time.increaseTo(e3.inputWindow[1]);
-            const ciphertext = "0x" + "ab".repeat(100);
-            await ctx.interfold.publishCiphertextOutput(
-              firstE3Id,
-              ciphertext,
-              ethers.keccak256(ciphertext),
-              "0x1337",
-            );
-          }
-        }
+      const requestId = await ctx.randomnessProvider.requestIdByE3Id(firstE3Id);
+      await ctx.randomnessProvider.fulfill(requestId, 123n);
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
 
-        expect(await ctx.interfold.getE3Stage(firstE3Id)).to.equal(
-          scenario.stage,
-        );
-        await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
-        await ctx.interfold.processE3Failure(firstE3Id);
+      await ctx.interfold.processE3Failure(firstE3Id);
 
-        const distribution =
-          await ctx.e3RefundManager.getRefundDistribution(firstE3Id);
-        expect(distribution.requesterAmount).to.equal(
-          (distribution.originalPayment * scenario.requesterBps) / 10000n,
-        );
-        expect(distribution.honestNodeAmount).to.equal(
-          (distribution.originalPayment * scenario.nodeBps) / 10000n,
-        );
-        expect(distribution.protocolAmount).to.equal(
-          distribution.originalPayment -
-            distribution.requesterAmount -
-            distribution.honestNodeAmount,
-        );
+      const distribution =
+        await ctx.e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(distribution.requesterAmount).to.equal(
+        distribution.originalPayment,
+      );
+      expect(distribution.honestNodeAmount).to.equal(0);
+      expect(distribution.protocolAmount).to.equal(0);
+    });
 
-        const before = await ctx.usdcToken.balanceOf(
-          await ctx.requester.getAddress(),
-        );
-        await ctx.e3RefundManager
-          .connect(ctx.requester)
-          .claimRequesterRefund(firstE3Id);
-        const after = await ctx.usdcToken.balanceOf(
-          await ctx.requester.getAddress(),
-        );
-        expect(after - before).to.equal(distribution.requesterAmount);
-      }
+    it("rejects cancellation after the committee randomness is known", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.makeReadyRequest();
+
+      await expect(ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id))
+        .to.be.revertedWithCustomError(ctx.interfold, "E3NotCancellable")
+        .withArgs(firstE3Id, 1);
+    });
+
+    it("does not expose an unresolved seed after the E3 times out", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.makeReadyRequest();
+
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.markE3Failed(firstE3Id);
+
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {

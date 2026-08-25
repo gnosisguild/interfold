@@ -25,6 +25,7 @@ export type {
   CiphernodeAddedData,
   CiphernodeRemovedData,
   CommitteeRequestedData,
+  CommitteeRandomnessRequestedData,
   CommitteePublishedData,
 } from '@interfold/sdk'
 

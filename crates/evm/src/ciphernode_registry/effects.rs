@@ -335,6 +335,58 @@ pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
     }
 }
 
+/// Reads the provider used for future committee randomness requests.
+pub async fn fetch_randomness_provider<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+) -> Result<Option<Address>> {
+    let contract = ICiphernodeRegistry::new(registry_address, provider);
+    let randomness_provider = contract.randomnessProvider().call().await?;
+    if randomness_provider == Address::ZERO {
+        Ok(None)
+    } else {
+        Ok(Some(randomness_provider))
+    }
+}
+
+/// Reads every provider needed to replay committee randomness history.
+pub async fn fetch_randomness_providers<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+    from_block: u64,
+) -> Result<Vec<Address>> {
+    const LOG_CHUNK_SIZE: u64 = 10_000;
+    let base_filter = Filter::new()
+        .address(registry_address)
+        .event_signature(ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH);
+    let mut providers = Vec::new();
+    let mut seen = HashSet::new();
+    let head = provider.get_block_number().await?;
+    let mut start = from_block;
+    while start <= head {
+        let end = start.saturating_add(LOG_CHUNK_SIZE - 1).min(head);
+        let filter = base_filter.clone().from_block(start).to_block(end);
+        for log in provider.get_logs(&filter).await? {
+            let event = ICiphernodeRegistry::RandomnessProviderSet::decode_log_data(log.data())
+                .context("invalid RandomnessProviderSet event")?;
+            if event.randomnessProvider != Address::ZERO && seen.insert(event.randomnessProvider) {
+                providers.push(event.randomnessProvider);
+            }
+        }
+        if end == head {
+            break;
+        }
+        start = end + 1;
+    }
+
+    if let Some(current) = fetch_randomness_provider(provider, registry_address).await? {
+        if seen.insert(current) {
+            providers.push(current);
+        }
+    }
+    Ok(providers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{reverts_with, ticket_submission_error_is_terminal};

@@ -95,6 +95,34 @@ Run `check-config` before `deploy`. This action validates the network, required
 contract addresses, ProxyAdmin owner, and initial E3 program owner. It does not
 send a transaction.
 
+Committee sortition uses a Chainlink VRF v2.5 subscription through
+`ChainlinkVrfRandomnessProvider`. Set the coordinator, subscription ID, key
+hash, confirmation count, callback gas limit, payment mode, and response timeout
+in the `randomness` configuration. The subscription owner must equal
+`protocolOwner`, and the selected LINK or native balance must be nonzero. The
+governance batch accepts provider ownership, adds the provider as a subscription
+consumer, and connects it to the Registry.
+
+For the live proxy upgrade, pause requests and confirm that Interfold has no
+active E3s and the Registry has no unreleased committees. Then run:
+
+```sh
+pnpm --filter @interfold/contracts upgrade:vrf-sortition --network mainnet \
+  --config deploy/protocol/mainnet-protocol.config.json \
+  --vrf-subscription-id <DAO-owned-subscription-id>
+
+pnpm --filter @interfold/contracts upgrade:vrf-sortition:validate --network mainnet \
+  --config deploy/protocol/mainnet-protocol.config.json \
+  --vrf-subscription-id <DAO-owned-subscription-id>
+```
+
+The first command deploys implementations and writes the governance batch. It
+does not unpause requests. After the upgrade, restart every ciphernode on the
+matching release before the DAO enables requests. The Registry permits a future
+provider or timeout change only while requests are paused and all committee
+obligations are released. Restart every node after a provider rotation so that
+it watches the new address.
+
 Set `protocolOwner` to the contract that owns and configures the protocol. Set
 the optional `safe` field to the same address only when the protocol owner is a
 Safe. The deploy action writes a governance transaction file. Use

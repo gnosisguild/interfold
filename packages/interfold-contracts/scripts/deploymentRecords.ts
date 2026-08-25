@@ -122,6 +122,26 @@ export function syncProtocolDeploymentRecords(
     "RegistrySortitionLib",
     opts.chain,
   );
+  if (config.randomness && deployment.randomnessProvider) {
+    storeDeploymentArgs(
+      {
+        address: deployment.randomnessProvider,
+        blockNumber,
+        constructorArgs: {
+          requesterAddress: deployment.ciphernodeRegistry,
+          coordinator: config.randomness.coordinator,
+          vrfSubscriptionId: config.randomness.subscriptionId,
+          vrfKeyHash: config.randomness.keyHash,
+          vrfRequestConfirmations: config.randomness.requestConfirmations,
+          vrfCallbackGasLimit: config.randomness.callbackGasLimit,
+          payInNativeToken: config.randomness.nativePayment,
+          protocolOwner: config.protocolOwner,
+        },
+      },
+      "ChainlinkVrfRandomnessProvider",
+      opts.chain,
+    );
+  }
   storeDeploymentArgs(
     { address: config.feeToken, blockNumber },
     "MockUSDC",

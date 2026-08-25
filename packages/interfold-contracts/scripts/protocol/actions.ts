@@ -13,6 +13,7 @@ import {
   safeBatchPath,
   writeJson,
 } from "./files";
+import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
@@ -108,6 +109,7 @@ async function assertPreconditions(
   ethers: any,
   config: ReturnType<typeof loadConfig>,
 ) {
+  const randomness = requireRandomnessConfig(config);
   const contracts = [
     requireContract(ethers.provider, config.fold, "fold"),
     requireContract(ethers.provider, config.feeToken, "feeToken"),
@@ -125,6 +127,11 @@ async function assertPreconditions(
       ethers.provider,
       config.bondingRegistryProxyAdmin,
       "bondingRegistryProxyAdmin",
+    ),
+    requireContract(
+      ethers.provider,
+      randomness.coordinator,
+      "randomness.coordinator",
     ),
   ];
   if (config.escrowVotesAdapter) {
@@ -190,6 +197,7 @@ async function assertPreconditions(
       `BondingRegistry ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${proxyAdminOwner}`,
     );
   }
+  await assertVrfSubscription(ethers, config);
   await assertAragonGovernancePreconditions(ethers, config);
 }
 

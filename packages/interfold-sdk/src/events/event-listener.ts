@@ -49,6 +49,7 @@ export class EventListener implements SDKEventEmitter {
   // runtime; those default to the Interfold contract.
   private static readonly REGISTRY_ONLY_EVENTS: ReadonlySet<string> = new Set([
     RegistryEventType.COMMITTEE_REQUESTED,
+    RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED,
     RegistryEventType.COMMITTEE_PUBLISHED,
     RegistryEventType.COMMITTEE_FINALIZED,
     RegistryEventType.INTERFOLD_SET,

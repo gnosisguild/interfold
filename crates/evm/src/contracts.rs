@@ -211,6 +211,24 @@ sol! {
 
         function numCiphernodes() external view returns (uint256);
 
+        function randomnessProvider() external view returns (address);
+
+        function sortitionSeed(
+            uint256 e3Id
+        ) external view returns (bool ready, uint256 seed);
+
+        function getSortitionRequest(
+            uint256 e3Id
+        )
+            external
+            view
+            returns (
+                uint32[2] memory threshold,
+                uint256 requestBlock,
+                uint256 committeeDeadline,
+                uint256 ticketPrice
+            );
+
         // ── Events ──────────────────────────────────────────────────────────
         event CiphernodeAdded(
             address indexed node,
@@ -234,6 +252,17 @@ sol! {
             uint256 committeeDeadline,
             uint256 ticketPrice
         );
+
+        event CommitteeRandomnessRequested(
+            uint256 indexed e3Id,
+            uint256 indexed requestId,
+            address indexed provider,
+            uint256 randomnessDeadline
+        );
+
+        event RandomnessProviderSet(address indexed randomnessProvider);
+
+        event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
 
         event SortitionCommitteeFinalized(
             uint256 indexed e3Id,
@@ -308,6 +337,21 @@ sol! {
         error DkgProofRequired();
         error InvalidDkgProof();
         error FoldAttestationsRequired();
+    }
+}
+
+// ── IRandomnessProvider ────────────────────────────────────────────────────
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    interface IRandomnessProvider {
+        event RandomnessFulfilled(
+            uint256 indexed requestId,
+            uint256 indexed e3Id,
+            uint256 randomWord,
+            uint256 fulfilledAt
+        );
     }
 }
 

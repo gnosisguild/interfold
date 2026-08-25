@@ -159,6 +159,7 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
     "SLASHED_FUNDS_TREASURY",
   );
   applyAddressOverride(config, "slasher", "slasher", "SLASHER_ADDRESS");
+  applyRandomnessOverride(config);
   if (config.interfold.pricing.protocolTreasury === ZERO) {
     config.interfold.pricing.protocolTreasury = config.protocolTreasury;
   }
@@ -213,6 +214,18 @@ function applyGovernanceOverride(config: ProtocolConfigFile): void {
   }
   if (proposalMetadata && !config.governance.proposalMetadata) {
     config.governance.proposalMetadata = proposalMetadata;
+  }
+}
+
+function applyRandomnessOverride(config: ProtocolConfigFile): void {
+  const subscriptionId =
+    arg("vrf-subscription-id") ?? process.env.VRF_SUBSCRIPTION_ID;
+  if (
+    subscriptionId &&
+    config.randomness &&
+    BigInt(config.randomness.subscriptionId) === 0n
+  ) {
+    config.randomness.subscriptionId = subscriptionId;
   }
 }
 
@@ -287,6 +300,54 @@ function validateConfig(config: ProtocolConfigFile): void {
   );
   if (config.slasher !== ZERO)
     config.slasher = address(config.slasher, "slasher");
+  if (config.randomness) {
+    config.randomness.coordinator = address(
+      config.randomness.coordinator,
+      "randomness.coordinator",
+    );
+    if (config.randomness.coordinator === ZERO) {
+      throw new Error("randomness.coordinator must not be the zero address");
+    }
+    if (!/^\d+$/.test(config.randomness.subscriptionId)) {
+      throw new Error("randomness.subscriptionId must be an unsigned integer");
+    }
+    if (
+      !ethersLib.isHexString(config.randomness.keyHash, 32) ||
+      BigInt(config.randomness.keyHash) === 0n
+    ) {
+      throw new Error("randomness.keyHash must be a non-zero bytes32 value");
+    }
+    if (
+      !Number.isInteger(config.randomness.requestConfirmations) ||
+      config.randomness.requestConfirmations < 1 ||
+      config.randomness.requestConfirmations > 200
+    ) {
+      throw new Error(
+        "randomness.requestConfirmations must be an integer from 1 through 200",
+      );
+    }
+    if (
+      !Number.isInteger(config.randomness.callbackGasLimit) ||
+      config.randomness.callbackGasLimit < 1 ||
+      config.randomness.callbackGasLimit > 4_294_967_295
+    ) {
+      throw new Error(
+        "randomness.callbackGasLimit must be a positive uint32 value",
+      );
+    }
+    if (typeof config.randomness.nativePayment !== "boolean") {
+      throw new Error("randomness.nativePayment must be a boolean");
+    }
+    if (!/^\d+$/.test(config.randomness.requestTimeout)) {
+      throw new Error("randomness.requestTimeout must be an unsigned integer");
+    }
+    const requestTimeout = BigInt(config.randomness.requestTimeout);
+    if (requestTimeout < 60n || requestTimeout > 86_400n) {
+      throw new Error(
+        "randomness.requestTimeout must be from 60 through 86400 seconds",
+      );
+    }
+  }
   config.interfold.pricing.protocolTreasury = address(
     config.interfold.pricing.protocolTreasury,
     "interfold.pricing.protocolTreasury",

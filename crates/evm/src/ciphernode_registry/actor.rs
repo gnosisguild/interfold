@@ -29,8 +29,8 @@ use actix::prelude::*;
 use alloy::{
     primitives::{Address, Bytes, B256, U256},
     providers::{Provider, WalletProvider},
-    rpc::types::TransactionReceipt,
-    sol_types::SolError,
+    rpc::types::{Filter, TransactionReceipt},
+    sol_types::{SolError, SolEvent},
 };
 use anyhow::{Context as _, Result};
 use e3_events::{
@@ -54,8 +54,9 @@ mod handlers;
 
 #[allow(unused_imports)]
 pub use effects::{
-    fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier,
-    finalize_committee_on_registry, publish_committee_to_registry, submit_ticket_to_registry,
+    fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, fetch_randomness_provider,
+    fetch_randomness_providers, finalize_committee_on_registry, publish_committee_to_registry,
+    submit_ticket_to_registry,
 };
 
 /// Connects to CiphernodeRegistry.sol converting EVM events to InterfoldEvents.
@@ -79,7 +80,7 @@ async fn parse_registry_log<P: Provider + Clone + 'static>(
     provider_factory: Option<ProviderFactory<P>>,
     confirmations: u64,
     log: EvmLog,
-) -> (EthProvider<P>, Result<EvmEvent>) {
+) -> (EthProvider<P>, Result<Option<EvmEvent>>) {
     let result = async {
         let block = log.log.block_number.context(
             "provider log is missing its block number; pending or malformed logs cannot be ordered",
@@ -87,6 +88,10 @@ async fn parse_registry_log<P: Provider + Clone + 'static>(
         let log_index = log.log.log_index.context(
             "provider log is missing its log index; malformed logs cannot be ordered deterministically",
         )?;
+
+        if is_control_plane_event(log.log.topics().first()) {
+            return Ok(None);
+        }
 
         let event = if let Some(request) =
             decode_committee_request(log.log.data(), log.log.topics())
@@ -172,17 +177,47 @@ async fn parse_registry_log<P: Provider + Clone + 'static>(
         .context("contract log matched the CiphernodeRegistry address but could not be decoded")?;
 
         let timestamp = from_log_chain_id_to_ts(log.timestamp, log_index, log.chain_id);
-        Ok(EvmEvent::new(
+        Ok(Some(EvmEvent::new(
             log.id,
             event,
             block,
             timestamp,
             log.chain_id,
-        ))
+        )))
     }
     .await;
 
     (provider, result)
+}
+
+fn is_control_plane_event(topic: Option<&B256>) -> bool {
+    matches!(
+        topic,
+        Some(value)
+            if *value == ICiphernodeRegistry::CommitteeRandomnessRequested::SIGNATURE_HASH
+                || *value == ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH
+                || *value == ICiphernodeRegistry::RandomnessRequestTimeoutSet::SIGNATURE_HASH
+    )
+}
+
+#[cfg(test)]
+mod control_plane_event_tests {
+    use super::*;
+
+    #[test]
+    fn acknowledges_randomness_control_plane_events() {
+        for topic in [
+            ICiphernodeRegistry::CommitteeRandomnessRequested::SIGNATURE_HASH,
+            ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH,
+            ICiphernodeRegistry::RandomnessRequestTimeoutSet::SIGNATURE_HASH,
+        ] {
+            assert!(is_control_plane_event(Some(&topic)));
+        }
+        assert!(!is_control_plane_event(None));
+        assert!(!is_control_plane_event(Some(
+            &ICiphernodeRegistry::TicketSubmitted::SIGNATURE_HASH,
+        )));
+    }
 }
 
 async fn forward_registry_event(next: EvmEventProcessor, event: InterfoldEvmEvent) -> Result<()> {
@@ -230,7 +265,8 @@ impl<P: Provider + Clone + 'static> Handler<InterfoldEvmEvent> for CiphernodeReg
                             parse_registry_log(provider, provider_factory, confirmations, log)
                                 .await;
                         let event = match parsed {
-                            Ok(event) => InterfoldEvmEvent::Event(event),
+                            Ok(Some(event)) => InterfoldEvmEvent::Event(event),
+                            Ok(None) => InterfoldEvmEvent::Processed(id),
                             Err(parse_error) => {
                                 error!(
                                     %id,

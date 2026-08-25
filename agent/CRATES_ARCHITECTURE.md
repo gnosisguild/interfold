@@ -934,6 +934,15 @@ prevents an indefinite drain. Detached tasks without a join handle or cancellati
 residual: process exit is their final cancellation boundary, so they cannot all prove completion or
 persist recovery intent.
 
+## Randomness-provider event boundary
+
+The `e3-evm` randomness-provider reader watches the current provider and every provider recorded in
+the Registry's provider-set history. It translates only a Registry-accepted fulfillment into the
+durable `CommitteeRequested` event. The Registry call confirms the request-time provider, request
+ID, response deadline, and derived seed before Rust starts sortition. Provider rotation requires all
+committees to be released, and running nodes must restart before requests resume so that the EVM
+router includes the new provider address.
+
 ## Subsystem contracts
 
 | Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                                       | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Extension boundary / must not own                                                                                         |

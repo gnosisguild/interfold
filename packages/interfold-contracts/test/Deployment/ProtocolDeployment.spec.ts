@@ -253,6 +253,18 @@ describe("Protocol deployment", function () {
       "DkgFoldAttestationVerifier",
     );
     await dkgFoldAttestationVerifier.waitForDeployment();
+    const coordinator: any = await ethers.deployContract(
+      "ChainlinkVrfCoordinatorV2_5Mock",
+      [0, 0, ethers.parseEther("1")],
+    );
+    await coordinator.waitForDeployment();
+    await coordinator.connect(safe).createSubscription();
+    const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
+    if (!subscriptionId) throw new Error("subscription missing");
+    await coordinator.fundSubscription(
+      subscriptionId,
+      ethers.parseEther("100"),
+    );
 
     const config = JSON.parse(
       fs.readFileSync(
@@ -280,6 +292,15 @@ describe("Protocol deployment", function () {
       dkgFoldAttestationVerifier: await dkgFoldAttestationVerifier.getAddress(),
     };
     config.deployMockCiphertextVerifier = true;
+    config.randomness = {
+      coordinator: await coordinator.getAddress(),
+      subscriptionId: subscriptionId.toString(),
+      keyHash: `0x${"11".repeat(32)}`,
+      requestConfirmations: 3,
+      callbackGasLimit: 500_000,
+      nativePayment: false,
+      requestTimeout: "3600",
+    };
 
     const result = await deployProtocolContracts(ethers, operator, config);
     const ticket = await ethers.getContractAt(
@@ -313,6 +334,7 @@ describe("Protocol deployment", function () {
       await dkgFoldAttestationVerifier.getAddress(),
     );
     expect(result.contracts.ciphertextVerifier).to.match(/^0x[0-9a-fA-F]{40}$/);
+    expect(result.contracts.randomnessProvider).to.match(/^0x[0-9a-fA-F]{40}$/);
     for (const verifier of [
       result.contracts.decryptionVerifier,
       result.contracts.pkVerifier,
@@ -371,5 +393,41 @@ describe("Protocol deployment", function () {
     expect(ciphertextTx[0].data.toLowerCase()).to.contain(
       result.contracts.ciphertextVerifier!.slice(2).toLowerCase(),
     );
+
+    const registry = await ethers.getContractAt(
+      "CiphernodeRegistryOwnable",
+      result.contracts.ciphernodeRegistry,
+    );
+    const randomnessProvider = await ethers.getContractAt(
+      "ChainlinkVrfRandomnessProvider",
+      result.contracts.randomnessProvider,
+    );
+    const randomnessCalls = [
+      [
+        result.contracts.randomnessProvider,
+        randomnessProvider.interface.getFunction("acceptOwnership")!.selector,
+      ],
+      [
+        await coordinator.getAddress(),
+        coordinator.interface.getFunction("addConsumer")!.selector,
+      ],
+      [
+        result.contracts.ciphernodeRegistry,
+        registry.interface.getFunction("setRandomnessRequestTimeout")!.selector,
+      ],
+      [
+        result.contracts.ciphernodeRegistry,
+        registry.interface.getFunction("setRandomnessProvider")!.selector,
+      ],
+    ] as const;
+    for (const [target, selector] of randomnessCalls) {
+      expect(
+        txs.filter(
+          (tx) =>
+            tx.to.toLowerCase() === target.toLowerCase() &&
+            tx.data.startsWith(selector),
+        ),
+      ).to.have.lengthOf(1);
+    }
   });
 });

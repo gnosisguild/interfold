@@ -334,22 +334,37 @@ export function sourceContentFromWorkingTree(
 
   const npmSource = parseNpmSourceKey(sourceKey);
   if (!npmSource) return undefined;
-  const packageDir = path.join(
-    PACKAGE_DIR,
-    "node_modules",
-    npmSource.packageName,
-  );
-  const packageJsonPath = path.join(packageDir, "package.json");
-  const sourcePath = path.resolve(packageDir, npmSource.relativePath);
-  if (!sourcePath.startsWith(`${packageDir}${path.sep}`)) return undefined;
-  if (!fs.existsSync(packageJsonPath) || !fs.existsSync(sourcePath)) {
-    return undefined;
+  const packageDirs = [
+    path.join(PACKAGE_DIR, "node_modules", npmSource.packageName),
+  ];
+  const pnpmStore = path.join(WORKSPACE_DIR, "node_modules", ".pnpm");
+  if (fs.existsSync(pnpmStore)) {
+    const packagePrefix = `${npmSource.packageName.replace("/", "+")}@${
+      npmSource.version
+    }`;
+    for (const entry of fs.readdirSync(pnpmStore).sort()) {
+      if (entry === packagePrefix || entry.startsWith(`${packagePrefix}_`)) {
+        packageDirs.push(
+          path.join(pnpmStore, entry, "node_modules", npmSource.packageName),
+        );
+      }
+    }
   }
-  const packageVersion = (
-    JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { version?: string }
-  ).version;
-  if (packageVersion !== npmSource.version) return undefined;
-  return fs.readFileSync(sourcePath, "utf8");
+
+  for (const packageDir of packageDirs) {
+    const packageJsonPath = path.join(packageDir, "package.json");
+    const sourcePath = path.resolve(packageDir, npmSource.relativePath);
+    if (!sourcePath.startsWith(`${packageDir}${path.sep}`)) continue;
+    if (!fs.existsSync(packageJsonPath) || !fs.existsSync(sourcePath)) continue;
+    const packageVersion = (
+      JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
+        version?: string;
+      }
+    ).version;
+    if (packageVersion !== npmSource.version) continue;
+    return fs.readFileSync(sourcePath, "utf8");
+  }
+  return undefined;
 }
 
 export function compilerInputMatchesWorkingTree(

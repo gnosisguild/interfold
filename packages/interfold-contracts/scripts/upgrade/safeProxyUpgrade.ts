@@ -73,7 +73,7 @@ export async function proposeProxyUpgrade(
 
   const [operator] = await ethers.getSigners();
   const operatorAddress = await operator.getAddress();
-  const deployed = await deployImplementation(
+  const deployed = await deployUpgradeImplementation(
     ethers,
     operator,
     target,
@@ -250,7 +250,7 @@ async function appendBondedVotingTxs(
   return { bondedCheckpoints, bondedVotes, resyncOwners };
 }
 
-async function deployImplementation(
+export async function deployUpgradeImplementation(
   ethers: any,
   operator: any,
   target: UpgradeTarget,

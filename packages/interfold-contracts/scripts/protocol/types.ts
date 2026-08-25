@@ -24,6 +24,20 @@ export interface PricingConfig {
   minThreshold: string;
 }
 
+export interface RandomnessConfig {
+  /** Chainlink VRF v2.5 coordinator for the deployment chain. */
+  coordinator: string;
+  /** Existing, funded subscription owned by the protocol owner. */
+  subscriptionId: string;
+  /** Gas lane key hash published for the deployment chain. */
+  keyHash: string;
+  requestConfirmations: number;
+  callbackGasLimit: number;
+  nativePayment: boolean;
+  /** Maximum seconds to wait before the requester can cancel a request. */
+  requestTimeout: string;
+}
+
 export interface ProtocolConfigFile {
   name: string;
   chainId: number;
@@ -52,6 +66,7 @@ export interface ProtocolConfigFile {
   protocolTreasury: string;
   slashedFundsTreasury: string;
   slasher: string;
+  randomness?: RandomnessConfig;
   ticketToken: { lockRegistry: boolean };
   bonding: {
     ticketPrice: string;
@@ -147,6 +162,8 @@ export interface ProtocolDeployment {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  randomnessProvider: string;
+  randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;
   ciphernodeRegistryImplementation: string;
   ciphernodeRegistryProxyAdmin: string;
@@ -189,6 +206,8 @@ export interface ProtocolContracts {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  randomnessProvider: string;
+  randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;
   ciphernodeRegistryImplementation: string;
   ciphernodeRegistryProxyAdmin: string;
