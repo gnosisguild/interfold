@@ -263,17 +263,7 @@ jobs:
 
       - name: Install solc (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Pinned static binary rather than ppa:ethereum/ethereum — see the note in ci.yml. A
-          # release build must not be able to fail because Launchpad's key server is down.
-          set -euo pipefail
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Install solc (macOS)
         if: matrix.os == 'macos-latest'

@@ -177,26 +177,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -246,26 +230,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -315,23 +283,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -570,23 +522,7 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
@@ -660,7 +596,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
       - name: 'Download build artifacts'
@@ -730,23 +666,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build interfold CLI
         run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
@@ -833,27 +753,11 @@ jobs:
 
       - name: Install Foundry
         if: matrix.test-suite == 'cargo test'
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
         if: matrix.test-suite == 'cargo test'
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
@@ -926,7 +830,7 @@ jobs:
           sudo chmod -R 777 $GITHUB_WORKSPACE/examples/CRISP/.cache-synpress
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -939,23 +843,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Install yq
         run: |
@@ -1183,23 +1071,7 @@ jobs:
           key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
 
       - name: Install solc
-        run: |
-          # protobuf-compiler comes from the Ubuntu main archive. solc comes from the official
-          # static release, NOT ppa:ethereum/ethereum: that PPA resolves its signing key through
-          # Launchpad, which returned HTTP 500 (GPGKeyTemporarilyNotFoundError) and killed two
-          # entire CI runs. Nine jobs each took an independent chance on that one third-party
-          # service, and a single failure cancels every other job in the run. A pinned binary has
-          # no such dependency and is reproducible besides.
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y protobuf-compiler
-          SOLC_VERSION=0.8.28
-          curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
-            -o /tmp/solc
-          sudo install -m 0755 /tmp/solc /usr/local/bin/solc
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
@@ -1461,7 +1333,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Download interfold binary
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
