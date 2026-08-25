@@ -953,6 +953,18 @@ fn count_projected_events(projected: &[&str], event_type: &str) -> usize {
     projected.iter().filter(|seen| **seen == event_type).count()
 }
 
+fn keyshare_parties(history: &[InterfoldEvent], e3_id: &E3id) -> HashSet<u64> {
+    history
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::KeyshareCreated(data) if data.e3_id == *e3_id => {
+                Some(data.party_id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Return the local aggregator role at a history event.
 fn local_aggregator_role_at(
     history: &[InterfoldEvent],
@@ -1851,11 +1863,15 @@ async fn test_trbfv_actor() -> Result<()> {
             "Active aggregator {active_aggregator_addr}: public-key flow is missing {marker}"
         );
     }
-    let active_keyshare_count =
-        count_projected_events(&active_aggregator_pubkey_events, "KeyshareCreated");
+    let active_keyshare_party_ids = keyshare_parties(&active_aggregator_history, &e3_id);
+    let active_keyshare_count = active_keyshare_party_ids.len();
     assert!(
-        active_keyshare_count >= committee_h && active_keyshare_count <= threshold_n,
-        "Active aggregator: expected KeyshareCreated from {committee_h}..={threshold_n} committee members, got {active_keyshare_count}"
+        active_keyshare_count >= committee_h
+            && active_keyshare_count <= threshold_n
+            && active_keyshare_party_ids
+                .iter()
+                .all(|party_id| (*party_id as usize) < threshold_n),
+        "Active aggregator: expected KeyshareCreated from {committee_h}..={threshold_n} committee members, got parties {active_keyshare_party_ids:?}"
     );
     assert_eq!(
         active_aggregator_pubkey_events.first().copied(),
@@ -1887,7 +1903,8 @@ async fn test_trbfv_actor() -> Result<()> {
             let mut projected =
                 project_history(&history, |data| publickey_aggregator_marker(data, &e3_id));
             projected.retain(|event| *event != "DKGRecursiveAggregationComplete");
-            let keyshare_count = count_projected_events(&projected, "KeyshareCreated");
+            let keyshare_party_ids = keyshare_parties(&history, &e3_id);
+            let keyshare_count = keyshare_party_ids.len();
             let mut projected_without_keyshares: Vec<&str> = projected
                 .iter()
                 .copied()
