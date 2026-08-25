@@ -14,11 +14,12 @@
 use std::collections::HashMap;
 
 use crate::actors::accusation_manager::AccusationManager;
+use actix::Actor;
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use async_trait::async_trait;
-use e3_events::{BusHandle, CommitteeFinalized, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{BusHandle, Committee, E3id, Event, InterfoldEvent, InterfoldEventData};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info, warn};
@@ -51,6 +52,8 @@ pub struct AccusationManagerExtension {
     vote_validity_secs_by_chain: HashMap<u64, u64>,
     /// Clock-skew allowance for peer accusation deadlines.
     accusation_deadline_skew_secs: u64,
+    /// Active finalized committees loaded before request contexts hydrate.
+    persisted_committees: HashMap<E3id, Committee>,
 }
 
 impl AccusationManagerExtension {
@@ -60,6 +63,7 @@ impl AccusationManagerExtension {
         slashing_manager: Address,
         vote_validity_secs_by_chain: HashMap<u64, u64>,
         accusation_deadline_skew_secs: u64,
+        persisted_committees: HashMap<E3id, Committee>,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
@@ -67,6 +71,7 @@ impl AccusationManagerExtension {
             slashing_manager,
             vote_validity_secs_by_chain,
             accusation_deadline_skew_secs,
+            persisted_committees,
         })
     }
 
@@ -82,33 +87,23 @@ impl AccusationManagerExtension {
             }
         }
     }
-}
 
-#[async_trait]
-impl E3Extension for AccusationManagerExtension {
-    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
-        let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {
-            return;
-        };
-
-        // Don't start twice
+    fn start_manager(&self, ctx: &mut E3Context, committee: &[String]) {
         if ctx.get_event_recipient("accusation_manager").is_some() {
             return;
         }
 
-        let CommitteeFinalized {
-            e3_id, committee, ..
-        } = data.clone();
-
-        // Parse committee addresses — all must be valid or we cannot start
-        let mut committee_addresses: Vec<Address> = Vec::with_capacity(committee.len());
-        for s in committee.iter() {
-            match s.parse::<Address>() {
-                Ok(addr) => committee_addresses.push(addr),
-                Err(e) => {
+        let e3_id = ctx.e3_id.clone();
+        let mut committee_addresses = Vec::with_capacity(committee.len());
+        for node in committee {
+            match node.parse::<Address>() {
+                Ok(address) => committee_addresses.push(address),
+                Err(error) => {
                     error!(
-                        "Failed to parse committee address {} — cannot start AccusationManager: {}",
-                        s, e
+                        %e3_id,
+                        node,
+                        %error,
+                        "Cannot start AccusationManager because a committee address is invalid"
                     );
                     return;
                 }
@@ -116,42 +111,41 @@ impl E3Extension for AccusationManagerExtension {
         }
 
         if committee_addresses.is_empty() {
-            error!("No committee addresses — cannot start AccusationManager");
+            error!(%e3_id, "Cannot start AccusationManager because the committee is empty");
             return;
         }
 
-        // `E3Meta` stores the compiled circuit threshold T. Solidity requires
-        // H votes, so derive and pass both values explicitly.
         let Some(meta) = ctx.get_dependency(META_KEY) else {
-            error!("E3Meta not available — cannot start AccusationManager");
+            error!(%e3_id, "Cannot start AccusationManager because E3 metadata is unavailable");
             return;
         };
         let circuit_threshold_t = meta.threshold_m;
         let vote_quorum_h = match accusation_vote_quorum(meta.threshold_m, meta.threshold_n) {
             Ok(quorum) => quorum,
-            Err(err) => {
+            Err(error) => {
                 error!(
                     %e3_id,
                     threshold_t = meta.threshold_m,
                     committee_n = meta.threshold_n,
-                    error = %err,
-                    "Unknown committee size — cannot start AccusationManager"
+                    %error,
+                    "Cannot start AccusationManager for an unknown committee size"
                 );
                 return;
             }
         };
 
         info!(
-            "Starting AccusationManager for E3 {} with {} committee members, circuit threshold T={}, vote quorum H={}",
-            e3_id,
-            committee_addresses.len(),
+            %e3_id,
+            committee_members = committee_addresses.len(),
             circuit_threshold_t,
-            vote_quorum_h
+            vote_quorum_h,
+            "Starting AccusationManager"
         );
 
         let vote_validity_secs = self.vote_validity_secs_for(e3_id.chain_id());
-
-        let addr = AccusationManager::setup_with_quorum(
+        // The request router owns delivery and lifetime for this per-E3 actor. A global bus
+        // subscription would deliver each event twice and retain completed actors forever.
+        let addr = AccusationManager::new_with_quorum(
             &self.bus,
             e3_id,
             self.signer.clone(),
@@ -162,28 +156,33 @@ impl E3Extension for AccusationManagerExtension {
             vote_validity_secs,
             self.accusation_deadline_skew_secs,
             meta.params_preset,
-        );
+        )
+        .start();
 
         ctx.set_event_recipient("accusation_manager", Some(addr.into()));
     }
+}
 
-    /// Re-hydrates the `AccusationManager` after a node restart.
-    ///
-    /// Intentionally a no-op — `AccusationManager` is **ephemeral by design**:
-    ///
-    /// - Each instance is scoped to one E3 (created by [`AccusationManagerExtension::handle`]
-    ///   when `CommitteeFinalized` is received) and holds only transient in-memory state
-    ///   (pending accusations, buffered votes, verification caches).
-    /// - On restart, all in-flight accusations are lost. This is an accepted trade-off:
-    ///   every pending accusation has a finite vote timeout (default 5 min). If the node
-    ///   restarts, the accusation would have timed out anyway. Other committee members
-    ///   running their own independent `AccusationManager` instances will continue the
-    ///   protocol unaffected.
-    /// - A malicious node cannot exploit restart-induced state loss to prevent slashing:
-    ///   restarting only loses *this node's* pending state — all other honest nodes still
-    ///   independently verify, vote, and reach quorum without this node's participation
-    ///   (as long as enough honest nodes remain to meet the on-chain quorum H).
-    async fn hydrate(&self, _ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
+#[async_trait]
+impl E3Extension for AccusationManagerExtension {
+    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
+        let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {
+            return;
+        };
+
+        if data.e3_id != ctx.e3_id {
+            return;
+        }
+        self.start_manager(ctx, &data.committee);
+    }
+
+    /// Recreate the per-E3 actor so this node can process new accusations after a restart.
+    /// In-flight vote state remains ephemeral and expires at the signed accusation deadline.
+    async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
+        if let Some(committee) = self.persisted_committees.get(&ctx.e3_id) {
+            let members = committee.members().to_vec();
+            self.start_manager(ctx, &members);
+        }
         Ok(())
     }
 }
@@ -191,6 +190,54 @@ impl E3Extension for AccusationManagerExtension {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix::{Context, Handler};
+    use e3_data::{DataStore, InMemStore, RepositoriesFactory};
+    use e3_events::{
+        hlc_factory::HlcFactory, EventBus, EventBusConfig, Seed, Sequencer, StoreEventRequested,
+    };
+    use e3_fhe_params::BfvPreset;
+    use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
+    use e3_utils::ArcBytes;
+    use std::sync::Arc;
+
+    struct StoreSink;
+
+    impl Actor for StoreSink {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<StoreEventRequested> for StoreSink {
+        type Result = ();
+
+        fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+    }
+
+    fn test_bus() -> BusHandle {
+        let event_bus = EventBus::new(EventBusConfig { deduplicate: true }).start();
+        let store = StoreSink.start();
+        let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+        BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("accusation-hydrate-test")
+    }
+
+    fn test_context(e3_id: E3id) -> E3Context {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id,
+            extensions: Arc::new(Vec::new()),
+        })
+    }
+
+    fn test_meta() -> E3Meta {
+        E3Meta {
+            threshold_m: 1,
+            threshold_n: 3,
+            seed: Seed([0; 32]),
+            params_preset: BfvPreset::InsecureThreshold512,
+            params: ArcBytes::default(),
+            error_size: ArcBytes::default(),
+        }
+    }
 
     #[test]
     fn accusation_quorum_matches_canonical_on_chain_committee_thresholds() {
@@ -205,5 +252,35 @@ mod tests {
     #[test]
     fn accusation_quorum_rejects_unknown_committee_parameters() {
         assert!(accusation_vote_quorum(2, 3).is_err());
+    }
+
+    #[actix::test]
+    async fn hydration_recreates_the_accusation_manager() -> Result<()> {
+        let e3_id = E3id::new("7", 31337);
+        let committee = Committee::new(vec![
+            "0x1111111111111111111111111111111111111111".to_string(),
+            "0x2222222222222222222222222222222222222222".to_string(),
+            "0x3333333333333333333333333333333333333333".to_string(),
+        ]);
+        let extension = AccusationManagerExtension::create(
+            &test_bus(),
+            PrivateKeySigner::random(),
+            Address::repeat_byte(0x44),
+            HashMap::from([(31337, 300)]),
+            30,
+            HashMap::from([(e3_id.clone(), committee)]),
+        );
+        let mut context = test_context(e3_id.clone());
+        context.set_dependency(META_KEY, test_meta());
+        let snapshot = E3ContextSnapshot {
+            e3_id,
+            recipients: Vec::new(),
+            dependencies: vec!["meta".to_string()],
+        };
+
+        extension.hydrate(&mut context, &snapshot).await?;
+
+        assert!(context.get_event_recipient("accusation_manager").is_some());
+        Ok(())
     }
 }

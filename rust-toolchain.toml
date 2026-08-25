@@ -1,4 +1,4 @@
 [toolchain]
 channel = "1.91.1"
-components = ["rustfmt"]
+components = ["rustfmt", "rust-analyzer"]
 targets = ["wasm32-unknown-unknown"]

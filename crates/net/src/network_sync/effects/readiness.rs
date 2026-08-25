@@ -3,6 +3,7 @@
 //! Own network readiness, fallback timing, and ingress task setup.
 
 use super::*;
+use crate::net_interface_handle::NetEventSubscriber;
 
 impl NetSyncManager {
     /// Apply a readiness decision: publish `NetReady`, or schedule the fallback timeout.
@@ -41,12 +42,12 @@ impl NetSyncManager {
     pub fn setup(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
-        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        rx: &NetEventSubscriber,
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
         network: NetworkPolicy,
     ) -> Addr<Self> {
-        let mut events = rx.resubscribe();
+        let mut events = rx.subscribe();
         let addr = Self::new(bus, tx, rx, eventstore, topic, network).start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());

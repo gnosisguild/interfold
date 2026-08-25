@@ -19,14 +19,16 @@ mod network;
 mod peer_admission;
 mod repo;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use actix::Recipient;
 use anyhow::bail;
 use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::Repository;
-use e3_events::{run_once, BusHandle, EffectsEnabled, EventStoreQueryBy, EventSubscriber, TsAgg};
+use e3_events::{
+    run_once, BusHandle, E3id, EffectsEnabled, EventStoreQueryBy, EventSubscriber, PartyId, TsAgg,
+};
 use tracing::error;
 use tracing::{info, instrument};
 
@@ -61,8 +63,15 @@ pub fn setup_net_interface(
     keypair: Libp2pKeypair,
     peers: Vec<String>,
     quic_port: u16,
+    max_buffered_events: usize,
 ) -> Result<NetInterfaceHandle> {
-    let mut interface = Libp2pNetInterface::new(keypair, peers, Some(quic_port), network)?;
+    let mut interface = Libp2pNetInterface::new_with_application_event_capacity(
+        keypair,
+        peers,
+        Some(quic_port),
+        network,
+        max_buffered_events,
+    )?;
 
     let handle = interface.handle();
 
@@ -104,6 +113,28 @@ pub fn setup_net_with_limits(
     max_buffered_events: usize,
     max_buffered_bytes: usize,
 ) -> Result<NetEventBufferHandle> {
+    setup_net_with_limits_and_interests(
+        network,
+        bus,
+        eventstore,
+        interface,
+        max_buffered_events,
+        max_buffered_bytes,
+        HashMap::new(),
+    )
+}
+
+/// Set up bounded networking and restore active DHT interests without publishing new protocol
+/// events during process startup.
+pub fn setup_net_with_limits_and_interests(
+    network: &NetworkPolicy,
+    bus: BusHandle,
+    eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
+    interface: impl NetInterface,
+    max_buffered_events: usize,
+    max_buffered_bytes: usize,
+    initial_interests: HashMap<E3id, PartyId>,
+) -> Result<NetEventBufferHandle> {
     if max_buffered_events == 0 || max_buffered_bytes == 0 {
         bail!("network startup buffer limits must both be greater than zero");
     }
@@ -113,20 +144,20 @@ pub fn setup_net_with_limits(
     let _net_sync = NetSyncManager::setup(
         &bus,
         &interface.tx(),
-        &Arc::new(interface.rx()),
+        &interface.events(),
         eventstore.into(),
         topic,
         network.clone(),
     );
 
-    // Buffer all incoming events until SyncEnded
+    // Buffer application events until SyncEnded. The producer keeps control events on the raw
+    // channel that the sync manager consumes.
     let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
         &bus,
-        &interface.rx(),
+        &interface.application_events(),
         max_buffered_events,
         max_buffered_bytes,
     );
-    let rx = Arc::new(rx);
     let tx = interface.tx();
     let network = network.clone();
 
@@ -135,9 +166,16 @@ pub fn setup_net_with_limits(
         let rx = rx.clone();
         let topic = topic.to_owned();
         let tx = tx.clone();
+        let initial_interests = initial_interests.clone();
         move |_| {
             NetEventTranslator::setup(&bus, &tx, &rx, &topic, network.clone());
-            DocumentPublisher::setup(&bus, &tx, &rx, &topic);
+            DocumentPublisher::setup_with_interests(
+                &bus,
+                &tx,
+                &rx,
+                &topic,
+                initial_interests.clone(),
+            );
             Ok(())
         }
     });

@@ -5,6 +5,7 @@
 
 use crate::domain::EventTranslationService;
 use crate::events::{GossipData, GossipPublishFailure, NetCommand, NetEvent};
+use crate::net_interface_handle::NetEventSubscriber;
 use crate::NetworkPolicy;
 use actix::prelude::*;
 use anyhow::Result;
@@ -13,9 +14,7 @@ use e3_events::{
     EventType, InterfoldEvent,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
-use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -72,11 +71,11 @@ impl NetEventTranslator {
     pub fn setup(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
-        rx: &Arc<broadcast::Receiver<NetEvent>>,
+        rx: &NetEventSubscriber,
         topic: &str,
         network: NetworkPolicy,
     ) -> Addr<Self> {
-        let mut rx = rx.resubscribe();
+        let mut rx = rx.subscribe();
         let addr = NetEventTranslator::new(bus, tx, topic, network).start();
 
         // Listen on all events
@@ -268,6 +267,15 @@ fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
     }
 }
 
+impl Handler<InterfoldEvent> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
+            self.handle_interfold_event(msg, ctx)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,14 +294,5 @@ mod tests {
             retry_policy(&GossipPublishFailure::permanent("invalid payload")),
             None
         );
-    }
-}
-
-impl Handler<InterfoldEvent> for NetEventTranslator {
-    type Result = ();
-    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            self.handle_interfold_event(msg, ctx)
-        })
     }
 }

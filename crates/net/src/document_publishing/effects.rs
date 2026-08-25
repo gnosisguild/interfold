@@ -4,11 +4,12 @@
 
 use super::*;
 use crate::domain::EventConversionService;
+use crate::net_interface_handle::NetEventSubscriber;
 
 /// Called when we receive a PublishDocumentRequested event
 pub async fn handle_publish_document_requested(
     tx: mpsc::Sender<NetCommand>,
-    rx: Arc<broadcast::Receiver<NetEvent>>,
+    rx: NetEventSubscriber,
     event: PublishDocumentRequested,
     topic: impl Into<String>,
     bus: BusHandle,
@@ -37,7 +38,7 @@ pub async fn handle_publish_document_requested(
 /// Called when we receive a notification from the net_interface
 pub async fn handle_document_published_notification(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     bus: BusHandle,
     ids: HashMap<E3id, PartyId>,
     event: DocumentPublishedNotification,
@@ -81,7 +82,7 @@ pub async fn handle_document_published_notification(
 /// Call DhtPutRecord Command on the Libp2pNetInterface and handle the results
 async fn put_record(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     expires: Option<std::time::Instant>,
     value: ArcBytes,
     key: ContentHash,
@@ -111,7 +112,7 @@ async fn put_record(
 /// Call DhtGetRecord Command on the Libp2pNetInterface and handle the results
 async fn get_record(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     key: ContentHash,
 ) -> Result<ArcBytes> {
     let id = CorrelationId::new();
@@ -137,7 +138,7 @@ async fn get_record(
 /// Broadcasts document published notification on Libp2pNetInterface
 async fn broadcast_document_published_notification(
     net_cmds: mpsc::Sender<NetCommand>,
-    net_events: Arc<broadcast::Receiver<NetEvent>>,
+    net_events: NetEventSubscriber,
     payload: DocumentPublishedNotification,
     topic: impl Into<String>,
 ) -> Result<()> {
