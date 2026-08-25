@@ -499,12 +499,15 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
-├─ 2b. CANONICAL H ROSTER (when H < N):
+├─ 2b. C4 ROSTER (when H < N):
 │     Before C4 witness layout, merge external honest party_ids with own_party_id,
 │     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
-│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H still complete KeyshareCreated but are not in the
-│     aggregator's NodeFold / `honest_committee_addresses` roster.
+│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`).
+│
+│     After C5, PublicKeyAggregated carries the authoritative H-address subset. Each
+│     keyshare maps those addresses through the full N committee order and replaces its
+│     persisted `honest_parties` set before C6. Parties outside that global H roster
+│     ignore CiphertextOutputPublished and do not generate C6 work.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {

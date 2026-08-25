@@ -775,7 +775,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
         c6_n=$(jq -r '.benchmark_config.committee_n // empty' <<<"$INTEGRATION_BLOB")
         if [ -n "$c6_h" ] && [ -n "$c6_n" ]; then
             echo "" >> "$OUTPUT_FILE"
-            echo "_C6 note: \`N=${c6_n}\` is the full committee size and \`H=${c6_h}\` is the canonical honest roster. \`ZkThresholdShareDecryption\` should run once for each eligible honest party, so its expected request count is \`H=${c6_h}\`. Each request returns one proof per ciphertext output. The \`runs\` value counts proof-generation requests._" >> "$OUTPUT_FILE"
+            echo "_Run-count note: DKG preparation rows are N-scoped and remain \`N=${c6_n}\` for this committee. C6 producer rows are H-scoped: \`ZkThresholdShareDecryption\` should run once for each eligible honest party, so its expected request count is \`H=${c6_h}\`. C7 aggregation is one job per ciphertext output and consumes H C6 inputs. The \`runs\` value counts proof-generation or aggregation jobs, as applicable._" >> "$OUTPUT_FILE"
         fi
         ott=$(jq -r '.operation_timings_total_seconds // empty' <<<"$INTEGRATION_BLOB")
         if [ -n "$ott" ] && [ "$ott" != "null" ]; then

@@ -12,11 +12,15 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
         let state = self.state.try_get()?;
-        if state
-            .honest_parties
-            .as_ref()
-            .is_some_and(|parties| !parties.contains(&state.party_id))
-        {
+        let Some(honest_parties) = state.honest_parties.as_ref() else {
+            info!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "Skipping decryption-share generation because the canonical honest roster is unavailable"
+            );
+            return Ok(());
+        };
+        if !honest_parties.contains(&state.party_id) {
             info!(
                 e3_id = %state.e3_id,
                 party_id = state.party_id,

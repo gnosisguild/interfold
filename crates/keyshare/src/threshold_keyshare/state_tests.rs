@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use alloy::primitives::Address;
 use e3_events::E3id;
 
 fn arc(bytes: &[u8]) -> ArcBytes {
@@ -35,6 +36,28 @@ fn new_initialises_defaults_and_records_dkg_start() {
     assert_eq!(s.get_threshold_n(), 3);
     assert_eq!(s.get_party_id(), 0);
     assert_eq!(s.get_address(), "0xabc");
+}
+
+#[test]
+fn honest_addresses_map_to_full_committee_party_ids() {
+    let committee = vec![
+        Address::from([1u8; 20]),
+        Address::from([2u8; 20]),
+        Address::from([3u8; 20]),
+    ];
+
+    assert_eq!(
+        party_ids_for_honest_addresses(&committee, &[committee[0], committee[2]])
+            .expect("valid honest subset"),
+        BTreeSet::from([0, 2])
+    );
+}
+
+#[test]
+fn honest_address_outside_full_committee_is_rejected() {
+    let committee = vec![Address::from([1u8; 20])];
+
+    assert!(party_ids_for_honest_addresses(&committee, &[Address::from([2u8; 20])]).is_err());
 }
 
 #[test]

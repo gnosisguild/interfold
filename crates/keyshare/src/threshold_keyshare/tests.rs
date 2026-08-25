@@ -14,11 +14,11 @@ use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled,
     EventBus, EventBusConfig, EventSource, FailureReason, HistoryCollector, InterfoldEvent,
-    InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse, TakeEvents,
-    Unsequenced,
+    InterfoldEventData, PublicKeyAggregated, Sequencer, StoreEventRequested, StoreEventResponse,
+    TakeEvents, Unsequenced,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 #[derive(Default)]
 struct TestEventStore {
@@ -107,6 +107,43 @@ async fn start_actor() -> Result<(
     Repository<ThresholdKeyshareState>,
 )> {
     start_actor_with_state(KeyshareState::Init).await
+}
+
+#[actix::test]
+async fn public_key_aggregated_replaces_local_roster_with_global_honest_set() -> Result<()> {
+    let (actor, _history, e3_id, repo) = start_actor().await?;
+    let committee_addresses = vec![
+        Address::from([1u8; 20]),
+        Address::from([2u8; 20]),
+        Address::from([3u8; 20]),
+    ];
+    let event = PublicKeyAggregated {
+        pubkey: ArcBytes::from_bytes(b"public-key"),
+        e3_id,
+        nodes: Default::default(),
+        committee_addresses: committee_addresses.clone(),
+        honest_committee_addresses: vec![committee_addresses[0], committee_addresses[2]],
+        pk_commitment: [0u8; 32],
+        dkg_aggregator_proof: None,
+        dkg_attestation_bundle: None,
+    };
+
+    actor
+        .send(
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                event.into(),
+                None,
+                1,
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(1),
+        )
+        .await?;
+
+    let state = repo.read().await?.expect("persisted keyshare state");
+    assert_eq!(state.honest_parties, Some(BTreeSet::from([0, 2])));
+    Ok(())
 }
 
 async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<InterfoldEvent> {
