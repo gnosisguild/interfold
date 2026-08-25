@@ -224,6 +224,7 @@ describe("Protocol deployment", function () {
         requestConfirmations: 1,
         callbackGasLimit: 2_500_000,
         nativePayment: false,
+        minimumSubscriptionBalance: "1",
         requestTimeout: "3600",
       },
     } as ProtocolConfigFile;
@@ -247,6 +248,30 @@ describe("Protocol deployment", function () {
         randomness: { ...config.randomness!, keyHash: ethersLib.ZeroHash },
       }),
     ).to.be.rejectedWith("keyHash is not registered");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: {
+          ...config.randomness!,
+          minimumSubscriptionBalance: "2",
+        },
+      }),
+    ).to.be.rejectedWith("balance 1 is below the configured minimum 2");
+
+    const nativeConfig = {
+      ...config,
+      randomness: {
+        ...config.randomness!,
+        nativePayment: true,
+      },
+    };
+    await expect(
+      assertVrfSubscription(ethers, nativeConfig),
+    ).to.be.rejectedWith("native balance 0 is below the configured minimum 1");
+    await coordinator.fundSubscriptionWithNative(subscriptionId, {
+      value: 1n,
+    });
+    await assertVrfSubscription(ethers, nativeConfig);
   });
 
   it("normalizes the optional escrow votes adapter", function () {
@@ -407,6 +432,7 @@ describe("Protocol deployment", function () {
       requestConfirmations: 3,
       callbackGasLimit: 500_000,
       nativePayment: false,
+      minimumSubscriptionBalance: "1",
       requestTimeout: "3600",
     };
 

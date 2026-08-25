@@ -34,6 +34,8 @@ export interface RandomnessConfig {
   requestConfirmations: number;
   callbackGasLimit: number;
   nativePayment: boolean;
+  /** Sets the lowest allowed balance in wei for native payment or juels for LINK. */
+  minimumSubscriptionBalance: string;
   /** Maximum seconds to wait before the requester can cancel a request. */
   requestTimeout: string;
 }

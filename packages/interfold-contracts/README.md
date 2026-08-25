@@ -98,13 +98,14 @@ send a transaction.
 Committee sortition uses a Chainlink VRF v2.5 subscription through
 `ChainlinkVrfRandomnessProvider`. Set the coordinator, subscription ID, key
 hash, confirmation count, callback gas limit, payment mode, and response timeout
-in the `randomness` configuration. The subscription owner must equal
-`protocolOwner`, and the selected LINK or native balance must be nonzero. The
+in the `randomness` configuration. Also set `minimumSubscriptionBalance` in wei
+for native payment or juels for LINK. The subscription owner must equal
+`protocolOwner`, and its selected balance must meet this configured reserve. The
 governance batch accepts provider ownership, adds the provider as a subscription
-consumer, and connects it to the Registry. The mainnet configuration uses the
-subscription's native ETH balance and waits 64 blocks before fulfillment. This
-deeper confirmation window makes a request-block rewrite more expensive while
-remaining within the one-hour response timeout.
+consumer, and connects it to the Registry. The mainnet configuration requires a
+1 ETH reserve and waits 64 blocks before fulfillment. This deeper confirmation
+window makes a request-block rewrite more expensive while remaining within the
+one-hour response timeout.
 
 For the live proxy upgrade, pause requests and confirm that Interfold has no
 active E3s and the Registry has no unreleased committees. Then run:

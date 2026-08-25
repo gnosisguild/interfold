@@ -607,6 +607,10 @@ paid request is stored. The production provider uses a Chainlink VRF v2.5 subscr
 re-requests randomness for an E3, and its callback records valid responses without calling the
 Registry or reverting.
 
+Fresh deployment and upgrade validation check the subscription owner, consumer, coordinator limits,
+gas lane, and selected payment balance. The balance must meet the configured
+`minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
+
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
 context. The Registry rejects results recorded in the chain-native request block, results dated in

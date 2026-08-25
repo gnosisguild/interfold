@@ -19,6 +19,7 @@
     "requestConfirmations": 3,
     "callbackGasLimit": 150000,
     "nativePayment": false,
+    "minimumSubscriptionBalance": "1000000000000000000",
     "requestTimeout": "3600"
   },
   "ticketToken": {

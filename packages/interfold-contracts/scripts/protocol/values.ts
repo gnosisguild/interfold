@@ -338,6 +338,14 @@ function validateConfig(config: ProtocolConfigFile): void {
     if (typeof config.randomness.nativePayment !== "boolean") {
       throw new Error("randomness.nativePayment must be a boolean");
     }
+    if (
+      !/^\d+$/.test(config.randomness.minimumSubscriptionBalance) ||
+      BigInt(config.randomness.minimumSubscriptionBalance) === 0n
+    ) {
+      throw new Error(
+        "randomness.minimumSubscriptionBalance must be a positive integer",
+      );
+    }
     if (!/^\d+$/.test(config.randomness.requestTimeout)) {
       throw new Error("randomness.requestTimeout must be an unsigned integer");
     }

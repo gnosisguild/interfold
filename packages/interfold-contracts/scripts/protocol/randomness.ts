@@ -83,11 +83,12 @@ export async function assertVrfSubscription(
   const balance = randomness.nativePayment
     ? subscription.nativeBalance
     : subscription.balance;
-  if (balance === 0n) {
+  const minimumBalance = BigInt(randomness.minimumSubscriptionBalance);
+  if (balance < minimumBalance) {
     throw new Error(
-      `VRF subscription ${randomness.subscriptionId} has no ${
+      `VRF subscription ${randomness.subscriptionId} ${
         randomness.nativePayment ? "native" : "LINK"
-      } balance`,
+      } balance ${balance} is below the configured minimum ${minimumBalance}`,
     );
   }
   if (

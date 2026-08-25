@@ -72,6 +72,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
       requestConfirmations: 3,
       callbackGasLimit: 150_000,
       nativePayment: false,
+      minimumSubscriptionBalance: "1000000000000000000",
       requestTimeout: "3600",
     };
   } else {
@@ -94,6 +95,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
       requestConfirmations: 3,
       callbackGasLimit: 150_000,
       nativePayment: false,
+      minimumSubscriptionBalance: "1000000000000000000",
       requestTimeout: "3600",
     };
   }
