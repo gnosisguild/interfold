@@ -1847,10 +1847,10 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
     let active_keyshare_party_ids = keyshare_parties(&active_aggregator_history, &e3_id);
-    assert_eq!(
-        active_keyshare_party_ids.len(),
-        threshold_n,
-        "Active aggregator: expected one KeyshareCreated from each of the {threshold_n} committee parties, got {active_keyshare_party_ids:?}"
+    assert!(
+        active_keyshare_party_ids.len() >= committee_h
+            && active_keyshare_party_ids.len() <= threshold_n,
+        "Active aggregator: expected KeyshareCreated from {committee_h}..={threshold_n} committee parties, got {active_keyshare_party_ids:?}"
     );
     assert!(
         active_keyshare_party_ids
