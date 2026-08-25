@@ -211,6 +211,8 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 RandomnessProviderSolReader decodes RandomnessFulfilled
 │
 ├─ Calls Registry.sortitionSeed(e3Id)
+│  → Briefly retries when the event arrives before the Registry's recorded response block or time
+│  → Never starts sortition until the Registry accepts the response
 │  → Registry accepts only the request-time provider and request ID
 │  → A response after randomnessDeadline is not usable
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)

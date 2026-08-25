@@ -19,6 +19,8 @@ use std::time::Duration;
 use tracing::{debug, error, warn};
 
 const EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
+const RANDOMNESS_ACCEPTANCE_TIMEOUT: Duration = Duration::from_secs(15);
+const RANDOMNESS_ACCEPTANCE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct RandomnessProviderSolReader<P> {
     provider: EthProvider<P>,
@@ -69,15 +71,31 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
         .context("invalid RandomnessFulfilled event")?;
 
     let registry = ICiphernodeRegistry::new(registry_address, provider.provider());
-    let resolved = registry.sortitionSeed(fulfillment.e3Id).call().await?;
-    if !resolved.ready {
-        warn!(
-            e3_id = %fulfillment.e3Id,
-            request_id = %fulfillment.requestId,
-            "Ignoring randomness that the registry did not accept"
-        );
-        return Ok(None);
-    }
+    let resolved = match tokio::time::timeout(RANDOMNESS_ACCEPTANCE_TIMEOUT, async {
+        loop {
+            let resolved = registry
+                .sortitionSeed(fulfillment.e3Id)
+                .call()
+                .await
+                .context("failed to read the accepted sortition seed")?;
+            if resolved.ready {
+                return Ok::<_, anyhow::Error>(resolved);
+            }
+            tokio::time::sleep(RANDOMNESS_ACCEPTANCE_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            warn!(
+                e3_id = %fulfillment.e3Id,
+                request_id = %fulfillment.requestId,
+                "Ignoring randomness that the registry did not accept"
+            );
+            return Ok(None);
+        }
+    };
     let request = registry
         .getSortitionRequest(fulfillment.e3Id)
         .call()
