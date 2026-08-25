@@ -7,7 +7,7 @@
 use crate::traits::{ErrorEvent, Event};
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
-use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
+use e3_utils::{colorize, Color, MAILBOX_LIMIT_LARGE};
 use futures_util::future::join_all;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -546,7 +546,7 @@ impl<E: Event> HistoryCollector<E> {
 impl<E: Event> Actor for HistoryCollector<E> {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT_LARGE);
     }
 }
 
