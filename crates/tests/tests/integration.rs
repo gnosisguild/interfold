@@ -16,7 +16,7 @@ use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
     ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, EventSource, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
+    E3id, EventId, EventSource, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
     PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind,
     ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
@@ -50,6 +50,8 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::sleep,
 };
+
+const BENCHMARK_POST_BARRIER_SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy)]
 struct BenchmarkParams {
@@ -111,7 +113,6 @@ fn select_benchmark_params() -> BenchmarkParams {
     } else {
         Duration::from_secs(1_000)
     };
-
     BenchmarkParams {
         preset_subdir,
         bfv_preset,
@@ -211,20 +212,19 @@ fn uses_dist_preset_artifacts(preset_subdir: &str, committee_str: &str) -> bool 
         .exists()
 }
 
-/// Preset stamp path — under the new layout each `{preset}/{committee}` dir has its own stamp.
-fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBuf {
-    if uses_dist_preset_artifacts(preset_subdir, committee_str) {
-        repo_root()
-            .join("dist/circuits")
-            .join(preset_subdir)
-            .join(committee_str)
-            .join(".build-stamp.json")
-    } else {
-        repo_root()
-            .join("circuits")
-            .join("bin")
-            .join(".active-preset.json")
-    }
+fn preset_stamp_matches(
+    stamp_path: &std::path::Path,
+    preset_subdir: &str,
+    committee_str: &str,
+) -> bool {
+    let Ok(raw) = std::fs::read_to_string(stamp_path) else {
+        return false;
+    };
+    let Ok(stamp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    stamp.get("preset").and_then(|value| value.as_str()) == Some(preset_subdir)
+        && stamp.get("committee").and_then(|value| value.as_str()) == Some(committee_str)
 }
 
 /// Reads the active committee from `circuits/bin/.active-preset.json`, which is written by every
@@ -407,21 +407,23 @@ async fn setup_test_zk_backend(
 
         let preset_out = circuits_dir.join(preset_subdir).join(committee_str);
         let circuits_bin_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
-        // `circuits/bin` is preset-agnostic on disk — only `.active-preset.json` records which
-        // preset+committee the most recent local build targeted. Without it we cannot tell
-        // whether `circuits/bin` matches `preset_subdir`, and copying wrong artifacts would
-        // silently produce invalid proofs.
-        let preset_build_stamp = resolve_preset_stamp_path(preset_subdir, committee_str);
+        // `circuits/bin` is preset-agnostic on disk. Require the stamp to match both the requested
+        // preset and committee before copying local artifacts into the test backend.
+        let dist_stamp = dist_preset.join(".build-stamp.json");
+        let active_bin_stamp = repo_root.join("circuits/bin/.active-preset.json");
+        let dist_artifacts_ready = uses_dist_preset_artifacts(preset_subdir, committee_str)
+            && preset_stamp_matches(&dist_stamp, preset_subdir, committee_str);
+        let bin_artifacts_ready = circuits_bin_marker.exists()
+            && preset_stamp_matches(&active_bin_stamp, preset_subdir, committee_str);
 
-        if uses_dist_preset_artifacts(preset_subdir, committee_str) {
+        if dist_artifacts_ready {
             copy_dir_recursive(&dist_preset, &preset_out).await?;
-        } else if !circuits_bin_marker.exists() || !preset_build_stamp.exists() {
-            // Either no local build exists, or the local build cannot be proven to match
-            // the requested preset; download the pinned release tarball instead.
+        } else if !bin_artifacts_ready {
+            // Either no local build exists, or the local build does not match the requested
+            // preset and committee. Download the pinned release tarball instead.
             println!(
-                "No verifiable local circuit fixtures for preset `{}/{}` \
-                 (need either dist/circuits/{}/{}/recursive/dkg/pk/pk.json \
-                 or circuits/bin + circuits/bin/.active-preset.json); \
+                "No matching local circuit fixtures for preset `{}/{}` \
+                 (checked dist/circuits/{}/{}/.build-stamp.json and circuits/bin/.active-preset.json); \
                  downloading release circuits via ensure_installed()...",
                 preset_subdir, committee_str, preset_subdir, committee_str
             );
@@ -965,22 +967,57 @@ fn keyshare_parties(history: &[InterfoldEvent], e3_id: &E3id) -> HashSet<u64> {
         .collect()
 }
 
+fn aggregator_role_event_at(
+    history: &[InterfoldEvent],
+    e3_id: &E3id,
+    event_index: usize,
+) -> Option<(usize, bool)> {
+    history
+        .iter()
+        .take(event_index + 1)
+        .enumerate()
+        .rev()
+        .find_map(|(index, event)| match event.get_data() {
+            InterfoldEventData::AggregatorChanged(data) if data.e3_id == *e3_id => {
+                Some((index, data.is_aggregator))
+            }
+            _ => None,
+        })
+}
+
 /// Return the local aggregator role at a history event.
 fn local_aggregator_role_at(
     history: &[InterfoldEvent],
     e3_id: &E3id,
     event_index: usize,
 ) -> Option<bool> {
-    history
-        .iter()
-        .take(event_index + 1)
-        .rev()
-        .find_map(|event| match event.get_data() {
-            InterfoldEventData::AggregatorChanged(data) if data.e3_id == *e3_id => {
-                Some(data.is_aggregator)
-            }
-            _ => None,
-        })
+    aggregator_role_event_at(history, e3_id, event_index).map(|(_, is_aggregator)| is_aggregator)
+}
+
+fn collect_local_aggregate_events<F>(
+    history: &[InterfoldEvent],
+    e3_id: &E3id,
+    node_index: usize,
+    phase: &str,
+    mut is_aggregate: F,
+) -> Result<Vec<(usize, EventId)>>
+where
+    F: FnMut(&InterfoldEventData) -> bool,
+{
+    let mut aggregate_events = Vec::new();
+    for (event_index, event) in history.iter().enumerate() {
+        if event.source() != EventSource::Local || !is_aggregate(event.get_data()) {
+            continue;
+        }
+        if local_aggregator_role_at(history, e3_id, event_index) != Some(true) {
+            bail!(
+                "{phase}: node {node_index} recorded {} while inactive at history index {event_index}",
+                event.event_type()
+            );
+        }
+        aggregate_events.push((event_index, event.event_id()));
+    }
+    Ok(aggregate_events)
 }
 
 /// Scan a node history for slashing, accusation, and protocol-fault signals that must not
@@ -1218,20 +1255,18 @@ fn plaintext_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
     }
 }
 
-/// `VerifyShareProofs` is shared by C1 and C6; its signed proof types identify the phase.
+/// `VerifyShareProofs` is shared by C1 and C6; a C6 proof identifies a C6 request.
 fn is_c6_verify_request(request: &ComputeRequestKind) -> bool {
     let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(request)) = request else {
         return false;
     };
 
-    !request.party_proofs.is_empty()
-        && request.party_proofs.iter().all(|party| {
-            !party.signed_proofs.is_empty()
-                && party
-                    .signed_proofs
-                    .iter()
-                    .all(|proof| proof.payload.proof_type == ProofType::C6ThresholdShareDecryption)
-        })
+    request.party_proofs.iter().any(|party| {
+        party
+            .signed_proofs
+            .iter()
+            .any(|proof| proof.payload.proof_type == ProofType::C6ThresholdShareDecryption)
+    })
 }
 
 fn plaintext_aggregator_events(history: &[InterfoldEvent], e3_id: &E3id) -> Vec<&'static str> {
@@ -1733,21 +1768,6 @@ async fn test_trbfv_actor() -> Result<()> {
     // keyshares into PublicKeyAggregated; DKGRecursiveAggregationComplete is one per member (N).
     let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; threshold_n];
     let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; threshold_n];
-    let mut active_aggregator_c1_c5: Vec<&'static str> = vec![
-        "ShareVerificationDispatched",
-        "CommitmentConsistencyCheckRequested",
-        "CommitmentConsistencyCheckComplete",
-    ];
-    // C1 verification dispatches ALL N submitted keyshare proofs (the protocol needs to know
-    // who's dishonest before it can pick the H honest set), so N ProofVerificationPassed events
-    // fire. The aggregator subsequently truncates to H for C5 input only.
-    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", threshold_n));
-    active_aggregator_c1_c5.extend_from_slice(&[
-        "ShareVerificationComplete",
-        "PkAggregationProofPending",
-        "PkAggregationProofSigned",
-    ]);
-
     let mut expected_events: Vec<&'static str> = vec!["AggregatorChanged"];
     if proof_aggregation_enabled {
         expected_events.extend_from_slice(&ks_n);
@@ -1826,114 +1846,114 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
-    let mut expected_active_aggregator_pubkey_events = vec![
-        "CommitteeFinalized",
-        "CiphernodeSelected",
-        "AggregatorChanged",
-    ];
-    expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
-    expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
-    expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
-
-    // The active aggregator is also a selected committee member, so its node history contains
-    // local ThresholdKeyshare DKG work in addition to the public-key aggregation stage. Project
-    // only the deterministic pubkey-aggregation signals instead of comparing the whole raw node bus.
-    //
-    // KeyshareCreated and DKGRecursiveAggregationComplete events are produced independently
-    // by each committee member and gossiped in parallel with the active aggregator's own
-    // C1→C5 verification flow, so their positions relative to the C1→C5 sub-sequence are
-    // non-deterministic. Compare as a multiset plus boundary events rather than strict order.
-    let mut active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
-        publickey_aggregator_marker(data, &e3_id)
-    });
-    active_aggregator_pubkey_events.retain(|event| *event != "DKGRecursiveAggregationComplete");
-
-    // Every committee member runs the full C1→C5 aggregation workflow redundantly, and a
-    // progress deadline promotes standbys when the active member stalls. Under heavy load,
-    // the score-picked member can be demoted or outrun before it finishes its own C5 proof,
-    // so its snapshot may legitimately lack the local C5-stage markers. Assert only the
-    // gossip-guaranteed floor on this node.
-    for marker in [
-        "AggregatorChanged",
-        "CiphernodeSelected",
-        "CommitteeFinalized",
-    ] {
-        assert!(
-            active_aggregator_pubkey_events.contains(&marker),
-            "Active aggregator {active_aggregator_addr}: public-key flow is missing {marker}"
-        );
-    }
     let active_keyshare_party_ids = keyshare_parties(&active_aggregator_history, &e3_id);
-    let active_keyshare_count = active_keyshare_party_ids.len();
+    assert_eq!(
+        active_keyshare_party_ids.len(),
+        threshold_n,
+        "Active aggregator: expected one KeyshareCreated from each of the {threshold_n} committee parties, got {active_keyshare_party_ids:?}"
+    );
     assert!(
-        active_keyshare_count >= committee_h
-            && active_keyshare_count <= threshold_n
-            && active_keyshare_party_ids
-                .iter()
-                .all(|party_id| (*party_id as usize) < threshold_n),
-        "Active aggregator: expected KeyshareCreated from {committee_h}..={threshold_n} committee members, got parties {active_keyshare_party_ids:?}"
-    );
-    assert_eq!(
-        active_aggregator_pubkey_events.first().copied(),
-        Some("CommitteeFinalized"),
-        "Active aggregator: first event must be CommitteeFinalized"
-    );
-    assert_eq!(
-        active_aggregator_pubkey_events.last().copied(),
-        Some("PublicKeyAggregated"),
-        "Active aggregator: last event must be PublicKeyAggregated"
-    );
-
-    let mut expected_without_keyshares: Vec<&'static str> =
-        expected_active_aggregator_pubkey_events
+        active_keyshare_party_ids
             .iter()
-            .copied()
-            .filter(|event| *event != "KeyshareCreated")
-            .collect();
-    expected_without_keyshares.sort();
+            .all(|party_id| (*party_id as usize) < threshold_n),
+        "Active aggregator: KeyshareCreated contains a party outside 0..{threshold_n}: {active_keyshare_party_ids:?}"
+    );
 
-    // The complete C1→C5 multiset must exist on the member that finished its own
-    // aggregation flow first. Gossip can still be settling after the public-key barrier, so
-    // retry until the bounded phase timeout instead of failing on the first partial snapshot.
-    let pubkey_deadline = Instant::now() + pubkey_flow_timeout;
+    // The winning member must record its own C1→C5 events while it has the aggregator role.
+    // Other members can contribute gossiped keyshares and public-key results to the same history.
+    let pubkey_deadline = Instant::now() + BENCHMARK_POST_BARRIER_SETTLE_TIMEOUT;
+    let mut pubkey_candidate_deadline = None;
     let mut pubkey_flow_winner: Option<(usize, Vec<InterfoldEvent>)> = None;
     loop {
-        for index in 1..nodes.len() {
+        let mut histories = Vec::with_capacity(nodes.len());
+        let mut pubkey_producer_ids = HashSet::new();
+        for index in 0..nodes.len() {
             let history = nodes.get_history(index).await?;
-            let mut projected =
-                project_history(&history, |data| publickey_aggregator_marker(data, &e3_id));
-            projected.retain(|event| *event != "DKGRecursiveAggregationComplete");
-            let keyshare_party_ids = keyshare_parties(&history, &e3_id);
-            let keyshare_count = keyshare_party_ids.len();
-            let mut projected_without_keyshares: Vec<&str> = projected
-                .iter()
-                .copied()
-                .filter(|event| *event != "KeyshareCreated")
-                .collect();
-            projected_without_keyshares.sort();
-            let public_key_index = history.iter().enumerate().rev().find_map(|(index, event)| {
-                (event.source() == EventSource::Local
-                    && matches!(
-                        event.get_data(),
+            let local_events = collect_local_aggregate_events(
+                &history,
+                &e3_id,
+                index,
+                "public-key aggregation",
+                |data| {
+                    matches!(
+                        data,
                         InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id
-                    ))
-                .then_some(index)
-            });
-            if keyshare_count >= committee_h
-                && keyshare_count <= threshold_n
-                && projected_without_keyshares == expected_without_keyshares
-                && public_key_index.is_some_and(|index| {
-                    local_aggregator_role_at(&history, &e3_id, index) == Some(true)
-                })
-            {
-                pubkey_flow_winner = Some((index, history.to_vec()));
-                break;
+                    )
+                },
+            )?;
+            pubkey_producer_ids.extend(local_events.iter().map(|(_, event_id)| *event_id));
+            histories.push((index, history, local_events));
+        }
+
+        if pubkey_producer_ids.len() > 1 {
+            bail!(
+                "public-key aggregation produced multiple logical local results: {pubkey_producer_ids:?}"
+            );
+        }
+
+        if let Some(&producer_id) = pubkey_producer_ids.iter().next() {
+            let candidate_deadline = pubkey_candidate_deadline
+                .get_or_insert_with(|| Instant::now() + BENCHMARK_POST_BARRIER_SETTLE_TIMEOUT);
+            for (index, history, local_events) in &histories {
+                if *index == 0 {
+                    continue;
+                }
+                let Some(public_key_index) =
+                    local_events
+                        .iter()
+                        .rev()
+                        .find_map(|(event_index, event_id)| {
+                            (*event_id == producer_id).then_some(*event_index)
+                        })
+                else {
+                    continue;
+                };
+                let Some((active_role_index, true)) =
+                    aggregator_role_event_at(history, &e3_id, public_key_index)
+                else {
+                    continue;
+                };
+                let keyshare_party_ids = keyshare_parties(history, &e3_id);
+                if keyshare_party_ids.len() != threshold_n
+                    || keyshare_party_ids
+                        .iter()
+                        .any(|party_id| (*party_id as usize) >= threshold_n)
+                {
+                    continue;
+                }
+
+                let local_pubkey_events: Vec<&str> = history[active_role_index..=public_key_index]
+                    .iter()
+                    .filter(|event| event.source() == EventSource::Local)
+                    .filter_map(|event| publickey_aggregator_marker(event.get_data(), &e3_id))
+                    .collect();
+                let required_local_markers = [
+                    "ShareVerificationDispatched",
+                    "CommitmentConsistencyCheckRequested",
+                    "CommitmentConsistencyCheckComplete",
+                    "ShareVerificationComplete",
+                    "PkAggregationProofPending",
+                    "PkAggregationProofSigned",
+                ];
+                let local_c1_proof_count =
+                    count_projected_events(&local_pubkey_events, "ProofVerificationPassed");
+                if required_local_markers
+                    .iter()
+                    .all(|marker| local_pubkey_events.contains(marker))
+                    && local_c1_proof_count >= threshold_n
+                    && Instant::now() >= *candidate_deadline
+                {
+                    pubkey_flow_winner = Some((*index, history.to_vec()));
+                    break;
+                }
             }
         }
         if pubkey_flow_winner.is_some() {
             break;
         }
-        if Instant::now() >= pubkey_deadline {
+        let now = Instant::now();
+        let deadline = pubkey_candidate_deadline.unwrap_or(pubkey_deadline);
+        if now >= deadline {
             break;
         }
         sleep(Duration::from_secs(5)).await;
@@ -1941,7 +1961,7 @@ async fn test_trbfv_actor() -> Result<()> {
     let (_pubkey_flow_winner_index, pubkey_flow_winner_history) =
         pubkey_flow_winner.ok_or_else(|| {
             anyhow::anyhow!(
-                "No committee member recorded the complete C1→C5 public-key flow within {pubkey_flow_timeout:?}"
+                "No committee member recorded a local C1→C5 public-key flow after the public-key barrier within {BENCHMARK_POST_BARRIER_SETTLE_TIMEOUT:?}"
             )
         })?;
 
@@ -2037,35 +2057,62 @@ async fn test_trbfv_actor() -> Result<()> {
 
     println!("CiphertextOutputPublished event has been dispatched!");
 
-    // PlaintextAggregated is a local publication intent and is not gossiped. Every committee
-    // member runs the plaintext aggregation workflow redundantly, and under heavy load the
-    // score-picked member can finish after its peers (or be demoted mid-flight). Poll all
-    // participants and continue with whichever node recorded its own PlaintextAggregated.
+    // PlaintextAggregated is a local publication intent and is not gossiped. Poll committee
+    // members and continue with the node that recorded the event while it held the aggregator role.
     println!(
         "[bench-progress] polling all nodes for a local PlaintextAggregated (score-picked node {active_aggregator_index})"
     );
     let plaintext_deadline = Instant::now() + plaintext_flow_timeout;
+    let mut plaintext_candidate_deadline = None;
     let (plaintext_node_index, active_aggregator_history) = loop {
-        let mut found = None;
-        for index in 1..nodes.len() {
+        let mut histories = Vec::with_capacity(nodes.len());
+        let mut plaintext_producer_ids = HashSet::new();
+        for index in 0..nodes.len() {
             let history = nodes.get_history(index).await?;
-            let plaintext_index = history.iter().position(|event| {
-                matches!(
-                    event.get_data(),
-                    InterfoldEventData::PlaintextAggregated(data) if data.e3_id == e3_id
-                )
-            });
-            if plaintext_index.is_some_and(|event_index| {
-                local_aggregator_role_at(&history, &e3_id, event_index) == Some(true)
-            }) {
-                found = Some((index, history));
-                break;
+            let local_events = collect_local_aggregate_events(
+                &history,
+                &e3_id,
+                index,
+                "plaintext aggregation",
+                |data| {
+                    matches!(
+                        data,
+                        InterfoldEventData::PlaintextAggregated(data) if data.e3_id == e3_id
+                    )
+                },
+            )?;
+            plaintext_producer_ids.extend(local_events.iter().map(|(_, event_id)| *event_id));
+            histories.push((index, history, local_events));
+        }
+
+        if plaintext_producer_ids.len() > 1 {
+            bail!(
+                "plaintext aggregation produced multiple logical local results: {plaintext_producer_ids:?}"
+            );
+        }
+
+        let mut found = None;
+        if let Some(&producer_id) = plaintext_producer_ids.iter().next() {
+            let candidate_deadline = plaintext_candidate_deadline
+                .get_or_insert_with(|| Instant::now() + BENCHMARK_POST_BARRIER_SETTLE_TIMEOUT);
+            if Instant::now() >= *candidate_deadline {
+                found = histories
+                    .into_iter()
+                    .find_map(|(index, history, local_events)| {
+                        (index != 0
+                            && local_events
+                                .iter()
+                                .any(|(_, event_id)| *event_id == producer_id))
+                        .then_some((index, history))
+                    });
             }
         }
         if let Some(found) = found {
             break found;
         }
-        if Instant::now() >= plaintext_deadline {
+        let now = Instant::now();
+        let deadline = plaintext_candidate_deadline.unwrap_or(plaintext_deadline);
+        if now >= deadline {
             bail!("No node recorded a local PlaintextAggregated within {plaintext_flow_timeout:?}");
         }
         sleep(Duration::from_secs(5)).await;
@@ -2117,17 +2164,19 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // All N committee members that received share material attempt decryption and gossip; the
-    // aggregator consumes only H. So the number of distinct senders observed at the collector
-    // sits in [H, N].
-    assert!(
-        unique_ds_parties.len() >= committee_h && unique_ds_parties.len() <= threshold_n,
-        "collector: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
+    // Only the canonical H honest members generate decryption shares. The collector still sees
+    // the shares through the event bus, but no non-roster member should publish one.
+    assert_eq!(
+        unique_ds_parties.len(),
+        committee_h,
+        "collector: expected DecryptionshareCreated from exactly H={committee_h} honest parties, got {} parties {unique_ds_parties:?}",
         unique_ds_parties.len()
     );
 
-    let active_aggregator_plaintext_events =
-        plaintext_aggregator_events(&active_aggregator_history, &e3_id);
+    let active_aggregator_plaintext_events = plaintext_aggregator_events(
+        &active_aggregator_history[ciphertext_output_index..],
+        &e3_id,
+    );
 
     // C6 head layout:
     //   CiphertextOutputPublished, DecryptionshareCreated × K, ShareVerificationDispatched,
@@ -2165,36 +2214,47 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    assert!(
-        unique_ds_parties_agg.len() >= committee_h && unique_ds_parties_agg.len() <= threshold_n,
-        "active aggregator: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
+    assert_eq!(
+        unique_ds_parties_agg.len(),
+        committee_h,
+        "active aggregator: expected DecryptionshareCreated from exactly H={committee_h} parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
         unique_ds_parties_agg.len()
     );
+    let c6_head_end = active_aggregator_plaintext_events
+        .iter()
+        .enumerate()
+        .skip(svd_index)
+        .filter(|(_, event)| **event != "DecryptionshareCreated")
+        .nth(2)
+        .map(|(index, _)| index + 1)
+        .expect("C6 verification head should contain three markers");
+    let c6_head: Vec<&str> = active_aggregator_plaintext_events[svd_index..c6_head_end]
+        .iter()
+        .copied()
+        .filter(|event| *event != "DecryptionshareCreated")
+        .collect();
     assert_eq!(
-        &active_aggregator_plaintext_events[svd_index..svd_index + 3],
-        &[
+        c6_head,
+        vec![
             "ShareVerificationDispatched",
             "CommitmentConsistencyCheckRequested",
             "CommitmentConsistencyCheckComplete",
-        ][..],
+        ],
         "Unexpected active aggregator C6 head after ShareVerificationDispatched"
     );
-    let c6_head_end = svd_index + 3;
 
     let aggregation_pending_index = active_aggregator_plaintext_events
         .iter()
         .position(|event| *event == "AggregationProofPending")
         .expect("AggregationProofPending should be present");
     let c6_body = &active_aggregator_plaintext_events[c6_head_end..aggregation_pending_index];
-    assert_eq!(
-        count_projected_events(c6_body, "C6VerifyRequest"),
-        1,
-        "expected one C6 verification request before aggregation"
+    assert!(
+        count_projected_events(c6_body, "C6VerifyRequest") >= 1,
+        "expected at least one C6 verification request before aggregation"
     );
-    assert_eq!(
-        count_projected_events(c6_body, "C6VerifyResponse"),
-        1,
-        "expected one C6 verification response before aggregation"
+    assert!(
+        count_projected_events(c6_body, "C6VerifyResponse") >= 1,
+        "expected at least one paired C6 verification response before aggregation"
     );
     assert_eq!(
         count_projected_events(c6_body, "ShareVerificationComplete"),

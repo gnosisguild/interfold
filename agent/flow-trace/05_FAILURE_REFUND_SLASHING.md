@@ -1136,8 +1136,9 @@ Slash Reasons (derived from ProofType for Lane A):
 │              Complete Proof-to-Slash Pipeline                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                │
-│  1. PROOF GENERATION (each committee member)                   │
+│  1. PROOF GENERATION (per phase-eligible producer)              │
 │     ProofRequestActor generates & signs C0-C7 proofs           │
+│     → C6 generation is limited to the canonical H roster       │
 │     → Broadcasts signed proofs via P2P gossip                  │
 │                                                                │
 │  2. PROOF VERIFICATION (each receiving committee member)       │

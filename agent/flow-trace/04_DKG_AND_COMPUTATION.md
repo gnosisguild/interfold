@@ -904,7 +904,11 @@ active E3's deadlines.
 
 ---
 
-## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
+## Phase 4: Decryption Share Generation (Canonical Honest Members, with C6 Proof)
+
+Only members in the persisted canonical honest roster of size `H` generate a decryption share and
+C6 proof. Other committee members ignore `CiphertextOutputPublished` for this phase. The active
+aggregator verifies and folds the resulting `H` share/proof bundles.
 
 Before proof verification, the BFV wrapper requires every public input to use its canonical BN254
 field representation. Message coefficients must also fit exactly in 64 bits. This second check is

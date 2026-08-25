@@ -771,6 +771,12 @@ if [ -n "$INTEGRATION_BLOB" ]; then
             [ -z "$name" ] && continue
             echo "| $name | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
         done < <(jq -r '.operation_timings[]? | [.name, .avg_seconds, .runs, .total_seconds] | @tsv' <<<"$INTEGRATION_BLOB")
+        c6_h=$(jq -r '.benchmark_config.committee_h // empty' <<<"$INTEGRATION_BLOB")
+        c6_n=$(jq -r '.benchmark_config.committee_n // empty' <<<"$INTEGRATION_BLOB")
+        if [ -n "$c6_h" ] && [ -n "$c6_n" ]; then
+            echo "" >> "$OUTPUT_FILE"
+            echo "_C6 note: \`N=${c6_n}\` is the full committee size and \`H=${c6_h}\` is the canonical honest roster. \`ZkThresholdShareDecryption\` should run once for each eligible honest party, so its expected request count is \`H=${c6_h}\`. Each request returns one proof per ciphertext output. The \`runs\` value counts proof-generation requests._" >> "$OUTPUT_FILE"
+        fi
         ott=$(jq -r '.operation_timings_total_seconds // empty' <<<"$INTEGRATION_BLOB")
         if [ -n "$ott" ] && [ "$ott" != "null" ]; then
             echo "" >> "$OUTPUT_FILE"

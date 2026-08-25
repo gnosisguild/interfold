@@ -572,8 +572,8 @@ sequenceDiagram
     P->>Z: folded/recursive aggregation proof work
     P->>W: aggregated public key
     Chain->>K: ciphertext outputs
-    K->>Z: C6 decryption-share proofs
-    K->>T: share + proof per output and party
+    K->>Z: C6 decryption-share proofs for the canonical H roster
+    K->>T: share + proof per output and honest party
     T->>Z: C7 aggregation proof
     T->>W: plaintext output
 ```
