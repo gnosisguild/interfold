@@ -16,9 +16,9 @@ use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
     ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated,
-    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    E3id, EventSource, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
+    PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind,
+    ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -155,7 +155,7 @@ fn benchmark_multithread_concurrent_jobs() -> usize {
 }
 
 /// Logical CPUs that the shared Rayon pool must not use, so actor runtimes keep headroom
-/// (`BENCHMARK_RESERVE_THREADS`, default `max(2, cores / 4)`).
+/// (`BENCHMARK_RESERVE_THREADS`, default `max(1, min(max(2, cores / 4), cores.saturating_sub(1)))`).
 ///
 /// The harness runs all nodes, their event buses, and their history collectors on one tokio
 /// runtime. A pool sized near the core count starves those actors. EventBus fanout then passes
@@ -1165,30 +1165,12 @@ fn plaintext_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             if data.e3_id == *e3_id
                 && matches!(
                     &data.request,
-                    ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(_))
-                ) =>
-        {
-            Some("C6VerifyRequest")
-        }
-        InterfoldEventData::ComputeRequest(data)
-            if data.e3_id == *e3_id
-                && matches!(
-                    &data.request,
                     ComputeRequestKind::TrBFV(TrBFVRequest::CalculateThresholdDecryption(_))
                         | ComputeRequestKind::Zk(ZkRequest::DecryptedSharesAggregation(_))
                         | ComputeRequestKind::Zk(ZkRequest::DecryptionAggregation { .. })
                 ) =>
         {
             Some("ComputeRequest")
-        }
-        InterfoldEventData::ComputeResponse(data)
-            if data.e3_id == *e3_id
-                && matches!(
-                    &data.response,
-                    ComputeResponseKind::Zk(ZkResponse::VerifyShareProofs(_))
-                ) =>
-        {
-            Some("C6VerifyResponse")
         }
         InterfoldEventData::ComputeResponse(data)
             if data.e3_id == *e3_id
@@ -1222,6 +1204,58 @@ fn plaintext_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
         }
         _ => None,
     }
+}
+
+/// `VerifyShareProofs` is shared by C1 and C6; its signed proof types identify the phase.
+fn is_c6_verify_request(request: &ComputeRequestKind) -> bool {
+    let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(request)) = request else {
+        return false;
+    };
+
+    !request.party_proofs.is_empty()
+        && request.party_proofs.iter().all(|party| {
+            !party.signed_proofs.is_empty()
+                && party
+                    .signed_proofs
+                    .iter()
+                    .all(|proof| proof.payload.proof_type == ProofType::C6ThresholdShareDecryption)
+        })
+}
+
+fn plaintext_aggregator_events(history: &[InterfoldEvent], e3_id: &E3id) -> Vec<&'static str> {
+    let mut c6_correlations = HashSet::new();
+
+    history
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(data)
+                if data.e3_id == *e3_id && is_c6_verify_request(&data.request) =>
+            {
+                c6_correlations.insert(data.correlation_id);
+                Some("C6VerifyRequest")
+            }
+            InterfoldEventData::ComputeResponse(data)
+                if data.e3_id == *e3_id
+                    && c6_correlations.contains(&data.correlation_id)
+                    && matches!(
+                        &data.response,
+                        ComputeResponseKind::Zk(ZkResponse::VerifyShareProofs(_))
+                    ) =>
+            {
+                Some("C6VerifyResponse")
+            }
+            data => plaintext_aggregator_marker(data, e3_id),
+        })
+        .collect()
+}
+
+fn is_c6_share_verification_dispatched(event: &InterfoldEvent, e3_id: &E3id) -> bool {
+    matches!(
+        event.get_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.e3_id == *e3_id
+                && data.kind == VerificationKind::ThresholdDecryptionProofs
+    )
 }
 
 async fn setup_score_sortition_environment(
@@ -1749,22 +1783,21 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // Unlike KeyshareCreated (cheap, gossiped early — all N arrive before aggregation), the
-    // per-node recursive fold proof (DKGRecursiveAggregationComplete) is expensive and late.
     // `PublicKeyAggregated` fires once the aggregator selects and aggregates the honest set, so
-    // only the H honest folds are guaranteed to have reached node 0 by this barrier; the extra
-    // N-H members' folds race against it (and may land afterward). Assert the guaranteed floor
-    // and that every observed fold party is a committee member, not the racy `== N`.
+    // only the H honest inputs are guaranteed to have reached node 0 by this barrier. Both
+    // gossiped event types can race with the barrier, so assert the guaranteed floor and the
+    // committee-party bounds instead of requiring all N events.
     assert!(
         dkg_parties.len() >= committee_h
             && dkg_parties.len() <= threshold_n
             && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
         "node 0: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members before PublicKeyAggregated (only the H honest folds are guaranteed by this barrier), got parties {dkg_parties:?}"
     );
-    assert_eq!(
-        ks_parties.len(),
-        threshold_n,
-        "node 0: expected KeyshareCreated from each committee member (N={threshold_n}), got parties {ks_parties:?}"
+    assert!(
+        ks_parties.len() >= committee_h
+            && ks_parties.len() <= threshold_n
+            && ks_parties.iter().all(|p| (*p as usize) < threshold_n),
+        "node 0: expected KeyshareCreated from {committee_h}..={threshold_n} committee members before PublicKeyAggregated, got parties {ks_parties:?}"
     );
     let pk_agg = h
         .iter()
@@ -1802,8 +1835,6 @@ async fn test_trbfv_actor() -> Result<()> {
         publickey_aggregator_marker(data, &e3_id)
     });
     active_aggregator_pubkey_events.retain(|event| *event != "DKGRecursiveAggregationComplete");
-    let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
-    expected_sorted.sort();
 
     // Every committee member runs the full C1→C5 aggregation workflow redundantly, and a
     // progress deadline promotes standbys when the active member stalls. Under heavy load,
@@ -1820,10 +1851,11 @@ async fn test_trbfv_actor() -> Result<()> {
             "Active aggregator {active_aggregator_addr}: public-key flow is missing {marker}"
         );
     }
-    assert_eq!(
-        count_projected_events(&active_aggregator_pubkey_events, "KeyshareCreated"),
-        threshold_n,
-        "Active aggregator: expected KeyshareCreated from each of the {threshold_n} committee members"
+    let active_keyshare_count =
+        count_projected_events(&active_aggregator_pubkey_events, "KeyshareCreated");
+    assert!(
+        active_keyshare_count >= committee_h && active_keyshare_count <= threshold_n,
+        "Active aggregator: expected KeyshareCreated from {committee_h}..={threshold_n} committee members, got {active_keyshare_count}"
     );
     assert_eq!(
         active_aggregator_pubkey_events.first().copied(),
@@ -1836,33 +1868,64 @@ async fn test_trbfv_actor() -> Result<()> {
         "Active aggregator: last event must be PublicKeyAggregated"
     );
 
+    let mut expected_without_keyshares: Vec<&'static str> =
+        expected_active_aggregator_pubkey_events
+            .iter()
+            .copied()
+            .filter(|event| *event != "KeyshareCreated")
+            .collect();
+    expected_without_keyshares.sort();
+
     // The complete C1→C5 multiset must exist on the member that finished its own
-    // aggregation flow first. Scan every node and require one exact match.
+    // aggregation flow first. Gossip can still be settling after the public-key barrier, so
+    // retry until the bounded phase timeout instead of failing on the first partial snapshot.
+    let pubkey_deadline = Instant::now() + pubkey_flow_timeout;
     let mut pubkey_flow_winner: Option<(usize, Vec<InterfoldEvent>)> = None;
-    for index in 0..nodes.len() {
-        let history = nodes.get_history(index).await?;
-        let mut projected =
-            project_history(&history, |data| publickey_aggregator_marker(data, &e3_id));
-        projected.retain(|event| *event != "DKGRecursiveAggregationComplete");
-        projected.sort();
-        let public_key_index = history.iter().rposition(|event| {
-            matches!(
-                event.get_data(),
-                InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id
-            )
-        });
-        if projected == expected_sorted.as_slice()
-            && public_key_index.is_some_and(|index| {
-                local_aggregator_role_at(&history, &e3_id, index) == Some(true)
-            })
-        {
-            pubkey_flow_winner = Some((index, history.to_vec()));
+    loop {
+        for index in 1..nodes.len() {
+            let history = nodes.get_history(index).await?;
+            let mut projected =
+                project_history(&history, |data| publickey_aggregator_marker(data, &e3_id));
+            projected.retain(|event| *event != "DKGRecursiveAggregationComplete");
+            let keyshare_count = count_projected_events(&projected, "KeyshareCreated");
+            let mut projected_without_keyshares: Vec<&str> = projected
+                .iter()
+                .copied()
+                .filter(|event| *event != "KeyshareCreated")
+                .collect();
+            projected_without_keyshares.sort();
+            let public_key_index = history.iter().enumerate().rev().find_map(|(index, event)| {
+                (event.source() == EventSource::Local
+                    && matches!(
+                        event.get_data(),
+                        InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id
+                    ))
+                .then_some(index)
+            });
+            if keyshare_count >= committee_h
+                && keyshare_count <= threshold_n
+                && projected_without_keyshares == expected_without_keyshares
+                && public_key_index.is_some_and(|index| {
+                    local_aggregator_role_at(&history, &e3_id, index) == Some(true)
+                })
+            {
+                pubkey_flow_winner = Some((index, history.to_vec()));
+                break;
+            }
+        }
+        if pubkey_flow_winner.is_some() {
             break;
         }
+        if Instant::now() >= pubkey_deadline {
+            break;
+        }
+        sleep(Duration::from_secs(5)).await;
     }
     let (_pubkey_flow_winner_index, pubkey_flow_winner_history) =
         pubkey_flow_winner.ok_or_else(|| {
-            anyhow::anyhow!("No committee member recorded the complete C1→C5 public-key flow")
+            anyhow::anyhow!(
+                "No committee member recorded the complete C1→C5 public-key flow within {pubkey_flow_timeout:?}"
+            )
         })?;
 
     if let Some(secs) = history_wall_seconds_between(
@@ -1992,7 +2055,7 @@ async fn test_trbfv_actor() -> Result<()> {
     };
     // The decryption phase starts at this node's own CiphertextOutputPublished observation;
     // everything before it belongs to the public-key phase.
-    let active_aggregator_pubkey_history_len = active_aggregator_history
+    let ciphertext_output_index = active_aggregator_history
         .iter()
         .position(|event| {
             matches!(
@@ -2046,10 +2109,8 @@ async fn test_trbfv_actor() -> Result<()> {
         unique_ds_parties.len()
     );
 
-    let active_aggregator_plaintext_events = project_history(
-        &active_aggregator_history[active_aggregator_pubkey_history_len..],
-        |data| plaintext_aggregator_marker(data, &e3_id),
-    );
+    let active_aggregator_plaintext_events =
+        plaintext_aggregator_events(&active_aggregator_history, &e3_id);
 
     // C6 head layout:
     //   CiphertextOutputPublished, DecryptionshareCreated × K, ShareVerificationDispatched,
@@ -2066,20 +2127,22 @@ async fn test_trbfv_actor() -> Result<()> {
         .iter()
         .position(|e| *e == "ShareVerificationDispatched")
         .expect("ShareVerificationDispatched should be present in plaintext flow");
+    let c6_svd_history_index = active_aggregator_history
+        .iter()
+        .enumerate()
+        .skip(ciphertext_output_index + 1)
+        .find_map(|(index, event)| {
+            is_c6_share_verification_dispatched(event, &e3_id).then_some(index)
+        })
+        .expect("C6 ShareVerificationDispatched should be present in plaintext history");
     let pre_svd = &active_aggregator_plaintext_events[1..svd_index];
     assert!(
         pre_svd.iter().all(|e| *e == "DecryptionshareCreated"),
         "active aggregator: only DecryptionshareCreated allowed between CiphertextOutputPublished and ShareVerificationDispatched, got {pre_svd:?}"
     );
     let unique_ds_parties_agg: HashSet<u64> = active_aggregator_history
-        [active_aggregator_pubkey_history_len..]
+        [ciphertext_output_index..c6_svd_history_index]
         .iter()
-        .take_while(|e| {
-            !matches!(
-                e.get_data(),
-                InterfoldEventData::ShareVerificationDispatched(_)
-            )
-        })
         .filter_map(|e| match e.get_data() {
             InterfoldEventData::DecryptionshareCreated(d) if d.e3_id == e3_id => Some(d.party_id),
             _ => None,
@@ -2185,7 +2248,7 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     if let Some(secs) = history_wall_seconds_between(
-        &active_aggregator_history[active_aggregator_pubkey_history_len..],
+        &active_aggregator_history[ciphertext_output_index..],
         |d| {
             matches!(
                 d,
