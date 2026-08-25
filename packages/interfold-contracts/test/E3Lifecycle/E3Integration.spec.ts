@@ -1789,11 +1789,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
+      const proposalId = await slashingManager.totalProposals();
       await slashingManager.proposeSlash(
         firstE3Id,
         await operator1.getAddress(),
         proof,
       );
+      await slashingManager.retrySlashRoute(proposalId);
 
       const token = await usdcToken.getAddress();
       const targetRecipient = await requester.getAddress();
