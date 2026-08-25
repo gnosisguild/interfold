@@ -20,6 +20,7 @@ import { deployAndSaveFaucet } from "./deployAndSave/faucet";
 import { deployAndSaveInterfold } from "./deployAndSave/interfold";
 import { deployAndSaveInterfoldTicketToken } from "./deployAndSave/interfoldTicketToken";
 import { deployAndSaveInterfoldToken } from "./deployAndSave/interfoldToken";
+import { deployAndSaveMockRandomnessProvider } from "./deployAndSave/mockRandomnessProvider";
 import { deployAndSaveMockStableToken } from "./deployAndSave/mockStableToken";
 import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
@@ -233,6 +234,14 @@ export const deployInterfold = async (
   const ciphernodeRegistryAddress = await ciphernodeRegistry.getAddress();
   console.log("CiphernodeRegistry deployed to:", ciphernodeRegistryAddress);
 
+  console.log("Deploying MockRandomnessProvider...");
+  const { randomnessProvider } = await deployAndSaveMockRandomnessProvider({
+    requester: ciphernodeRegistryAddress,
+    hre,
+  });
+  const randomnessProviderAddress = await randomnessProvider.getAddress();
+  console.log("MockRandomnessProvider deployed to:", randomnessProviderAddress);
+
   // BondingRegistry is deployed before FOLD so its address can be passed to
   // the token constructor.  The ciphernode bond token is set to address(0) temporarily
   // and fixed after FOLD is deployed with the complete asset configuration.
@@ -430,6 +439,12 @@ export const deployInterfold = async (
   await send(
     ciphernodeRegistry.setBondingRegistry(bondingRegistryAddress),
     "ciphernodeRegistry.setBondingRegistry",
+  );
+
+  console.log("Setting RandomnessProvider address in CiphernodeRegistry...");
+  await send(
+    ciphernodeRegistry.setRandomnessProvider(randomnessProviderAddress),
+    "ciphernodeRegistry.setRandomnessProvider",
   );
 
   console.log("Setting Submission Window in CiphernodeRegistry...");
@@ -803,6 +818,16 @@ export const deployInterfold = async (
       slashingManagerAddress,
     ],
     [
+      "ciphernodeRegistry.randomnessProvider",
+      ciphernodeRegistry.randomnessProvider(),
+      randomnessProviderAddress,
+    ],
+    [
+      "randomnessProvider.requester",
+      randomnessProvider.requester(),
+      ciphernodeRegistryAddress,
+    ],
+    [
       "bondingRegistry.registry",
       bondingRegistry.registry(),
       ciphernodeRegistryAddress,
@@ -901,6 +926,7 @@ export const deployInterfold = async (
     BondedCheckpoints: ${bondedCheckpointsAddress}
     BondedVotes: ${bondedVotesAddress}
     CiphernodeRegistry: ${ciphernodeRegistryAddress}
+    RandomnessProvider: ${randomnessProviderAddress}
     E3RefundManager: ${e3RefundManagerAddress}
     Interfold: ${interfoldAddress}
     DecryptionVerifier (BFV): ${decryptionVerifierAddress}
