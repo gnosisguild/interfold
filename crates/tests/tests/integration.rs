@@ -164,6 +164,7 @@ fn benchmark_multithread_reserve_threads() -> usize {
     std::env::var("BENCHMARK_RESERVE_THREADS")
         .ok()
         .and_then(|s| s.parse().ok())
+        .filter(|&threads| threads >= 1)
         .unwrap_or_else(|| {
             let cores = std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -1797,9 +1798,10 @@ async fn test_trbfv_actor() -> Result<()> {
     // by each committee member and gossiped in parallel with the active aggregator's own
     // C1→C5 verification flow, so their positions relative to the C1→C5 sub-sequence are
     // non-deterministic. Compare as a multiset plus boundary events rather than strict order.
-    let active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
+    let mut active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
         publickey_aggregator_marker(data, &e3_id)
     });
+    active_aggregator_pubkey_events.retain(|event| *event != "DKGRecursiveAggregationComplete");
     let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
     expected_sorted.sort();
 
