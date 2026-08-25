@@ -40,6 +40,15 @@ const HEAD_TTL: Duration = Duration::from_secs(3);
 /// bound between blocks.
 const MAX_ENTRIES: usize = 20_000;
 
+/// Backstop lifetime for the `latest` call cache.
+///
+/// The block-boundary invalidation below is the correct rule, but it only fires when something
+/// reads the head — so if head refreshes stop (a client that only calls `/chain/read`, or an
+/// upstream that starts failing `/chain/head`), entries from an old block would be served as
+/// `latest` indefinitely. This bounds that to a span shorter than a block time, so the worst case
+/// degrades to "one block stale" rather than "stale until the process restarts".
+const LATEST_CALL_TTL: Duration = Duration::from_secs(6);
+
 #[derive(Clone, Copy)]
 pub struct CachedHead {
     pub block_number: u64,
@@ -54,6 +63,8 @@ struct Inner {
     /// Reads at `latest`, valid only for `latest_block`.
     latest_calls: HashMap<(String, String), String>,
     latest_block: u64,
+    /// When `latest_block` was last advanced, for the TTL backstop.
+    latest_block_at: Option<Instant>,
     /// Reads pinned to a historical block, keyed by `(address, calldata, block)`.
     historical_calls: HashMap<(String, String, u64), String>,
 }
@@ -84,8 +95,11 @@ pub async fn put_block_number(block_number: u64) {
 async fn store_head(block_number: u64, timestamp: Option<u64>) {
     let mut guard = CACHE.write().await;
 
-    if block_number > guard.latest_block {
+    // `!=` rather than `>`: a reorg that lowers the head still means the state these results
+    // describe is gone, and a `>` test would keep serving the orphaned block's answers.
+    if block_number != guard.latest_block {
         guard.latest_block = block_number;
+        guard.latest_block_at = Some(Instant::now());
         guard.latest_calls.clear();
     }
 
@@ -138,6 +152,13 @@ pub async fn call(address: &str, data: &str, block: Option<u64>) -> Option<Strin
             if guard.latest_block == 0 {
                 return None;
             }
+            // Nothing has confirmed the head recently enough for these to still describe it.
+            if guard
+                .latest_block_at
+                .is_none_or(|at| at.elapsed() >= LATEST_CALL_TTL)
+            {
+                return None;
+            }
             guard.latest_calls.get(&(address, data)).cloned()
         }
     }
@@ -166,7 +187,9 @@ pub async fn put_call(
             if guard.historical_calls.len() >= MAX_ENTRIES {
                 guard.historical_calls.clear();
             }
-            guard.historical_calls.insert((address, data, block), result);
+            guard
+                .historical_calls
+                .insert((address, data, block), result);
         }
         None => {
             if guard.latest_block == 0 {

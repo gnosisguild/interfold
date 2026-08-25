@@ -50,6 +50,14 @@ import type {
 } from './types'
 
 /**
+ * Pass as the SDK's `rpcUrl` to read the chain through the CRISP server's own `/chain/rpc` route.
+ *
+ * A sentinel rather than a boolean flag so the parameter keeps one meaning — "where chain reads
+ * go" — whether that is a URL you supply or the server you are already talking to.
+ */
+export const SERVER_RPC = 'server' as const
+
+/**
  * A class representing the CRISP SDK.
  */
 export class CrispSDK {
@@ -60,24 +68,27 @@ export class CrispSDK {
   private serverUrl: string
 
   /**
-   * Endpoint used for direct chain reads.
-   *
-   * Defaults to the server's own read-only JSON-RPC route, so an instance configured with just a
-   * server URL reads the chain through that server rather than through viem's default public RPC
-   * — a third-party endpoint neither the caller nor this SDK controls. Pass an explicit URL to
-   * override, or `null` to keep the old default-public behaviour deliberately.
+   * Endpoint used for direct chain reads, or `undefined` to use viem's default public RPC.
    */
   private rpcUrl: string | undefined
 
   /**
    * Create a new instance.
+   *
    * @param serverUrl - The base URL of the CRISP server
-   * @param rpcUrl - Endpoint for direct chain reads. Defaults to the server's `/chain/rpc` route;
-   *                 pass `null` to fall back to viem's default public RPC.
+   * @param rpcUrl - Endpoint for direct chain reads. Omit (or pass `null`) to keep viem's default
+   *                 public RPC. Pass {@link SERVER_RPC} to read through the CRISP server's own
+   *                 `/chain/rpc` route instead of a third-party endpoint. Any other string is used
+   *                 as the endpoint URL directly.
+   *
+   * Routing through the server is opt-in rather than the default because it is a change of
+   * transport, not a tuning knob: a caller who merely upgrades this package would have every chain
+   * read redirected to a route their deployed server may not have — or may not be configured to
+   * serve the contracts being read — turning a version bump into an outage.
    */
   constructor(serverUrl: string, rpcUrl?: string | null) {
     this.serverUrl = serverUrl
-    this.rpcUrl = rpcUrl === null ? undefined : (rpcUrl ?? chainRpcUrl(serverUrl))
+    this.rpcUrl = rpcUrl === SERVER_RPC ? chainRpcUrl(serverUrl) : (rpcUrl ?? undefined)
   }
 
   /**

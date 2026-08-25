@@ -5,7 +5,25 @@ chains:
     enabled: true
     rpc_url: ws://localhost:8545
     contracts:
-      e3_  - name: "mainnet"
+      e3_program:
+        address: "0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7"
+        deploy_block: 78
+      interfold:
+        address: "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690"
+        deploy_block: 32
+      ciphernode_registry:
+        address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+        deploy_block: 9
+      bonding_registry:
+        address: "0x9A676e781A523b5d0C0e43731313A708CB607508"
+        deploy_block: 10
+      slashing_manager:
+        address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+        deploy_block: 7
+      fee_token:
+        address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+        deploy_block: 4
+  - name: "mainnet"
     enabled: false
     rpc_url: "wss://ethereum-rpc.publicnode.com"
     chain_id: 1
@@ -30,24 +48,6 @@ chains:
       fee_token:
         address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
         deploy_block: 20663730
-program:
-        address: "0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7"
-        deploy_block: 78
-      interfold:
-        address: "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690"
-        deploy_block: 32
-      ciphernode_registry:
-        address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
-        deploy_block: 9
-      bonding_registry:
-        address: "0x9A676e781A523b5d0C0e43731313A708CB607508"
-        deploy_block: 10
-      slashing_manager:
-        address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-        deploy_block: 7
-      fee_token:
-        address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-        deploy_block: 4
   - name: "sepolia"
     enabled: false
     rpc_url: "wss://ethereum-sepolia-rpc.publicnode.com"

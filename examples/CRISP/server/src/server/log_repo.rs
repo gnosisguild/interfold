@@ -165,6 +165,36 @@ impl<S: DataStore> LogRepository<S> {
         Ok(())
     }
 
+    /// Re-base an address's coverage to `from_block`, discarding an earlier claim.
+    ///
+    /// Needed because coverage outlives the configuration that produced it. An address dropped
+    /// from `INDEX_LOG_CONTRACTS` and later restored still carries the record from its first run,
+    /// which claims history reaching back before the gap when nothing was indexed. Reads are
+    /// gated on the live configuration, so the stale record cannot be served while the address is
+    /// absent — but when it returns, the claim has to be narrowed to what will actually be there.
+    ///
+    /// Only ever narrows: a record already starting later is left alone.
+    pub async fn rebase_coverage(&mut self, address: &str, from_block: u64) -> Result<()> {
+        let key = Self::coverage_key(address);
+
+        let current: Option<LogCoverage> = self
+            .store
+            .get(&key)
+            .await
+            .map_err(|e| eyre::eyre!("reading log coverage {key} failed: {e}"))?;
+
+        if current.is_none_or(|existing| existing.from_block >= from_block) {
+            return Ok(());
+        }
+
+        self.store
+            .insert(&key, &LogCoverage { from_block })
+            .await
+            .map_err(|e| eyre::eyre!("writing log coverage {key} failed: {e}"))?;
+
+        Ok(())
+    }
+
     /// The highest block the indexer has fully applied.
     ///
     /// The upper bound of what the store can answer: a query reaching past it would silently

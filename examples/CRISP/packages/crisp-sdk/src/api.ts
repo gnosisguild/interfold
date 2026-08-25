@@ -278,6 +278,10 @@ export const readContracts = async (serverUrl: string, calls: ContractRead[]): P
  * The range needs no chunking by the caller: the server splits it into windows the upstream
  * provider accepts, which is the whole reason clients otherwise carry range-splitting code.
  *
+ * It is still BOUNDED — the server refuses a span wider than a million blocks, and `fromBlock`
+ * defaults to 0, so a query naming only an address is rejected on a long-lived chain. Pass the
+ * contract's deployment block as `fromBlock`; that is the intended usage and always in range.
+ *
  * @param serverUrl - The base URL of the CRISP server
  * @param query - The log query
  * @returns The matching logs, ordered by block and log index

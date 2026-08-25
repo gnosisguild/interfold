@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::server::log_repo::{LogRepository, StoredLog};
 use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
     get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
@@ -20,6 +21,7 @@ use alloy::sol_types::{sol_data, SolType};
 use alloy_primitives::{Address, U256};
 use crisp_utils::decode_tally;
 use e3_fhe_params::decode_bfv_params_arc;
+use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use e3_sdk::{
     evm_helpers::{
         contracts::{InterfoldRead, ReadWrite},
@@ -32,8 +34,6 @@ use e3_sdk::{
 };
 use evm_helpers::{CRISPContractFactory, InputPublished};
 use eyre::Context;
-use crate::server::log_repo::{LogRepository, StoredLog};
-use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
@@ -473,6 +473,14 @@ async fn wait_for_indexed_inputs<S: DataStore>(
 /// handler, so two passes do not overlap.
 const DEADLINE_RETRY_OFFSETS: [u64; 3] = [60, 180, 420];
 
+/// Store key holding the `INDEX_LOG_CONTRACTS` set as of the previous run.
+///
+/// Coverage records outlive the configuration that created them, and the store has no delete. This
+/// is what lets a restart tell "this address has been indexed continuously" from "this address is
+/// back after a spell of not being indexed", so the second case can narrow its claim instead of
+/// asserting history that was never fetched.
+const LOG_INDEX_CONFIG_KEY: &str = "_logs:_config";
+
 async fn handle_e3_input_deadline_expiration(
     e3_id: String,
     store: SharedStore<impl DataStore>,
@@ -758,8 +766,9 @@ pub async fn register_input_published(
 
 /// Persist every log from a watched contract, so `/chain/logs` can answer from the store.
 ///
-/// Untyped on purpose — see `log_repo`. Errors are logged rather than propagated: failing to
-/// retain a log for the read API must not abort a catch-up that the E3 handlers depend on.
+/// Untyped on purpose — see `log_repo`. A failed write IS propagated: the catch-up uses a handler
+/// error to hold the cursor back, and an index that quietly missed a log while the cursor moved
+/// past it answers later queries short while looking authoritative.
 pub async fn register_log_index(
     indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
     log_contracts: &[String],
@@ -779,19 +788,37 @@ pub async fn register_log_index(
                     return Ok(());
                 }
 
+                // A log with no block number or index cannot be placed. `unwrap_or_default()`
+                // filed it at block 0, log 0 — a position that both collides with any other
+                // unplaceable log and sits below every coverage record, so it would be silently
+                // dropped from every query anyway. Skipping it is the same outcome, said out loud.
+                let (Some(block_number), Some(log_index)) = (log.block_number, log.log_index)
+                else {
+                    warn!(
+                        "Skipping a log with no block position from {}",
+                        log.address()
+                    );
+                    return Ok(());
+                };
+
                 let stored = StoredLog {
                     removed: log.removed,
                     address: log.address().to_string(),
                     topics: log.topics().iter().map(|t| t.to_string()).collect(),
                     data: log.data().data.to_string(),
-                    block_number: log.block_number.unwrap_or_default(),
+                    block_number,
                     transaction_hash: log.transaction_hash.map(|h| h.to_string()),
-                    log_index: log.log_index.unwrap_or_default(),
+                    log_index,
                 };
 
-                if let Err(e) = repo.append(stored).await {
-                    error!("Could not index log: {e}");
-                }
+                // Propagated, not logged and dropped. The cursor is a claim that everything below
+                // it has been applied, and `catch_up` relies on a handler error to stop the
+                // cursor advancing past a failed window — swallowing this disarmed exactly that
+                // safety net, and one transient store failure became a permanent hole underneath
+                // an index that still reported the range as covered.
+                repo.append(stored)
+                    .await
+                    .map_err(|e| eyre::eyre!("indexing a log failed: {e}"))?;
 
                 Ok(())
             }
@@ -879,11 +906,39 @@ pub async fn start_indexer(
             };
 
             if let Some(coverage_from) = coverage_from {
-                let mut repo = LogRepository::new(store);
+                // The set that was log-indexed on the previous run. An address present now but
+                // absent then was not indexed during the gap, so whatever coverage its earlier
+                // run left behind overstates what is in the store.
+                let previous: Vec<String> = store
+                    .get(LOG_INDEX_CONFIG_KEY)
+                    .await
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+
+                let mut repo = LogRepository::new(store.clone());
                 for address in index_log_contracts {
-                    if let Err(e) = repo.ensure_coverage_from(address, coverage_from).await {
+                    let was_indexed = previous
+                        .iter()
+                        .any(|entry| entry.eq_ignore_ascii_case(address));
+
+                    let recorded = if was_indexed {
+                        repo.ensure_coverage_from(address, coverage_from).await
+                    } else {
+                        // Newly added (or re-added after a removal): claim only from here on.
+                        repo.rebase_coverage(address, coverage_from)
+                            .await
+                            .and(repo.ensure_coverage_from(address, coverage_from).await)
+                    };
+
+                    if let Err(e) = recorded {
                         error!("Could not record log coverage for {address}: {e}");
                     }
+                }
+
+                let mut store = store;
+                let current: Vec<String> = index_log_contracts.to_vec();
+                if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
+                    error!("Could not record the log-index configuration: {e}");
                 }
             }
         }

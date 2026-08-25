@@ -177,7 +177,16 @@ impl EventListener {
 
             // Providers are not required to return logs in order, and the handlers below are
             // order-sensitive: `block_number`/`log_index` is the chain's own ordering.
-            logs.sort_by_key(|log| (log.block_number, log.log_index));
+            //
+            // A log with no block number (pending, in principle unreachable here) sorts LAST
+            // rather than first: sorting `Option` directly put the one entry whose position
+            // cannot be verified ahead of every entry whose position is known.
+            logs.sort_by_key(|log| {
+                (
+                    log.block_number.unwrap_or(u64::MAX),
+                    log.log_index.unwrap_or(u64::MAX),
+                )
+            });
 
             for log in &logs {
                 let raw_count = self.raw_handlers.read().await.len();

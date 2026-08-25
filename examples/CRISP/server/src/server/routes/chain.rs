@@ -10,9 +10,14 @@
 //! contracts it already talks to through this server. These routes close that gap, and they are
 //! deliberately NOT a general purpose JSON-RPC proxy:
 //!
-//! - Every call is checked against an address allowlist (`INDEX_CONTRACTS`), so the server cannot
-//!   be turned into free RPC for the rest of the chain. The data itself is public — the allowlist
-//!   bounds cost and abuse, not disclosure.
+//! - Every method that names an address is checked against an allowlist (`INDEX_CONTRACTS` plus
+//!   the contracts this server is configured against), so the server cannot be turned into free
+//!   RPC for the rest of the chain. The data itself is public — the allowlist bounds cost and
+//!   abuse, not disclosure. The check fails closed in both directions: an unknown parameter shape
+//!   is refused, and so is a request that omits the address a method could have carried (an
+//!   `eth_call` with no `to` is arbitrary EVM execution; an `eth_getLogs` with no `address` is
+//!   every log on the chain). The few methods that name no address at all are bounded by shape
+//!   instead — no full transaction bodies, and a capped `feeHistory`.
 //! - Only reads. There is no path here that can send a transaction; writes stay with the user's
 //!   wallet, which brings its own transport.
 //! - Log queries are windowed server-side, so a caller may ask for the whole history of a contract
@@ -26,10 +31,10 @@ use crate::server::read_cache;
 
 use actix_web::{web, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
+use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, Bytes, B256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, TransactionRequest};
-use alloy::network::TransactionBuilder;
 use log::error;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -49,6 +54,29 @@ const MAX_BATCH: usize = 64;
 /// with a clear bound is better than accepting a request that ties up a connection for minutes:
 /// callers know their contract's deployment block, and asking from there is the intended usage.
 const MAX_LOG_WINDOWS: u64 = 500;
+
+/// Cap on how many calls one JSON-RPC batch may carry.
+///
+/// A batch is executed sequentially, so an unbounded array is an unbounded number of upstream
+/// requests held open on one connection — the same fan-out `/chain/read` already bounds.
+const MAX_RPC_BATCH: usize = 64;
+
+/// How long to wait on the upstream provider before giving up.
+///
+/// Without one, reqwest waits forever: a provider that accepts connections and then stalls would
+/// pin a worker per request until the process is restarted.
+const UPSTREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// One HTTP client for the process, rather than one per request.
+///
+/// `Client` owns a connection pool; building it per call threw the pool away every time and paid
+/// a fresh TLS handshake for each upstream request.
+static HTTP: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(UPSTREAM_TIMEOUT)
+        .build()
+        .expect("building the upstream HTTP client cannot fail with a timeout as its only option")
+});
 
 /// Whether a range is small enough to serve, given the window size.
 fn windows_for(from: u64, to: u64) -> u64 {
@@ -151,51 +179,147 @@ fn rpc_error(id: Option<serde_json::Value>, code: i64, message: &str) -> serde_j
 /// A call carrying `from`, `value` or a gas field is not keyed: those can change the result, and
 /// a key that ignores them would serve one caller's answer to another.
 fn call_cache_key(params: &serde_json::Value) -> Option<(String, String, Option<u64>)> {
-    let tx = params.get(0)?;
+    // A state override object in the third position lets the caller choose the bytes the node
+    // returns. It is forwarded verbatim, so a key that ignores it would let one caller pick what
+    // every other caller is served for the rest of the block.
+    if params.get(2).is_some_and(|v| !v.is_null()) {
+        return None;
+    }
 
-    if ["from", "value", "gas", "gasPrice", "maxFeePerGas"]
-        .iter()
-        .any(|field| tx.get(field).is_some_and(|v| !v.is_null()))
+    let tx = params.get(0)?.as_object()?;
+
+    // An allowlist of the fields the key accounts for, not a denylist of the ones known to break
+    // it: any field this endpoint does not understand may change the result, and a new one
+    // appearing in a future client must not silently become uncounted.
+    if tx
+        .keys()
+        .any(|field| !matches!(field.as_str(), "to" | "data" | "input"))
     {
         return None;
     }
 
     let address = tx.get("to")?.as_str()?.to_string();
-    let data = tx.get("data").or_else(|| tx.get("input"))?.as_str()?.to_string();
+    let data = tx
+        .get("data")
+        .or_else(|| tx.get("input"))?
+        .as_str()?
+        .to_string();
 
-    let block = match params.get(1).and_then(|v| v.as_str()) {
-        None | Some("latest") => None,
-        // Anything that is not a plain `latest` or a concrete height (pending, safe, finalized)
-        // is left uncached rather than guessed at.
-        Some(tag) if tag.starts_with("0x") => {
-            Some(u64::from_str_radix(tag.trim_start_matches("0x"), 16).ok()?)
-        }
+    let block = match params.get(1) {
+        // Absent or null: `latest` by JSON-RPC default.
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(tag)) => match tag.as_str() {
+            "latest" => None,
+            // Anything that is not a plain `latest` or a concrete height (pending, safe,
+            // finalized) is left uncached rather than guessed at.
+            hex if hex.starts_with("0x") => {
+                Some(u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()?)
+            }
+            _ => return None,
+        },
+        // The EIP-1898 object form (`{"blockNumber":…}` / `{"blockHash":…}`). Reading it with
+        // `as_str` yielded `None`, which is the key for `latest` — so a result the node computed
+        // at an arbitrary historical block was filed as the current one, and any caller could
+        // choose what every other caller saw. Not keyed at all rather than keyed wrongly.
         Some(_) => return None,
     };
 
     Some((address, data, block))
 }
 
-/// Pull the `to`/`address` field out of an `eth_call` or `eth_getLogs` parameter list so it can be
-/// checked against the allowlist. `eth_getLogs` accepts a single address or an array of them.
-fn requested_addresses(method: &str, params: &serde_json::Value) -> Vec<String> {
-    let Some(first) = params.get(0) else {
-        return Vec::new();
-    };
+/// Which addresses a call is scoped to, so they can be checked against the allowlist.
+///
+/// The distinction that matters is between a method that carries NO address by construction and
+/// one whose address this function failed to find: the first is a global read that the allowlist
+/// cannot bound at all, the second is an unrecognised shape. Returning an empty vec for both is
+/// what made the allowlist decorative — an `eth_call` with no `to`, or an `eth_getLogs` with no
+/// `address`, skipped the check entirely and was forwarded verbatim.
+enum Scope {
+    /// Check every one of these against the allowlist before forwarding.
+    Addresses(Vec<String>),
+    /// The method takes no address; nothing to check, and nothing this endpoint can bound by
+    /// address either.
+    Global,
+    /// The method should be address-scoped but this request is not. Refuse.
+    Unscoped(&'static str),
+}
+
+/// Pull the address (or addresses) a request is scoped to out of its parameter list.
+///
+/// Fails closed: every method that CAN name an address must name one, and any shape this does not
+/// recognise is a refusal rather than a pass.
+fn requested_addresses(method: &str, params: &serde_json::Value) -> Scope {
+    // Methods whose address is a bare string in the first position.
+    let positional = matches!(
+        method,
+        "eth_getCode" | "eth_getBalance" | "eth_getStorageAt" | "eth_getTransactionCount"
+    );
+
+    if positional {
+        return match params.get(0) {
+            Some(serde_json::Value::String(one)) => Scope::Addresses(vec![one.clone()]),
+            _ => Scope::Unscoped("this method requires an address in the first parameter"),
+        };
+    }
 
     let field = match method {
+        // An `eth_call` with no `to` is a contract-creation simulation: the caller supplies
+        // initcode that runs arbitrary EVM, which is a read of any contract on the chain by
+        // another name. There is no address to check, so there is nothing to allow.
         "eth_call" | "eth_estimateGas" => "to",
+        // An absent, null or empty `address` means "every address" to a node. Serving that would
+        // return the whole chain's logs through an endpoint whose stated bound is an allowlist.
         "eth_getLogs" => "address",
-        _ => return Vec::new(),
+        _ => return Scope::Global,
+    };
+
+    let Some(first) = params.get(0) else {
+        return Scope::Unscoped("this method requires a filter or call object");
     };
 
     match first.get(field) {
-        Some(serde_json::Value::String(one)) => vec![one.clone()],
-        Some(serde_json::Value::Array(many)) => many
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_string))
-            .collect(),
-        _ => Vec::new(),
+        Some(serde_json::Value::String(one)) => Scope::Addresses(vec![one.clone()]),
+        Some(serde_json::Value::Array(many)) if !many.is_empty() => {
+            let mut addresses = Vec::with_capacity(many.len());
+            for entry in many {
+                match entry.as_str() {
+                    Some(one) => addresses.push(one.to_string()),
+                    None => return Scope::Unscoped("addresses must be strings"),
+                }
+            }
+            Scope::Addresses(addresses)
+        }
+        _ => Scope::Unscoped("this method requires an explicit address"),
+    }
+}
+
+/// Cap on `eth_feeHistory`'s block count, which is otherwise a caller-chosen fan-out.
+const MAX_FEE_HISTORY_BLOCKS: u64 = 128;
+
+/// Reject the shapes of an address-less method that would return an unbounded response.
+///
+/// These methods cannot be bounded by the allowlist — there is no address in them — so the only
+/// remaining lever is refusing the expensive variants. A block request with full transaction
+/// bodies is the largest single response a node will produce, and nothing in this server's
+/// intended use needs one.
+fn global_request_is_too_broad(method: &str, params: &serde_json::Value) -> Option<&'static str> {
+    match method {
+        "eth_getBlockByNumber" | "eth_getBlockByHash" => params
+            .get(1)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            .then_some("full transaction bodies are not served; pass false"),
+        "eth_feeHistory" => {
+            let count = params.get(0).and_then(|v| match v {
+                serde_json::Value::String(hex) => {
+                    u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+                }
+                serde_json::Value::Number(n) => n.as_u64(),
+                _ => None,
+            })?;
+            (count > MAX_FEE_HISTORY_BLOCKS).then_some("feeHistory block count is too large")
+        }
+        _ => None,
     }
 }
 
@@ -214,6 +338,23 @@ async fn rpc(body: web::Json<serde_json::Value>, store: web::Data<AppData>) -> i
     // every batched request a 400 that no JSON-RPC client knows how to read.
     match body.into_inner() {
         serde_json::Value::Array(entries) => {
+            // An empty batch is an Invalid Request per the spec, not an empty result.
+            if entries.is_empty() {
+                return HttpResponse::Ok().json(rpc_error(
+                    None,
+                    -32600,
+                    "Invalid request: empty batch",
+                ));
+            }
+
+            if entries.len() > MAX_RPC_BATCH {
+                return HttpResponse::Ok().json(rpc_error(
+                    None,
+                    -32600,
+                    &format!("At most {MAX_RPC_BATCH} calls per batch"),
+                ));
+            }
+
             let mut responses = Vec::with_capacity(entries.len());
             for entry in entries {
                 responses.push(handle_rpc_call(entry, &store).await);
@@ -245,18 +386,30 @@ async fn handle_rpc_call(
         );
     }
 
-    for address in requested_addresses(&request.method, &request.params) {
-        match parse_address(&address) {
-            Some(parsed) if is_allowed(&parsed) => {}
-            Some(parsed) => {
-                return rpc_error(
-                    id,
-                    -32602,
-                    &format!("Address not served by this indexer: {parsed}"),
-                );
+    match requested_addresses(&request.method, &request.params) {
+        Scope::Addresses(addresses) => {
+            for address in addresses {
+                match parse_address(&address) {
+                    Some(parsed) if is_allowed(&parsed) => {}
+                    Some(parsed) => {
+                        return rpc_error(
+                            id,
+                            -32602,
+                            &format!("Address not served by this indexer: {parsed}"),
+                        );
+                    }
+                    None => return rpc_error(id, -32602, "Invalid address"),
+                }
             }
-            None => {
-                return rpc_error(id, -32602, "Invalid address");
+        }
+        Scope::Unscoped(reason) => {
+            return rpc_error(id, -32602, &format!("{}: {reason}", request.method));
+        }
+        Scope::Global => {
+            // Nothing to check by address, so the bound has to come from the shape of the request
+            // itself: these are the methods that can return an unbounded amount of data.
+            if let Some(reason) = global_request_is_too_broad(&request.method, &request.params) {
+                return rpc_error(id, -32602, reason);
             }
         }
     }
@@ -282,7 +435,9 @@ async fn handle_rpc_call(
     // Same per-block reasoning as `/chain/read`: this is the path the frontends take, so it is
     // where the duplication across clients actually happens.
     let cacheable_call = request.method == "eth_call";
-    let call_key = cacheable_call.then(|| call_cache_key(&request.params)).flatten();
+    let call_key = cacheable_call
+        .then(|| call_cache_key(&request.params))
+        .flatten();
     // Read BEFORE the upstream request: if the head moves while it is in flight, the result
     // describes the older block and must not be filed under the newer one.
     let issued_at_block = read_cache::current_latest_block().await;
@@ -297,14 +452,14 @@ async fn handle_rpc_call(
         read_cache::record_call(false).await;
     }
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP;
 
     // Handled separately for two reasons: the index can usually answer it outright, and when it
     // cannot, forwarding a wide range verbatim would just relay the provider's own range-cap error
     // back to a caller with no way to know the cap. This is the path the frontends actually take,
     // so it is where serving from the index matters.
     if request.method == "eth_getLogs" {
-        if let Some(indexed) = logs_from_index(&store, &request.params).await {
+        if let Some(indexed) = logs_from_index(store, &request.params).await {
             read_cache::record_logs(true).await;
             return serde_json::json!({
                 "jsonrpc": "2.0", "id": id, "result": indexed,
@@ -312,7 +467,7 @@ async fn handle_rpc_call(
         }
         read_cache::record_logs(false).await;
 
-        return match forward_windowed_logs(&client, &request.params).await {
+        return match forward_windowed_logs(client, &request.params).await {
             Ok(logs) => serde_json::json!({
                 "jsonrpc": "2.0", "id": id, "result": logs,
             }),
@@ -345,8 +500,14 @@ async fn handle_rpc_call(
                 if let (Some((address, data, block)), Some(result)) =
                     (&call_key, value.get("result").and_then(|r| r.as_str()))
                 {
-                    read_cache::put_call(address, data, *block, result.to_string(), issued_at_block)
-                        .await;
+                    read_cache::put_call(
+                        address,
+                        data,
+                        *block,
+                        result.to_string(),
+                        issued_at_block,
+                    )
+                    .await;
                 }
 
                 if request.method == "eth_blockNumber" {
@@ -387,6 +548,18 @@ async fn logs_from_index(
 ) -> Option<Vec<serde_json::Value>> {
     let filter = params.get(0)?;
     let address = filter.get("address")?.as_str()?;
+
+    // `blockHash` is an alternative to `fromBlock`/`toBlock` that names one specific block,
+    // including an orphaned one. The index is keyed by height and has no way to answer it — and
+    // with both range bounds absent the bounds below would default to the indexed head, so this
+    // returned the head block's logs as if they were the requested block's.
+    if filter.get("blockHash").is_some_and(|v| !v.is_null()) {
+        return None;
+    }
+
+    if !is_log_indexed(address) {
+        return None;
+    }
 
     let repo = store.logs();
     let indexed_from = repo.coverage(address).await.ok()??;
@@ -459,27 +632,42 @@ async fn forward_windowed_logs(
     client: &reqwest::Client,
     params: &serde_json::Value,
 ) -> eyre::Result<Vec<serde_json::Value>> {
-    let filter = params
-        .get(0)
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
+    let filter = params.get(0).cloned().unwrap_or(serde_json::json!({}));
+
+    // A `blockHash` filter names one block and is mutually exclusive with a range. Rewriting
+    // `fromBlock`/`toBlock` into it below would produce a request the node rejects, so it is
+    // forwarded as-is in a single call instead.
+    if filter.get("blockHash").is_some_and(|v| !v.is_null()) {
+        return forward_logs_verbatim(client, &filter).await;
+    }
 
     let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
     let head = provider.get_block_number().await?;
 
     // Hex block tags, `earliest`/`latest`, or absent — all normalised to numbers so the window
-    // arithmetic below has something to count with.
-    let resolve = |value: Option<&serde_json::Value>, fallback: u64| -> u64 {
-        match value.and_then(|v| v.as_str()) {
-            Some("latest") | Some("pending") | Some("safe") | Some("finalized") | None => fallback,
-            Some("earliest") => 0,
-            Some(tag) => u64::from_str_radix(tag.trim_start_matches("0x"), 16).unwrap_or(fallback),
+    // arithmetic below has something to count with. A tag that parses as none of these is an
+    // error rather than a silent fallback: `"fromBlock": "1000"` (decimal, a common client bug)
+    // used to resolve to the head and come back as an empty single-block scan, presented as a
+    // complete answer for the range the caller actually asked for.
+    let resolve = |value: Option<&serde_json::Value>, fallback: u64| -> eyre::Result<u64> {
+        match value {
+            None | Some(serde_json::Value::Null) => Ok(fallback),
+            Some(serde_json::Value::String(tag)) => match tag.as_str() {
+                "latest" | "pending" | "safe" | "finalized" => Ok(fallback),
+                "earliest" => Ok(0),
+                hex if hex.starts_with("0x") => {
+                    u64::from_str_radix(hex.trim_start_matches("0x"), 16)
+                        .map_err(|_| eyre::eyre!("invalid block tag: {tag}"))
+                }
+                other => Err(eyre::eyre!("invalid block tag: {other}")),
+            },
+            Some(other) => Err(eyre::eyre!("invalid block tag: {other}")),
         }
     };
 
     // Both bounds default to `latest`, per the JSON-RPC spec.
-    let from = resolve(filter.get("fromBlock"), head);
-    let to = resolve(filter.get("toBlock"), head).min(head);
+    let from = resolve(filter.get("fromBlock"), head)?;
+    let to = resolve(filter.get("toBlock"), head)?.min(head);
 
     if windows_for(from, to) > MAX_LOG_WINDOWS {
         return Err(eyre::eyre!(
@@ -524,17 +712,62 @@ async fn forward_windowed_logs(
     Ok(all)
 }
 
-/// Contracts these routes will serve, parsed from `INDEX_CONTRACTS`.
+/// Forward one `eth_getLogs` filter unchanged, for the shapes windowing cannot express.
+async fn forward_logs_verbatim(
+    client: &reqwest::Client,
+    filter: &serde_json::Value,
+) -> eyre::Result<Vec<serde_json::Value>> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [filter],
+    });
+
+    let response: serde_json::Value = client
+        .post(&CONFIG.http_rpc_url)
+        .json(&body)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    if let Some(err) = response.get("error") {
+        return Err(eyre::eyre!("upstream error: {err}"));
+    }
+
+    match response.get("result") {
+        Some(serde_json::Value::Array(logs)) => Ok(logs.clone()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Contracts these routes will serve: `INDEX_CONTRACTS` plus the ones this server is itself
+/// configured against.
 ///
 /// An empty allowlist denies everything rather than allowing everything: a misconfigured
 /// deployment should fail closed, not silently become an open RPC endpoint.
+///
+/// The server's own contracts are implicit because refusing them is never the intended
+/// configuration — the SDK's `getOnChainRoundData` reads the E3 program this server was deployed
+/// to serve, and requiring the operator to name it a second time in `INDEX_CONTRACTS` turned a
+/// forgotten variable into "the SDK cannot read the round it just told you about".
 fn is_allowed(address: &Address) -> bool {
-    CONFIG
+    let configured = [
+        CONFIG.e3_program_address.as_str(),
+        CONFIG.interfold_address.as_str(),
+        CONFIG.ciphernode_registry_address.as_str(),
+        CONFIG.fee_token_address.as_str(),
+        CONFIG.crisp_voting_token.as_deref().unwrap_or(""),
+    ];
+
+    let listed = CONFIG
         .index_contracts
         .as_deref()
         .unwrap_or("")
         .split(',')
-        .map(str::trim)
+        .map(str::trim);
+
+    configured
+        .into_iter()
+        .chain(listed)
         .filter(|entry| !entry.is_empty())
         .filter_map(|entry| Address::from_str(entry).ok())
         .any(|allowed| allowed == *address)
@@ -542,6 +775,30 @@ fn is_allowed(address: &Address) -> bool {
 
 fn parse_address(value: &str) -> Option<Address> {
     Address::from_str(value.trim()).ok()
+}
+
+/// Whether an address's logs are being indexed RIGHT NOW, per the live configuration.
+///
+/// Checked in addition to the stored coverage record, because a coverage record outlives the
+/// configuration that created it: the store has no delete, so removing a contract from
+/// `INDEX_LOG_CONTRACTS` — the documented way to stop paying for a chatty contract's logs — left
+/// its record behind while the cursor kept advancing. Every query then passed the coverage test
+/// and was answered from a frozen index, missing every event since the removal, and by design
+/// indistinguishable from an upstream answer.
+fn is_log_indexed(address: &str) -> bool {
+    let Some(address) = parse_address(address) else {
+        return false;
+    };
+
+    CONFIG
+        .index_log_contracts
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| Address::from_str(entry).ok())
+        .any(|indexed| indexed == address)
 }
 
 #[derive(Debug, Serialize)]
@@ -690,10 +947,14 @@ async fn read(request: web::Json<ReadRequest>) -> impl Responder {
         }
         read_cache::record_call(false).await;
 
-        let tx = TransactionRequest::default().with_to(address).with_input(data);
+        let tx = TransactionRequest::default()
+            .with_to(address)
+            .with_input(data);
 
         let pending = match call.block_number {
-            Some(number) => provider.call(tx).block(BlockNumberOrTag::Number(number).into()),
+            Some(number) => provider
+                .call(tx)
+                .block(BlockNumberOrTag::Number(number).into()),
             None => provider.call(tx),
         };
 
@@ -771,35 +1032,39 @@ async fn logs(request: web::Json<LogsRequest>, store: web::Data<AppData>) -> imp
     // before indexing began, or reaching past what has been applied, would come back short, and a
     // silently short answer is worse than a slower correct one.
     let repo = store.logs();
-    if let (Ok(Some(indexed_from)), Ok(Some(indexed_head))) =
-        (repo.coverage(&request.address).await, repo.indexed_head().await)
-    {
-        let from = request.from_block.unwrap_or(0);
-        // Compared BEFORE clamping. Clamping first made this test tautological, so a caller asking
-        // past the indexed head got a quietly truncated 200 instead of the upstream answer.
-        let requested_to = request.to_block.unwrap_or(indexed_head);
+    if is_log_indexed(&request.address) {
+        if let (Ok(Some(indexed_from)), Ok(Some(indexed_head))) = (
+            repo.coverage(&request.address).await,
+            repo.indexed_head().await,
+        ) {
+            let from = request.from_block.unwrap_or(0);
+            // Compared BEFORE clamping. Clamping first made this test tautological, so a caller
+            // asking past the indexed head got a quietly truncated 200 instead of the upstream
+            // answer.
+            let requested_to = request.to_block.unwrap_or(indexed_head);
 
-        if from >= indexed_from && requested_to <= indexed_head {
-            let to = requested_to;
-            let topics: Vec<Option<String>> = request.topics.clone();
-            match repo.query(&request.address, from, to, &topics).await {
-                Ok(found) => {
-                    read_cache::record_logs(true).await;
-                    return HttpResponse::Ok().json(
-                        found
-                            .into_iter()
-                            .map(|log| LogEntry {
-                                address: log.address,
-                                topics: log.topics,
-                                data: log.data,
-                                block_number: Some(log.block_number),
-                                transaction_hash: log.transaction_hash,
-                                log_index: Some(log.log_index),
-                            })
-                            .collect::<Vec<_>>(),
-                    );
+            if from >= indexed_from && requested_to <= indexed_head {
+                let to = requested_to;
+                let topics: Vec<Option<String>> = request.topics.clone();
+                match repo.query(&request.address, from, to, &topics).await {
+                    Ok(found) => {
+                        read_cache::record_logs(true).await;
+                        return HttpResponse::Ok().json(
+                            found
+                                .into_iter()
+                                .map(|log| LogEntry {
+                                    address: log.address,
+                                    topics: log.topics,
+                                    data: log.data,
+                                    block_number: Some(log.block_number),
+                                    transaction_hash: log.transaction_hash,
+                                    log_index: Some(log.log_index),
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    Err(e) => error!("chain/logs: index read failed, falling back upstream: {e}"),
                 }
-                Err(e) => error!("chain/logs: index read failed, falling back upstream: {e}"),
             }
         }
     }
@@ -945,23 +1210,36 @@ async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl
 
     let mut low = 0u64;
     let mut high = head_block.header.number;
-    let mut best = 0u64;
-    let mut best_timestamp = 0u64;
+    let mut best: Option<(u64, u64)> = None;
 
     while low <= high {
         let mid = low + (high - low) / 2;
 
+        // A failed probe must abort the search, not end it: the bisection has only ruled out half
+        // the range at each step, so whatever `best` holds is a partial answer. Returning it was
+        // a 200 carrying block 0 — and a caller resolving a snapshot timepoint would then read
+        // `getPastVotes(voter, 0)` and report every voter ineligible.
         let block = match provider
             .get_block_by_number(BlockNumberOrTag::Number(mid))
             .await
         {
             Ok(Some(b)) => b,
-            _ => break,
+            Ok(None) => {
+                error!("chain/block-at-timestamp: block {mid} missing during bisection");
+                return HttpResponse::ServiceUnavailable().json(JsonResponse {
+                    response: "Upstream RPC could not resolve the timestamp".to_string(),
+                });
+            }
+            Err(e) => {
+                error!("chain/block-at-timestamp: block {mid} lookup failed: {e}");
+                return HttpResponse::ServiceUnavailable().json(JsonResponse {
+                    response: "Upstream RPC unavailable".to_string(),
+                });
+            }
         };
 
         if block.header.timestamp <= target {
-            best = block.header.number;
-            best_timestamp = block.header.timestamp;
+            best = Some((block.header.number, block.header.timestamp));
             low = mid + 1;
         } else {
             if mid == 0 {
@@ -971,8 +1249,12 @@ async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl
         }
     }
 
+    // No block at or before the target: the timestamp predates the chain. Genesis is a real
+    // answer here, and it is reached by exhausting the search rather than by abandoning it.
+    let (block_number, timestamp) = best.unwrap_or((0, 0));
+
     HttpResponse::Ok().json(BlockAtTimestampResponse {
-        block_number: best,
-        timestamp: best_timestamp,
+        block_number,
+        timestamp,
     })
 }

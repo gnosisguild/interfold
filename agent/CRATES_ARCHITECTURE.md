@@ -617,6 +617,45 @@ node submit a transaction. `E3RequestComplete` does not discard an unfinished pu
 and only a canonical EVM `E3StageChanged(Complete)` makes the request router publish that cleanup
 signal.
 
+## Indexer catch-up and the applied-block cursor
+
+`e3-indexer` can replay the logs it missed while it was not running. The machinery is **opt-in**:
+an indexer that never calls `configure_backfill` writes no cursor, replays nothing, and starts its
+subscription at the head, exactly as before the feature existed. That distinction is a safety
+property, not a convenience — the event handlers are not pure (`E3Requested` submits
+`setMerkleRoot` on chain and re-initialises the stored round), so replay must never be acquired by
+merely upgrading the crate.
+
+`INDEXER_CURSOR_KEY` (`_indexer:cursor`) holds the last block whose logs have been fully applied.
+Four rules keep it from claiming more than is true:
+
+- **It only advances once the catch-up has completed** for the current connection. A cursor that
+  moved while a gap beneath it was still unreplayed would seal that gap permanently.
+- **It only advances monotonically.** Block handlers are spawned rather than awaited, so headers
+  can be applied out of order; the claim goes through `fetch_max` so a late header cannot move it
+  backwards and make a restart replay blocks already applied.
+- **It advances to `blockheight - 1`**, because the header and the logs arrive on two independent
+  subscriptions with no ordering guarantee between them.
+- **A window advances it only after every handler in that window succeeded.** `catch_up`
+  propagates handler errors for exactly this reason, so a consumer's raw handler must return
+  `Err` on a failed write rather than logging and continuing.
+
+The catch-up re-reads the head after each pass and loops until it converges, because a backfill
+from a deployment block can run for hours and every block mined during it would otherwise fall
+between the replay and the subscription that starts afterwards. A backfill that keeps failing does
+not wedge the process: after several attempts the indexer subscribes anyway with the cursor left
+where it was, so live indexing resumes and the unreplayed range is retried later rather than being
+claimed as applied.
+
+Handlers registered on the block listener must capture only what they need — never the
+`Arc<IndexerContext>` itself. The context owns the block listener, so a handler holding the
+context forms a reference cycle and the indexer is never dropped.
+
+Consumers that build a queryable log index on top of the cursor (the CRISP server does) must also
+treat coverage records as claims that can go stale: the store has no delete, so a record outlives
+the configuration that created it and has to be re-checked against the live configuration at read
+time.
+
 ## Failure, accusation, slashing, expulsion, and timeout
 
 ```mermaid
