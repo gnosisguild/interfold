@@ -49,8 +49,8 @@ const sdk = new InterfoldSDK({
     feeToken: '0x...', // Your ERC-20 fee token address
   },
   chain: sepolia,
-  // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 
 // Listen to events with the unified event system
@@ -90,8 +90,8 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
@@ -209,8 +209,8 @@ function MyComponent() {
       feeToken: '0x...',
     },
     autoConnect: true,
-    // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-    thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
   })
 
   useEffect(() => {
@@ -272,8 +272,8 @@ import {
   getThresholdBfvParamsSet,
 } from '@interfold/sdk'
 
-// Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-const presetName = 'SECURE_THRESHOLD_8192'
+// 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+const presetName = 'INSECURE_THRESHOLD_512'
 
 const publicKey = await generatePublicKey(presetName)
 const encrypted = await encryptNumber(42n, publicKey, presetName)
@@ -434,13 +434,35 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name                | On-chain `paramSet` index | Use case                                                                                                    |
-| -------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and testing only — small polynomial degree (N=512), fast but not cryptographically secure |
-| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=4 CRT moduli)                                              |
+| Preset name                | On-chain `paramSet` index | Use case                                                                                               |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and Sepolia — small polynomial degree (N=512), fast but not cryptographically secure |
+| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=3 CRT moduli)                                         |
 
-Always use `'SECURE_THRESHOLD_8192'` in production. The insecure preset exists solely to speed up
-local dev cycles.
+| Network                | Preset                     | `paramSet` |
+| ---------------------- | -------------------------- | ---------- |
+| Local development      | `'INSECURE_THRESHOLD_512'` | `0`        |
+| Sepolia testnet        | `'INSECURE_THRESHOLD_512'` | `0`        |
+| Mainnet and production | `'SECURE_THRESHOLD_8192'`  | `1`        |
+
+Use `'INSECURE_THRESHOLD_512'` on Sepolia: the Sepolia ciphernodes run the insecure preset, and the
+circuit artifacts bundled in this package are compiled for it. Use `'SECURE_THRESHOLD_8192'` in
+production, together with your own `secure-8192` circuit artifacts (see
+[Proving](#proving-embedded-circuits-or-your-own)).
+
+### Proving: embedded circuits or your own
+
+`generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
+user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
+`--preset insecure-512 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+`'INSECURE_THRESHOLD_512'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
+`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=512 circuits cannot
+execute.
+
+For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and
+committee your deployment uses, emit the Solidity verifier from them, and feed them the witness from
+`encryptNumberAndGenInputs()`. `examples/CRISP` in the monorepo shows the full flow. Secure
+artifacts may ship here in a later release.
 
 ## Error Handling
 

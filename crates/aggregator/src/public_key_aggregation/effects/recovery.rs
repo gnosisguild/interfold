@@ -10,6 +10,9 @@ impl PublicKeyAggregator {
         &mut self,
         effects_context: EventContext<Sequenced>,
     ) -> Result<()> {
+        if !self.can_run_aggregation_effects() {
+            return Ok(());
+        }
         let recovery = self.recovery.try_get()?;
         ensure!(
             recovery.schema_version == PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,

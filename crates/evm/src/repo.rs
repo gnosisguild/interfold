@@ -7,7 +7,7 @@
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 
-use crate::EvmReadInterfaceState;
+use crate::{EvmReadInterfaceState, SlashingWriterRecoveryState};
 
 pub trait EthPrivateKeyRepositoryFactory {
     fn eth_private_key(&self) -> Repository<Vec<u8>>;
@@ -51,6 +51,19 @@ impl BondingRegistryReaderRepositoryFactory for Repositories {
         Repository::new(
             self.store
                 .scope(StoreKeys::bonding_registry_reader(chain_id)),
+        )
+    }
+}
+
+pub trait SlashingWriterRepositoryFactory {
+    fn slashing_writer_recovery(&self, chain_id: u64) -> Repository<SlashingWriterRecoveryState>;
+}
+
+impl SlashingWriterRepositoryFactory for Repositories {
+    fn slashing_writer_recovery(&self, chain_id: u64) -> Repository<SlashingWriterRecoveryState> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::slashing_writer_recovery(chain_id)),
         )
     }
 }

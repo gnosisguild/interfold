@@ -588,18 +588,23 @@ phase.
 ```
   All committee members receive KeyshareCreated events
 │
-├─ KeyshareCreatedFilterBuffer gates events:
+├─ KeyshareCreatedFilterBuffer validates events:
   │   └─ Only accepts KeyshareCreated from verified committee members
   │   └─ Compares committee, keyshare, and exclusion identities as parsed EVM addresses;
   │      EIP-55 casing differences cannot bypass an exclusion or its buffered-share purge
-  │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On exclusion- or timeout-driven handoff, the next active aggregator flushes its buffer
+  │   └─ Buffers only until CommitteeFinalized provides the canonical party-slot map
+  │   └─ Then forwards every valid keyshare into each committee member's persisted actor state
 │
-  ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
+  ├─ Every committee member persists the same collected keyshares
   │
   ├─ When every non-excluded member has submitted a keyshare:
 │   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
+│   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
+│   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
+│   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
+│   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
+│   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
 │   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
@@ -979,19 +984,21 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 ```
   All committee members receive DecryptionshareCreated events
 │
-  ├─ DecryptionshareCreatedBuffer gates events:
+  ├─ DecryptionshareCreatedBuffer validates exclusion state:
   │   ├─ Tracks parties excluded by on-chain expulsion or the disabled-policy fallback
-  │   ├─ Buffers until AggregatorChanged(is_aggregator=true)
-  │   └─ Forwards the role change, then flushes verified shares when this node is active
+  │   └─ Forwards every valid share into each committee member's persisted plaintext actor
   │
-  ├─ ThresholdPlaintextAggregator receives flushed shares
-  │   ├─ Arms its 30-minute collection timeout only while this node is active
-  │   ├─ Starts a fresh collection window after promotion and cancels it after demotion
+  ├─ ThresholdPlaintextAggregator persists shares on active and standby nodes
   │   ├─ Verifies sender is in committee
   │   ├─ Adds the share if verified
   │   └─ Ignores non-members or excluded parties
 │
-  ├─ C6 VERIFICATION (per-share, on active aggregator):
+  ├─ Once all required honest shares are durable:
+  │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
+  │   ├─ Start the 10-minute failover budget only at this readiness boundary
+  │   └─ A promoted standby resumes the persisted phase
+│
+  ├─ C6 VERIFICATION (per-share, active aggregator only):
 │   ShareVerificationActor receives C6 signed proofs
 │   ├─ ECDSA recovery + ZK verification (same 2-phase as C2/C3)
 │   ├─ On failure: SignedProofFailed → accusation pipeline
@@ -1311,10 +1318,14 @@ E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes
 durable event order or audit state.
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
-repository stores the pending phase, assigned party, absolute deadline, and locally unresponsive
-party IDs. An unchanged phase and assignment preserve the original deadline. A new assignment gets
-the full budget. `EffectsEnabled` re-arms the remaining duration or processes an overdue deadline
-immediately. Canonical phase progress cancels the old timer and clears the phase-local skip set.
+repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
+unresponsive party IDs. `CommitteeFinalized` and `CiphertextOutputPublished` identify the canonical
+phase but do not start a progress budget. A persisted aggregation actor publishes
+`AggregationInputsReady` only after all inputs are durable. An unchanged ready phase and assignment
+preserve the original deadline. A new assignment gets the full budget. `EffectsEnabled` re-arms the
+remaining duration or processes an overdue deadline immediately. Canonical phase progress cancels
+the old timer and clears the phase-local skip set. Startup migrates the v0.12 failover snapshot by
+discarding its pre-readiness timers and skip set.
 
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer

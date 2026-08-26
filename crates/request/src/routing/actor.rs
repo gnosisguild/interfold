@@ -27,7 +27,7 @@ use e3_events::BusHandle;
 use e3_events::E3RequestComplete;
 use e3_events::EType;
 use e3_events::EventType;
-use e3_events::{AggregateId, E3id, InterfoldEvent, RequestRouterCheckpoint};
+use e3_events::{AggregateId, CiphernodeSelected, E3id, InterfoldEvent, RequestRouterCheckpoint};
 use e3_utils::MAILBOX_LIMIT;
 use serde::Deserialize;
 use serde::Serialize;
@@ -96,6 +96,7 @@ pub struct E3Router {
     /// Per-aggregate cursor covered by the self-consistent router recovery checkpoint.
     replay_cursors: HashMap<AggregateId, u64>,
     recovery_store: Repository<RequestRouterCheckpoint>,
+    recovered_selections: Vec<CiphernodeSelected>,
 }
 
 pub struct E3RouterParams {
@@ -104,6 +105,7 @@ pub struct E3RouterParams {
     store: Repository<E3RouterSnapshot>,
     replay_cursors: HashMap<AggregateId, u64>,
     recovery_store: Repository<RequestRouterCheckpoint>,
+    recovered_selections: Vec<CiphernodeSelected>,
 }
 
 impl E3Router {
@@ -112,6 +114,8 @@ impl E3Router {
         let builder = E3RouterBuilder {
             bus: bus.clone(),
             extensions: vec![],
+            recovered_selections: vec![],
+            recovery_store: repositories.request_router_checkpoint(),
             store: repositories.router(),
         };
 
@@ -129,6 +133,7 @@ impl E3Router {
             buffer: EventBuffer::default(),
             replay_cursors: params.replay_cursors,
             recovery_store: params.recovery_store,
+            recovered_selections: params.recovered_selections,
         }
     }
 }

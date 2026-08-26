@@ -8,20 +8,73 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
     type Result = ();
     fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
-        if !self.sortition_seeds.contains_key(&e3_id) {
-            info!(e3_id = %e3_id, "Waiting for the delayed sortition seed");
-            self.pending_requests.insert(e3_id, msg);
+        if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+            recovery.pending_requests.insert(e3_id.clone(), msg.clone());
+            Ok(recovery)
+        }) {
+            self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
             return;
         }
-        self.perform_sortition(msg);
+        let seed_ready = self
+            .recovery
+            .get()
+            .is_some_and(|recovery| recovery.seeds.contains_key(&e3_id));
+        if !seed_ready {
+            info!(e3_id = %e3_id, "Waiting for the delayed sortition seed");
+            return;
+        }
+        if self.effects_enabled {
+            self.perform_sortition(msg);
+        }
+    }
+}
+
+impl Handler<EffectsEnabled> for Sortition {
+    type Result = ();
+
+    fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
+        self.effects_enabled = true;
+        let recovery = self.recovery.get().unwrap_or_default();
+        let requests = recovery
+            .pending_requests
+            .iter()
+            .filter(|(e3_id, _)| recovery.seeds.contains_key(e3_id))
+            .map(|(_, request)| request.clone())
+            .collect::<Vec<_>>();
+        let membership_e3s = recovery
+            .pending_expulsions
+            .keys()
+            .chain(recovery.pending_exclusions.keys())
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        for request in requests {
+            self.perform_sortition(request);
+        }
+        for e3_id in membership_e3s {
+            self.redrive_membership_changes(&e3_id);
+        }
     }
 }
 
 impl Sortition {
     pub(super) fn perform_sortition(&mut self, msg: TypedEvent<E3Requested>) {
         let e3_id = msg.e3_id.clone();
+        if self.processed_requests.contains(&e3_id) {
+            return;
+        }
         let chain_id = msg.e3_id.chain_id();
-        let seed = self.sortition_seeds[&e3_id];
+        let Some(seed) = self
+            .recovery
+            .get()
+            .and_then(|recovery| recovery.seeds.get(&e3_id).copied())
+        else {
+            self.bus.err(
+                EType::Sortition,
+                anyhow!("E3 {e3_id} has no recovered sortition seed"),
+            );
+            return;
+        };
         let threshold_m = msg.threshold_m;
         let threshold_n = msg.threshold_n;
         let buffer = ticket_sortition::calculate_buffer_size(threshold_m, threshold_n);
@@ -101,7 +154,20 @@ impl Sortition {
             }
         }
 
-        self.ciphernode_selector
-            .do_send(WithSortitionTicket::new(msg, node_index, &self.address))
+        match self.ciphernode_selector.try_send(WithSortitionTicket::new(
+            msg,
+            node_index,
+            &self.address,
+        )) {
+            Ok(()) => {
+                self.processed_requests.insert(e3_id);
+            }
+            Err(error) => {
+                self.bus.err(
+                    EType::Sortition,
+                    anyhow!("Could not dispatch sortition result for E3 {e3_id}: {error}"),
+                );
+            }
+        }
     }
 }

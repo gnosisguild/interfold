@@ -274,18 +274,11 @@ pub async fn load_signer_from_repository(
     private_key.parse().map_err(Into::into)
 }
 
-pub async fn get_current_timestamp() -> Result<u64> {
-    let config = e3_config::load_config("_default", None, None)?;
-    let chain = config
-        .chains()
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No chains configured"))?;
-
-    let rpc_url = chain.rpc_url()?;
-    let provider = ProviderConfig::new(rpc_url, chain.rpc_auth.clone())
-        .create_readonly_provider()
-        .await?;
-
+/// Read the latest block timestamp from an already resolved chain provider.
+pub async fn get_current_timestamp_from_provider<P>(provider: EthProvider<P>) -> Result<u64>
+where
+    P: Provider + Clone,
+{
     let block = provider
         .provider()
         .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)

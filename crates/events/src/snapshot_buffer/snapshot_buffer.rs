@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[actix::test]
-    async fn equal_sequences_from_different_aggregates_use_distinct_batches() -> Result<()> {
+    async fn cross_aggregate_batches_flush_in_event_order() -> Result<()> {
         let config = &AggregateConfig::new(HashMap::from([
             (AggregateId::new(1), Duration::from_secs(60)),
             (AggregateId::new(2), Duration::from_secs(60)),
@@ -389,6 +389,20 @@ mod tests {
         buffer
             .send(Insert::new_with_context("aggregate-two", vec![2], second))
             .await?;
+        buffer
+            .send(Insert::new_with_context(
+                "shared-state",
+                vec![1],
+                create_ec(1, 1),
+            ))
+            .await?;
+        buffer
+            .send(Insert::new_with_context(
+                "shared-state",
+                vec![2],
+                create_ec(2, 1),
+            ))
+            .await?;
 
         buffer.send(FlushPendingSnapshots).await??;
 
@@ -404,6 +418,13 @@ mod tests {
             aggregate_ids,
             HashSet::from([AggregateId::new(1), AggregateId::new(2)])
         );
+        let shared_values = batches
+            .iter()
+            .flat_map(|batch| batch.commands())
+            .filter(|insert| insert.key().as_slice() == b"shared-state")
+            .map(|insert| insert.value().clone())
+            .collect::<Vec<_>>();
+        assert_eq!(shared_values, vec![vec![1], vec![2]]);
         Ok(())
     }
 
