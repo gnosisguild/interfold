@@ -59,6 +59,25 @@ fn round_not_found(e3_id: &str) -> HttpResponse {
     })
 }
 
+/// The round IS indexed — its committee just has not published a key.
+///
+/// Same status as an unknown round, because there is still nothing to serve, but never the same
+/// message. The two have completely different causes: one means the request was never seen, the
+/// other means DKG has not completed (or never will, for a round that failed). Reporting both as
+/// "no state for round X" sent us looking for a broken indexer when the indexer was fine and the
+/// ciphernodes were not.
+async fn round_state_pending(store: &web::Data<AppData>, e3_id: &str) -> HttpResponse {
+    match store.e3(e3_id).has_crisp_record().await {
+        Ok(true) => HttpResponse::NotFound().json(JsonResponse {
+            response: format!(
+                "Round {e3_id} is indexed, but its committee has not published a key yet, so \
+                 there is no state to serve. Check whether the round has failed on chain."
+            ),
+        }),
+        _ => round_not_found(e3_id),
+    }
+}
+
 /// Endpoint to get the ciphertext a slot currently holds. Used for every ballot, not only masks.
 ///
 /// Answers with the end of the slot's chain of usable entries, and the tree index of that entry.
@@ -248,7 +267,7 @@ async fn get_round_result(
 
     match store.e3(&e3_id).try_get_web_result_request().await {
         Ok(Some(response)) => HttpResponse::Ok().json(response),
-        Ok(None) => round_not_found(&e3_id),
+        Ok(None) => round_state_pending(&store, &e3_id).await,
         Err(e) => {
             error!("Error getting E3 state for {e3_id}: {e:?}");
             HttpResponse::InternalServerError().body("Failed to get E3 state")
@@ -326,7 +345,7 @@ async fn get_round_state_lite(
 
     match store.e3(&e3_id).try_get_e3_state_lite().await {
         Ok(Some(state_lite)) => HttpResponse::Ok().json(state_lite),
-        Ok(None) => round_not_found(&e3_id),
+        Ok(None) => round_state_pending(&store, &e3_id).await,
         Err(e) => {
             // Reaches here only on a store failure now, so it is worth a log line: it used to be
             // the ordinary "round not indexed yet" path and was silently discarded.

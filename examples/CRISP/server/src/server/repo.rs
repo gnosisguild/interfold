@@ -176,6 +176,17 @@ impl<S: DataStore> CrispE3Repository<S> {
             .map_err(|e| eyre::eyre!("Could get crisp at '{key}' due to error: {e}"))
     }
 
+    /// Whether this server has a record of the round at all.
+    ///
+    /// The CRISP record is written when `E3Requested` is indexed; the indexer's `_e3:` record only
+    /// lands on `CommitteePublished`. So a round mid-DKG — or one whose committee never formed —
+    /// has the first and not the second, and reads needing both come back empty. Without this the
+    /// two are indistinguishable, and "the committee has not published a key" reads as "no such
+    /// round", which is a very different thing to debug.
+    pub async fn has_crisp_record(&self) -> Result<bool> {
+        Ok(self.try_get_crisp().await?.is_some())
+    }
+
     async fn get_crisp(&self) -> Result<E3Crisp> {
         let key = self.crisp_key();
         let e3_crisp = self
