@@ -655,7 +655,7 @@ describe("E3 Pricing", function () {
       expect(pc.computeUtilizationBps).to.equal(5000);
       expect(pc.decryptUtilizationBps).to.equal(2500);
       expect(pc.protocolTreasury).to.equal(await owner.getAddress());
-      expect(pc.randomnessFlatFee).to.equal(1_000_000);
+      expect(pc.randomnessFlatFee).to.equal(1_000_000n);
       expect(pc.minCommitteeSize).to.equal(0);
       expect(pc.minThreshold).to.equal(0);
     });

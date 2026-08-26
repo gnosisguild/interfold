@@ -7,6 +7,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import InterfoldModule from "../../ignition/modules/interfold";
+import { localPricingConfig } from "../../scripts/pricingConfig";
 import type {
   MockBlacklistUSDC,
   MockFeeOnTransferToken,
@@ -858,6 +859,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             bondingRegistry: await interfold.bondingRegistry(),
             e3RefundManager: addressOne,
             feeToken: await interfold.feeToken(),
+            pricingConfig: localPricingConfig(await owner.getAddress()),
             initialE3Program: await e3Program.getAddress(),
           },
         },

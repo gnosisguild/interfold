@@ -139,7 +139,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   assertEqual(
     "interfold.pricing.randomnessFlatFee",
     (await interfold.getPricingConfig()).randomnessFlatFee,
-    config.interfold.pricing.randomnessFlatFee,
+    BigInt(config.interfold.pricing.randomnessFlatFee),
   );
   assertEqual(
     "registry.unreleasedCommitteeCount",

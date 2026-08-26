@@ -23,6 +23,7 @@ import MockPkVerifierModule from "../../ignition/modules/mockPkVerifier";
 import MockCircuitVerifierModule from "../../ignition/modules/mockSlashingVerifier";
 import MockStableTokenModule from "../../ignition/modules/mockStableToken";
 import SlashingManagerModule from "../../ignition/modules/slashingManager";
+import { localPricingConfig } from "../../scripts/pricingConfig";
 import {
   BondingRegistry__factory as BondingRegistryFactory,
   CiphernodeRegistryOwnable__factory as CiphernodeRegistryOwnableFactory,
@@ -425,6 +426,7 @@ export async function deployInterfoldSystem(
         feeToken: await usdcToken.getAddress(),
         feeTokenDecimals: 6,
         timeoutConfig,
+        pricingConfig: localPricingConfig(ownerAddress),
         initialE3Program,
       },
     },

@@ -2,6 +2,7 @@
 import { type Interface, ethers as ethersLib } from "ethers";
 import path from "path";
 
+import { pricingConfigFingerprint } from "./pricingConfig";
 import { ADDRESS_ONE } from "./protocol/constants";
 import { repoRoot } from "./protocol/files";
 import type {
@@ -292,7 +293,7 @@ export function syncProtocolDeploymentRecords(
         randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
-        pricingConfig: JSON.stringify(config.interfold.pricing),
+        pricingConfig: pricingConfigFingerprint(config.interfold.pricing),
         initialE3Program: deployment.initialE3Program,
       },
       libraries: {
