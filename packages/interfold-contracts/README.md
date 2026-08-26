@@ -228,6 +228,7 @@ The 40 USDS value uses Chainlink's Ethereum native-payment example: 50 gwei,
 0.01302 ETH request cost. At the release reference price of 2,442.81 USDS per
 ETH, the estimate is 31.81 USDS. Rounding to 40 USDS adds a 25.8% buffer. See
 [VRF_FEE.md](deploy/protocol/VRF_FEE.md) for the calculation and review rules.
+This conversion assumes that 1 USDS is worth 1 USD.
 
 The randomness fee is not part of service escrow. If randomness times out, the
 requester receives all service escrow, but the randomness fee stays charged. A

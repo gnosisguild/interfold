@@ -44,6 +44,9 @@ configured fee  = 40 USDS
 buffer          = 8.194614 USDS, or approximately 25.8%
 ```
 
+The conversion assumes that 1 USDS is worth 1 USD. Governance must review the
+fee if USDS moves materially away from that target.
+
 The configured callback limit is 150,000 gas. Subscription billing uses the
 actual callback gas, not the complete limit. The subscription must still hold
 the larger maximum reservation that the coordinator calculates from the gas lane
@@ -83,6 +86,7 @@ pause. Also review it when one of these inputs changes materially:
 - The Chainlink premium.
 - The expected Ethereum gas price.
 - The ETH-to-USDS reference price.
+- A material USDS-to-USD deviation.
 
 Update the fee token, expected decimals, service prices, and `randomnessFlatFee`
 in one `setFeeAssetConfig()` transaction.
