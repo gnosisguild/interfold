@@ -9,7 +9,7 @@ use std::str::FromStr;
 use crate::server::{
     app_data::AppData,
     models::{
-        canonical_e3_id, e3_id_to_u256, GetRoundRequest, PreviousCiphertextRequest,
+        canonical_e3_id, e3_id_to_u256, GetRoundRequest, JsonResponse, PreviousCiphertextRequest,
         PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
     },
     CONFIG,
@@ -41,6 +41,22 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
                 web::post().to(handle_get_previous_ciphertext),
             ),
     );
+}
+
+/// The answer for a round this server has no record of.
+///
+/// 404, not 500: the request was well formed and the server is fine — there is simply no such
+/// round here, either because the id does not exist or because the indexer has not written it
+/// yet. Both frontends poll this for a round whose committee is still forming, once per block,
+/// so answering "internal server error" made a normal state of a normal round look like an
+/// outage in every console and every log.
+///
+/// Not 204 either: the SDK treats a 2xx as a body it can parse, so an empty success would fail
+/// inside `response.json()` with a parse error instead of a status a caller can branch on.
+fn round_not_found(e3_id: &str) -> HttpResponse {
+    HttpResponse::NotFound().json(JsonResponse {
+        response: format!("No state for round {e3_id}"),
+    })
 }
 
 /// Endpoint to get the ciphertext a slot currently holds. Used for every ballot, not only masks.
@@ -230,10 +246,11 @@ async fn get_round_result(
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
 
-    match store.e3(e3_id).get_web_result_request().await {
-        Ok(response) => HttpResponse::Ok().json(response),
+    match store.e3(&e3_id).try_get_web_result_request().await {
+        Ok(Some(response)) => HttpResponse::Ok().json(response),
+        Ok(None) => round_not_found(&e3_id),
         Err(e) => {
-            error!("Error getting E3 state: {:?}", e);
+            error!("Error getting E3 state for {e3_id}: {e:?}");
             HttpResponse::InternalServerError().body("Failed to get E3 state")
         }
     }
@@ -307,9 +324,15 @@ async fn get_round_state_lite(
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
 
-    match store.e3(e3_id).get_e3_state_lite().await {
-        Ok(state_lite) => HttpResponse::Ok().json(state_lite),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to get E3 state"),
+    match store.e3(&e3_id).try_get_e3_state_lite().await {
+        Ok(Some(state_lite)) => HttpResponse::Ok().json(state_lite),
+        Ok(None) => round_not_found(&e3_id),
+        Err(e) => {
+            // Reaches here only on a store failure now, so it is worth a log line: it used to be
+            // the ordinary "round not indexed yet" path and was silently discarded.
+            error!("Error getting E3 state for {e3_id}: {e:?}");
+            HttpResponse::InternalServerError().body("Failed to get E3 state")
+        }
     }
 }
 
@@ -329,10 +352,11 @@ async fn get_token_holders_hashes(
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
 
-    match store.e3(e3_id).get_token_holder_hashes().await {
-        Ok(hashes) => HttpResponse::Ok().json(hashes),
+    match store.e3(&e3_id).try_get_token_holder_hashes().await {
+        Ok(Some(hashes)) => HttpResponse::Ok().json(hashes),
+        Ok(None) => round_not_found(&e3_id),
         Err(e) => {
-            error!("Error getting token holders hashes: {:?}", e);
+            error!("Error getting token holders hashes for {e3_id}: {e:?}");
             HttpResponse::InternalServerError().body("Failed to get token holders hashes")
         }
     }
@@ -353,10 +377,11 @@ async fn handle_get_eligible_addresses(
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
 
-    match store.e3(e3_id).get_eligible_addresses().await {
-        Ok(addresses) => HttpResponse::Ok().json(addresses),
+    match store.e3(&e3_id).try_get_eligible_addresses().await {
+        Ok(Some(addresses)) => HttpResponse::Ok().json(addresses),
+        Ok(None) => round_not_found(&e3_id),
         Err(e) => {
-            error!("Error getting eligible addresses: {:?}", e);
+            error!("Error getting eligible addresses for {e3_id}: {e:?}");
             HttpResponse::InternalServerError().body("Failed to get eligible addresses")
         }
     }

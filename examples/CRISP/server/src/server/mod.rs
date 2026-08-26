@@ -88,6 +88,9 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Built once, outside the factory closure: the closure runs per worker, and a per-worker
     // limiter would multiply every window by the worker count.
     let rate_limiter = web::Data::new(rate_limit::RateLimiter::new());
+    // Separate window, separate type: the relay's 10-a-minute limit would make the read routes
+    // useless, and actix keys `app_data` by type so one type can only ever be one limiter.
+    let chain_rate_limiter = web::Data::new(rate_limit::ChainRateLimiter::new());
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -101,6 +104,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
             .app_data(rate_limiter.clone())
+            .app_data(chain_rate_limiter.clone())
             .configure(routes::setup_routes)
     })
     .bind(bind_addr)?;

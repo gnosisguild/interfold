@@ -27,17 +27,20 @@
 use crate::config::CONFIG;
 use crate::server::app_data::AppData;
 use crate::server::models::JsonResponse;
+use crate::server::rate_limit::ChainRateLimiter;
 use crate::server::read_cache;
 
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionBuilder;
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{address, Address, Bytes, B256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::client::RpcClient;
-use alloy::transports::http::Http;
 use alloy::rpc::types::{Filter, TransactionRequest};
-use log::error;
+use alloy::sol;
+use alloy::sol_types::SolCall;
+use alloy::transports::http::Http;
+use log::{error, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -88,7 +91,7 @@ static HTTP: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new
 /// JSON-RPC forward path was fixed first; these are the rest of them.
 static PROVIDER: tokio::sync::OnceCell<DynProvider> = tokio::sync::OnceCell::const_new();
 
-async fn upstream() -> eyre::Result<&'static DynProvider> {
+pub(super) async fn upstream() -> eyre::Result<&'static DynProvider> {
     PROVIDER
         .get_or_try_init(|| async {
             let url: reqwest::Url = CONFIG
@@ -110,6 +113,40 @@ fn windows_for(from: u64, to: u64) -> u64 {
         return 0;
     }
     (to - from) / LOG_WINDOW + 1
+}
+
+/// Charge a request against the caller's read window, returning the refusal if it does not fit.
+///
+/// These routes are cheap per call and unbounded in aggregate: they are the one place in this
+/// server that will make an upstream request for anyone who asks, and the allowlist bounds WHICH
+/// contracts that reaches, not HOW OFTEN. `cost` is in upstream calls, so a batch is charged for
+/// what it will actually cause rather than for being one HTTP request.
+pub(super) fn admit(
+    request: &HttpRequest,
+    limiter: &ChainRateLimiter,
+    cost: usize,
+) -> Result<(), (String, usize)> {
+    // Same caveat as the relay's limiter: `realip_remote_addr` trusts `X-Forwarded-For`, which is
+    // right behind this deployment's proxy and spoofable without one. Spoofing only widens the
+    // spoofer's own window.
+    let caller = request
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+
+    match limiter.check_caller_cost(&caller, cost) {
+        Ok(()) => Ok(()),
+        Err(_) => Err((caller, cost)),
+    }
+}
+
+/// The typed routes' refusal.
+pub(super) fn too_many_requests(caller: &str, cost: usize, route: &str) -> HttpResponse {
+    warn!("Rate limit refused {route} from {caller} (cost {cost})");
+    HttpResponse::TooManyRequests().json(JsonResponse {
+        response: "Too many chain reads from this address, slow down".to_string(),
+    })
 }
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -253,6 +290,161 @@ fn call_cache_key(params: &serde_json::Value) -> Option<(String, String, Option<
     Some((address, data, block))
 }
 
+/// Multicall3, at the same address on every chain it is deployed to.
+///
+/// It has to be on the allowlist for the frontends to work at all — viem coalesces independent
+/// `eth_call`s into a single `aggregate3` through it — but it is the one allowlisted address
+/// whose `to` says nothing about what is being read. `aggregate3([{target, callData}])` reaches
+/// ANY contract on the chain behind a `to` the check waves through, which rebuilds the
+/// "allowlist is decorative" hole through a different door. The data is public either way; the
+/// bound this loses is on cost and abuse, and that is the bound this endpoint exists to keep.
+///
+/// So a call to Multicall3 is decoded and its inner `target`s are checked instead.
+pub(super) const MULTICALL3: Address = address!("0xcA11bde05977b3631167028862bE2a173976CA11");
+
+/// How many levels of Multicall3-inside-Multicall3 to unwrap before refusing.
+///
+/// A nested aggregate is a legitimate shape (and cheap to decode), but the recursion has to stop
+/// somewhere: without a cap, a deeply nested payload is unbounded decode work chosen by the
+/// caller. Nothing either frontend sends nests at all.
+const MAX_MULTICALL_DEPTH: usize = 2;
+
+sol! {
+    struct Multicall3Call {
+        address target;
+        bytes callData;
+    }
+
+    struct Multicall3Call3 {
+        address target;
+        bool allowFailure;
+        bytes callData;
+    }
+
+    struct Multicall3Call3Value {
+        address target;
+        bool allowFailure;
+        uint256 value;
+        bytes callData;
+    }
+
+    function aggregate(Multicall3Call[] calls) returns (uint256 blockNumber, bytes[] returnData);
+    function tryAggregate(bool requireSuccess, Multicall3Call[] calls) returns (bytes[] returnData);
+    function blockAndAggregate(Multicall3Call[] calls)
+        returns (uint256 blockNumber, bytes32 blockHash, bytes[] returnData);
+    function tryBlockAndAggregate(bool requireSuccess, Multicall3Call[] calls)
+        returns (uint256 blockNumber, bytes32 blockHash, bytes[] returnData);
+    function aggregate3(Multicall3Call3[] calls) returns (bytes[] returnData);
+    function aggregate3Value(Multicall3Call3Value[] calls) returns (bytes[] returnData);
+}
+
+/// `getEthBalance(address)` — a Multicall3 self-view over public state, with no inner call to
+/// unwrap. Allowed as-is, like `eth_getBalance`.
+const MULTICALL3_GET_ETH_BALANCE: [u8; 4] = [0x4d, 0x23, 0x01, 0xcc];
+
+/// Every contract a call to Multicall3 would actually reach.
+///
+/// Fails closed in the same way as the rest of the check: an unrecognised selector on Multicall3
+/// is refused rather than forwarded, because "we could not tell what this reaches" and "this
+/// reaches nothing" are not the same answer.
+fn multicall3_targets(calldata: &[u8], depth: usize) -> Result<Vec<Address>, &'static str> {
+    if depth > MAX_MULTICALL_DEPTH {
+        return Err("multicall nesting is too deep");
+    }
+
+    let Some(selector) = calldata
+        .get(..4)
+        .and_then(|head| <[u8; 4]>::try_from(head).ok())
+    else {
+        return Err("a call to Multicall3 must carry a function selector");
+    };
+
+    // `getEthBalance` names its address in a plain parameter, and reaches no other contract.
+    if selector == MULTICALL3_GET_ETH_BALANCE {
+        return Ok(Vec::new());
+    }
+
+    let inner: Vec<(Address, Bytes)> = if selector == aggregate3Call::SELECTOR {
+        aggregate3Call::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 aggregate3 payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else if selector == aggregate3ValueCall::SELECTOR {
+        aggregate3ValueCall::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 aggregate3Value payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else if selector == aggregateCall::SELECTOR {
+        aggregateCall::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 aggregate payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else if selector == blockAndAggregateCall::SELECTOR {
+        blockAndAggregateCall::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 blockAndAggregate payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else if selector == tryAggregateCall::SELECTOR {
+        tryAggregateCall::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 tryAggregate payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else if selector == tryBlockAndAggregateCall::SELECTOR {
+        tryBlockAndAggregateCall::abi_decode(calldata)
+            .map_err(|_| "could not decode this Multicall3 tryBlockAndAggregate payload")?
+            .calls
+            .into_iter()
+            .map(|call| (call.target, call.callData))
+            .collect()
+    } else {
+        return Err("this Multicall3 function is not served by this indexer");
+    };
+
+    let mut targets = Vec::with_capacity(inner.len());
+    for (target, call_data) in inner {
+        // A target of Multicall3 itself would pass the allowlist while hiding another call list
+        // behind it — the same bypass one level down.
+        if target == MULTICALL3 {
+            targets.extend(multicall3_targets(&call_data, depth + 1)?);
+        } else {
+            targets.push(target);
+        }
+    }
+
+    Ok(targets)
+}
+
+/// The scope of an `eth_call`/`eth_estimateGas` whose `to` is Multicall3.
+fn multicall3_scope(call: &serde_json::Value) -> Scope {
+    // viem sends `data`; some clients send `input`. Both name the same field of a call object.
+    let Some(hex) = call
+        .get("data")
+        .or_else(|| call.get("input"))
+        .and_then(|value| value.as_str())
+    else {
+        return Scope::Unscoped("a call to Multicall3 must carry call data");
+    };
+
+    let Ok(calldata) = hex::decode(hex.trim().trim_start_matches("0x")) else {
+        return Scope::Unscoped("call data must be hex");
+    };
+
+    match multicall3_targets(&calldata, 0) {
+        Ok(targets) => Scope::Addresses(targets.iter().map(|target| target.to_string()).collect()),
+        Err(reason) => Scope::Unscoped(reason),
+    }
+}
+
 /// Which addresses a call is scoped to, so they can be checked against the allowlist.
 ///
 /// The distinction that matters is between a method that carries NO address by construction and
@@ -275,19 +467,19 @@ enum Scope {
 /// Fails closed: every method that CAN name an address must name one, and any shape this does not
 /// recognise is a refusal rather than a pass.
 fn requested_addresses(method: &str, params: &serde_json::Value) -> Scope {
-    // Methods whose address is a bare string in the first position.
-    let positional = matches!(
-        method,
-        "eth_getCode" | "eth_getBalance" | "eth_getStorageAt" | "eth_getTransactionCount"
-    );
-
-    if positional {
-        return match params.get(0) {
-            Some(serde_json::Value::String(one)) => Scope::Addresses(vec![one.clone()]),
-            _ => Scope::Unscoped("this method requires an address in the first parameter"),
-        };
-    }
-
+    // `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` and `eth_getStorageAt` are NOT
+    // allowlist-checked, and must not be: they take an ACCOUNT, and that account is normally the
+    // caller's own EOA — which can never appear on a list of watched CONTRACTS. Gating them broke
+    // every transaction in both apps, because a wallet needs the sender's nonce and gas balance
+    // before it will sign, and connectors call `getCode` on the signer to detect a smart account.
+    //
+    // The allowlist bounds the thing this endpoint is at risk of becoming: a free general-purpose
+    // executor. That risk lives in `eth_call` (arbitrary EVM) and `eth_getLogs` (range scans that
+    // fan out into hundreds of upstream requests), both still checked below. These four are O(1)
+    // point reads of public state with no fan-out, and the read window in `admit` is what bounds
+    // how many of them one caller may ask for.
+    //
+    // They fall through to the `_ => Scope::Global` arm.
     let field = match method {
         // An `eth_call` with no `to` is a contract-creation simulation: the caller supplies
         // initcode that runs arbitrary EVM, which is a read of any contract on the chain by
@@ -302,6 +494,16 @@ fn requested_addresses(method: &str, params: &serde_json::Value) -> Scope {
     let Some(first) = params.get(0) else {
         return Scope::Unscoped("this method requires a filter or call object");
     };
+
+    // Only the call object's `to`: an `eth_getLogs` naming Multicall3 asks for that contract's own
+    // logs, which is what the allowlist already answers.
+    if field == "to" {
+        if let Some(to) = first.get("to").and_then(|value| value.as_str()) {
+            if parse_address(to) == Some(MULTICALL3) {
+                return multicall3_scope(first);
+            }
+        }
+    }
 
     match first.get(field) {
         Some(serde_json::Value::String(one)) => Scope::Addresses(vec![one.clone()]),
@@ -358,7 +560,27 @@ fn global_request_is_too_broad(method: &str, params: &serde_json::Value) -> Opti
 ///
 /// `eth_getLogs` is special-cased: the range is split into windows here, so a caller may ask for a
 /// contract's whole history without knowing the upstream provider's cap.
-async fn rpc(body: web::Json<serde_json::Value>, store: web::Data<AppData>) -> impl Responder {
+async fn rpc(
+    request: HttpRequest,
+    body: web::Json<serde_json::Value>,
+    store: web::Data<AppData>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
+    // Charged before anything is parsed or forwarded, and by batch length: one array of 64 is 64
+    // sequential upstream requests on one connection.
+    let cost = match body.as_array() {
+        Some(entries) => entries.len(),
+        None => 1,
+    };
+    if let Err((caller, cost)) = admit(&request, &limiter, cost) {
+        warn!("Rate limit refused /chain/rpc from {caller} (cost {cost})");
+        return HttpResponse::TooManyRequests().json(rpc_error(
+            None,
+            -32005,
+            "Too many chain reads from this address, slow down",
+        ));
+    }
+
     // A JSON-RPC endpoint must accept a batch as a top-level array, and viem sends one whenever
     // `batch: true` is set — which both of our clients do. Rejecting arrays at the extractor made
     // every batched request a 400 that no JSON-RPC client knows how to read.
@@ -817,7 +1039,7 @@ fn is_allowed(address: &Address) -> bool {
         .any(|allowed| allowed == *address)
 }
 
-fn parse_address(value: &str) -> Option<Address> {
+pub(super) fn parse_address(value: &str) -> Option<Address> {
     Address::from_str(value.trim()).ok()
 }
 
@@ -829,7 +1051,7 @@ fn parse_address(value: &str) -> Option<Address> {
 /// its record behind while the cursor kept advancing. Every query then passed the coverage test
 /// and was answered from a frozen index, missing every event since the removal, and by design
 /// indistinguishable from an upstream answer.
-fn is_log_indexed(address: &str) -> bool {
+pub(super) fn is_log_indexed(address: &str) -> bool {
     let Some(address) = parse_address(address) else {
         return false;
     };
@@ -857,7 +1079,11 @@ pub struct HeadResponse {
 /// Replaces a `useBlockNumber({ watch: true })` poll per hook with one call, and returns the
 /// timestamp alongside so callers deciding whether a voting window has closed do not need a
 /// second round trip for the block.
-async fn head() -> impl Responder {
+async fn head(http_request: HttpRequest, limiter: web::Data<ChainRateLimiter>) -> impl Responder {
+    if let Err((caller, cost)) = admit(&http_request, &limiter, 1) {
+        return too_many_requests(&caller, cost, "/chain/head");
+    }
+
     // The most-polled call in the app by an order of magnitude: several hooks per client watch it
     // on a timer. Serving a few seconds old head collapses that crowd into one upstream request.
     // Only a fully-known head is served: an entry learned from `eth_blockNumber` carries no
@@ -936,7 +1162,15 @@ pub struct ReadResult {
 /// than from the index on purpose: they are per-user and change constantly, so an indexed copy
 /// would have to mirror every transfer and delegation to stay correct, and a stale answer here is
 /// not a slow UI — it is the wrong balance or a voter wrongly told they are ineligible.
-async fn read(request: web::Json<ReadRequest>) -> impl Responder {
+async fn read(
+    http_request: HttpRequest,
+    request: web::Json<ReadRequest>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
+    if let Err((caller, cost)) = admit(&http_request, &limiter, request.calls.len()) {
+        return too_many_requests(&caller, cost, "/chain/read");
+    }
+
     if request.calls.is_empty() {
         return HttpResponse::Ok().json(Vec::<ReadResult>::new());
     }
@@ -1057,7 +1291,19 @@ pub struct LogEntry {
 ///
 /// The window is the point: a caller asking for a contract's whole history gets it in one
 /// request, instead of reimplementing range-splitting against whatever cap the provider enforces.
-async fn logs(request: web::Json<LogsRequest>, store: web::Data<AppData>) -> impl Responder {
+async fn logs(
+    http_request: HttpRequest,
+    request: web::Json<LogsRequest>,
+    store: web::Data<AppData>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
+    // One log query can expand into up to `MAX_LOG_WINDOWS` upstream calls, but how many is not
+    // known until the range is resolved below. Charged as one call: the window count is already
+    // capped, and the allowlist bounds which contract it can be asked for.
+    if let Err((caller, cost)) = admit(&http_request, &limiter, 1) {
+        return too_many_requests(&caller, cost, "/chain/logs");
+    }
+
     let Some(address) = parse_address(&request.address) else {
         return HttpResponse::BadRequest().json(JsonResponse {
             response: format!("Invalid address: {}", request.address),
@@ -1231,7 +1477,16 @@ pub struct BlockAtTimestampResponse {
 /// Clients need this to turn a proposal's snapshot timepoint into a block, and the obvious
 /// client-side implementation is a binary search that costs `O(log n)` `eth_getBlockByNumber`
 /// calls per lookup. Doing it here spends those on one connection instead of the browser's.
-async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl Responder {
+async fn block_at_timestamp(
+    http_request: HttpRequest,
+    request: web::Json<BlockAtTimestampRequest>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
+    // A binary search over block headers: several upstream reads per request, not one.
+    if let Err((caller, cost)) = admit(&http_request, &limiter, 8) {
+        return too_many_requests(&caller, cost, "/chain/block-at-timestamp");
+    }
+
     let provider = match upstream().await {
         Ok(p) => p,
         Err(e) => {
@@ -1317,4 +1572,189 @@ async fn block_at_timestamp(request: web::Json<BlockAtTimestampRequest>) -> impl
         block_number,
         timestamp,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded_aggregate3(targets: &[Address]) -> Vec<u8> {
+        aggregate3Call {
+            calls: targets
+                .iter()
+                .map(|target| Multicall3Call3 {
+                    target: *target,
+                    allowFailure: true,
+                    callData: Bytes::from_static(&[0x70, 0xa0, 0x82, 0x31]),
+                })
+                .collect(),
+        }
+        .abi_encode()
+    }
+
+    #[test]
+    fn aggregate3_reports_every_inner_target() {
+        let one = address!("0x1111111111111111111111111111111111111111");
+        let two = address!("0x2222222222222222222222222222222222222222");
+
+        let targets = multicall3_targets(&encoded_aggregate3(&[one, two]), 0).unwrap();
+
+        assert_eq!(targets, vec![one, two]);
+    }
+
+    #[test]
+    fn nested_multicalls_are_unwrapped_rather_than_waved_through() {
+        let hidden = address!("0x3333333333333333333333333333333333333333");
+
+        let outer = aggregate3Call {
+            calls: vec![Multicall3Call3 {
+                target: MULTICALL3,
+                allowFailure: true,
+                callData: encoded_aggregate3(&[hidden]).into(),
+            }],
+        }
+        .abi_encode();
+
+        assert_eq!(multicall3_targets(&outer, 0).unwrap(), vec![hidden]);
+    }
+
+    #[test]
+    fn nesting_past_the_cap_is_refused() {
+        let mut payload =
+            encoded_aggregate3(&[address!("0x4444444444444444444444444444444444444444")]);
+
+        for _ in 0..=MAX_MULTICALL_DEPTH {
+            payload = aggregate3Call {
+                calls: vec![Multicall3Call3 {
+                    target: MULTICALL3,
+                    allowFailure: true,
+                    callData: payload.into(),
+                }],
+            }
+            .abi_encode();
+        }
+
+        assert!(multicall3_targets(&payload, 0).is_err());
+    }
+
+    #[test]
+    fn other_aggregate_shapes_decode_too() {
+        let one = address!("0x5555555555555555555555555555555555555555");
+
+        let try_aggregate = tryAggregateCall {
+            requireSuccess: false,
+            calls: vec![Multicall3Call {
+                target: one,
+                callData: Bytes::new(),
+            }],
+        }
+        .abi_encode();
+
+        assert_eq!(multicall3_targets(&try_aggregate, 0).unwrap(), vec![one]);
+    }
+
+    #[test]
+    fn get_eth_balance_reaches_no_other_contract() {
+        let call_data = [MULTICALL3_GET_ETH_BALANCE.as_slice(), &[0u8; 32]].concat();
+
+        assert!(multicall3_targets(&call_data, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn account_reads_are_not_allowlist_checked() {
+        // The caller's own EOA can never be on a list of watched contracts, so gating these was
+        // gating every transaction in both apps.
+        for method in [
+            "eth_getBalance",
+            "eth_getTransactionCount",
+            "eth_getCode",
+            "eth_getStorageAt",
+        ] {
+            let params =
+                serde_json::json!(["0x1111111111111111111111111111111111111111", "latest"]);
+            assert!(
+                matches!(requested_addresses(method, &params), Scope::Global),
+                "{method} must not be address-scoped"
+            );
+        }
+    }
+
+    #[test]
+    fn eth_call_is_still_allowlist_checked() {
+        let params = serde_json::json!([{ "to": "0x1111111111111111111111111111111111111111" }]);
+        assert!(matches!(
+            requested_addresses("eth_call", &params),
+            Scope::Addresses(_)
+        ));
+
+        // ...and an `eth_call` with no `to` is arbitrary EVM, still refused.
+        assert!(matches!(
+            requested_addresses("eth_call", &serde_json::json!([{}])),
+            Scope::Unscoped(_)
+        ));
+    }
+
+    #[actix_web::test]
+    async fn the_read_window_charges_a_batch_per_call_and_eventually_refuses() {
+        let limiter = ChainRateLimiter::new();
+        let request = actix_web::test::TestRequest::default().to_http_request();
+
+        let mut batches = 0;
+        while admit(&request, &limiter, 64).is_ok() {
+            batches += 1;
+            assert!(batches < 1_000, "the read window never closed");
+        }
+
+        // 1200 calls / 64 per batch: a caller gets ~18 full batches a minute, not 1200 of them.
+        assert!(
+            (15..=20).contains(&batches),
+            "unexpected batch budget: {batches}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn one_caller_hitting_the_window_does_not_refuse_another() {
+        let limiter = ChainRateLimiter::new();
+        let hot = actix_web::test::TestRequest::default()
+            .peer_addr("10.0.0.1:1234".parse().unwrap())
+            .to_http_request();
+        let other = actix_web::test::TestRequest::default()
+            .peer_addr("10.0.0.2:1234".parse().unwrap())
+            .to_http_request();
+
+        while admit(&hot, &limiter, 64).is_ok() {}
+
+        assert!(admit(&other, &limiter, 64).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_selector_on_multicall3_is_refused() {
+        assert!(multicall3_targets(&[0xde, 0xad, 0xbe, 0xef], 0).is_err());
+    }
+
+    #[test]
+    fn a_multicall_eth_call_is_scoped_to_its_inner_targets() {
+        let one = address!("0x6666666666666666666666666666666666666666");
+        let params = serde_json::json!([{
+            "to": "0xca11bde05977b3631167028862be2a173976ca11",
+            "data": format!("0x{}", hex::encode(encoded_aggregate3(&[one]))),
+        }]);
+
+        match requested_addresses("eth_call", &params) {
+            Scope::Addresses(addresses) => {
+                assert_eq!(addresses, vec![one.to_string()]);
+            }
+            _ => panic!("a Multicall3 call must be address-scoped"),
+        }
+    }
+
+    #[test]
+    fn a_multicall_eth_call_without_data_is_refused() {
+        let params = serde_json::json!([{ "to": "0xca11bde05977b3631167028862be2a173976ca11" }]);
+
+        assert!(matches!(
+            requested_addresses("eth_call", &params),
+            Scope::Unscoped(_)
+        ));
+    }
 }
