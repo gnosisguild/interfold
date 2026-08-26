@@ -368,10 +368,15 @@ CommitteeFinalizer actor receives CommitteeRequested event
 │   ├─ local TicketGenerated.party_index is known
 │   └─ EffectsEnabled has fired
 │
-├─ Calculates wait time:
+├─ Calculates wait time (finalization_delay_seconds):
 │   wait = max(committeeDeadline - currentTimestamp, 0)
 │          + 1 second
-│          + party_index * 5 seconds
+│          + party_index * 30 seconds
+│   → The 30-second step must exceed one block interval plus the log read.
+│     A member cancels its own attempt only after it observes
+│     CommitteeFinalized, so a shorter step makes every member send a
+│     transaction that reverts. The step is paid only while earlier
+│     members stay silent.
 │
 ├─ Schedules a staggered timer
 │
@@ -388,19 +393,20 @@ CommitteeFinalizer actor receives CommitteeRequested event
 ```
 CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
 │
-├─ Preflight: should_finalize_committee() (eth_call)
-│   └─ Skips the transaction when the committee is not finalizable
-│      (CommitteeAlreadyFinalized / CommitteeNotRequested /
-│       SubmissionWindowNotClosed / ThresholdNotMet)
+├─ Preflight: committee_finalization_terminal() (eth_call)
+│   └─ Skips the transaction when finalizeCommittee reverts with
+│      CommitteeAlreadyFinalized, which covers both the Finalized and the
+│      Failed stage. Another member can finalize between the stagger tick
+│      and this call, and a transaction sent after that point is mined with
+│      a failed receipt and burns gas.
 │
 └─ Calls contract.finalizeCommittee(e3Id).send()
     │
     │  If the transaction is mined with a failed receipt, the writer runs the
-    │  state check again (send_tx_idempotent in crates/evm/src/helpers.rs).
-    │  A revert with CommitteeAlreadyFinalized plus a non-empty
-    │  getActiveCommitteeNodes list shows that another sender finalized after
-    │  the preflight, so the node logs the outcome and reports no error. The
-    │  Failed stage gives the same revert with an empty list and stays an error.
+    │  same state check again (send_tx_idempotent in crates/evm/src/helpers.rs).
+    │  A terminal state means no chain work remains, so the node logs the
+    │  outcome and reports no error. Any other failure stays an error and
+    │  retries after 30 seconds.
     │
     │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────────┐
     │  │                                                         │
@@ -551,11 +557,11 @@ A ready committee must finalize at or before its absolute DKG deadline.
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
    deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG
    time instead of extending the paid lifecycle. After the DKG deadline, anyone can fail an
-   unfinalized ready committee. Because staggered timers can overlap, more than one node can send
-   the transaction. The losing transaction reverts with `CommitteeAlreadyFinalized`; the writer
-   re-reads the committee after the failure and treats the revert as complete only when the registry
-   reports a finalized committee. A committee that another sender finalized into the `Failed` stage
-   produces the same revert and stays an error.
+   unfinalized ready committee. The staggered timers keep one member ahead of the next, and the
+   writer reads the chain again before it sends. Both guards can still lose to a transaction that
+   lands in the same block, so more than one node can send. The losing transaction reverts with
+   `CommitteeAlreadyFinalized`; the writer re-reads the state after the failure and reports no error
+   when finalization is terminal.
 
 6. **IMT root snapshot**: The Merkle tree root is captured at request time. Nodes that join/leave
    after the request don't affect this E3's committee. A removed node's current-tree slot can be

@@ -694,6 +694,10 @@ phase.
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
      → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
+     → A restart replays the intent, so an unfinished publication still reaches the chain.
+       E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
+       drops the intent: a completed request published its candidate in an earlier run, and
+       repeating it only spends gas
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │

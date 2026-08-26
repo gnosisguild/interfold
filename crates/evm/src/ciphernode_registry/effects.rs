@@ -120,7 +120,15 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
     contract_address: Address,
     e3_id: E3id,
 ) -> Result<TxOutcome> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+
+    // Members finalize on a stagger. Another member can finalize between the
+    // stagger tick and this call, so read the chain first. Without this check
+    // the transaction is mined with a failed receipt and burns gas.
+    if committee_finalization_terminal(provider.clone(), contract_address, e3_id_u256).await? {
+        info!(e3_id = %e3_id, "Committee already finalized on chain; skipping finalizeCommittee");
+        return Ok(TxOutcome::AlreadySettled);
+    }
 
     let settled_provider = provider.clone();
     let settled = || async move {
