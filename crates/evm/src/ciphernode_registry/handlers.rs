@@ -37,6 +37,26 @@ fn mark_request_complete(
     }
 }
 
+/// Settle the publication gate for a completed request and report whether an
+/// intent survives.
+///
+/// A completed request that arrives before effects are enabled comes from event
+/// replay. Its key candidate reached the chain in an earlier run, so the
+/// replayed intent must go; otherwise the writer publishes the same candidate
+/// again after every restart. A completed request that arrives while effects
+/// run can still overtake an in-flight publication, so that intent stays.
+fn settle_publication_for_completed_request(
+    publication: &mut ReplaySubmissionGate<E3id, PublicKeyAggregated>,
+    e3_id: &E3id,
+    effects_enabled: bool,
+) -> bool {
+    if !effects_enabled {
+        publication.finish(e3_id, true);
+    }
+
+    publication.contains(e3_id)
+}
+
 fn finish_completed_publication(
     active_aggregators: &mut HashMap<E3id, bool>,
     completed_requests: &mut HashSet<E3id>,
@@ -196,7 +216,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     type Result = ();
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
-        let publication_pending = self.publication.contains(&msg.e3_id);
+        let publication_pending = settle_publication_for_completed_request(
+            &mut self.publication,
+            &msg.e3_id,
+            self.effects_enabled,
+        );
         self.ticket_submissions.finish(&msg.e3_id, true);
         self.committee_finalizations.finish(&msg.e3_id, true);
         mark_request_complete(
@@ -360,12 +384,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitCommitteeFina
 
 #[cfg(test)]
 mod tests {
-    use super::{finish_completed_publication, mark_request_complete, update_request_registry};
+    use super::{
+        finish_completed_publication, mark_request_complete,
+        settle_publication_for_completed_request, update_request_registry, ReplaySubmissionGate,
+    };
     use alloy::primitives::Address;
     use e3_events::{
-        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id,
-        DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, OrderedSet,
+        PublicKeyAggregated, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
+    use e3_utils::ArcBytes;
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -402,6 +430,48 @@ mod tests {
 
         assert!(!update_request_registry(&mut registries, &event));
         assert!(!registries.contains_key(&e3_id));
+    }
+
+    fn publication_intent(e3_id: &E3id) -> PublicKeyAggregated {
+        PublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+            e3_id: e3_id.clone(),
+            nodes: OrderedSet::from(vec![]),
+            committee_addresses: vec![],
+            honest_committee_addresses: vec![],
+            pk_commitment: [7u8; 32],
+            dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
+        }
+    }
+
+    #[test]
+    fn replayed_completion_drops_the_publication_intent() {
+        let e3_id = E3id::new("10", 1);
+        let mut publication = ReplaySubmissionGate::new();
+        publication.record(e3_id.clone(), publication_intent(&e3_id));
+
+        // Effects are disabled while the commit log replays.
+        let pending = settle_publication_for_completed_request(&mut publication, &e3_id, false);
+
+        assert!(!pending);
+        assert!(!publication.contains(&e3_id));
+
+        publication.enable_effects();
+        assert!(publication.start(&e3_id).is_none());
+    }
+
+    #[test]
+    fn live_completion_retains_the_publication_intent() {
+        let e3_id = E3id::new("11", 1);
+        let mut publication = ReplaySubmissionGate::new();
+        publication.record(e3_id.clone(), publication_intent(&e3_id));
+        publication.enable_effects();
+
+        let pending = settle_publication_for_completed_request(&mut publication, &e3_id, true);
+
+        assert!(pending);
+        assert!(publication.start(&e3_id).is_some());
     }
 
     #[test]
