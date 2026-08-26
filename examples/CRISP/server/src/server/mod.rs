@@ -90,7 +90,9 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rate_limiter = web::Data::new(rate_limit::RateLimiter::new());
     // Separate window, separate type: the relay's 10-a-minute limit would make the read routes
     // useless, and actix keys `app_data` by type so one type can only ever be one limiter.
-    let chain_rate_limiter = web::Data::new(rate_limit::ChainRateLimiter::new());
+    let chain_rate_limiter = web::Data::new(rate_limit::ChainRateLimiter::with_trust(
+        CONFIG.trust_proxy_headers,
+    ));
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()

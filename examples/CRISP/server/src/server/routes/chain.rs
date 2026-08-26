@@ -131,13 +131,7 @@ fn windows_for(from: u64, to: u64) -> u64 {
 /// request, mint a fresh window each time, and never be limited at all. So the header is believed
 /// only when the deployment declares a proxy that overwrites it; otherwise the socket peer, which
 /// cannot be forged, is used instead.
-pub(super) fn caller_id(request: &HttpRequest) -> String {
-    identify(request, CONFIG.trust_proxy_headers)
-}
-
-/// The rule itself, with the deployment's answer passed in rather than read from config, so it
-/// can be tested without the test's outcome depending on the environment it runs in.
-fn identify(request: &HttpRequest, trust_proxy_headers: bool) -> String {
+pub(super) fn identify(request: &HttpRequest, trust_proxy_headers: bool) -> String {
     let info = request.connection_info();
     let caller = if trust_proxy_headers {
         info.realip_remote_addr()
@@ -158,7 +152,7 @@ pub(super) fn admit(
     limiter: &ChainRateLimiter,
     cost: usize,
 ) -> Result<(), (String, usize)> {
-    let caller = caller_id(request);
+    let caller = identify(request, limiter.trusts_proxy_headers());
 
     match limiter.check_caller_cost(&caller, cost) {
         Ok(()) => Ok(()),

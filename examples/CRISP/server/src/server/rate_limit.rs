@@ -73,19 +73,37 @@ pub struct RateLimiter {
 /// A distinct type rather than a second `RateLimiter`: actix keys `app_data` by type, so two
 /// instances of one type are one instance, and the relay's window would silently become the
 /// read window (10 requests a minute, which is a blank page).
-pub struct ChainRateLimiter(RateLimiter);
+pub struct ChainRateLimiter {
+    limiter: RateLimiter,
+    /// Whether a caller may be identified by `Forwarded` / `X-Forwarded-For`.
+    ///
+    /// Carried here rather than read from `CONFIG` at the point of use, so that identifying a
+    /// caller needs no environment. `CONFIG` is a `Lazy` that panics when the process has no
+    /// configuration — which is every test run — and one such panic poisons it for the rest of
+    /// the suite.
+    trust_proxy_headers: bool,
+}
 
 impl ChainRateLimiter {
+    /// The safe default: identify callers by their socket peer, which cannot be forged.
     pub fn new() -> Self {
-        Self(RateLimiter::with_limits(
-            CHAIN_PER_CALLER_LIMIT,
-            CHAIN_GLOBAL_LIMIT,
-        ))
+        Self::with_trust(false)
+    }
+
+    pub fn with_trust(trust_proxy_headers: bool) -> Self {
+        Self {
+            limiter: RateLimiter::with_limits(CHAIN_PER_CALLER_LIMIT, CHAIN_GLOBAL_LIMIT),
+            trust_proxy_headers,
+        }
+    }
+
+    pub fn trusts_proxy_headers(&self) -> bool {
+        self.trust_proxy_headers
     }
 
     /// Charge `cost` upstream calls to `caller` and answer whether they fit in the window.
     pub fn check_caller_cost(&self, caller: &str, cost: usize) -> Result<(), RateLimitExceeded> {
-        self.0.check_caller_cost(caller, cost)
+        self.limiter.check_caller_cost(caller, cost)
     }
 }
 
