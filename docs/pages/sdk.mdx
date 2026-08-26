@@ -57,8 +57,8 @@ const sdk = new InterfoldSDK({
     feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
   },
   chain: sepolia,
-  // Use 'SECURE_THRESHOLD_8192' for production. 'INSECURE_THRESHOLD_512' is for local dev only.
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
@@ -77,8 +77,8 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // Use 'SECURE_THRESHOLD_8192' for production. 'INSECURE_THRESHOLD_512' is for local dev only.
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
@@ -87,15 +87,29 @@ const sdk = InterfoldSDK.create({
 The `thresholdBfvParamsPresetName` field selects the BFV encryption parameters used by the client.
 It must match the `paramSet` index registered in the on-chain `Interfold` contract:
 
-| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                           |
-| ------------------------ | ------------------- | ------ | -------------- | -------- | ---------------------------------- |
-| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Local development and testing only |
-| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 4              | ✅ Full  | Production deployments             |
+| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                      |
+| ------------------------ | ------------------- | ------ | -------------- | -------- | ----------------------------- |
+| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Local development and Sepolia |
+| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production deployments        |
 
-**Always use `SECURE_THRESHOLD_8192` in production.** The insecure preset uses a small polynomial
-ring (N=512) with no cryptographic security guarantees — it exists solely to speed up local dev
-cycles. The secure preset (N=8192) meets standard FHE security targets and is required for mainnet
-and testnet deployments.
+#### Which preset to use on which network
+
+| Network                | Preset                   | `paramSet` |
+| ---------------------- | ------------------------ | ---------- |
+| Local development      | `INSECURE_THRESHOLD_512` | `0`        |
+| Sepolia testnet        | `INSECURE_THRESHOLD_512` | `0`        |
+| Mainnet and production | `SECURE_THRESHOLD_8192`  | `1`        |
+
+**Use `INSECURE_THRESHOLD_512` on Sepolia.** The Sepolia ciphernodes run the insecure preset, and
+the circuit artifacts that ship in `@interfold/sdk` are compiled for it. The secure preset adds no
+real security on a testnet that runs mock verifiers; it only makes proof generation slower and
+causes a parameter mismatch. Earlier revisions of this page recommended `SECURE_THRESHOLD_8192` for
+Sepolia — that recommendation was wrong.
+
+**Use `SECURE_THRESHOLD_8192` in production.** The insecure preset uses a small polynomial ring
+(N=512) with no cryptographic security guarantees. The secure preset (N=8192) meets standard FHE
+security targets. It also needs `secure-8192` circuit artifacts on the prover and the verifier — see
+[Proving: embedded circuits or your own](#proving-embedded-circuits-or-your-own).
 
 The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
 request an E3 with `paramSet: 1` but initialise the SDK with `INSECURE_THRESHOLD_512`, the
@@ -111,7 +125,7 @@ const hash = await sdk.requestE3({
     BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
   ],
   e3Program: '0x...',
-  paramSet: 1, // ParamSet.Secure8192
+  paramSet: 0, // ParamSet.Insecure512 — use 1 (Secure8192) only on a secure network
   computeProviderParams: '0x',
   customParams: '0x',
 })
@@ -157,8 +171,8 @@ export function Dashboard() {
       ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
       feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
     },
-    // Use 'SECURE_THRESHOLD_8192' for production. 'INSECURE_THRESHOLD_512' is for local dev only.
-    thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
   })
 
   useEffect(() => {
@@ -199,8 +213,8 @@ const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n
 // Standalone import (pass preset name explicitly)
 import { generatePublicKey, encryptNumber } from '@interfold/sdk'
 
-const pk = await generatePublicKey('SECURE_THRESHOLD_8192')
-const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
+const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
+const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
 ```
 
 ### Full encryption method reference
@@ -217,6 +231,34 @@ const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
 | `encryptVectorAndGenProof(v, pk)`  | Vector version of `encryptNumberAndGenProof`          |
 | `getThresholdBfvParamsSet()`       | Get the parameter set for the configured preset       |
 | `generateProof(circuitInputs)`     | Generate a ZK proof from circuit inputs directly      |
+
+### Proving: embedded circuits or your own
+
+`generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
+circuits that are embedded in the package. Those artifacts are compiled with
+`--preset insecure-512 --committee minimum` (see
+`packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
+and a minimum-size committee.
+
+This has two consequences:
+
+- **`generateProof()` is a convenience for the embedded insecure path.** It is enough for local
+  development, for Sepolia, and for tests. Secure (N=8192) artifacts do not ship in the SDK today.
+- **The secure preset gives witnesses the embedded circuits cannot execute.** With
+  `SECURE_THRESHOLD_8192`, `encryptNumberAndGenInputs()` returns N=8192 circuit inputs, while the
+  embedded UDE circuits are N=512. Proof generation fails on the shape mismatch.
+
+**For on-chain Honk verification of encryption, bring your own compiled circuits.** Most E3 programs
+already need a custom proving pipeline on top of Greco — an app circuit and a fold circuit that
+wraps the UDE proof — so compile the UDE, app, and fold circuits for the preset and committee your
+deployment uses, then emit the Solidity verifier from them. `examples/CRISP` shows the whole flow.
+See [Noir Circuits](./noir-circuits) for the build commands and the verifier interface.
+
+Use `encryptNumberAndGenInputs()` (or `encryptVectorAndGenInputs()`) to get the circuit inputs, and
+feed them to your own prover instead of `generateProof()`.
+
+Secure artifacts may ship in the SDK in a later release. Until they do, treat your own compiled
+circuits as the supported path for production.
 
 ## Modular submodule imports
 

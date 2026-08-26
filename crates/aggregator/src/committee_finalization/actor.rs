@@ -24,7 +24,15 @@ use tracing::{error, info};
 mod handlers;
 
 const FINALIZATION_BUFFER_SECONDS: u64 = 1;
-const FINALIZE_INTERVAL_SECONDS: u64 = 5;
+/// Delay between one committee member's finalization attempt and the next.
+///
+/// A member cancels its own attempt when it observes `CommitteeFinalized`. That
+/// observation needs the leader's transaction to be mined and its log to be
+/// read. The interval must therefore exceed several block times, or every
+/// member sends a transaction that reverts with `CommitteeAlreadyFinalized`.
+/// The delay applies only while earlier members stay silent, so a larger value
+/// costs nothing when the first member finalizes.
+const FINALIZE_INTERVAL_SECONDS: u64 = 30;
 const FINALIZATION_RPC_RETRY_SECONDS: u64 = 30;
 pub const COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION: u32 = 1;
 
@@ -56,6 +64,19 @@ impl CommitteeFinalizerRecoveryState {
         self.pending_requests.remove(e3_id);
         self.tickets.remove(e3_id);
     }
+}
+
+/// Seconds a committee member waits after the submission window closes before it
+/// attempts finalization.
+///
+/// Members attempt in `party_index` order. Each step must be long enough for the
+/// previous member's transaction to be mined and for its `CommitteeFinalized`
+/// log to be read, or every member sends a transaction that reverts.
+fn finalization_delay_seconds(committee_deadline: u64, now: u64, party_index: u64) -> u64 {
+    committee_deadline
+        .saturating_sub(now)
+        .saturating_add(FINALIZATION_BUFFER_SECONDS)
+        .saturating_add(party_index.saturating_mul(FINALIZE_INTERVAL_SECONDS))
 }
 
 /// CommitteeFinalizer is an actor that listens to CommitteeRequested events and dispatches
@@ -160,12 +181,11 @@ impl CommitteeFinalizer {
             fut.into_actor(self)
                 .then(move |current_timestamp, act, ctx| {
                     if let Some(current_timestamp) = current_timestamp {
-                        let seconds_until_deadline = committee_deadline
-                            .saturating_sub(current_timestamp)
-                            .saturating_add(FINALIZATION_BUFFER_SECONDS)
-                            .saturating_add(
-                                party_index.saturating_mul(FINALIZE_INTERVAL_SECONDS),
-                            );
+                        let seconds_until_deadline = finalization_delay_seconds(
+                            committee_deadline,
+                            current_timestamp,
+                            party_index,
+                        );
 
                         info!(
                             e3_id = %e3_id,
@@ -246,5 +266,39 @@ impl Actor for CommitteeFinalizer {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finalization_delay_seconds, FINALIZE_INTERVAL_SECONDS};
+
+    /// Longest block interval observed on Sepolia. The stagger must exceed it,
+    /// plus the log read that cancels a pending attempt.
+    const OBSERVED_BLOCK_INTERVAL_SECONDS: u64 = 18;
+
+    #[test]
+    fn the_first_member_attempts_right_after_the_deadline() {
+        assert_eq!(finalization_delay_seconds(1_000, 900, 0), 101);
+    }
+
+    #[test]
+    fn each_member_waits_for_the_previous_attempt_to_reach_the_chain() {
+        let first = finalization_delay_seconds(1_000, 1_000, 0);
+        let second = finalization_delay_seconds(1_000, 1_000, 1);
+
+        assert!(
+            second - first > OBSERVED_BLOCK_INTERVAL_SECONDS,
+            "stagger {} must exceed one block interval",
+            second - first
+        );
+    }
+
+    #[test]
+    fn a_passed_deadline_keeps_the_stagger() {
+        assert_eq!(
+            finalization_delay_seconds(1_000, 5_000, 3),
+            1 + 3 * FINALIZE_INTERVAL_SECONDS
+        );
     }
 }

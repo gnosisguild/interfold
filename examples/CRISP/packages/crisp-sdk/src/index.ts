@@ -34,9 +34,14 @@ export {
   validateVote,
   destroyBBApi,
 } from './vote'
-export { CrispSDK } from './sdk'
+export { CrispSDK, SERVER_RPC } from './sdk'
 
 export type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   OnChainRoundData,
   RoundDetails,
   TokenDetails,

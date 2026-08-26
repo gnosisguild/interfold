@@ -34,6 +34,46 @@ pub struct Config {
     pub e3_compute_provider_parallel: bool,
     pub e3_compute_provider_batch_size: u32,
     pub etherscan_api_key: String,
+    /// Block to start indexing from on a FRESH database. Absent means "start at the chain head",
+    /// which is what this server did before backfill existed — set it to the deployment block of
+    /// the watched contracts to build a complete index. Ignored once a cursor is stored: a
+    /// restart always resumes from the cursor, replaying exactly the gap.
+    #[serde(default)]
+    pub index_start_block: Option<u64>,
+    /// `eth_getLogs` window for backfill. Lower it if the provider rejects the range.
+    #[serde(default)]
+    pub index_chunk_size: Option<u64>,
+    /// Comma-separated contract addresses the `/chain/*` routes will serve. Empty (the default)
+    /// denies every request: a misconfigured deployment must fail closed rather than quietly
+    /// become an open RPC endpoint for the whole chain.
+    #[serde(default)]
+    pub index_contracts: Option<String>,
+    /// Whether to believe `Forwarded` / `X-Forwarded-For` when identifying a caller.
+    ///
+    /// OFF by default, because actix's `realip_remote_addr` implements no trust-proxy logic: it
+    /// takes the header at face value. Both rate limiters key their per-caller window on that
+    /// value, so with no proxy stripping the header a caller can mint a fresh identity per
+    /// request and the window stops bounding anything.
+    ///
+    /// Set it ONLY when every request reaches this server through a proxy that overwrites those
+    /// headers — a CDN or load balancer you control. Behind such a proxy it must be set, or every
+    /// caller shares the proxy's address and therefore one window between them.
+    #[serde(default)]
+    pub trust_proxy_headers: bool,
+
+    /// Comma-separated subset of `INDEX_CONTRACTS` whose LOGS are indexed into the store.
+    ///
+    /// Separate from the read allowlist on purpose. Serving `eth_call` for a contract is cheap;
+    /// retaining every log it emits is not. A high-volume ERC-20 emits thousands of `Transfer`
+    /// events per thousand blocks, and indexing those costs storage and write amplification for
+    /// data no client queries — the frontends want `DelegateChanged` and `ProposalCreated`, not
+    /// transfers. List only the contracts whose event history is actually read; everything else
+    /// stays readable but has its (rare) log queries forwarded upstream.
+    ///
+    /// Empty means no log indexing, which is the safe default: correctness is unaffected, only
+    /// latency.
+    #[serde(default)]
+    pub index_log_contracts: Option<String>,
 }
 
 impl Config {

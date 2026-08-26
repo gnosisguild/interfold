@@ -16,9 +16,19 @@ import {
   CRISP_SERVER_TOKEN_TREE_ENDPOINT,
   CRISP_SERVER_VOTING_BROADCAST_ENDPOINT,
   CRISP_SERVER_VOTING_STATUS_ENDPOINT,
+  CRISP_SERVER_CHAIN_HEAD_ENDPOINT,
+  CRISP_SERVER_CHAIN_READ_ENDPOINT,
+  CRISP_SERVER_CHAIN_LOGS_ENDPOINT,
+  CRISP_SERVER_CHAIN_BLOCK_AT_TIMESTAMP_ENDPOINT,
+  CRISP_SERVER_CHAIN_RPC_ENDPOINT,
 } from './constants'
 
 import type {
+  ChainHead,
+  ContractRead,
+  ContractReadResult,
+  IndexedLog,
+  LogQuery,
   BroadcastVoteRequest,
   BroadcastVoteResponse,
   CurrentRoundResponse,
@@ -209,3 +219,130 @@ export const getTokenHolderHashes = async (serverUrl: string, e3Id: bigint): Pro
  */
 export const getEligibleAddresses = async (serverUrl: string, e3Id: bigint): Promise<TokenHolder[]> =>
   postJson<TokenHolder[]>(serverUrl, CRISP_SERVER_ELIGIBLE_ADDRESSES_ENDPOINT, { round_id: e3Id.toString() })
+
+/**
+ * The chain head (block number, timestamp, chain id) as seen by the CRISP server.
+ *
+ * One call in place of polling `eth_blockNumber` from every hook that wants to know whether
+ * something has advanced, and it carries the timestamp so a caller deciding whether a voting
+ * window has closed does not need a second round trip for the block.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @returns The current head
+ */
+export const getChainHead = async (serverUrl: string): Promise<ChainHead> => {
+  const data = await postJson<{ block_number: number | string; timestamp: number | string; chain_id: number }>(
+    serverUrl,
+    CRISP_SERVER_CHAIN_HEAD_ENDPOINT,
+    {},
+  )
+
+  return {
+    blockNumber: BigInt(data.block_number),
+    timestamp: BigInt(data.timestamp),
+    chainId: Number(data.chain_id),
+  }
+}
+
+/**
+ * Read allowlisted contracts through the CRISP server, batched.
+ *
+ * Point reads are answered from the chain rather than from the server's index on purpose: they
+ * are per-account and change constantly, and a stale answer here is not a slow UI but a wrong
+ * balance or a voter wrongly told they cannot vote.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @param calls - The calls to perform, in order
+ * @returns One result per call, in the same order
+ */
+export const readContracts = async (serverUrl: string, calls: ContractRead[]): Promise<ContractReadResult[]> => {
+  if (calls.length === 0) return []
+
+  const data = await postJson<{ result: string | null; error: string | null }[]>(serverUrl, CRISP_SERVER_CHAIN_READ_ENDPOINT, {
+    calls: calls.map((call) => ({
+      address: call.address,
+      data: call.data,
+      block_number: call.blockNumber !== undefined ? Number(call.blockNumber) : undefined,
+    })),
+  })
+
+  return data.map((entry) => ({
+    result: entry.result ? (entry.result as `0x${string}`) : undefined,
+    error: entry.error ?? undefined,
+  }))
+}
+
+/**
+ * Query logs for an allowlisted contract over an arbitrary block range.
+ *
+ * The range needs no chunking by the caller: the server splits it into windows the upstream
+ * provider accepts, which is the whole reason clients otherwise carry range-splitting code.
+ *
+ * It is still BOUNDED — the server refuses a span wider than a million blocks, and `fromBlock`
+ * defaults to 0, so a query naming only an address is rejected on a long-lived chain. Pass the
+ * contract's deployment block as `fromBlock`; that is the intended usage and always in range.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @param query - The log query
+ * @returns The matching logs, ordered by block and log index
+ */
+export const getIndexedLogs = async (serverUrl: string, query: LogQuery): Promise<IndexedLog[]> => {
+  const data = await postJson<
+    {
+      address: string
+      topics: string[]
+      data: string
+      block_number: number | null
+      transaction_hash: string | null
+      log_index: number | null
+    }[]
+  >(serverUrl, CRISP_SERVER_CHAIN_LOGS_ENDPOINT, {
+    address: query.address,
+    topics: (query.topics ?? []).map((topic) => topic ?? null),
+    from_block: query.fromBlock !== undefined ? Number(query.fromBlock) : undefined,
+    to_block: query.toBlock !== undefined ? Number(query.toBlock) : undefined,
+  })
+
+  return data.map((log) => ({
+    address: log.address,
+    topics: log.topics as `0x${string}`[],
+    data: log.data as `0x${string}`,
+    blockNumber: log.block_number !== null ? BigInt(log.block_number) : undefined,
+    transactionHash: log.transaction_hash ?? undefined,
+    logIndex: log.log_index ?? undefined,
+  }))
+}
+
+/**
+ * The last block at or before a timestamp.
+ *
+ * Clients need this to turn a proposal's snapshot timepoint into a block. Done client-side it is
+ * a binary search costing `O(log n)` block fetches per lookup; the server spends those on its own
+ * connection instead.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @param timestamp - The unix timestamp to resolve
+ * @returns The block at or before the timestamp, and that block's timestamp
+ */
+export const getBlockAtTimestamp = async (serverUrl: string, timestamp: bigint): Promise<{ blockNumber: bigint; timestamp: bigint }> => {
+  const data = await postJson<{ block_number: number | string; timestamp: number | string }>(
+    serverUrl,
+    CRISP_SERVER_CHAIN_BLOCK_AT_TIMESTAMP_ENDPOINT,
+    { timestamp: Number(timestamp) },
+  )
+
+  return { blockNumber: BigInt(data.block_number), timestamp: BigInt(data.timestamp) }
+}
+
+/**
+ * The URL of the server's read-only JSON-RPC endpoint.
+ *
+ * Point a standard Ethereum client at this to read the allowlisted contracts without a
+ * hosted-provider key. It serves reads only — transactions are signed and broadcast by the
+ * user's wallet, which brings its own transport.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @returns The JSON-RPC URL
+ */
+export const chainRpcUrl = (serverUrl: string): string =>
+  `${serverUrl.replace(/\/+$/, '')}/${CRISP_SERVER_CHAIN_RPC_ENDPOINT}`

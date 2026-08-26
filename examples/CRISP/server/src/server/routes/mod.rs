@@ -4,7 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod chain;
+mod members;
+mod proposals;
 mod rounds;
+mod scan;
 mod state;
 mod voting;
 
@@ -14,4 +18,7 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     state::setup_routes(config);
     voting::setup_routes(config);
     rounds::setup_routes(config);
+    chain::setup_routes(config);
+    members::setup_routes(config);
+    proposals::setup_routes(config);
 }

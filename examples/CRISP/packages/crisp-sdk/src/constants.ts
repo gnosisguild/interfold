@@ -19,6 +19,14 @@ export const CRISP_SERVER_ROUNDS_PUBLIC_KEY_ENDPOINT = 'rounds/public-key'
 export const CRISP_SERVER_ROUNDS_CIPHERTEXT_ENDPOINT = 'rounds/ciphertext'
 export const CRISP_SERVER_ROUNDS_REQUEST_ENDPOINT = 'rounds/request'
 
+// Chain access. These let a client read the contracts CRISP already watches without holding a
+// hosted-provider key of its own — see the `/chain/*` routes on the server.
+export const CRISP_SERVER_CHAIN_RPC_ENDPOINT = 'chain/rpc'
+export const CRISP_SERVER_CHAIN_HEAD_ENDPOINT = 'chain/head'
+export const CRISP_SERVER_CHAIN_READ_ENDPOINT = 'chain/read'
+export const CRISP_SERVER_CHAIN_LOGS_ENDPOINT = 'chain/logs'
+export const CRISP_SERVER_CHAIN_BLOCK_AT_TIMESTAMP_ENDPOINT = 'chain/block-at-timestamp'
+
 export const MERKLE_TREE_MAX_DEPTH = 20 // static, hardcoded in the circuit.
 
 // @note Must stay aligned with CRISP circuits / threshold message layout (Rust & Noir MAX_MSG_NON_ZERO_COEFFS).
