@@ -200,25 +200,44 @@ ciphernodes. The planned launch uses sUSDS shares. Nodes can redeem their shares
 after an exit, while the protocol routes slashed shares through the slashed-fund
 paths.
 
-The launch pricing model is cost-plus:
+The launch pricing model separates node services from the VRF request:
 
 ```text
 modeled base cost = key generation + coordination + availability
                   + decryption + publication + verification
-gross E3 fee      = modeled base cost * (1 + marginBps / 10_000)
-treasury revenue  = gross E3 fee * protocolShareBps / 10_000
-CN reward pool    = gross E3 fee - treasury revenue
+service fee       = modeled base cost * (1 + marginBps / 10_000)
+total quote       = service fee + randomnessFlatFee
+treasury revenue  = randomnessFlatFee
+                  + service fee * protocolShareBps / 10_000
+CN reward pool    = service fee - service protocol share
 ```
 
 Launch defaults set `marginBps = 1000` and `protocolShareBps = 182`. In plain
 English: requests pay a 10% margin over modeled ciphernode cost, and the
-protocol treasury receives about 1.82% of the gross E3 fee. Because the treasury
-share is applied to the gross fee in-contract, 1.82% gross is approximately 20%
-of the 10% margin; the remaining fee is distributed to active committee nodes.
+protocol treasury receives about 1.82% of the service fee. Because the treasury
+share is applied to the service fee in-contract, 1.82% is approximately 20% of
+the 10% margin; the remaining fee is distributed to active committee nodes.
+
+The Ethereum launch configuration sets `randomnessFlatFee` to 40 USDS. The fee
+reimburses the DAO-funded Chainlink VRF subscription. It does not receive the
+service margin, and ciphernodes do not share it. The contract credits this fee
+to the request-time treasury when Chainlink accepts the randomness request.
+
+The 40 USDS value uses Chainlink's Ethereum native-payment example: 50 gwei,
+115,000 verification gas, 95,000 callback gas, and a 24% premium produce a
+0.01302 ETH request cost. At the release reference price of 2,442.81 USDS per
+ETH, the estimate is 31.81 USDS. Rounding to 40 USDS adds a 25.8% buffer. See
+[VRF_FEE.md](deploy/protocol/VRF_FEE.md) for the calculation and review rules.
+
+The randomness fee is not part of service escrow. If randomness times out, the
+requester receives all service escrow, but the randomness fee stays charged. A
+late fulfillment can still charge the subscription after the E3 fails. If the
+Chainlink request itself reverts, the complete E3 request reverts and no fee is
+collected.
 
 Do not configure `protocolShareBps = 2000` unless the intent is for the treasury
-to receive 20% of the whole E3 fee. With a 10% margin, that would pay
-ciphernodes less than the modeled base cost.
+to receive 20% of the service fee. With a 10% margin, that would pay ciphernodes
+less than the modeled base cost.
 
 ## Localhost deployment
 

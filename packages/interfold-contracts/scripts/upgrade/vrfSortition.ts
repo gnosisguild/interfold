@@ -28,7 +28,11 @@ import type {
   SafeTransaction,
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
-import { loadConfig, requireContract } from "../protocol/values";
+import {
+  feeAssetConfig,
+  loadConfig,
+  requireContract,
+} from "../protocol/values";
 import { deployUpgradeImplementation } from "./safeProxyUpgrade";
 
 function planPath(config: ProtocolConfigFile): string {
@@ -163,6 +167,12 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
       deployment.interfold,
       interfoldUpgrade.implementation,
     ),
+    safeTx(
+      deployment.interfold,
+      interfold.interface.encodeFunctionData("setFeeAssetConfig", [
+        feeAssetConfig(config),
+      ]),
+    ),
     ...buildRandomnessTransactions(
       config,
       randomness.randomnessProvider,
@@ -176,7 +186,7 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} VRF sortition upgrade`;
   batch.meta.description =
-    "Upgrade committee sortition to Chainlink VRF and configure its subscription consumer.";
+    "Upgrade committee sortition to Chainlink VRF, configure its flat fee, and configure the subscription consumer.";
   writeJson(rawBatchFile, batch);
 
   let safeBuilderFile: string | undefined;

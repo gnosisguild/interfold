@@ -114,7 +114,7 @@ contract Interfold is
     mapping(uint8 => bytes) public paramSetRegistry;
 
     /// @notice Mapping tracking fee payments for each E3.
-    /// @dev Stores the amount paid for an E3, distributed to committee upon completion.
+    /// @dev Stores service escrow. The request-time randomness fee is credited separately.
     mapping(uint256 e3Id => uint256 e3Payment) public e3Payments;
 
     /// @notice Maps E3 ID to its current stage
@@ -164,7 +164,7 @@ contract Interfold is
     mapping(uint256 e3Id => mapping(address account => uint256 amount))
         internal _pendingRewards;
 
-    /// @notice Pull-payment ledger for treasury protocol-share credits.
+    /// @notice Pull-payment ledger for treasury randomness-fee and protocol-share credits.
     /// @dev Per-treasury / per-token so treasury rotations are non-destructive.
     mapping(address treasury => mapping(IERC20 token => uint256 amount))
         internal _pendingTreasury;
@@ -329,11 +329,18 @@ contract Interfold is
         // separate committee seed after this request is final.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
-        e3Payments[e3Id] = quotedFee;
         e3CryptoConfigIds[e3Id] = requestParams.expectedCryptoConfigId;
-        _e3FeeTokens[e3Id] = feeToken;
-        _e3ProtocolShareBps[e3Id] = _pricingConfig.protocolShareBps;
-        _e3ProtocolTreasury[e3Id] = _pricingConfig.protocolTreasury;
+        InterfoldPricing.recordRequestPayment(
+            e3Payments,
+            _e3FeeTokens,
+            _e3ProtocolShareBps,
+            _e3ProtocolTreasury,
+            _pendingTreasury,
+            _pricingConfig,
+            e3Id,
+            quotedFee,
+            feeToken
+        );
 
         // Initialize E3 Lifecycle
         _e3Stages[e3Id] = E3Stage.Requested;
@@ -695,29 +702,14 @@ contract Interfold is
     ///      Uses the per-E3 feeToken stored at request time (survives global token rotation).
     /// @param e3Id The ID of the failed E3
     function processE3Failure(uint256 e3Id) external {
-        E3Stage stage = _e3Stages[e3Id];
-        require(stage == E3Stage.Failed, E3NotFailed(e3Id));
-
-        uint256 payment = e3Payments[e3Id];
-        require(payment > 0, NoPaymentToRefund(e3Id));
-        e3Payments[e3Id] = 0; // Prevent double processing
-
-        address[] memory honestNodes = InterfoldLifecycle.honestNodes(
+        InterfoldPricing.processE3Failure(
+            e3Payments,
+            _e3FeeTokens,
+            uint8(_e3Stages[e3Id]),
             address(_registryFor(e3Id)),
+            _refundManagerFor(e3Id),
             e3Id
         );
-
-        IERC20 paymentToken = _e3FeeTokens[e3Id];
-
-        IE3RefundManager refundManager = _refundManagerFor(e3Id);
-        InterfoldPricing.transferExact(
-            paymentToken,
-            address(refundManager),
-            payment
-        );
-        refundManager.calculateRefund(e3Id, payment, honestNodes, paymentToken);
-
-        emit E3FailureProcessed(e3Id, payment, honestNodes.length);
     }
 
     /// @inheritdoc IInterfold

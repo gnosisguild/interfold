@@ -12,7 +12,7 @@ import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import { deployRandomnessProvider } from "./randomness";
 import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
-import { deployedAddress, pricingConfig, timeoutConfig } from "./values";
+import { deployedAddress, feeAssetConfig, timeoutConfig } from "./values";
 
 export async function deployProtocolContracts(
   ethers: any,
@@ -119,11 +119,7 @@ export async function deployProtocolContracts(
       registryProxy.proxy,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      {
-        token: config.feeToken,
-        expectedDecimals: config.feeTokenDecimals,
-        pricing: pricingConfig(config.interfold.pricing),
-      },
+      feeAssetConfig(config),
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
       initialE3Program,

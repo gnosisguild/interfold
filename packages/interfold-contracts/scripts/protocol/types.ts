@@ -7,6 +7,8 @@ export interface TimeoutConfig {
 }
 
 export interface PricingConfig {
+  /** Non-refundable fee-token amount charged for one accepted randomness request. */
+  randomnessFlatFee: string;
   keyGenFixedPerNode: string;
   keyGenPerEncryptionProof: string;
   coordinationPerPair: string;

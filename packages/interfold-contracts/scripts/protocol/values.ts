@@ -91,6 +91,15 @@ export function pricingConfig(config: PricingConfig) {
     decryptUtilizationBps: BigInt(config.decryptUtilizationBps),
     minCommitteeSize: BigInt(config.minCommitteeSize),
     minThreshold: BigInt(config.minThreshold),
+    randomnessFlatFee: BigInt(config.randomnessFlatFee),
+  };
+}
+
+export function feeAssetConfig(config: ProtocolConfigFile) {
+  return {
+    token: config.feeToken,
+    expectedDecimals: config.feeTokenDecimals,
+    pricing: pricingConfig(config.interfold.pricing),
   };
 }
 
@@ -360,6 +369,15 @@ function validateConfig(config: ProtocolConfigFile): void {
     config.interfold.pricing.protocolTreasury,
     "interfold.pricing.protocolTreasury",
   );
+  if (
+    !/^\d+$/.test(config.interfold.pricing.randomnessFlatFee) ||
+    BigInt(config.interfold.pricing.randomnessFlatFee) === 0n ||
+    BigInt(config.interfold.pricing.randomnessFlatFee) >= 1n << 192n
+  ) {
+    throw new Error(
+      "interfold.pricing.randomnessFlatFee must be a positive uint192 value",
+    );
+  }
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }

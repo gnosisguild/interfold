@@ -148,7 +148,8 @@ design citation alone does not establish current runtime behavior.
   rotation atomically sends any balance above `totalCiphernodeBondLiability` to the treasury before
   validating the replacement, so an unsolicited transfer cannot interleave with rotation. —
   `flow-trace/02`, `05`; INDEX concern #23
-- The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
+- The fee token, expected decimals, flat randomness fee, and every raw-unit service price change as
+  one configuration. The flat randomness fee must be nonzero and uses the fee token's raw units.
   Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
   time. Decimal validation checks the unit scale only; it does not establish the token's economic
   value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
@@ -247,9 +248,11 @@ design citation alone does not establish current runtime behavior.
 ### Slashing and failure settlement
 
 - Fault attribution drives payout direction: requester/DP/CP failures pay completed work + protocol
-  share from the request-time fee escrow; supplier/ciphernode failures return **100% of fee escrow
-  to the requester with no protocol cut**, honest nodes compensated only from actual ticket slashes.
-  — `flow-trace/05`
+  share from the request-time service fee escrow; supplier/ciphernode failures return **100% of
+  service fee escrow to the requester with no protocol cut**, honest nodes compensated only from
+  actual ticket slashes. The request-time randomness fee is not fee escrow. It remains a treasury
+  claim after any accepted randomness request, including a request that later times out. —
+  `flow-trace/05`
 - Slash assets keep their own ERC-20 denomination — independent pull claims, no conversion;
   different decimals never mix. — `flow-trace/05`
 - Slashed **ticket** funds are always escrowed first; destination depends on terminal outcome

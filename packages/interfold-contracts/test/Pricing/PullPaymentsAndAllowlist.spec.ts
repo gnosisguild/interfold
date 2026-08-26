@@ -89,6 +89,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       decryptUtilizationBps: 2500,
       minCommitteeSize: 0,
       minThreshold: 0,
+      randomnessFlatFee: 1n,
     });
 
     const now = await time.latest();
@@ -319,7 +320,10 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       await interfold.connect(owner).setFeeAssetConfig({
         token: tokenAddress,
         expectedDecimals: 18,
-        pricing: await currentPricingConfig(interfold),
+        pricing: {
+          ...(await currentPricingConfig(interfold)),
+          randomnessFlatFee: ethers.parseEther("1"),
+        },
       });
 
       const now = await time.latest();

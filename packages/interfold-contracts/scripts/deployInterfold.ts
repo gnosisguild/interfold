@@ -593,6 +593,7 @@ export const deployInterfold = async (
         decryptUtilizationBps: 2500, // 25%
         minCommitteeSize: 0,
         minThreshold: 0,
+        randomnessFlatFee: 1_000_000, // 1.00 mock USDC
       },
     }),
     "interfold.setFeeAssetConfig",

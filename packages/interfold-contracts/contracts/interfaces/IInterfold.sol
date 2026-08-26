@@ -116,6 +116,7 @@ interface IInterfold {
         uint16 decryptUtilizationBps;
         uint32 minCommitteeSize;
         uint32 minThreshold;
+        uint192 randomnessFlatFee;
     }
 
     /// @notice Fee asset and every raw-unit price denominated in that asset.
@@ -224,7 +225,7 @@ interface IInterfold {
         uint256 amount
     );
 
-    /// @notice Emitted when the protocol-treasury share is credited for later pull.
+    /// @notice Emitted when a randomness fee or protocol share is credited for later pull.
     /// @param e3Id The ID of the E3 computation.
     /// @param treasury The treasury address credited (snapshotted at request time).
     /// @param token The ERC20 fee token used for this E3.
@@ -236,7 +237,7 @@ interface IInterfold {
         uint256 amount
     );
 
-    /// @notice Emitted when a treasury withdraws its accrued protocol share.
+    /// @notice Emitted when a treasury withdraws its accrued credits.
     /// @param treasury The treasury address pulling its credits.
     /// @param token The ERC20 token transferred.
     /// @param amount The amount transferred.
@@ -708,7 +709,7 @@ interface IInterfold {
     /// @return e3 The struct representing the requested E3.
     function getE3(uint256 e3Id) external view returns (E3 memory e3);
 
-    /// @notice This function returns the fee of an E3
+    /// @notice Returns the service fee and flat randomness fee for an E3.
     /// @dev This function MUST revert if the E3 parameters are invalid.
     /// @param e3Params the struct representing the E3 request parameters
     /// @return fee the fee of the E3

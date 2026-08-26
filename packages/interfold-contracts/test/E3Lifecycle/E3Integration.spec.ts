@@ -411,10 +411,29 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .withArgs(firstE3Id, 6);
     });
 
-    it("fully refunds a request whose randomness expired", async function () {
+    it("refunds service fees after a randomness timeout", async function () {
       const ctx = await loadFixture(setup);
       await ctx.randomnessProvider.setAutoFulfill(false);
+      const requesterAddress = await ctx.requester.getAddress();
+      const requesterBalanceBefore =
+        await ctx.usdcToken.balanceOf(requesterAddress);
       await ctx.makeReadyRequest();
+      const serviceFee = await ctx.interfold.e3Payments(firstE3Id);
+      const randomnessFee = (await ctx.interfold.getPricingConfig())
+        .randomnessFlatFee;
+      const requesterBalanceAfterRequest =
+        await ctx.usdcToken.balanceOf(requesterAddress);
+      expect(requesterBalanceBefore - requesterBalanceAfterRequest).to.equal(
+        serviceFee + randomnessFee,
+      );
+
+      const pricing = await ctx.interfold.getPricingConfig();
+      expect(
+        await ctx.interfold.pendingTreasuryClaim(
+          pricing.protocolTreasury,
+          await ctx.usdcToken.getAddress(),
+        ),
+      ).to.equal(randomnessFee);
 
       const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
       await time.increaseTo(deadline + 1n);
@@ -440,6 +459,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       expect(distribution.honestNodeAmount).to.equal(0);
       expect(distribution.protocolAmount).to.equal(0);
+
+      await ctx.e3RefundManager
+        .connect(ctx.requester)
+        .claimRequesterRefund(firstE3Id);
+      const requesterBalanceAfterRefund =
+        await ctx.usdcToken.balanceOf(requesterAddress);
+      expect(
+        requesterBalanceAfterRefund - requesterBalanceAfterRequest,
+      ).to.equal(serviceFee);
     });
 
     it("rejects cancellation after the committee randomness is known", async function () {
@@ -534,6 +562,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         decryptUtilizationBps: 0,
         minCommitteeSize: 0,
         minThreshold: 0,
+        randomnessFlatFee: 1,
       });
 
       await finalizeReadyCommittee();
@@ -1021,7 +1050,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.setFeeAssetConfig({
         token: tokenAddress,
         expectedDecimals: 18,
-        pricing: await currentPricingConfig(interfold),
+        pricing: {
+          ...(await currentPricingConfig(interfold)),
+          randomnessFlatFee: ethers.parseEther("1"),
+        },
       });
 
       await makeRequest(requester, 0, token);
@@ -1504,7 +1536,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.connect(owner).setFeeAssetConfig({
         token: await feeToken.getAddress(),
         expectedDecimals: 6,
-        pricing: await currentPricingConfig(interfold),
+        pricing: {
+          ...(await currentPricingConfig(interfold)),
+          randomnessFlatFee: 1_000_000,
+        },
       });
 
       await makeRequest(requester, 0, feeToken);

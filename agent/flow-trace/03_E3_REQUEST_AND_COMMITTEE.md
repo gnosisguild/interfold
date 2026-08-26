@@ -32,6 +32,11 @@ existing E3's escrow or settlement unit. Fee assets must transfer exact amounts 
 account balances. Interfold checks the custody increase for escrow deposits. Each outbound transfer
 checks the recipient increase and the Interfold custody decrease.
 
+Each quote has two parts. The service fee funds ciphernodes and the service protocol share. The flat
+randomness fee reimburses the protocol-funded randomness subscription. Interfold credits the flat
+fee to the request-time treasury when the request succeeds. It stores only the service fee in
+`e3Payments`, so success and failure settlement cannot pay or refund the randomness fee.
+
 Interfold starts with requests paused. Deployment wires and validates one complete dependency
 generation before it enables requests. Governance must pause requests and drain the current
 generation before it replaces a registry, bonding registry, slashing manager, or refund manager.
@@ -77,21 +82,26 @@ Requester calls: Interfold.request({
 │   └─ e3Programs[e3Program] == true (program whitelisted)
 │
 ├─ FEE CALCULATION:
-│   ├─ fee = getE3Quote()
+│   ├─ totalFee = getE3Quote()
 │   │   → InterfoldPricing validates the active circuit [T, H, N].
 │   │   → The quote uses N for committee-wide work and H for required decryption shares.
 │   │   → It also uses the time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
 │   │   → availability covers at least request time through input-window end
 │   │   → a later equal-length input window therefore costs more
+│   │   → serviceFee = modeled work cost * (1 + marginBps / 10_000)
+│   │   → totalFee = serviceFee + randomnessFlatFee
+│   │   → margin does not apply to randomnessFlatFee
 │   ├─ Require the current fee token to equal expectedFeeToken
 │   ├─ Require the active scheme, parameter hash, and circuit version to equal
 │   │  expectedCryptoConfigId
-│   ├─ Require fee <= maxFee
-│   ├─ feeToken.transferFrom(requester, address(this), fee)
-│   │   → require Interfold receives exactly fee
-│   └─ e3Payments[e3Id] = fee  (stored per-E3)
-│       _e3FeeTokens[e3Id] = feeToken  (survives global token rotation)
+│   ├─ Require totalFee <= maxFee
+│   ├─ feeToken.transferFrom(requester, address(this), totalFee)
+│   │   → require Interfold receives exactly totalFee
+│   ├─ e3Payments[e3Id] = serviceFee  (refundable service escrow)
+│   ├─ _pendingTreasury[requestTreasury][feeToken] += randomnessFlatFee
+│   │   → emit TreasuryCredited
+│   └─ _e3FeeTokens[e3Id] = feeToken  (survives global token rotation)
 │
 ├─ E3 CREATION:
 │   ├─ e3Id = nexte3Id++
@@ -625,10 +635,11 @@ even when it starts after the E3 has failed or completed.
 
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
-paths classify it as `CommitteeFormationTimeout`, release committee obligations, and allow a full
-requester refund. The timeout also clears the active provider. New E3 requests then revert until
-governance pauses requests, investigates the failure, and restores a provider. A late callback stays
-recorded in the request-bound provider but cannot restart the E3.
+paths classify it as `CommitteeFormationTimeout`, release committee obligations, and return all
+service fee escrow to the requester. The flat randomness fee stays charged. The timeout also clears
+the active provider. New E3 requests then revert until governance pauses requests, investigates the
+failure, and restores a provider. A late callback stays recorded in the request-bound provider but
+cannot restart the E3.
 
 The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
 also exposes the event so operators can alert on the halt without treating it as an E3 data event.

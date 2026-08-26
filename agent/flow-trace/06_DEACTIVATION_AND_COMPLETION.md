@@ -172,6 +172,8 @@ publishPlaintextOutput() succeeds
 │   ├─ stage = Complete
 │   ├─ _distributeRewards(e3Id)
 │   │   ├─ (activeNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
+│   │   ├─ payment = request-time service fee escrow
+│   │   │   → the flat randomness fee was credited to treasury at request time
 │   │   ├─ protocolAmount = payment * snapshotted protocolShareBps / 10_000
 │   │   ├─ cnAmount = payment - protocolAmount
 │   │   ├─ perNode = cnAmount / activeNodes.length

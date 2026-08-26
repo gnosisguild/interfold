@@ -57,10 +57,17 @@ fn catalog(contract: &str) -> &'static [EvmEventDefinition] {
 /// Entries here are append-only — a signature that was once on chain is on chain forever.
 fn retired_catalog(contract: &str) -> &'static [EvmEventDefinition] {
     match contract {
+        "Interfold" => RETIRED_INTERFOLD,
         "BondingRegistry" => RETIRED_BONDING_REGISTRY,
         _ => &[],
     }
 }
+
+const RETIRED_INTERFOLD: &[EvmEventDefinition] = &[EvmEventDefinition::new(
+    "FeeAssetConfigUpdated",
+    "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
+    None,
+)];
 
 const RETIRED_BONDING_REGISTRY: &[EvmEventDefinition] = &[
     // Renamed to `CiphernodeBondUpdated`. Same field layout, so the decoded record is identical;
@@ -114,7 +121,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("FeeTokenAllowed", "FeeTokenAllowed(address,bool)", None),
     EvmEventDefinition::new(
         "FeeAssetConfigUpdated",
-        "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
+        "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint192))",
         None,
     ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
@@ -706,6 +713,15 @@ mod tests {
     /// able to read its own history.
     #[test]
     fn retired_signatures_still_decode_to_their_current_name() {
+        let old_fee_config = keccak256(
+            "FeeAssetConfigUpdated(address,uint8,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint16,uint16,uint16,uint16,uint16,uint32,uint32))",
+        );
+        assert_eq!(
+            find("Interfold", old_fee_config).map(|event| event.name),
+            Some("FeeAssetConfigUpdated"),
+            "pre-VRF pricing logs must still decode"
+        );
+
         let retired = keccak256("LicenseBondUpdated(address,int256,uint256,bytes32)");
         assert_eq!(
             find("BondingRegistry", retired).map(|event| event.name),

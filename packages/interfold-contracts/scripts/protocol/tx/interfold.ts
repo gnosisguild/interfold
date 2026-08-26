@@ -10,7 +10,7 @@ import type {
   ProtocolInterfaces,
   SafeTransaction,
 } from "../types";
-import { encodeBfvParams, optionalAddress, pricingConfig } from "../values";
+import { encodeBfvParams, feeAssetConfig, optionalAddress } from "../values";
 
 export function appendInterfoldTxs(
   txs: SafeTransaction[],
@@ -89,11 +89,7 @@ function appendCommitteeAndPricingTxs(
     safeTx(
       c.interfold,
       i.interfold.encodeFunctionData("setFeeAssetConfig", [
-        {
-          token: config.feeToken,
-          expectedDecimals: config.feeTokenDecimals,
-          pricing: pricingConfig(config.interfold.pricing),
-        },
+        feeAssetConfig(config),
       ]),
     ),
   );

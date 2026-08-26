@@ -249,15 +249,6 @@ library InterfoldLifecycle {
             revert IInterfold.DKGDeadlinePassed(e3Id, dkgDeadline);
     }
 
-    function honestNodes(
-        address registryAddress,
-        uint256 e3Id
-    ) external view returns (address[] memory) {
-        (address[] memory nodes, ) = ICiphernodeRegistry(registryAddress)
-            .getActiveCommitteeNodes(e3Id);
-        return nodes;
-    }
-
     /// @notice Validates, verifies, and records one ciphertext output.
     function publishCiphertext(
         mapping(uint256 e3Id => E3 e3) storage e3s,

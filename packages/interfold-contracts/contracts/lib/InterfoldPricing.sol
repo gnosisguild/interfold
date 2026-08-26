@@ -56,15 +56,6 @@ library InterfoldPricing {
         _requireExactReceipt(token, recipient, balanceBefore, amount);
     }
 
-    /// @notice Send an exact token amount from a custody contract.
-    function transferExact(
-        IERC20 token,
-        address recipient,
-        uint256 amount
-    ) external {
-        _transferExact(token, recipient, amount);
-    }
-
     /// @notice Drain one E3 reward and transfer it to its recipient.
     function claimReward(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
@@ -91,6 +82,53 @@ library InterfoldPricing {
         pendingTreasury[treasury][token] = 0;
         _transferExact(token, treasury, amount);
         emit TreasuryClaimed(treasury, token, amount);
+    }
+
+    /// @notice Records service escrow and credits the randomness fee.
+    function recordRequestPayment(
+        mapping(uint256 e3Id => uint256 amount) storage e3Payments,
+        mapping(uint256 e3Id => IERC20 token) storage feeTokens,
+        mapping(uint256 e3Id => uint16 bps) storage protocolShareBps,
+        mapping(uint256 e3Id => address treasury) storage protocolTreasuries,
+        mapping(address treasury => mapping(IERC20 token => uint256 amount))
+            storage pendingTreasury,
+        IInterfold.PricingConfig storage pricing,
+        uint256 e3Id,
+        uint256 quotedFee,
+        IERC20 token
+    ) external {
+        uint256 randomnessFee = pricing.randomnessFlatFee;
+        address treasury = pricing.protocolTreasury;
+        e3Payments[e3Id] = quotedFee - randomnessFee;
+        feeTokens[e3Id] = token;
+        protocolShareBps[e3Id] = pricing.protocolShareBps;
+        protocolTreasuries[e3Id] = treasury;
+        pendingTreasury[treasury][token] += randomnessFee;
+        emit IInterfold.TreasuryCredited(e3Id, treasury, token, randomnessFee);
+    }
+
+    /// @notice Transfers service escrow and calculates one failed-E3 refund.
+    function processE3Failure(
+        mapping(uint256 e3Id => uint256 amount) storage e3Payments,
+        mapping(uint256 e3Id => IERC20 token) storage feeTokens,
+        uint8 stage,
+        address registry,
+        IE3RefundManager refundManager,
+        uint256 e3Id
+    ) external {
+        if (stage != uint8(IInterfold.E3Stage.Failed))
+            revert IInterfold.E3NotFailed(e3Id);
+
+        uint256 payment = e3Payments[e3Id];
+        if (payment == 0) revert IInterfold.NoPaymentToRefund(e3Id);
+        e3Payments[e3Id] = 0;
+
+        (address[] memory honestNodes, ) = ICiphernodeRegistry(registry)
+            .getActiveCommitteeNodes(e3Id);
+        IERC20 paymentToken = feeTokens[e3Id];
+        _transferExact(paymentToken, address(refundManager), payment);
+        refundManager.calculateRefund(e3Id, payment, honestNodes, paymentToken);
+        emit IInterfold.E3FailureProcessed(e3Id, payment, honestNodes.length);
     }
 
     /// @notice Validates a fee asset and every raw-unit price tied to it.
@@ -122,6 +160,9 @@ library InterfoldPricing {
             );
         }
 
+        if (config.pricing.randomnessFlatFee == 0)
+            revert IInterfold.PaymentRequired(config.pricing.randomnessFlatFee);
+
         _validatePricingConfig(
             config.pricing,
             maxMarginBps,
@@ -150,10 +191,8 @@ library InterfoldPricing {
             revert IInterfold.UtilizationBpsExceedsMax(
                 config.decryptUtilizationBps
             );
-        if (
-            config.protocolShareBps != 0 &&
-            config.protocolTreasury == address(0)
-        ) revert IInterfold.TreasuryRequired();
+        if (config.protocolTreasury == address(0))
+            revert IInterfold.TreasuryRequired();
         if (config.minCommitteeSize < config.minThreshold)
             revert IInterfold.MinSizeBelowMinThreshold();
     }
@@ -362,12 +401,16 @@ library InterfoldPricing {
 
         uint256 baseFee = _baseFee(pc, n, h, duration);
 
-        // Apply margin markup
+        // Apply the margin only to ciphernode services. The flat randomness
+        // fee reimburses the protocol-funded subscription without a markup.
         fee =
             (baseFee * (uint256(BPS_BASE) + uint256(pc.marginBps))) /
             uint256(BPS_BASE);
 
         if (fee == 0) revert IInterfold.PaymentRequired(fee);
+        if (pc.randomnessFlatFee == 0)
+            revert IInterfold.PaymentRequired(pc.randomnessFlatFee);
+        fee += pc.randomnessFlatFee;
     }
 
     function _validateQuoteWindow(

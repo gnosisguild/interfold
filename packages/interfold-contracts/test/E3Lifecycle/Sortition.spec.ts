@@ -105,6 +105,7 @@ async function deployStack() {
     decryptUtilizationBps: 2500,
     minCommitteeSize: 0,
     minThreshold: 0,
+    randomnessFlatFee: 1n,
   });
 
   await feeToken

@@ -137,6 +137,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
         decryptionWindow: "21600",
       },
       pricing: {
+        randomnessFlatFee: "1000000000000000000",
         keyGenFixedPerNode: "100000000000000000",
         keyGenPerEncryptionProof: "100000000000000000",
         coordinationPerPair: "10000000000000000",

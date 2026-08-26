@@ -9,7 +9,7 @@ import type {
   ProtocolDeployment,
   ProtocolInterfaces,
 } from "./protocol/types";
-import { pricingConfig } from "./protocol/values";
+import { feeAssetConfig } from "./protocol/values";
 import {
   isLocalDeploymentChain,
   storeDeploymentArgs,
@@ -266,11 +266,7 @@ export function syncProtocolDeploymentRecords(
       deployment.ciphernodeRegistry,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      {
-        token: config.feeToken,
-        expectedDecimals: config.feeTokenDecimals,
-        pricing: pricingConfig(config.interfold.pricing),
-      },
+      feeAssetConfig(config),
       BigInt(config.interfold.maxDuration),
       {
         dkgWindow: BigInt(config.interfold.timeoutConfig.dkgWindow),
@@ -293,6 +289,7 @@ export function syncProtocolDeploymentRecords(
         e3RefundManager: ADDRESS_ONE,
         feeToken: config.feeToken,
         feeTokenDecimals: config.feeTokenDecimals,
+        randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
         pricingConfig: JSON.stringify(config.interfold.pricing),
