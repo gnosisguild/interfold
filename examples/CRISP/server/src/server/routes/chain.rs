@@ -532,11 +532,18 @@ const MAX_FEE_HISTORY_BLOCKS: u64 = 128;
 /// intended use needs one.
 fn global_request_is_too_broad(method: &str, params: &serde_json::Value) -> Option<&'static str> {
     match method {
-        "eth_getBlockByNumber" | "eth_getBlockByHash" => params
-            .get(1)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-            .then_some("full transaction bodies are not served; pass false"),
+        // Full transaction bodies USED to be refused here, on the grounds that a whole block is
+        // the largest single response a node produces and nothing in this server's intended use
+        // needs one. The second half was wrong: viem's `waitForTransactionReceipt` fetches the
+        // mined block with `includeTransactions: true` to detect a replaced transaction (a
+        // speed-up or a cancel), and no caller can opt out of it. Refusing it broke the
+        // confirmation step of EVERY write once the frontends read through this endpoint — the
+        // transaction landed on chain and the UI reported an invalid-parameter error.
+        //
+        // The cost is bounded without the refusal: it names ONE block, so it is a single large
+        // response rather than a fan-out, and how often a caller may ask is what the read window
+        // in `admit` decides. What is worth bounding here is a method whose size the CALLER
+        // chooses, which is why `feeHistory` keeps its cap.
         "eth_feeHistory" => {
             let count = params.get(0).and_then(|v| match v {
                 serde_json::Value::String(hex) => {
@@ -1658,6 +1665,26 @@ mod tests {
         let call_data = [MULTICALL3_GET_ETH_BALANCE.as_slice(), &[0u8; 32]].concat();
 
         assert!(multicall3_targets(&call_data, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_block_with_full_transaction_bodies_is_served() {
+        // Exactly the shape viem's `waitForTransactionReceipt` sends while checking whether a
+        // transaction was replaced. Refusing it reported a parameter error for a transaction that
+        // had already been mined.
+        let params = serde_json::json!(["0xb08cfe", true]);
+        assert!(global_request_is_too_broad("eth_getBlockByNumber", &params).is_none());
+        assert!(global_request_is_too_broad("eth_getBlockByHash", &params).is_none());
+    }
+
+    #[test]
+    fn a_caller_chosen_fee_history_range_is_still_capped() {
+        // The bound worth keeping: unlike a block, the caller picks how much work this is.
+        let too_many = serde_json::json!(["0x400", "latest", []]);
+        assert!(global_request_is_too_broad("eth_feeHistory", &too_many).is_some());
+
+        let reasonable = serde_json::json!(["0x8", "latest", []]);
+        assert!(global_request_is_too_broad("eth_feeHistory", &reasonable).is_none());
     }
 
     #[test]
