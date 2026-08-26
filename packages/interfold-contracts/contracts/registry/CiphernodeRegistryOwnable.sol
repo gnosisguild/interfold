@@ -713,16 +713,20 @@ contract CiphernodeRegistryOwnable is
             );
     }
 
+    function _requireCommitteeRequested(uint256 e3Id) private view {
+        require(
+            committees[e3Id].stage != CommitteeStage.None,
+            CommitteeNotRequested()
+        );
+    }
+
     /// @notice Finalize the committee after submission window closes
     /// @dev Can be called by anyone after the deadline. If threshold not met, marks E3 as failed.
     /// @param e3Id ID of the E3 computation
     /// @return success True if committee formed successfully, false if threshold not met
     function finalizeCommittee(uint256 e3Id) external returns (bool success) {
         Committee storage c = committees[e3Id];
-        require(
-            c.stage != ICiphernodeRegistry.CommitteeStage.None,
-            CommitteeNotRequested()
-        );
+        _requireCommitteeRequested(e3Id);
         require(
             c.stage == ICiphernodeRegistry.CommitteeStage.Requested,
             CommitteeAlreadyFinalized()
@@ -1130,6 +1134,7 @@ contract CiphernodeRegistryOwnable is
     function getCommitteeDeadline(
         uint256 e3Id
     ) external view returns (uint256) {
+        _requireCommitteeRequested(e3Id);
         (, , uint256 deadline) = _sortitionState(e3Id);
         return deadline;
     }

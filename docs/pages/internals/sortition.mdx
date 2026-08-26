@@ -38,10 +38,11 @@ for the accepted seed. The first valid ticket stores that seed and its response-
 deadline on-chain.
 
 The E3 computation seed in `E3Requested` remains separate. It is still used by the cryptographic
-workflow, but it does not rank tickets. A block builder or L2 sequencer cannot calculate alternate
-VRF outputs by changing block contents. A provider can delay or withhold a response, but it cannot
-replace the frozen request with a second draw. A timeout fails the E3 instead of selecting a
-fallback randomness source.
+workflow, but it does not rank tickets. An Ethereum block builder cannot calculate alternate VRF
+outputs by changing block contents. This release supports Ethereum mainnet and Sepolia; it does not
+enable Arbitrum deployments. A provider can delay or withhold a response, but it cannot replace the
+frozen request with a second draw. A timeout fails the E3 instead of selecting a fallback randomness
+source.
 
 ---
 

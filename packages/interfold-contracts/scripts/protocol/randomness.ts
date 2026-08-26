@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { assertSupportedVrfChain } from "./chains";
 import { safeTx } from "./safe";
 import type {
   ProtocolConfigFile,
@@ -27,6 +28,7 @@ export const vrfProviderInterface = new ethersLib.Interface([
 export function requireRandomnessConfig(
   config: ProtocolConfigFile,
 ): RandomnessConfig {
+  assertSupportedVrfChain(config.chainId);
   if (!config.randomness) {
     throw new Error("randomness configuration is required");
   }
@@ -176,6 +178,7 @@ export async function deployRandomnessProvider(
     randomness.requestConfirmations,
     randomness.callbackGasLimit,
     randomness.nativePayment,
+    BigInt(randomness.minimumSubscriptionBalance),
     config.protocolOwner,
   );
   await provider.waitForDeployment();

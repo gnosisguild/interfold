@@ -7,7 +7,7 @@
 export { EventListener } from './event-listener'
 export type { EventListenerOptions } from './event-listener'
 
-export { InterfoldEventType, RegistryEventType } from './types'
+export { InterfoldEventType, RandomnessProviderEventType, RegistryEventType } from './types'
 
 export type {
   AllEventTypes,
@@ -25,6 +25,9 @@ export type {
   CommitteeRequestedData,
   CommitteeRandomnessRequestedData,
   RandomnessCircuitBreakerTrippedData,
+  RandomnessFulfilledData,
+  RandomnessProviderEvent,
+  RandomnessProviderEventCallback,
   CommitteePublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,

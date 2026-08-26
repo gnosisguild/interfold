@@ -205,6 +205,14 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("requestCommittee()", function () {
+    it("rejects an unknown E3 deadline", async function () {
+      const { registry } = await loadFixture(setup);
+
+      await expect(
+        registry.getCommitteeDeadline(firstE3Id),
+      ).to.be.revertedWithCustomError(registry, "CommitteeNotRequested");
+    });
+
     it("stores rootAt for the requested e3Id after a successful request", async function () {
       const {
         registry,
@@ -1431,24 +1439,5 @@ describe("CiphernodeRegistryOwnable", function () {
       // Three operators registered in setup
       expect(await registry.treeSize()).to.equal(3);
     });
-  });
-});
-
-describe("RegistrySortitionLib block counter", function () {
-  it("uses the Arbitrum L2 block number", async function () {
-    const library = await ethers.deployContract("RegistrySortitionLib");
-    await library.waitForDeployment();
-    const l2BlockNumber = 123456n;
-    const result = ethers.zeroPadValue(ethers.toBeHex(l2BlockNumber), 32);
-    await ethers.provider.send("hardhat_setCode", [
-      "0x0000000000000000000000000000000000000064",
-      `0x7f${result.slice(2)}60005260206000f3`,
-    ]);
-
-    for (const chainId of [42161, 42170, 421614]) {
-      expect(await library.currentBlockNumberForChain(chainId)).to.equal(
-        l2BlockNumber,
-      );
-    }
   });
 });

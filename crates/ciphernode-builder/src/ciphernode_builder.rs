@@ -1161,6 +1161,14 @@ fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
     Ok(())
 }
 
+fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
+    ensure!(
+        matches!(chain_id, 1 | 1_337 | 31_337 | 11_155_111),
+        "VRF sortition supports Ethereum mainnet, Sepolia, and local development chains only; received chain_id {chain_id}"
+    );
+    Ok(())
+}
+
 /// Build delay configuration for a specific chain
 fn create_aggregate_delay(chain: &ChainConfig, actual_chain_id: u64) -> (AggregateId, Duration) {
     let aggregate_id = AggregateId::from_chain_id(Some(actual_chain_id));
@@ -1206,7 +1214,10 @@ async fn setup_evm_system(
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
-        // An entropy block read at the chain head can disappear before the ticket transaction.
+        if contract_components.ciphernode_registry {
+            validate_vrf_chain_id(chain_id)?;
+        }
+        // Delay ingestion until the configured number of confirmations is present.
         let ingestion_confirmations = chain.ingestion_confirmations()?;
         evm_config.insert(chain_id, chain.try_into()?);
 
@@ -1399,6 +1410,7 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 mod tests {
     use super::{
         create_aggregate_delay, reconcile_committee_snapshots, recovered_ciphernode_selections,
+        validate_vrf_chain_id,
     };
     use e3_config::{
         chain_config::ChainConfig,
@@ -1449,6 +1461,20 @@ mod tests {
         let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(None), 1);
 
         assert_eq!(delay, Duration::ZERO);
+    }
+
+    #[test]
+    fn supports_ethereum_vrf_chains() {
+        for chain_id in [1, 11_155_111, 31_337, 1_337] {
+            assert!(validate_vrf_chain_id(chain_id).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_arbitrum_vrf_chains() {
+        let error = validate_vrf_chain_id(42_161).expect_err("Arbitrum must be rejected");
+
+        assert!(error.to_string().contains("Ethereum mainnet"));
     }
 
     #[test]

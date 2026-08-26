@@ -166,14 +166,18 @@ After the window closes and ≥ `threshold_n` tickets are present:
 
 ### Events to Watch
 
-| Event                          | Meaning                                     |
-| ------------------------------ | ------------------------------------------- |
-| `CommitteeRandomnessRequested` | A request-bound VRF request was created     |
-| `RandomnessFulfilled`          | The provider stored a verified VRF response |
-| `TicketSubmitted`              | A ticket was submitted for selection        |
-| `SortitionCommitteeFinalized`  | Committee members were confirmed            |
-| `CommitteeFormationFailed`     | Not enough operators submitted tickets      |
-| `CommitteePublished`           | The aggregated public key is ready          |
+| Event                             | Meaning                                     |
+| --------------------------------- | ------------------------------------------- |
+| `CommitteeRandomnessRequested`    | A request-bound VRF request was created     |
+| `RandomnessFulfilled`             | The provider stored a verified VRF response |
+| `RandomnessCircuitBreakerTripped` | A timeout halted new E3 requests            |
+| `TicketSubmitted`                 | A ticket was submitted for selection        |
+| `SortitionCommitteeFinalized`     | Committee members were confirmed            |
+| `CommitteeFormationFailed`        | Not enough operators submitted tickets      |
+| `CommitteePublished`              | The aggregated public key is ready          |
+
+This release supports Ethereum mainnet and Sepolia. Do not configure the ciphernode Registry reader
+for Arbitrum until a later protocol release adds that deployment path.
 
 ### Log Messages
 

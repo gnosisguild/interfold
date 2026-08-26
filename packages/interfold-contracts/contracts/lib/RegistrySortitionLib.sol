@@ -10,16 +10,9 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
-import { IArbSys } from "../interfaces/external/IArbSys.sol";
 
 /// @notice Resolves entropy and updates candidate rankings for registry sortition.
 library RegistrySortitionLib {
-    uint256 private constant ARBITRUM_ONE_CHAIN_ID = 42161;
-    uint256 private constant ARBITRUM_NOVA_CHAIN_ID = 42170;
-    uint256 private constant ARBITRUM_SEPOLIA_CHAIN_ID = 421614;
-
-    IArbSys private constant ARBSYS = IArbSys(address(100));
-
     // keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant RANDOMNESS_STORAGE_SLOT =
         0x57a1af54ea0bbeb06d6edf6fa5ea97cbfa420879daa9f127d968d8e1bc60f000;
@@ -252,7 +245,7 @@ library RegistrySortitionLib {
         RandomnessRequest storage request = state.requests[e3Id];
         request.provider = provider;
         request.submissionWindow = submissionWindow;
-        request.requestedBlock = currentBlockNumber(block.chainid);
+        request.requestedBlock = currentBlockNumber();
         request.requestedAt = block.timestamp;
         randomnessDeadline = block.timestamp + timeout;
         request.randomnessDeadline = randomnessDeadline;
@@ -389,23 +382,9 @@ library RegistrySortitionLib {
         );
     }
 
-    /// @notice Returns the block counter used by the chain's VRF coordinator.
-    /// @dev Arbitrum's Solidity `block.number` is an L1 number. Chainlink confirmations use the
-    ///      L2 counter exposed by ArbSys, so request and fulfillment markers must use it too.
-    function currentBlockNumber(
-        uint256 chainId
-    ) internal view returns (uint256) {
-        if (_usesArbitrumBlockNumbers(chainId)) {
-            return ARBSYS.arbBlockNumber();
-        }
+    /// @notice Returns the Ethereum block number used for request and fulfillment markers.
+    function currentBlockNumber() internal view returns (uint256) {
         return block.number;
-    }
-
-    /// @notice Test and diagnostics wrapper for {currentBlockNumber}.
-    function currentBlockNumberForChain(
-        uint256 chainId
-    ) external view returns (uint256) {
-        return currentBlockNumber(chainId);
     }
 
     function _randomnessStorage()
@@ -445,7 +424,7 @@ library RegistrySortitionLib {
         uint256 fulfilledAt,
         uint256 fulfilledBlock
     ) private view returns (bool) {
-        uint256 currentBlock = currentBlockNumber(block.chainid);
+        uint256 currentBlock = currentBlockNumber();
         return
             fulfilled &&
             fulfilledAt != 0 &&
@@ -455,15 +434,6 @@ library RegistrySortitionLib {
             fulfilledBlock <= currentBlock &&
             fulfilledAt <= request.randomnessDeadline &&
             fulfilledAt <= type(uint256).max - request.submissionWindow;
-    }
-
-    function _usesArbitrumBlockNumbers(
-        uint256 chainId
-    ) private pure returns (bool) {
-        return
-            chainId == ARBITRUM_ONE_CHAIN_ID ||
-            chainId == ARBITRUM_NOVA_CHAIN_ID ||
-            chainId == ARBITRUM_SEPOLIA_CHAIN_ID;
     }
 
     function _requireRequestsPaused() private view {

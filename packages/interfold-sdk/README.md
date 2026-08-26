@@ -170,6 +170,26 @@ enum RegistryEventType {
 }
 ```
 
+### Randomness Provider Events
+
+The provider address is frozen for each E3 and can change after governance rotation, so it is not
+part of the static SDK contract addresses. Read `provider`, `requestId`, and `e3Id` from
+`CommitteeRandomnessRequested`, then watch that provider directly:
+
+```typescript
+await listener.onRandomnessProviderEvent(
+  provider,
+  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+  ({ data }) => {
+    console.log(data.requestId, data.e3Id, data.fulfilledAt)
+  },
+)
+```
+
+Use `getHistoricalRandomnessProviderEvents` to recover fulfillments that were emitted before the
+watcher started. `RandomnessFulfilled` proves that the provider stored a response. The Registry
+remains authoritative about whether that response was timely and usable.
+
 ### Event Data Structure
 
 Each event follows a consistent structure:

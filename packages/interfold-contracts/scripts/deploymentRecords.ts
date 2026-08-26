@@ -136,6 +136,8 @@ export function syncProtocolDeploymentRecords(
           vrfRequestConfirmations: config.randomness.requestConfirmations,
           vrfCallbackGasLimit: config.randomness.callbackGasLimit,
           payInNativeToken: config.randomness.nativePayment,
+          vrfMinimumSubscriptionBalance:
+            config.randomness.minimumSubscriptionBalance,
           protocolOwner: config.protocolOwner,
         },
       },

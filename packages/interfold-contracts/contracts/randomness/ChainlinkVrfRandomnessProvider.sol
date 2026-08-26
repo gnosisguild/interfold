@@ -37,6 +37,12 @@ contract ChainlinkVrfRandomnessProvider is
     error InvalidKeyHash();
     error InvalidRequestConfirmations();
     error InvalidCallbackGasLimit();
+    error InvalidMinimumSubscriptionBalance();
+    error UnsupportedChain(uint256 chainId);
+    error InsufficientSubscriptionBalance(
+        uint96 availableBalance,
+        uint96 minimumBalance
+    );
     error RandomnessAlreadyRequested(uint256 e3Id);
 
     event RandomnessResponseIgnored(uint256 indexed requestId);
@@ -47,6 +53,7 @@ contract ChainlinkVrfRandomnessProvider is
     uint16 public immutable requestConfirmations; // solhint-disable-line immutable-vars-naming
     uint32 public immutable callbackGasLimit; // solhint-disable-line immutable-vars-naming
     bool public immutable nativePayment; // solhint-disable-line immutable-vars-naming
+    uint96 public immutable minimumSubscriptionBalance; // solhint-disable-line immutable-vars-naming
 
     mapping(uint256 e3Id => bool requested) public randomnessRequested;
     mapping(uint256 e3Id => uint256 requestId) public requestIdByE3Id;
@@ -61,16 +68,18 @@ contract ChainlinkVrfRandomnessProvider is
         uint16 vrfRequestConfirmations,
         uint32 vrfCallbackGasLimit,
         bool payInNativeToken,
+        uint96 vrfMinimumSubscriptionBalance,
         address protocolOwner
     ) VRFConsumerBaseV2Plus(coordinator) {
-        if (requesterAddress == address(0) || requesterAddress.code.length == 0)
-            revert InvalidRequester(requesterAddress);
-        if (protocolOwner == address(0))
-            revert InvalidProtocolOwner(protocolOwner);
-        if (vrfSubscriptionId == 0) revert InvalidSubscriptionId();
-        if (vrfKeyHash == bytes32(0)) revert InvalidKeyHash();
-        if (vrfRequestConfirmations == 0) revert InvalidRequestConfirmations();
-        if (vrfCallbackGasLimit == 0) revert InvalidCallbackGasLimit();
+        _requireSupportedChain(block.chainid);
+        _validateAddresses(requesterAddress, protocolOwner);
+        _validateVrfConfiguration(
+            vrfSubscriptionId,
+            vrfKeyHash,
+            vrfRequestConfirmations,
+            vrfCallbackGasLimit,
+            vrfMinimumSubscriptionBalance
+        );
 
         requester = requesterAddress;
         subscriptionId = vrfSubscriptionId;
@@ -78,6 +87,7 @@ contract ChainlinkVrfRandomnessProvider is
         requestConfirmations = vrfRequestConfirmations;
         callbackGasLimit = vrfCallbackGasLimit;
         nativePayment = payInNativeToken;
+        minimumSubscriptionBalance = vrfMinimumSubscriptionBalance;
 
         if (protocolOwner != msg.sender) transferOwnership(protocolOwner);
     }
@@ -88,6 +98,16 @@ contract ChainlinkVrfRandomnessProvider is
     ) external returns (uint256 requestId) {
         if (msg.sender != requester) revert OnlyRequester(msg.sender);
         if (randomnessRequested[e3Id]) revert RandomnessAlreadyRequested(e3Id);
+
+        (uint96 linkBalance, uint96 nativeBalance, , , ) = s_vrfCoordinator
+            .getSubscription(subscriptionId);
+        uint96 availableBalance = nativePayment ? nativeBalance : linkBalance;
+        if (availableBalance < minimumSubscriptionBalance) {
+            revert InsufficientSubscriptionBalance(
+                availableBalance,
+                minimumSubscriptionBalance
+            );
+        }
 
         // Set this before the external call so one E3 can never request twice.
         randomnessRequested[e3Id] = true;
@@ -148,9 +168,7 @@ contract ChainlinkVrfRandomnessProvider is
 
         result.randomWord = randomWords[0];
         result.fulfilledAt = block.timestamp;
-        result.fulfilledBlock = RegistrySortitionLib.currentBlockNumber(
-            block.chainid
-        );
+        result.fulfilledBlock = RegistrySortitionLib.currentBlockNumber();
         result.fulfilled = true;
         emit RandomnessFulfilled(
             requestId,
@@ -158,5 +176,38 @@ contract ChainlinkVrfRandomnessProvider is
             randomWords[0],
             block.timestamp
         );
+    }
+
+    function _requireSupportedChain(uint256 chainId) private pure {
+        bool supported = chainId == 1 ||
+            chainId == 11_155_111 ||
+            chainId == 31_337 ||
+            chainId == 1_337;
+        if (!supported) revert UnsupportedChain(chainId);
+    }
+
+    function _validateAddresses(
+        address requesterAddress,
+        address protocolOwner
+    ) private view {
+        if (requesterAddress == address(0) || requesterAddress.code.length == 0)
+            revert InvalidRequester(requesterAddress);
+        if (protocolOwner == address(0))
+            revert InvalidProtocolOwner(protocolOwner);
+    }
+
+    function _validateVrfConfiguration(
+        uint256 vrfSubscriptionId,
+        bytes32 vrfKeyHash,
+        uint16 vrfRequestConfirmations,
+        uint32 vrfCallbackGasLimit,
+        uint96 vrfMinimumSubscriptionBalance
+    ) private pure {
+        if (vrfSubscriptionId == 0) revert InvalidSubscriptionId();
+        if (vrfKeyHash == bytes32(0)) revert InvalidKeyHash();
+        if (vrfRequestConfirmations == 0) revert InvalidRequestConfirmations();
+        if (vrfCallbackGasLimit == 0) revert InvalidCallbackGasLimit();
+        if (vrfMinimumSubscriptionBalance == 0)
+            revert InvalidMinimumSubscriptionBalance();
     }
 }

@@ -128,6 +128,11 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
       await provider.nativePayment(),
       randomness.nativePayment,
     ],
+    [
+      "provider.minimumSubscriptionBalance",
+      await provider.minimumSubscriptionBalance(),
+      randomness.minimumSubscriptionBalance,
+    ],
   ] as const) {
     assertEqual(label, actual, expected);
   }

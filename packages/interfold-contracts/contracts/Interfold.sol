@@ -349,11 +349,8 @@ contract Interfold is
 
         e3.seed = seed;
         e3.committeeSize = requestParams.committeeSize;
-        // store request timepoint as `block.timestamp` (EIP-6372
-        // timestamp clock) so it matches the registry's `c.requestBlock`
-        // and ticket-token `getPastVotes` lookups across L2s (e.g.
-        // Arbitrum where `block.number` ticks every ~250ms and is
-        // inconsistent with consensus-time deadlines).
+        // Store the request as an EIP-6372 timestamp. The Registry and ticket
+        // token use the same clock for request-time voting-power lookups.
         e3.requestBlock = block.timestamp;
         e3.inputWindow = requestParams.inputWindow;
         e3.e3Program = requestParams.e3Program;
@@ -813,7 +810,7 @@ contract Interfold is
     /// @dev While `markFailedGracePeriod > 0` and inside the window, only requester /
     ///      owner / active committee member may call; permissionless once
     ///      `block.timestamp > relevantDeadline + markFailedGracePeriod`. Protects
-    ///      against L2 sequencer-hiccup races without giving up liveness.
+    ///      against short chain or RPC delays without giving up liveness.
     /// @param e3Id The E3 ID
     /// @return reason The failure reason
     function markE3Failed(

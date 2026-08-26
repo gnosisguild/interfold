@@ -149,6 +149,11 @@ export async function actionValidate(): Promise<void> {
       randomnessConfig.nativePayment,
     ],
     [
+      "randomnessProvider.minimumSubscriptionBalance",
+      randomnessProvider.minimumSubscriptionBalance(),
+      randomnessConfig.minimumSubscriptionBalance,
+    ],
+    [
       "randomnessProvider.owner",
       randomnessProvider.owner(),
       config.protocolOwner,

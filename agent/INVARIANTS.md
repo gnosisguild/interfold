@@ -190,15 +190,18 @@ design citation alone does not establish current runtime behavior.
   `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`; top-N lowest win. Each E3
   freezes one `IRandomnessProvider` request, response deadline, and submission window after the paid
   request is stored. The production provider uses Chainlink VRF v2.5 subscription funding. It never
-  re-requests an E3, and the Registry rejects responses from the chain-native request block,
-  future-dated responses, and late responses. Ethereum uses `block.number`; Arbitrum uses the L2
-  block number from ArbSys. The first request that expires without a usable response clears the
-  active provider. This blocks new requests until governance pauses the protocol and restores a
-  provider. A timely accepted response remains readable after terminal cleanup so fresh historical
-  replay derives the same committee request; late responses remain unusable. Rust reads the accepted
-  seed and request context from the Registry. Governance can change the provider or response timeout
-  only while requests are paused and all committee obligations are released. The E3 computation seed
-  remains separate. — `flow-trace/03`
+  re-requests an E3, checks the configured subscription balance floor before requesting, and the
+  Registry rejects responses from the Ethereum request block, future-dated responses, and late
+  responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
+  first request that expires without a usable response clears the active provider. This blocks new
+  requests until governance pauses the protocol and restores a provider. A timely accepted response
+  remains readable after terminal cleanup so fresh historical replay derives the same committee
+  request; late responses remain unusable. Rust reads the accepted seed and request context at the
+  fulfillment block. If historical block state is unavailable, it accepts retained current state
+  only when the Registry still reports the seed as ready. Unverifiable state rejects the log and
+  fails closed for replay. Governance can change the provider or response timeout only while
+  requests are paused and all committee obligations are released. The E3 computation seed remains
+  separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and

@@ -220,9 +220,12 @@ CiphernodeRegistrySolReader decodes DkgFoldAttestationContextEstablished
 │
 RandomnessProviderSolReader decodes RandomnessFulfilled
 │
-├─ Calls Registry.sortitionSeed(e3Id)
-│  → Briefly retries when the event arrives before the Registry's recorded response block or time
-│  → Never starts sortition until the Registry accepts the response
+├─ Calls Registry.sortitionSeed(e3Id) at the fulfillment log's block
+│  → A successful `ready = false` result proves that the response is unusable
+│  → If historical state is unavailable, current state is accepted only when `ready = true`
+│  → An RPC failure or unverifiable result rejects the log so restart replay can retry it
+│  → The reader does not poll or silently discard uncertain fulfillment state
+│  → Sortition starts only after the Registry accepts the response
 │  → Registry accepts only the request-time provider and request ID
 │  → A response after randomnessDeadline is not usable
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
@@ -628,16 +631,19 @@ Registry or reverting.
 Fresh deployment and upgrade validation check the subscription owner, consumer, coordinator limits,
 gas lane, and selected payment balance. The balance must meet the configured
 `minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
+The provider reads the same selected balance before every request and reverts an underfunded request
+before the E3 is accepted. The floor is an admission check, not a reservation for concurrent draws,
+so production uses a dedicated subscription with balance monitoring.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
-context. The Registry rejects results recorded in the chain-native request block, results dated in
-the future, and results recorded after the response deadline. Ethereum uses `block.number`. Arbitrum
-uses `ArbSys.arbBlockNumber()` because Solidity `block.number` reports an L1 block number there. It
-derives `keccak256(randomWord, chainId, registry, e3Id, requestId)`, and the first ticket stores the
-same seed and response-time submission deadline. A timely accepted result remains readable after
-terminal cleanup. A fresh node can therefore derive the same historical `CommitteeRequested` event
-even when it starts after the E3 has failed or completed.
+context. The Registry rejects results recorded in the Ethereum request block, results dated in the
+future, and results recorded after the response deadline. This release supports Ethereum mainnet,
+Sepolia, and local development chains only and uses `block.number`. It derives
+`keccak256(randomWord, chainId, registry, e3Id, requestId)`, and the first ticket stores the same
+seed and response-time submission deadline. A timely accepted result remains readable after terminal
+cleanup. A fresh node can therefore derive the same historical `CommitteeRequested` event even when
+it starts after the E3 has failed or completed.
 
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
@@ -648,7 +654,8 @@ failure, and restores a provider. A late callback stays recorded in the request-
 cannot restart the E3.
 
 The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
-also exposes the event so operators can alert on the halt without treating it as an E3 data event.
+also exposes this event and the request-bound provider's `RandomnessFulfilled` event. Consumers use
+the provider address, request ID, and E3 ID from `CommitteeRandomnessRequested` to correlate them.
 
 The Rust Registry reader retains the old `CommitteeRequested` block-hash decoder only for historical
 log replay. New requests use `CommitteeRandomnessRequested` and the configured provider event.

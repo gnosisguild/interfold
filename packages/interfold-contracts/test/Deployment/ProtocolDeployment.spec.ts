@@ -216,6 +216,7 @@ describe("Protocol deployment", function () {
     await coordinator.fundSubscription(subscriptionId, 1n);
 
     const config = {
+      chainId: 1,
       protocolOwner: await owner.getAddress(),
       randomness: {
         coordinator: await coordinator.getAddress(),
@@ -272,6 +273,50 @@ describe("Protocol deployment", function () {
       value: 1n,
     });
     await assertVrfSubscription(ethers, nativeConfig);
+  });
+
+  it("rejects Arbitrum VRF config", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-chain-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.chainId = 42161;
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "VRF sortition supports Ethereum mainnet, Sepolia, and local development chains only",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized VRF balance floor", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-balance-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.randomness.minimumSubscriptionBalance = (1n << 96n).toString();
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "randomness.minimumSubscriptionBalance must be a positive uint96 value",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("normalizes the optional escrow votes adapter", function () {
@@ -536,6 +581,7 @@ describe("Protocol deployment", function () {
       "ChainlinkVrfRandomnessProvider",
       result.contracts.randomnessProvider,
     );
+    expect(await randomnessProvider.minimumSubscriptionBalance()).to.equal(1);
     const randomnessCalls = [
       [
         result.contracts.randomnessProvider,

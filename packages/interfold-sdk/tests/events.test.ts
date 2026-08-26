@@ -4,12 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { CiphernodeRegistryOwnable__factory } from '@interfold/contracts/types'
+import { CiphernodeRegistryOwnable__factory, IRandomnessProvider__factory } from '@interfold/contracts/types'
 import type { Log, PublicClient } from 'viem'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EventListener } from '../src/events/event-listener'
-import { RegistryEventType, type InterfoldEvent } from '../src/events/types'
+import { RandomnessProviderEventType, RegistryEventType, type InterfoldEvent } from '../src/events/types'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -30,6 +30,69 @@ describe('RegistryEventType', () => {
     expect(registryEventNames).toContain(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED)
     expect(RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED).toBe('RandomnessCircuitBreakerTripped')
     expect(registryEventNames).toContain(RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED)
+  })
+
+  it('watches fulfillment on the request-bound provider', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const unwatch = vi.fn()
+    const watchContractEvent = vi.fn().mockReturnValue(unwatch)
+    const callback = vi.fn()
+    const listener = new EventListener({
+      publicClient: { watchContractEvent } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback)
+    const options = watchContractEvent.mock.calls[0]?.[0]
+    expect(options.address).toBe(provider)
+    expect(options.abi).toBe(IRandomnessProvider__factory.abi)
+    expect(options.eventName).toBe('RandomnessFulfilled')
+
+    const log = {
+      args: { requestId: 7n, e3Id: 11n, randomWord: 13n, fulfilledAt: 17n },
+      blockNumber: 19n,
+      transactionHash: '0x1234',
+    } as unknown as Log
+    options.onLogs([log])
+
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+        provider,
+        data: { requestId: 7n, e3Id: 11n, randomWord: 13n, fulfilledAt: 17n },
+        blockNumber: 19n,
+      }),
+    )
+
+    listener.offRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback)
+    expect(unwatch).toHaveBeenCalledOnce()
+  })
+
+  it('queries historical provider fulfillment', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const getContractEvents = vi.fn().mockResolvedValue([])
+    const listener = new EventListener({
+      publicClient: { getContractEvents } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.getHistoricalRandomnessProviderEvents(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, 10n, 20n)
+
+    expect(getContractEvents).toHaveBeenCalledWith({
+      address: provider,
+      abi: IRandomnessProvider__factory.abi,
+      eventName: RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+      fromBlock: 10n,
+      toBlock: 20n,
+    })
   })
 
   it('handles asynchronous event callback failures', async () => {

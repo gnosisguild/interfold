@@ -100,12 +100,20 @@ Committee sortition uses a Chainlink VRF v2.5 subscription through
 hash, confirmation count, callback gas limit, payment mode, and response timeout
 in the `randomness` configuration. Also set `minimumSubscriptionBalance` in wei
 for native payment or juels for LINK. The subscription owner must equal
-`protocolOwner`, and its selected balance must meet this configured reserve. The
-governance batch accepts provider ownership, adds the provider as a subscription
-consumer, and connects it to the Registry. The mainnet configuration requires a
-1 ETH reserve and waits 64 blocks before fulfillment. This deeper confirmation
-window makes a request-block rewrite more expensive while remaining within the
-one-hour response timeout.
+`protocolOwner`. Deployment validation checks this balance, and the provider
+checks it again before each request. An underfunded request reverts before the
+protocol accepts the E3 payment. Use a dedicated subscription and monitor its
+balance because the floor does not reserve funds for concurrent requests or
+automatically replenish the subscription. The governance batch accepts provider
+ownership, adds the provider as a subscription consumer, and connects it to the
+Registry. The mainnet configuration requires a 1 ETH floor and waits 64 blocks
+before fulfillment. This confirmation window makes a request-block rewrite more
+expensive while remaining within the one-hour response timeout.
+
+This VRF sortition release supports Ethereum mainnet, Sepolia, and local
+development chains only. Deployment scripts, the production provider, and the
+ciphernode reject other chain IDs. Arbitrum support requires a later contract
+and node upgrade.
 
 For the live proxy upgrade, pause requests and confirm that Interfold has no
 active E3s and the Registry has no unreleased committees. Then run:

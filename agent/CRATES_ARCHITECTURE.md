@@ -1006,10 +1006,13 @@ persist recovery intent.
 
 The `e3-evm` randomness-provider reader watches the current provider and every provider recorded in
 the Registry's provider-set history. It translates only a Registry-accepted fulfillment into the
-durable `CommitteeRequested` event. The Registry call confirms the request-time provider, request
-ID, response deadline, and derived seed before Rust starts sortition. Provider rotation requires all
-committees to be released, and running nodes must restart before requests resume so that the EVM
-router includes the new provider address.
+durable `CommitteeRequested` event. It reads the Registry at the fulfillment block. If an RPC cannot
+serve that historical block, it uses retained current state only when the Registry reports the seed
+as ready. It rejects unverifiable state so restart replay can retry the event. The Registry call
+confirms the request-time provider, request ID, response deadline, and derived seed before Rust
+starts sortition. Provider rotation requires all committees to be released, and running nodes must
+restart before requests resume so that the EVM router includes the new provider address. This
+release starts Registry readers only on Ethereum mainnet, Sepolia, and local development chains.
 
 ## Subsystem contracts
 

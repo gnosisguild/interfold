@@ -52,9 +52,7 @@ contract MockRandomnessProvider is IRandomnessProvider {
         _knownRequests[requestId] = true;
         emit RandomnessRequested(requestId, e3Id);
         if (autoFulfill) {
-            uint256 currentBlock = RegistrySortitionLib.currentBlockNumber(
-                block.chainid
-            );
+            uint256 currentBlock = RegistrySortitionLib.currentBlockNumber();
             _fulfill(
                 requestId,
                 uint256(keccak256(abi.encode(e3Id, requestId))),
@@ -71,7 +69,7 @@ contract MockRandomnessProvider is IRandomnessProvider {
             requestId,
             randomWord,
             block.timestamp,
-            RegistrySortitionLib.currentBlockNumber(block.chainid)
+            RegistrySortitionLib.currentBlockNumber()
         );
     }
 
@@ -84,7 +82,7 @@ contract MockRandomnessProvider is IRandomnessProvider {
             requestId,
             randomWord,
             fulfilledAt,
-            RegistrySortitionLib.currentBlockNumber(block.chainid)
+            RegistrySortitionLib.currentBlockNumber()
         );
     }
 

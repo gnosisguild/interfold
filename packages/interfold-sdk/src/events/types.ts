@@ -30,6 +30,10 @@ export enum RegistryEventType {
   INITIALIZED = 'Initialized',
 }
 
+export enum RandomnessProviderEventType {
+  RANDOMNESS_FULFILLED = 'RandomnessFulfilled',
+}
+
 export type AllEventTypes = InterfoldEventType | RegistryEventType
 
 export interface E3RequestedData {
@@ -105,6 +109,13 @@ export interface RandomnessCircuitBreakerTrippedData {
   randomnessProvider: string
 }
 
+export interface RandomnessFulfilledData {
+  requestId: bigint
+  e3Id: bigint
+  randomWord: bigint
+  fulfilledAt: bigint
+}
+
 export interface CommitteePublishedData {
   e3Id: bigint
   nodes: string[]
@@ -151,6 +162,20 @@ export interface InterfoldEvent<T extends AllEventTypes> {
   blockNumber: bigint
   transactionHash: string
 }
+
+export interface RandomnessProviderEvent<T extends RandomnessProviderEventType = RandomnessProviderEventType> {
+  type: T
+  data: RandomnessFulfilledData
+  provider: `0x${string}`
+  log: Log
+  timestamp: Date
+  blockNumber: bigint
+  transactionHash: string
+}
+
+export type RandomnessProviderEventCallback<T extends RandomnessProviderEventType = RandomnessProviderEventType> = (
+  event: RandomnessProviderEvent<T>,
+) => void | Promise<void>
 
 export type EventCallback<T extends AllEventTypes = AllEventTypes> = (event: InterfoldEvent<T>) => void | Promise<void>
 

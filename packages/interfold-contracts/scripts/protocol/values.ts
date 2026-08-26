@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { assertSupportedVrfChain } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
 import { configPath, readJson } from "./files";
@@ -310,6 +311,7 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (config.slasher !== ZERO)
     config.slasher = address(config.slasher, "slasher");
   if (config.randomness) {
+    assertSupportedVrfChain(config.chainId);
     config.randomness.coordinator = address(
       config.randomness.coordinator,
       "randomness.coordinator",
@@ -349,10 +351,11 @@ function validateConfig(config: ProtocolConfigFile): void {
     }
     if (
       !/^\d+$/.test(config.randomness.minimumSubscriptionBalance) ||
-      BigInt(config.randomness.minimumSubscriptionBalance) === 0n
+      BigInt(config.randomness.minimumSubscriptionBalance) === 0n ||
+      BigInt(config.randomness.minimumSubscriptionBalance) >= 1n << 96n
     ) {
       throw new Error(
-        "randomness.minimumSubscriptionBalance must be a positive integer",
+        "randomness.minimumSubscriptionBalance must be a positive uint96 value",
       );
     }
     if (!/^\d+$/.test(config.randomness.requestTimeout)) {

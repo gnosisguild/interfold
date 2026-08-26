@@ -5,10 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { type Abi, type Log, type PublicClient } from 'viem'
-import { CiphernodeRegistryOwnable__factory, Interfold__factory } from '@interfold/contracts/types'
+import { CiphernodeRegistryOwnable__factory, Interfold__factory, IRandomnessProvider__factory } from '@interfold/contracts/types'
 
 import {
   RegistryEventType,
+  type RandomnessProviderEvent,
+  type RandomnessProviderEventCallback,
+  type RandomnessProviderEventType,
   type AllEventTypes,
   type InterfoldEvent,
   type InterfoldEventData,
@@ -31,6 +34,7 @@ export interface EventListenerOptions {
 export class EventListener implements SDKEventEmitter {
   private listeners: Map<AllEventTypes, Set<EventCallback>> = new Map()
   private activeWatchers: Map<string, () => void> = new Map()
+  private randomnessProviderListeners: Map<string, Set<RandomnessProviderEventCallback>> = new Map()
   private isPolling = false
   private lastBlockNumber: bigint = BigInt(0)
   private publicClient: PublicClient
@@ -67,6 +71,99 @@ export class EventListener implements SDKEventEmitter {
   public async onInterfoldEvent<T extends AllEventTypes>(eventType: T, callback: EventCallback<T>): Promise<void> {
     const { address, abi } = this.resolveContract(eventType)
     return this.watchContractEvent(address, eventType, abi, callback)
+  }
+
+  public async onRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+  ): Promise<void> {
+    const listenerKey = `${provider.toLowerCase()}:${eventType}`
+    const watcherKey = `randomness-provider:${listenerKey}`
+    let callbacks = this.randomnessProviderListeners.get(listenerKey)
+    if (!callbacks) {
+      callbacks = new Set()
+      this.randomnessProviderListeners.set(listenerKey, callbacks)
+    }
+    callbacks.add(callback as RandomnessProviderEventCallback)
+
+    if (this.activeWatchers.has(watcherKey)) return
+
+    try {
+      const unwatch = this.publicClient.watchContractEvent({
+        address: provider,
+        abi: IRandomnessProvider__factory.abi,
+        eventName: eventType,
+        fromBlock: this.config.fromBlock,
+        onLogs: (logs: Log[]) => {
+          for (const log of logs) {
+            const event: RandomnessProviderEvent<T> = {
+              type: eventType,
+              data: (log as unknown as { args: RandomnessProviderEvent<T>['data'] }).args,
+              provider,
+              log,
+              timestamp: new Date(),
+              blockNumber: log.blockNumber ?? 0n,
+              transactionHash: log.transactionHash ?? '0x',
+            }
+            const currentCallbacks = this.randomnessProviderListeners.get(listenerKey)
+            currentCallbacks?.forEach((currentCallback) => {
+              try {
+                const result = currentCallback(event)
+                if (result) {
+                  void result.catch((error) => {
+                    console.error(`Error in randomness provider callback for ${eventType}:`, error)
+                  })
+                }
+              } catch (error) {
+                console.error(`Error in randomness provider callback for ${eventType}:`, error)
+              }
+            })
+          }
+        },
+      })
+      this.activeWatchers.set(watcherKey, unwatch)
+    } catch (error) {
+      callbacks.delete(callback as RandomnessProviderEventCallback)
+      if (callbacks.size === 0) this.randomnessProviderListeners.delete(listenerKey)
+      throw new SDKError(`Failed to watch randomness provider event ${eventType} on ${provider}: ${error}`, 'WATCH_EVENT_FAILED')
+    }
+  }
+
+  public offRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+  ): void {
+    const listenerKey = `${provider.toLowerCase()}:${eventType}`
+    const callbacks = this.randomnessProviderListeners.get(listenerKey)
+    callbacks?.delete(callback as RandomnessProviderEventCallback)
+    if (callbacks && callbacks.size === 0) {
+      this.randomnessProviderListeners.delete(listenerKey)
+      const watcherKey = `randomness-provider:${listenerKey}`
+      const unwatch = this.activeWatchers.get(watcherKey)
+      if (unwatch) unwatch()
+      this.activeWatchers.delete(watcherKey)
+    }
+  }
+
+  public async getHistoricalRandomnessProviderEvents(
+    provider: `0x${string}`,
+    eventType: RandomnessProviderEventType,
+    fromBlock?: bigint,
+    toBlock?: bigint,
+  ): Promise<Log[]> {
+    try {
+      return await this.publicClient.getContractEvents({
+        address: provider,
+        abi: IRandomnessProvider__factory.abi,
+        eventName: eventType,
+        fromBlock: fromBlock ?? this.config.fromBlock,
+        toBlock: toBlock ?? this.config.toBlock,
+      })
+    } catch (error) {
+      throw new SDKError(`Failed to get randomness provider events from ${provider}: ${error}`, 'HISTORICAL_EVENTS_FAILED')
+    }
   }
 
   public async once<T extends AllEventTypes>(type: T, callback: EventCallback<T>): Promise<void> {
@@ -245,6 +342,7 @@ export class EventListener implements SDKEventEmitter {
     })
     this.activeWatchers.clear()
     this.listeners.clear()
+    this.randomnessProviderListeners.clear()
   }
 
   private async pollForEvents(): Promise<void> {

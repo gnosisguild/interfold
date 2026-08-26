@@ -34,8 +34,7 @@ interface IRandomnessProvider {
     /// @return fulfilled Whether the provider recorded a valid response.
     /// @return randomWord Random word returned by the provider.
     /// @return fulfilledAt Timestamp when the provider recorded the response.
-    /// @return fulfilledBlock Chain-native block when the provider recorded the response.
-    ///         Arbitrum providers return the L2 block number from ArbSys.
+    /// @return fulfilledBlock Ethereum block when the provider recorded the response.
     function getRandomness(
         uint256 requestId
     )

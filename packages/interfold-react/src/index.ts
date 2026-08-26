@@ -27,7 +27,10 @@ export type {
   CommitteeRequestedData,
   CommitteeRandomnessRequestedData,
   RandomnessCircuitBreakerTrippedData,
+  RandomnessFulfilledData,
+  RandomnessProviderEvent,
+  RandomnessProviderEventCallback,
   CommitteePublishedData,
 } from '@interfold/sdk'
 
-export { InterfoldEventType, RegistryEventType } from '@interfold/sdk'
+export { InterfoldEventType, RandomnessProviderEventType, RegistryEventType } from '@interfold/sdk'

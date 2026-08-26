@@ -12,20 +12,32 @@ use crate::domain::randomness_provider_events::{committee_requested, SortitionRe
 use crate::helpers::EthProvider;
 use crate::messages::{EvmEvent, EvmEventProcessor, EvmLog, EvmLogRejected, InterfoldEvmEvent};
 use actix::prelude::*;
-use alloy::{primitives::Address, providers::Provider, sol_types::SolEvent};
-use anyhow::{Context as _, Result};
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, U256},
+    providers::Provider,
+    sol_types::SolEvent,
+};
+use anyhow::{bail, Context as _, Result};
 use e3_utils::MAILBOX_LIMIT;
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
 const EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
-const RANDOMNESS_ACCEPTANCE_TIMEOUT: Duration = Duration::from_secs(15);
-const RANDOMNESS_ACCEPTANCE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct RandomnessProviderSolReader<P> {
     provider: EthProvider<P>,
     registry: Address,
     next: EvmEventProcessor,
+}
+
+#[derive(Debug)]
+struct AcceptedSortitionContext {
+    seed: U256,
+    threshold: [u32; 2],
+    request_block: U256,
+    committee_deadline: U256,
+    ticket_price: U256,
 }
 
 impl<P: Provider + Clone + 'static> Actor for RandomnessProviderSolReader<P> {
@@ -60,6 +72,10 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
         .log
         .block_number
         .context("randomness log is missing its block number")?;
+    let block_hash = log
+        .log
+        .block_hash
+        .context("randomness log is missing its block hash")?;
     let log_index = log
         .log
         .log_index
@@ -70,43 +86,26 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
     let fulfillment = IRandomnessProvider::RandomnessFulfilled::decode_log_data(log.log.data())
         .context("invalid RandomnessFulfilled event")?;
 
-    let registry = ICiphernodeRegistry::new(registry_address, provider.provider());
-    let resolved = match tokio::time::timeout(RANDOMNESS_ACCEPTANCE_TIMEOUT, async {
-        loop {
-            let resolved = registry
-                .sortitionSeed(fulfillment.e3Id)
-                .call()
-                .await
-                .context("failed to read the accepted sortition seed")?;
-            if resolved.ready {
-                return Ok::<_, anyhow::Error>(resolved);
-            }
-            tokio::time::sleep(RANDOMNESS_ACCEPTANCE_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    {
-        Ok(result) => result?,
-        Err(_) => {
-            warn!(
-                e3_id = %fulfillment.e3Id,
-                request_id = %fulfillment.requestId,
-                "Ignoring randomness that the registry did not accept"
-            );
-            return Ok(None);
-        }
+    let Some(accepted) = read_accepted_sortition(
+        &provider,
+        registry_address,
+        fulfillment.e3Id,
+        fulfillment.requestId,
+        BlockId::hash_canonical(block_hash),
+        block,
+    )
+    .await?
+    else {
+        return Ok(None);
     };
-    let request = registry
-        .getSortitionRequest(fulfillment.e3Id)
-        .call()
-        .await?;
+
     let data = committee_requested(SortitionRequestContext {
         e3_id: fulfillment.e3Id,
-        seed: resolved.seed,
-        threshold: request.threshold,
-        request_block: request.requestBlock,
-        committee_deadline: request.committeeDeadline,
-        ticket_price: request.ticketPrice,
+        seed: accepted.seed,
+        threshold: accepted.threshold,
+        request_block: accepted.request_block,
+        committee_deadline: accepted.committee_deadline,
+        ticket_price: accepted.ticket_price,
         chain_id: log.chain_id,
     });
     let timestamp = from_log_chain_id_to_ts(log.timestamp, log_index, log.chain_id);
@@ -117,6 +116,76 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
         timestamp,
         log.chain_id,
     )))
+}
+
+async fn read_accepted_sortition<P: Provider + Clone + 'static>(
+    provider: &EthProvider<P>,
+    registry_address: Address,
+    e3_id: U256,
+    request_id: U256,
+    event_block: BlockId,
+    block: u64,
+) -> Result<Option<AcceptedSortitionContext>> {
+    let registry = ICiphernodeRegistry::new(registry_address, provider.provider());
+    let pinned = match registry
+        .sortitionSeed(e3_id)
+        .block(event_block.clone())
+        .call()
+        .await
+    {
+        Ok(resolved) if !resolved.ready => return Ok(None),
+        Ok(resolved) => registry
+            .getSortitionRequest(e3_id)
+            .block(event_block)
+            .call()
+            .await
+            .map(|request| (resolved, request))
+            .map_err(anyhow::Error::from),
+        Err(error) => Err(error.into()),
+    };
+
+    let (resolved, request) = match pinned {
+        Ok(context) => context,
+        Err(pinned_error) => {
+            warn!(
+                e3_id = %e3_id,
+                request_id = %request_id,
+                event_block = block,
+                error = %pinned_error,
+                "Could not read the fulfillment block; checking retained registry state"
+            );
+            let resolved = registry
+                .sortitionSeed(e3_id)
+                .call()
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to read the accepted sortition seed after block {block}: {pinned_error}"
+                    )
+                })?;
+            if !resolved.ready {
+                bail!(
+                    "registry acceptance for randomness request {} at block {} is not verifiable",
+                    request_id,
+                    block
+                );
+            }
+            let request = registry
+                .getSortitionRequest(e3_id)
+                .call()
+                .await
+                .context("failed to read the retained sortition request")?;
+            (resolved, request)
+        }
+    };
+
+    Ok(Some(AcceptedSortitionContext {
+        seed: resolved.seed,
+        threshold: request.threshold,
+        request_block: request.requestBlock,
+        committee_deadline: request.committeeDeadline,
+        ticket_price: request.ticketPrice,
+    }))
 }
 
 async fn forward(next: EvmEventProcessor, event: InterfoldEvmEvent) -> Result<()> {
@@ -191,5 +260,88 @@ impl<P: Provider + Clone + 'static> Handler<InterfoldEvmEvent> for RandomnessPro
             }
             _ => (),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        primitives::Bytes, providers::ProviderBuilder, sol_types::SolValue,
+        transports::mock::Asserter,
+    };
+
+    async fn provider(asserter: &Asserter) -> EthProvider<impl Provider + Clone> {
+        asserter.push_success(&"0x1");
+        EthProvider::new(ProviderBuilder::new().connect_mocked_client(asserter.clone()))
+            .await
+            .expect("mock chain ID must decode")
+    }
+
+    #[tokio::test]
+    async fn reads_accepted_state_at_the_event_block() {
+        let asserter = Asserter::new();
+        let provider = provider(&asserter).await;
+        asserter.push_success(&Bytes::from((true, U256::from(9)).abi_encode()));
+        asserter.push_success(&Bytes::from(
+            ([2u32, 3u32], U256::from(4), U256::from(5), U256::from(6)).abi_encode(),
+        ));
+
+        let accepted = read_accepted_sortition(
+            &provider,
+            Address::ZERO,
+            U256::from(7),
+            U256::from(8),
+            BlockId::number(10),
+            10,
+        )
+        .await
+        .expect("event-block state must decode")
+        .expect("ready state must be accepted");
+
+        assert_eq!(accepted.seed, U256::from(9));
+        assert_eq!(accepted.threshold, [2, 3]);
+        assert_eq!(accepted.committee_deadline, U256::from(5));
+    }
+
+    #[tokio::test]
+    async fn rejects_unverifiable_fulfillment_state() {
+        let asserter = Asserter::new();
+        let provider = provider(&asserter).await;
+        asserter.push_failure_msg("historical state unavailable");
+        asserter.push_success(&Bytes::from((false, U256::ZERO).abi_encode()));
+
+        let error = read_accepted_sortition(
+            &provider,
+            Address::ZERO,
+            U256::from(7),
+            U256::from(8),
+            BlockId::number(10),
+            10,
+        )
+        .await
+        .expect_err("uncertain state must fail closed");
+
+        assert!(error.to_string().contains("not verifiable"));
+    }
+
+    #[tokio::test]
+    async fn ignores_canonically_unusable_fulfillment() {
+        let asserter = Asserter::new();
+        let provider = provider(&asserter).await;
+        asserter.push_success(&Bytes::from((false, U256::ZERO).abi_encode()));
+
+        let accepted = read_accepted_sortition(
+            &provider,
+            Address::ZERO,
+            U256::from(7),
+            U256::from(8),
+            BlockId::number(10),
+            10,
+        )
+        .await
+        .expect("canonical rejection must be processed");
+
+        assert!(accepted.is_none());
     }
 }

@@ -8,23 +8,31 @@ import { expect } from "chai";
 import { ethers, networkHelpers } from "../fixtures";
 
 describe("ChainlinkVrfRandomnessProvider", function () {
-  async function setup() {
+  async function setup({
+    nativePayment = false,
+    fundedBalance = ethers.parseEther("100"),
+    minimumBalance = 1n,
+    baseFee = 0n,
+  } = {}) {
     const [owner, protocolOwner, other] = await ethers.getSigners();
     const requester = await ethers.deployContract("MockCiphernodeRegistry");
     await requester.waitForDeployment();
 
     const coordinator = await ethers.deployContract(
       "ChainlinkVrfCoordinatorV2_5Mock",
-      [0, 0, ethers.parseEther("1")],
+      [baseFee, 0, ethers.parseEther("1")],
     );
     await coordinator.waitForDeployment();
     await coordinator.createSubscription();
     const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
     if (!subscriptionId) throw new Error("subscription missing");
-    await coordinator.fundSubscription(
-      subscriptionId,
-      ethers.parseEther("100"),
-    );
+    if (nativePayment) {
+      await coordinator.fundSubscriptionWithNative(subscriptionId, {
+        value: fundedBalance,
+      });
+    } else {
+      await coordinator.fundSubscription(subscriptionId, fundedBalance);
+    }
 
     const provider: any = await ethers.deployContract(
       "ChainlinkVrfRandomnessProvider",
@@ -35,7 +43,8 @@ describe("ChainlinkVrfRandomnessProvider", function () {
         `0x${"11".repeat(32)}`,
         3,
         500_000,
-        false,
+        nativePayment,
+        minimumBalance,
         await protocolOwner.getAddress(),
       ],
     );
@@ -93,6 +102,69 @@ describe("ChainlinkVrfRandomnessProvider", function () {
     await expect(provider.connect(requesterSigner).requestRandomness(7))
       .to.be.revertedWithCustomError(provider, "RandomnessAlreadyRequested")
       .withArgs(7);
+  });
+
+  it("checks the LINK balance floor", async function () {
+    const { coordinator, provider, requesterSigner, subscriptionId } =
+      await setup({ fundedBalance: 4n, minimumBalance: 5n });
+
+    await expect(provider.connect(requesterSigner).requestRandomness(7))
+      .to.be.revertedWithCustomError(
+        provider,
+        "InsufficientSubscriptionBalance",
+      )
+      .withArgs(4, 5);
+
+    await coordinator.fundSubscription(subscriptionId, 1n);
+    await expect(provider.connect(requesterSigner).requestRandomness(7))
+      .to.emit(provider, "RandomnessRequested")
+      .withArgs(1, 7);
+  });
+
+  it("checks the native balance floor", async function () {
+    const { coordinator, provider, requesterSigner, subscriptionId } =
+      await setup({
+        nativePayment: true,
+        fundedBalance: 4n,
+        minimumBalance: 5n,
+      });
+
+    await coordinator.fundSubscription(subscriptionId, 100n);
+    await expect(provider.connect(requesterSigner).requestRandomness(7))
+      .to.be.revertedWithCustomError(
+        provider,
+        "InsufficientSubscriptionBalance",
+      )
+      .withArgs(4, 5);
+
+    await coordinator.fundSubscriptionWithNative(subscriptionId, {
+      value: 1n,
+    });
+    await expect(provider.connect(requesterSigner).requestRandomness(7))
+      .to.emit(provider, "RandomnessRequested")
+      .withArgs(1, 7);
+  });
+
+  it("blocks requests after balance depletion", async function () {
+    const { coordinator, provider, requesterSigner } = await setup({
+      fundedBalance: 2n,
+      minimumBalance: 2n,
+      baseFee: 1n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(7);
+    await coordinator.fulfillRandomWordsWithOverride(
+      1,
+      await provider.getAddress(),
+      [111],
+    );
+
+    await expect(provider.connect(requesterSigner).requestRandomness(8))
+      .to.be.revertedWithCustomError(
+        provider,
+        "InsufficientSubscriptionBalance",
+      )
+      .withArgs(1, 2);
   });
 
   it("does not revert the coordinator callback for an unknown response", async function () {

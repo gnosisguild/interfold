@@ -308,6 +308,29 @@ The SDK provides two event type enums for subscribing to on-chain events:
 `CommitteeRequested` is retained for pre-VRF registry logs. The ciphernode runtime creates its own
 durable event with the same name after the registry accepts a VRF result.
 
+### `RandomnessProviderEventType`
+
+| Enum Key               | Solidity Event Name   |
+| ---------------------- | --------------------- |
+| `RANDOMNESS_FULFILLED` | `RandomnessFulfilled` |
+
+The Registry freezes a provider address for each request. Use the address, request ID, and E3 ID
+from `CommitteeRandomnessRequested` to watch and correlate the provider response:
+
+```typescript
+await listener.onRandomnessProviderEvent(
+  provider,
+  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+  ({ data }) => {
+    console.log(data.requestId, data.e3Id, data.fulfilledAt)
+  },
+)
+```
+
+`getHistoricalRandomnessProviderEvents` returns fulfillment logs that predate the watcher. A
+fulfillment means that the provider stored a response. Query the Registry to determine whether the
+response was timely and usable.
+
 ## E3 lifecycle enums
 
 ### `E3Stage`
