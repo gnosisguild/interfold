@@ -218,17 +218,15 @@ protocol treasury receives about 1.82% of the service fee. Because the treasury
 share is applied to the service fee in-contract, 1.82% is approximately 20% of
 the 10% margin; the remaining fee is distributed to active committee nodes.
 
-The Ethereum launch configuration sets `randomnessFlatFee` to 40 USDS. The fee
+The Ethereum launch configuration sets `randomnessFlatFee` to 5 USDS. The fee
 reimburses the DAO-funded Chainlink VRF subscription. It does not receive the
 service margin, and ciphernodes do not share it. The contract credits this fee
 to the request-time treasury when Chainlink accepts the randomness request.
 
-The 40 USDS value uses Chainlink's Ethereum native-payment example: 50 gwei,
-115,000 verification gas, 95,000 callback gas, and a 24% premium produce a
-0.01302 ETH request cost. At the release reference price of 2,442.81 USDS per
-ETH, the estimate is 31.81 USDS. Rounding to 40 USDS adds a 25.8% buffer. See
-[VRF_FEE.md](deploy/protocol/VRF_FEE.md) for the calculation and review rules.
-This conversion assumes that 1 USDS is worth 1 USD.
+The 5 USDS value is a rounded long-term operating estimate. Actual requests can
+cost more or less because Ethereum gas prices and the ETH price change. The DAO
+subscription reserve absorbs this variance across requests. This estimate
+assumes that 1 USDS is worth 1 USD.
 
 The randomness fee is not part of service escrow. If randomness times out, the
 requester receives all service escrow, but the randomness fee stays charged. A
