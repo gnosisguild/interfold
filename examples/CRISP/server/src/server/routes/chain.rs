@@ -60,6 +60,14 @@ const MAX_BATCH: usize = 64;
 /// callers know their contract's deployment block, and asking from there is the intended usage.
 const MAX_LOG_WINDOWS: u64 = 500;
 
+/// Cost charged for `/chain/block-at-timestamp`.
+///
+/// The route bisects over block headers, so it costs about `log2(head)` upstream reads — roughly
+/// 25 on a 20-million-block chain, not the 8 it used to be charged. 32 covers any chain height up
+/// to 2^32 blocks, which is far beyond anything this will run against, and paying a fixed
+/// worst-case avoids a head read just to price the request.
+const BLOCK_SEARCH_COST: usize = 32;
+
 /// Cap on how many calls one JSON-RPC batch may carry.
 ///
 /// A batch is executed sequentially, so an unbounded array is an unbounded number of upstream
@@ -115,6 +123,30 @@ fn windows_for(from: u64, to: u64) -> u64 {
     (to - from) / LOG_WINDOW + 1
 }
 
+/// Who to charge a request to.
+///
+/// `realip_remote_addr` reads `Forwarded` / `X-Forwarded-For` and performs NO trust-proxy check —
+/// it returns whatever the header says. Since both limiters key their per-caller window on this,
+/// trusting it with nothing in front means a caller can present a different address on every
+/// request, mint a fresh window each time, and never be limited at all. So the header is believed
+/// only when the deployment declares a proxy that overwrites it; otherwise the socket peer, which
+/// cannot be forged, is used instead.
+pub(super) fn caller_id(request: &HttpRequest) -> String {
+    identify(request, CONFIG.trust_proxy_headers)
+}
+
+/// The rule itself, with the deployment's answer passed in rather than read from config, so it
+/// can be tested without the test's outcome depending on the environment it runs in.
+fn identify(request: &HttpRequest, trust_proxy_headers: bool) -> String {
+    let info = request.connection_info();
+    let caller = if trust_proxy_headers {
+        info.realip_remote_addr()
+    } else {
+        info.peer_addr()
+    };
+    caller.unwrap_or("unknown").to_string()
+}
+
 /// Charge a request against the caller's read window, returning the refusal if it does not fit.
 ///
 /// These routes are cheap per call and unbounded in aggregate: they are the one place in this
@@ -126,14 +158,7 @@ pub(super) fn admit(
     limiter: &ChainRateLimiter,
     cost: usize,
 ) -> Result<(), (String, usize)> {
-    // Same caveat as the relay's limiter: `realip_remote_addr` trusts `X-Forwarded-For`, which is
-    // right behind this deployment's proxy and spoofable without one. Spoofing only widens the
-    // spoofer's own window.
-    let caller = request
-        .connection_info()
-        .realip_remote_addr()
-        .unwrap_or("unknown")
-        .to_string();
+    let caller = caller_id(request);
 
     match limiter.check_caller_cost(&caller, cost) {
         Ok(()) => Ok(()),
@@ -573,9 +598,20 @@ async fn rpc(
     store: web::Data<AppData>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // Charged before anything is parsed or forwarded, and by batch length: one array of 64 is 64
-    // sequential upstream requests on one connection.
+    // The batch cap is checked BEFORE the window is charged, not after. Charged first, an
+    // oversized batch cost more than the whole window and was refused by the limiter — so the
+    // caller got a 429 instead of the error naming the cap, and a request the server was going to
+    // reject outright still had to be paid for.
     let cost = match body.as_array() {
+        Some(entries) if entries.len() > MAX_RPC_BATCH => {
+            return HttpResponse::Ok().json(rpc_error(
+                None,
+                -32600,
+                &format!("At most {MAX_RPC_BATCH} calls per batch"),
+            ));
+        }
+        // Charged by batch length: one array of 64 is 64 sequential upstream requests held open
+        // on a single connection.
         Some(entries) => entries.len(),
         None => 1,
     };
@@ -602,13 +638,7 @@ async fn rpc(
                 ));
             }
 
-            if entries.len() > MAX_RPC_BATCH {
-                return HttpResponse::Ok().json(rpc_error(
-                    None,
-                    -32600,
-                    &format!("At most {MAX_RPC_BATCH} calls per batch"),
-                ));
-            }
+            // The size cap is enforced above, before the read window is charged.
 
             let mut responses = Vec::with_capacity(entries.len());
             for entry in entries {
@@ -1174,18 +1204,20 @@ async fn read(
     request: web::Json<ReadRequest>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
+    // Capped before charged, for the same reason as `/chain/rpc`: an oversized batch costs more
+    // than the whole window, so charging first turned the error that names the cap into a 429.
+    if request.calls.len() > MAX_BATCH {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!("At most {MAX_BATCH} calls per request"),
+        });
+    }
+
     if let Err((caller, cost)) = admit(&http_request, &limiter, request.calls.len()) {
         return too_many_requests(&caller, cost, "/chain/read");
     }
 
     if request.calls.is_empty() {
         return HttpResponse::Ok().json(Vec::<ReadResult>::new());
-    }
-
-    if request.calls.len() > MAX_BATCH {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!("At most {MAX_BATCH} calls per request"),
-        });
     }
 
     let provider = match upstream().await {
@@ -1304,9 +1336,11 @@ async fn logs(
     store: web::Data<AppData>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // One log query can expand into up to `MAX_LOG_WINDOWS` upstream calls, but how many is not
-    // known until the range is resolved below. Charged as one call: the window count is already
-    // capped, and the allowlist bounds which contract it can be asked for.
+    // Admission happens twice on purpose. This first charge covers the request itself and the
+    // index-served path, which makes no upstream call at all. The windowed upstream scan below is
+    // charged again for the windows it will actually open, once the range is known — a query can
+    // expand to `MAX_LOG_WINDOWS` (500) `eth_getLogs` calls, and charging that as one call left
+    // the per-caller fan-out bound the limiter documents off by up to 500x.
     if let Err((caller, cost)) = admit(&http_request, &limiter, 1) {
         return too_many_requests(&caller, cost, "/chain/logs");
     }
@@ -1396,7 +1430,9 @@ async fn logs(
         return HttpResponse::Ok().json(Vec::<LogEntry>::new());
     }
 
-    if windows_for(from, to) > MAX_LOG_WINDOWS {
+    let windows = windows_for(from, to);
+
+    if windows > MAX_LOG_WINDOWS {
         return HttpResponse::BadRequest().json(JsonResponse {
             response: format!(
                 "Range {from}-{to} is too wide; at most {} blocks per request. Start from the \
@@ -1404,6 +1440,13 @@ async fn logs(
                 MAX_LOG_WINDOWS * LOG_WINDOW
             ),
         });
+    }
+
+    // Now that the range is resolved, charge what this scan will really cost. Checked after the
+    // width cap above, so a range too wide to serve is refused with the message that explains it
+    // rather than with a rate-limit refusal.
+    if let Err((caller, cost)) = admit(&http_request, &limiter, windows as usize) {
+        return too_many_requests(&caller, cost, "/chain/logs (upstream scan)");
     }
 
     // Refused, not truncated. A log has at most four topics, so a fifth is a malformed filter —
@@ -1489,8 +1532,8 @@ async fn block_at_timestamp(
     request: web::Json<BlockAtTimestampRequest>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // A binary search over block headers: several upstream reads per request, not one.
-    if let Err((caller, cost)) = admit(&http_request, &limiter, 8) {
+    // A binary search over block headers: see `BLOCK_SEARCH_COST`.
+    if let Err((caller, cost)) = admit(&http_request, &limiter, BLOCK_SEARCH_COST) {
         return too_many_requests(&caller, cost, "/chain/block-at-timestamp");
     }
 
@@ -1665,6 +1708,54 @@ mod tests {
         let call_data = [MULTICALL3_GET_ETH_BALANCE.as_slice(), &[0u8; 32]].concat();
 
         assert!(multicall3_targets(&call_data, 0).unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn an_oversized_batch_is_refused_by_the_cap_not_by_the_window() {
+        // The cap is checked before the window is charged, so a caller who sends 65 calls learns
+        // the limit is 64 instead of being told to slow down — and pays nothing for a request the
+        // server was never going to run.
+        let limiter = ChainRateLimiter::new();
+        let request = actix_web::test::TestRequest::default().to_http_request();
+
+        // The whole window is still available afterwards.
+        assert!(admit(&request, &limiter, MAX_RPC_BATCH).is_ok());
+    }
+
+    #[actix_web::test]
+    async fn a_wide_log_scan_is_charged_for_the_windows_it_opens() {
+        // 500 windows is 500 upstream calls; charging it as 1 left the per-caller bound off by
+        // that factor. Two maximal scans should exhaust a 1200-call window.
+        let limiter = ChainRateLimiter::new();
+        let request = actix_web::test::TestRequest::default().to_http_request();
+
+        assert_eq!(
+            windows_for(0, MAX_LOG_WINDOWS * LOG_WINDOW - 1),
+            MAX_LOG_WINDOWS
+        );
+        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_ok());
+        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_ok());
+        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_err());
+    }
+
+    #[actix_web::test]
+    async fn an_untrusted_forwarded_header_cannot_mint_a_new_identity() {
+        // With `trust_proxy_headers` off (the default), two requests from the same socket are the
+        // same caller however they label themselves — otherwise the window bounds nothing.
+        let first = actix_web::test::TestRequest::default()
+            .peer_addr("10.0.0.1:1111".parse().unwrap())
+            .insert_header(("X-Forwarded-For", "1.2.3.4"))
+            .to_http_request();
+        let second = actix_web::test::TestRequest::default()
+            .peer_addr("10.0.0.1:2222".parse().unwrap())
+            .insert_header(("X-Forwarded-For", "5.6.7.8"))
+            .to_http_request();
+
+        assert_eq!(identify(&first, false), identify(&second, false));
+
+        // And with a trusted proxy in front, the header is what distinguishes them — that is the
+        // whole reason the switch exists.
+        assert_ne!(identify(&first, true), identify(&second, true));
     }
 
     #[test]

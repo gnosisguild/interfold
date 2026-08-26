@@ -48,6 +48,19 @@ pub struct Config {
     /// become an open RPC endpoint for the whole chain.
     #[serde(default)]
     pub index_contracts: Option<String>,
+    /// Whether to believe `Forwarded` / `X-Forwarded-For` when identifying a caller.
+    ///
+    /// OFF by default, because actix's `realip_remote_addr` implements no trust-proxy logic: it
+    /// takes the header at face value. Both rate limiters key their per-caller window on that
+    /// value, so with no proxy stripping the header a caller can mint a fresh identity per
+    /// request and the window stops bounding anything.
+    ///
+    /// Set it ONLY when every request reaches this server through a proxy that overwrites those
+    /// headers — a CDN or load balancer you control. Behind such a proxy it must be set, or every
+    /// caller shares the proxy's address and therefore one window between them.
+    #[serde(default)]
+    pub trust_proxy_headers: bool,
+
     /// Comma-separated subset of `INDEX_CONTRACTS` whose LOGS are indexed into the store.
     ///
     /// Separate from the read allowlist on purpose. Serving `eth_call` for a contract is cheap;

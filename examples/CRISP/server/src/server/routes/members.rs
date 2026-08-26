@@ -27,7 +27,7 @@ use crate::server::app_data::AppData;
 use crate::server::models::JsonResponse;
 use crate::server::rate_limit::ChainRateLimiter;
 
-use super::chain::{admit, parse_address, too_many_requests, upstream, MULTICALL3};
+use super::chain::{admit, is_allowed, parse_address, too_many_requests, upstream, MULTICALL3};
 use super::scan::{coverage_for, scan_logs, Coverage, Target};
 
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
@@ -214,6 +214,18 @@ async fn delegates(
             response: format!("Invalid token address: {requested}"),
         });
     };
+    // The bound this route was missing. Without it any address could be named, and a `from_block`
+    // inside the 600-window cap would buy up to 600 sequential `eth_getLogs` calls plus one
+    // `aggregate3` per 200 discovered addresses — fan-out the fixed cost charged above does not
+    // account for. Worse, every distinct address left a permanent `SCANS` entry and every
+    // successful scan a permanent `CACHE` entry, so a caller could grow both without limit by
+    // naming addresses nobody watches. `/proposals` and `/rounds/inputs` check the same way.
+    if !is_allowed(&token) {
+        return HttpResponse::NotFound().json(JsonResponse {
+            response: format!("Token {token} is not served by this indexer"),
+        });
+    }
+
     let token_key = token.to_string().to_lowercase();
 
     // What the local index can answer for, if anything. NOT a precondition: a range it cannot

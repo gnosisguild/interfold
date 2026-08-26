@@ -74,7 +74,14 @@ async fn round_state_pending(store: &web::Data<AppData>, e3_id: &str) -> HttpRes
                  there is no state to serve. Check whether the round has failed on chain."
             ),
         }),
-        _ => round_not_found(e3_id),
+        Ok(false) => round_not_found(e3_id),
+        // A store failure is not an absent round. Collapsing it into 404 would tell a caller that
+        // a round it can see on chain does not exist here — the same conflation this function was
+        // added to remove, one level down.
+        Err(e) => {
+            error!("Error checking whether round {e3_id} is recorded: {e:?}");
+            HttpResponse::InternalServerError().body("Failed to get E3 state")
+        }
     }
 }
 
