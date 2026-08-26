@@ -92,6 +92,15 @@ pub struct DelegatesRequest {
     /// token — the bound is which tokens it INDEXES, checked below, not an allowlist.
     #[serde(default)]
     pub token: Option<String>,
+    /// Where to read each candidate's CURRENT voting power, when that is not the token itself.
+    ///
+    /// Delegation and voting weight can live on different contracts: the governance app scans
+    /// `DelegateChanged` on the token but reads `getVotes` from a bonded-votes adapter, so a
+    /// directory built entirely against the token would list the right delegates with the wrong
+    /// numbers. Defaults to the token, which is the common case. `total_supply` stays on the
+    /// token either way — it is what the percentages divide by.
+    #[serde(default)]
+    pub power_source: Option<String>,
     /// The block the caller needs the history to reach back to — the token's deployment block.
     ///
     /// The server cannot know it: coverage records where THIS server started indexing, which on a
@@ -114,6 +123,8 @@ pub struct DelegateEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct DelegatesResponse {
     pub token: String,
+    /// Where the voting power was read from. Equal to `token` unless the caller named another.
+    pub power_source: String,
     /// The block every voting-power read was pinned to.
     ///
     /// Pinned, not `latest`: left unpinned, each batch resolves against whatever head it happens
@@ -232,6 +243,27 @@ async fn delegates(
     // cover is scanned upstream below. Refusing instead would have been safe and useless — the
     // client's fallback does exactly that scan, so refusing just moves the same work back into
     // every browser, which is what this route exists to stop.
+    // Defaults to the token. Allowlisted on its own account: it is a second contract this route
+    // will call, so it has to be one this server serves.
+    let power_source = match &request.power_source {
+        Some(raw) => match parse_address(raw) {
+            Some(address) if is_allowed(&address) => address,
+            Some(address) => {
+                return HttpResponse::NotFound().json(JsonResponse {
+                    response: format!(
+                        "Voting power source {address} is not served by this indexer"
+                    ),
+                });
+            }
+            None => {
+                return HttpResponse::BadRequest().json(JsonResponse {
+                    response: format!("Invalid power source address: {raw}"),
+                });
+            }
+        },
+        None => token,
+    };
+
     let indexed = coverage_for(&store, &token_key).await;
     let indexed_head = indexed.map(|(_, head)| head).unwrap_or(0);
 
@@ -313,7 +345,7 @@ async fn delegates(
     };
     candidates.shrink_to_fit();
 
-    let response = match build_directory(provider, token, block, &candidates).await {
+    let response = match build_directory(provider, token, power_source, block, &candidates).await {
         Ok(mut built) => {
             built.scanned_from = scanned_from;
             built.scanned_to = block;
@@ -403,6 +435,8 @@ async fn scan_delegate_changed(
 async fn build_directory(
     provider: &alloy::providers::DynProvider,
     token: Address,
+    // Where `getVotes` is read from — the token unless the caller named another contract.
+    power_source: Address,
     block: u64,
     candidates: &[Address],
 ) -> eyre::Result<DelegatesResponse> {
@@ -423,7 +457,7 @@ async fn build_directory(
         let calls = chunk
             .iter()
             .map(|account| Call3 {
-                target: token,
+                target: power_source,
                 // Per-call failure rather than a reverting batch: one token that does not
                 // implement `getVotes` for one account must not discard the whole directory.
                 allowFailure: true,
@@ -474,6 +508,7 @@ async fn build_directory(
 
     Ok(DelegatesResponse {
         token: token.to_string(),
+        power_source: power_source.to_string(),
         block,
         // Filled in by the caller, which is the only place that knows what the scan covered.
         scanned_from: 0,
