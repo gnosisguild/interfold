@@ -56,7 +56,27 @@ pub struct Target<'a> {
     /// The address lowercased, as the log index keys it.
     pub key: &'a str,
     pub topic0: B256,
+    /// Positional filters for topics 1..3 — the event's indexed arguments. `None` matches
+    /// anything.
+    ///
+    /// Pushed down to the source rather than filtered after: the whole point of an indexed
+    /// argument is that the node (or the bucket read) can skip what does not match, and a route
+    /// asking for one proposal's votes should not pull every proposal's votes to find them.
+    pub topics: [Option<B256>; 3],
     pub indexed: Coverage,
+}
+
+impl<'a> Target<'a> {
+    /// A target matching every log of one event, whatever its indexed arguments.
+    pub fn any(address: Address, key: &'a str, topic0: B256, indexed: Coverage) -> Self {
+        Self {
+            address,
+            key,
+            topic0,
+            topics: [None, None, None],
+            indexed,
+        }
+    }
 }
 
 /// Every log of `target.topic0` from `target.address` in `[from, to]`.
@@ -78,26 +98,27 @@ pub async fn scan_logs(
 
     if let Some((indexed_from, indexed_head)) = target.indexed {
         if from >= indexed_from && to <= indexed_head {
-            return from_index(store, target.key, target.topic0, from, to).await;
+            return from_index(store, target, from, to).await;
         }
     }
 
-    from_upstream(provider, target.address, target.topic0, from, to).await
+    from_upstream(provider, target, from, to).await
 }
 
 /// The indexed path: one local read per bucket, no upstream request at all.
 async fn from_index(
     store: &web::Data<AppData>,
-    address_key: &str,
-    topic0: B256,
+    target: &Target<'_>,
     from: u64,
     to: u64,
 ) -> eyre::Result<Vec<ScannedLog>> {
-    let filter = format!("{topic0:#x}");
-    let stored = store
-        .logs()
-        .query(address_key, from, to, &[Some(filter), None, None, None])
-        .await?;
+    let filters = [
+        Some(format!("{:#x}", target.topic0)),
+        target.topics[0].map(|topic| format!("{topic:#x}")),
+        target.topics[1].map(|topic| format!("{topic:#x}")),
+        target.topics[2].map(|topic| format!("{topic:#x}")),
+    ];
+    let stored = store.logs().query(target.key, from, to, &filters).await?;
 
     let mut logs = Vec::with_capacity(stored.len());
     for entry in stored {
@@ -129,8 +150,7 @@ async fn from_index(
 /// The upstream path, windowed.
 async fn from_upstream(
     provider: &DynProvider,
-    address: Address,
-    topic0: B256,
+    target: &Target<'_>,
     from: u64,
     to: u64,
 ) -> eyre::Result<Vec<ScannedLog>> {
@@ -141,7 +161,18 @@ async fn from_upstream(
         );
     }
 
-    let base = Filter::new().address(address).event_signature(topic0);
+    let mut base = Filter::new()
+        .address(target.address)
+        .event_signature(target.topic0);
+    if let Some(topic) = target.topics[0] {
+        base = base.topic1(topic);
+    }
+    if let Some(topic) = target.topics[1] {
+        base = base.topic2(topic);
+    }
+    if let Some(topic) = target.topics[2] {
+        base = base.topic3(topic);
+    }
 
     let mut logs = Vec::new();
     let mut start = from;

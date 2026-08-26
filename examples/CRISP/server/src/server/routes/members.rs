@@ -364,12 +364,7 @@ async fn scan_delegate_changed(
     let logs = scan_logs(
         store,
         provider,
-        &Target {
-            address: token,
-            key: token_key,
-            topic0: DelegateChanged::SIGNATURE_HASH,
-            indexed,
-        },
+        &Target::any(token, token_key, DelegateChanged::SIGNATURE_HASH, indexed),
         from,
         to,
     )

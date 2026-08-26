@@ -12,13 +12,20 @@ use crate::server::models::{
     RoundRequestWithRequester,
 };
 
-use actix_web::{web, HttpResponse, Responder};
+use super::chain::{admit, is_allowed, parse_address, too_many_requests, upstream};
+use super::scan::{coverage_for, scan_logs, Target};
+use crate::server::rate_limit::ChainRateLimiter;
+
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, U256};
-use alloy::sol_types::SolValue;
+use alloy::providers::Provider;
+use alloy::sol;
+use alloy::sol_types::{SolEvent, SolValue};
 use e3_sdk::evm_helpers::contracts::{
     CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
 };
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -26,8 +33,186 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
             .route("/current", web::post().to(get_current_round))
             .route("/public-key", web::post().to(get_public_key))
             .route("/ciphertext", web::post().to(get_ciphertext))
-            .route("/request", web::post().to(request_new_round)),
+            .route("/request", web::post().to(request_new_round))
+            .route("/inputs", web::post().to(round_inputs)),
     );
+}
+
+sol! {
+    /// The E3 PROGRAM's input event — three arguments. Not to be confused with `Interfold`'s
+    /// four-argument `InputPublished`, which carries an extra `inputHash`; they are different
+    /// events from different contracts and only one of them is what the activity feed renders.
+    event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
+}
+
+/// Cost charged to the caller's read window.
+const INPUTS_READ_COST: usize = 4;
+
+#[derive(Debug, Deserialize)]
+pub struct RoundInputsRequest {
+    pub round_id: String,
+    /// The E3 program that emitted them. Defaults to the configured one; a round created against
+    /// a different program names it here.
+    #[serde(default)]
+    pub program: Option<String>,
+    #[serde(default)]
+    pub from_block: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishedInput {
+    pub index: String,
+    pub block: u64,
+    pub transaction_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RoundInputsResponse {
+    pub program: String,
+    pub round_id: String,
+    pub scanned_from: u64,
+    pub scanned_to: u64,
+    pub indexed_head: u64,
+    pub inputs: Vec<PublishedInput>,
+}
+
+/// When each encrypted ballot landed in a round, for the activity feed.
+///
+/// `/state/lite` already reports how MANY inputs a round holds, but not when each arrived or in
+/// which transaction, which is what the feed links to — so this is not the same question.
+///
+/// The event's `data` is the ciphertext and is deliberately dropped: the feed renders an index, a
+/// block and a link, and returning the payload would make the response orders of magnitude larger
+/// for a field nothing reads. Ballots stay indistinguishable either way — a mask and a vote look
+/// the same here, as they do on chain.
+async fn round_inputs(
+    http_request: HttpRequest,
+    data: web::Json<RoundInputsRequest>,
+    store: web::Data<AppData>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
+    if let Err((caller, cost)) = admit(&http_request, &limiter, INPUTS_READ_COST) {
+        return too_many_requests(&caller, cost, "/rounds/inputs");
+    }
+
+    let request = data.into_inner();
+
+    let e3_id = match canonical_e3_id(&request.round_id) {
+        Ok(id) => id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+    let Ok(e3_id_u256) = U256::from_str_radix(&e3_id, 10) else {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!("Invalid round id: {e3_id}"),
+        });
+    };
+
+    let requested = request
+        .program
+        .clone()
+        .unwrap_or_else(|| CONFIG.e3_program_address.clone());
+    let Some(program) = parse_address(&requested) else {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!("Invalid program address: {requested}"),
+        });
+    };
+
+    if !is_allowed(&program) {
+        return HttpResponse::NotFound().json(JsonResponse {
+            response: format!("Program {program} is not served by this indexer"),
+        });
+    }
+
+    let program_key = program.to_string().to_lowercase();
+    let indexed = coverage_for(&store, &program_key).await;
+    let indexed_head = indexed.map(|(_, head)| head).unwrap_or(0);
+
+    let Some(scan_from) = request.from_block.or(indexed.map(|(from, _)| from)) else {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!(
+                "from_block is required for {program}: its logs are not indexed here"
+            ),
+        });
+    };
+
+    let provider = match upstream().await {
+        Ok(p) => p,
+        Err(e) => {
+            error!("rounds/inputs: provider unavailable: {e}");
+            return HttpResponse::ServiceUnavailable().json(JsonResponse {
+                response: "Upstream RPC unavailable".to_string(),
+            });
+        }
+    };
+
+    let block = match provider.get_block_number().await {
+        Ok(number) => number,
+        Err(e) => {
+            error!("rounds/inputs: could not read the head: {e}");
+            return HttpResponse::ServiceUnavailable().json(JsonResponse {
+                response: "Upstream RPC unavailable".to_string(),
+            });
+        }
+    };
+
+    let target = Target {
+        address: program,
+        key: &program_key,
+        topic0: InputPublished::SIGNATURE_HASH,
+        topics: [Some(e3_id_u256.into()), None, None],
+        indexed,
+    };
+
+    let logs = match scan_logs(&store, provider, &target, scan_from, block).await {
+        Ok(found) => found,
+        Err(e) => {
+            error!("rounds/inputs: scanning InputPublished failed: {e}");
+            return HttpResponse::ServiceUnavailable().json(JsonResponse {
+                response: "Failed to read the input history".to_string(),
+            });
+        }
+    };
+
+    let mut inputs = Vec::with_capacity(logs.len());
+    for log in logs {
+        let Ok(decoded) = InputPublished::decode_raw_log(log.topics.iter().copied(), &log.data)
+        else {
+            continue;
+        };
+        inputs.push(PublishedInput {
+            index: decoded.index.to_string(),
+            block: log.block_number,
+            transaction_hash: log.transaction_hash,
+        });
+    }
+
+    // Newest first, as the feed renders them.
+    inputs.reverse();
+
+    HttpResponse::Ok().json(RoundInputsResponse {
+        program: program.to_string(),
+        round_id: e3_id,
+        scanned_from: scan_from,
+        scanned_to: block,
+        indexed_head,
+        inputs,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_input_published_signature_is_the_program_event_not_interfold_s() {
+        // `InputPublished(uint256,bytes,uint256)` from the E3 PROGRAM, cross-checked against
+        // viem's `toEventSelector`. Interfold emits a four-argument event of the same name; using
+        // that one here would return an empty feed with nothing to indicate why.
+        assert_eq!(
+            format!("{:#x}", InputPublished::SIGNATURE_HASH),
+            "0xa8b9f2de7b39faeef44659f323cd6d14cfa11fbf8c4eaccfb1d6c954194656fd"
+        );
+    }
 }
 
 /// Request a new E3 round
