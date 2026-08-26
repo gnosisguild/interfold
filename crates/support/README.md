@@ -292,8 +292,10 @@ rewards distributed.
 `program.risc0.boundless` fields make the launcher exit, and the environment variables never reach
 the container. See #1812.
 
-To use other values, open a shell in the container, export the variables there, and start
-`e3-support-app` yourself. `./scripts/dev.sh` opens such a shell.
+To use other values, open a shell in the container with `interfold program shell`, export the
+variables there, and start `e3-support-app` yourself. That command goes through the same
+`ctl/container` the launcher uses, so the shell publishes port 13151 and carries the `host.local`
+alias a Step 7 callback needs.
 
 ---
 
