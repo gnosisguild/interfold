@@ -65,11 +65,11 @@ const NETWORKS: Record<string, NetworkProfile> = {
     name: 'Sepolia',
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
-    interfold: '0x38A8A686A420023568E995b57B4FBEA371555Ba7',
-    ciphernodeRegistry: '0xa639b9a7AB05B787fFE258735Cf9541152a0E610',
-    crispProgram: '0x8D9c914446451fdE7FC0fdBcF20573E878c3DE5a',
-    bondingRegistry: '0x4b8560271CD78e071f0074f6Db7D344298187F8b',
-    faucet: '0xCb350D89ACf8FC1720e4BF2cF59B70f30F8D2DbA',
+    interfold: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C',
+    ciphernodeRegistry: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8',
+    crispProgram: '0x8654F380760c46857188097Fa0AD0bf995603124',
+    bondingRegistry: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4',
+    faucet: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85',
     // Earliest of the Interfold/CiphernodeRegistry/CRISPProgram deploy blocks
     // (CiphernodeRegistry) — a later value silently drops early registry events.
     deployBlock: '11508403',

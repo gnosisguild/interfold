@@ -363,3 +363,60 @@ export enum CreditMode {
   CONSTANT = 0,
   CUSTOM = 1,
 }
+
+/**
+ * The chain head as reported by the CRISP server (`chain/head`).
+ */
+export type ChainHead = {
+  blockNumber: bigint
+  timestamp: bigint
+  chainId: number
+}
+
+/**
+ * One `eth_call` in a `chain/read` batch. The caller owns the ABI encoding; the server forwards
+ * the calldata untouched, so a client can read any view function of an allowlisted contract
+ * without the server needing to know its ABI.
+ */
+export type ContractRead = {
+  address: string
+  data: `0x${string}`
+  /** Historical block to read at. Omit for latest. */
+  blockNumber?: bigint
+}
+
+/**
+ * The outcome of one call in a `chain/read` batch.
+ *
+ * A revert is reported per call rather than failing the batch, because probing a function a
+ * contract may not implement is a normal thing to do (the IVotes and proxy probes both rely on
+ * it) and one expected revert must not discard its siblings' results.
+ */
+export type ContractReadResult = {
+  result?: `0x${string}`
+  error?: string
+}
+
+/**
+ * A log as returned by `chain/logs`.
+ */
+export type IndexedLog = {
+  address: string
+  topics: `0x${string}`[]
+  data: `0x${string}`
+  blockNumber?: bigint
+  transactionHash?: string
+  logIndex?: number
+}
+
+/**
+ * A `chain/logs` query. The range is unbounded from the caller's side: the server splits it into
+ * windows the upstream provider will accept.
+ */
+export type LogQuery = {
+  address: string
+  /** Positional topic filters; `null`/`undefined` in a position matches anything. */
+  topics?: (string | null | undefined)[]
+  fromBlock?: bigint
+  toBlock?: bigint
+}

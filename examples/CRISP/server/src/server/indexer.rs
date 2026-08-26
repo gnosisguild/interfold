@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::server::log_repo::{LogRepository, StoredLog};
 use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
     get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
@@ -20,6 +21,7 @@ use alloy::sol_types::{sol_data, SolType};
 use alloy_primitives::{Address, U256};
 use crisp_utils::decode_tally;
 use e3_fhe_params::decode_bfv_params_arc;
+use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use e3_sdk::{
     evm_helpers::{
         contracts::{InterfoldRead, ReadWrite},
@@ -32,7 +34,7 @@ use e3_sdk::{
 };
 use evm_helpers::{CRISPContractFactory, InputPublished};
 use eyre::Context;
-use log::{info, warn};
+use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
 use std::time::Duration;
@@ -471,6 +473,14 @@ async fn wait_for_indexed_inputs<S: DataStore>(
 /// handler, so two passes do not overlap.
 const DEADLINE_RETRY_OFFSETS: [u64; 3] = [60, 180, 420];
 
+/// Store key holding the `INDEX_LOG_CONTRACTS` set as of the previous run.
+///
+/// Coverage records outlive the configuration that created them, and the store has no delete. This
+/// is what lets a restart tell "this address has been indexed continuously" from "this address is
+/// back after a spell of not being indexed", so the second case can narrow its claim instead of
+/// asserting history that was never fetched.
+const LOG_INDEX_CONFIG_KEY: &str = "_logs:_config";
+
 async fn handle_e3_input_deadline_expiration(
     e3_id: String,
     store: SharedStore<impl DataStore>,
@@ -748,6 +758,71 @@ pub async fn register_input_published(
     Ok(indexer)
 }
 
+/// Persist every log from a watched contract, so `/chain/logs` can answer from the store.
+///
+/// Untyped on purpose — see `log_repo`. A failed write IS propagated: the catch-up uses a handler
+/// error to hold the cursor back, and an index that quietly missed a log while the cursor moved
+/// past it answers later queries short while looking authoritative.
+pub async fn register_log_index(
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+    log_contracts: &[String],
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
+    // Lowercased once so the per-log membership test is a plain comparison.
+    let wanted: Vec<String> = log_contracts.iter().map(|a| a.to_lowercase()).collect();
+
+    indexer
+        .add_raw_log_handler(move |log, ctx| {
+            let mut repo = LogRepository::new(ctx.store());
+            let wanted = wanted.clone();
+            async move {
+                // Watched for the typed handlers is not the same as wanted in the log index: a
+                // busy token emits thousands of transfers nobody queries, and retaining them costs
+                // storage and write amplification for nothing.
+                if !wanted.contains(&log.address().to_string().to_lowercase()) {
+                    return Ok(());
+                }
+
+                // A log with no block number or index cannot be placed. `unwrap_or_default()`
+                // filed it at block 0, log 0 — a position that both collides with any other
+                // unplaceable log and sits below every coverage record, so it would be silently
+                // dropped from every query anyway. Skipping it is the same outcome, said out loud.
+                let (Some(block_number), Some(log_index)) = (log.block_number, log.log_index)
+                else {
+                    warn!(
+                        "Skipping a log with no block position from {}",
+                        log.address()
+                    );
+                    return Ok(());
+                };
+
+                let stored = StoredLog {
+                    removed: log.removed,
+                    address: log.address().to_string(),
+                    topics: log.topics().iter().map(|t| t.to_string()).collect(),
+                    data: log.data().data.to_string(),
+                    block_number,
+                    transaction_hash: log.transaction_hash.map(|h| h.to_string()),
+                    log_index,
+                    block_hash: log.block_hash.map(|h| h.to_string()),
+                    transaction_index: log.transaction_index,
+                };
+
+                // Propagated, not logged and dropped. The cursor is a claim that everything below
+                // it has been applied, and `catch_up` relies on a handler error to stop the
+                // cursor advancing past a failed window — swallowing this disarmed exactly that
+                // safety net, and one transient store failure became a permanent hole underneath
+                // an index that still reported the range as covered.
+                repo.append(stored)
+                    .await
+                    .map_err(|e| eyre::eyre!("indexing a log failed: {e}"))?;
+
+                Ok(())
+            }
+        })
+        .await;
+    Ok(indexer)
+}
+
 pub async fn start_indexer(
     url: &str,
     contract_address: &str,
@@ -755,15 +830,32 @@ pub async fn start_indexer(
     crisp_address: &str,
     store: SharedStore<impl DataStore>,
     private_key: &str,
+    index_start_block: Option<u64>,
+    index_chunk_size: Option<u64>,
+    index_contracts: &[String],
+    index_log_contracts: &[String],
 ) -> Result<()> {
     info!("CRISP: Creating indexer...");
-    let crisp_indexer = InterfoldIndexer::new_with_write_contract(
-        url,
-        &[contract_address, registry_address, crisp_address],
-        store,
-        private_key,
-    )
-    .await?;
+
+    // The E3 stack, plus whatever the deployment asked to be readable through `/chain/*`. Watching
+    // the extra addresses is what lets their logs be served from the store instead of forwarded
+    // upstream on every request; the typed handlers below dispatch on event signature, so a
+    // contract that emits nothing they recognise simply flows past them into the log index.
+    //
+    // `INDEX_LOG_CONTRACTS` is documented as a subset of `INDEX_CONTRACTS`, but nothing enforces
+    // that, and an entry listed only there would never reach the subscription or the backfill
+    // filter — while coverage was still recorded for it below. Every query for that address then
+    // passed the coverage test and was answered from an empty index: an authoritative empty log
+    // list. Watching the union costs nothing and removes the way to configure that.
+    let mut watched: Vec<&str> = vec![contract_address, registry_address, crisp_address];
+    for address in index_contracts.iter().chain(index_log_contracts.iter()) {
+        if !watched.iter().any(|w| w.eq_ignore_ascii_case(address)) {
+            watched.push(address);
+        }
+    }
+
+    let crisp_indexer =
+        InterfoldIndexer::new_with_write_contract(url, &watched, store, private_key).await?;
     info!("CRISP: Indexer registering handlers...");
 
     let crisp_indexer = register_e3_requested(crisp_indexer).await?;
@@ -771,7 +863,132 @@ pub async fn start_indexer(
     let crisp_indexer = register_plaintext_output_published(crisp_indexer).await?;
     let crisp_indexer = register_committee_published(crisp_indexer).await?;
     let crisp_indexer = register_input_published(crisp_indexer).await?;
+    let crisp_indexer = register_log_index(crisp_indexer, index_log_contracts).await?;
     info!("CRISP: Indexer finished registering handlers!");
+
+    // Resolve where indexing will ACTUALLY begin, ONCE, and drive both the backfill configuration
+    // and the coverage claim from that single value.
+    //
+    // Reading it twice was a silent hole. Coverage used to come from `get_head_block_rpc` over the
+    // HTTP URL, while the catch-up read its own head over the WebSocket URL later in startup —
+    // possibly a different node, certainly a later moment. The HTTP read is the lower of the two,
+    // which is the unsafe direction: coverage claimed blocks that indexing then skipped over, and
+    // `ensure_coverage_from` never overwrites, so the wrong bound persisted for the life of the
+    // database.
+    //
+    // Three cases:
+    //
+    //   - A resumed database already carries coverage from its first run, and the cursor may sit
+    //     far above a since-lowered INDEX_START_BLOCK. Re-claiming the lower bound would assert
+    //     history that will never be fetched, so existing coverage is left untouched.
+    //   - INDEX_START_BLOCK set: that is the start, and the catch-up uses the same number.
+    //   - Fresh database, nothing configured: read the head here and PIN the backfill to it, so
+    //     the catch-up cannot resolve a different (later) start than the one claimed below.
+    let store = crisp_indexer.get_store();
+
+    // A read ERROR is not an absent record. `unwrap_or(None)` conflated them, so one transient
+    // store failure made a resumed database look fresh — pinning the coverage claim to the current
+    // head and discarding the record describing everything indexed so far. Propagated instead:
+    // startup is exactly the moment a broken store should be loud, and every later decision here
+    // is derived from this value.
+    let resumed: Option<u64> = store
+        .get(INDEXER_CURSOR_KEY)
+        .await
+        .map_err(|e| eyre::eyre!("reading the indexer cursor failed: {e}"))?;
+
+    let start_block = match (resumed, index_start_block) {
+        // `ensure_coverage_from` leaves an existing record alone, so this only fills a gap left by
+        // an older database that predates log indexing.
+        (Some(cursor), _) => Some(cursor.saturating_add(1)),
+        (None, Some(configured)) => Some(configured),
+        (None, None) => match crisp_indexer.head_block().await {
+            Ok(head) => Some(head),
+            Err(e) => {
+                error!("Could not read the head to pin the index start: {e}");
+                None
+            }
+        },
+    };
+
+    // Close the gap left by every restart and dropped socket before subscribing. On a resumed
+    // database the stored cursor wins regardless of what is passed here; on a fresh one this pins
+    // the start to the very block coverage is about to claim.
+    crisp_indexer.configure_backfill(
+        if resumed.is_some() {
+            index_start_block
+        } else {
+            start_block
+        },
+        index_chunk_size,
+    );
+
+    // Record where the log index starts for each watched contract, before any log arrives, so a
+    // contract that has emitted nothing yet does not look uncovered forever.
+    {
+        if !index_log_contracts.is_empty() {
+            let coverage_from = start_block;
+
+            if let Some(coverage_from) = coverage_from {
+                // The set that was log-indexed on the previous run. An address present now but
+                // absent then was not indexed during the gap, so whatever coverage its earlier
+                // run left behind overstates what is in the store.
+                //
+                // An Err here must NOT read as "no previous set". That would mark every address
+                // newly added and narrow its coverage to the current head — permanently discarding
+                // the record for history that is still sitting in the store, so `/chain/logs`
+                // would stop serving a range it can answer perfectly well. On a read failure the
+                // rebase is skipped entirely: leaving a claim alone is recoverable, narrowing one
+                // wrongly is not.
+                let previous: Option<Vec<String>> = match store.get(LOG_INDEX_CONFIG_KEY).await {
+                    Ok(previous) => Some(previous.unwrap_or_default()),
+                    Err(e) => {
+                        error!(
+                            "Could not read the previous log-index configuration: {e}. Leaving \
+                             every coverage record as it stands this run."
+                        );
+                        None
+                    }
+                };
+
+                let mut repo = LogRepository::new(store.clone());
+                for address in index_log_contracts {
+                    // Unknown previous set ⇒ treated as already indexed, which only ever widens
+                    // what is claimed by filling a missing record, never narrows an existing one.
+                    let was_indexed = previous.as_ref().is_none_or(|previous| {
+                        previous
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(address))
+                    });
+
+                    let recorded = if was_indexed {
+                        repo.ensure_coverage_from(address, coverage_from).await
+                    } else {
+                        // Newly added (or re-added after a removal): claim only from here on.
+                        repo.rebase_coverage(address, coverage_from)
+                            .await
+                            .and(repo.ensure_coverage_from(address, coverage_from).await)
+                    };
+
+                    if let Err(e) = recorded {
+                        error!("Could not record log coverage for {address}: {e}");
+                    }
+                }
+
+                // Only when the comparison above actually happened. Recording the current set
+                // after a failed read would tell the NEXT run that every address was already
+                // indexed, so an address genuinely added during this run would never have its
+                // stale coverage narrowed — the read failure would outlive itself.
+                if previous.is_some() {
+                    let mut store = store;
+                    let current: Vec<String> = index_log_contracts.to_vec();
+                    if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
+                        error!("Could not record the log-index configuration: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");
     Ok(())
