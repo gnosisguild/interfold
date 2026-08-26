@@ -59,8 +59,9 @@ interfold --config /path/to/owner.yaml ciphernode bond \
 **Inactive status.** Both bond AND tickets must be above their minimums for `isActive` to be `true`.
 Check both.
 
-**Balance snapshot timing.** Balances are snapshotted at `requestBlock - 1`. If you added tickets in
-the same block as the E3 request, they won't count for that round. They'll apply to the next one.
+**Balance snapshot timing.** The stored `requestBlock` field is a timestamp checkpoint. Balances are
+snapshotted at `requestBlock - 1`. Ticket changes at the request timestamp do not count for that
+round. They apply to later requests.
 
 ---
 
@@ -71,8 +72,9 @@ Look for `"SubmissionWindowClosed"` errors or missing `TicketSubmitted` events.
 
 ### Common causes
 
-**RPC latency.** The sortition submission window includes the wait for the entropy block. If your
-RPC endpoint is slow, the transaction may not be mined in time.
+**RPC latency.** The full sortition submission window starts when the registry accepts the VRF
+response. A slow RPC endpoint can delay detection or prevent the ticket transaction from being mined
+before the deadline.
 
 **Fix:** Use a faster RPC endpoint. Avoid free-tier endpoints that throttle under load.
 

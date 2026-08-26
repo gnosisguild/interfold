@@ -215,6 +215,7 @@ sequenceDiagram
     participant Users
     participant Interfold
     participant CiphernodeRegistry
+    participant RandomnessProvider
     participant E3Program
     participant ComputeProvider
     participant DecryptionVerifier
@@ -224,9 +225,14 @@ sequenceDiagram
     Interfold->>ComputeProvider: validate(computeProviderParams)
     ComputeProvider-->>Interfold: decryptionVerifier
     Interfold->>CiphernodeRegistry: requestCommittee(e3Id, legacySeed, threshold)
-    CiphernodeRegistry->>CiphernodeRegistry: commit future entropy block
+    CiphernodeRegistry->>RandomnessProvider: requestRandomness(e3Id)
+    RandomnessProvider-->>CiphernodeRegistry: requestId
     CiphernodeRegistry-->>Interfold: success
     Interfold-->>Users: e3Id, E3 struct
+
+    Note over RandomnessProvider: Chainlink verifies and stores the VRF response
+    CiphernodeRegistry->>RandomnessProvider: getRandomness(requestId)
+    RandomnessProvider-->>CiphernodeRegistry: random word and fulfillment context
 
     Users->>Interfold: activate(e3Id)
     Interfold->>CiphernodeRegistry: committeePublicKey(e3Id)

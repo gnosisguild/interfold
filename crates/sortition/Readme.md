@@ -25,6 +25,8 @@ sequenceDiagram
     participant Operator
     participant BondingRegistry
     participant CiphernodeRegistry
+    participant RandomnessProvider
+    participant RandomnessReader
     participant Interfold
     participant EventBus
     participant E3Router
@@ -63,9 +65,14 @@ sequenceDiagram
     Note over Operator,PlaintextAggregator: Phase 2: E3 Request & Sortition
 
     Operator->>EventBus: E3Requested(e3Id, thresholdM, thresholdN, computationSeed, params, chainId)
-    CiphernodeRegistry->>EventBus: CommitteeRequested(e3Id, entropyBlock, requestBlock, chainId)
+    CiphernodeRegistry->>RandomnessProvider: requestRandomness(e3Id)
+    RandomnessProvider-->>CiphernodeRegistry: requestId
+    RandomnessProvider->>RandomnessReader: RandomnessFulfilled(requestId, e3Id)
+    RandomnessReader->>CiphernodeRegistry: sortitionSeed(e3Id), getSortitionRequest(e3Id)
+    CiphernodeRegistry-->>RandomnessReader: Accepted seed and request context
+    RandomnessReader->>EventBus: CommitteeRequested(e3Id, seed, requestBlock, deadline, chainId)
     EventBus->>Sortition: E3Requested
-    EventBus->>Sortition: CommitteeRequested with the resolved sortition seed
+    EventBus->>Sortition: Durable CommitteeRequested
     Sortition->>Sortition: Wait until both request events are available
     Sortition->>NodeStateManager: GetNodeState(chainId)
     NodeStateManager-->>Sortition: NodeStateStore { nodes, ticketPrice }
@@ -288,6 +295,7 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
   - `TicketBalanceUpdated`
   - `OperatorActivationChanged`
   - `ConfigurationUpdated`
+  - `RandomnessFulfilled`
   - `CommitteeFinalized`
 - **Deduplication**: EventBus ignores already-seen events
 
@@ -328,13 +336,15 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 | `OperatorActivationChanged` | operator, active, chainId                    | Node activation status              |
 | `ConfigurationUpdated`      | parameter, oldValue, newValue                | System parameter changes            |
 
-### Ciphernode Registry Events
+### Sortition Input Events
 
-| Event                | Parameters                                | Purpose                |
-| -------------------- | ----------------------------------------- | ---------------------- |
-| `CiphernodeAdded`    | address, index, numNodes, chainId         | Node registration      |
-| `CiphernodeRemoved`  | address, index, numNodes, chainId         | Node removal           |
-| `CommitteeRequested` | e3Id, entropyBlock, requestBlock, chainId | Delayed sortition seed |
+| Event                          | Parameters                                                                   | Purpose                            |
+| ------------------------------ | ---------------------------------------------------------------------------- | ---------------------------------- |
+| `CiphernodeAdded`              | address, index, numNodes, chainId                                            | Node registration                  |
+| `CiphernodeRemoved`            | address, index, numNodes, chainId                                            | Node removal                       |
+| `CommitteeRandomnessRequested` | e3Id, requestId, provider, randomnessDeadline                                | Frozen on-chain randomness request |
+| `RandomnessFulfilled`          | requestId, e3Id, randomWord, fulfilledAt                                     | Verified provider response         |
+| `CommitteeRequested`           | e3Id, seed, threshold, requestBlock, committeeDeadline, ticketPrice, chainId | Durable runtime sortition context  |
 
 ### Interfold Events
 

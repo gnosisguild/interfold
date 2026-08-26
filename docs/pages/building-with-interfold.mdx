@@ -148,8 +148,9 @@ function getTimeoutConfig() external view returns (E3TimeoutConfig memory config
    ) external returns (uint256 e3Id, E3 memory e3);
    ```
 
-2. Contract validates the parameters, quotes the fee, and stores an `E3` record with a seed for the
-   computation. The registry derives a separate committee seed after the request is final.
+2. Contract validates the parameters, quotes the service and flat randomness fees, and stores an
+   `E3` record with a seed for the computation. The registry requests VRF and derives a separate,
+   request-bound committee seed after a verified response.
 3. The E3 program's `validate` hook returns the encryption scheme ID, which is persisted on the `E3`
    struct.
 4. Committee selection is delegated to the `ciphernodeRegistry` via `requestCommittee`.

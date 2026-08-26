@@ -24,7 +24,7 @@ pnpm add @interfold/sdk
 ## Quick Start
 
 ```typescript
-import { InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
+import { CommitteeSize, InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
 import { createPublicClient, createWalletClient, http, custom } from 'viem'
 import { sepolia } from 'viem/chains'
 
@@ -58,16 +58,17 @@ sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, (event) => {
   console.log('E3 Requested:', event.data)
 })
 
-sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_REQUESTED, (event) => {
-  console.log('Committee Requested:', event.data)
+sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED, (event) => {
+  console.log('Committee randomness requested:', event.data)
 })
 
 // Interact with contracts
+const now = BigInt(Math.floor(Date.now() / 1000))
 const hash = await sdk.requestE3({
-  threshold: [1, 3],
-  inputWindow: [BigInt(0), BigInt(100)],
+  committeeSize: CommitteeSize.Minimum,
+  inputWindow: [now, now + 300n],
   e3Program: '0x...',
-  e3ProgramParams: '0x...',
+  paramSet: 0, // Insecure512 for development
   computeProviderParams: '0x...',
   customParams: '0x...',
 })
@@ -137,17 +138,15 @@ enum InterfoldEventType {
   PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',
 
   // E3 Program Management
-  E3_PROGRAM_ENABLED = 'E3ProgramEnabled',
-  E3_PROGRAM_DISABLED = 'E3ProgramDisabled',
+  E3_PROGRAM_REGISTERED = 'E3ProgramRegistered',
 
   // Encryption Scheme Management
   ENCRYPTION_SCHEME_ENABLED = 'EncryptionSchemeEnabled',
-  ENCRYPTION_SCHEME_DISABLED = 'EncryptionSchemeDisabled',
 
   // Configuration
   CIPHERNODE_REGISTRY_SET = 'CiphernodeRegistrySet',
   MAX_DURATION_SET = 'MaxDurationSet',
-  ALLOWED_E3_PROGRAMS_PARAMS_SET = 'AllowedE3ProgramsParamsSet',
+  PARAM_SET_REGISTERED = 'ParamSetRegistered',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',
 }
@@ -316,13 +315,14 @@ await sdk.approveFeeToken(amount: bigint);
 
 // Request a new E3 computation
 await sdk.requestE3({
-  threshold: [number, number],
+  committeeSize: CommitteeSize.Minimum,
   inputWindow: [bigint, bigint],
   e3Program: `0x${string}`,
-  e3ProgramParams: `0x${string}`,
+  paramSet: 0,
   computeProviderParams: `0x${string}`,
-  customParams?: `0x${string}`,
-  gasLimit?: bigint
+  customParams: '0x',
+  maxFee: amount,
+  gasLimit: 1_500_000n
 });
 
 // Publish ciphertext output
@@ -336,9 +336,9 @@ const stage = await sdk.getE3Stage(e3Id: bigint);
 const reason = await sdk.getFailureReason(e3Id: bigint);
 ```
 
-The original requester can cancel an E3 while it is in `Requested`, `CommitteeFinalized`,
-`KeyPublished`, or `CiphertextReady`. Operators retain the configured value of completed milestones,
-and the remaining work allocation becomes claimable through the refund manager.
+The original requester can cancel only while the E3 is `Requested`, after the randomness deadline,
+and only if no timely VRF result is usable. A valid result disables cancellation. The failure path
+returns all service fee escrow and keeps the flat randomness fee charged.
 
 ```ts
 const hash = await sdk.cancelE3(e3Id)
