@@ -101,6 +101,15 @@ pub struct DelegatesRequest {
     /// token either way — it is what the percentages divide by.
     #[serde(default)]
     pub power_source: Option<String>,
+    /// Where `DelegateChanged` is emitted, when that is not the token itself.
+    ///
+    /// With a voting escrow in play, delegation moves to the escrow's IVotes adapter and the
+    /// token's own delegation feeds a read nobody consumes — so the candidate scan has to follow
+    /// the adapter. Defaults to the token. Together with `power_source` this lets all three roles
+    /// (supply, delegation, voting weight) sit on different contracts, which is what the
+    /// governance deployment actually does.
+    #[serde(default)]
+    pub delegation_source: Option<String>,
     /// The block the caller needs the history to reach back to — the token's deployment block.
     ///
     /// The server cannot know it: coverage records where THIS server started indexing, which on a
@@ -125,6 +134,8 @@ pub struct DelegatesResponse {
     pub token: String,
     /// Where the voting power was read from. Equal to `token` unless the caller named another.
     pub power_source: String,
+    /// Where `DelegateChanged` was scanned. Equal to `token` unless the caller named another.
+    pub delegation_source: String,
     /// The block every voting-power read was pinned to.
     ///
     /// Pinned, not `latest`: left unpinned, each batch resolves against whatever head it happens
@@ -264,7 +275,36 @@ async fn delegates(
         None => token,
     };
 
-    let indexed = coverage_for(&store, &token_key).await;
+    // Same treatment as `power_source`: allowlisted on its own account, because it is another
+    // contract this route reads.
+    let delegation_source = match &request.delegation_source {
+        Some(raw) => match parse_address(raw) {
+            Some(address) if is_allowed(&address) => address,
+            Some(address) => {
+                return HttpResponse::NotFound().json(JsonResponse {
+                    response: format!("Delegation source {address} is not served by this indexer"),
+                });
+            }
+            None => {
+                return HttpResponse::BadRequest().json(JsonResponse {
+                    response: format!("Invalid delegation source address: {raw}"),
+                });
+            }
+        },
+        None => token,
+    };
+    let scan_key = delegation_source.to_string().to_lowercase();
+
+    // Keyed by all three roles, not by the token. The same token yields a DIFFERENT directory
+    // depending on where delegation and voting weight are read from, so a token-keyed cache would
+    // serve one caller's answer to another and be wrong for both.
+    let cache_key = format!(
+        "{token_key}|{scan_key}|{}",
+        power_source.to_string().to_lowercase()
+    );
+
+    // Coverage follows the contract whose LOGS are scanned, not the token.
+    let indexed = coverage_for(&store, &scan_key).await;
     let indexed_head = indexed.map(|(_, head)| head).unwrap_or(0);
 
     // Where history has to start. The server cannot know it — coverage records where THIS server
@@ -301,22 +341,22 @@ async fn delegates(
 
     // Everything below this point is the work; a request arriving in the same block as the last
     // one does none of it.
-    if let Some(hit) = cached_directory(&token_key, block, scan_from).await {
+    if let Some(hit) = cached_directory(&cache_key, block, scan_from).await {
         return HttpResponse::Ok().json(hit);
     }
 
     // One scan per token at a time. Whoever waited here almost certainly no longer needs to scan
     // at all, so check again before doing any work.
-    let lock = scan_lock(&token_key).await;
+    let lock = scan_lock(&cache_key).await;
     let _scanning = lock.lock().await;
 
-    if let Some(hit) = cached_directory(&token_key, block, scan_from).await {
+    if let Some(hit) = cached_directory(&cache_key, block, scan_from).await {
         return HttpResponse::Ok().json(hit);
     }
 
     // Reuse the existing candidate set when it starts early enough, and scan only what has been
     // mined since. A caller asking for MORE history than was scanned before gets a full rescan.
-    let reusable = CACHE.read().await.get(&token_key).and_then(|entry| {
+    let reusable = CACHE.read().await.get(&cache_key).and_then(|entry| {
         entry
             .scanned
             .filter(|(from, to)| *from <= scan_from && *to <= block)
@@ -325,8 +365,16 @@ async fn delegates(
 
     let (mut candidates, scanned_from) = match reusable {
         Some((from, to, known)) => {
-            match scan_delegate_changed(&store, provider, token, &token_key, to + 1, block, indexed)
-                .await
+            match scan_delegate_changed(
+                &store,
+                provider,
+                delegation_source,
+                &scan_key,
+                to + 1,
+                block,
+                indexed,
+            )
+            .await
             {
                 Ok(fresh) => (merge(known, fresh), from),
                 Err(e) => return scan_failed(e),
@@ -334,7 +382,13 @@ async fn delegates(
         }
         None => {
             match scan_delegate_changed(
-                &store, provider, token, &token_key, scan_from, block, indexed,
+                &store,
+                provider,
+                delegation_source,
+                &scan_key,
+                scan_from,
+                block,
+                indexed,
             )
             .await
             {
@@ -345,7 +399,16 @@ async fn delegates(
     };
     candidates.shrink_to_fit();
 
-    let response = match build_directory(provider, token, power_source, block, &candidates).await {
+    let response = match build_directory(
+        provider,
+        token,
+        power_source,
+        delegation_source,
+        block,
+        &candidates,
+    )
+    .await
+    {
         Ok(mut built) => {
             built.scanned_from = scanned_from;
             built.scanned_to = block;
@@ -361,7 +424,7 @@ async fn delegates(
     };
 
     CACHE.write().await.insert(
-        token_key,
+        cache_key,
         TokenCache {
             scanned: Some((scanned_from, block)),
             candidates,
@@ -437,6 +500,9 @@ async fn build_directory(
     token: Address,
     // Where `getVotes` is read from — the token unless the caller named another contract.
     power_source: Address,
+    // Where `DelegateChanged` was scanned — reported so a caller can confirm it got the
+    // directory it asked for rather than a token-wide one.
+    delegation_source: Address,
     block: u64,
     candidates: &[Address],
 ) -> eyre::Result<DelegatesResponse> {
@@ -509,6 +575,7 @@ async fn build_directory(
     Ok(DelegatesResponse {
         token: token.to_string(),
         power_source: power_source.to_string(),
+        delegation_source: delegation_source.to_string(),
         block,
         // Filled in by the caller, which is the only place that knows what the scan covered.
         scanned_from: 0,
