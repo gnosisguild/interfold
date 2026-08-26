@@ -474,6 +474,7 @@ export async function deployInterfoldSystem(
       ciphernodeRegistryAddress,
     );
     await randomnessProvider.waitForDeployment();
+    await (await randomnessProvider.setAutoFulfill(true)).wait();
     await ciphernodeRegistry.setRandomnessProvider(
       await randomnessProvider.getAddress(),
     );

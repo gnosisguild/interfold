@@ -32,11 +32,13 @@ export async function deployAndSaveMockRandomnessProvider({
     String(existing.constructorArgs?.requester).toLowerCase() ===
       requester.toLowerCase()
   ) {
+    const randomnessProvider = MockRandomnessProviderFactory.connect(
+      existing.address,
+      signer,
+    );
+    await disableAutoFulfillment(randomnessProvider);
     return {
-      randomnessProvider: MockRandomnessProviderFactory.connect(
-        existing.address,
-        signer,
-      ),
+      randomnessProvider,
     };
   }
 
@@ -44,6 +46,7 @@ export async function deployAndSaveMockRandomnessProvider({
     signer,
   ).deploy(requester);
   await randomnessProvider.waitForDeployment();
+  await disableAutoFulfillment(randomnessProvider);
   const address = await randomnessProvider.getAddress();
   const blockNumber = await ethers.provider.getBlockNumber();
 
@@ -58,4 +61,12 @@ export async function deployAndSaveMockRandomnessProvider({
   );
 
   return { randomnessProvider };
+}
+
+async function disableAutoFulfillment(
+  randomnessProvider: MockRandomnessProvider,
+): Promise<void> {
+  if (await randomnessProvider.autoFulfill()) {
+    await (await randomnessProvider.setAutoFulfill(false)).wait();
+  }
 }

@@ -81,6 +81,67 @@ async function getInterfoldConnection(hre: any) {
   };
 }
 
+async function fulfillConfiguredMockRandomness(
+  hre: any,
+  e3Id: bigint,
+  requestBlockNumber: number,
+): Promise<void> {
+  const mockDeployment = readDeploymentArgs(
+    "MockRandomnessProvider",
+    hre.globalOptions.network,
+  );
+  if (!mockDeployment?.address) return;
+
+  const { ethers, registry } = await getRegistryConnection(hre);
+  const configuredProvider = await registry.randomnessProvider();
+  if (
+    configuredProvider.toLowerCase() !== mockDeployment.address.toLowerCase()
+  ) {
+    return;
+  }
+
+  const [signer] = await ethers.getSigners();
+  const provider = await ethers.getContractAt(
+    "MockRandomnessProvider",
+    mockDeployment.address,
+    signer,
+  );
+  const requestId = await provider.requestIdByE3Id(e3Id);
+  if (requestId === 0n) {
+    throw new Error(`Mock randomness request not found for E3 ${e3Id}`);
+  }
+
+  const [alreadyFulfilled] = await provider.getRandomness(requestId);
+  if (!alreadyFulfilled) {
+    const randomWord = BigInt(
+      ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["string", "uint256", "uint256"],
+          ["interfold-local-randomness", e3Id, requestId],
+        ),
+      ),
+    );
+    const fulfillment = await provider.fulfill(requestId, randomWord);
+    const receipt = await fulfillment.wait();
+    if (!receipt) {
+      throw new Error(
+        `Mock randomness fulfillment was not mined for E3 ${e3Id}`,
+      );
+    }
+    if (receipt.blockNumber <= requestBlockNumber) {
+      throw new Error(
+        `Mock randomness for E3 ${e3Id} must be fulfilled after request block ${requestBlockNumber}`,
+      );
+    }
+  }
+
+  const [usable] = await registry.sortitionSeed(e3Id);
+  if (!usable) {
+    throw new Error(`Registry did not accept mock randomness for E3 ${e3Id}`);
+  }
+  console.log(`Mock randomness fulfilled for E3 ${e3Id}`);
+}
+
 export const requestCommittee = task(
   "committee:new",
   "Request a new ciphernode committee, will use E3 mock contracts by default",
@@ -285,6 +346,8 @@ export const requestCommittee = task(
       }
 
       const e3Id = requestedEvent.args.e3Id;
+
+      await fulfillConfiguredMockRandomness(hre, e3Id, receipt.blockNumber);
 
       console.log(`Committee requested for E3 ${e3Id}`);
       console.log(`E3_ID=${e3Id}`);

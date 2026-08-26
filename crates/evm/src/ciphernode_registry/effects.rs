@@ -4,6 +4,12 @@
 
 use super::*;
 
+const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
+
+fn ticket_gas_limit(estimate: u64) -> u64 {
+    estimate.saturating_mul(TICKET_GAS_SAFETY_MULTIPLIER)
+}
+
 /// Report whether a contract call contains this exact parameterless custom error.
 fn reverts_with(error: &anyhow::Error, selector: [u8; 4]) -> bool {
     contains_error_selector(&format!("{error:?}"), selector)
@@ -44,7 +50,16 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
             let builder = contract
                 .submitTicket(e3_id_u256, ticket_number_u256)
                 .nonce(current_nonce);
-            let pending = builder.send().await?;
+            // Nodes estimate concurrently before any ticket is mined. Earlier
+            // insertions can make a later top-N update more expensive than its
+            // estimate, so leave room for the request state to change.
+            let estimated_gas = builder.estimate_gas().await?;
+            let gas_limit = ticket_gas_limit(estimated_gas);
+            debug!(
+                estimated_gas,
+                gas_limit, "Applying submitTicket gas safety margin"
+            );
+            let pending = builder.gas(gas_limit).send().await?;
             drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit ticket", &receipt)?;
@@ -397,7 +412,7 @@ pub async fn fetch_randomness_providers<P: Provider + Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{reverts_with, ticket_submission_error_is_terminal};
+    use super::{reverts_with, ticket_gas_limit, ticket_submission_error_is_terminal};
     use crate::contracts::ICiphernodeRegistry;
     use alloy::sol_types::{Revert, SolError};
 
@@ -440,5 +455,11 @@ mod tests {
             &anyhow::anyhow!("CommitteeAlreadyFinalized"),
             selector
         ));
+    }
+
+    #[test]
+    fn doubles_ticket_gas_estimate_without_overflow() {
+        assert_eq!(ticket_gas_limit(250_000), 500_000);
+        assert_eq!(ticket_gas_limit(u64::MAX), u64::MAX);
     }
 }

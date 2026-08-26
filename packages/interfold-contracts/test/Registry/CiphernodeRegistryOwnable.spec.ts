@@ -171,6 +171,17 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("randomness configuration", function () {
+    it("disables mock auto-fulfillment by default", async function () {
+      const { registry } = await loadFixture(setup);
+      const replacement = await ethers.deployContract(
+        "MockRandomnessProvider",
+        [await registry.getAddress()],
+      );
+      await replacement.waitForDeployment();
+
+      expect(await replacement.autoFulfill()).to.equal(false);
+    });
+
     it("requires requests to be paused before changing provider settings", async function () {
       const { registry, interfold } = await loadFixture(setup);
       const replacement = await ethers.deployContract(

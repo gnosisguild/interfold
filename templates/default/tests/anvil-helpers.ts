@@ -2,7 +2,7 @@
 
 import type { PublicClient } from 'viem'
 
-/** Advance anvil time and mine (closes sortition submission window on-chain). */
+/** Advance Anvil time, then mine one block at the new timestamp. */
 export async function advanceAnvilTime(publicClient: PublicClient, seconds: number): Promise<void> {
   await publicClient.request({
     method: 'evm_increaseTime',

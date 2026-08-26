@@ -22,7 +22,9 @@ contract MockRandomnessProvider is IRandomnessProvider {
     error UnknownRandomnessRequest(uint256 requestId);
 
     address public immutable override requester;
-    bool public autoFulfill = true;
+    /// @dev Unit-test shortcut only. Local integration tests must call `fulfill` in a later
+    /// transaction so off-chain readers observe the same block boundary as production VRF.
+    bool public autoFulfill;
     bool public autoFulfillInRequestBlock;
     uint256 public nextRequestId = 1;
     mapping(uint256 e3Id => uint256 requestId) public requestIdByE3Id;
