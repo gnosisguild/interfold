@@ -27,13 +27,14 @@ use crate::server::app_data::AppData;
 use crate::server::models::JsonResponse;
 use crate::server::rate_limit::ChainRateLimiter;
 
-use super::chain::{admit, is_log_indexed, parse_address, too_many_requests, upstream, MULTICALL3};
+use super::chain::{admit, parse_address, too_many_requests, upstream, MULTICALL3};
+use super::scan::{coverage_for, scan_logs, Coverage, Target};
 
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, Bytes, U256};
-use alloy::providers::Provider;
+use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
@@ -119,29 +120,76 @@ pub struct DelegatesResponse {
     /// to hit, so a delegation landing mid-scan is counted in one batch and not another, and the
     /// percentages stop summing.
     pub block: u64,
-    /// The first block indexed for this token, and the last block applied. Together they say what
-    /// the candidate scan actually covered, so a client can tell a complete answer from one taken
-    /// while the indexer is still catching up — the failure mode a typed route has to expose that
-    /// a raw `eth_getLogs` proxy does not.
-    pub indexed_from: u64,
+    /// The block range the `DelegateChanged` scan actually covered.
+    ///
+    /// The guarantee this route makes, and the one a client has to be able to check: a directory
+    /// scanned from later than the token's deployment is missing delegates, and nothing else in
+    /// the response would distinguish it from a complete one.
+    pub scanned_from: u64,
+    pub scanned_to: u64,
+    /// How far local indexing has been applied. Below `scanned_to` means part of this answer came
+    /// from the upstream provider rather than the index — correct either way, just slower.
     pub indexed_head: u64,
     pub total_supply: String,
     pub delegates: Vec<DelegateEntry>,
 }
 
-/// One computed directory, kept until the chain moves past the block it was computed at.
-struct Cached {
-    block: u64,
-    response: DelegatesResponse,
+/// What is remembered per token, on two different clocks.
+#[derive(Default)]
+struct TokenCache {
+    /// The candidate set and the range it was built from. Delegates only ever ACCUMULATE — an
+    /// address that stops holding power is dropped by `getVotes`, not by the scan — so this is
+    /// extended a block at a time rather than rebuilt, and the expensive historical scan is paid
+    /// once for the life of the process instead of once per block.
+    scanned: Option<(u64, u64)>,
+    candidates: Vec<Address>,
+    /// The directory as computed at a block. Voting power changes with every delegation, so this
+    /// is only good for the block it was pinned to.
+    directory: Option<(u64, DelegatesResponse)>,
 }
 
 /// Per-token cache.
 ///
 /// The whole point of moving this server-side: within one block the answer is identical for every
 /// caller, so the first request pays for it and the rest are a map lookup. Keyed by lowercased
-/// token address; bounded by how many tokens this server indexes, which is a handful.
-static CACHE: once_cell::sync::Lazy<RwLock<HashMap<String, Cached>>> =
+/// token address; bounded by how many tokens this server is asked about.
+static CACHE: once_cell::sync::Lazy<RwLock<HashMap<String, TokenCache>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// One in-flight scan per token.
+///
+/// Without this, a cold cache is a thundering herd: the historical scan can be tens of windows,
+/// the cache is only written when it finishes, and every request that arrives meanwhile sees a
+/// miss and starts its own. A restart with a handful of open browsers would multiply the whole
+/// backfill by the number of tabs. Holders queue and then find the cache warm — the recheck after
+/// acquiring is what makes the wait worth having.
+static SCANS: once_cell::sync::Lazy<
+    RwLock<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// The lock for one token, created on first use.
+async fn scan_lock(token_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    if let Some(existing) = SCANS.read().await.get(token_key) {
+        return existing.clone();
+    }
+    SCANS
+        .write()
+        .await
+        .entry(token_key.to_string())
+        .or_default()
+        .clone()
+}
+
+/// The cached directory for `block`, if it covers `scan_from`.
+async fn cached_directory(
+    token_key: &str,
+    block: u64,
+    scan_from: u64,
+) -> Option<DelegatesResponse> {
+    let cache = CACHE.read().await;
+    let (cached_block, response) = cache.get(token_key)?.directory.as_ref()?;
+    (*cached_block == block && response.scanned_from <= scan_from).then(|| response.clone())
+}
 
 /// The delegate directory for a voting token: every address ever delegated to that still holds
 /// voting power, ranked, with the token's total supply for percentages.
@@ -168,34 +216,24 @@ async fn delegates(
     };
     let token_key = token.to_string().to_lowercase();
 
-    // Not a permission check: this route can only ANSWER from the log index, so a token whose
-    // logs are not indexed has no answer here at all. Refusing plainly lets the client fall back
-    // to scanning for itself, which is what it does today.
-    if !is_log_indexed(&token_key) {
-        return not_indexed(&token);
-    }
+    // What the local index can answer for, if anything. NOT a precondition: a range it cannot
+    // cover is scanned upstream below. Refusing instead would have been safe and useless — the
+    // client's fallback does exactly that scan, so refusing just moves the same work back into
+    // every browser, which is what this route exists to stop.
+    let indexed = coverage_for(&store, &token_key).await;
+    let indexed_head = indexed.map(|(_, head)| head).unwrap_or(0);
 
-    let repo = store.logs();
-    let (Ok(Some(indexed_from)), Ok(Some(indexed_head))) =
-        (repo.coverage(&token_key).await, repo.indexed_head().await)
-    else {
-        return not_indexed(&token);
+    // Where history has to start. The server cannot know it — coverage records where THIS server
+    // began indexing, which on a deployment with no backfill is long after the token shipped — so
+    // the caller names it, and only a token this server indexes has a usable default.
+    let Some(scan_from) = request.from_block.or(indexed.map(|(from, _)| from)) else {
+        return HttpResponse::BadRequest().json(JsonResponse {
+            response: format!(
+                "from_block is required for {token}: this server does not index its logs, so it \
+                 has no deployment block to scan from"
+            ),
+        });
     };
-
-    // Not clamped, and not answered partially: an answer built from history that starts after the
-    // token did is missing delegates, and nothing in the response would distinguish it from a
-    // complete one. The same rule `/chain/logs` follows — a query reaching past what is covered
-    // goes back to the caller rather than being served short.
-    if let Some(required_from) = request.from_block {
-        if indexed_from > required_from {
-            return HttpResponse::NotFound().json(JsonResponse {
-                response: format!(
-                    "Delegate history for {token} is indexed only from block {indexed_from}, \
-                     but the caller needs it from {required_from}"
-                ),
-            });
-        }
-    }
 
     let provider = match upstream().await {
         Ok(p) => p,
@@ -217,26 +255,56 @@ async fn delegates(
         }
     };
 
-    if let Some(hit) = CACHE.read().await.get(&token_key) {
-        if hit.block == block {
-            return HttpResponse::Ok().json(hit.response.clone());
-        }
+    // Everything below this point is the work; a request arriving in the same block as the last
+    // one does none of it.
+    if let Some(hit) = cached_directory(&token_key, block, scan_from).await {
+        return HttpResponse::Ok().json(hit);
     }
 
-    let candidates = match candidate_delegates(&store, &token_key, indexed_from, indexed_head).await
-    {
-        Ok(addresses) => addresses,
-        Err(e) => {
-            error!("members/delegates: reading the log index failed: {e}");
-            return HttpResponse::InternalServerError().json(JsonResponse {
-                response: "Failed to read the delegate history".to_string(),
-            });
+    // One scan per token at a time. Whoever waited here almost certainly no longer needs to scan
+    // at all, so check again before doing any work.
+    let lock = scan_lock(&token_key).await;
+    let _scanning = lock.lock().await;
+
+    if let Some(hit) = cached_directory(&token_key, block, scan_from).await {
+        return HttpResponse::Ok().json(hit);
+    }
+
+    // Reuse the existing candidate set when it starts early enough, and scan only what has been
+    // mined since. A caller asking for MORE history than was scanned before gets a full rescan.
+    let reusable = CACHE.read().await.get(&token_key).and_then(|entry| {
+        entry
+            .scanned
+            .filter(|(from, to)| *from <= scan_from && *to <= block)
+            .map(|(from, to)| (from, to, entry.candidates.clone()))
+    });
+
+    let (mut candidates, scanned_from) = match reusable {
+        Some((from, to, known)) => {
+            match scan_delegate_changed(&store, provider, token, &token_key, to + 1, block, indexed)
+                .await
+            {
+                Ok(fresh) => (merge(known, fresh), from),
+                Err(e) => return scan_failed(e),
+            }
+        }
+        None => {
+            match scan_delegate_changed(
+                &store, provider, token, &token_key, scan_from, block, indexed,
+            )
+            .await
+            {
+                Ok(found) => (merge(Vec::new(), found), scan_from),
+                Err(e) => return scan_failed(e),
+            }
         }
     };
+    candidates.shrink_to_fit();
 
     let response = match build_directory(provider, token, block, &candidates).await {
         Ok(mut built) => {
-            built.indexed_from = indexed_from;
+            built.scanned_from = scanned_from;
+            built.scanned_to = block;
             built.indexed_head = indexed_head;
             built
         }
@@ -250,71 +318,78 @@ async fn delegates(
 
     CACHE.write().await.insert(
         token_key,
-        Cached {
-            block,
-            response: response.clone(),
+        TokenCache {
+            scanned: Some((scanned_from, block)),
+            candidates,
+            directory: Some((block, response.clone())),
         },
     );
 
     HttpResponse::Ok().json(response)
 }
 
-fn not_indexed(token: &Address) -> HttpResponse {
-    HttpResponse::NotFound().json(JsonResponse {
-        response: format!(
-            "Delegate history for {token} is not indexed by this server; add it to INDEX_LOG_CONTRACTS"
-        ),
+fn scan_failed(e: eyre::Report) -> HttpResponse {
+    error!("members/delegates: scanning DelegateChanged failed: {e}");
+    HttpResponse::ServiceUnavailable().json(JsonResponse {
+        response: "Failed to read the delegate history".to_string(),
     })
 }
 
-/// Every address the token has ever delegated TO, in first-seen order.
+/// Add `fresh` to `known`, keeping first-seen order and dropping repeats.
+fn merge(known: Vec<Address>, fresh: Vec<Address>) -> Vec<Address> {
+    let mut seen: std::collections::HashSet<Address> = known.iter().copied().collect();
+    let mut merged = known;
+    for address in fresh {
+        if seen.insert(address) {
+            merged.push(address);
+        }
+    }
+    merged
+}
+
+/// Every address delegated TO in `[from, to]`.
 ///
-/// Read from topics: `toDelegate` is indexed, so no log data has to be decoded, and an address
-/// that has since delegated away is still a candidate — whether it currently holds power is
-/// decided by `getVotes` below, not by the last event about it.
-async fn candidate_delegates(
+/// `toDelegate` is indexed, so the candidate set is readable from topics alone — no log data has
+/// to be decoded. An address that has since delegated away is still a candidate; whether it holds
+/// power now is decided by `getVotes`, not by the last event about it.
+async fn scan_delegate_changed(
     store: &web::Data<AppData>,
+    provider: &DynProvider,
+    token: Address,
     token_key: &str,
     from: u64,
     to: u64,
+    indexed: Coverage,
 ) -> eyre::Result<Vec<Address>> {
-    let topic0 = format!("{:#x}", DelegateChanged::SIGNATURE_HASH);
-    let logs = store
-        .logs()
-        .query(token_key, from, to, &[Some(topic0), None, None, None])
-        .await?;
+    let logs = scan_logs(
+        store,
+        provider,
+        &Target {
+            address: token,
+            key: token_key,
+            topic0: DelegateChanged::SIGNATURE_HASH,
+            indexed,
+        },
+        from,
+        to,
+    )
+    .await?;
 
-    let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
-
     for log in logs {
         // topics[3] is `toDelegate`: [signature, delegator, fromDelegate, toDelegate].
         let Some(topic) = log.topics.get(3) else {
             continue;
         };
-        let Some(address) = address_from_topic(topic) else {
-            continue;
-        };
+        let address = Address::from_word(*topic);
         // The zero address is what `delegate(address(0))` records — an undelegation, not a
         // delegate. It can never hold voting power.
-        if address == Address::ZERO {
-            continue;
-        }
-        if seen.insert(address) {
+        if address != Address::ZERO {
             candidates.push(address);
         }
     }
 
     Ok(candidates)
-}
-
-/// A 32-byte topic word carrying a left-padded address.
-fn address_from_topic(topic: &str) -> Option<Address> {
-    let hex = topic.trim().trim_start_matches("0x");
-    if hex.len() != 64 {
-        return None;
-    }
-    parse_address(&hex[24..])
 }
 
 /// Total supply plus each candidate's voting power at `block`, zeros dropped, ranked.
@@ -393,7 +468,9 @@ async fn build_directory(
     Ok(DelegatesResponse {
         token: token.to_string(),
         block,
-        indexed_from: 0,
+        // Filled in by the caller, which is the only place that knows what the scan covered.
+        scanned_from: 0,
+        scanned_to: 0,
         indexed_head: 0,
         total_supply: total_supply.to_string(),
         delegates,
@@ -435,6 +512,36 @@ mod tests {
             path,
             data: web::Data::new(AppData::new(db)),
         }
+    }
+
+    /// A 32-byte topic word carrying a left-padded address.
+    fn address_from_topic(topic: &str) -> Option<Address> {
+        let hex = topic.trim().trim_start_matches("0x");
+        if hex.len() != 64 {
+            return None;
+        }
+        parse_address(&hex[24..])
+    }
+
+    /// The index half of `scan_delegate_changed`, so the candidate logic can be tested without a
+    /// provider. Same topic filter and same topic-3 read.
+    async fn index_candidates(
+        store: &web::Data<AppData>,
+        token_key: &str,
+        from: u64,
+        to: u64,
+    ) -> eyre::Result<Vec<Address>> {
+        let topic0 = format!("{:#x}", DelegateChanged::SIGNATURE_HASH);
+        let logs = store
+            .logs()
+            .query(token_key, from, to, &[Some(topic0), None, None, None])
+            .await?;
+
+        Ok(logs
+            .into_iter()
+            .filter_map(|log| log.topics.get(3).and_then(|t| address_from_topic(t)))
+            .filter(|address| *address != Address::ZERO)
+            .collect())
     }
 
     fn topic_for(address: Address) -> String {
@@ -483,9 +590,14 @@ mod tests {
             .unwrap();
 
         let token_key = token.to_string().to_lowercase();
-        let found = candidate_delegates(&store.data, &token_key, 0, 200)
-            .await
-            .unwrap();
+        // Dedup belongs to `merge`, which is also what folds an incremental scan into the set
+        // already held — so the two paths cannot disagree about what a repeat is.
+        let found = merge(
+            Vec::new(),
+            index_candidates(&store.data, &token_key, 0, 200)
+                .await
+                .unwrap(),
+        );
 
         assert_eq!(found, vec![first, second]);
     }
@@ -506,7 +618,7 @@ mod tests {
             .unwrap();
 
         let token_key = token.to_string().to_lowercase();
-        let found = candidate_delegates(&store.data, &token_key, 0, 100)
+        let found = index_candidates(&store.data, &token_key, 0, 100)
             .await
             .unwrap();
 
@@ -530,11 +642,33 @@ mod tests {
             .unwrap();
 
         let token_key = token.to_string().to_lowercase();
-        let found = candidate_delegates(&store.data, &token_key, 0, 100)
+        let found = index_candidates(&store.data, &token_key, 0, 100)
             .await
             .unwrap();
 
         assert_eq!(found, vec![ours]);
+    }
+
+    #[test]
+    fn an_incremental_scan_extends_the_set_without_repeating_it() {
+        let known = vec![Address::repeat_byte(0x11), Address::repeat_byte(0x22)];
+        // A delegate seen again in the new window, and one seen for the first time.
+        let fresh = vec![Address::repeat_byte(0x22), Address::repeat_byte(0x33)];
+
+        assert_eq!(
+            merge(known, fresh),
+            vec![
+                Address::repeat_byte(0x11),
+                Address::repeat_byte(0x22),
+                Address::repeat_byte(0x33)
+            ]
+        );
+    }
+
+    #[test]
+    fn merging_nothing_new_leaves_the_set_alone() {
+        let known = vec![Address::repeat_byte(0x11)];
+        assert_eq!(merge(known.clone(), Vec::new()), known);
     }
 
     #[test]

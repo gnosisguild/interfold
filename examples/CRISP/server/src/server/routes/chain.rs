@@ -1015,7 +1015,7 @@ async fn forward_logs_verbatim(
 /// configuration — the SDK's `getOnChainRoundData` reads the E3 program this server was deployed
 /// to serve, and requiring the operator to name it a second time in `INDEX_CONTRACTS` turned a
 /// forgotten variable into "the SDK cannot read the round it just told you about".
-fn is_allowed(address: &Address) -> bool {
+pub(super) fn is_allowed(address: &Address) -> bool {
     let configured = [
         CONFIG.e3_program_address.as_str(),
         CONFIG.interfold_address.as_str(),
