@@ -1,10 +1,13 @@
 name: contributors
 
-# Lives outside ci.yml because ci.yml only runs on pull_request, where
-# github.ref is refs/pull/N/merge — the main-branch guard could never match
-# and the job was silently skipped on every run.
+# Runs on pull_request rather than push to main. The contributors table lives on
+# main, but main is covered by the "Main Protection" ruleset: a direct push is
+# rejected, and the PR the action falls back to opening can never merge because
+# PRs created with GITHUB_TOKEN do not trigger workflow runs, so the required
+# template_integration / crisp_e2e checks never report. Committing to the PR's
+# own branch sidesteps both — the table reaches main when the PR merges.
 on:
-  push:
+  pull_request:
     branches:
       - main
 
@@ -16,17 +19,22 @@ jobs:
     timeout-minutes: 10
     runs-on: 'ubuntu-latest'
     name: Populate Contributors List
-    if: "!contains(github.event.head_commit.message, 'contrib-readme-action')"
+    # Fork PRs get a read-only GITHUB_TOKEN and no write access to the fork's
+    # branch, so the push would fail. Skip them; the list refreshes on the next
+    # same-repo PR.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     concurrency:
-      group: contrib-readme-${{ github.ref }}
+      group: contrib-readme-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          # The default merge ref is detached; the action needs the real branch
+          # to commit back to.
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -41,6 +49,8 @@ jobs:
           commit_message: 'docs(contributor): contrib-readme-action has updated readme'
           committer_username: 'github-actions[bot]'
           committer_email: 'github-actions[bot]@users.noreply.github.com'
-          auto_detect_branch_protection: true
+          # PR branches are not covered by the Main Protection ruleset, so push
+          # straight to them. Left on, the action would try to open a PR instead.
+          auto_detect_branch_protection: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
