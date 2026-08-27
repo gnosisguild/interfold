@@ -137,6 +137,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new("MaxDurationSet", "MaxDurationSet(uint256)", None),
     EvmEventDefinition::new(
+        "NodeReleaseRegistrySet",
+        "NodeReleaseRegistrySet(address)",
+        None,
+    ),
+    EvmEventDefinition::new(
         "OwnershipTransferStarted",
         "OwnershipTransferStarted(address,address)",
         None,
