@@ -54,19 +54,19 @@ pins nargo/bb), `zk-helpers`, `trbfv`, `keyshare`, `aggregator`, `sortition`, `s
 
 Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 
-| Task                        | Command                                                                                                            |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Install / build all         | `pnpm i` · `pnpm build`                                                                                            |
-| Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                             |
-| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                              |
-| Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                            |
-| Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                              |
-| Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                  |
-| Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)    |
-| Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                       |
-| Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                               |
-| Consistency checks          | `pnpm check:committee` · `check:docs` · `check:invariants` · `check:ciphernode bond` · `check:pnpm` · `check:size` |
-| Release bump                | `pnpm bump:versions X.Y.Z`                                                                                         |
+| Task                        | Command                                                                                                                                            |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Install / build all         | `pnpm i` · `pnpm build`                                                                                                                            |
+| Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
+| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                                                              |
+| Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
+| Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
+| Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                                                  |
+| Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)                                    |
+| Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                                                       |
+| Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                                                               |
+| Consistency checks          | `pnpm check:committee` · `check:docs` · `check:addresses` · `check:invariants` · `check:license` · `check:verifiers` · `check:pnpm` · `check:size` |
+| Release bump                | `pnpm bump:versions X.Y.Z`                                                                                                                         |
 
 ## Conventions
 
@@ -76,10 +76,12 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
   conventional commits; breaking PRs merge only alongside a breaking release; docs changes get the
   `documentation` label. CI validates commit messages.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
-- **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:ciphernode bond`, `check:committee`,
+- **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
   `check:docs` (harness-doc drift gate — escape with `[skip-doc-sync]` in a commit message when no
-  documented behavior changed), `check:invariants` (grep-enforced invariants: `do_send` ratchet,
-  skip-proof feature containment — baselines in `scripts/invariant-baselines.env`).
+  documented behavior changed), `check:addresses` (contract addresses in the docs, dashboard,
+  DAppNode package, and CRISP example must match `deployments/manifest.json`), `check:invariants`
+  (grep-enforced invariants: `do_send` ratchet, skip-proof feature containment — baselines in
+  `scripts/invariant-baselines.env`), `check:verifiers`.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable
