@@ -10,10 +10,11 @@ import {
   writeJson,
 } from "../protocol/files";
 import {
+  assertValidatedVrfDeploymentMatchesPlan,
   assertVrfSubscription,
   assertVrfUpgradePlanMatchesDeployment,
   requireCiphernodeRestartAcknowledgement,
-  requireRandomnessConfig,
+  requirePlannedRandomnessConfig,
 } from "../protocol/randomness";
 import {
   aragonAdminSafeBatch,
@@ -28,6 +29,7 @@ import type {
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
+import { proxyImplementation } from "./safeProxyUpgrade";
 
 function upgradePlanPath(name: string): string {
   return path.join(protocolDir, `${name}.vrf-sortition.upgrade.json`);
@@ -42,7 +44,6 @@ export async function prepareVrfSortitionResume(): Promise<void> {
 
   const { ethers } = await connect();
   const config = loadConfig();
-  const randomness = requireRandomnessConfig(config);
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
   const plan = readJson<VrfSortitionUpgradePlan>(upgradePlanPath(config.name));
   const network = await ethers.provider.getNetwork();
@@ -52,6 +53,9 @@ export async function prepareVrfSortitionResume(): Promise<void> {
     plan,
     network.chainId,
   );
+  const randomness = requirePlannedRandomnessConfig(config, plan);
+  const effectiveConfig = { ...config, randomness };
+  assertValidatedVrfDeploymentMatchesPlan(deployment, plan);
 
   await Promise.all([
     requireContract(ethers.provider, deployment.interfold, "Interfold proxy"),
@@ -70,6 +74,30 @@ export async function prepareVrfSortitionResume(): Promise<void> {
     "CiphernodeRegistryOwnable",
     deployment.ciphernodeRegistry,
   );
+  const liveRegistryImplementation = await proxyImplementation(
+    ethers,
+    deployment.ciphernodeRegistry,
+  );
+  if (
+    liveRegistryImplementation.toLowerCase() !==
+    plan.registryImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `registry implementation: expected ${plan.registryImplementation}, got ${liveRegistryImplementation}`,
+    );
+  }
+  const liveInterfoldImplementation = await proxyImplementation(
+    ethers,
+    deployment.interfold,
+  );
+  if (
+    liveInterfoldImplementation.toLowerCase() !==
+    plan.interfoldImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `Interfold implementation: expected ${plan.interfoldImplementation}, got ${liveInterfoldImplementation}`,
+    );
+  }
   if (!(await interfold.requestsPaused())) {
     throw new Error("E3 requests are already enabled");
   }
@@ -87,6 +115,13 @@ export async function prepareVrfSortitionResume(): Promise<void> {
   if (configuredProvider === ethers.ZeroAddress) {
     throw new Error("CiphernodeRegistry has no randomness provider");
   }
+  if (
+    configuredProvider.toLowerCase() !== plan.randomnessProvider.toLowerCase()
+  ) {
+    throw new Error(
+      `registry.randomnessProvider: expected ${plan.randomnessProvider}, got ${configuredProvider}`,
+    );
+  }
   await requireContract(
     ethers.provider,
     configuredProvider,
@@ -97,6 +132,7 @@ export async function prepareVrfSortitionResume(): Promise<void> {
     configuredProvider,
   );
   for (const [label, actual, expected] of [
+    ["provider.owner", await provider.owner(), config.protocolOwner],
     [
       "provider.requester",
       await provider.requester(),
@@ -138,7 +174,20 @@ export async function prepareVrfSortitionResume(): Promise<void> {
       throw new Error(`${label}: expected ${expected}, got ${actual}`);
     }
   }
-  await assertVrfSubscription(ethers, config, configuredProvider);
+  const liveRandomnessFee = (await interfold.getPricingConfig())
+    .randomnessFlatFee;
+  if (liveRandomnessFee !== BigInt(plan.randomnessFlatFee)) {
+    throw new Error(
+      `interfold.pricing.randomnessFlatFee: expected ${plan.randomnessFlatFee}, got ${liveRandomnessFee}`,
+    );
+  }
+  const liveRequestTimeout = await registry.randomnessRequestTimeout();
+  if (liveRequestTimeout !== BigInt(randomness.requestTimeout)) {
+    throw new Error(
+      `registry.randomnessRequestTimeout: expected ${randomness.requestTimeout}, got ${liveRequestTimeout}`,
+    );
+  }
+  await assertVrfSubscription(ethers, effectiveConfig, configuredProvider);
 
   const txs: SafeTransaction[] = [
     safeTx(

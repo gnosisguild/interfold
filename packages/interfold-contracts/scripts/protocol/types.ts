@@ -167,6 +167,8 @@ export interface ProtocolDeployment {
   poseidonT3: string;
   registrySortitionLib: string;
   randomnessProvider: string;
+  /** Exact randomness settings used to deploy and validate the recorded provider. */
+  randomness?: RandomnessConfig;
   randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;
   ciphernodeRegistryImplementation: string;
@@ -198,6 +200,8 @@ export interface VrfSortitionUpgradePlan {
   lifecycleLibrary: string;
   pricingLibrary: string;
   randomnessProvider: string;
+  randomness: RandomnessConfig;
+  randomnessFlatFee: string;
   randomnessProviderOwnershipAcceptanceRequired: boolean;
   safeTransactions: string;
   governanceSafeBuilder?: string;

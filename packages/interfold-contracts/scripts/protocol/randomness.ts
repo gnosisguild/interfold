@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
-import { assertSupportedVrfChain } from "./chains";
+import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { safeTx } from "./safe";
 import type {
   ProtocolConfigFile,
@@ -48,12 +48,142 @@ export function requireRandomnessConfig(
   return config.randomness;
 }
 
+function assertRandomnessValue(
+  label: string,
+  actual: string | number | boolean,
+  expected: string | number | boolean,
+): void {
+  if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+    throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  }
+}
+
+function assertRandomnessConfigMatches(
+  label: string,
+  actual: RandomnessConfig,
+  expected: RandomnessConfig,
+  allowZeroSubscriptionPlaceholder = false,
+): void {
+  for (const [field, actualValue, expectedValue] of [
+    ["coordinator", actual.coordinator, expected.coordinator],
+    ["subscriptionId", actual.subscriptionId, expected.subscriptionId],
+    ["keyHash", actual.keyHash, expected.keyHash],
+    [
+      "requestConfirmations",
+      actual.requestConfirmations,
+      expected.requestConfirmations,
+    ],
+    ["callbackGasLimit", actual.callbackGasLimit, expected.callbackGasLimit],
+    ["nativePayment", actual.nativePayment, expected.nativePayment],
+    [
+      "minimumSubscriptionBalance",
+      actual.minimumSubscriptionBalance,
+      expected.minimumSubscriptionBalance,
+    ],
+    ["requestTimeout", actual.requestTimeout, expected.requestTimeout],
+  ] as const) {
+    if (
+      field === "subscriptionId" &&
+      allowZeroSubscriptionPlaceholder &&
+      BigInt(String(actualValue)) === 0n
+    ) {
+      continue;
+    }
+    assertRandomnessValue(`${label}.${field}`, actualValue, expectedValue);
+  }
+}
+
+export function requirePlannedRandomnessConfig(
+  config: ProtocolConfigFile,
+  plan: VrfSortitionUpgradePlan,
+): RandomnessConfig {
+  if (!plan.randomness) {
+    throw new Error("VRF upgrade plan has no randomness configuration");
+  }
+  if (!config.randomness) {
+    throw new Error("randomness configuration is required");
+  }
+  assertRandomnessConfigMatches(
+    "config.randomness",
+    config.randomness,
+    plan.randomness,
+    true,
+  );
+  assertRandomnessValue(
+    "config.interfold.pricing.randomnessFlatFee",
+    config.interfold.pricing.randomnessFlatFee,
+    plan.randomnessFlatFee,
+  );
+  assertSupportedVrfChain(config.chainId);
+  assertVrfRequestTimeout(
+    config.chainId,
+    plan.randomness.requestConfirmations,
+    BigInt(plan.randomness.requestTimeout),
+  );
+  return plan.randomness;
+}
+
+export function assertValidatedVrfDeploymentMatchesPlan(
+  deployment: ProtocolDeployment,
+  plan: VrfSortitionUpgradePlan,
+): void {
+  for (const [label, actual, expected] of [
+    [
+      "deployment registry implementation",
+      deployment.ciphernodeRegistryImplementation,
+      plan.registryImplementation,
+    ],
+    [
+      "deployment sortition library",
+      deployment.registrySortitionLib,
+      plan.sortitionLibrary,
+    ],
+    [
+      "deployment Interfold implementation",
+      deployment.interfoldImplementation,
+      plan.interfoldImplementation,
+    ],
+    [
+      "deployment lifecycle library",
+      deployment.interfoldLifecycle,
+      plan.lifecycleLibrary,
+    ],
+    [
+      "deployment pricing library",
+      deployment.interfoldPricing,
+      plan.pricingLibrary,
+    ],
+    [
+      "deployment randomness provider",
+      deployment.randomnessProvider,
+      plan.randomnessProvider,
+    ],
+  ] as const) {
+    assertPlanValue(label, actual, expected);
+  }
+  if (!deployment.randomness) {
+    throw new Error(
+      "Validated deployment has no recorded randomness configuration",
+    );
+  }
+  assertRandomnessConfigMatches(
+    "deployment.randomness",
+    deployment.randomness,
+    plan.randomness,
+  );
+}
+
 export async function assertVrfSubscription(
   ethers: any,
   config: ProtocolConfigFile,
   expectedConsumer?: string,
 ): Promise<void> {
   const randomness = requireRandomnessConfig(config);
+  assertVrfRequestTimeout(
+    config.chainId,
+    randomness.requestConfirmations,
+    BigInt(randomness.requestTimeout),
+  );
   const coordinator = new ethersLib.Contract(
     randomness.coordinator,
     vrfCoordinatorInterface,

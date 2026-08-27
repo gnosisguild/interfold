@@ -81,7 +81,7 @@ async function getInterfoldConnection(hre: any) {
   };
 }
 
-async function fulfillConfiguredMockRandomness(
+async function fulfillConfiguredLocalRandomness(
   hre: any,
   e3Id: bigint,
   requestBlockNumber: number,
@@ -90,20 +90,42 @@ async function fulfillConfiguredMockRandomness(
     "MockRandomnessProvider",
     hre.globalOptions.network,
   );
-  if (!mockDeployment?.address) return;
+  const chainlinkDeployment = readDeploymentArgs(
+    "ChainlinkVrfRandomnessProvider",
+    hre.globalOptions.network,
+  );
 
   const { ethers, registry } = await getRegistryConnection(hre);
   const configuredProvider = await registry.randomnessProvider();
-  if (
-    configuredProvider.toLowerCase() !== mockDeployment.address.toLowerCase()
-  ) {
+  const selected = [
+    { kind: "mock", deployment: mockDeployment },
+    { kind: "coordinator", deployment: chainlinkDeployment },
+  ].find(
+    ({ deployment }) =>
+      deployment?.address?.toLowerCase() === configuredProvider.toLowerCase(),
+  );
+  if (!selected) {
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+    if (chainId === 1_337 || chainId === 31_337) {
+      throw new Error(
+        `Configured local randomness provider ${configuredProvider} has no deployment record`,
+      );
+    }
     return;
+  }
+  const selectedDeployment = selected.deployment;
+  if (!selectedDeployment) {
+    throw new Error(
+      `Configured local randomness provider ${configuredProvider} has no deployment record`,
+    );
   }
 
   const [signer] = await ethers.getSigners();
   const provider = await ethers.getContractAt(
-    "MockRandomnessProvider",
-    mockDeployment.address,
+    selected.kind === "mock"
+      ? "MockRandomnessProvider"
+      : "ChainlinkVrfRandomnessProvider",
+    selectedDeployment.address,
     signer,
   );
   const requestId = await provider.requestIdByE3Id(e3Id);
@@ -121,25 +143,36 @@ async function fulfillConfiguredMockRandomness(
         ),
       ),
     );
-    const fulfillment = await provider.fulfill(requestId, randomWord);
+    const fulfillment =
+      selected.kind === "mock"
+        ? await provider.fulfill(requestId, randomWord)
+        : await (
+            await ethers.getContractAt(
+              "ChainlinkVrfCoordinatorV2_5Mock",
+              await provider.s_vrfCoordinator(),
+              signer,
+            )
+          ).fulfillRandomWordsWithOverride(requestId, configuredProvider, [
+            randomWord,
+          ]);
     const receipt = await fulfillment.wait();
     if (!receipt) {
       throw new Error(
-        `Mock randomness fulfillment was not mined for E3 ${e3Id}`,
+        `Local randomness fulfillment was not mined for E3 ${e3Id}`,
       );
     }
     if (receipt.blockNumber <= requestBlockNumber) {
       throw new Error(
-        `Mock randomness for E3 ${e3Id} must be fulfilled after request block ${requestBlockNumber}`,
+        `Local randomness for E3 ${e3Id} must be fulfilled after request block ${requestBlockNumber}`,
       );
     }
   }
 
   const [usable] = await registry.sortitionSeed(e3Id);
   if (!usable) {
-    throw new Error(`Registry did not accept mock randomness for E3 ${e3Id}`);
+    throw new Error(`Registry did not accept local randomness for E3 ${e3Id}`);
   }
-  console.log(`Mock randomness fulfilled for E3 ${e3Id}`);
+  console.log(`Local randomness fulfilled for E3 ${e3Id}`);
 }
 
 export const requestCommittee = task(
@@ -347,7 +380,7 @@ export const requestCommittee = task(
 
       const e3Id = requestedEvent.args.e3Id;
 
-      await fulfillConfiguredMockRandomness(hre, e3Id, receipt.blockNumber);
+      await fulfillConfiguredLocalRandomness(hre, e3Id, receipt.blockNumber);
 
       console.log(`Committee requested for E3 ${e3Id}`);
       console.log(`E3_ID=${e3Id}`);

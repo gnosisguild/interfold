@@ -35,7 +35,7 @@ import { cleanDeploymentsTask } from "./tasks/utils";
 dotenv.config();
 
 const mnemonic =
-  process.env.MNEMONIC ??
+  process.env.MNEMONIC?.trim() ||
   "test test test test test test test test test test test junk";
 const privateKey = process.env.PRIVATE_KEY!;
 const rpcUrl = process.env.RPC_URL ?? "http://localhost:8545";

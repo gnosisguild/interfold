@@ -14,6 +14,7 @@ import {
   assertVrfSubscription,
   buildRandomnessTransactions,
   deployRandomnessProvider,
+  requireRandomnessConfig,
 } from "../protocol/randomness";
 import {
   aragonAdminSafeBatch,
@@ -29,7 +30,7 @@ import type {
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import {
-  feeAssetConfig,
+  assertExitTiming,
   loadConfig,
   requireContract,
 } from "../protocol/values";
@@ -80,6 +81,7 @@ function upgradeTransaction(
 export async function prepareVrfSortitionUpgrade(): Promise<void> {
   const { ethers } = await connect();
   const config = loadConfig();
+  const randomnessConfig = requireRandomnessConfig(config);
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
   const network = await ethers.provider.getNetwork();
   if (Number(network.chainId) !== deployment.chainId) {
@@ -129,6 +131,22 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
       `CiphernodeRegistry still has ${unreleasedCommittees} unreleased committees`,
     );
   }
+  const liveBondingRegistry = await registry.bondingRegistry();
+  await requireContract(
+    ethers.provider,
+    liveBondingRegistry,
+    "live bonding registry",
+  );
+  const bondingRegistry = await ethers.getContractAt(
+    "BondingRegistry",
+    liveBondingRegistry,
+  );
+  assertExitTiming(
+    await bondingRegistry.exitDelay(),
+    await registry.sortitionSubmissionWindow(),
+    BigInt(randomnessConfig.requestTimeout),
+    "Live protocol",
+  );
 
   const [operator] = await ethers.getSigners();
   const registryUpgrade = await deployUpgradeImplementation(
@@ -169,8 +187,8 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
     ),
     safeTx(
       deployment.interfold,
-      interfold.interface.encodeFunctionData("setFeeAssetConfig", [
-        feeAssetConfig(config),
+      interfold.interface.encodeFunctionData("setRandomnessFlatFee", [
+        BigInt(config.interfold.pricing.randomnessFlatFee),
       ]),
     ),
     ...buildRandomnessTransactions(
@@ -214,6 +232,8 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
     lifecycleLibrary: interfoldUpgrade.lifecycleLibrary,
     pricingLibrary: interfoldUpgrade.pricingLibrary,
     randomnessProvider: randomness.randomnessProvider,
+    randomness: { ...randomnessConfig },
+    randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
     randomnessProviderOwnershipAcceptanceRequired:
       randomness.randomnessProviderOwnershipAcceptanceRequired,
     safeTransactions: rawBatchFile,

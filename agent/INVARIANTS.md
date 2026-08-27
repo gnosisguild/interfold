@@ -148,11 +148,13 @@ design citation alone does not establish current runtime behavior.
   rotation atomically sends any balance above `totalCiphernodeBondLiability` to the treasury before
   validating the replacement, so an unsolicited transfer cannot interleave with rotation. —
   `flow-trace/02`, `05`; INDEX concern #23
-- The fee token, expected decimals, flat randomness fee, and every raw-unit service price change as
-  one configuration. The flat randomness fee must be nonzero and uses the fee token's raw units.
-  Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
-  time. Decimal validation checks the unit scale only; it does not establish the token's economic
-  value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+- The fee token, expected decimals, and every raw-unit service price change as one configuration.
+  `setRandomnessFlatFee` is the only narrow pricing update: it changes only the nonzero flat fee and
+  preserves the token, decimal scale, treasury, margin, protocol share, and service prices. The flat
+  randomness fee uses the fee token's raw units. Each request states its expected token and maximum
+  fee. Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale
+  only; it does not establish the token's economic value. — `Interfold.setFeeAssetConfig`;
+  `Interfold.setRandomnessFlatFee`; `flow-trace/03`
 - **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
   ciphernode bond token must transfer exact amounts and must not rebase account balances. Every
   custody deposit checks the custody increase. Every outbound transfer checks the recipient increase

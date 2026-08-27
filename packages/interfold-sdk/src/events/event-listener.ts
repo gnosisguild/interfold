@@ -36,6 +36,7 @@ export class EventListener implements SDKEventEmitter {
   private static readonly MAX_REMEMBERED_LOGS = 10_000
   private listeners: Map<AllEventTypes, Set<EventCallback>> = new Map()
   private activeWatchers: Map<string, () => void> = new Map()
+  private watcherStartBlocks: Map<string, bigint | undefined> = new Map()
   private randomnessProviderListeners: Map<string, Set<RandomnessProviderEventCallback>> = new Map()
   private seenLiveLogs: Map<string, true> = new Map()
   private isPolling = false
@@ -84,21 +85,33 @@ export class EventListener implements SDKEventEmitter {
   ): Promise<void> {
     const listenerKey = `${provider.toLowerCase()}:${eventType}`
     const watcherKey = `randomness-provider:${listenerKey}`
+    const requestedStartBlock = fromBlock ?? this.config.fromBlock
     let callbacks = this.randomnessProviderListeners.get(listenerKey)
     if (!callbacks) {
       callbacks = new Set()
       this.randomnessProviderListeners.set(listenerKey, callbacks)
     }
-    callbacks.add(callback as RandomnessProviderEventCallback)
 
-    if (this.activeWatchers.has(watcherKey)) return
+    if (this.activeWatchers.has(watcherKey)) {
+      const activeStartBlock = this.watcherStartBlocks.get(watcherKey)
+      if (fromBlock !== undefined && requestedStartBlock !== activeStartBlock) {
+        throw new SDKError(
+          `Randomness provider watcher for ${eventType} on ${provider} already starts at ${activeStartBlock ?? 'latest'}; requested ${requestedStartBlock ?? 'latest'}`,
+          'INVALID_EVENT_CONFIG',
+        )
+      }
+      callbacks.add(callback as RandomnessProviderEventCallback)
+      return
+    }
+
+    callbacks.add(callback as RandomnessProviderEventCallback)
 
     try {
       const unwatch = this.publicClient.watchContractEvent({
         address: provider,
         abi: IRandomnessProvider__factory.abi,
         eventName: eventType,
-        fromBlock: fromBlock ?? this.config.fromBlock,
+        fromBlock: requestedStartBlock,
         onLogs: (logs: Log[]) => {
           for (const log of logs) {
             if (!this.rememberLiveLog(log)) continue
@@ -128,6 +141,7 @@ export class EventListener implements SDKEventEmitter {
         },
       })
       this.activeWatchers.set(watcherKey, unwatch)
+      this.watcherStartBlocks.set(watcherKey, requestedStartBlock)
     } catch (error) {
       callbacks.delete(callback as RandomnessProviderEventCallback)
       if (callbacks.size === 0) this.randomnessProviderListeners.delete(listenerKey)
@@ -149,6 +163,7 @@ export class EventListener implements SDKEventEmitter {
       const unwatch = this.activeWatchers.get(watcherKey)
       if (unwatch) unwatch()
       this.activeWatchers.delete(watcherKey)
+      this.watcherStartBlocks.delete(watcherKey)
     }
   }
 
@@ -339,6 +354,7 @@ export class EventListener implements SDKEventEmitter {
       }
     })
     this.activeWatchers.clear()
+    this.watcherStartBlocks.clear()
     this.listeners.clear()
     this.randomnessProviderListeners.clear()
     this.seenLiveLogs.clear()
@@ -382,7 +398,7 @@ export class EventListener implements SDKEventEmitter {
       })) as Log[]
     }
 
-    const end = configuredEnd ?? (await this.publicClient.getBlockNumber())
+    const end = configuredEnd ?? (await this.publicClient.getBlockNumber({ cacheTime: 0 }))
     if (end < start) return []
 
     const range = this.config.historicalBlockRange ?? EventListener.DEFAULT_HISTORICAL_BLOCK_RANGE

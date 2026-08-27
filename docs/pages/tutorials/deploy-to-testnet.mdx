@@ -132,13 +132,17 @@ const sdk = new InterfoldSDK({
 ```
 
 ```typescript
-const hash = await sdk.requestE3({
+const requestParams = {
   committeeSize: CommitteeSize.Minimum,
-  inputWindow: [startTime, endTime],
+  inputWindow: [startTime, endTime] as const,
   e3Program: YOUR_PROGRAM_ADDRESS,
   computeProviderParams: '0x...',
   paramSet: 0, // ParamSet.Insecure512
-})
+}
+const quote = await sdk.getE3Quote(requestParams)
+const approvalHash = await sdk.approveFeeToken(quote)
+await sdk.waitForTransaction(approvalHash)
+const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
 ```
 
 The SDK preset and the `paramSet` in the request must agree, and both must match what the ciphernode

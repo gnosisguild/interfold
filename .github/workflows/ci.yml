@@ -697,9 +697,15 @@ jobs:
           - test-suite: test:circuits
             command: pnpm test:circuits
             timeout: 15
-          - test-suite: test:sdk
-            command: pnpm test:sdk
-            timeout: 45
+          # The SDK's six proof tests took 19m35s in one process. The mask group and its
+          # complement run in parallel. The negative match keeps new tests in the core group.
+          - test-suite: test:sdk:core-and-ballot-proofs
+            command: pnpm test:sdk:core-and-ballot-proofs
+            timeout: 30
+            needs-sdk: true
+          - test-suite: test:sdk:mask-proofs
+            command: pnpm test:sdk:mask-proofs
+            timeout: 30
             needs-sdk: true
           # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
           # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
@@ -714,9 +720,16 @@ jobs:
           # Every contract leg needs both capabilities: `hardhat.config.ts` imports
           # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
           # and each leg contains at least one test that imports `@crisp-e3/sdk`.
-          - test-suite: test:contracts:input-tree
-            command: pnpm test:contracts:input-tree
-            timeout: 45
+          # The input-tree file took 25m20s. Run its poisoning cases and their complement in
+          # parallel. The negative match keeps every new test in the canonical group.
+          - test-suite: test:contracts:input-tree:poisoning
+            command: pnpm test:contracts:input-tree:poisoning
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:input-tree:canonical
+            command: pnpm test:contracts:input-tree:canonical
+            timeout: 30
             needs-evm: true
             needs-sdk: true
           - test-suite: test:contracts:ballots

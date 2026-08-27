@@ -24,6 +24,17 @@ import {
   requireContract,
 } from "../protocol/values";
 
+const IMPLEMENTATION_SLOT =
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+export async function proxyImplementation(
+  ethers: any,
+  proxy: string,
+): Promise<string> {
+  const word = await ethers.provider.getStorage(proxy, IMPLEMENTATION_SLOT);
+  return ethersLib.getAddress(`0x${word.slice(-40)}`);
+}
+
 export type UpgradeTarget =
   | "bondingRegistry"
   | "ciphernodeRegistry"

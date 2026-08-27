@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { ethers as ethersLib } from "ethers";
 import path from "node:path";
 
 import { connect } from "../protocol/cli";
@@ -12,16 +11,14 @@ import {
 import {
   assertVrfSubscription,
   assertVrfUpgradePlanMatchesDeployment,
-  requireRandomnessConfig,
+  requirePlannedRandomnessConfig,
 } from "../protocol/randomness";
 import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
-
-const IMPLEMENTATION_SLOT =
-  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+import { proxyImplementation } from "./safeProxyUpgrade";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -30,18 +27,9 @@ function assertEqual(label: string, actual: unknown, expected: unknown): void {
   console.log(`  ok ${label}`);
 }
 
-async function proxyImplementation(
-  ethers: any,
-  proxy: string,
-): Promise<string> {
-  const word = await ethers.provider.getStorage(proxy, IMPLEMENTATION_SLOT);
-  return ethersLib.getAddress(`0x${word.slice(-40)}`);
-}
-
 export async function validateVrfSortitionUpgrade(): Promise<void> {
   const { ethers } = await connect();
   const config = loadConfig();
-  const randomness = requireRandomnessConfig(config);
   const deploymentFile = deploymentPath(config);
   const deployment = readJson<ProtocolDeployment>(deploymentFile);
   const plan = readJson<VrfSortitionUpgradePlan>(
@@ -54,6 +42,8 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     plan,
     network.chainId,
   );
+  const randomness = requirePlannedRandomnessConfig(config, plan);
+  const effectiveConfig = { ...config, randomness };
 
   for (const [label, target] of [
     ["registry implementation", plan.registryImplementation],
@@ -144,7 +134,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   assertEqual(
     "interfold.pricing.randomnessFlatFee",
     (await interfold.getPricingConfig()).randomnessFlatFee,
-    BigInt(config.interfold.pricing.randomnessFlatFee),
+    BigInt(plan.randomnessFlatFee),
   );
   assertEqual(
     "registry.unreleasedCommitteeCount",
@@ -152,7 +142,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     0,
   );
 
-  await assertVrfSubscription(ethers, config, plan.randomnessProvider);
+  await assertVrfSubscription(ethers, effectiveConfig, plan.randomnessProvider);
   console.log("  ok VRF subscription consumer");
 
   writeJson(deploymentFile, {
@@ -163,6 +153,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     interfoldLifecycle: plan.lifecycleLibrary,
     interfoldPricing: plan.pricingLibrary,
     randomnessProvider: plan.randomnessProvider,
+    randomness,
     randomnessProviderOwnershipAcceptanceRequired: false,
   });
   console.log(`VRF sortition upgrade validated; updated ${deploymentFile}`);

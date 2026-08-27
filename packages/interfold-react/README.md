@@ -20,7 +20,9 @@ A React hook for interacting with the Interfold SDK. This hook provides a clean 
 managing SDK state, handling contract interactions, and listening to events.
 
 ```tsx
+import React from 'react'
 import { useInterfoldSDK } from '@interfold/react'
+import { CommitteeSize } from '@interfold/sdk'
 
 function MyComponent() {
   const {
@@ -28,8 +30,6 @@ function MyComponent() {
     isInitialized,
     error,
     requestE3,
-    activateE3,
-    publishInput,
     onInterfoldEvent,
     off,
     InterfoldEventType,
@@ -39,8 +39,9 @@ function MyComponent() {
     contracts: {
       interfold: '0x...',
       ciphernodeRegistry: '0x...',
+      feeToken: '0x...',
     },
-    chainId: 1,
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
   })
 
   // Listen to events
@@ -61,15 +62,20 @@ function MyComponent() {
   // Request computation
   const handleRequest = async () => {
     try {
-      const hash = await requestE3({
-        threshold: [2, 3],
-        startWindow: [BigInt(Date.now()), BigInt(Date.now() + 300000)],
-        duration: BigInt(1800),
+      if (!sdk) return
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      const requestParams = {
+        committeeSize: CommitteeSize.Minimum,
+        inputWindow: [now, now + 300n] as const,
         e3Program: '0x...',
-        e3ProgramParams: '0x...',
+        paramSet: 0,
         computeProviderParams: '0x...',
         customParams: '0x...',
-      })
+      }
+      const quote = await sdk.getE3Quote(requestParams)
+      const approvalHash = await sdk.approveFeeToken(quote)
+      await sdk.waitForTransaction(approvalHash)
+      const hash = await requestE3({ ...requestParams, maxFee: quote })
       console.log('E3 requested with hash:', hash)
     } catch (error) {
       console.error('Failed to request E3:', error)

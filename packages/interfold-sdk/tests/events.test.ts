@@ -96,6 +96,25 @@ describe('RegistryEventType', () => {
     })
   })
 
+  it('reads an uncached head for an open-ended history query', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const getBlockNumber = vi.fn().mockResolvedValue(25n)
+    const getContractEvents = vi.fn().mockResolvedValue([])
+    const listener = new EventListener({
+      publicClient: { getBlockNumber, getContractEvents } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.getHistoricalRandomnessProviderEvents(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, 10n)
+
+    expect(getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 })
+    expect(getContractEvents).toHaveBeenCalledWith(expect.objectContaining({ fromBlock: 10n, toBlock: 25n }))
+  })
+
   it('chunks bounded provider history queries', async () => {
     const provider = '0x0000000000000000000000000000000000000004' as const
     const getContractEvents = vi.fn().mockResolvedValue([])
@@ -164,6 +183,40 @@ describe('RegistryEventType', () => {
     onLogs([log])
 
     expect(callback).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a conflicting start block for a shared provider watcher', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const watchContractEvent = vi.fn().mockReturnValue(vi.fn())
+    const firstCallback = vi.fn()
+    const secondCallback = vi.fn()
+    const joiningCallback = vi.fn()
+    const listener = new EventListener({
+      publicClient: { watchContractEvent } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, firstCallback, 10n)
+    await expect(
+      listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, secondCallback, 11n),
+    ).rejects.toMatchObject({ code: 'INVALID_EVENT_CONFIG' })
+    await listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, joiningCallback)
+
+    watchContractEvent.mock.calls[0]?.[0].onLogs([
+      {
+        args: { requestId: 1n, e3Id: 2n, randomWord: 3n, fulfilledAt: 4n },
+        blockNumber: 12n,
+        transactionHash: '0x1234',
+      } as unknown as Log,
+    ])
+    expect(watchContractEvent).toHaveBeenCalledOnce()
+    expect(firstCallback).toHaveBeenCalledOnce()
+    expect(secondCallback).not.toHaveBeenCalled()
+    expect(joiningCallback).toHaveBeenCalledOnce()
   })
 
   it('does not redeliver logs returned by an overlapping historical query', async () => {

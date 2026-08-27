@@ -12,6 +12,10 @@ const providerInterface = new Interface([
   'function fulfill(uint256 requestId, uint256 randomWord)',
   'function getRandomness(uint256 requestId) view returns (bool fulfilled, uint256 randomWord, uint256 fulfilledAt, uint256 fulfilledBlock)',
 ])
+const registryInterface = new Interface(['function randomnessProvider() view returns (address)'])
+const coordinatorInterface = new Interface([
+  'function fulfillRandomWordsWithOverride(uint256 requestId, address consumer, uint256[] words)',
+])
 const maximumConsecutiveFailures = 10
 const maximumBlockRange = 10_000
 const pollIntervalMs = 500
@@ -39,7 +43,7 @@ async function withTimeout(promise, durationMs, description) {
   }
 }
 
-async function readMockDeployment() {
+async function readConfiguredDeployment() {
   let contents
   try {
     contents = await readFile(deploymentsUrl, 'utf8')
@@ -48,13 +52,36 @@ async function readMockDeployment() {
     throw error
   }
 
-  const deployment = JSON.parse(contents).localhost?.MockRandomnessProvider
-  if (!deployment?.address || deployment.blockNumber === undefined) return undefined
+  const records = JSON.parse(contents).localhost
+  const registryRecord = records?.CiphernodeRegistryOwnable
+  if (!registryRecord?.address || (await chain.getCode(registryRecord.address)) === '0x') return undefined
+  const registry = new Contract(registryRecord.address, registryInterface, chain)
+  const configuredAddress = await registry.randomnessProvider()
+  if (/^0x0{40}$/i.test(configuredAddress)) return undefined
+  const candidates = [
+    { kind: 'mock', record: records.MockRandomnessProvider },
+    { kind: 'coordinator', record: records.ChainlinkVrfRandomnessProvider },
+  ]
+  const selected = candidates.find(({ record }) => record?.address?.toLowerCase() === configuredAddress.toLowerCase())
+  if (!selected) {
+    throw new Error(`Configured randomness provider ${configuredAddress} has no deployment record`)
+  }
+  const { kind, record } = selected
+  if (record.blockNumber === undefined) {
+    throw new Error(`Randomness provider ${configuredAddress} has no deployment block`)
+  }
+  if ((await chain.getCode(configuredAddress)) === '0x') return undefined
+  const coordinator = record.constructorArgs?.coordinator
+  if (kind === 'coordinator' && !coordinator) {
+    throw new Error(`Chainlink randomness provider ${configuredAddress} has no coordinator record`)
+  }
 
   return {
-    address: deployment.address,
-    blockNumber: Number(deployment.blockNumber),
-    key: `${deployment.address.toLowerCase()}:${deployment.blockNumber}`,
+    address: configuredAddress,
+    blockNumber: Number(record.blockNumber),
+    coordinator,
+    kind,
+    key: `${kind}:${configuredAddress.toLowerCase()}:${record.blockNumber}`,
   }
 }
 
@@ -72,7 +99,7 @@ function randomWord(e3Id, requestId) {
 }
 
 async function fulfillPendingRandomness() {
-  const deployment = await readMockDeployment()
+  const deployment = await readConfiguredDeployment()
   if (!deployment) return
 
   if (deployment.key !== activeDeployment) {
@@ -111,12 +138,23 @@ async function fulfillPendingRandomness() {
       continue
     }
 
-    const transaction = await provider.fulfill(requestId, randomWord(e3Id, requestId))
-    const receipt = await withTimeout(transaction.wait(), transactionTimeoutMs, `Mock randomness fulfillment for E3 ${e3Id}`)
-    if (!receipt) throw new Error(`Mock randomness fulfillment for E3 ${e3Id} was not mined`)
+    const word = randomWord(e3Id, requestId)
+    const transaction =
+      deployment.kind === 'mock'
+        ? await provider.fulfill(requestId, word)
+        : await new Contract(deployment.coordinator, coordinatorInterface, await fulfillmentSigner()).fulfillRandomWordsWithOverride(
+            requestId,
+            deployment.address,
+            [word],
+          )
+    const receipt = await withTimeout(transaction.wait(), transactionTimeoutMs, `Randomness fulfillment for E3 ${e3Id}`)
+    if (!receipt) throw new Error(`Randomness fulfillment for E3 ${e3Id} was not mined`)
+    if (receipt.status !== 1) throw new Error(`Randomness fulfillment for E3 ${e3Id} reverted`)
     if (receipt.blockNumber <= log.blockNumber) {
       throw new Error(`Randomness for E3 ${e3Id} was not fulfilled after request block ${log.blockNumber}`)
     }
+    const [accepted] = await provider.getRandomness(requestId)
+    if (!accepted) throw new Error(`Randomness provider did not record fulfillment for E3 ${e3Id}`)
     console.log(`[anvil-randomness] fulfilled E3 ${e3Id} in block ${receipt.blockNumber}`)
   }
 

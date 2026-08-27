@@ -13,7 +13,7 @@ import hardhatToolboxMochaEthersPlugin from '@nomicfoundation/hardhat-toolbox-mo
 
 dotenv.config()
 
-const mnemonic = process.env.MNEMONIC ?? 'test test test test test test test test test test test junk'
+const mnemonic = process.env.MNEMONIC?.trim() || 'test test test test test test test test test test test junk'
 const privateKey = process.env.PRIVATE_KEY!
 const rpcUrl = process.env.RPC_URL ?? 'http://localhost:8545'
 

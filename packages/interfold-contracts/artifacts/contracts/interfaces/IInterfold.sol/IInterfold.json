@@ -2773,6 +2773,19 @@
     {
       "inputs": [
         {
+          "internalType": "uint192",
+          "name": "randomnessFlatFee",
+          "type": "uint192"
+        }
+      ],
+      "name": "setRandomnessFlatFee",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "bool",
           "name": "paused",
           "type": "bool"
@@ -2852,5 +2865,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-6c9c2370a92c27bd82737e9358f05f84698db5fd"
+  "buildInfoId": "solc-0_8_28-a9ff432c520a34187742acc5d51aa1e5b4a73f45"
 }

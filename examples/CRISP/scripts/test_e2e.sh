@@ -2,6 +2,10 @@
 
 set -e
 
+# Keep this test independent of a developer's server/.env. The voting window must remain open
+# through committee formation, DKG, wallet reconnection, and encrypted-vote proof generation.
+export E3_DURATION="${CRISP_E2E_DURATION_SECS:-300}"
+
 if [ "$1" == "--ui" ]; then
   PLAYWRIGHT_CMD="pnpm synpress && pnpm playwright test"
 else
@@ -14,6 +18,5 @@ else
 fi
 
 echo "TEST E2E SCRIPT STARTING..."
-# Wait for client then give ciphernodes extra time to fully initialize DKG listeners
-pnpm concurrently -krs first ./scripts/dev.sh "wait-on tcp:3000 && sleep 45 && ${PLAYWRIGHT_CMD} && sleep 3"
-  
+# The client starts only after the ciphernodes are running and registered.
+pnpm concurrently -krs first ./scripts/dev.sh "wait-on tcp:3000 file:./.interfold/ready && ${PLAYWRIGHT_CMD}"

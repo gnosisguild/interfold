@@ -647,6 +647,11 @@ interface IInterfold {
     ///      must transfer exact amounts and must not rebase account balances.
     function setFeeAssetConfig(FeeAssetConfig calldata config) external;
 
+    /// @notice Sets only the non-refundable randomness fee.
+    /// @dev Preserves the fee token, token scale, treasury, and service prices.
+    /// @param randomnessFlatFee The fee-token amount charged for one accepted randomness request.
+    function setRandomnessFlatFee(uint192 randomnessFlatFee) external;
+
     /// @notice Add or remove a token from the fee-token allow-list.
     /// @dev Owner-only. The contract `feeToken()` must be on the allow-list for `request()` to succeed.
     /// @param token The ERC20 token.

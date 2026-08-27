@@ -64,14 +64,18 @@ sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED, (event) =
 
 // Interact with contracts
 const now = BigInt(Math.floor(Date.now() / 1000))
-const hash = await sdk.requestE3({
+const requestParams = {
   committeeSize: CommitteeSize.Minimum,
-  inputWindow: [now, now + 300n],
+  inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
   paramSet: 0, // Insecure512 for development
   computeProviderParams: '0x...',
   customParams: '0x...',
-})
+}
+const quote = await sdk.getE3Quote(requestParams)
+const approvalHash = await sdk.approveFeeToken(quote)
+await sdk.waitForTransaction(approvalHash)
+const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
 ```
 
 ### Factory Method
@@ -192,6 +196,8 @@ do not overlap. Historical reads are split into bounded RPC queries, and live wa
 duplicate delivery of the same log. `RandomnessFulfilled` proves that the provider stored a
 response. The Registry remains authoritative about whether that response was timely and usable. If
 the listener config does not define `fromBlock`, the history method requires it as an argument.
+Subscribers that share one provider and event watcher must use the same explicit `fromBlock`, or
+omit it to join the active watcher.
 
 ### Event Data Structure
 

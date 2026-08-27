@@ -12,9 +12,11 @@ import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
 import {
+  assertValidatedVrfDeploymentMatchesPlan,
   assertVrfSubscription,
   assertVrfUpgradePlanMatchesDeployment,
   requireCiphernodeRestartAcknowledgement,
+  requirePlannedRandomnessConfig,
 } from "../../scripts/protocol/randomness";
 import {
   aragonAdminSafeBatch,
@@ -190,6 +192,8 @@ describe("Protocol deployment", function () {
       lifecycleLibrary: ethersLib.ZeroAddress,
       pricingLibrary: ethersLib.ZeroAddress,
       randomnessProvider: ethersLib.ZeroAddress,
+      randomness: { ...config.randomness! },
+      randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
       randomnessProviderOwnershipAcceptanceRequired: false,
       safeTransactions: "upgrade.json",
     } satisfies VrfSortitionUpgradePlan;
@@ -208,6 +212,131 @@ describe("Protocol deployment", function () {
     expect(() =>
       assertVrfUpgradePlanMatchesDeployment(config, deployment, plan, 42161n),
     ).to.throw("connected chain");
+  });
+
+  it("binds validation and resume to the prepared VRF settings", function () {
+    const config = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const deployment = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolDeployment;
+    const randomness = { ...config.randomness!, subscriptionId: "7" };
+    const plan = {
+      name: config.name,
+      operator: ethersLib.ZeroAddress,
+      protocolOwner: config.protocolOwner,
+      registryProxy: deployment.ciphernodeRegistry,
+      registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+      registryImplementation: "0x0000000000000000000000000000000000000011",
+      sortitionLibrary: "0x0000000000000000000000000000000000000012",
+      interfoldProxy: deployment.interfold,
+      interfoldProxyAdmin: deployment.interfoldProxyAdmin,
+      interfoldImplementation: "0x0000000000000000000000000000000000000013",
+      lifecycleLibrary: "0x0000000000000000000000000000000000000014",
+      pricingLibrary: "0x0000000000000000000000000000000000000015",
+      randomnessProvider: "0x0000000000000000000000000000000000000016",
+      randomness,
+      randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
+      randomnessProviderOwnershipAcceptanceRequired: false,
+      safeTransactions: "upgrade.json",
+    } satisfies VrfSortitionUpgradePlan;
+
+    expect(requirePlannedRandomnessConfig(config, plan)).to.deep.equal(
+      randomness,
+    );
+    expect(() =>
+      requirePlannedRandomnessConfig(
+        {
+          ...config,
+          randomness: { ...config.randomness!, requestTimeout: "7200" },
+        },
+        plan,
+      ),
+    ).to.throw("config.randomness.requestTimeout");
+    expect(() =>
+      requirePlannedRandomnessConfig(
+        {
+          ...config,
+          interfold: {
+            ...config.interfold,
+            pricing: {
+              ...config.interfold.pricing,
+              randomnessFlatFee: "1",
+            },
+          },
+        },
+        plan,
+      ),
+    ).to.throw("config.interfold.pricing.randomnessFlatFee");
+
+    const validatedDeployment = {
+      ...deployment,
+      registrySortitionLib: plan.sortitionLibrary,
+      ciphernodeRegistryImplementation: plan.registryImplementation,
+      interfoldImplementation: plan.interfoldImplementation,
+      interfoldLifecycle: plan.lifecycleLibrary,
+      interfoldPricing: plan.pricingLibrary,
+      randomnessProvider: plan.randomnessProvider,
+      randomness: { ...plan.randomness },
+    };
+    expect(() =>
+      assertValidatedVrfDeploymentMatchesPlan(validatedDeployment, plan),
+    ).not.to.throw();
+    expect(() =>
+      assertValidatedVrfDeploymentMatchesPlan(
+        {
+          ...validatedDeployment,
+          interfoldImplementation: ethersLib.ZeroAddress,
+        },
+        plan,
+      ),
+    ).to.throw("deployment Interfold implementation");
+  });
+
+  it("rejects VRF timing that cannot satisfy protocol reservations", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-vrf-timing-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.bonding.exitDelay = "4200";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "exitDelay 4200 must be greater than sortitionSubmissionWindow 600 + randomnessRequestTimeout 3600",
+      );
+
+      config.bonding.exitDelay = "2592000";
+      config.randomness.requestTimeout = "900";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "randomness.requestTimeout must be at least 1668 seconds",
+      );
+
+      config.randomness.requestTimeout = "3600";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).not.to.throw();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects unsupported VRF parameters", async function () {

@@ -567,6 +567,15 @@ contract Interfold is
     }
 
     /// @inheritdoc IInterfold
+    function setRandomnessFlatFee(
+        uint192 randomnessFlatFee
+    ) external onlyOwner {
+        if (randomnessFlatFee == 0) revert PaymentRequired(0);
+        _pricingConfig.randomnessFlatFee = randomnessFlatFee;
+        emit FeeAssetConfigUpdated(feeToken, feeTokenDecimals, _pricingConfig);
+    }
+
+    /// @inheritdoc IInterfold
     function setFeeTokenAllowed(IERC20 token, bool allowed) external onlyOwner {
         require(address(token) != address(0), InvalidFeeToken(token));
         _feeTokenAllowed[token] = allowed;

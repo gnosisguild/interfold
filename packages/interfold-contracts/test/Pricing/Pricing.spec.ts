@@ -452,6 +452,35 @@ describe("E3 Pricing", function () {
     });
   });
 
+  describe("setRandomnessFlatFee()", function () {
+    it("updates only the flat randomness fee", async function () {
+      const { interfold, notTheOwner } = await loadFixture(setup);
+      const tokenBefore = await interfold.feeToken();
+      const decimalsBefore = await interfold.feeTokenDecimals();
+      const pricingBefore = toPlainConfig(await interfold.getPricingConfig());
+      const newFee = pricingBefore.randomnessFlatFee + 123n;
+
+      await expect(
+        interfold.connect(notTheOwner).setRandomnessFlatFee(newFee),
+      ).to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount");
+      await expect(interfold.setRandomnessFlatFee(0))
+        .to.be.revertedWithCustomError(interfold, "PaymentRequired")
+        .withArgs(0);
+      await expect(interfold.setRandomnessFlatFee(newFee)).to.emit(
+        interfold,
+        "FeeAssetConfigUpdated",
+      );
+
+      const pricingAfter = toPlainConfig(await interfold.getPricingConfig());
+      expect(await interfold.feeToken()).to.equal(tokenBefore);
+      expect(await interfold.feeTokenDecimals()).to.equal(decimalsBefore);
+      expect(pricingAfter).to.deep.equal({
+        ...pricingBefore,
+        randomnessFlatFee: newFee,
+      });
+    });
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   //  Protocol Treasury Share on Reward Distribution
   // ──────────────────────────────────────────────────────────────────────────

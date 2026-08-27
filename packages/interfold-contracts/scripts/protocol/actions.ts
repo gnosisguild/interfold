@@ -243,6 +243,7 @@ export async function actionDeploy(): Promise<void> {
     fold: config.fold,
     feeToken: config.feeToken,
     ticketUnderlyingToken: config.ticketUnderlyingToken,
+    randomness: config.randomness ? { ...config.randomness } : undefined,
     bondingRegistryProxy: config.bondingRegistryProxy,
     bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
     ...result.contracts,

@@ -118,17 +118,21 @@ ciphertext will be encrypted under the wrong parameters and decryption will fail
 ### Requesting computations
 
 ```ts
-const hash = await sdk.requestE3({
+const requestParams = {
   committeeSize: 0, // CommitteeSize.Minimum (N=3)
   inputWindow: [
     BigInt(Math.floor(Date.now() / 1000)),
     BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
-  ],
+  ] as const,
   e3Program: '0x...',
   paramSet: 0, // ParamSet.Insecure512 — use 1 (Secure8192) only on a secure network
   computeProviderParams: '0x',
   customParams: '0x',
-})
+}
+const quote = await sdk.getE3Quote(requestParams)
+const approvalHash = await sdk.approveFeeToken(quote)
+await sdk.waitForTransaction(approvalHash)
+const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
 ```
 
 ### Event subscriptions
@@ -333,7 +337,7 @@ defines one. It reads fulfillment logs in bounded block ranges. To join history 
 without overlap, read through a fixed head and start the watcher at the next block:
 
 ```typescript
-const historicalHead = await sdk.getPublicClient().getBlockNumber()
+const historicalHead = await sdk.getPublicClient().getBlockNumber({ cacheTime: 0 })
 const logs = await sdk.getHistoricalRandomnessProviderEvents(
   provider,
   RandomnessProviderEventType.RANDOMNESS_FULFILLED,
@@ -350,7 +354,9 @@ await sdk.onRandomnessProviderEvent(
 
 A fulfillment means that the provider stored a response. Query the Registry to determine whether the
 response was timely and usable. Live watchers also suppress repeated delivery of the same block,
-transaction, and log index.
+transaction, and log index. Calls that share one provider and event watcher must use the same
+explicit `fromBlock`; omit it to join the active watcher. The SDK rejects a conflicting explicit
+start block instead of silently dropping it.
 
 ## E3 lifecycle enums
 

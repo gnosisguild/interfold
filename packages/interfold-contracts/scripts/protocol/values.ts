@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
-import { assertSupportedVrfChain } from "./chains";
+import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
 import { configPath, readJson } from "./files";
@@ -102,6 +102,20 @@ export function feeAssetConfig(config: ProtocolConfigFile) {
     expectedDecimals: config.feeTokenDecimals,
     pricing: pricingConfig(config.interfold.pricing),
   };
+}
+
+export function assertExitTiming(
+  exitDelay: bigint,
+  sortitionSubmissionWindow: bigint,
+  randomnessRequestTimeout: bigint,
+  context: string,
+): void {
+  const requiredDelay = sortitionSubmissionWindow + randomnessRequestTimeout;
+  if (exitDelay <= requiredDelay) {
+    throw new Error(
+      `${context} exitDelay ${exitDelay} must be greater than sortitionSubmissionWindow ${sortitionSubmissionWindow} + randomnessRequestTimeout ${randomnessRequestTimeout} (${requiredDelay})`,
+    );
+  }
 }
 
 export function loadConfig(file = configPath()): ProtocolConfigFile {
@@ -367,6 +381,25 @@ function validateConfig(config: ProtocolConfigFile): void {
         "randomness.requestTimeout must be from 60 through 86400 seconds",
       );
     }
+    assertVrfRequestTimeout(
+      config.chainId,
+      config.randomness.requestConfirmations,
+      requestTimeout,
+    );
+    if (!/^\d+$/.test(config.registry.sortitionSubmissionWindow)) {
+      throw new Error(
+        "registry.sortitionSubmissionWindow must be an unsigned integer",
+      );
+    }
+    if (!/^\d+$/.test(config.bonding.exitDelay)) {
+      throw new Error("bonding.exitDelay must be an unsigned integer");
+    }
+    assertExitTiming(
+      BigInt(config.bonding.exitDelay),
+      BigInt(config.registry.sortitionSubmissionWindow),
+      requestTimeout,
+      "Protocol configuration",
+    );
   }
   config.interfold.pricing.protocolTreasury = address(
     config.interfold.pricing.protocolTreasury,

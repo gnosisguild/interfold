@@ -26,11 +26,15 @@ releases the displaced candidate. Finalization retains the winners' obligations 
 
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
-decimals check confirms the unit scale only; it does not prove that two tokens have the same
-economic value. Each request snapshots the active token, so later fee-asset changes do not alter an
-existing E3's escrow or settlement unit. Fee assets must transfer exact amounts and must not rebase
-account balances. Interfold checks the custody increase for escrow deposits. Each outbound transfer
-checks the recipient increase and the Interfold custody decrease.
+owner can update only the nonzero flat randomness fee through `setRandomnessFlatFee()`. This narrow
+setter preserves the fee token, decimals, treasury, margin, protocol share, and service prices, and
+it still emits the complete configuration. The VRF upgrade uses this setter so a governance batch
+cannot replace live fee settings with stale deployment-file values. The decimals check confirms the
+unit scale only; it does not prove that two tokens have the same economic value. Each request
+snapshots the active token, so later fee-asset changes do not alter an existing E3's escrow or
+settlement unit. Fee assets must transfer exact amounts and must not rebase account balances.
+Interfold checks the custody increase for escrow deposits. Each outbound transfer checks the
+recipient increase and the Interfold custody decrease.
 
 Each quote has two parts. The service fee funds ciphernodes and the service protocol share. The flat
 randomness fee reimburses the protocol-funded randomness subscription. Interfold credits the flat
@@ -635,7 +639,11 @@ gas lane, and selected payment balance. The balance must meet the configured
 `minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
 The provider reads the same selected balance before every request and reverts an underfunded request
 before the E3 is accepted. The floor is an admission check, not a reservation for concurrent draws,
-so production uses a dedicated subscription with balance monitoring.
+so production uses a dedicated subscription with balance monitoring. Upgrade preparation also checks
+the live exit delay against the planned response timeout and submission window before it deploys any
+implementation. The upgrade plan snapshots the effective subscription and provider settings.
+Validation records that snapshot, and resume rejects stale implementations, provider settings, fees,
+or deployment records.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
