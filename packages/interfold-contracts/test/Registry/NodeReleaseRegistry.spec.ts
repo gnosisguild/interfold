@@ -63,6 +63,27 @@ describe("NodeReleaseRegistry", function () {
     ).to.equal(patchRelease);
   });
 
+  it("does not invalidate eligibility twice during initial setup", async function () {
+    const { interfold, bondingRegistry, ciphernodeRegistry, owner } =
+      await deployInterfoldSystem({ setupOperators: 0 });
+    const replacement = await ethers.deployContract("NodeReleaseRegistry", [
+      await owner.getAddress(),
+      await bondingRegistry.getAddress(),
+      await ciphernodeRegistry.getAddress(),
+    ]);
+
+    await interfold.setRequestsPaused(true);
+    await interfold.setNodeReleaseRegistry(await replacement.getAddress());
+    const versionAfterActivation =
+      await bondingRegistry.eligibilityConfigurationVersion();
+
+    await replacement.setRequiredNodeRelease(1, 1);
+
+    expect(await bondingRegistry.eligibilityConfigurationVersion()).to.equal(
+      versionAfterActivation,
+    );
+  });
+
   it("does not admit a future protocol release before its cutover", async function () {
     const { interfold, bondingRegistry, nodeReleaseRegistry, operator1 } =
       await loadFixture(setup);

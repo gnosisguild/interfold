@@ -65,7 +65,9 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
         ) revert NodeReleasePolicyRegression();
         requiredProtocolVersion = protocolVersion;
         requiredNodeGeneration = nodeGeneration;
-        bondingRegistry.refreshOperatorStatus(address(0));
+        if (previousProtocolVersion != 0) {
+            bondingRegistry.refreshOperatorStatus(address(0));
+        }
         emit RequiredNodeReleaseUpdated(
             previousProtocolVersion,
             previousNodeGeneration,
