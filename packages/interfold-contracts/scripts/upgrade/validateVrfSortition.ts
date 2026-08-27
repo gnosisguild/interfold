@@ -51,6 +51,13 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     ["Interfold implementation", plan.interfoldImplementation],
     ["lifecycle library", plan.lifecycleLibrary],
     ["pricing library", plan.pricingLibrary],
+    ["BondingRegistry implementation", plan.bondingImplementation],
+    ["bonding asset library", plan.bondingAssetLibrary],
+    ["bonding eligibility library", plan.bondingEligibilityLibrary],
+    ["bonding slashing library", plan.bondingSlashingLibrary],
+    ["bonding registration library", plan.bondingRegistrationLibrary],
+    ["bonding ownership library", plan.bondingOwnershipLibrary],
+    ["node release registry", plan.nodeReleaseRegistry],
     ["randomness provider", plan.randomnessProvider],
   ] as const) {
     await requireContract(ethers.provider, target, label);
@@ -66,6 +73,11 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     await proxyImplementation(ethers, plan.interfoldProxy),
     plan.interfoldImplementation,
   );
+  assertEqual(
+    "BondingRegistry implementation",
+    await proxyImplementation(ethers, plan.bondingProxy),
+    plan.bondingImplementation,
+  );
 
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
@@ -78,6 +90,14 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   const provider = await ethers.getContractAt(
     "ChainlinkVrfRandomnessProvider",
     plan.randomnessProvider,
+  );
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    plan.bondingProxy,
+  );
+  const nodeRelease = await ethers.getContractAt(
+    "NodeReleaseRegistry",
+    plan.nodeReleaseRegistry,
   );
   for (const [label, actual, expected] of [
     [
@@ -130,6 +150,58 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   if (!(await interfold.requestsPaused())) {
     throw new Error("Interfold requests must remain paused during validation");
   }
+  for (const [label, actual, expected] of [
+    [
+      "interfold.nodeReleaseRegistry",
+      await interfold.nodeReleaseRegistry(),
+      plan.nodeReleaseRegistry,
+    ],
+    ["nodeRelease.owner", await nodeRelease.owner(), config.protocolOwner],
+    [
+      "nodeRelease.bondingRegistry",
+      await nodeRelease.bondingRegistry(),
+      plan.bondingProxy,
+    ],
+    [
+      "nodeRelease.ciphernodeRegistry",
+      await nodeRelease.ciphernodeRegistry(),
+      plan.registryProxy,
+    ],
+    [
+      "nodeRelease.requiredProtocolVersion",
+      await nodeRelease.requiredProtocolVersion(),
+      plan.nodeRelease.protocolVersion,
+    ],
+    [
+      "nodeRelease.requiredNodeGeneration",
+      await nodeRelease.requiredNodeGeneration(),
+      plan.nodeRelease.nodeGeneration,
+    ],
+    [
+      "nodeRelease.recommendedNodeReleaseId",
+      await nodeRelease.recommendedNodeReleaseId(),
+      plan.nodeRelease.releaseId,
+    ],
+  ] as const) {
+    assertEqual(label, actual, expected);
+  }
+  const approvedRelease = await nodeRelease.getNodeRelease(
+    plan.nodeRelease.releaseId,
+  );
+  assertEqual(
+    "nodeRelease.approved.protocolVersion",
+    approvedRelease.protocolVersion,
+    plan.nodeRelease.protocolVersion,
+  );
+  assertEqual(
+    "nodeRelease.approved.nodeGeneration",
+    approvedRelease.nodeGeneration,
+    plan.nodeRelease.nodeGeneration,
+  );
+  assertEqual("nodeRelease.approved", approvedRelease.approved, true);
+  console.log(
+    `  ok release-ready active operators: ${await bonding.numActiveOperators()}`,
+  );
   assertEqual("interfold.activeE3Count", await interfold.activeE3Count(), 0);
   assertEqual(
     "interfold.pricing.randomnessFlatFee",
@@ -152,6 +224,13 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     interfoldImplementation: plan.interfoldImplementation,
     interfoldLifecycle: plan.lifecycleLibrary,
     interfoldPricing: plan.pricingLibrary,
+    bondingRegistryImplementation: plan.bondingImplementation,
+    bondingAssetLib: plan.bondingAssetLibrary,
+    bondingEligibilityLib: plan.bondingEligibilityLibrary,
+    bondingSlashingLib: plan.bondingSlashingLibrary,
+    bondingRegistrationLib: plan.bondingRegistrationLibrary,
+    bondingOwnershipLib: plan.bondingOwnershipLibrary,
+    nodeReleaseRegistry: plan.nodeReleaseRegistry,
     randomnessProvider: plan.randomnessProvider,
     randomness,
     randomnessProviderOwnershipAcceptanceRequired: false,

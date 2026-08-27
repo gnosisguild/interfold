@@ -11,6 +11,7 @@ import os from "os";
 import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import { currentNodeRelease } from "../../scripts/protocol/nodeRelease";
 import {
   assertValidatedVrfDeploymentMatchesPlan,
   assertVrfSubscription,
@@ -35,6 +36,16 @@ import { BondingRegistry__factory as BondingRegistryFactory } from "../../types"
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("derives one release identity for the Rust and contract tooling", function () {
+    const release = currentNodeRelease();
+    expect(release.version).to.match(/^\d+\.\d+\.\d+/);
+    expect(release.protocolVersion).to.be.greaterThan(0);
+    expect(release.nodeGeneration).to.be.greaterThan(0);
+    expect(release.releaseId).to.equal(
+      ethersLib.id(`interfold.node.release:v1:${release.version}`),
+    );
+  });
+
   it("requires a ciphernode restart acknowledgement before resume", function () {
     expect(() => requireCiphernodeRestartAcknowledgement(false)).to.throw(
       "Restart every ciphernode",
@@ -191,6 +202,19 @@ describe("Protocol deployment", function () {
       interfoldImplementation: ethersLib.ZeroAddress,
       lifecycleLibrary: ethersLib.ZeroAddress,
       pricingLibrary: ethersLib.ZeroAddress,
+      bondingProxy: config.bondingRegistryProxy,
+      bondingProxyAdmin: config.bondingRegistryProxyAdmin,
+      bondingImplementation: ethersLib.ZeroAddress,
+      bondingAssetLibrary: ethersLib.ZeroAddress,
+      bondingEligibilityLibrary: ethersLib.ZeroAddress,
+      bondingSlashingLibrary: ethersLib.ZeroAddress,
+      bondingRegistrationLibrary: ethersLib.ZeroAddress,
+      bondingOwnershipLibrary: ethersLib.ZeroAddress,
+      nodeReleaseRegistry: ethersLib.ZeroAddress,
+      nodeRelease: {
+        ...currentNodeRelease(),
+        releaseId: ethersLib.ZeroHash,
+      },
       randomnessProvider: ethersLib.ZeroAddress,
       randomness: { ...config.randomness! },
       randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
@@ -247,6 +271,19 @@ describe("Protocol deployment", function () {
       interfoldImplementation: "0x0000000000000000000000000000000000000013",
       lifecycleLibrary: "0x0000000000000000000000000000000000000014",
       pricingLibrary: "0x0000000000000000000000000000000000000015",
+      bondingProxy: config.bondingRegistryProxy,
+      bondingProxyAdmin: config.bondingRegistryProxyAdmin,
+      bondingImplementation: "0x0000000000000000000000000000000000000017",
+      bondingAssetLibrary: "0x0000000000000000000000000000000000000018",
+      bondingEligibilityLibrary: "0x0000000000000000000000000000000000000019",
+      bondingSlashingLibrary: "0x0000000000000000000000000000000000000020",
+      bondingRegistrationLibrary: "0x0000000000000000000000000000000000000021",
+      bondingOwnershipLibrary: "0x0000000000000000000000000000000000000022",
+      nodeReleaseRegistry: "0x0000000000000000000000000000000000000023",
+      nodeRelease: {
+        ...currentNodeRelease(),
+        releaseId: ethersLib.ZeroHash,
+      },
       randomnessProvider: "0x0000000000000000000000000000000000000016",
       randomness,
       randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
@@ -290,6 +327,13 @@ describe("Protocol deployment", function () {
       interfoldLifecycle: plan.lifecycleLibrary,
       interfoldPricing: plan.pricingLibrary,
       randomnessProvider: plan.randomnessProvider,
+      bondingRegistryImplementation: plan.bondingImplementation,
+      bondingAssetLib: plan.bondingAssetLibrary,
+      bondingEligibilityLib: plan.bondingEligibilityLibrary,
+      bondingSlashingLib: plan.bondingSlashingLibrary,
+      bondingRegistrationLib: plan.bondingRegistrationLibrary,
+      bondingOwnershipLib: plan.bondingOwnershipLibrary,
+      nodeReleaseRegistry: plan.nodeReleaseRegistry,
       randomness: { ...plan.randomness },
     };
     expect(() =>
@@ -540,8 +584,9 @@ describe("Protocol deployment", function () {
   });
 
   it("uses separate fee and ticket collateral tokens", async function () {
-    const [operator, safe, bondingProxy, bondingProxyAdmin] =
-      await ethers.getSigners();
+    const [operator, safe, bondingProxyAdmin] = await ethers.getSigners();
+    const bondingProxy = await ethers.deployContract("MockBondingRegistry");
+    await bondingProxy.waitForDeployment();
     const tokenFactory = await ethers.getContractFactory(
       "MockFeeOnTransferToken",
     );

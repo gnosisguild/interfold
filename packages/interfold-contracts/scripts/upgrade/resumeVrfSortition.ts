@@ -98,6 +98,18 @@ export async function prepareVrfSortitionResume(): Promise<void> {
       `Interfold implementation: expected ${plan.interfoldImplementation}, got ${liveInterfoldImplementation}`,
     );
   }
+  const liveBondingImplementation = await proxyImplementation(
+    ethers,
+    plan.bondingProxy,
+  );
+  if (
+    liveBondingImplementation.toLowerCase() !==
+    plan.bondingImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `BondingRegistry implementation: expected ${plan.bondingImplementation}, got ${liveBondingImplementation}`,
+    );
+  }
   if (!(await interfold.requestsPaused())) {
     throw new Error("E3 requests are already enabled");
   }
@@ -109,6 +121,46 @@ export async function prepareVrfSortitionResume(): Promise<void> {
   if (unreleasedCommittees !== 0n) {
     throw new Error(
       `CiphernodeRegistry still has ${unreleasedCommittees} unreleased committees`,
+    );
+  }
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    plan.bondingProxy,
+  );
+  const nodeRelease = await ethers.getContractAt(
+    "NodeReleaseRegistry",
+    plan.nodeReleaseRegistry,
+  );
+  const configuredNodeRelease = await interfold.nodeReleaseRegistry();
+  if (
+    configuredNodeRelease.toLowerCase() !==
+    plan.nodeReleaseRegistry.toLowerCase()
+  ) {
+    throw new Error(
+      `interfold.nodeReleaseRegistry: expected ${plan.nodeReleaseRegistry}, got ${configuredNodeRelease}`,
+    );
+  }
+  const requiredActiveNodes = config.interfold.committeeThresholds.reduce(
+    (maximum, threshold) => {
+      const total = BigInt(threshold.total);
+      return total > maximum ? total : maximum;
+    },
+    0n,
+  );
+  const activeNodes = await bonding.numActiveOperators();
+  if (activeNodes < requiredActiveNodes) {
+    throw new Error(
+      `Only ${activeNodes} release-ready operators are active; ${requiredActiveNodes} are required by the largest committee configuration`,
+    );
+  }
+  const requiredProtocolVersion = await nodeRelease.requiredProtocolVersion();
+  const requiredNodeGeneration = await nodeRelease.requiredNodeGeneration();
+  if (
+    requiredProtocolVersion !== BigInt(plan.nodeRelease.protocolVersion) ||
+    requiredNodeGeneration !== BigInt(plan.nodeRelease.nodeGeneration)
+  ) {
+    throw new Error(
+      `node release policy changed after validation: expected protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration}; got protocol ${requiredProtocolVersion}, generation ${requiredNodeGeneration}`,
     );
   }
   const configuredProvider = await registry.randomnessProvider();

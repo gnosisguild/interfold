@@ -391,6 +391,20 @@ export function syncProtocolDeploymentRecords(
     opts.chain,
   );
 
+  storeDeploymentArgs(
+    {
+      address: deployment.nodeReleaseRegistry,
+      blockNumber,
+      constructorArgs: {
+        owner: config.protocolOwner,
+        bondingRegistry: config.bondingRegistryProxy,
+        ciphernodeRegistry: deployment.ciphernodeRegistry,
+      },
+    },
+    "NodeReleaseRegistry",
+    opts.chain,
+  );
+
   if (shouldSyncIntegration(opts)) {
     updateE3Config(opts.chain, integrationConfigPath(), {
       Interfold: "interfold",

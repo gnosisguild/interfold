@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use anyhow::{ensure, Result};
-use e3_config::{NetworkId, NetworkProfile};
+use e3_config::{current_node_release, NetworkId, NetworkProfile};
 use e3_events::{E3id, Event, EventContextAccessors, InterfoldEvent, SeqState};
 use libp2p::{identify::Info, StreamProtocol};
 use sha2::{Digest, Sha256};
@@ -32,19 +32,28 @@ impl ProtocolSet {
     }
 
     fn with_deployments(network_id: NetworkId, deployments: [u8; 32]) -> Result<Self> {
+        Self::with_protocol_version(
+            network_id,
+            deployments,
+            current_node_release().protocol_version,
+        )
+    }
+
+    fn with_protocol_version(
+        network_id: NetworkId,
+        deployments: [u8; 32],
+        protocol_version: u32,
+    ) -> Result<Self> {
         let network_id = network_id.to_string();
         let deployments = hex::encode(deployments);
-        let kademlia_protocol = StreamProtocol::try_from_owned(format!(
-            "/interfold/{network_id}/kad/{KADEMLIA_VERSION}"
-        ))?;
-        let sync_protocol = StreamProtocol::try_from_owned(format!(
-            "/interfold/{network_id}/sync/{SYNC_WIRE_MAJOR}.0.0"
-        ))?;
+        let prefix = format!("interfold/{network_id}/protocol/{protocol_version}");
+        let kademlia_protocol =
+            StreamProtocol::try_from_owned(format!("/{prefix}/kad/{KADEMLIA_VERSION}"))?;
+        let sync_protocol =
+            StreamProtocol::try_from_owned(format!("/{prefix}/sync/{SYNC_WIRE_MAJOR}.0.0"))?;
         Ok(Self {
-            gossip_topic: format!("interfold/{network_id}/events/{GOSSIP_WIRE_MAJOR}"),
-            identify_protocol: format!(
-                "interfold/{network_id}/deployments/{deployments}/{IDENTIFY_MAJOR}"
-            ),
+            gossip_topic: format!("{prefix}/events/{GOSSIP_WIRE_MAJOR}"),
+            identify_protocol: format!("{prefix}/deployments/{deployments}/{IDENTIFY_MAJOR}"),
             kademlia_protocol,
             // New protocols must be inserted first. Multistream-select uses this order for
             // outbound negotiation. Keep an older protocol only while its wire schema is safe.
@@ -242,6 +251,19 @@ mod tests {
             first.protocols().gossip_topic(),
             second.protocols().gossip_topic()
         );
+    }
+
+    #[test]
+    fn protocol_versions_produce_disjoint_networks() {
+        let network_id = NetworkProfile::mainnet().id();
+        let deployments = deployment_fingerprint(&HashMap::new());
+        let first = ProtocolSet::with_protocol_version(network_id, deployments, 1).unwrap();
+        let second = ProtocolSet::with_protocol_version(network_id, deployments, 2).unwrap();
+
+        assert_ne!(first.gossip_topic(), second.gossip_topic());
+        assert_ne!(first.identify_protocol(), second.identify_protocol());
+        assert_ne!(first.kademlia_protocol(), second.kademlia_protocol());
+        assert_ne!(first.sync_protocols(), second.sync_protocols());
     }
 
     #[test]

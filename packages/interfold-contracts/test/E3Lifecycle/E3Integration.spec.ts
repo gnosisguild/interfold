@@ -97,6 +97,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       bondingRegistry,
       ciphernodeRegistry: registry,
       slashingManager,
+      nodeReleaseRegistry,
       usdcToken,
       ciphernodeBondToken: foldToken,
       mocks: {
@@ -185,6 +186,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
       await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
+      await nodeReleaseRegistry
+        .connect(operator)
+        .acknowledgeNodeRelease(
+          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+        );
       await foldToken
         .connect(computeProvider)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));

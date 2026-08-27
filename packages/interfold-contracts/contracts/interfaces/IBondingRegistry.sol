@@ -554,7 +554,8 @@ interface IBondingRegistry {
     /**
      * @notice Re-evaluate one registered operator under the current eligibility policy.
      * @dev Permissionless so operators or governance can restore current status after
-     *      an eligibility configuration update.
+     *      an eligibility configuration update. Address zero is reserved for the configured
+     *      NodeReleaseRegistry to invalidate all cached statuses during a release cutover.
      */
     function refreshOperatorStatus(address operator) external;
 

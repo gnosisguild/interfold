@@ -135,6 +135,7 @@ describe("SlashingManager", function () {
       usdcToken,
       mocks,
       mockCiphernodeRegistry: mockCiphernodeRegistryOpt,
+      nodeReleaseRegistry,
     } = sys;
     const mockCiphernodeRegistry = mockCiphernodeRegistryOpt!;
     const _mockVerifier = mocks.circuitVerifier!;
@@ -175,6 +176,7 @@ describe("SlashingManager", function () {
       _mockVerifier,
       mockCiphernodeRegistry,
       mockInterfold,
+      nodeReleaseRegistry,
     };
   }
 
@@ -1202,11 +1204,17 @@ describe("SlashingManager", function () {
         ticketToken,
         usdcToken,
         mockCiphernodeRegistry,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
 
       await bondingRegistry
         .connect(operator)
         .setBondOwner(await owner.getAddress());
+      await nodeReleaseRegistry
+        .connect(operator)
+        .acknowledgeNodeRelease(
+          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+        );
       await interfoldToken
         .connect(owner)
         .approve(
@@ -1482,6 +1490,7 @@ describe("SlashingManager", function () {
         interfoldToken,
         ticketToken,
         usdcToken,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
       const actualTicket = ethers.parseUnits("5", 6);
       const actualCiphernodeBond = ethers.parseEther("10");
@@ -1491,6 +1500,11 @@ describe("SlashingManager", function () {
         requiredCiphernodeBond: actualCiphernodeBond,
       });
       await bondingRegistry.connect(operator).setBondOwner(ownerAddress);
+      await nodeReleaseRegistry
+        .connect(operator)
+        .acknowledgeNodeRelease(
+          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+        );
       await interfoldToken
         .connect(owner)
         .approve(await bondingRegistry.getAddress(), actualCiphernodeBond);

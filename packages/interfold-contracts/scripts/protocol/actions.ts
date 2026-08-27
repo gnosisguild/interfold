@@ -289,6 +289,7 @@ Protocol contracts deployed
   bondingEligibilityLib:  ${deployment.bondingEligibilityLib}
   bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
+  nodeReleaseRegistry:     ${deployment.nodeReleaseRegistry}
   bondedCheckpoints:      ${deployment.bondedCheckpoints}
   bondedVotes:            (run --action activate-voting after the governance batch)
 

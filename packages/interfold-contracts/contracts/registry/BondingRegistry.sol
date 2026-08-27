@@ -434,6 +434,14 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function refreshOperatorStatus(address operator) public {
+        if (operator == address(0)) {
+            BondingEligibilityLib.requireNodeReleaseRegistry(
+                address(registry),
+                msg.sender
+            );
+            _invalidateEligibilityStatuses();
+            return;
+        }
         require(operators[operator].registered, NotRegistered());
         _updateOperatorStatus(operator);
     }
@@ -541,8 +549,8 @@ contract BondingRegistry is
         if (delegatedBond != 0) {
             uint256 remainingBonded = _bondedByOwner[previousOwner] -
                 delegatedBond;
-            uint256 lockedBalance = _lockedBalanceOf(
-                ciphernodeBondToken,
+            uint256 lockedBalance = BondingAssetLib.lockedBalanceOf(
+                address(ciphernodeBondToken),
                 previousOwner
             );
             uint256 controlledBalance = ciphernodeBondToken.balanceOf(
@@ -886,7 +894,9 @@ contract BondingRegistry is
             );
         }
 
-        _decreaseDelegatedBond(operator, actualSlashAmount);
+        address bondOwner = bondOwnerOf(operator);
+        _bondedByOwner[bondOwner] -= actualSlashAmount;
+        _syncBondedCheckpoint(bondOwner);
         slashedCiphernodeBond += actualSlashAmount;
         emit CiphernodeBondUpdated(
             operator,
@@ -1047,16 +1057,13 @@ contract BondingRegistry is
         address[] calldata recipients,
         uint256[] calldata amounts
     ) external onlyAuthorizedDistributor {
-        require(recipients.length == amounts.length, ArrayLengthMismatch());
-
-        uint256 len = recipients.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (amounts[i] > 0) {
-                address recipient = bondOwnerOf(recipients[i]);
-                if (recipient == address(0)) recipient = recipients[i];
-                rewardToken.safeTransferFrom(msg.sender, recipient, amounts[i]);
-            }
-        }
+        BondingAssetLib.distributeRewards(
+            rewardToken,
+            _bondOwnerOf,
+            msg.sender,
+            recipients,
+            amounts
+        );
     }
 
     // ======================
@@ -1266,7 +1273,7 @@ contract BondingRegistry is
     }
 
     /// @notice Disabled. Reverts unconditionally.
-    function renounceOwnership() public view override onlyOwner {
+    function renounceOwnership() public pure override {
         revert RenounceOwnershipDisabled();
     }
 
@@ -1275,37 +1282,34 @@ contract BondingRegistry is
     /// @param newRewardDistributor Address to authorize as reward distributor
     function setRewardDistributor(
         address newRewardDistributor
-    ) public onlyOwner {
-        require(newRewardDistributor != address(0), ZeroAddress());
-        // hard cap on the number of authorized reward distributors so
-        // payout fan-out loops in downstream consumers stay bounded.
-        if (!authorizedDistributors[newRewardDistributor]) {
-            require(
-                authorizedDistributorCount < MAX_AUTHORIZED_DISTRIBUTORS,
-                MaxAuthorizedDistributors()
-            );
-            authorizedDistributorCount++;
-        }
-        authorizedDistributors[newRewardDistributor] = true;
-        emit RewardDistributorUpdated(newRewardDistributor, true);
+    ) external onlyOwner {
+        authorizedDistributorCount = BondingAssetLib.setRewardDistributor(
+            authorizedDistributors,
+            authorizedDistributorCount,
+            MAX_AUTHORIZED_DISTRIBUTORS,
+            newRewardDistributor,
+            true
+        );
     }
 
     /// @notice Revokes reward distributor authorization
     /// @dev Only callable by owner
     /// @param distributor Address to revoke
-    function revokeRewardDistributor(address distributor) public onlyOwner {
-        if (authorizedDistributors[distributor]) {
-            authorizedDistributorCount--;
-        }
-        authorizedDistributors[distributor] = false;
-        emit RewardDistributorUpdated(distributor, false);
+    function revokeRewardDistributor(address distributor) external onlyOwner {
+        authorizedDistributorCount = BondingAssetLib.setRewardDistributor(
+            authorizedDistributors,
+            authorizedDistributorCount,
+            MAX_AUTHORIZED_DISTRIBUTORS,
+            distributor,
+            false
+        );
     }
 
     /// @inheritdoc IBondingRegistry
     function withdrawSlashedFunds(
         uint256 ticketAmount,
         uint256 ciphernodeBondAmount
-    ) public onlyOwner {
+    ) external onlyOwner {
         require(
             ticketAmount <= slashedTicketBalance - reservedSlashedTicketBalance,
             ReservedSlashedFunds()
@@ -1323,7 +1327,8 @@ contract BondingRegistry is
         if (ciphernodeBondAmount > 0) {
             slashedCiphernodeBond -= ciphernodeBondAmount;
             totalCiphernodeBondLiability -= ciphernodeBondAmount;
-            _safeTransferCiphernodeBondWithDeltaCheck(
+            BondingAssetLib.transferExact(
+                address(ciphernodeBondToken),
                 slashedFundsTreasury,
                 ciphernodeBondAmount
             );
@@ -1367,12 +1372,6 @@ contract BondingRegistry is
         _updateOperatorStatus(operator);
     }
 
-    function _decreaseDelegatedBond(address operator, uint256 amount) internal {
-        address bondOwner = bondOwnerOf(operator);
-        _bondedByOwner[bondOwner] -= amount;
-        _syncBondedCheckpoint(bondOwner);
-    }
-
     /// @dev Record the owner's current bonded total in the checkpoint contract.
     ///
     /// Sends the total rather than a delta, so the history mirrors this mapping. A mutation site
@@ -1414,6 +1413,7 @@ contract BondingRegistry is
                     ciphernodeBond: op.ciphernodeBond,
                     requiredCiphernodeBond: requiredCiphernodeBond,
                     ciphernodeBondActiveBps: ciphernodeBondActiveBps,
+                    registry: address(registry),
                     ticketToken: address(ticketToken),
                     ticketPrice: ticketPrice,
                     minTicketBalance: minTicketBalance
@@ -1431,34 +1431,12 @@ contract BondingRegistry is
         return BondingSlashingLib.activeBanCount(operator) != 0;
     }
 
-    /// @dev Reads a lock-aware token through a checked low-level call so a bad
-    ///      configuration returns a protocol error instead of an ABI decode error.
-    function _lockedBalanceOf(
-        IERC20 token,
-        address account
-    ) internal view returns (uint256) {
-        return BondingAssetLib.lockedBalanceOf(address(token), account);
-    }
-
     /// @dev Invalidates every cached active status in O(1). Operators are
     ///      considered inactive until they refresh under the new version.
     function _invalidateEligibilityStatuses() internal {
         eligibilityConfigurationVersion = BondingEligibilityLib
             .invalidateConfiguration(eligibilityConfigurationVersion);
         numActiveOperators = 0;
-    }
-
-    /// @dev Sends the ciphernode bond token and reverts unless the recipient receives the
-    ///      exact amount. A revert restores the liability accounting at the call site.
-    function _safeTransferCiphernodeBondWithDeltaCheck(
-        address recipient,
-        uint256 expectedAmount
-    ) internal {
-        BondingAssetLib.transferExact(
-            address(ciphernodeBondToken),
-            recipient,
-            expectedAmount
-        );
     }
 
     ////////////////////////////////////////////////////////////

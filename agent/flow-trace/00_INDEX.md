@@ -10,6 +10,7 @@
 | 4   | [04_DKG_AND_COMPUTATION.md](04_DKG_AND_COMPUTATION.md)                 | Full DKG with ZK proof pipeline: BFV keygen → C0 proof → encryption key exchange → TrBFV share generation → C1/C2/C3 proofs → share verification → Shamir secret sharing → encrypted share broadcast → C4 proofs → decryption key reconstruction. C5 proof for PK aggregation. Ciphertext output → C6 proof for decryption shares → C7 proof for plaintext → rewards.                                |
 | 5   | [05_FAILURE_REFUND_SLASHING.md](05_FAILURE_REFUND_SLASHING.md)         | Timeout-based failure detection, `markE3Failed`, `processE3Failure`. Fault-attributed refunds: requester/DP/CP failures pay completed work from service fee escrow; supplier/ciphernode failures return all service fee escrow and compensate honest nodes from ticket slashes. The flat randomness fee is not refundable escrow. Off-chain accusation, Lane A/B slashing, and slashed-fund routing. |
 | 6   | [06_DEACTIVATION_AND_COMPLETION.md](06_DEACTIVATION_AND_COMPLETION.md) | Voluntary deactivation (ticket/ciphernode bond withdrawal), full deregistration (IMT removal), E3 happy-path completion, node shutdown, sync/restart, exit queue timing, ban/unban.                                                                                                                                                                                                                  |
+| 7   | [07_UPGRADES.md](07_UPGRADES.md)                                       | Recommended rolling releases, mandatory node-only cutovers, combined contract/protocol upgrades, release acknowledgement, resume checks, wire compatibility, and rollback.                                                                                                                                                                                                                           |
 
 ---
 
@@ -37,10 +38,12 @@
 5. TICKETS      Bond owner calls addTicketBalanceFor(operator, N)
                   → Reverts with NotRegistered() before step 4
                   → Owner's ticket collateral → non-transferable tFOLD minted to operator
-                  → If bond+tickets meet thresholds → active=true
+                  → Active only when bond, tickets, and release policy all pass
 
 6. START        interfold start
-                  → Node boots, syncs historical events, starts listening
+                  → Verifies the compiled release against the on-chain policy
+                  → Acknowledges the approved release and refreshes operator eligibility
+                  → Then syncs historical events and starts listening
 
 7. E3 REQUEST   Requester calls Interfold.request(params)
                   → Service fee enters escrow

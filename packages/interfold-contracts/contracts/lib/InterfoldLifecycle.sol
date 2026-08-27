@@ -80,7 +80,8 @@ library InterfoldLifecycle {
         address registryAddress,
         address bondingAddress,
         address slashManagerAddress,
-        address refundManagerAddress
+        address refundManagerAddress,
+        address nodeReleaseRegistryAddress
     ) external view {
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         IBondingRegistry bonding = IBondingRegistry(bondingAddress);
@@ -101,6 +102,7 @@ library InterfoldLifecycle {
             bondingAddress.code.length == 0 ||
             slashManagerAddress.code.length == 0 ||
             refundManagerAddress.code.length == 0 ||
+            nodeReleaseRegistryAddress.code.length == 0 ||
             registryView.interfold() != address(this) ||
             registryView.bondingRegistry() != bondingAddress ||
             registryView.slashingManager() != slashManagerAddress ||

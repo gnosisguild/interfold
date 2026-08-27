@@ -28,6 +28,56 @@ library BondingAssetLib {
     using SafeERC20 for IERC20;
     using ExitQueueLib for ExitQueueLib.ExitQueueState;
 
+    function setRewardDistributor(
+        mapping(address distributor => bool authorized) storage distributors,
+        uint256 distributorCount,
+        uint256 maximumDistributors,
+        address distributor,
+        bool authorized
+    ) external returns (uint256 newDistributorCount) {
+        if (authorized && distributor == address(0)) {
+            revert IBondingRegistry.ZeroAddress();
+        }
+        bool wasAuthorized = distributors[distributor];
+        newDistributorCount = distributorCount;
+        if (wasAuthorized != authorized) {
+            if (authorized) {
+                if (distributorCount >= maximumDistributors) {
+                    revert IBondingRegistry.MaxAuthorizedDistributors();
+                }
+                newDistributorCount = distributorCount + 1;
+            } else {
+                newDistributorCount = distributorCount - 1;
+            }
+        }
+        distributors[distributor] = authorized;
+        emit IBondingRegistry.RewardDistributorUpdated(distributor, authorized);
+    }
+
+    function distributeRewards(
+        IERC20 rewardToken,
+        mapping(address operator => address bondOwner) storage bondOwners,
+        address distributor,
+        address[] calldata recipients,
+        uint256[] calldata amounts
+    ) external {
+        if (recipients.length != amounts.length) {
+            revert IBondingRegistry.ArrayLengthMismatch();
+        }
+        uint256 len = recipients.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 amount = amounts[i];
+            if (amount != 0) {
+                address recipient = bondOwners[recipients[i]];
+                if (recipient == address(0)) recipient = recipients[i];
+                rewardToken.safeTransferFrom(distributor, recipient, amount);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function claimExits(
         ExitQueueLib.ExitQueueState storage exits,
         InterfoldTicketToken ticketToken,

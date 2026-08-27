@@ -8,6 +8,7 @@ pragma solidity 0.8.28;
 import { IInterfold, E3, IE3Program } from "./interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
+import { INodeReleaseRegistry } from "./interfaces/INodeReleaseRegistry.sol";
 import { ISlashingManager } from "./interfaces/ISlashingManager.sol";
 import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IDecryptionVerifier } from "./interfaces/IDecryptionVerifier.sol";
@@ -209,8 +210,16 @@ contract Interfold is
     /// @notice Circuit configuration frozen for each E3 request.
     mapping(uint256 e3Id => bytes32 configId) public e3CryptoConfigIds;
 
+    /// @notice Governance-selected controller for ciphernode release eligibility.
+    INodeReleaseRegistry public nodeReleaseRegistry;
+
     /// @notice Emitted when the {markFailedGracePeriod} value is updated.
     event MarkFailedGracePeriodSet(uint256 gracePeriod);
+
+    /// @notice Emitted when governance replaces the ciphernode release controller.
+    event NodeReleaseRegistrySet(
+        INodeReleaseRegistry indexed nodeReleaseRegistry
+    );
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -984,6 +993,18 @@ contract Interfold is
         emit RequestsPausedSet(paused);
     }
 
+    /// @notice Sets the release controller while the protocol is paused and drained.
+    function setNodeReleaseRegistry(
+        INodeReleaseRegistry newNodeReleaseRegistry
+    ) external onlyOwner {
+        if (address(newNodeReleaseRegistry).code.length == 0) {
+            revert DependencyConfigurationMismatch();
+        }
+        nodeReleaseRegistry = newNodeReleaseRegistry;
+        newNodeReleaseRegistry.activate();
+        emit NodeReleaseRegistrySet(newNodeReleaseRegistry);
+    }
+
     /// @notice Set timeout configuration
     /// @param config The new timeout config
     function setTimeoutConfig(
@@ -1203,7 +1224,8 @@ contract Interfold is
             address(ciphernodeRegistry),
             address(bondingRegistry),
             address(slashingManager),
-            address(e3RefundManager)
+            address(e3RefundManager),
+            address(nodeReleaseRegistry)
         );
     }
 
@@ -1244,5 +1266,5 @@ contract Interfold is
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 }

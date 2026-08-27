@@ -8,6 +8,7 @@ import {
   readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
+import { deployNodeReleaseRegistry } from "./nodeRelease";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import { deployRandomnessProvider } from "./randomness";
@@ -186,6 +187,14 @@ export async function deployProtocolContracts(
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
 
+  const nodeRelease = await deployNodeReleaseRegistry(
+    ethers,
+    config.protocolOwner,
+    config.bondingRegistryProxy,
+    registryProxy.proxy,
+  );
+  const nodeReleaseRegistry = nodeRelease.address;
+
   // Bound to the proxy, not the implementation: the proxy is the address that calls `sync`, and
   // `BondedCheckpoints` accepts writes from exactly one address. The registry is pointed at this
   // contract by a `setBondedCheckpoints` transaction in the governance batch, after `initialize`.
@@ -240,6 +249,7 @@ export async function deployProtocolContracts(
       bondingSlashingLib,
       bondingRegistrationLib,
       bondingOwnershipLib,
+      nodeReleaseRegistry,
       bondedCheckpoints,
       initialE3Program,
       ...deployedVerifiers,
@@ -253,6 +263,7 @@ export async function deployProtocolContracts(
       registry: registryFactory.interface,
       interfold: interfoldFactory.interface,
       bonding: bondingFactory.interface,
+      nodeRelease: nodeRelease.interface,
     },
   };
 }

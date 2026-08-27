@@ -3,6 +3,7 @@ import { ethers as ethersLib } from "ethers";
 
 import { connect } from "./cli";
 import { deploymentPath, readJson } from "./files";
+import { currentNodeRelease } from "./nodeRelease";
 import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import type { ProtocolDeployment } from "./types";
 import { loadConfig, requireContract } from "./values";
@@ -67,6 +68,11 @@ export async function actionValidate(): Promise<void> {
     "ChainlinkVrfRandomnessProvider",
     deployment.randomnessProvider,
   );
+  const nodeReleaseRegistry = await ethers.getContractAt(
+    "NodeReleaseRegistry",
+    deployment.nodeReleaseRegistry,
+  );
+  const nodeRelease = currentNodeRelease();
 
   const proxyAdmin = (target: string) =>
     new ethersLib.Contract(
@@ -85,6 +91,7 @@ export async function actionValidate(): Promise<void> {
     ["interfoldPricing", deployment.interfoldPricing],
     ["bondedCheckpoints", deployment.bondedCheckpoints],
     ["randomnessProvider", deployment.randomnessProvider],
+    ["nodeReleaseRegistry", deployment.nodeReleaseRegistry],
   ] as const) {
     if ((await ethers.provider.getCode(address)) === "0x") {
       throw new Error(`${label}: no contract at ${address}`);
@@ -170,6 +177,41 @@ export async function actionValidate(): Promise<void> {
       deployment.slashingManager,
     ],
     ["interfold.owner", interfold.owner(), config.protocolOwner],
+    [
+      "interfold.nodeReleaseRegistry",
+      interfold.nodeReleaseRegistry(),
+      deployment.nodeReleaseRegistry,
+    ],
+    [
+      "nodeReleaseRegistry.owner",
+      nodeReleaseRegistry.owner(),
+      config.protocolOwner,
+    ],
+    [
+      "nodeReleaseRegistry.bondingRegistry",
+      nodeReleaseRegistry.bondingRegistry(),
+      deployment.bondingRegistryProxy,
+    ],
+    [
+      "nodeReleaseRegistry.ciphernodeRegistry",
+      nodeReleaseRegistry.ciphernodeRegistry(),
+      deployment.ciphernodeRegistry,
+    ],
+    [
+      "nodeReleaseRegistry.requiredProtocolVersion",
+      nodeReleaseRegistry.requiredProtocolVersion(),
+      nodeRelease.protocolVersion,
+    ],
+    [
+      "nodeReleaseRegistry.requiredNodeGeneration",
+      nodeReleaseRegistry.requiredNodeGeneration(),
+      nodeRelease.nodeGeneration,
+    ],
+    [
+      "nodeReleaseRegistry.recommendedNodeReleaseId",
+      nodeReleaseRegistry.recommendedNodeReleaseId(),
+      nodeRelease.releaseId,
+    ],
     ["interfold.feeToken", interfold.feeToken(), config.feeToken],
     [
       "interfold.feeTokenDecimals",
@@ -359,6 +401,16 @@ export async function actionValidate(): Promise<void> {
     const actual = await actualPromise;
     assertEqual(label, actual, expected);
   }
+
+  await assertStruct(
+    "nodeReleaseRegistry.currentRelease",
+    nodeReleaseRegistry.getNodeRelease(nodeRelease.releaseId),
+    {
+      protocolVersion: nodeRelease.protocolVersion,
+      nodeGeneration: nodeRelease.nodeGeneration,
+      approved: true,
+    },
+  );
 
   await assertVrfSubscription(ethers, config, deployment.randomnessProvider);
   console.log("  ok randomnessProvider subscription consumer");

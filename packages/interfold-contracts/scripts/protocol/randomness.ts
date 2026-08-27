@@ -158,6 +158,16 @@ export function assertValidatedVrfDeploymentMatchesPlan(
       deployment.randomnessProvider,
       plan.randomnessProvider,
     ],
+    [
+      "deployment BondingRegistry implementation",
+      deployment.bondingRegistryImplementation,
+      plan.bondingImplementation,
+    ],
+    [
+      "deployment node release registry",
+      deployment.nodeReleaseRegistry,
+      plan.nodeReleaseRegistry,
+    ],
   ] as const) {
     assertPlanValue(label, actual, expected);
   }
@@ -294,6 +304,16 @@ export function assertVrfUpgradePlanMatchesDeployment(
     "Interfold ProxyAdmin",
     plan.interfoldProxyAdmin,
     deployment.interfoldProxyAdmin,
+  );
+  assertPlanValue(
+    "BondingRegistry proxy",
+    plan.bondingProxy,
+    config.bondingRegistryProxy,
+  );
+  assertPlanValue(
+    "BondingRegistry ProxyAdmin",
+    plan.bondingProxyAdmin,
+    config.bondingRegistryProxyAdmin,
   );
 }
 

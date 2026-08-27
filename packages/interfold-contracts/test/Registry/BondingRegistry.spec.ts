@@ -65,6 +65,7 @@ describe("BondingRegistry", function () {
       usdcToken,
       slashingManager,
       mockCiphernodeRegistry,
+      nodeReleaseRegistry,
     } = sys;
     // Spec consumes the (mock) registry typed as the real interface.
     const ciphernodeRegistry = mockCiphernodeRegistry!;
@@ -91,6 +92,13 @@ describe("BondingRegistry", function () {
     await bondingRegistry
       .connect(operatorKey2)
       .setBondOwner(operator2OwnerAddress);
+    const releaseId = await nodeReleaseRegistry.recommendedNodeReleaseId();
+    await nodeReleaseRegistry
+      .connect(operatorKey1)
+      .acknowledgeNodeRelease(releaseId);
+    await nodeReleaseRegistry
+      .connect(operatorKey2)
+      .acknowledgeNodeRelease(releaseId);
 
     return {
       bondingRegistry,

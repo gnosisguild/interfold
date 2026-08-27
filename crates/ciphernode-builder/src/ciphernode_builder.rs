@@ -30,10 +30,11 @@ use e3_events::{
     EventType, EvmEventConfig, InterfoldEvent,
 };
 use e3_evm::{
-    fetch_accusation_vote_validity, fetch_randomness_providers, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
-    InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
-    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
+    BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
+    EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter, ProviderConfig,
+    RandomnessProviderSolReader, SlashingManagerSolReader, SlashingManagerSolWriter,
+    SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -600,6 +601,23 @@ impl CiphernodeBuilder {
 
         let mut provider_cache =
             provider_cache.with_write_support(Arc::clone(&self.cipher), Arc::clone(&repositories));
+
+        if self.contract_components.ciphernode_registry {
+            for chain in self
+                .chains
+                .iter()
+                .filter(|chain| chain.enabled.unwrap_or(true))
+            {
+                let provider = provider_cache.ensure_write_provider(chain).await?;
+                ensure_node_release(
+                    provider,
+                    chain.contracts.interfold.address()?,
+                    chain.contracts.bonding_registry.address()?,
+                    chain.contracts.ciphernode_registry.address()?,
+                )
+                .await?;
+            }
+        }
 
         // Resolve node address and enable the bus
         let addr = provider_cache.ensure_signer().await?.address().to_string();

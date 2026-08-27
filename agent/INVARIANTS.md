@@ -164,7 +164,8 @@ design citation alone does not establish current runtime behavior.
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
-- Operator active ⇔ `registered` AND
+- Operator active ⇔ its acknowledged release is approved, has exactly the required
+  `protocolVersion`, and meets the minimum `nodeGeneration` AND `registered` AND
   `ciphernodeBond >= requiredCiphernodeBond × ciphernodeBondActiveBps/10000` (default 80%) AND
   `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`; `flow-trace/01`, `02`
 - `minTicketBalance` must remain nonzero. — `flow-trace/02`
@@ -174,6 +175,15 @@ design citation alone does not establish current runtime behavior.
   statuses in O(1). Rust sortition consumes the same `ConfigurationUpdated` event and marks
   operators inactive until a matching `OperatorActivationChanged` arrives. — `BondingRegistry.sol`;
   INDEX concern #24
+- **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
+  required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
+  and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
+  A node becomes active again only after it acknowledges an approved compatible release. Never lower
+  either required counter; roll back code under a new release ID and a higher generation. —
+  `NodeReleaseRegistry.sol`; `flow-trace/07`
+- **Release acknowledgement is not remote attestation:** it prevents accidental stale software
+  participation. Byzantine safety still depends on threshold cryptography, proof verification,
+  slashing, and committee validation. — `flow-trace/07`
 
 ### E3 request and committee selection
 
@@ -474,6 +484,20 @@ design citation alone does not establish current runtime behavior.
   including zeros, to the claimed message (IF-002).
 
 ## Node / actor runtime
+
+### Release compatibility
+
+- Before EVM readers and protocol actors start, each enabled ciphernode chain reads the
+  governance-selected `NodeReleaseRegistry`, verifies that the compiled release ID is approved and
+  compatible, and acknowledges it on-chain. A missing controller, unapproved release, metadata
+  mismatch, or stale protocol/generation is a startup error. — `e3_evm::node_release`;
+  `flow-trace/07`
+- `protocol_version` covers incompatible contracts, events, cryptography, protocol behavior, and
+  scopes every P2P protocol name. Nodes on different protocol versions do not discover, gossip, or
+  synchronize with each other. `node_generation` covers a mandatory node-only release. P2P
+  serialization compatibility within one protocol version remains separately gated by
+  `GOSSIP_WIRE_MAJOR` and `SYNC_WIRE_MAJOR`. — `crates/config/protocol-release.toml`;
+  `flow-trace/07`
 
 ### Layering
 

@@ -20,6 +20,7 @@ export async function setupOperatorForSortition(
   usdcToken: any,
   ticketToken: any,
   registry: any,
+  nodeReleaseRegistry?: any,
 ): Promise<void> {
   const operatorAddress = await operator.getAddress();
   const bondOwnerAddress = await bondOwner.getAddress();
@@ -32,6 +33,12 @@ export async function setupOperatorForSortition(
   await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
   await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
+  if (nodeReleaseRegistry) {
+    const releaseId = await nodeReleaseRegistry.recommendedNodeReleaseId();
+    await nodeReleaseRegistry
+      .connect(operator)
+      .acknowledgeNodeRelease(releaseId);
+  }
   await ciphernodeBondToken
     .connect(bondOwner)
     .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));

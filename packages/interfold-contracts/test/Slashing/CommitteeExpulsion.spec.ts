@@ -74,6 +74,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       ciphernodeBondToken: foldToken,
       ticketToken,
       usdcToken,
+      nodeReleaseRegistry,
       mocks,
     } = sys;
     const mockVerifier = mocks.circuitVerifier!;
@@ -119,6 +120,11 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
       await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
+      await nodeReleaseRegistry
+        .connect(operator)
+        .acknowledgeNodeRelease(
+          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+        );
       await foldToken
         .connect(owner)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
@@ -274,6 +280,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       usdcToken,
       foldToken,
       ticketToken,
+      nodeReleaseRegistry,
       owner,
       requester,
       treasury,
@@ -797,6 +804,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         slashFirstMember,
         configureEvidencePolicy,
         proposeThresholdBreach,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
 
       const reason = await configureEvidencePolicy("ROLLBACK_EVIDENCE_SLASH");
@@ -808,7 +816,10 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const ticketsBefore = await bondingRegistry.getTicketBalance(operator);
       const ciphernodeBondBefore =
         await bondingRegistry.getCiphernodeBond(operator);
-      const mock = await ethers.deployContract("MockFailingInterfold");
+      const mock = await ethers.deployContract("MockFailingInterfold", [
+        await nodeReleaseRegistry.getAddress(),
+        await bondingRegistry.getAddress(),
+      ]);
       await mock.waitForDeployment();
       await ethers.provider.send("hardhat_setCode", [
         await interfold.getAddress(),

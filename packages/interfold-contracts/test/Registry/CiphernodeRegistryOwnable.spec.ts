@@ -70,6 +70,7 @@ describe("CiphernodeRegistryOwnable", function () {
       mockDecryptionVerifier: sys.mocks.decryptionVerifier,
       mockPkVerifier: sys.mocks.pkVerifier,
       randomnessProvider,
+      nodeReleaseRegistry: sys.nodeReleaseRegistry,
       request,
     };
   }
@@ -606,6 +607,7 @@ describe("CiphernodeRegistryOwnable", function () {
         ticketToken,
         usdcToken,
         request,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
       const signers = await ethers.getSigners();
       const lateOperator = signers[5];
@@ -619,6 +621,7 @@ describe("CiphernodeRegistryOwnable", function () {
         usdcToken,
         ticketToken,
         registry,
+        nodeReleaseRegistry,
       );
       await bondingRegistry
         .connect(owner)
@@ -1278,6 +1281,7 @@ describe("CiphernodeRegistryOwnable", function () {
         ticketToken,
         usdcToken,
         request,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
       const operator4 = (await ethers.getSigners())[5]!;
       await setupOperatorForSortition(
@@ -1288,6 +1292,7 @@ describe("CiphernodeRegistryOwnable", function () {
         usdcToken,
         ticketToken,
         registry,
+        nodeReleaseRegistry,
       );
       const candidates = [operator1, operator2, operator3, operator4];
       const exitAmount = ethers.parseUnits("1", 6);

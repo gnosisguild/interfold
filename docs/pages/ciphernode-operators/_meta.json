@@ -5,6 +5,9 @@
   "running": {
     "title": "Running a Ciphernode"
   },
+  "upgrades": {
+    "title": "Ciphernode Upgrades"
+  },
   "registration": {
     "title": "Registration & Bonding"
   },

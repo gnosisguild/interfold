@@ -17,6 +17,7 @@ mod adapters;
 mod contracts;
 mod domain;
 mod messages;
+mod node_release;
 mod operator_status;
 mod repo;
 
@@ -29,5 +30,6 @@ pub use actors::*;
 pub use domain::encode_attestation_evidence;
 pub use helpers::*;
 pub use messages::*;
+pub use node_release::*;
 pub use operator_status::*;
 pub use repo::*;

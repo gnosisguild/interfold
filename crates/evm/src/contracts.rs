@@ -67,6 +67,10 @@ sol! {
             uint256 e3Id
         ) external view returns (bool canFail, uint8 reason);
 
+        function nodeReleaseRegistry() external view returns (address);
+        function bondingRegistry() external view returns (address);
+        function ciphernodeRegistry() external view returns (address);
+
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
         event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
@@ -91,6 +95,29 @@ sol! {
         error E3AlreadyFailed(uint256 e3Id);
         error E3AlreadyComplete(uint256 e3Id);
         error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
+    }
+}
+
+// ── INodeReleaseRegistry ───────────────────────────────────────────────────
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    interface INodeReleaseRegistry {
+        struct NodeRelease {
+            uint32 protocolVersion;
+            uint32 nodeGeneration;
+            bool approved;
+        }
+
+        function acknowledgeNodeRelease(bytes32 releaseId) external;
+        function getNodeRelease(bytes32 releaseId) external view returns (NodeRelease memory);
+        function requiredProtocolVersion() external view returns (uint32);
+        function requiredNodeGeneration() external view returns (uint32);
+        function recommendedNodeReleaseId() external view returns (bytes32);
+        function operatorNodeReleaseId(address operator) external view returns (bytes32);
+        function bondingRegistry() external view returns (address);
+        function ciphernodeRegistry() external view returns (address);
     }
 }
 

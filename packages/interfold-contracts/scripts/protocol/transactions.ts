@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { appendNodeReleaseTransactions } from "./nodeRelease";
 import { appendRandomnessTxs } from "./randomness";
 import { appendBondingTxs, bondingUpgradeTx } from "./tx/bonding";
 import { appendInterfoldTxs } from "./tx/interfold";
@@ -20,6 +21,7 @@ export function buildSafeTransactions(
 
   appendInterfoldTxs(txs, config, contracts, interfaces);
   appendRegistryTxs(txs, config, contracts, interfaces);
+  appendNodeReleaseTransactions(txs, contracts, interfaces);
   appendRandomnessTxs(txs, config, contracts, interfaces);
   appendTicketTxs(txs, config, contracts, interfaces);
   appendSlashingTxs(txs, config, contracts, interfaces);

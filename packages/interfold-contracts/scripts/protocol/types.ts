@@ -145,6 +145,7 @@ export interface ProtocolDeployment {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  nodeReleaseRegistry: string;
   bondedCheckpoints: string;
   /**
    * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
@@ -199,6 +200,21 @@ export interface VrfSortitionUpgradePlan {
   interfoldImplementation: string;
   lifecycleLibrary: string;
   pricingLibrary: string;
+  bondingProxy: string;
+  bondingProxyAdmin: string;
+  bondingImplementation: string;
+  bondingAssetLibrary: string;
+  bondingEligibilityLibrary: string;
+  bondingSlashingLibrary: string;
+  bondingRegistrationLibrary: string;
+  bondingOwnershipLibrary: string;
+  nodeReleaseRegistry: string;
+  nodeRelease: {
+    version: string;
+    protocolVersion: number;
+    nodeGeneration: number;
+    releaseId: string;
+  };
   randomnessProvider: string;
   randomness: RandomnessConfig;
   randomnessFlatFee: string;
@@ -253,6 +269,7 @@ export interface ProtocolContracts {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  nodeReleaseRegistry: string;
   bondedCheckpoints: string;
   /**
    * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
@@ -285,6 +302,9 @@ export interface ProtocolInterfaces {
     encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
   };
   bonding: {
+    encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
+  };
+  nodeRelease: {
     encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
   };
 }

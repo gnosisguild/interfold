@@ -1,0 +1,75 @@
+---
+title: 'Ciphernode Upgrades'
+description:
+  'How Interfold rolls out compatible, mandatory, and contract-linked ciphernode releases'
+---
+
+# Ciphernode Upgrades
+
+Interfold checks each ciphernode release against an on-chain governance policy before the node
+starts protocol actors. An outdated node fails startup and cannot become an active operator.
+
+## What the versions mean
+
+| Value            | Increase it when                                                          |
+| ---------------- | ------------------------------------------------------------------------- |
+| Release ID       | The exact release version changes                                         |
+| Protocol version | Contracts, events, cryptography, or protocol behavior become incompatible |
+| Node generation  | A node-only fix must be installed by every operator                       |
+
+Every new ciphernode binary needs its exact release ID approved before it can start. This is a small
+governance policy update, not a proxy upgrade. An ordinary compatible release is approved and
+recommended without pausing the protocol. A compatible contract-only fix does not require a new node
+release or a version-policy change.
+
+The P2P network also includes the protocol version in its gossip, discovery, and synchronization
+names. Nodes on incompatible protocol versions reject each other. Compatible patch releases use the
+same protocol version and stay connected.
+
+Treat a node bug that affects network parsing, message meaning, or peer safety as an incompatible
+protocol change. A node-generation cutover excludes stale nodes from new committees, but it does not
+place otherwise compatible releases on separate P2P networks.
+
+## Compatible rolling release
+
+Governance can approve and recommend a backward-compatible release. Operators then restart at their
+own pace. Both the old and new approved releases can participate because they follow the same
+protocol. Restart one operator at a time and keep enough current committee members online to retain
+the threshold.
+
+## Mandatory release
+
+For a security fix or incompatible change, governance uses a clean cutover:
+
+1. Pause new E3 requests.
+2. Wait for all active E3s and committee obligations to finish.
+3. Approve the new release and raise the required version.
+4. Upgrade at least one configured bootstrap peer.
+5. Restart every ciphernode with the new release.
+6. Wait until enough upgraded nodes are active to fill the largest committee and can discover one
+   another.
+7. Resume requests.
+
+Raising the requirement immediately marks every previous operator status inactive. The new binary
+checks the policy, acknowledges its release on-chain, and refreshes its operator status during
+startup. Old nodes cannot enter new committees, so they cannot hold a new computation hostage.
+
+## Operator procedure
+
+Keep the node stopped, pull the exact versioned image, run the offline validation command from the
+[running guide](/ciphernode-operators/running#run-the-container), and start the node. A successful
+startup log includes `Ciphernode release is accepted`. If the release is not approved or is below
+the required version, leave the node stopped and contact the protocol team.
+
+Release acknowledgement prevents accidental use of stale software. It is not remote attestation of
+the executable. Interfold still relies on threshold cryptography, proof verification, committee
+checks, and slashing to handle malicious operators.
+
+The active-operator count proves contract eligibility, not that every process is online or mutually
+reachable. Confirm node health and P2P connectivity before governance resumes requests. A mandatory
+cutover can also be delayed by an active E3 or unreleased committee because the policy cannot change
+until both are terminal.
+
+Required versions never decrease. A rollback is shipped as another approved release that raises the
+applicable version and never lowers the other one, even when it restores earlier code or contract
+behavior.

@@ -40,12 +40,14 @@ import {
   MockPkVerifier__factory as MockPkVerifierFactory,
   MockRandomnessProvider__factory as MockRandomnessProviderFactory,
   MockUSDC__factory as MockUSDCFactory,
+  NodeReleaseRegistry__factory as NodeReleaseRegistryFactory,
   SlashingManager__factory as SlashingManagerFactory,
 } from "../../types";
 import type { E3RefundManager } from "../../types/contracts/E3RefundManager";
 import type { IInterfold, Interfold } from "../../types/contracts/Interfold";
 import type { BondingRegistry } from "../../types/contracts/registry/BondingRegistry";
 import type { CiphernodeRegistryOwnable } from "../../types/contracts/registry/CiphernodeRegistryOwnable";
+import type { NodeReleaseRegistry } from "../../types/contracts/registry/NodeReleaseRegistry";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry";
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
@@ -189,6 +191,7 @@ export interface InterfoldSystem {
   /** Populated only when `useMockCiphernodeRegistry: true`. */
   mockCiphernodeRegistry?: MockCiphernodeRegistry;
   bondingRegistry: BondingRegistry;
+  nodeReleaseRegistry: NodeReleaseRegistry;
   slashingManager: SlashingManager;
   e3RefundManager: E3RefundManager;
   // Tokens
@@ -468,6 +471,17 @@ export async function deployInterfoldSystem(
   await registryForWiring.setBondingRegistry(
     await bondingRegistry.getAddress(),
   );
+
+  const nodeReleaseRegistry = await new NodeReleaseRegistryFactory(
+    owner,
+  ).deploy(ownerAddress, bondingRegistryAddress, effectiveRegistryAddress);
+  await nodeReleaseRegistry.waitForDeployment();
+  const fixtureReleaseId = ethers.id("interfold.node.release:v1:test");
+  await interfold.setNodeReleaseRegistry(
+    await nodeReleaseRegistry.getAddress(),
+  );
+  await nodeReleaseRegistry.approveNodeRelease(fixtureReleaseId, 1, 1);
+  await nodeReleaseRegistry.setRequiredNodeRelease(fixtureReleaseId);
   let randomnessProvider: MockRandomnessProvider | undefined;
   if (!mockCiphernodeRegistry) {
     randomnessProvider = await new MockRandomnessProviderFactory(owner).deploy(
@@ -584,6 +598,7 @@ export async function deployInterfoldSystem(
         // helper still completes successfully; real specs use the owned
         // registry instance.
         (mockCiphernodeRegistry ?? ciphernodeRegistry) as any,
+        nodeReleaseRegistry,
       );
     }
     await mine(1);
@@ -624,6 +639,7 @@ export async function deployInterfoldSystem(
     ciphernodeRegistry,
     mockCiphernodeRegistry,
     bondingRegistry,
+    nodeReleaseRegistry,
     slashingManager,
     e3RefundManager,
     ciphernodeBondToken,
