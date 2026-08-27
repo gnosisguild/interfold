@@ -10,6 +10,7 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
+import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 import {
     IProtocolDependencyView
 } from "../interfaces/IProtocolDependencyView.sol";
@@ -97,6 +98,9 @@ library InterfoldLifecycle {
         IProtocolDependencyView refundView = IProtocolDependencyView(
             refundManagerAddress
         );
+        INodeReleaseRegistry nodeReleaseRegistry = INodeReleaseRegistry(
+            nodeReleaseRegistryAddress
+        );
         if (
             registryAddress.code.length == 0 ||
             bondingAddress.code.length == 0 ||
@@ -115,6 +119,9 @@ library InterfoldLifecycle {
             slashView.e3RefundManager() != refundManagerAddress ||
             refundView.interfold() != address(this) ||
             refundView.bondingRegistry() != bondingAddress ||
+            address(nodeReleaseRegistry.bondingRegistry()) != bondingAddress ||
+            address(nodeReleaseRegistry.ciphernodeRegistry()) !=
+            registryAddress ||
             registry.numCiphernodes() != bonding.numRegisteredOperators()
         ) revert IInterfold.DependencyConfigurationMismatch();
     }

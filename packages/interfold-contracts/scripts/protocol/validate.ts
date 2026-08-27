@@ -207,11 +207,6 @@ export async function actionValidate(): Promise<void> {
       nodeReleaseRegistry.requiredNodeGeneration(),
       nodeRelease.nodeGeneration,
     ],
-    [
-      "nodeReleaseRegistry.recommendedNodeReleaseId",
-      nodeReleaseRegistry.recommendedNodeReleaseId(),
-      nodeRelease.releaseId,
-    ],
     ["interfold.feeToken", interfold.feeToken(), config.feeToken],
     [
       "interfold.feeTokenDecimals",
@@ -401,16 +396,6 @@ export async function actionValidate(): Promise<void> {
     const actual = await actualPromise;
     assertEqual(label, actual, expected);
   }
-
-  await assertStruct(
-    "nodeReleaseRegistry.currentRelease",
-    nodeReleaseRegistry.getNodeRelease(nodeRelease.releaseId),
-    {
-      protocolVersion: nodeRelease.protocolVersion,
-      nodeGeneration: nodeRelease.nodeGeneration,
-      approved: true,
-    },
-  );
 
   await assertVrfSubscription(ethers, config, deployment.randomnessProvider);
   console.log("  ok randomnessProvider subscription consumer");

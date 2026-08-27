@@ -200,12 +200,48 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
   ) {
     throw new Error("BondingRegistry libraries were not deployed");
   }
-  const nodeReleaseDeployment = await deployNodeReleaseRegistry(
-    ethers,
-    config.protocolOwner,
-    config.bondingRegistryProxy,
-    deployment.ciphernodeRegistry,
-  );
+  let nodeReleaseDeployment: { address: string; interface: any };
+  if (deployment.nodeReleaseRegistry) {
+    await requireContract(
+      ethers.provider,
+      deployment.nodeReleaseRegistry,
+      "recorded node release registry",
+    );
+    const existingNodeRelease = await ethers.getContractAt(
+      "NodeReleaseRegistry",
+      deployment.nodeReleaseRegistry,
+    );
+    for (const [label, actual, expected] of [
+      ["owner", await existingNodeRelease.owner(), config.protocolOwner],
+      [
+        "BondingRegistry",
+        await existingNodeRelease.bondingRegistry(),
+        config.bondingRegistryProxy,
+      ],
+      [
+        "CiphernodeRegistry",
+        await existingNodeRelease.ciphernodeRegistry(),
+        deployment.ciphernodeRegistry,
+      ],
+    ] as const) {
+      if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+        throw new Error(
+          `Recorded NodeReleaseRegistry ${label} mismatch: expected ${expected}, got ${actual}`,
+        );
+      }
+    }
+    nodeReleaseDeployment = {
+      address: deployment.nodeReleaseRegistry,
+      interface: existingNodeRelease.interface,
+    };
+  } else {
+    nodeReleaseDeployment = await deployNodeReleaseRegistry(
+      ethers,
+      config.protocolOwner,
+      config.bondingRegistryProxy,
+      deployment.ciphernodeRegistry,
+    );
+  }
   const nodeRelease = currentNodeRelease();
   const randomness = await deployRandomnessProvider(
     ethers,
@@ -238,17 +274,9 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
     ),
     safeTx(
       nodeReleaseDeployment.address,
-      nodeReleaseDeployment.interface.encodeFunctionData("approveNodeRelease", [
-        nodeRelease.releaseId,
-        nodeRelease.protocolVersion,
-        nodeRelease.nodeGeneration,
-      ]),
-    ),
-    safeTx(
-      nodeReleaseDeployment.address,
       nodeReleaseDeployment.interface.encodeFunctionData(
         "setRequiredNodeRelease",
-        [nodeRelease.releaseId],
+        [nodeRelease.protocolVersion, nodeRelease.nodeGeneration],
       ),
     ),
     safeTx(

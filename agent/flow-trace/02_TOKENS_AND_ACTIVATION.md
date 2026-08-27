@@ -231,7 +231,7 @@ A completed ban or unban refreshes the affected registered operator immediately.
 
 A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
 drains the protocol, raises the required release policy, and resets the active count to zero.
-Starting the approved binary acknowledges its release and refreshes the operator. See
+Starting the compatible binary acknowledges its release and refreshes the operator. See
 [07_UPGRADES.md](07_UPGRADES.md).
 
 ---
@@ -632,8 +632,9 @@ doing nothing.
 
 ```text
 active = registered
-  AND approvedRelease(operator).protocolVersion == requiredProtocolVersion
-  AND approvedRelease(operator).nodeGeneration >= requiredNodeGeneration
+  AND nodeReleaseRegistry.isNodeReleaseReady(operator) == true
+      // The operator's acknowledged protocolVersion must equal the required value.
+      // The operator's acknowledged nodeGeneration must meet the required minimum.
   AND ciphernodeBond >= ceil(requiredCiphernodeBond * ciphernodeBondActiveBps / 10000)
   AND (ticketToken.balanceOf(operator) / ticketPrice) >= minTicketBalance
 ```

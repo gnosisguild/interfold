@@ -74,16 +74,9 @@ export function appendNodeReleaseTransactions(
     ),
     safeTx(
       contracts.nodeReleaseRegistry,
-      interfaces.nodeRelease.encodeFunctionData("approveNodeRelease", [
-        release.releaseId,
+      interfaces.nodeRelease.encodeFunctionData("setRequiredNodeRelease", [
         release.protocolVersion,
         release.nodeGeneration,
-      ]),
-    ),
-    safeTx(
-      contracts.nodeReleaseRegistry,
-      interfaces.nodeRelease.encodeFunctionData("setRequiredNodeRelease", [
-        release.releaseId,
       ]),
     ),
   );

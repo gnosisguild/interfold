@@ -177,28 +177,9 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
       await nodeRelease.requiredNodeGeneration(),
       plan.nodeRelease.nodeGeneration,
     ],
-    [
-      "nodeRelease.recommendedNodeReleaseId",
-      await nodeRelease.recommendedNodeReleaseId(),
-      plan.nodeRelease.releaseId,
-    ],
   ] as const) {
     assertEqual(label, actual, expected);
   }
-  const approvedRelease = await nodeRelease.getNodeRelease(
-    plan.nodeRelease.releaseId,
-  );
-  assertEqual(
-    "nodeRelease.approved.protocolVersion",
-    approvedRelease.protocolVersion,
-    plan.nodeRelease.protocolVersion,
-  );
-  assertEqual(
-    "nodeRelease.approved.nodeGeneration",
-    approvedRelease.nodeGeneration,
-    plan.nodeRelease.nodeGeneration,
-  );
-  assertEqual("nodeRelease.approved", approvedRelease.approved, true);
   console.log(
     `  ok release-ready active operators: ${await bonding.numActiveOperators()}`,
   );

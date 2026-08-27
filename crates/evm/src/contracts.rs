@@ -104,18 +104,16 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     interface INodeReleaseRegistry {
-        struct NodeRelease {
+        struct OperatorNodeRelease {
+            bytes32 releaseId;
             uint32 protocolVersion;
             uint32 nodeGeneration;
-            bool approved;
         }
 
-        function acknowledgeNodeRelease(bytes32 releaseId) external;
-        function getNodeRelease(bytes32 releaseId) external view returns (NodeRelease memory);
+        function acknowledgeNodeRelease(bytes32 releaseId, uint32 protocolVersion, uint32 nodeGeneration) external;
         function requiredProtocolVersion() external view returns (uint32);
         function requiredNodeGeneration() external view returns (uint32);
-        function recommendedNodeReleaseId() external view returns (bytes32);
-        function operatorNodeReleaseId(address operator) external view returns (bytes32);
+        function operatorNodeRelease(address operator) external view returns (OperatorNodeRelease memory);
         function bondingRegistry() external view returns (address);
         function ciphernodeRegistry() external view returns (address);
     }

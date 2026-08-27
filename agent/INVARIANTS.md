@@ -164,8 +164,8 @@ design citation alone does not establish current runtime behavior.
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
-- Operator active ⇔ its acknowledged release is approved, has exactly the required
-  `protocolVersion`, and meets the minimum `nodeGeneration` AND `registered` AND
+- Operator active ⇔ its acknowledged release has exactly the required `protocolVersion`, meets the
+  minimum `nodeGeneration`, AND `registered` AND
   `ciphernodeBond >= requiredCiphernodeBond × ciphernodeBondActiveBps/10000` (default 80%) AND
   `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`; `flow-trace/01`, `02`
 - `minTicketBalance` must remain nonzero. — `flow-trace/02`
@@ -178,8 +178,8 @@ design citation alone does not establish current runtime behavior.
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
-  A node becomes active again only after it acknowledges an approved compatible release. Never lower
-  either required counter; roll back code under a new release ID and a higher generation. —
+  A node becomes active again only after it acknowledges compatible values. Never lower either
+  required counter; roll back code under a new release ID and a higher generation. —
   `NodeReleaseRegistry.sol`; `flow-trace/07`
 - **Release acknowledgement is not remote attestation:** it prevents accidental stale software
   participation. Byzantine safety still depends on threshold cryptography, proof verification,
@@ -488,9 +488,9 @@ design citation alone does not establish current runtime behavior.
 ### Release compatibility
 
 - Before EVM readers and protocol actors start, each enabled ciphernode chain reads the
-  governance-selected `NodeReleaseRegistry`, verifies that the compiled release ID is approved and
-  compatible, and acknowledges it on-chain. A missing controller, unapproved release, metadata
-  mismatch, or stale protocol/generation is a startup error. — `e3_evm::node_release`;
+  governance-selected `NodeReleaseRegistry`, verifies that the compiled compatibility values meet
+  the required policy, and acknowledges its exact release ID and values on-chain. A missing
+  controller or stale protocol/generation is a startup error. — `e3_evm::node_release`;
   `flow-trace/07`
 - `protocol_version` covers incompatible contracts, events, cryptography, protocol behavior, and
   scopes every P2P protocol name. Nodes on different protocol versions do not discover, gossip, or

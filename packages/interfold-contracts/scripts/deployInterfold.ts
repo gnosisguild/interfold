@@ -478,15 +478,10 @@ export const deployInterfold = async (
     "interfold.setNodeReleaseRegistry",
   );
   await send(
-    nodeReleaseRegistry.approveNodeRelease(
-      nodeRelease.releaseId,
+    nodeReleaseRegistry.setRequiredNodeRelease(
       nodeRelease.protocolVersion,
       nodeRelease.nodeGeneration,
     ),
-    "nodeReleaseRegistry.approveNodeRelease",
-  );
-  await send(
-    nodeReleaseRegistry.setRequiredNodeRelease(nodeRelease.releaseId),
     "nodeReleaseRegistry.setRequiredNodeRelease",
   );
 

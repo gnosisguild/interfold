@@ -92,13 +92,20 @@ describe("BondingRegistry", function () {
     await bondingRegistry
       .connect(operatorKey2)
       .setBondOwner(operator2OwnerAddress);
-    const releaseId = await nodeReleaseRegistry.recommendedNodeReleaseId();
     await nodeReleaseRegistry
       .connect(operatorKey1)
-      .acknowledgeNodeRelease(releaseId);
+      .acknowledgeNodeRelease(
+        ethers.id("interfold.node.release:v1:test"),
+        1,
+        1,
+      );
     await nodeReleaseRegistry
       .connect(operatorKey2)
-      .acknowledgeNodeRelease(releaseId);
+      .acknowledgeNodeRelease(
+        ethers.id("interfold.node.release:v1:test"),
+        1,
+        1,
+      );
 
     return {
       bondingRegistry,

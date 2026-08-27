@@ -13,9 +13,9 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { INodeReleaseManager } from "../interfaces/INodeReleaseManager.sol";
 import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 
-/// @notice Governance policy for ciphernode software releases.
-/// @dev Release acknowledgement prevents accidental stale participation. It does not prove which
-///      binary a malicious operator runs.
+/// @notice Governance policy for ciphernode compatibility versions.
+/// @dev Acknowledgement prevents accidental stale participation. It does not prove which binary a
+///      malicious operator runs.
 contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
     // solhint-disable-next-line immutable-vars-naming
     IBondingRegistry public immutable bondingRegistry;
@@ -24,10 +24,9 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
 
     uint32 public requiredProtocolVersion;
     uint32 public requiredNodeGeneration;
-    bytes32 public recommendedNodeReleaseId;
 
-    mapping(bytes32 releaseId => NodeRelease release) private _releases;
-    mapping(address operator => bytes32 releaseId) public operatorNodeReleaseId;
+    mapping(address operator => OperatorNodeRelease release)
+        private _operatorNodeReleases;
 
     constructor(
         address owner,
@@ -48,120 +47,74 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
         revert RenounceOwnershipDisabled();
     }
 
-    function approveNodeRelease(
-        bytes32 releaseId,
+    function setRequiredNodeRelease(
         uint32 protocolVersion,
         uint32 nodeGeneration
     ) external onlyOwner {
-        if (
-            releaseId == bytes32(0) ||
-            protocolVersion == 0 ||
-            nodeGeneration == 0
-        ) revert InvalidNodeRelease();
-        NodeRelease storage release = _releases[releaseId];
-        if (
-            release.protocolVersion != 0 &&
-            (release.protocolVersion != protocolVersion ||
-                release.nodeGeneration != nodeGeneration)
-        ) revert NodeReleaseMetadataMismatch(releaseId);
-        if (release.protocolVersion != 0 && !release.approved) {
-            assertUpgradeWindow();
+        if (protocolVersion == 0 || nodeGeneration == 0) {
+            revert InvalidNodeRelease();
         }
-        release.protocolVersion = protocolVersion;
-        release.nodeGeneration = nodeGeneration;
-        release.approved = true;
-        emit NodeReleaseApprovalUpdated(
-            releaseId,
-            protocolVersion,
-            nodeGeneration,
-            true
-        );
-    }
-
-    function revokeNodeRelease(bytes32 releaseId) external onlyOwner {
         assertUpgradeWindow();
-        NodeRelease storage release = _releases[releaseId];
-        if (!release.approved) revert NodeReleaseNotApproved(releaseId);
-        release.approved = false;
-        if (recommendedNodeReleaseId == releaseId) {
-            recommendedNodeReleaseId = bytes32(0);
-            emit RecommendedNodeReleaseUpdated(bytes32(0));
-        }
-        bondingRegistry.refreshOperatorStatus(address(0));
-        emit NodeReleaseApprovalUpdated(
-            releaseId,
-            release.protocolVersion,
-            release.nodeGeneration,
-            false
-        );
-    }
-
-    function setRequiredNodeRelease(bytes32 releaseId) external onlyOwner {
-        assertUpgradeWindow();
-        NodeRelease storage release = _releases[releaseId];
-        if (!release.approved) revert NodeReleaseNotApproved(releaseId);
         uint32 previousProtocolVersion = requiredProtocolVersion;
         uint32 previousNodeGeneration = requiredNodeGeneration;
         if (
-            release.protocolVersion < previousProtocolVersion ||
-            release.nodeGeneration < previousNodeGeneration ||
-            (release.protocolVersion == previousProtocolVersion &&
-                release.nodeGeneration == previousNodeGeneration)
+            protocolVersion < previousProtocolVersion ||
+            nodeGeneration < previousNodeGeneration ||
+            (protocolVersion == previousProtocolVersion &&
+                nodeGeneration == previousNodeGeneration)
         ) revert NodeReleasePolicyRegression();
-        requiredProtocolVersion = release.protocolVersion;
-        requiredNodeGeneration = release.nodeGeneration;
-        recommendedNodeReleaseId = releaseId;
+        requiredProtocolVersion = protocolVersion;
+        requiredNodeGeneration = nodeGeneration;
         bondingRegistry.refreshOperatorStatus(address(0));
         emit RequiredNodeReleaseUpdated(
             previousProtocolVersion,
             previousNodeGeneration,
-            release.protocolVersion,
-            release.nodeGeneration,
-            releaseId
+            protocolVersion,
+            nodeGeneration
         );
-        emit RecommendedNodeReleaseUpdated(releaseId);
     }
 
-    function setRecommendedNodeRelease(bytes32 releaseId) external onlyOwner {
-        if (releaseId != bytes32(0)) {
-            NodeRelease storage release = _releases[releaseId];
-            if (!release.approved) revert NodeReleaseNotApproved(releaseId);
-            if (
-                release.protocolVersion != requiredProtocolVersion ||
-                release.nodeGeneration < requiredNodeGeneration
-            ) revert NodeReleaseNotCompatible(releaseId);
+    function acknowledgeNodeRelease(
+        bytes32 releaseId,
+        uint32 protocolVersion,
+        uint32 nodeGeneration
+    ) external {
+        if (
+            releaseId == bytes32(0) ||
+            protocolVersion == 0 ||
+            nodeGeneration == 0
+        ) {
+            revert InvalidNodeRelease();
         }
-        recommendedNodeReleaseId = releaseId;
-        emit RecommendedNodeReleaseUpdated(releaseId);
-    }
-
-    function acknowledgeNodeRelease(bytes32 releaseId) external {
-        if (!_releases[releaseId].approved) {
-            revert NodeReleaseNotApproved(releaseId);
-        }
-        operatorNodeReleaseId[msg.sender] = releaseId;
-        emit OperatorNodeReleaseAcknowledged(msg.sender, releaseId);
+        _operatorNodeReleases[msg.sender] = OperatorNodeRelease(
+            releaseId,
+            protocolVersion,
+            nodeGeneration
+        );
+        emit OperatorNodeReleaseAcknowledged(
+            msg.sender,
+            releaseId,
+            protocolVersion,
+            nodeGeneration
+        );
         if (bondingRegistry.isRegistered(msg.sender)) {
             bondingRegistry.refreshOperatorStatus(msg.sender);
         }
     }
 
-    function getNodeRelease(
-        bytes32 releaseId
-    ) external view returns (NodeRelease memory) {
-        return _releases[releaseId];
-    }
-
     function isNodeReleaseReady(address operator) public view returns (bool) {
-        NodeRelease storage release = _releases[
-            operatorNodeReleaseId[operator]
-        ];
+        OperatorNodeRelease storage release = _operatorNodeReleases[operator];
         return
             requiredProtocolVersion != 0 &&
             requiredNodeGeneration != 0 &&
-            release.approved &&
             release.protocolVersion == requiredProtocolVersion &&
             release.nodeGeneration >= requiredNodeGeneration;
+    }
+
+    function operatorNodeRelease(
+        address operator
+    ) external view returns (OperatorNodeRelease memory) {
+        return _operatorNodeReleases[operator];
     }
 
     function assertUpgradeWindow() public view {

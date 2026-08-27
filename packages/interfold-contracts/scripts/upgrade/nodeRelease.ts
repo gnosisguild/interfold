@@ -119,7 +119,18 @@ async function prepare(): Promise<void> {
   if (BigInt(release.nodeGeneration) < requiredNodeGeneration) {
     throw new Error("nodeGeneration cannot move backwards");
   }
-  if (mandatory && BigInt(release.nodeGeneration) === requiredNodeGeneration) {
+  if (!mandatory) {
+    if (BigInt(release.nodeGeneration) !== requiredNodeGeneration) {
+      throw new Error(
+        "A node generation change is mandatory; run this command with --mandatory",
+      );
+    }
+    console.log(
+      `Ciphernode ${release.version} is compatible with protocol ${release.protocolVersion}, generation ${release.nodeGeneration}; no governance transaction is required`,
+    );
+    return;
+  }
+  if (BigInt(release.nodeGeneration) === requiredNodeGeneration) {
     throw new Error(
       "Increase node_generation before preparing a mandatory node-only release",
     );
@@ -140,26 +151,17 @@ async function prepare(): Promise<void> {
   const txs: SafeTransaction[] = [
     safeTx(
       deployment.nodeReleaseRegistry,
-      releases.interface.encodeFunctionData("approveNodeRelease", [
-        release.releaseId,
+      releases.interface.encodeFunctionData("setRequiredNodeRelease", [
         release.protocolVersion,
         release.nodeGeneration,
       ]),
-    ),
-    safeTx(
-      deployment.nodeReleaseRegistry,
-      releases.interface.encodeFunctionData(
-        mandatory ? "setRequiredNodeRelease" : "setRecommendedNodeRelease",
-        [release.releaseId],
-      ),
     ),
   ];
   const rawBatchFile = batchPath(config.name, "upgrade");
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} ciphernode release ${release.version}`;
-  batch.meta.description = mandatory
-    ? "Require the approved ciphernode release after the protocol was paused and drained."
-    : "Approve and recommend a backward-compatible ciphernode release.";
+  batch.meta.description =
+    "Raise the required ciphernode generation after the protocol was paused and drained.";
   writeJson(rawBatchFile, batch);
 
   let safeBuilderFile: string | undefined;
@@ -187,7 +189,7 @@ async function prepare(): Promise<void> {
   };
   writeJson(planPath(config.name), plan);
   console.log(
-    `${mandatory ? "Mandatory" : "Recommended"} ciphernode release prepared: ${release.version} (${release.releaseId})`,
+    `Mandatory ciphernode release prepared: ${release.version} (${release.releaseId})`,
   );
 }
 
@@ -196,7 +198,7 @@ async function resume(): Promise<void> {
     await protocolContracts();
   const plan = readJson<NodeReleasePlan>(planPath(config.name));
   if (!plan.mandatory) {
-    throw new Error("A recommended release does not pause the protocol");
+    throw new Error("Only a mandatory release has a resume step");
   }
   if (
     plan.nodeReleaseRegistry.toLowerCase() !==
@@ -214,16 +216,6 @@ async function resume(): Promise<void> {
       BigInt(plan.release.nodeGeneration)
   ) {
     throw new Error("Live required release does not match the prepared plan");
-  }
-  const approved = await releases.getNodeRelease(plan.release.releaseId);
-  if (
-    !approved.approved ||
-    approved.protocolVersion !== BigInt(plan.release.protocolVersion) ||
-    approved.nodeGeneration !== BigInt(plan.release.nodeGeneration)
-  ) {
-    throw new Error(
-      "Prepared release is not approved with the expected metadata",
-    );
   }
   const minimumActive = config.interfold.committeeThresholds.reduce(
     (maximum, threshold) => {

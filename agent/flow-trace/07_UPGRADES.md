@@ -14,23 +14,20 @@ discover, or synchronize with each other. P2P encoding remains separate. Increas
 `GOSSIP_WIRE_MAJOR` or `SYNC_WIRE_MAJOR` when the corresponding wire format becomes incompatible
 within the same protocol version.
 
-## Recommended rolling release
+## Compatible rolling release
 
 ```text
 build backward-compatible release
-  -> governance approves releaseId
-  -> governance marks it recommended
+  -> keep protocol_version and node_generation unchanged
+  -> publish the versioned binary without a governance transaction
   -> operators restart one at a time without dropping an active committee below threshold
-  -> new node verifies policy and acknowledges releaseId
-  -> old approved compatible nodes remain eligible
+  -> new node verifies the required counters and acknowledges its releaseId and counters
+  -> old compatible nodes remain eligible
 ```
 
-Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepare` to build the
-governance batch. Do not change `protocol_version` in this path.
-
-Every new binary requires this approval because startup checks its exact `releaseId`. This is a
-release-policy transaction, not a contract implementation upgrade. A compatible contract-only change
-does not require a new release entry.
+Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepare` to confirm that
+the release needs no governance transaction. Do not change either compatibility counter in this
+path. A compatible contract-only change also needs no node policy change.
 
 ## Mandatory node-only release
 
@@ -38,7 +35,7 @@ does not require a new release entry.
 increase node_generation and build release
   -> pause new E3 requests
   -> wait for activeE3Count == 0 and unreleasedCommitteeCount == 0
-  -> governance approves and requires the release
+  -> governance raises the required node generation
   -> BondingRegistry invalidates all active statuses in O(1)
   -> old nodes cannot become active or enter new committees
   -> upgraded nodes start, verify policy, acknowledge, and refresh themselves
@@ -56,10 +53,10 @@ Prepare with `upgrade:node-release --action prepare --mandatory`. After operator
 ## Contract or protocol upgrade
 
 Increase `protocol_version`. Pause and drain first. One governance proposal must upgrade the
-contracts, approve the matching release, and raise the required protocol version. Restart nodes
-after that proposal executes. Upgrade at least one configured bootstrap peer before the remaining
-operators. Resume only after the on-chain active count can fill every configured committee and the
-new-version peers can discover each other.
+contracts and raise the required protocol version. Restart nodes after that proposal executes.
+Upgrade at least one configured bootstrap peer before the remaining operators. Resume only after the
+on-chain active count can fill every configured committee and the new-version peers can discover
+each other.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
@@ -69,8 +66,8 @@ both `Interfold` and `BondingRegistry`.
 The required counters never decrease. For a bad node-only release, pause, drain, build the previous
 code as a new release, and increase `node_generation`. For a contract or protocol rollback, restore
 the safe behavior under a new, higher `protocol_version` and do not lower `node_generation`; do not
-reuse the old version numbers. Approve and require that release before resuming. This makes the
-rollback explicit and prevents nodes from silently returning to an older vulnerable release.
+reuse the old version numbers. Raise the required counters before resuming. This makes the rollback
+explicit and prevents nodes from silently returning to an older vulnerable release.
 
 Release acknowledgement is operator self-attestation, not proof of the running executable. It
 prevents accidental mixed deployments. Threshold cryptography and on-chain verification remain the

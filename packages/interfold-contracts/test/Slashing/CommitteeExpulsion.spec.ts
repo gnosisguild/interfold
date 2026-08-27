@@ -123,7 +123,9 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       await nodeReleaseRegistry
         .connect(operator)
         .acknowledgeNodeRelease(
-          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+          ethers.id("interfold.node.release:v1:test"),
+          1,
+          1,
         );
       await foldToken
         .connect(owner)

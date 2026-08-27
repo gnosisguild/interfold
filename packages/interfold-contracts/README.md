@@ -116,11 +116,11 @@ ciphernode reject other chain IDs. Arbitrum support requires a later contract
 and node upgrade.
 
 Ciphernode releases use the on-chain `NodeReleaseRegistry`. A compatible rolling
-release is prepared with `pnpm upgrade:node-release --action prepare`. For a
-mandatory node-only fix, increase `node_generation`, pause and drain the
-protocol, then add `--mandatory`. After enough upgraded nodes start and
-acknowledge the release, generate the checked unpause transaction with
-`pnpm upgrade:node-release --action resume`.
+release keeps both compatibility values and needs no governance transaction. For
+a mandatory node-only fix, increase `node_generation`, pause and drain the
+protocol, then run `pnpm upgrade:node-release --action prepare --mandatory`.
+After enough upgraded nodes acknowledge the release, generate the checked
+unpause transaction with `pnpm upgrade:node-release --action resume`.
 
 If a request reaches its randomness deadline without a usable response, the
 Registry clears the active provider. This blocks every new E3 request and stops

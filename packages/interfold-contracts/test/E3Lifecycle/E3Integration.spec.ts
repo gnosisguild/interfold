@@ -189,7 +189,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await nodeReleaseRegistry
         .connect(operator)
         .acknowledgeNodeRelease(
-          await nodeReleaseRegistry.recommendedNodeReleaseId(),
+          ethers.id("interfold.node.release:v1:test"),
+          1,
+          1,
         );
       await foldToken
         .connect(computeProvider)

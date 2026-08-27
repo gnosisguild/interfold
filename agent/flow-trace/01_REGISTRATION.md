@@ -166,9 +166,9 @@ order is bond, register, tickets.
 The node's address—not the bond owner's—is inserted into the IMT, owns the tFOLD balance, and
 remains the committee and slashing identity.
 
-The ciphernode checks and acknowledges its approved release during startup. Registration and ticket
-funding may finish first, but the operator remains inactive until that acknowledgement meets the
-required protocol version and node generation. See [07_UPGRADES.md](07_UPGRADES.md).
+The ciphernode checks and acknowledges its compatibility values during startup. Registration and
+ticket funding may finish first, but the operator remains inactive until that acknowledgement meets
+the required protocol version and node generation. See [07_UPGRADES.md](07_UPGRADES.md).
 
 ---
 

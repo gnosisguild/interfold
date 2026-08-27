@@ -28,9 +28,8 @@ describe("NodeReleaseRegistry", function () {
     const nextRelease = ethers.id("interfold.node.release:v1:next");
 
     expect(await bondingRegistry.isActive(operator)).to.equal(true);
-    await nodeReleaseRegistry.approveNodeRelease(nextRelease, 1, 2);
     await interfold.setRequestsPaused(true);
-    await nodeReleaseRegistry.setRequiredNodeRelease(nextRelease);
+    await nodeReleaseRegistry.setRequiredNodeRelease(1, 2);
 
     expect(await bondingRegistry.isActive(operator)).to.equal(false);
     expect(await bondingRegistry.numActiveOperators()).to.equal(0);
@@ -40,24 +39,28 @@ describe("NodeReleaseRegistry", function () {
 
     await nodeReleaseRegistry
       .connect(operator1!)
-      .acknowledgeNodeRelease(nextRelease);
+      .acknowledgeNodeRelease(nextRelease, 1, 2);
     expect(await bondingRegistry.isActive(operator)).to.equal(true);
     expect(await bondingRegistry.numActiveOperators()).to.equal(1);
   });
 
-  it("keeps compatible nodes active during a recommended rollout", async function () {
+  it("accepts a compatible patch without a governance transaction", async function () {
     const { bondingRegistry, nodeReleaseRegistry, operator1 } =
       await loadFixture(setup);
     const operator = await operator1!.getAddress();
-    const recommended = ethers.id("interfold.node.release:v1:recommended");
+    const patchRelease = ethers.id("interfold.node.release:v1:patch");
 
-    await nodeReleaseRegistry.approveNodeRelease(recommended, 1, 1);
-    await nodeReleaseRegistry.setRecommendedNodeRelease(recommended);
+    await nodeReleaseRegistry
+      .connect(operator1!)
+      .acknowledgeNodeRelease(patchRelease, 1, 1);
 
     expect(await bondingRegistry.isActive(operator)).to.equal(true);
     expect(await nodeReleaseRegistry.isNodeReleaseReady(operator)).to.equal(
       true,
     );
+    expect(
+      (await nodeReleaseRegistry.operatorNodeRelease(operator)).releaseId,
+    ).to.equal(patchRelease);
   });
 
   it("does not admit a future protocol release before its cutover", async function () {
@@ -66,37 +69,28 @@ describe("NodeReleaseRegistry", function () {
     const operator = await operator1!.getAddress();
     const futureProtocol = ethers.id("interfold.node.release:v1:future");
 
-    await nodeReleaseRegistry.approveNodeRelease(futureProtocol, 2, 1);
     await nodeReleaseRegistry
       .connect(operator1!)
-      .acknowledgeNodeRelease(futureProtocol);
+      .acknowledgeNodeRelease(futureProtocol, 2, 1);
 
     expect(await nodeReleaseRegistry.isNodeReleaseReady(operator)).to.equal(
       false,
     );
     expect(await bondingRegistry.isActive(operator)).to.equal(false);
-    await expect(nodeReleaseRegistry.setRecommendedNodeRelease(futureProtocol))
-      .to.be.revertedWithCustomError(
-        nodeReleaseRegistry,
-        "NodeReleaseNotCompatible",
-      )
-      .withArgs(futureProtocol);
-
     await interfold.setRequestsPaused(true);
-    await nodeReleaseRegistry.setRequiredNodeRelease(futureProtocol);
+    await nodeReleaseRegistry.setRequiredNodeRelease(2, 1);
+    expect(await bondingRegistry.isActive(operator)).to.equal(false);
+
     await nodeReleaseRegistry
       .connect(operator1!)
-      .acknowledgeNodeRelease(futureProtocol);
+      .acknowledgeNodeRelease(futureProtocol, 2, 1);
     expect(await bondingRegistry.isActive(operator)).to.equal(true);
   });
 
   it("requires a paused and drained cutover", async function () {
     const { nodeReleaseRegistry } = await loadFixture(setup);
-    const nextRelease = ethers.id("interfold.node.release:v1:required");
-    await nodeReleaseRegistry.approveNodeRelease(nextRelease, 2, 2);
-
     await expect(
-      nodeReleaseRegistry.setRequiredNodeRelease(nextRelease),
+      nodeReleaseRegistry.setRequiredNodeRelease(2, 2),
     ).to.be.revertedWithCustomError(
       nodeReleaseRegistry,
       "NodeReleasePolicyRequiresPause",
@@ -114,17 +108,42 @@ describe("NodeReleaseRegistry", function () {
     );
   });
 
-  it("keeps release metadata immutable", async function () {
-    const { nodeReleaseRegistry } = await loadFixture(setup);
-    const releaseId = ethers.id("interfold.node.release:v1:immutable");
-    await nodeReleaseRegistry.approveNodeRelease(releaseId, 1, 2);
+  it("rejects invalid and regressive compatibility requirements", async function () {
+    const { interfold, nodeReleaseRegistry } = await loadFixture(setup);
+    await interfold.setRequestsPaused(true);
 
-    await expect(nodeReleaseRegistry.approveNodeRelease(releaseId, 2, 2))
-      .to.be.revertedWithCustomError(
-        nodeReleaseRegistry,
-        "NodeReleaseMetadataMismatch",
-      )
-      .withArgs(releaseId);
+    await expect(
+      nodeReleaseRegistry.setRequiredNodeRelease(0, 1),
+    ).to.be.revertedWithCustomError(nodeReleaseRegistry, "InvalidNodeRelease");
+    await expect(
+      nodeReleaseRegistry.setRequiredNodeRelease(1, 1),
+    ).to.be.revertedWithCustomError(
+      nodeReleaseRegistry,
+      "NodeReleasePolicyRegression",
+    );
+  });
+
+  it("rejects a dependency replacement that leaves stale release bindings", async function () {
+    const { interfold, bondingRegistry, slashingManager, nodeReleaseRegistry } =
+      await deployInterfoldSystem({ setupOperators: 0 });
+    const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+    await replacement.setInterfold(await interfold.getAddress());
+    await replacement.setBondingRegistry(await bondingRegistry.getAddress());
+    await replacement.setSlashingManager(await slashingManager.getAddress());
+    await interfold.setRequestsPaused(true);
+    await bondingRegistry.setRegistry(await replacement.getAddress());
+    await slashingManager.setCiphernodeRegistry(await replacement.getAddress());
+    await interfold.setCiphernodeRegistry(await replacement.getAddress());
+
+    await expect(
+      interfold.setRequestsPaused(false),
+    ).to.be.revertedWithCustomError(
+      interfold,
+      "DependencyConfigurationMismatch",
+    );
+    expect(await nodeReleaseRegistry.ciphernodeRegistry()).to.not.equal(
+      await replacement.getAddress(),
+    );
   });
 
   it("rejects a controller bound to another ciphernode registry", async function () {

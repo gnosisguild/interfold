@@ -42,7 +42,7 @@
 
 6. START        interfold start
                   → Verifies the compiled release against the on-chain policy
-                  → Acknowledges the approved release and refreshes operator eligibility
+                  → Acknowledges the release compatibility values and refreshes operator eligibility
                   → Then syncs historical events and starts listening
 
 7. E3 REQUEST   Requester calls Interfold.request(params)

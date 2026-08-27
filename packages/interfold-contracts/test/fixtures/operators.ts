@@ -34,10 +34,17 @@ export async function setupOperatorForSortition(
 
   await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
   if (nodeReleaseRegistry) {
-    const releaseId = await nodeReleaseRegistry.recommendedNodeReleaseId();
+    const [protocolVersion, nodeGeneration] = await Promise.all([
+      nodeReleaseRegistry.requiredProtocolVersion(),
+      nodeReleaseRegistry.requiredNodeGeneration(),
+    ]);
     await nodeReleaseRegistry
       .connect(operator)
-      .acknowledgeNodeRelease(releaseId);
+      .acknowledgeNodeRelease(
+        ethers.id("interfold.node.release:v1:test"),
+        protocolVersion,
+        nodeGeneration,
+      );
   }
   await ciphernodeBondToken
     .connect(bondOwner)

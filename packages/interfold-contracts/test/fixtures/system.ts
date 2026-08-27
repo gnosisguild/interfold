@@ -476,12 +476,10 @@ export async function deployInterfoldSystem(
     owner,
   ).deploy(ownerAddress, bondingRegistryAddress, effectiveRegistryAddress);
   await nodeReleaseRegistry.waitForDeployment();
-  const fixtureReleaseId = ethers.id("interfold.node.release:v1:test");
   await interfold.setNodeReleaseRegistry(
     await nodeReleaseRegistry.getAddress(),
   );
-  await nodeReleaseRegistry.approveNodeRelease(fixtureReleaseId, 1, 1);
-  await nodeReleaseRegistry.setRequiredNodeRelease(fixtureReleaseId);
+  await nodeReleaseRegistry.setRequiredNodeRelease(1, 1);
   let randomnessProvider: MockRandomnessProvider | undefined;
   if (!mockCiphernodeRegistry) {
     randomnessProvider = await new MockRandomnessProviderFactory(owner).deploy(

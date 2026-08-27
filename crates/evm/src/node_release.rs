@@ -17,29 +17,16 @@ use alloy::{
 use anyhow::{ensure, Context, Result};
 use e3_config::current_node_release;
 use e3_utils::require_successful_receipt;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReleasePolicy {
     required_protocol_version: u32,
     required_node_generation: u32,
-    approved_protocol_version: u32,
-    approved_node_generation: u32,
-    approved: bool,
 }
 
 fn validate_release_policy(policy: ReleasePolicy) -> Result<()> {
     let release = current_node_release();
-    ensure!(policy.approved, "this ciphernode release is not approved");
-    ensure!(
-        policy.approved_protocol_version == release.protocol_version
-            && policy.approved_node_generation == release.node_generation,
-        "approved release metadata does not match this binary: chain has protocol {}, generation {}; binary has protocol {}, generation {}",
-        policy.approved_protocol_version,
-        policy.approved_node_generation,
-        release.protocol_version,
-        release.node_generation
-    );
     ensure!(
         release.protocol_version == policy.required_protocol_version,
         "ciphernode protocol version {} does not match required version {}",
@@ -94,17 +81,13 @@ where
     let (
         required_protocol_version,
         required_node_generation,
-        approved_release,
-        recommended_release_id,
-        acknowledged_release_id,
+        acknowledged_release,
         controller_bonding,
         controller_ciphernode_registry,
     ) = tokio::try_join!(
         async { controller.requiredProtocolVersion().call().await },
         async { controller.requiredNodeGeneration().call().await },
-        async { controller.getNodeRelease(release_id).call().await },
-        async { controller.recommendedNodeReleaseId().call().await },
-        async { controller.operatorNodeReleaseId(operator).call().await },
+        async { controller.operatorNodeRelease(operator).call().await },
         async { controller.bondingRegistry().call().await },
         async { controller.ciphernodeRegistry().call().await },
     )?;
@@ -116,9 +99,6 @@ where
     validate_release_policy(ReleasePolicy {
         required_protocol_version,
         required_node_generation,
-        approved_protocol_version: approved_release.protocolVersion,
-        approved_node_generation: approved_release.nodeGeneration,
-        approved: approved_release.approved,
     })
     .with_context(|| {
         format!(
@@ -127,20 +107,16 @@ where
         )
     })?;
 
-    if recommended_release_id != release_id {
-        warn!(
-            current_release = %release_id,
-            recommended_release = %recommended_release_id,
-            "Ciphernode is compatible but not the recommended release"
-        );
-    }
-
     let bonding = IBondingRegistry::new(bonding_address, provider.provider());
     let (registered, active) = tokio::try_join!(
         async { bonding.isRegistered(operator).call().await },
         async { bonding.isActive(operator).call().await },
     )?;
-    if acknowledged_release_id == release_id && (!registered || active) {
+    if acknowledged_release.releaseId == release_id
+        && acknowledged_release.protocolVersion == release.protocol_version
+        && acknowledged_release.nodeGeneration == release.node_generation
+        && (!registered || active)
+    {
         info!(
             version = release.version(),
             protocol_version = release.protocol_version,
@@ -163,7 +139,11 @@ where
         .pending()
         .await?;
     let pending = controller
-        .acknowledgeNodeRelease(release_id)
+        .acknowledgeNodeRelease(
+            release_id,
+            release.protocol_version,
+            release.node_generation,
+        )
         .nonce(current_nonce)
         .send()
         .await?;
@@ -183,32 +163,23 @@ mod tests {
         validate_release_policy(ReleasePolicy {
             required_protocol_version: release.protocol_version,
             required_node_generation: release.node_generation,
-            approved_protocol_version: release.protocol_version,
-            approved_node_generation: release.node_generation,
-            approved: true,
         })
         .unwrap();
     }
 
     #[test]
-    fn rejects_unapproved_or_newer_requirements() {
+    fn rejects_newer_requirements() {
         let release = current_node_release();
         let base = ReleasePolicy {
             required_protocol_version: release.protocol_version,
             required_node_generation: release.node_generation,
-            approved_protocol_version: release.protocol_version,
-            approved_node_generation: release.node_generation,
-            approved: false,
         };
-        assert!(validate_release_policy(base).is_err());
         assert!(validate_release_policy(ReleasePolicy {
-            approved: true,
             required_node_generation: release.node_generation + 1,
             ..base
         })
         .is_err());
         assert!(validate_release_policy(ReleasePolicy {
-            approved: true,
             required_protocol_version: release.protocol_version + 1,
             ..base
         })
