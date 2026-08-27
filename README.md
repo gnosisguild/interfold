@@ -124,24 +124,10 @@ pnpm test:integration --no-prebuild
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/auryn-macmillan">
-                    <img src="https://avatars.githubusercontent.com/u/8453294?v=4" width="100;" alt="auryn-macmillan"/>
-                    <br />
-                    <sub><b>Auryn Macmillan</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/hmzakhalid">
                     <img src="https://avatars.githubusercontent.com/u/36852564?v=4" width="100;" alt="hmzakhalid"/>
                     <br />
                     <sub><b>Hamza Khalid</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/samepant">
-                    <img src="https://avatars.githubusercontent.com/u/6718506?v=4" width="100;" alt="samepant"/>
-                    <br />
-                    <sub><b>samepant</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -152,19 +138,17 @@ pnpm test:integration --no-prebuild
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/cristovaoth">
-                    <img src="https://avatars.githubusercontent.com/u/12870300?v=4" width="100;" alt="cristovaoth"/>
+                <a href="https://github.com/auryn-macmillan">
+                    <img src="https://avatars.githubusercontent.com/u/8453294?v=4" width="100;" alt="auryn-macmillan"/>
                     <br />
-                    <sub><b>Cristóvão</b></sub>
+                    <sub><b>Auryn Macmillan</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
-                <a href="https://github.com/nginnever">
-                    <img src="https://avatars.githubusercontent.com/u/7103153?v=4" width="100;" alt="nginnever"/>
+                <a href="https://github.com/cedoor">
+                    <img src="https://avatars.githubusercontent.com/u/11427903?v=4" width="100;" alt="cedoor"/>
                     <br />
-                    <sub><b>Nathan Ginnever</b></sub>
+                    <sub><b>Cedoor</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -174,11 +158,57 @@ pnpm test:integration --no-prebuild
                     <sub><b>Giacomo</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
-                <a href="https://github.com/cedoor">
-                    <img src="https://avatars.githubusercontent.com/u/11427903?v=4" width="100;" alt="cedoor"/>
+                <a href="https://github.com/samepant">
+                    <img src="https://avatars.githubusercontent.com/u/6718506?v=4" width="100;" alt="samepant"/>
                     <br />
-                    <sub><b>Cedoor</b></sub>
+                    <sub><b>samepant</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/cristovaoth">
+                    <img src="https://avatars.githubusercontent.com/u/12870300?v=4" width="100;" alt="cristovaoth"/>
+                    <br />
+                    <sub><b>Cristóvão</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/nginnever">
+                    <img src="https://avatars.githubusercontent.com/u/7103153?v=4" width="100;" alt="nginnever"/>
+                    <br />
+                    <sub><b>Nathan Ginnever</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Toby1009">
+                    <img src="https://avatars.githubusercontent.com/u/69885352?v=4" width="100;" alt="Toby1009"/>
+                    <br />
+                    <sub><b>Malingshu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/0xkeygen">
+                    <img src="https://avatars.githubusercontent.com/u/211014662?v=4" width="100;" alt="0xkeygen"/>
+                    <br />
+                    <sub><b>Bryant</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/zahrajavar">
+                    <img src="https://avatars.githubusercontent.com/u/81833289?v=4" width="100;" alt="zahrajavar"/>
+                    <br />
+                    <sub><b>Zara</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/eccogrinder">
+                    <img src="https://avatars.githubusercontent.com/u/100447090?v=4" width="100;" alt="eccogrinder"/>
+                    <br />
+                    <sub><b>marv</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -193,6 +223,27 @@ pnpm test:integration --no-prebuild
                     <img src="https://avatars.githubusercontent.com/u/92573882?v=4" width="100;" alt="Subhasish-Behera"/>
                     <br />
                     <sub><b>SUBHASISH BEHERA</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/jfschwarz">
+                    <img src="https://avatars.githubusercontent.com/u/524089?v=4" width="100;" alt="jfschwarz"/>
+                    <br />
+                    <sub><b>Jan-Felix</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/callumweb3">
+                    <img src="https://avatars.githubusercontent.com/u/314530502?v=4" width="100;" alt="callumweb3"/>
+                    <br />
+                    <sub><b>callumweb3</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/CryptAm">
+                    <img src="https://avatars.githubusercontent.com/u/102138190?v=4" width="100;" alt="CryptAm"/>
+                    <br />
+                    <sub><b>cryptam</b></sub>
                 </a>
             </td>
 		</tr>
