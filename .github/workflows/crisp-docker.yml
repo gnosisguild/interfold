@@ -58,7 +58,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ github.ref == 'refs/heads/release' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE_NAME) || '' }}
           build-args: |
             SKIP_SOLIDITY=1
           cache-from: |
