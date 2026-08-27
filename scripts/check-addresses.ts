@@ -161,26 +161,39 @@ const SKIP = [
   /^Cargo\.lock$/,
 ]
 
-type Published = { address: string; where: string; name: string; deployBlock?: number }
+type Published = { address: string; where: string; network: string; name: string; deployBlock?: number }
 
-const readManifest = (): Map<string, Published> => {
+/**
+ * Every manifest entry, grouped by address.
+ *
+ * One address can hold more than one entry. A deterministic deployment puts the
+ * same address on two networks, and one network can publish an address under
+ * both `contracts` and `reference`. Keying by address alone would keep whichever
+ * entry the loop reached last, and the name and deploy block checks would then
+ * measure a consumer against another network.
+ */
+const readManifest = (): Map<string, Published[]> => {
   const raw = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, MANIFEST), 'utf8')) as {
     networks: Record<string, Record<string, Record<string, { address?: string; deploy_block?: number }> | unknown>>
   }
 
-  const published = new Map<string, Published>()
+  const published = new Map<string, Published[]>()
   for (const [network, body] of Object.entries(raw.networks ?? {})) {
     for (const section of ['contracts', 'reference']) {
       const entries = (body as Record<string, unknown>)[section]
       if (!entries || typeof entries !== 'object') continue
       for (const [name, entry] of Object.entries(entries as Record<string, { address?: string; deploy_block?: number }>)) {
         if (!entry?.address) continue
-        published.set(entry.address.toLowerCase(), {
+        const key = entry.address.toLowerCase()
+        const found = published.get(key) ?? []
+        found.push({
           address: entry.address,
           where: `${network}.${section}.${name}`,
+          network,
           name,
-          deployBlock: (entry as { deploy_block?: number }).deploy_block,
+          deployBlock: entry.deploy_block,
         })
+        published.set(key, found)
       }
     }
   }
@@ -298,22 +311,37 @@ const main = (): void => {
 
     // Rules 3 and 4: the name and the deploy block beside an address must agree
     // with the manifest. Rule 2 only proves the address is still in the set.
+    //
+    // An address can hold several entries, so a binding passes when one entry
+    // accounts for it. The name narrows the entries first, which keeps the
+    // deploy block tied to the contract the line actually names.
     for (const binding of bindingsIn(file)) {
-      const entry = published.get(binding.address.toLowerCase())
-      if (!entry) continue
+      const entries = published.get(binding.address.toLowerCase())
+      if (!entries) continue
 
       const expected = LABELS[binding.label]
-      if (expected && expected !== entry.name) {
-        problems.push(
-          `${file}:${binding.line}: ${binding.address} is published as ${entry.where}, but this line calls it "${binding.label}".`,
-        )
+      let candidates = entries
+      if (expected) {
+        candidates = entries.filter((entry) => entry.name === expected)
+        if (candidates.length === 0) {
+          problems.push(
+            `${file}:${binding.line}: this line calls ${binding.address} "${binding.label}", but the manifest publishes it as ` +
+              `${entries.map((entry) => entry.where).join(', ')}.`,
+          )
+          continue
+        }
       }
 
-      if (binding.block !== undefined && entry.deployBlock !== undefined && binding.block !== entry.deployBlock) {
-        problems.push(
-          `${file}:${binding.line}: ${binding.address} shows deploy block ${binding.block}, but ${entry.where} was deployed at ${entry.deployBlock}.`,
-        )
-      }
+      if (binding.block === undefined) continue
+
+      const known = candidates.filter((entry) => entry.deployBlock !== undefined)
+      if (known.length === 0) continue
+      if (known.some((entry) => entry.deployBlock === binding.block)) continue
+
+      problems.push(
+        `${file}:${binding.line}: ${binding.address} shows deploy block ${binding.block}, but ` +
+          `${known.map((entry) => `${entry.where} was deployed at ${entry.deployBlock}`).join(', ')}.`,
+      )
     }
   }
 
