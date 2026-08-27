@@ -1,11 +1,11 @@
 name: contributors
 
-# Runs on pull_request rather than push to main. The contributors table lives on
-# main, but main is covered by the "Main Protection" ruleset: a direct push is
-# rejected, and the PR the action falls back to opening can never merge because
-# PRs created with GITHUB_TOKEN do not trigger workflow runs, so the required
-# template_integration / crisp_e2e checks never report. Committing to the PR's
-# own branch sidesteps both — the table reaches main when the PR merges.
+# Runs on pull_request and commits to the PR's own branch, rather than on push
+# to main. main is covered by the "Main Protection" ruleset: a direct push is
+# rejected, and a PR opened with GITHUB_TOKEN can never merge, because such PRs
+# do not trigger workflow runs and the required template_integration /
+# crisp_e2e checks would never report. PR branches are not covered by the
+# ruleset, so the table reaches main when the PR merges.
 on:
   pull_request:
     branches:
@@ -32,25 +32,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          # The default merge ref is detached; the action needs the real branch
-          # to commit back to.
+          # The default merge ref is detached; the commit below needs the real
+          # branch to push back to.
           ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Contribute List
-        uses: akhilmhdh/contributors-readme-action@1ff4c56187458b34cd602aee93e897344ce34bfc # v1.4.0
-        with:
-          image_size: 100
-          readme_path: README.md
-          use_username: false
-          columns_per_row: 6
-          collaborators: direct
-          commit_message: 'docs(contributor): contrib-readme-action has updated readme'
-          committer_username: 'github-actions[bot]'
-          committer_email: 'github-actions[bot]@users.noreply.github.com'
-          # PR branches are not covered by the Main Protection ruleset, so push
-          # straight to them. Left on, the action would try to open a PR instead.
-          auto_detect_branch_protection: false
+      - name: Render contributors table
+        # Uses the runner's preinstalled Node. The script has no dependencies:
+        # node:fs plus global fetch.
+        run: node .github/scripts/update-contributors.mjs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "Contributors table already up to date"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          git commit -m 'docs(contributor): update contributors list'
+          git push origin "HEAD:${HEAD_REF}"
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
