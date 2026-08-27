@@ -14,6 +14,7 @@ import { deployProtocolContracts } from "../../scripts/protocol/deployContracts"
 import {
   assertVrfSubscription,
   assertVrfUpgradePlanMatchesDeployment,
+  requireCiphernodeRestartAcknowledgement,
 } from "../../scripts/protocol/randomness";
 import {
   aragonAdminSafeBatch,
@@ -32,6 +33,13 @@ import { BondingRegistry__factory as BondingRegistryFactory } from "../../types"
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("requires a ciphernode restart acknowledgement before resume", function () {
+    expect(() => requireCiphernodeRestartAcknowledgement(false)).to.throw(
+      "Restart every ciphernode",
+    );
+    expect(() => requireCiphernodeRestartAcknowledgement(true)).not.to.throw();
+  });
+
   it("wraps DAO wiring actions in one Aragon Admin Safe transaction", async function () {
     const [adminPlugin, proposerSafe, targetA, targetB] =
       await ethers.getSigners();

@@ -37,7 +37,7 @@ import { SDKError, isValidAddress } from './utils'
 import { DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME } from './constants'
 
 import type { SDKConfig } from './types'
-import type { AllEventTypes, EventCallback } from './events/types'
+import type { AllEventTypes, EventCallback, RandomnessProviderEventCallback, RandomnessProviderEventType } from './events/types'
 import type { E3, E3RequestParams } from './contracts/types'
 import { E3Stage, FailureReason } from './contracts/types'
 import type { BfvParams, EncryptedValueAndPublicInputs, ThresholdBfvParamsPresetName, VerifiableEncryptionResult } from './crypto/types'
@@ -212,6 +212,32 @@ export class InterfoldSDK {
 
   public async onInterfoldEvent<T extends AllEventTypes>(eventType: T, callback: EventCallback<T>): Promise<void> {
     return this.eventListener.onInterfoldEvent(eventType, callback)
+  }
+
+  public async onRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+    fromBlock?: bigint,
+  ): Promise<void> {
+    return this.eventListener.onRandomnessProviderEvent(provider, eventType, callback, fromBlock)
+  }
+
+  public offRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+  ): void {
+    this.eventListener.offRandomnessProviderEvent(provider, eventType, callback)
+  }
+
+  public async getHistoricalRandomnessProviderEvents(
+    provider: `0x${string}`,
+    eventType: RandomnessProviderEventType,
+    fromBlock?: bigint,
+    toBlock?: bigint,
+  ): Promise<Log[]> {
+    return this.eventListener.getHistoricalRandomnessProviderEvents(provider, eventType, fromBlock, toBlock)
   }
 
   public off<T extends AllEventTypes>(eventType: T, callback: EventCallback<T>): void {

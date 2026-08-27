@@ -174,10 +174,10 @@ enum RegistryEventType {
 
 The provider address is frozen for each E3 and can change after governance rotation, so it is not
 part of the static SDK contract addresses. Read `provider`, `requestId`, and `e3Id` from
-`CommitteeRandomnessRequested`, then watch that provider directly:
+`CommitteeRandomnessRequested`, then watch that provider through the main SDK:
 
 ```typescript
-await listener.onRandomnessProviderEvent(
+await sdk.onRandomnessProviderEvent(
   provider,
   RandomnessProviderEventType.RANDOMNESS_FULFILLED,
   ({ data }) => {
@@ -186,9 +186,12 @@ await listener.onRandomnessProviderEvent(
 )
 ```
 
-Use `getHistoricalRandomnessProviderEvents` to recover fulfillments that were emitted before the
-watcher started. `RandomnessFulfilled` proves that the provider stored a response. The Registry
-remains authoritative about whether that response was timely and usable.
+Use `sdk.getHistoricalRandomnessProviderEvents` with explicit block bounds to recover earlier
+fulfillments. Start the live watcher at `historicalToBlock + 1n` so the historical and live ranges
+do not overlap. Historical reads are split into bounded RPC queries, and live watchers suppress
+duplicate delivery of the same log. `RandomnessFulfilled` proves that the provider stored a
+response. The Registry remains authoritative about whether that response was timely and usable. If
+the listener config does not define `fromBlock`, the history method requires it as an argument.
 
 ### Event Data Structure
 

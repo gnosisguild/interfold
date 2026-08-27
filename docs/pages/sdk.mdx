@@ -275,7 +275,7 @@ All exports are also available from the main `@interfold/sdk` entry point.
 
 ## Event types
 
-The SDK provides two event type enums for subscribing to on-chain events:
+The SDK provides three event type enums for subscribing to on-chain events:
 
 ### `InterfoldEventType`
 
@@ -315,10 +315,11 @@ durable event with the same name after the registry accepts a VRF result.
 | `RANDOMNESS_FULFILLED` | `RandomnessFulfilled` |
 
 The Registry freezes a provider address for each request. Use the address, request ID, and E3 ID
-from `CommitteeRandomnessRequested` to watch and correlate the provider response:
+from `CommitteeRandomnessRequested` to watch and correlate the provider response. These methods are
+available on the main `InterfoldSDK` object:
 
 ```typescript
-await listener.onRandomnessProviderEvent(
+await sdk.onRandomnessProviderEvent(
   provider,
   RandomnessProviderEventType.RANDOMNESS_FULFILLED,
   ({ data }) => {
@@ -327,9 +328,29 @@ await listener.onRandomnessProviderEvent(
 )
 ```
 
-`getHistoricalRandomnessProviderEvents` returns fulfillment logs that predate the watcher. A
-fulfillment means that the provider stored a response. Query the Registry to determine whether the
-response was timely and usable.
+`getHistoricalRandomnessProviderEvents` requires an explicit `fromBlock` unless the listener config
+defines one. It reads fulfillment logs in bounded block ranges. To join history to a live watcher
+without overlap, read through a fixed head and start the watcher at the next block:
+
+```typescript
+const historicalHead = await sdk.getPublicClient().getBlockNumber()
+const logs = await sdk.getHistoricalRandomnessProviderEvents(
+  provider,
+  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+  providerDeployBlock,
+  historicalHead,
+)
+await sdk.onRandomnessProviderEvent(
+  provider,
+  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+  handleFulfillment,
+  historicalHead + 1n,
+)
+```
+
+A fulfillment means that the provider stored a response. Query the Registry to determine whether the
+response was timely and usable. Live watchers also suppress repeated delivery of the same block,
+transaction, and log index.
 
 ## E3 lifecycle enums
 

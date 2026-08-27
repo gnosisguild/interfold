@@ -126,14 +126,20 @@ pnpm --filter @interfold/contracts upgrade:vrf-sortition --network mainnet \
 pnpm --filter @interfold/contracts upgrade:vrf-sortition:validate --network mainnet \
   --config deploy/protocol/mainnet-protocol.config.json \
   --vrf-subscription-id <DAO-owned-subscription-id>
+
+# Run this only after every ciphernode has restarted on the matching release.
+pnpm --filter @interfold/contracts upgrade:vrf-sortition:resume --network mainnet \
+  --config deploy/protocol/mainnet-protocol.config.json \
+  --vrf-subscription-id <DAO-owned-subscription-id> \
+  --ciphernodes-restarted
 ```
 
 The first command deploys implementations and writes the governance batch. It
-does not unpause requests. After the upgrade, restart every ciphernode on the
-matching release before the DAO enables requests. The Registry permits a future
-provider or timeout change only while requests are paused and all committee
-obligations are released. Restart every node after a provider rotation so that
-it watches the new address.
+does not unpause requests. The resume command checks the provider, subscription,
+active E3 count, and committee obligations. It refuses to create an unpause
+transaction unless governance explicitly confirms that every ciphernode was
+restarted. Use the same paused, restart, validate, and resume process after a
+provider rotation so every node watches the new address.
 
 If a request reaches its randomness deadline without a usable response, the
 Registry clears the active provider. This blocks every new E3 request and stops

@@ -207,7 +207,8 @@ Each ciphernode reads the Registry's provider-set history and current randomness
 watches every returned provider address so that a restart can replay requests that used an older
 provider. Governance can rotate the provider only while requests are paused and every committee is
 released. Running nodes must restart before requests resume so that they also watch the newly
-configured provider.
+configured provider. The standard resume script refuses to create an unpause transaction without an
+explicit confirmation that the coordinated restart is complete.
 
 ### 2a. Request Event Processing
 
@@ -223,7 +224,8 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 ├─ Calls Registry.sortitionSeed(e3Id) at the fulfillment log's block
 │  → A successful `ready = false` result proves that the response is unusable
 │  → If historical state is unavailable, current state is accepted only when `ready = true`
-│  → An RPC failure or unverifiable result rejects the log so restart replay can retry it
+│  → Registry verification is bounded to 15 seconds
+│  → An RPC failure, timeout, or unverifiable result rejects the log so restart replay can retry it
 │  → The reader does not poll or silently discard uncertain fulfillment state
 │  → Sortition starts only after the Registry accepts the response
 │  → Registry accepts only the request-time provider and request ID

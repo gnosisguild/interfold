@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EventListener } from '../src/events/event-listener'
 import { RandomnessProviderEventType, RegistryEventType, type InterfoldEvent } from '../src/events/types'
+import { InterfoldSDK } from '../src/interfold-sdk'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -93,6 +94,124 @@ describe('RegistryEventType', () => {
       fromBlock: 10n,
       toBlock: 20n,
     })
+  })
+
+  it('chunks bounded provider history queries', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const getContractEvents = vi.fn().mockResolvedValue([])
+    const listener = new EventListener({
+      publicClient: { getContractEvents } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.getHistoricalRandomnessProviderEvents(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, 1n, 25_000n)
+
+    expect(getContractEvents).toHaveBeenCalledTimes(3)
+    expect(getContractEvents.mock.calls.map(([options]) => [options.fromBlock, options.toBlock])).toEqual([
+      [1n, 10_000n],
+      [10_001n, 20_000n],
+      [20_001n, 25_000n],
+    ])
+  })
+
+  it('requires a provider history start block', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const getContractEvents = vi.fn().mockResolvedValue([])
+    const listener = new EventListener({
+      publicClient: { getContractEvents } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await expect(
+      listener.getHistoricalRandomnessProviderEvents(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED),
+    ).rejects.toMatchObject({ code: 'INVALID_EVENT_CONFIG' })
+    expect(getContractEvents).not.toHaveBeenCalled()
+  })
+
+  it('suppresses repeated live provider logs', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const watchContractEvent = vi.fn().mockReturnValue(vi.fn())
+    const callback = vi.fn()
+    const listener = new EventListener({
+      publicClient: { watchContractEvent } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+    await listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback)
+
+    const log = {
+      args: { requestId: 7n, e3Id: 11n, randomWord: 13n, fulfilledAt: 17n },
+      blockHash: `0x${'12'.repeat(32)}`,
+      blockNumber: 19n,
+      logIndex: 1,
+      transactionHash: `0x${'34'.repeat(32)}`,
+    } as unknown as Log
+    const options = watchContractEvent.mock.calls[0]?.[0]
+    expect(options).toBeDefined()
+    const { onLogs } = options!
+    onLogs([log])
+    onLogs([log])
+
+    expect(callback).toHaveBeenCalledOnce()
+  })
+
+  it('does not redeliver logs returned by an overlapping historical query', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const log = {
+      args: { requestId: 7n, e3Id: 11n, randomWord: 13n, fulfilledAt: 17n },
+      blockHash: `0x${'12'.repeat(32)}`,
+      blockNumber: 19n,
+      logIndex: 1,
+      removed: false,
+      transactionHash: `0x${'34'.repeat(32)}`,
+    } as unknown as Log
+    const getContractEvents = vi.fn().mockResolvedValue([log])
+    const watchContractEvent = vi.fn().mockReturnValue(vi.fn())
+    const callback = vi.fn()
+    const listener = new EventListener({
+      publicClient: { getContractEvents, watchContractEvent } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await listener.getHistoricalRandomnessProviderEvents(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, 1n, 19n)
+    await listener.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback, 19n)
+    watchContractEvent.mock.calls[0]?.[0].onLogs([log])
+
+    expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('exposes provider events through the main SDK', async () => {
+    const provider = '0x0000000000000000000000000000000000000004' as const
+    const watchContractEvent = vi.fn().mockReturnValue(vi.fn())
+    const callback = vi.fn()
+    const sdk = new InterfoldSDK({
+      publicClient: { watchContractEvent } as unknown as PublicClient,
+      contracts: {
+        interfold: '0x0000000000000000000000000000000000000001',
+        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
+        feeToken: '0x0000000000000000000000000000000000000003',
+      },
+    })
+
+    await sdk.onRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback, 21n)
+
+    expect(watchContractEvent).toHaveBeenCalledWith(expect.objectContaining({ address: provider, fromBlock: 21n }))
+    sdk.offRandomnessProviderEvent(provider, RandomnessProviderEventType.RANDOMNESS_FULFILLED, callback)
   })
 
   it('handles asynchronous event callback failures', async () => {

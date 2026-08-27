@@ -8,7 +8,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './test',
-  timeout: 5 * 60 * 10000,
+  timeout: 10 * 60 * 1000,
   use: {
     baseURL: 'http://localhost:3000',
     actionTimeout: 75 * 1000,
@@ -17,8 +17,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   workers: process.env.CI ? 1 : undefined,
-  // reporter: "html",
-  reporter: [['html'], ['list']], // Add list reporter
+  reporter: [['html', { open: 'never' }], ['list']],
 
   // Add support for ES modules
   projects: [

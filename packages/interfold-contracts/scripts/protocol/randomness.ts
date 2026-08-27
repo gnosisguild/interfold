@@ -25,6 +25,16 @@ export const vrfProviderInterface = new ethersLib.Interface([
   "function acceptOwnership()",
 ]);
 
+export function requireCiphernodeRestartAcknowledgement(
+  acknowledged: boolean,
+): void {
+  if (!acknowledged) {
+    throw new Error(
+      "Refusing to prepare the resume transaction. Restart every ciphernode on the matching release, then pass --ciphernodes-restarted.",
+    );
+  }
+}
+
 export function requireRandomnessConfig(
   config: ProtocolConfigFile,
 ): RandomnessConfig {

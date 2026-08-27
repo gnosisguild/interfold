@@ -32,9 +32,12 @@ export interface EventListenerOptions {
 }
 
 export class EventListener implements SDKEventEmitter {
+  private static readonly DEFAULT_HISTORICAL_BLOCK_RANGE = 10_000n
+  private static readonly MAX_REMEMBERED_LOGS = 10_000
   private listeners: Map<AllEventTypes, Set<EventCallback>> = new Map()
   private activeWatchers: Map<string, () => void> = new Map()
   private randomnessProviderListeners: Map<string, Set<RandomnessProviderEventCallback>> = new Map()
+  private seenLiveLogs: Map<string, true> = new Map()
   private isPolling = false
   private lastBlockNumber: bigint = BigInt(0)
   private publicClient: PublicClient
@@ -77,6 +80,7 @@ export class EventListener implements SDKEventEmitter {
     provider: `0x${string}`,
     eventType: T,
     callback: RandomnessProviderEventCallback<T>,
+    fromBlock?: bigint,
   ): Promise<void> {
     const listenerKey = `${provider.toLowerCase()}:${eventType}`
     const watcherKey = `randomness-provider:${listenerKey}`
@@ -94,9 +98,10 @@ export class EventListener implements SDKEventEmitter {
         address: provider,
         abi: IRandomnessProvider__factory.abi,
         eventName: eventType,
-        fromBlock: this.config.fromBlock,
+        fromBlock: fromBlock ?? this.config.fromBlock,
         onLogs: (logs: Log[]) => {
           for (const log of logs) {
+            if (!this.rememberLiveLog(log)) continue
             const event: RandomnessProviderEvent<T> = {
               type: eventType,
               data: (log as unknown as { args: RandomnessProviderEvent<T>['data'] }).args,
@@ -153,14 +158,12 @@ export class EventListener implements SDKEventEmitter {
     fromBlock?: bigint,
     toBlock?: bigint,
   ): Promise<Log[]> {
+    const start = fromBlock ?? this.config.fromBlock
+    if (start === undefined) {
+      throw new SDKError('Randomness provider history requires fromBlock or EventListenerConfig.fromBlock', 'INVALID_EVENT_CONFIG')
+    }
     try {
-      return await this.publicClient.getContractEvents({
-        address: provider,
-        abi: IRandomnessProvider__factory.abi,
-        eventName: eventType,
-        fromBlock: fromBlock ?? this.config.fromBlock,
-        toBlock: toBlock ?? this.config.toBlock,
-      })
+      return await this.getHistoricalContractEvents(provider, IRandomnessProvider__factory.abi, eventType, start, toBlock)
     } catch (error) {
       throw new SDKError(`Failed to get randomness provider events from ${provider}: ${error}`, 'HISTORICAL_EVENTS_FAILED')
     }
@@ -204,6 +207,7 @@ export class EventListener implements SDKEventEmitter {
             for (let i = 0; i < logs.length; i++) {
               const log = logs[i]
               if (!log) break
+              if (!emitter.rememberLiveLog(log)) continue
               const event: InterfoldEvent<T> = {
                 type: eventType,
                 data: (log as unknown as { args: unknown }).args as T extends InterfoldEventTypeT
@@ -271,13 +275,7 @@ export class EventListener implements SDKEventEmitter {
     const { address, abi } = this.resolveContract(eventType)
 
     try {
-      return await this.publicClient.getContractEvents({
-        address,
-        abi,
-        eventName: eventType as string,
-        fromBlock: fromBlock ?? this.config.fromBlock,
-        toBlock: toBlock ?? this.config.toBlock,
-      })
+      return await this.getHistoricalContractEvents(address, abi, eventType as string, fromBlock, toBlock)
     } catch (error) {
       throw new SDKError(`Failed to get historical events: ${error}`, 'HISTORICAL_EVENTS_FAILED')
     }
@@ -343,6 +341,75 @@ export class EventListener implements SDKEventEmitter {
     this.activeWatchers.clear()
     this.listeners.clear()
     this.randomnessProviderListeners.clear()
+    this.seenLiveLogs.clear()
+  }
+
+  private logIdentity(log: Log): string | undefined {
+    if (log.blockHash && log.transactionHash && log.logIndex !== null && log.logIndex !== undefined) {
+      return `${log.blockHash}:${log.transactionHash}:${log.logIndex}:${Boolean(log.removed)}`
+    }
+    return undefined
+  }
+
+  private rememberLiveLog(log: Log): boolean {
+    const identity = this.logIdentity(log)
+    if (!identity) return true
+    if (this.seenLiveLogs.has(identity)) return false
+
+    this.seenLiveLogs.set(identity, true)
+    if (this.seenLiveLogs.size > EventListener.MAX_REMEMBERED_LOGS) {
+      const oldest = this.seenLiveLogs.keys().next().value
+      if (oldest !== undefined) this.seenLiveLogs.delete(oldest)
+    }
+    return true
+  }
+
+  private async getHistoricalContractEvents(
+    address: `0x${string}`,
+    abi: Abi,
+    eventName: string,
+    fromBlock?: bigint,
+    toBlock?: bigint,
+  ): Promise<Log[]> {
+    const start = fromBlock ?? this.config.fromBlock
+    const configuredEnd = toBlock ?? this.config.toBlock
+    if (start === undefined) {
+      return (await this.publicClient.getContractEvents({
+        address,
+        abi,
+        eventName,
+        toBlock: configuredEnd,
+      })) as Log[]
+    }
+
+    const end = configuredEnd ?? (await this.publicClient.getBlockNumber())
+    if (end < start) return []
+
+    const range = this.config.historicalBlockRange ?? EventListener.DEFAULT_HISTORICAL_BLOCK_RANGE
+    if (range <= 0n) throw new SDKError('Historical block range must be greater than zero', 'INVALID_EVENT_CONFIG')
+
+    const logs: Log[] = []
+    const seen = new Set<string>()
+    for (let cursor = start; cursor <= end; cursor += range) {
+      const chunkEnd = cursor + range - 1n < end ? cursor + range - 1n : end
+      const chunk = (await this.publicClient.getContractEvents({
+        address,
+        abi,
+        eventName,
+        fromBlock: cursor,
+        toBlock: chunkEnd,
+      })) as Log[]
+      for (const log of chunk) {
+        const identity = this.logIdentity(log)
+        if (identity && seen.has(identity)) continue
+        if (identity) {
+          seen.add(identity)
+          this.rememberLiveLog(log)
+        }
+        logs.push(log)
+      }
+    }
+    return logs
   }
 
   private async pollForEvents(): Promise<void> {

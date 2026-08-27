@@ -9,7 +9,9 @@ import { testWithSynpress } from '@synthetixio/synpress'
 import { MetaMask, metaMaskFixtures } from '@synthetixio/synpress/playwright'
 import basicSetup from './wallet-setup/basic.setup'
 import { execFileSync } from 'child_process'
+import { readFileSync } from 'fs'
 import { config } from 'dotenv'
+import { Contract, JsonRpcProvider } from 'ethers'
 import path from 'path'
 
 const CLI = path.join(process.cwd(), 'target', 'debug', 'cli')
@@ -19,6 +21,8 @@ config({ path: path.join(process.cwd(), 'client', '.env') })
 
 const E3_DURATION = parseInt(process.env.E3_DURATION as string, 10) * 1000
 const OUTPUT_DECRYPTION_WAIT = 80_000 // A small buffer for decryption
+const RANDOMNESS_ACCEPTANCE_WAIT = 30_000
+const REGISTRY_READ_ABI = ['function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)']
 
 function crispTokenAddress(): string {
   const tokenAddress = process.env.VITE_CRISP_TOKEN
@@ -69,6 +73,34 @@ async function waitForE3Ready(e3id: string, maxWaitMs: number = E3_DURATION): Pr
     await new Promise((resolve) => setTimeout(resolve, 5000))
   }
   throw new Error(`E3 ${e3id} was not ready within ${maxWaitMs}ms`)
+}
+
+async function waitForRandomnessAcceptance(e3id: string): Promise<void> {
+  const deploymentsPath = path.join(process.cwd(), 'packages', 'crisp-contracts', 'deployed_contracts.json')
+  const deployments = JSON.parse(readFileSync(deploymentsPath, 'utf8'))
+  const registryAddress = deployments.localhost?.CiphernodeRegistryOwnable?.address
+  if (!registryAddress) throw new Error(`CiphernodeRegistryOwnable is missing from ${deploymentsPath}`)
+
+  const provider = new JsonRpcProvider('http://127.0.0.1:8545', 31337, { staticNetwork: true })
+  const registry = new Contract(registryAddress, REGISTRY_READ_ABI, provider)
+  const deadline = Date.now() + RANDOMNESS_ACCEPTANCE_WAIT
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      const [ready] = await registry.sortitionSeed(e3id)
+      if (ready) {
+        log(`Registry accepted delayed randomness for E3 ${e3id}`)
+        return
+      }
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+
+  const detail = lastError ? ` Last RPC error: ${lastError}` : ''
+  throw new Error(`Registry did not accept delayed randomness for E3 ${e3id} within ${RANDOMNESS_ACCEPTANCE_WAIT}ms.${detail}`)
 }
 
 const test = testWithSynpress(metaMaskFixtures(basicSetup))
@@ -180,6 +212,7 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   log('runCliInit()...')
   const e3id = await runCliInit()
   log(`Got e3 id: ${e3id}`)
+  await waitForRandomnessAcceptance(e3id)
 
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.waitForLoadState('load')

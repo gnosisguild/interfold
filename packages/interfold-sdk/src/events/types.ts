@@ -195,6 +195,8 @@ export interface SDKEventEmitter {
 export interface EventListenerConfig {
   fromBlock?: bigint
   toBlock?: bigint
+  /** Maximum block span for each historical RPC query. */
+  historicalBlockRange?: bigint
   polling?: boolean
   pollingInterval?: number
 }

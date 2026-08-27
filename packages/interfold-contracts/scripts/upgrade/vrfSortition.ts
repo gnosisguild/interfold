@@ -186,7 +186,7 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} VRF sortition upgrade`;
   batch.meta.description =
-    "Upgrade committee sortition to Chainlink VRF, configure its flat fee, and configure the subscription consumer.";
+    "Upgrade committee sortition to Chainlink VRF and keep E3 requests paused until every ciphernode restarts.";
   writeJson(rawBatchFile, batch);
 
   let safeBuilderFile: string | undefined;

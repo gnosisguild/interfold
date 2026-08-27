@@ -20,10 +20,11 @@ use alloy::{
 };
 use anyhow::{bail, Context as _, Result};
 use e3_utils::MAILBOX_LIMIT;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 use tracing::{debug, error, warn};
 
 const EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
+const REGISTRY_ACCEPTANCE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct RandomnessProviderSolReader<P> {
     provider: EthProvider<P>,
@@ -86,13 +87,19 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
     let fulfillment = IRandomnessProvider::RandomnessFulfilled::decode_log_data(log.log.data())
         .context("invalid RandomnessFulfilled event")?;
 
-    let Some(accepted) = read_accepted_sortition(
-        &provider,
-        registry_address,
+    let Some(accepted) = await_registry_acceptance(
+        REGISTRY_ACCEPTANCE_TIMEOUT,
         fulfillment.e3Id,
         fulfillment.requestId,
-        BlockId::hash_canonical(block_hash),
         block,
+        read_accepted_sortition(
+            &provider,
+            registry_address,
+            fulfillment.e3Id,
+            fulfillment.requestId,
+            BlockId::hash_canonical(block_hash),
+            block,
+        ),
     )
     .await?
     else {
@@ -116,6 +123,25 @@ async fn parse_fulfillment<P: Provider + Clone + 'static>(
         timestamp,
         log.chain_id,
     )))
+}
+
+async fn await_registry_acceptance<T, F>(
+    timeout: Duration,
+    e3_id: U256,
+    request_id: U256,
+    block: u64,
+    future: F,
+) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    tokio::time::timeout(timeout, future)
+        .await
+        .with_context(|| {
+            format!(
+                "timed out after {timeout:?} while verifying randomness request {request_id} for E3 {e3_id} at block {block}"
+            )
+        })?
 }
 
 async fn read_accepted_sortition<P: Provider + Clone + 'static>(
@@ -343,5 +369,23 @@ mod tests {
         .expect("canonical rejection must be processed");
 
         assert!(accepted.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bounds_registry_acceptance_reads() {
+        let error = await_registry_acceptance(
+            Duration::from_secs(15),
+            U256::from(7),
+            U256::from(8),
+            10,
+            std::future::pending::<Result<()>>(),
+        )
+        .await
+        .expect_err("a stalled RPC read must time out");
+
+        let message = error.to_string();
+        assert!(message.contains("timed out after 15s"), "{message}");
+        assert!(message.contains("request 8"), "{message}");
+        assert!(message.contains("E3 7"), "{message}");
     }
 }

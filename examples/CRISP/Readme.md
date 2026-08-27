@@ -89,10 +89,11 @@ from production and untrusted networks.
 1. Starts the Hardhat node in `packages/crisp-contracts`
 2. Deploys all contracts (Interfold, CRISPProgram, verifiers, registries) via
    `scripts/crisp_deploy.sh`
-3. Starts ciphernodes using `interfold.config.yaml` via `scripts/dev_cipher.sh`
-4. Launches the program server via `scripts/dev_program.sh`
-5. Starts the coordination server (Rust) via `scripts/dev_server.sh` on port `4000`
-6. Starts the React client via `scripts/dev_client.sh` on port `3000`
+3. Watches the local mock randomness provider and fulfills each request in a later block
+4. Starts ciphernodes using `interfold.config.yaml` via `scripts/dev_cipher.sh`
+5. Launches the program server via `scripts/dev_program.sh`
+6. Starts the coordination server (Rust) via `scripts/dev_server.sh` on port `4000`
+7. Starts the React client via `scripts/dev_client.sh` on port `3000`
 
 All services run concurrently and will automatically restart if needed.
 

@@ -166,6 +166,9 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     randomnessProviderOwnershipAcceptanceRequired: false,
   });
   console.log(`VRF sortition upgrade validated; updated ${deploymentFile}`);
+  console.log(
+    "E3 requests remain paused. Restart every ciphernode before preparing the resume transaction.",
+  );
 }
 
 validateVrfSortitionUpgrade().catch((error) => {
