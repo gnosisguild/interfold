@@ -1,7 +1,7 @@
 # DAppNode Interfold Ciphernode Dockerfile
 # Uses official upstream image from GitHub Container Registry
 
-ARG UPSTREAM_VERSION=0.12.1
+ARG UPSTREAM_VERSION=0.13.0
 FROM ghcr.io/theinterfold/ciphernode:${UPSTREAM_VERSION} AS upstream
 
 # Runtime image
