@@ -24,6 +24,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     esbuildOptions: { target: 'esnext' },
+    // The SDK stays unbundled so its worker URLs remain package-relative. Its
+    // CommonJS Poseidon dependency still needs Vite's ESM interop layer.
+    include: ['@crisp-e3/sdk > poseidon-lite'],
     exclude: [
       '@rollup/browser',
       '@noir-lang/noirc_abi',
