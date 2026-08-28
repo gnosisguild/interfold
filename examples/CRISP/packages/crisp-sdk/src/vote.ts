@@ -62,6 +62,8 @@ export const destroyBBApi = (): void => {
  * Runs in a worker when available to avoid blocking the main thread.
  */
 export const prepareCircuitInputs = async (inputs: PrepareBallotInputs): Promise<PreparedBallot> => {
+  const preset = requireCircuits().preset
+
   if (typeof Worker !== 'undefined') {
     try {
       const worker = new Worker(new URL('./workers/generateCircuitInputs.worker.js', import.meta.url), { type: 'module' })
@@ -78,7 +80,7 @@ export const prepareCircuitInputs = async (inputs: PrepareBallotInputs): Promise
           worker.terminate()
           reject(err)
         }
-        worker.postMessage(inputs)
+        worker.postMessage({ inputs, preset })
       })
     } catch {
       // Worker creation failed (e.g. bundler path resolution); fall back to main thread

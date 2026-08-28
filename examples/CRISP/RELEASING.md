@@ -73,20 +73,23 @@ that gives it `secure-8192` verifiers to prove against.
 
 ## Procedure
 
+Publish through `scripts/publish.ts`. It selects the preset from the release channel, builds the
+packages, publishes in dependency order, and updates the standalone client lockfile after npm serves
+the new SDK version.
+
 Both channels build from the artifacts that `pnpm build:presets` archives under
-`circuits/dist/<preset>/`, which git does not track. Run it whenever the circuits changed; the SDK
-build refuses artifacts that are missing or older than the sources, comparing a content digest that
-`stage-preset-artifacts.mjs` records at staging time.
+`circuits/dist/<preset>/`, which git does not track. Run that command whenever the circuits change.
+The SDK build refuses artifacts that are missing or older than the sources, using the content digest
+that `stage-preset-artifacts.mjs` records at staging time.
 
 ```sh
-pnpm -C examples/CRISP build:presets          # slow: compiles both presets
-cd examples/CRISP
+pnpm -C examples/CRISP build:presets # slow: compiles both presets
 
 # testing — insecure-512 under the `testing` tag, and moves the client
-pnpm publish:packages --channel testing 0.19.0-insecure.0
+pnpm -C examples/CRISP publish:packages --channel testing 0.19.0-insecure.0
 
 # production — secure-8192 under the `latest` tag, and leaves the client alone
-pnpm publish:packages --channel prod 0.19.0
+pnpm -C examples/CRISP publish:packages --channel prod 0.19.0
 ```
 
 Add `--dry-run` to print the exact steps for a channel without changing anything. The script bumps

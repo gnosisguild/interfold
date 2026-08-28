@@ -10,9 +10,7 @@
 
 use crate::ciphertext_addition::CiphertextAdditionWitness;
 use e3_fhe_params::build_bfv_params_arc;
-use e3_fhe_params::default_param_set;
-use e3_fhe_params::BfvParamSet;
-use e3_fhe_params::DEFAULT_BFV_PRESET;
+use e3_fhe_params::{default_param_set, BfvParamSet, BfvPreset};
 use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use e3_zk_helpers::CircuitComputation;
@@ -33,6 +31,7 @@ mod utils;
 
 pub struct ZKInputsGenerator {
     bfv_params: Arc<BfvParameters>,
+    bfv_preset: BfvPreset,
 }
 
 impl ZKInputsGenerator {
@@ -43,15 +42,60 @@ impl ZKInputsGenerator {
         moduli: &[u64],
         error1_variance: Option<&str>,
     ) -> Self {
+        Self::try_new(degree, plaintext_modulus, moduli, error1_variance)
+            .expect("Unsupported BFV threshold parameters")
+    }
+
+    /// Creates a new generator with the specified BFV parameters.
+    ///
+    /// The parameter tuple must match one of the threshold presets whose Noir circuit was built.
+    pub fn try_new(
+        degree: usize,
+        plaintext_modulus: u64,
+        moduli: &[u64],
+        error1_variance: Option<&str>,
+    ) -> Result<Self> {
+        let bfv_preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, moduli)
+            .ok_or_else(|| eyre::eyre!("Unsupported BFV threshold parameters"))?;
         let bfv_params = build_bfv_params_arc(degree, plaintext_modulus, moduli, error1_variance);
-        Self { bfv_params }
+        Ok(Self {
+            bfv_params,
+            bfv_preset,
+        })
+    }
+
+    /// Creates a new generator with the specified threshold BFV preset.
+    pub fn from_preset(preset: BfvPreset) -> Result<Self> {
+        if !preset.supports_pair() {
+            return Err(eyre::eyre!(
+                "BFV preset {} is not a threshold parameter set",
+                preset.name()
+            ));
+        }
+
+        Ok(Self::from_set(BfvParamSet::from(preset)))
+    }
+
+    /// Creates a new generator from a JavaScript-facing preset name.
+    pub fn from_preset_name(name: &str) -> Result<Self> {
+        let preset = match name.trim() {
+            "insecure-512" => BfvPreset::InsecureThreshold512,
+            "secure-8192" => BfvPreset::SecureThreshold8192,
+            other => BfvPreset::from_name(other)?,
+        };
+
+        Self::from_preset(preset)
     }
 
     /// Creates a new generator with the specified BFV parameter set.
     pub fn from_set(set: BfvParamSet) -> Self {
-        let bfv_params = set.build_arc();
-
-        Self { bfv_params }
+        Self::try_new(
+            set.degree,
+            set.plaintext_modulus,
+            set.moduli,
+            set.error1_variance,
+        )
+        .expect("Unsupported BFV threshold parameter set")
     }
 
     /// Creates a generator with default BFV parameters for testing purposes.
@@ -129,7 +173,7 @@ impl ZKInputsGenerator {
             .with_context(|| "Failed to encode plaintext")?;
 
         let user_data_encryption_computation_output = UserDataEncryptionCircuit::compute(
-            DEFAULT_BFV_PRESET,
+            self.bfv_preset,
             &UserDataEncryptionCircuitData {
                 public_key: pk,
                 plaintext: pt,
@@ -251,7 +295,7 @@ impl ZKInputsGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_fhe_params::constants::insecure_512;
+    use e3_fhe_params::constants::{insecure_512, secure_8192};
     use e3_fhe_params::{BfvParamSet, BfvPreset};
     use num_bigint::BigUint;
 
@@ -284,6 +328,40 @@ mod tests {
             .expect("failed to compute ciphertext commitment");
 
         BigUint::from_bytes_be(&bytes).to_string()
+    }
+
+    #[test]
+    fn from_preset_name_selects_the_requested_threshold_preset() {
+        let insecure = ZKInputsGenerator::from_preset_name("insecure-512")
+            .expect("insecure preset should parse");
+        let secure =
+            ZKInputsGenerator::from_preset_name("secure-8192").expect("secure preset should parse");
+
+        let insecure_params = insecure.get_bfv_params();
+        assert_eq!(insecure_params.degree(), insecure_512::DEGREE);
+        assert_eq!(
+            insecure_params.plaintext(),
+            insecure_512::threshold::PLAINTEXT_MODULUS
+        );
+        assert_eq!(insecure_params.moduli(), insecure_512::threshold::MODULI);
+
+        let secure_params = secure.get_bfv_params();
+        assert_eq!(secure_params.degree(), secure_8192::DEGREE);
+        assert_eq!(
+            secure_params.plaintext(),
+            secure_8192::threshold::PLAINTEXT_MODULUS
+        );
+        assert_eq!(secure_params.moduli(), secure_8192::threshold::MODULI);
+    }
+
+    #[test]
+    fn try_new_rejects_dkg_parameter_sets() {
+        let dkg = BfvParamSet::from(BfvPreset::SecureDkg8192);
+
+        let result =
+            ZKInputsGenerator::try_new(dkg.degree, dkg.plaintext_modulus, dkg.moduli, None);
+
+        assert!(result.is_err());
     }
 
     #[test]

@@ -28,6 +28,8 @@ pub struct Config {
     pub chain_id: u64,
     pub cron_api_key: String,
     // E3 parameters
+    #[serde(default)]
+    pub e3_param_set: u8, // 0=InsecureThreshold512, 1=SecureThreshold8192
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     pub e3_compute_provider_name: String,

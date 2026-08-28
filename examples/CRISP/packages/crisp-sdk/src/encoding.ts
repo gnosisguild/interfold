@@ -15,6 +15,7 @@
  */
 
 import { ZKInputsGenerator } from '@crisp-e3/zk-inputs'
+import { registeredPreset, type CircuitPreset } from './circuits'
 import { toBinary, numberArrayToBigInt64Array, decodeBytesToBigInts, getMaxVoteValue } from './utils'
 import { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS } from './constants'
 import { hexToBytes } from 'viem'
@@ -22,14 +23,30 @@ import type { Hex } from 'viem'
 import type { TallyResult, Vote } from './types'
 
 let _zkInputsGenerator: InstanceType<typeof ZKInputsGenerator> | null = null
+let _zkInputsGeneratorPreset: CircuitPreset | 'default' | null = null
+let _zkInputsGeneratorPresetOverride: CircuitPreset | null = null
+
+/** Force a BFV preset for contexts that do not share the registered circuit bundle. */
+export const setZkInputsGeneratorPreset = (preset: CircuitPreset): void => {
+  if (_zkInputsGeneratorPresetOverride !== preset) {
+    _zkInputsGenerator = null
+    _zkInputsGeneratorPreset = null
+    _zkInputsGeneratorPresetOverride = preset
+  }
+}
 
 /**
- * Returns the singleton ZK inputs generator instance (lazily initialized).
+ * Returns the singleton ZK inputs generator instance for the registered BFV preset.
  */
 export const getZkInputsGenerator = () => {
-  if (!_zkInputsGenerator) {
-    _zkInputsGenerator = ZKInputsGenerator.withDefaults()
+  const preset = _zkInputsGeneratorPresetOverride ?? registeredPreset()
+  const targetPreset = preset ?? 'default'
+
+  if (!_zkInputsGenerator || _zkInputsGeneratorPreset !== targetPreset) {
+    _zkInputsGenerator = preset ? ZKInputsGenerator.fromPreset(preset) : ZKInputsGenerator.withDefaults()
+    _zkInputsGeneratorPreset = targetPreset
   }
+
   return _zkInputsGenerator
 }
 
@@ -175,7 +192,10 @@ export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices
 export const decryptVote = (ciphertext: Uint8Array, secretKey: Uint8Array, numChoices: number): TallyResult => {
   const decryptedVote = getZkInputsGenerator().decryptVote(secretKey, ciphertext)
 
-  return decodeTally(Array.from(decryptedVote), numChoices)
+  return decodeTally(
+    Array.from(decryptedVote, (value) => BigInt(value)),
+    numChoices,
+  )
 }
 
 /**

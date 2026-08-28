@@ -208,7 +208,7 @@ Edit **`crisp.dev.env`** (created from `crisp.dev.env.example` on first `pnpm de
 
 | Variable                       | Default        | Effect                                                                |
 | ------------------------------ | -------------- | --------------------------------------------------------------------- |
-| `CRISP_BFV_PRESET`             | `insecure-512` | DKG circuit build preset for full aggregation                         |
+| `CRISP_BFV_PRESET`             | `insecure-512` | BFV preset for aggregation circuits and the server `E3_PARAM_SET`     |
 | `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | Ciphernode-only local-dev skip; also selects mock verifier deployment |
 
 `pnpm dev:setup` applies this profile and builds recursive circuits only when needed. `pnpm dev:up`
@@ -227,9 +227,9 @@ sync, and troubleshooting (`VkHashMismatch`, etc.).
 
 ### Vercel (CRISP client)
 
-Deploy from **`examples/CRISP/client`**. The build uses the published **`@crisp-e3/sdk@0.9.0`** on
-npm (`pnpm install --ignore-workspace`), not the monorepo workspace — so it does not compile Noir
-circuits on Vercel.
+Deploy from **`examples/CRISP/client`**. The build uses the published **`@crisp-e3/sdk`** package on
+npm (`pnpm install --ignore-workspace`), not the monorepo workspace. The published SDK package
+already contains the staged preset circuits, so Vercel does not compile Noir circuits.
 
 - **Project root directory:** `examples/CRISP/client`
 - **`vercel build` in CI:** run from the **repository root** (not `cd examples/CRISP/client` first)
@@ -240,10 +240,11 @@ Commit `examples/CRISP/client/pnpm-lock.yaml` after dependency bumps
 
 ## Publishing packages to npm
 
-In order to publish a new version of the CRISP packages to npm, you can use:
+In order to publish a new version of the CRISP packages to npm, select the release channel:
 
 ```sh
-pnpm publish:packages x.x.x # where x.x.x is the new version
+pnpm publish:packages --channel prod x.x.x
+pnpm publish:packages --channel testing x.x.x-insecure.0
 ```
 
 ## Contributing

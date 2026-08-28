@@ -4,11 +4,19 @@
 // during CPU-heavy zk-inputs WASM (BFV encryption).
 
 import type { PrepareBallotInputs } from '../types'
+import type { CircuitPreset } from '../circuits'
 import { prepareCircuitInputsImpl } from '../circuitInputs'
+import { setZkInputsGeneratorPreset } from '../encoding'
 
-self.onmessage = async (e: MessageEvent<PrepareBallotInputs>) => {
+type GenerateCircuitInputsRequest = {
+  inputs: PrepareBallotInputs
+  preset: CircuitPreset | null
+}
+
+self.onmessage = async (e: MessageEvent<GenerateCircuitInputsRequest>) => {
   try {
-    const prepared = await prepareCircuitInputsImpl(e.data)
+    if (e.data.preset) setZkInputsGeneratorPreset(e.data.preset)
+    const prepared = await prepareCircuitInputsImpl(e.data.inputs)
     self.postMessage({ type: 'result' as const, prepared })
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
-use e3_fhe_params::default_param_set;
+use e3_fhe_params::{BfvParamSet, BfvPreset};
 use evm_helpers::CRISPContract;
 use log::info;
 use reqwest::Client;
@@ -316,8 +316,12 @@ pub async fn initialize_crisp_round(
             return Err(anyhow::anyhow!("Invalid committee size: {}", invalid).into());
         }
     };
-    // param_set 0 = InsecureThreshold512 (must match on-chain paramSetRegistry)
-    let param_set: u8 = 0;
+    let param_set = match CONFIG.e3_param_set {
+        0 | 1 => CONFIG.e3_param_set,
+        invalid => {
+            return Err(anyhow::anyhow!("Invalid param set: {}", invalid).into());
+        }
+    };
     let compute_provider_params = ComputeProviderParams {
         name: CONFIG.e3_compute_provider_name.to_string(),
         parallel: CONFIG.e3_compute_provider_parallel,
@@ -512,7 +516,9 @@ pub async fn decrypt_and_publish_result(
 
 #[allow(dead_code)]
 fn generate_bfv_parameters() -> Arc<BfvParameters> {
-    build_bfv_params_from_set_arc(default_param_set())
+    let preset = BfvPreset::from_on_chain_param_set(CONFIG.e3_param_set)
+        .expect("E3_PARAM_SET must be 0 or 1");
+    build_bfv_params_from_set_arc(BfvParamSet::from(preset))
 }
 
 #[allow(dead_code)]

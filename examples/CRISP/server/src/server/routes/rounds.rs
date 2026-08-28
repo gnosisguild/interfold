@@ -461,8 +461,10 @@ pub async fn initialize_crisp_round(
         U256::from(window_start),
         U256::from(window_start + CONFIG.e3_duration),
     ];
-    // param_set 0 = InsecureThreshold512 (must match on-chain paramSetRegistry)
-    let param_set: u8 = 0;
+    let param_set = match CONFIG.e3_param_set {
+        0 | 1 => CONFIG.e3_param_set,
+        invalid => return Err(format!("Invalid param set: {}", invalid).into()),
+    };
     let compute_provider_params = ComputeProviderParams {
         name: CONFIG.e3_compute_provider_name.clone(),
         parallel: CONFIG.e3_compute_provider_parallel,

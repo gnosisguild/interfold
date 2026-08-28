@@ -4,14 +4,15 @@
 
 **Source of truth for local dev:** `examples/CRISP/crisp.dev.env` (from `crisp.dev.env.example`).
 
-| Variable                       | Default        | Effect                                               |
-| ------------------------------ | -------------- | ---------------------------------------------------- |
-| `CRISP_BFV_PRESET`             | `insecure-512` | `pnpm build:circuits --preset` for full aggregation  |
-| `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | Enables the ciphernode-only local-dev/test skip flag |
+| Variable                       | Default        | Effect                                                |
+| ------------------------------ | -------------- | ----------------------------------------------------- |
+| `CRISP_BFV_PRESET`             | `insecure-512` | BFV preset for circuits and the server `E3_PARAM_SET` |
+| `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | Enables the ciphernode-only local-dev/test skip flag  |
 
 `pnpm dev:setup` copies the example if missing and builds recursive circuits only when the skip flag
-is `false`. `pnpm dev:up` → `crisp_deploy.sh` deploys real verifiers for full aggregation and mock
-verifiers for skipped local-dev runs.
+is `false`. It also writes the matching `E3_PARAM_SET` into `server/.env`: `0` for `insecure-512`
+and `1` for `secure-8192`. `pnpm dev:up` → `crisp_deploy.sh` deploys real verifiers for full
+aggregation and mock verifiers for skipped local-dev runs.
 
 After changing `crisp.dev.env`, re-run `pnpm dev:setup` and a fresh `pnpm dev:up` (wipe
 `.interfold/data` when switching modes).
@@ -80,8 +81,8 @@ CRISP_BFV_PRESET=insecure-512
 CRISP_SKIP_PROOF_AGGREGATION=false
 ```
 
-CRISP `requestE3` still uses on-chain `param_set = 0` (`InsecureThreshold512`) unless you change the
-server — keep `CRISP_BFV_PRESET=insecure-512` for the default Minimum committee.
+CRISP `requestE3` reads `E3_PARAM_SET` from `server/.env`. Keep it aligned with `CRISP_BFV_PRESET`:
+`0` for `insecure-512`, `1` for `secure-8192`.
 
 ### Steps
 
@@ -94,8 +95,8 @@ pnpm dev:up       # deploy with ENABLE_ZK_VERIFICATION=true
 pnpm cli init
 ```
 
-`dev:setup` runs `pnpm build:circuits --preset <CRISP_BFV_PRESET>` before contract compile. `dev:up`
-deploys via `crisp_deploy.sh` with `ENABLE_ZK_VERIFICATION=true`.
+`dev:setup` runs `pnpm build:circuits --preset <CRISP_BFV_PRESET>` before contract compile and
+updates `server/.env`. `dev:up` deploys via `crisp_deploy.sh` with `ENABLE_ZK_VERIFICATION=true`.
 
 **Do not** run `pnpm build:circuits` with a different preset after deploy without redeploying — that
 causes **`VkHashMismatch()`** at `publishCommittee`.
